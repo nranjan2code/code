@@ -407,6 +407,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .run-state { display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border-radius: 99px; color: var(--faint); background: var(--surface-raised); font-size: var(--fs-caption); }
 .run-state.active { color: var(--green); }
 .run-state.attention { color: var(--live-ink); background: var(--live-wash); font-weight: 600; }
+.traffic-hint { white-space: nowrap; font-size: 12px; }
 .workspace-actions { position: relative; z-index: 40; display: flex; align-items: center; gap: 3px; min-width: 0; max-width: 62%; overflow: visible; scrollbar-width: none; flex-shrink: 0; }
 .workspace-more { position: relative; }
 .workspace-more summary { list-style: none; cursor: pointer; }
@@ -3384,6 +3385,7 @@ button.artifact-canvas-result:hover, button.artifact-canvas-result:focus-visible
 }
 @container workspace-main (max-width: 440px) {
   .target-dir-pill, .run-state { display: none !important; }
+  .traffic-hint { display: inline-flex !important; }
 }
 .msg, .tool, .worker, .thinking, .approval, .sysnote,
 .transcript-skeleton, .composer-box, .composer-note { max-width: 860px; }

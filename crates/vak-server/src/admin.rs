@@ -17,6 +17,10 @@ use crate::AppState;
 
 pub(crate) const SESSION_COOKIE: &str = "vak_session";
 
+pub(crate) async fn admin_traffic_status() -> Json<vak_llm::TrafficSnapshot> {
+    Json(vak_llm::RateLimitGate::traffic_snapshot())
+}
+
 // ---- GET /admin/api/sessions ----------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -1765,6 +1769,7 @@ pub(crate) fn routes() -> axum::Router<AppState> {
         )
         .route("/admin/api/config", get(get_config_admin))
         .route("/admin/api/gateway/status", get(gateway_status_admin))
+        .route("/admin/api/traffic", get(admin_traffic_status))
         .route(
             "/admin/api/gateway/workspace",
             axum::routing::patch(patch_gateway_workspace),

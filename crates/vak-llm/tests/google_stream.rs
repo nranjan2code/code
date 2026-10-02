@@ -91,6 +91,7 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"re
 async fn full_stream_accumulates_text_and_function_calls() {
     let provider = GoogleProvider::new(GoogleConfig {
         api_key: "k".into(),
+        project_id: None,
         base_url: mock_url(FIXTURE_STREAM).await,
     })
     .unwrap();
@@ -147,6 +148,7 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}],\"role\":\"mo
 async fn cached_tokens_are_split_out_of_prompt_token_count_not_added_on_top() {
     let provider = GoogleProvider::new(GoogleConfig {
         api_key: "k".into(),
+        project_id: None,
         base_url: mock_url(FIXTURE_CACHED_USAGE).await,
     })
     .unwrap();
@@ -171,6 +173,7 @@ data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"done\"}],\"role\":\"
 async fn finish_stop_maps_to_end_turn() {
     let provider = GoogleProvider::new(GoogleConfig {
         api_key: "k".into(),
+        project_id: None,
         base_url: mock_url(FIXTURE_STOP).await,
     })
     .unwrap();
@@ -191,6 +194,7 @@ async fn http_error_maps_to_typed_value() {
     let url = error_url(429, r#"{"error":{"message":"quota exceeded"}}"#).await;
     let provider = GoogleProvider::new(GoogleConfig {
         api_key: "k".into(),
+        project_id: None,
         base_url: url,
     })
     .unwrap();

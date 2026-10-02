@@ -73,7 +73,10 @@ horizon-ladder probe — local models are always eligible;
 docs/design/68-context-engine.md §1), and per-provider `[providers.*]`
 sections such as `[providers.ollama]` (`keep_alive`/`num_ctx`) and
 `[providers.anthropic]` (`fast_mode`, opt-in `speed: "fast"` on models
-discovered to support it; docs/design/01-llm.md).
+discovered to support it; docs/design/01-llm.md), and `[providers.google]`
+(`project_id`, a non-secret capacity identity that lets Gemini observations
+from multiple API keys in one Google Cloud project share local admission
+state; it does not query project limits).
 
 ## Storage
 

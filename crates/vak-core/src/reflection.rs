@@ -261,8 +261,10 @@ pub fn system_prompt() -> String {
 /// Returns proposals parsed from the model's reply (not yet written).
 pub async fn propose(
     provider: std::sync::Arc<dyn vak_llm::Provider>,
+    provider_route: &str,
     model: &str,
     transcript_tail: &str,
+    request_timeout: Option<std::time::Duration>,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<Proposals, String> {
     let tail: String = transcript_tail
@@ -286,15 +288,69 @@ pub async fn propose(
     req.messages = vec![user];
     req.max_tokens = MAX_TOKENS;
 
-    let stream = provider
-        .stream(req, cancel)
-        .await
-        .map_err(|e| format!("reflection call failed: {e}"))?;
-    let reply = stream
-        .result()
-        .await
-        .map_err(|e| format!("reflection call failed: {e}"))?
-        .text_content();
+    let estimated_input = (req.system.as_deref().unwrap_or("").chars().count() as u64
+        + tail.chars().count() as u64
+        + 3)
+        / 4;
+    let dispatch_started = std::time::Instant::now();
+    let admission_result = match request_timeout {
+        Some(timeout) => {
+            vak_llm::RequestAdmission::acquire_with_timeout(
+                provider.as_ref(),
+                provider_route,
+                model,
+                estimated_input,
+                MAX_TOKENS as u64,
+                timeout,
+                &cancel,
+            )
+            .await
+        }
+        None => {
+            vak_llm::RequestAdmission::acquire(
+                provider.as_ref(),
+                provider_route,
+                model,
+                estimated_input,
+                MAX_TOKENS as u64,
+                &cancel,
+            )
+            .await
+        }
+    };
+    let mut admission = admission_result
+        .map_err(|error| format!("reflection capacity admission failed: {error}"))?;
+    let provider_cancel = admission.cancellation_token();
+    let call = async { provider.stream(req, provider_cancel).await?.result().await };
+    let outcome = match request_timeout {
+        Some(timeout) => {
+            match tokio::time::timeout(timeout.saturating_sub(dispatch_started.elapsed()), call)
+                .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    return Err(format!(
+                        "reflection call exceeded its {timeout:?} admission and dispatch budget"
+                    ));
+                }
+            }
+        }
+        None => call.await,
+    };
+    let reply = match outcome {
+        Ok(reply) => reply,
+        Err(error) => {
+            if matches!(
+                &error,
+                vak_llm::LlmError::Context(_) | vak_llm::LlmError::QuotaExhausted(_)
+            ) {
+                admission.release_before_dispatch();
+            }
+            return Err(format!("reflection call failed: {error}"));
+        }
+    };
+    admission.settle(&reply.usage);
+    let reply = reply.text_content();
 
     Ok(parse_proposals(&reply))
 }

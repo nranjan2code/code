@@ -215,8 +215,13 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> 
 }
 
 fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
-    let message = serde_json::from_str::<Value>(body)
-        .ok()
+    let parsed = serde_json::from_str::<Value>(body).ok();
+    let code = parsed
+        .as_ref()
+        .and_then(|v| v.pointer("/error/code").or_else(|| v.get("code")))
+        .and_then(Value::as_str);
+    let message = parsed
+        .as_ref()
         .and_then(|v| {
             v.pointer("/error/message")
                 .and_then(|m| m.as_str().map(String::from))
@@ -227,10 +232,18 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
         400 => LlmError::classify_400(message),
         404 | 413 | 422 => LlmError::InvalidRequest(message),
         429 => LlmError::RateLimit {
-            message,
+            message: code
+                .map(|code| format!("{code}: {message}"))
+                .unwrap_or(message),
             retry_after_secs: retry_after,
         },
-        503 | 529 => LlmError::Overloaded(message),
+        503 | 529 => match retry_after {
+            Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
+                message,
+                retry_after_secs,
+            },
+            None => LlmError::Overloaded(message),
+        },
         _ => LlmError::Api { status, message },
     }
 }
@@ -285,9 +298,13 @@ impl Accumulator {
                     .and_then(Value::as_u64)
                     .or(self.retry_after_secs);
                 Err(match code {
-                    "rate_limit_exceeded" | "insufficient_quota" => LlmError::RateLimit {
+                    "rate_limit_exceeded" => LlmError::RateLimit {
                         message,
                         retry_after_secs,
+                    },
+                    "insufficient_quota" => LlmError::RateLimit {
+                        message: format!("insufficient_quota: {message}"),
+                        retry_after_secs: None,
                     },
                     "server_error" => LlmError::Overloaded(message),
                     "invalid_api_key" | "authentication_error" => LlmError::Auth(message),
@@ -447,10 +464,19 @@ impl Provider for OpenAiResponsesProvider {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!(
-            "openai-account:{}",
-            crate::gate::credential_id(&self.config.base_url, &self.config.api_key)
-        )
+        crate::openai::account_capacity_key(&self.config.base_url, &self.config.api_key)
+    }
+
+    async fn refresh_capacity(&self, cancel: &CancellationToken) -> Result<(), LlmError> {
+        if self.config.openrouter {
+            crate::provider_status::refresh_openrouter_capacity(
+                &self.config.base_url,
+                &self.config.api_key,
+                cancel,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     async fn stream(
@@ -459,6 +485,10 @@ impl Provider for OpenAiResponsesProvider {
         cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
+        let capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(
+            self.rate_limit_key(),
+            &request.model,
+        );
         let url = format!("{}/responses", self.config.base_url.trim_end_matches('/'));
         let body = build_body(&self.config, &request)?;
         let send_fut = self
@@ -477,21 +507,25 @@ impl Provider for OpenAiResponsesProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let retry_after = response
-                .headers()
-                .get("retry-after")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok());
+            let observation = crate::openai::openai_capacity_observation(response.headers());
+            let project_observation =
+                crate::openai::openai_project_capacity_observation(response.headers());
+            let retry_after = crate::openai::retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
+            capacity_ticket.observe_model(observation);
+            capacity_ticket.observe_account(project_observation);
             return Err(map_status_error(status.as_u16(), &text, retry_after));
         }
 
+        capacity_ticket.observe_model(crate::openai::openai_capacity_observation(
+            response.headers(),
+        ));
+        capacity_ticket.observe_account(crate::openai::openai_project_capacity_observation(
+            response.headers(),
+        ));
+
         let model = request.model.clone();
-        let stream_retry_after = response
-            .headers()
-            .get("retry-after")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok());
+        let stream_retry_after = crate::openai::retry_after_from_headers(response.headers());
         let (mut sink, stream_rx) = channel(256);
         let mut byte_stream = response.bytes_stream();
         let mut decoder = SseDecoder::new();

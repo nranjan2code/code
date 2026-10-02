@@ -19,6 +19,20 @@ pub struct RealtimeConfig {
     pub output_format: String,
 }
 
+fn account_capacity_key(endpoint: &str, api_key: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(endpoint) else {
+        return crate::gate::route_identity("openai", endpoint, api_key);
+    };
+    let secure = url.scheme() == "wss" || url.scheme() == "https";
+    let _ = url.set_scheme(if secure { "https" } else { "http" });
+    let path = url.path().trim_end_matches('/');
+    let path = path.strip_suffix("/realtime").unwrap_or(path).to_string();
+    url.set_path(&path);
+    url.set_query(None);
+    url.set_fragment(None);
+    crate::openai::account_capacity_key(url.as_str().trim_end_matches('/'), api_key)
+}
+
 impl RealtimeConfig {
     pub fn validate(&self) -> Result<(), LlmError> {
         for (name, value) in [
@@ -99,6 +113,21 @@ pub async fn round_trip(
             "realtime audio cannot be empty".into(),
         ));
     }
+    let account = account_capacity_key(endpoint, api_key);
+    let mut quota = crate::RateLimitGate::reserve_model(
+        account.clone(),
+        &config.model,
+        (audio.len() as u64 / 3).max(1),
+        cancel,
+    )
+    .await?;
+    let _permit = match crate::RateLimitGate::admit_account(account.clone(), cancel).await {
+        Ok(permit) => permit,
+        Err(error) => {
+            quota.release();
+            return Err(error);
+        }
+    };
     let separator = if endpoint.contains('?') { '&' } else { '?' };
     let url = format!(
         "{endpoint}{separator}model={}",
@@ -110,10 +139,18 @@ pub async fn round_trip(
         .header("OpenAI-Beta", "realtime=v1")
         .body(())
         .map_err(|e| LlmError::InvalidRequest(e.to_string()))?;
-    let (mut socket, _) = tokio::select! {
+    let capacity_ticket =
+        crate::RateLimitGate::capacity_observation_ticket(account.clone(), &config.model);
+    let (mut socket, handshake) = tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
         result = tokio_tungstenite::connect_async(request) => result.map_err(|e| LlmError::Network(e.to_string()))?,
     };
+    capacity_ticket.observe_model(crate::openai::openai_capacity_observation(
+        handshake.headers(),
+    ));
+    capacity_ticket.observe_account(crate::openai::openai_project_capacity_observation(
+        handshake.headers(),
+    ));
     let send = |value: Value| Message::Text(value.to_string());
     for value in [
         build_session_update(config, instructions)?,
@@ -157,7 +194,14 @@ pub async fn round_trip(
                 }
                 output.extend(bytes);
             }
-            Some("error") => return Err(LlmError::InvalidRequest(event.to_string())),
+            Some("error") => {
+                let message = event.to_string();
+                if message.contains("rate_limit") || message.contains("429") {
+                    crate::RateLimitGate::for_key(account.clone())
+                        .observe_limit(None, std::time::Duration::from_secs(1));
+                }
+                return Err(LlmError::InvalidRequest(message));
+            }
             Some("response.done") => break,
             _ => {}
         }
@@ -167,6 +211,7 @@ pub async fn round_trip(
             "provider returned empty realtime audio".into(),
         ));
     }
+    quota.settle_estimate();
     Ok(output)
 }
 

@@ -2071,6 +2071,19 @@ export function inboxUnreadCount(): Promise<{ count: number }> {
   return req("/inbox/unread_count");
 }
 
+export interface TrafficSnapshot {
+  state: "unknown" | "normal" | "busy" | "queued" | "limited";
+  active: number;
+  queued: number;
+  retry_after_secs: number | null;
+  observed_routes: number;
+  scope: string;
+}
+
+export function providerTraffic(): Promise<TrafficSnapshot> {
+  return req("/traffic");
+}
+
 // ---- feeds -----------------------------------------------------------
 
 import type { FeedSourceType, FeedStats, FeedSearchResponse, FeedItem } from "./types";

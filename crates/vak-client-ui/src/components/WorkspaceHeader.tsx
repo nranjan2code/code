@@ -69,6 +69,7 @@ export default function WorkspaceHeader() {
   // Setup state is read from the server on every open (store.ts): the header
   // names only what needs attention, so a ready conversation shows no status.
   const [setup] = createResource(setupEpoch, () => api.onboarding());
+  const [traffic, trafficActions] = createResource(() => api.providerTraffic());
   const needsService = () => { const state = setup(); return !!state && !state.core_ready && state.provider?.state === "incomplete"; };
   const taskStatus = createMemo(() => {
     const id = activeId();
@@ -103,6 +104,23 @@ export default function WorkspaceHeader() {
     const t = setInterval(() => void pollUnread(), INBOX_POLL_MS);
     onCleanup(() => clearInterval(t));
   });
+
+  createEffect(() => {
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") void trafficActions.refetch();
+    }, INBOX_POLL_MS);
+    onCleanup(() => clearInterval(t));
+  });
+
+  const trafficLabel = () => {
+    const snapshot = traffic();
+    if (!snapshot) return "Traffic · checking";
+    if (snapshot.state === "limited") return `Traffic · limited${snapshot.retry_after_secs ? ` · ${snapshot.retry_after_secs}s` : ""}`;
+    if (snapshot.state === "queued") return `Traffic · ${snapshot.queued} waiting`;
+    if (snapshot.state === "busy") return "Traffic · busy";
+    if (snapshot.state === "normal") return "Traffic · steady";
+    return "Traffic · learning";
+  };
 
   // Markdown transcript export (docs/design/29-personal-os.md P4): the
   // shared renderer's output is fetched from the router and written to a
@@ -139,6 +157,7 @@ export default function WorkspaceHeader() {
         </Show>
         <div class="workspace-title">
           <div class="workspace-title-row">
+            <span class="run-state traffic-hint" title={`Provider activity for ${traffic()?.scope ?? "this service process"}. Provider limits may be unknown until observed.`} aria-label={trafficLabel()}>{trafficLabel()}</span>
             <Show when={technicalDetails()}>
 
             <button

@@ -590,6 +590,16 @@ pub struct ProbeResolved {
 pub struct ProvidersSettings {
     pub ollama: OllamaSettings,
     pub anthropic: AnthropicSettings,
+    pub google: GoogleSettings,
+}
+
+/// Gemini capacity identity. Multiple API keys for one Google Cloud project
+/// consume the same published project quota; this non-secret label lets the
+/// local scheduler share observations across those credentials.
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[serde(default)]
+pub struct GoogleSettings {
+    pub project_id: Option<String>,
 }
 
 /// Anthropic provider tuning (docs/design/68-context-engine.md §11
@@ -1322,6 +1332,7 @@ pub struct Config {
     pub voice: VoiceSettings,
     pub ollama: OllamaResolved,
     pub anthropic: AnthropicResolved,
+    pub google_project_id: Option<String>,
     pub warnings: Vec<String>,
 }
 
@@ -1732,6 +1743,7 @@ impl Default for Config {
                 num_ctx: None,
             },
             anthropic: AnthropicResolved { fast_mode: false },
+            google_project_id: None,
             warnings: Vec::new(),
         }
     }
@@ -3112,6 +3124,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
 
     // --- providers.anthropic (docs/design/68-context-engine.md §11) ---
     cfg.anthropic.fast_mode = merged.providers.anthropic.fast_mode.unwrap_or(false);
+    cfg.google_project_id = merged.providers.google.project_id.clone();
 
     // --- intent kernel (docs/design/47-commitment-kernel.md) ---
     cfg.intent.enabled = merged.intent.enabled.unwrap_or(true);
@@ -3580,9 +3593,10 @@ const KNOWN_HEARTBEAT_KEYS: &[&str] = &[
     "quiet_hours",
     "max_findings",
 ];
-const KNOWN_PROVIDERS_KEYS: &[&str] = &["ollama", "anthropic"];
+const KNOWN_PROVIDERS_KEYS: &[&str] = &["ollama", "anthropic", "google"];
 const KNOWN_OLLAMA_KEYS: &[&str] = &["keep_alive", "num_ctx"];
 const KNOWN_ANTHROPIC_PROVIDER_KEYS: &[&str] = &["fast_mode"];
+const KNOWN_GOOGLE_PROVIDER_KEYS: &[&str] = &["project_id"];
 
 /// A typo'd key must be visible, not silently dead: diff the raw TOML
 /// against the known schema and surface every unrecognized key.
@@ -3860,6 +3874,16 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
                 if !KNOWN_ANTHROPIC_PROVIDER_KEYS.contains(&key.as_str()) {
                     out.push(format!(
                         "{}: unknown providers key 'providers.anthropic.{key}' (ignored)",
+                        path.display()
+                    ));
+                }
+            }
+        }
+        if let Some(t) = t.get("google").and_then(toml::Value::as_table) {
+            for key in t.keys() {
+                if !KNOWN_GOOGLE_PROVIDER_KEYS.contains(&key.as_str()) {
+                    out.push(format!(
+                        "{}: unknown providers key 'providers.google.{key}' (ignored)",
                         path.display()
                     ));
                 }
@@ -4171,6 +4195,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.providers.anthropic.fast_mode.is_some() {
         base.providers.anthropic.fast_mode = over.providers.anthropic.fast_mode;
+    }
+    if over.providers.google.project_id.is_some() {
+        base.providers.google.project_id = over.providers.google.project_id;
     }
     if over.intent.enabled.is_some() {
         base.intent.enabled = over.intent.enabled;

@@ -21,9 +21,30 @@ use crate::types::{
 
 pub const GOOGLE_DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 
+pub(crate) fn google_account_key(
+    base_url: &str,
+    api_key: &str,
+    project_id: Option<&str>,
+) -> String {
+    let identity = project_id
+        .filter(|id| !id.trim().is_empty())
+        .map(|id| format!("project:{}", id.trim()))
+        .unwrap_or_else(|| {
+            format!(
+                "credential:{}",
+                crate::gate::credential_id(base_url, api_key)
+            )
+        });
+    format!(
+        "google-account:{}:{identity}",
+        base_url.trim_end_matches('/')
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct GoogleConfig {
     pub api_key: String,
+    pub project_id: Option<String>,
     pub base_url: String,
 }
 
@@ -236,13 +257,37 @@ fn sanitize_schema(val: &Value) -> Value {
 }
 
 fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
-    let message = serde_json::from_str::<Value>(body)
-        .ok()
+    let retry_after = retry_after.or_else(|| google_retry_delay(body));
+    let parsed = serde_json::from_str::<Value>(body).ok();
+    let quota_evidence = parsed
+        .as_ref()
+        .and_then(|v| v.pointer("/error/details"))
+        .and_then(Value::as_array)
+        .map(|details| {
+            details
+                .iter()
+                .filter_map(|item| {
+                    let kind = item.get("@type").and_then(Value::as_str)?;
+                    if kind.ends_with("QuotaFailure") {
+                        serde_json::to_string(item).ok()
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+    let message = parsed
+        .as_ref()
         .and_then(|v| {
             v.pointer("/error/message")
                 .and_then(|m| m.as_str().map(String::from))
         })
         .unwrap_or_else(|| body.chars().take(500).collect());
+    let message = quota_evidence
+        .filter(|evidence| !evidence.is_empty())
+        .map(|evidence| format!("{message} {evidence}"))
+        .unwrap_or(message);
     match status {
         401 | 403 => LlmError::Auth(message),
         400 => LlmError::classify_400(message),
@@ -251,9 +296,31 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
             message,
             retry_after_secs: retry_after,
         },
-        503 | 529 => LlmError::Overloaded(message),
+        503 | 529 => match retry_after {
+            Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
+                message,
+                retry_after_secs,
+            },
+            None => LlmError::Overloaded(message),
+        },
         _ => LlmError::Api { status, message },
     }
+}
+
+pub(crate) fn google_retry_delay(body: &str) -> Option<u64> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let details = value.pointer("/error/details")?.as_array()?;
+    details
+        .iter()
+        .find(|detail| {
+            detail
+                .get("@type")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name.ends_with("RetryInfo"))
+        })?
+        .get("retryDelay")?
+        .as_str()
+        .and_then(crate::openai::parse_provider_duration)
 }
 
 struct Accumulator {
@@ -407,12 +474,24 @@ impl Provider for GoogleProvider {
         crate::gate::route_identity(self.name(), &self.config.base_url, &self.config.api_key)
     }
 
+    fn rate_limit_key(&self) -> String {
+        google_account_key(
+            &self.config.base_url,
+            &self.config.api_key,
+            self.config.project_id.as_deref(),
+        )
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
+        let capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(
+            self.rate_limit_key(),
+            &request.model,
+        );
         let url = format!(
             "{}/models/{}:streamGenerateContent?alt=sse",
             self.config.base_url.trim_end_matches('/'),
@@ -435,14 +514,15 @@ impl Provider for GoogleProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let retry_after = response
-                .headers()
-                .get("retry-after")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok());
+            let headers = response.headers().clone();
+            let retry_after = crate::openai::retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
+            let observation = google_capacity_observation(&headers, Some(&text));
+            capacity_ticket.observe_model(observation);
             return Err(map_status_error(status.as_u16(), &text, retry_after));
         }
+
+        capacity_ticket.observe_model(google_capacity_observation(response.headers(), None));
 
         let model = request.model.clone();
         let (mut sink, stream_rx) = channel(256);
@@ -494,6 +574,141 @@ impl Provider for GoogleProvider {
         });
 
         Ok(stream_rx.with_guard(provider_permit))
+    }
+}
+
+pub(crate) fn google_capacity_observation(
+    headers: &reqwest::header::HeaderMap,
+    body: Option<&str>,
+) -> crate::CapacityObservation {
+    let number = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+    };
+    let mut observation = crate::CapacityObservation {
+        tokens_remaining: number("x-ratelimit-remaining-tokens"),
+        tokens_limit: number("x-ratelimit-limit-tokens"),
+        requests_remaining: number("x-ratelimit-remaining-requests"),
+        requests_limit: number("x-ratelimit-limit-requests"),
+        reset_after_secs: headers
+            .get("x-ratelimit-reset")
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::openai::parse_provider_duration),
+        daily_remaining: None,
+        daily_limit: None,
+        daily_requests_remaining: None,
+        daily_requests_limit: None,
+        daily_reset_after_secs: None,
+        ..Default::default()
+    };
+    if let Some(body) = body {
+        observe_google_quota_failure(&mut observation, body);
+    }
+    observation
+}
+
+fn observe_google_quota_failure(observation: &mut crate::CapacityObservation, body: &str) {
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return;
+    };
+    let Some(details) = value.pointer("/error/details").and_then(Value::as_array) else {
+        return;
+    };
+    let retry_after = google_retry_delay(body);
+    let next_daily_reset = || {
+        let now = chrono::Utc::now();
+        let pacific = now.with_timezone(&chrono_tz::America::Los_Angeles);
+        let next_day = pacific.date_naive() + chrono::Days::new(1);
+        next_day
+            .and_hms_opt(0, 0, 0)?
+            .and_local_timezone(chrono_tz::America::Los_Angeles)
+            .single()
+            .map(|midnight| {
+                (midnight.with_timezone(&chrono::Utc) - now)
+                    .num_seconds()
+                    .max(0) as u64
+            })
+    };
+    for detail in details {
+        if !detail
+            .get("@type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.ends_with("QuotaFailure"))
+        {
+            continue;
+        }
+        let Some(violations) = detail.get("violations").and_then(Value::as_array) else {
+            continue;
+        };
+        for violation in violations {
+            let quota_id = violation
+                .get("quotaId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let metric = violation
+                .get("quotaMetric")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let is_daily = quota_id.contains("perday")
+                || quota_id.contains("per_day")
+                || quota_id.contains("daily");
+            let is_token = metric.contains("token");
+            let is_input_token =
+                is_token && (metric.contains("input_token") || metric.contains("prompt_token"));
+            let is_output_token = is_token && metric.contains("output_token");
+            let limit = violation
+                .get("quotaValue")
+                .and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok()));
+            if is_daily {
+                if is_input_token {
+                    observation.daily_input_remaining = Some(0);
+                    observation.daily_input_limit = limit.or(observation.daily_input_limit);
+                    observation.daily_input_reset_after_secs = next_daily_reset();
+                } else if is_output_token {
+                    observation.daily_output_remaining = Some(0);
+                    observation.daily_output_limit = limit.or(observation.daily_output_limit);
+                    observation.daily_output_reset_after_secs = next_daily_reset();
+                } else if is_token {
+                    // TPD is model-specific. If Google's metric does not
+                    // identify input or output, enforce it against combined
+                    // estimated demand instead of assuming an input-only cap.
+                    observation.daily_remaining = Some(0);
+                    observation.daily_limit = limit.or(observation.daily_limit);
+                    observation.daily_reset_after_secs = next_daily_reset();
+                } else {
+                    observation.daily_requests_remaining = Some(0);
+                    observation.daily_requests_limit = limit.or(observation.daily_requests_limit);
+                    observation.daily_requests_reset_after_secs = next_daily_reset();
+                }
+            } else {
+                observation.reset_after_secs = retry_after.or(observation.reset_after_secs);
+                if is_token {
+                    if is_output_token {
+                        observation.output_tokens_remaining = Some(0);
+                        observation.output_tokens_limit = limit.or(observation.output_tokens_limit);
+                        observation.output_tokens_reset_after_secs =
+                            retry_after.or(observation.output_tokens_reset_after_secs);
+                    } else {
+                        // Gemini documents its standard TPM dimension as
+                        // input tokens; unknown token metrics use that
+                        // conservative documented dimension.
+                        observation.input_tokens_remaining = Some(0);
+                        observation.input_tokens_limit = limit.or(observation.input_tokens_limit);
+                        observation.input_tokens_reset_after_secs =
+                            retry_after.or(observation.input_tokens_reset_after_secs);
+                    }
+                } else {
+                    observation.requests_reset_after_secs =
+                        retry_after.or(observation.requests_reset_after_secs);
+                    observation.requests_remaining = Some(0);
+                    observation.requests_limit = limit.or(observation.requests_limit);
+                }
+            }
+        }
     }
 }
 

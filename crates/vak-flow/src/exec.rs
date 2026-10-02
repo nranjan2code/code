@@ -61,6 +61,8 @@ pub type NodePrompt = Arc<dyn Fn(&[&str]) -> String + Send + Sync>;
 #[derive(Clone)]
 pub struct ExecutorDeps {
     pub provider: Arc<dyn Provider>,
+    /// Configured route name (distinct from the wire adapter's `Provider::name`).
+    pub provider_route: String,
     pub system_prompt: String,
     /// Composes an agent node's prompt for the node's own tools and for a
     /// reader that is the flow, not a person — the parent's prompt names the

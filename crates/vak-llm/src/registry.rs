@@ -33,6 +33,7 @@ fn cache_key(name: &str, auth: &ProviderAuth) -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     auth.api_key.hash(&mut h);
+    auth.options.hash(&mut h);
     format!(
         "{name}\u{0}{}\u{0}{:016x}",
         auth.base_url.as_deref().unwrap_or(""),
@@ -148,6 +149,7 @@ pub fn default_registry() -> ProviderRegistry {
     registry.register("google", |auth| {
         Ok(Arc::new(GoogleProvider::new(GoogleConfig {
             api_key: auth.api_key.clone(),
+            project_id: auth.options.get("project_id").cloned(),
             base_url: auth
                 .base_url
                 .clone()

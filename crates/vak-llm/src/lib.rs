@@ -29,7 +29,10 @@ pub mod work;
 pub use error::LlmError;
 pub use gate::credential_id;
 pub use model_identity::ModelRef;
-pub use rate_limit::RateLimitGate;
+pub use rate_limit::{
+    CapacityObservation, CapacityObservationTicket, DispatchPermit, QuotaPermit, RateLimitGate,
+    RequestAdmission, TrafficSnapshot,
+};
 pub use registry::{ProviderAuth, ProviderRegistry};
 pub use route::{
     BELIEF_FLOOR, BeliefMap, Demand, DemandBand, DemandInput, EndpointDialect, EvidenceSnapshot,
@@ -64,6 +67,13 @@ pub trait Provider: Send + Sync {
     /// the same opaque credential identity; the identity never contains a key.
     fn rate_limit_key(&self) -> String {
         self.circuit_key()
+    }
+
+    /// Refresh provider-published capacity evidence before admission when a
+    /// provider offers a bounded status endpoint. Implementations must not
+    /// make a model-generation call here.
+    async fn refresh_capacity(&self, _cancel: &CancellationToken) -> Result<(), LlmError> {
+        Ok(())
     }
 
     async fn stream(

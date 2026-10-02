@@ -110,6 +110,7 @@ fn make_executor_with_outcome(
     std::mem::forget(dir);
     Executor::new(ExecutorDeps {
         prompt_layers: Vec::new(),
+        provider_route: "test".into(),
         provider,
         system_prompt: "sys".into(),
         node_prompt: None,

@@ -13,6 +13,15 @@ use crate::types::{
 
 pub const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
+/// Shared opaque capacity identity for OpenAI protocol surfaces using the
+/// same configured endpoint and credential.
+pub(crate) fn account_capacity_key(base_url: &str, api_key: &str) -> String {
+    format!(
+        "openai-account:{}",
+        crate::gate::credential_id(base_url.trim_end_matches('/'), api_key)
+    )
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct OpenAiConfig {
     pub api_key: String,
@@ -45,6 +54,19 @@ pub async fn transcribe(
     if cancel.is_cancelled() {
         return Err(LlmError::Aborted { partial: None });
     }
+    let account = account_capacity_key(&config.base_url, &config.api_key);
+    let estimated_tokens = (audio.len() as u64 / 3).max(1);
+    let mut quota =
+        crate::RateLimitGate::reserve_model(account.clone(), model, estimated_tokens, cancel)
+            .await?;
+    let _permit = match crate::RateLimitGate::admit_account(account.clone(), cancel).await {
+        Ok(permit) => permit,
+        Err(error) => {
+            quota.release();
+            return Err(error);
+        }
+    };
+    let capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(account.clone(), model);
     let filename = if mime.contains("wav") {
         "audio.wav"
     } else if mime.contains("mpeg") || mime.contains("mp3") {
@@ -78,6 +100,10 @@ pub async fn transcribe(
         result = reqwest::Client::new().post(url).bearer_auth(&config.api_key).multipart(form).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
     };
     let status = response.status().as_u16();
+    observe_aux_capacity(&capacity_ticket, &account, status, response.headers());
+    if status < 400 {
+        quota.settle_estimate();
+    }
     let value: Value = response
         .json()
         .await
@@ -115,6 +141,19 @@ pub async fn speak(
     if cancel.is_cancelled() {
         return Err(LlmError::Aborted { partial: None });
     }
+    let account = account_capacity_key(&config.base_url, &config.api_key);
+    let estimated_tokens = (text.chars().count() as u64 / 4).max(1);
+    let mut quota =
+        crate::RateLimitGate::reserve_model(account.clone(), model, estimated_tokens, cancel)
+            .await?;
+    let _permit = match crate::RateLimitGate::admit_account(account.clone(), cancel).await {
+        Ok(permit) => permit,
+        Err(error) => {
+            quota.release();
+            return Err(error);
+        }
+    };
+    let capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(account.clone(), model);
     let mut body = serde_json::json!({
         "model": model,
         "input": text,
@@ -129,6 +168,10 @@ pub async fn speak(
         result = reqwest::Client::new().post(url).bearer_auth(&config.api_key).json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
     };
     let status = response.status().as_u16();
+    observe_aux_capacity(&capacity_ticket, &account, status, response.headers());
+    if status < 400 {
+        quota.settle_estimate();
+    }
     if status >= 400 {
         let body = response.text().await.unwrap_or_default();
         return Err(map_status_error(status, &body, None));
@@ -339,8 +382,13 @@ fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
 }
 
 fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
-    let message = serde_json::from_str::<Value>(body)
-        .ok()
+    let parsed = serde_json::from_str::<Value>(body).ok();
+    let code = parsed
+        .as_ref()
+        .and_then(|v| v.pointer("/error/code").or_else(|| v.get("code")))
+        .and_then(Value::as_str);
+    let message = parsed
+        .as_ref()
         .and_then(|v| {
             v.pointer("/error/message")
                 .or_else(|| v.pointer("/message"))
@@ -356,10 +404,18 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
         },
         404 | 413 | 422 => LlmError::invalid_request_for_endpoint("/v1/chat/completions", message),
         429 => LlmError::RateLimit {
-            message,
+            message: code
+                .map(|code| format!("{code}: {message}"))
+                .unwrap_or(message),
             retry_after_secs: retry_after,
         },
-        503 | 529 => LlmError::Overloaded(message),
+        503 | 529 => match retry_after {
+            Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
+                message,
+                retry_after_secs,
+            },
+            None => LlmError::Overloaded(message),
+        },
         _ => LlmError::Api { status, message },
     }
 }
@@ -543,10 +599,19 @@ impl Provider for OpenAiCompletionsProvider {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!(
-            "openai-account:{}",
-            crate::gate::credential_id(&self.config.base_url, &self.config.api_key)
-        )
+        account_capacity_key(&self.config.base_url, &self.config.api_key)
+    }
+
+    async fn refresh_capacity(&self, cancel: &CancellationToken) -> Result<(), LlmError> {
+        if self.config.openrouter {
+            crate::provider_status::refresh_openrouter_capacity(
+                &self.config.base_url,
+                &self.config.api_key,
+                cancel,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     async fn stream(
@@ -555,6 +620,10 @@ impl Provider for OpenAiCompletionsProvider {
         cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
+        let capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(
+            self.rate_limit_key(),
+            &request.model,
+        );
         let url = format!(
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
@@ -576,14 +645,17 @@ impl Provider for OpenAiCompletionsProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let retry_after = response
-                .headers()
-                .get("retry-after")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.parse::<u64>().ok());
+            let observation = openai_capacity_observation(response.headers());
+            let project_observation = openai_project_capacity_observation(response.headers());
+            let retry_after = retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
+            capacity_ticket.observe_model(observation);
+            capacity_ticket.observe_account(project_observation);
             return Err(map_status_error(status.as_u16(), &text, retry_after));
         }
+
+        capacity_ticket.observe_model(openai_capacity_observation(response.headers()));
+        capacity_ticket.observe_account(openai_project_capacity_observation(response.headers()));
 
         let model = request.model.clone();
         let (mut sink, stream_rx) = channel(256);
@@ -668,6 +740,132 @@ impl Provider for OpenAiCompletionsProvider {
 
         Ok(stream_rx.with_guard(provider_permit))
     }
+}
+
+pub(crate) fn openai_capacity_observation(
+    headers: &reqwest::header::HeaderMap,
+) -> crate::CapacityObservation {
+    let number = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+    };
+    let duration = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_provider_duration)
+    };
+    crate::CapacityObservation {
+        tokens_remaining: number("x-ratelimit-remaining-tokens"),
+        tokens_limit: number("x-ratelimit-limit-tokens"),
+        requests_remaining: number("x-ratelimit-remaining-requests"),
+        requests_limit: number("x-ratelimit-limit-requests"),
+        reset_after_secs: duration("x-ratelimit-reset-tokens"),
+        requests_reset_after_secs: duration("x-ratelimit-reset-requests"),
+        daily_remaining: number("x-ratelimit-remaining-day-tokens"),
+        daily_limit: number("x-ratelimit-limit-day-tokens"),
+        daily_requests_remaining: number("x-ratelimit-remaining-day-requests"),
+        daily_requests_limit: number("x-ratelimit-limit-day-requests"),
+        daily_reset_after_secs: duration("x-ratelimit-reset-day-tokens"),
+        daily_requests_reset_after_secs: duration("x-ratelimit-reset-day-requests"),
+        ..Default::default()
+    }
+}
+
+/// Project token headers are shared across models. Keep them on the account
+/// gate so parallel calls to different models coordinate against that limit.
+pub(crate) fn openai_project_capacity_observation(
+    headers: &reqwest::header::HeaderMap,
+) -> crate::CapacityObservation {
+    let number = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse().ok())
+    };
+    let duration = headers
+        .get("x-ratelimit-reset-project-tokens")
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_provider_duration);
+    crate::CapacityObservation {
+        tokens_remaining: number("x-ratelimit-remaining-project-tokens"),
+        tokens_limit: number("x-ratelimit-limit-project-tokens"),
+        reset_after_secs: duration,
+        ..Default::default()
+    }
+}
+
+fn observe_aux_capacity(
+    ticket: &crate::CapacityObservationTicket,
+    account: &str,
+    status: u16,
+    headers: &reqwest::header::HeaderMap,
+) {
+    ticket.observe_model(openai_capacity_observation(headers));
+    ticket.observe_account(openai_project_capacity_observation(headers));
+    if status == 429 || status == 503 {
+        let delay = retry_after_from_headers(headers).map(std::time::Duration::from_secs);
+        crate::RateLimitGate::for_key(account.to_string())
+            .observe_limit(delay, std::time::Duration::from_secs(1));
+    }
+}
+
+pub(crate) fn parse_provider_duration(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(seconds);
+    }
+    let (number, unit) = value.split_at(
+        value
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(value.len()),
+    );
+    let amount = number.parse::<f64>().ok()?;
+    let scale = match unit {
+        "ms" => 0.001,
+        "s" | "" => 1.0,
+        "m" => 60.0,
+        "h" => 3600.0,
+        _ => return None,
+    };
+    Some((amount * scale).ceil() as u64)
+}
+
+pub(crate) fn parse_provider_reset(value: &str) -> Option<u64> {
+    parse_provider_duration(value).or_else(|| {
+        let reset = chrono::DateTime::parse_from_rfc3339(value.trim()).ok()?;
+        let now = chrono::Utc::now();
+        Some(
+            (reset.with_timezone(&chrono::Utc) - now)
+                .num_seconds()
+                .max(0) as u64,
+        )
+    })
+}
+
+/// Parse RFC 9110 Retry-After values (delta-seconds or HTTP-date).
+pub(crate) fn parse_retry_after(value: &str) -> Option<u64> {
+    if let Ok(seconds) = value.trim().parse::<u64>() {
+        return Some(seconds);
+    }
+    let reset_at = httpdate::parse_http_date(value.trim()).ok()?;
+    let delay = reset_at
+        .duration_since(std::time::SystemTime::now())
+        .unwrap_or_default();
+    Some(
+        delay
+            .as_secs()
+            .saturating_add(u64::from(delay.subsec_nanos() > 0)),
+    )
+}
+
+pub(crate) fn retry_after_from_headers(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_retry_after)
 }
 
 #[cfg(test)]

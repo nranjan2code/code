@@ -205,6 +205,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
                 Ok(provider) => provider,
                 Err(error) => return vak_tools::ToolOutput::error(error.to_string()),
             },
+            provider_route: self.core.effective_provider().to_string(),
             system_prompt: self.system_prompt.clone(),
             node_prompt: Some(self.core.flow_node_prompt(self.descriptors.clone())),
             prompt_layers: inherited_prompt_layers,
@@ -4151,6 +4152,13 @@ impl Core {
                     base_url: vak_config::get_var("VAK_GOOGLE_BASE_URL").or_else(|| {
                         Some("https://generativelanguage.googleapis.com/v1beta".into())
                     }),
+                    options: self
+                        .inner
+                        .config
+                        .google_project_id
+                        .clone()
+                        .map(|id| [("project_id".to_string(), id)].into())
+                        .unwrap_or_default(),
                     ..Default::default()
                 })
             }
@@ -4307,6 +4315,7 @@ impl Core {
                 )),
                 api_key,
                 base_url: base_url.clone(),
+                options: primary.options.clone(),
                 ..Default::default()
             })
             .collect())
@@ -5165,21 +5174,51 @@ impl Core {
                 if cancel.is_cancelled() {
                     break;
                 }
-                let outcome = match tokio::time::timeout(
+                let dispatch_started = std::time::Instant::now();
+                let mut admission = match vak_llm::RequestAdmission::acquire_with_timeout(
+                    provider_client.as_ref(),
+                    &leg.provider,
+                    &leg.model,
+                    target as u64,
+                    request.max_tokens as u64,
                     Self::PROBE_REQUEST_TIMEOUT,
-                    provider_client.stream(request.clone(), cancel.clone()),
+                    cancel,
                 )
                 .await
                 {
-                    Ok(Ok(stream)) => stream.result().await,
-                    Ok(Err(e)) => Err(e),
+                    Ok(admission) => admission,
+                    Err(error) => {
+                        transport_error = Some(error);
+                        break;
+                    }
+                };
+                let remaining =
+                    Self::PROBE_REQUEST_TIMEOUT.saturating_sub(dispatch_started.elapsed());
+                let provider_cancel = admission.cancellation_token();
+                let outcome = match tokio::time::timeout(remaining, async {
+                    provider_client
+                        .stream(request.clone(), provider_cancel)
+                        .await?
+                        .result()
+                        .await
+                })
+                .await
+                {
+                    Ok(result) => result,
                     Err(_) => Err(vak_llm::LlmError::Network(format!(
-                        "probe rung {target} exceeded its {:?} timeout",
+                        "probe rung {target} exceeded its {:?} admission and dispatch budget",
                         Self::PROBE_REQUEST_TIMEOUT
                     ))),
                 };
+                if matches!(
+                    &outcome,
+                    Err(vak_llm::LlmError::Context(_) | vak_llm::LlmError::QuotaExhausted(_))
+                ) {
+                    admission.release_before_dispatch();
+                }
                 match outcome {
                     Ok(message) => {
+                        admission.settle(&message.usage);
                         if sent_chars > 0 && message.usage.input_tokens > 0 {
                             tokens_per_char_hint =
                                 message.usage.prompt_tokens() as f64 / sent_chars as f64;
@@ -5262,6 +5301,7 @@ impl Core {
                 vak_context::capacity::probe_request(4_000, tokens_per_char_hint, &leg.model);
             let (first_outcome, first_latency_ms) = Self::stream_with_first_token_latency(
                 &provider_client,
+                &leg.provider,
                 cache_request.clone(),
                 cancel,
             )
@@ -5271,6 +5311,7 @@ impl Core {
                     let (second_outcome, second_latency_ms) =
                         Self::stream_with_first_token_latency(
                             &provider_client,
+                            &leg.provider,
                             cache_request,
                             cancel,
                         )
@@ -5327,24 +5368,70 @@ impl Core {
     /// prefix-cache behaviour purely from timing when it reports nothing.
     async fn stream_with_first_token_latency(
         provider_client: &Arc<dyn Provider>,
+        provider_route: &str,
         request: vak_llm::ChatRequest,
         cancel: &CancellationToken,
     ) -> (
         Result<vak_llm::AssistantMessage, vak_llm::LlmError>,
         Option<u64>,
     ) {
+        let estimated_input = (request.system.as_deref().unwrap_or("").chars().count() as u64
+            + request
+                .messages
+                .iter()
+                .map(|message| message.text_content().chars().count() as u64)
+                .sum::<u64>()
+            + 3)
+            / 4;
+        let dispatch_started = std::time::Instant::now();
+        let mut admission = match vak_llm::RequestAdmission::acquire_with_timeout(
+            provider_client.as_ref(),
+            provider_route,
+            &request.model,
+            estimated_input,
+            request.max_tokens as u64,
+            Self::PROBE_REQUEST_TIMEOUT,
+            cancel,
+        )
+        .await
+        {
+            Ok(admission) => admission,
+            Err(error) => return (Err(error), None),
+        };
         let started = std::time::Instant::now();
-        match provider_client.stream(request, cancel.clone()).await {
-            Ok(mut stream) => {
-                let mut first_ms = None;
-                while let Some(_event) = futures::StreamExt::next(&mut stream).await {
-                    if first_ms.is_none() {
-                        first_ms = Some(started.elapsed().as_millis() as u64);
-                    }
+        let remaining = Self::PROBE_REQUEST_TIMEOUT.saturating_sub(dispatch_started.elapsed());
+        let provider_cancel = admission.cancellation_token();
+        match tokio::time::timeout(remaining, async {
+            let mut stream = provider_client.stream(request, provider_cancel).await?;
+            let mut first_ms = None;
+            while let Some(_event) = futures::StreamExt::next(&mut stream).await {
+                if first_ms.is_none() {
+                    first_ms = Some(started.elapsed().as_millis() as u64);
                 }
-                (stream.result().await, first_ms)
             }
-            Err(e) => (Err(e), None),
+            stream.result().await.map(|message| (message, first_ms))
+        })
+        .await
+        {
+            Ok(Ok((message, first_ms))) => {
+                admission.settle(&message.usage);
+                (Ok(message), first_ms)
+            }
+            Ok(Err(error)) => {
+                if matches!(
+                    &error,
+                    vak_llm::LlmError::Context(_) | vak_llm::LlmError::QuotaExhausted(_)
+                ) {
+                    admission.release_before_dispatch();
+                }
+                (Err(error), None)
+            }
+            Err(_) => (
+                Err(vak_llm::LlmError::Network(
+                    "capacity cache probe exceeded its admission and dispatch budget".into(),
+                )),
+                None,
+            ),
         }
     }
 
@@ -6046,13 +6133,39 @@ impl Core {
         let started = std::time::Instant::now();
         let mut receipt =
             vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Classify, &provider_name, &model);
-        let child = cancel.child_token();
-        let outcome = tokio::time::timeout(watchdog, async {
-            provider.stream(request, child).await?.result().await
+        let mut admission = match vak_llm::RequestAdmission::acquire_with_timeout(
+            provider.as_ref(),
+            &provider_name,
+            &model,
+            planned.input_tokens,
+            planned.output_tokens,
+            watchdog,
+            cancel,
+        )
+        .await
+        {
+            Ok(admission) => admission,
+            Err(error) => {
+                give_up(
+                    &mut partial,
+                    format!("provider capacity admission failed: {error}"),
+                );
+                return partial;
+            }
+        };
+        let remaining = watchdog.saturating_sub(started.elapsed());
+        let provider_cancel = admission.cancellation_token();
+        let outcome = tokio::time::timeout(remaining, async {
+            provider
+                .stream(request, provider_cancel)
+                .await?
+                .result()
+                .await
         })
         .await;
         let answer = match outcome {
             Ok(Ok(message)) => {
+                admission.settle(&message.usage);
                 receipt.record(
                     vak_llm::AttemptReason::Initial,
                     vak_llm::FailureDomain::Unknown,
@@ -6072,6 +6185,12 @@ impl Core {
                 message.text_content()
             }
             Ok(Err(error)) => {
+                if matches!(
+                    &error,
+                    vak_llm::LlmError::Context(_) | vak_llm::LlmError::QuotaExhausted(_)
+                ) {
+                    admission.release_before_dispatch();
+                }
                 receipt.record(
                     vak_llm::AttemptReason::Initial,
                     vak_llm::FailureDomain::Unknown,
@@ -7808,37 +7927,81 @@ impl Core {
             self.effective_provider(),
             &model,
         );
-        let summary = match provider.stream(req, cancel).await {
-            Ok(stream) => match stream.result().await {
-                Ok(msg) => {
-                    receipt.record(
-                        vak_llm::AttemptReason::Initial,
-                        vak_llm::FailureDomain::Unknown,
-                        vak_llm::Settlement::Ok,
-                        started.elapsed().as_millis() as u64,
-                        Some(msg.usage.clone()),
-                        None,
-                    );
-                    msg.text_content()
+        let request_timeout = (self.inner.config.request_timeout_secs > 0)
+            .then(|| std::time::Duration::from_secs(self.inner.config.request_timeout_secs));
+        let admission_result = match request_timeout {
+            Some(timeout) => {
+                vak_llm::RequestAdmission::acquire_with_timeout(
+                    provider.as_ref(),
+                    &self.effective_provider(),
+                    &model,
+                    before,
+                    req.max_tokens as u64,
+                    timeout,
+                    &cancel,
+                )
+                .await
+            }
+            None => {
+                vak_llm::RequestAdmission::acquire(
+                    provider.as_ref(),
+                    &self.effective_provider(),
+                    &model,
+                    before,
+                    req.max_tokens as u64,
+                    &cancel,
+                )
+                .await
+            }
+        };
+        let mut admission = match admission_result {
+            Ok(admission) => admission,
+            Err(error) => {
+                let _ = session.append_receipt(receipt);
+                return (session, CompactOutcome::failed(error.to_string()));
+            }
+        };
+        let provider_cancel = admission.cancellation_token();
+        let call = async { provider.stream(req, provider_cancel).await?.result().await };
+        let outcome = match request_timeout {
+            Some(timeout) => {
+                match tokio::time::timeout(timeout.saturating_sub(started.elapsed()), call).await {
+                    Ok(result) => result,
+                    Err(_) => Err(vak_llm::LlmError::Network(format!(
+                        "compaction exceeded its {timeout:?} admission and dispatch budget"
+                    ))),
                 }
-                Err(e) => {
-                    receipt.record(
-                        vak_llm::AttemptReason::Initial,
-                        vak_llm::FailureDomain::Unknown,
-                        vak_llm::Settlement::Failed,
-                        started.elapsed().as_millis() as u64,
-                        None,
-                        Some(e.to_string()),
-                    );
-                    let _ = session.append_receipt(receipt);
-                    return (session, CompactOutcome::failed(e.to_string()));
-                }
-            },
-            Err(e) => {
+            }
+            None => call.await,
+        };
+        let summary = match outcome {
+            Ok(msg) => {
+                admission.settle(&msg.usage);
                 receipt.record(
                     vak_llm::AttemptReason::Initial,
                     vak_llm::FailureDomain::Unknown,
-                    vak_llm::Settlement::Cancelled,
+                    vak_llm::Settlement::Ok,
+                    started.elapsed().as_millis() as u64,
+                    Some(msg.usage.clone()),
+                    None,
+                );
+                msg.text_content()
+            }
+            Err(e) => {
+                if matches!(
+                    &e,
+                    vak_llm::LlmError::Context(_) | vak_llm::LlmError::QuotaExhausted(_)
+                ) {
+                    admission.release_before_dispatch();
+                }
+                receipt.record(
+                    vak_llm::AttemptReason::Initial,
+                    vak_llm::FailureDomain::Unknown,
+                    if matches!(&e, vak_llm::LlmError::Aborted { .. }) {
+                        vak_llm::Settlement::Cancelled
+                    } else {
+                        vak_llm::Settlement::Failed
+                    },
                     started.elapsed().as_millis() as u64,
                     None,
                     Some(e.to_string()),
@@ -9371,15 +9534,25 @@ impl Core {
         }
 
         let model = self.effective_model();
-        let proposals =
-            match reflection::propose(provider, &model, &tail, CancellationToken::new()).await {
-                Ok(p) => p,
-                Err(_) => {
-                    return reflection::ReflectionOutcome::Skipped {
-                        reason: "reflect-call-failed",
-                    };
-                }
-            };
+        let provider_route = self.effective_provider();
+        let proposals = match reflection::propose(
+            provider,
+            &provider_route,
+            &model,
+            &tail,
+            (self.inner.config.request_timeout_secs > 0)
+                .then(|| std::time::Duration::from_secs(self.inner.config.request_timeout_secs)),
+            CancellationToken::new(),
+        )
+        .await
+        {
+            Ok(p) => p,
+            Err(_) => {
+                return reflection::ReflectionOutcome::Skipped {
+                    reason: "reflect-call-failed",
+                };
+            }
+        };
         if proposals.notes.is_empty() && proposals.skill.is_none() {
             return reflection::ReflectionOutcome::Reflected {
                 notes_added: 0,

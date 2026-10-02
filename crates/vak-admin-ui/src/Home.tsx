@@ -826,6 +826,7 @@ export function Home() {
   // opened and resolved while an operator sits on Home, not only while
   // someone happens to have Operations open.
   const [ops, opsActions] = createResource(() => api.operations());
+  const [traffic, trafficActions] = createResource(() => api.traffic());
   const [finops, finopsActions] = createResource(selectedAgentId, () => api.finops(selectedAgentIdOrUndefined()));
   const [approvals, approvalActions] = createResource(approvalsVersion, () => api.approvals());
   const [questions] = createResource(questionsVersion, () => api.questions());
@@ -854,11 +855,15 @@ export function Home() {
   const opsTimer = window.setInterval(() => {
     if (document.visibilityState === "visible") void opsActions.refetch();
   }, 10_000);
+  const trafficTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void trafficActions.refetch();
+  }, 10_000);
   const finopsTimer = window.setInterval(() => {
     if (document.visibilityState === "visible") void finopsActions.refetch();
   }, 30_000);
   onCleanup(() => {
     window.clearInterval(opsTimer);
+    window.clearInterval(trafficTimer);
     window.clearInterval(finopsTimer);
   });
 
@@ -1254,6 +1259,7 @@ export function Home() {
 
   const refreshAll = () => {
     opsActions.refetch();
+    trafficActions.refetch();
     finopsActions.refetch();
     approvalActions.refetch();
     sessionsActions.refetch();
@@ -1379,6 +1385,14 @@ export function Home() {
         </Show>
 
         <div class="home-deck-metrics">
+          <a href="#/operations/runtime" class="deck-metric-card" data-tone={traffic()?.state === "limited" ? "warn" : traffic()?.state === "queued" ? "info" : undefined}>
+            <div class="deck-metric-head">
+              <span class="deck-metric-lbl">Traffic</span>
+              <span class="kpi-tag info">{traffic()?.state === "limited" ? "Limited" : traffic()?.state === "queued" ? "Queued" : traffic()?.state === "busy" ? "Busy" : traffic()?.state === "normal" ? "Steady" : "Learning"}</span>
+            </div>
+            <div class="deck-metric-val">{traffic()?.active ?? "—"} active</div>
+            <div class="deck-metric-sub">{traffic()?.queued ?? 0} waiting · {traffic()?.observed_routes ?? 0} model windows observed</div>
+          </a>
           <a href="#/operations/incidents" class="deck-metric-card" data-tone={failedChecks().length > 0 ? "bad" : subsystems().some((s) => s.state === "unknown") ? "warn" : "ok"}>
             <div class="deck-metric-head">
               <span class="deck-metric-lbl">Service health</span>

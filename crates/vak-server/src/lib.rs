@@ -1155,6 +1155,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/providers/{name}/status", get(provider_status))
         .route("/search", get(search_sessions))
         .route("/ops/status", get(ops_status))
+        .route("/traffic", get(traffic_status))
         .route("/ops/center", get(operations_center))
         .route("/ops/actions", get(operations_actions))
         .route("/ops/incidents", get(operations_incidents))
@@ -1300,6 +1301,12 @@ async fn ops_status(State(state): State<AppState>) -> Json<serde_json::Value> {
             })
         });
     Json(payload)
+}
+
+/// Provider load hint for authenticated users. This is an aggregate of
+/// process-local observations and deliberately contains no account identity.
+async fn traffic_status() -> Json<vak_llm::TrafficSnapshot> {
+    Json(vak_llm::RateLimitGate::traffic_snapshot())
 }
 
 /// Read-only operational projection for desktop/TUI surfaces. This keeps

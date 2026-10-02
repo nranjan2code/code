@@ -124,7 +124,10 @@ impl RouteError {
                     StatusCode::BAD_REQUEST
                 }
                 vak_llm::LlmError::RateLimit { .. } => StatusCode::TOO_MANY_REQUESTS,
-                vak_llm::LlmError::Overloaded(_) => StatusCode::SERVICE_UNAVAILABLE,
+                vak_llm::LlmError::Overloaded(_)
+                | vak_llm::LlmError::OverloadedWithRetryAfter { .. } => {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
                 _ => StatusCode::BAD_GATEWAY,
             },
             Self::Local(VoiceError::InvalidRequest(_)) => StatusCode::BAD_REQUEST,
@@ -245,7 +248,8 @@ pub(crate) async fn transcribe(
         VoiceProvider::Gemini => {
             let model = pinned_model(settings.transcription_model.as_ref(), "transcription")?;
             let key = credential(core, VoiceProvider::Gemini)?;
-            let config = vak_llm::google_live::GoogleLiveConfig::new(key, model);
+            let mut config = vak_llm::google_live::GoogleLiveConfig::new(key, model);
+            config.project_id = core.config().google_project_id.clone();
             vak_llm::google_live::transcribe(&config, audio, mime, cancel)
                 .await
                 .map_err(RouteError::Provider)
@@ -415,8 +419,9 @@ async fn synthesize(
         }
         VoiceProvider::Gemini => {
             let key = credential(core, provider)?;
-            let config =
+            let mut config =
                 vak_llm::google_live::GoogleLiveConfig::new(key, model.unwrap_or_default());
+            config.project_id = core.config().google_project_id.clone();
             vak_llm::google_live::speak(&config, text, persona, voice_name, cancel)
                 .await
                 .map_err(RouteError::Provider)

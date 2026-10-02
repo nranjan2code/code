@@ -339,6 +339,15 @@ export interface GatewayStatus {
   workspace_catalog?: Array<{ path: string; name: string }>;
 }
 
+export interface TrafficSnapshot {
+  state: "unknown" | "normal" | "busy" | "queued" | "limited";
+  active: number;
+  queued: number;
+  retry_after_secs: number | null;
+  observed_routes: number;
+  scope: string;
+}
+
 export type AllowlistStatus = "pending" | "allowed" | "denied";
 
 export interface AllowlistRoute {

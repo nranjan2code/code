@@ -1031,6 +1031,7 @@ async fn run_flow_exec(
     outcome.max_turns = Some(core.effective_max_turns());
     let deps = vak_flow::ExecutorDeps {
         prompt_layers: Vec::new(),
+        provider_route: core.effective_provider().to_string(),
         provider,
         system_prompt: prepared.system_prompt,
         node_prompt: Some(core.flow_node_prompt(core.capability_descriptors())),
@@ -1927,6 +1928,7 @@ async fn run_plan(
     outcome.max_turns = Some(core.effective_max_turns());
     let deps = vak_flow::ExecutorDeps {
         prompt_layers: Vec::new(),
+        provider_route: core.effective_provider().to_string(),
         provider,
         system_prompt: prepared.system_prompt,
         node_prompt: Some(core.flow_node_prompt(core.capability_descriptors())),

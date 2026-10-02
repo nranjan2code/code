@@ -5,6 +5,7 @@
 //! replan, seeded with settled node outputs and the failure reason.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
@@ -263,16 +264,89 @@ async fn complete_text(
     let mut backoff_ms = PLANNER_RETRY_BACKOFF_MS;
     for attempt in 1..=PLANNER_CALL_ATTEMPTS {
         let last = attempt == PLANNER_CALL_ATTEMPTS;
-        match deps.provider.stream(request.clone(), cancel.clone()).await {
-            Ok(stream) => match stream.result().await {
-                Ok(response) => return Ok(response.text_content()),
-                Err(e) if !last && e.is_retryable() => {
-                    if !sleep_backoff(e.retry_after_secs(), backoff_ms, cancel).await {
-                        return Err("cancelled".into());
-                    }
+        // The planner calls Provider directly instead of going through the
+        // Agent dispatcher, so it must join the same account/model capacity
+        // gates itself. Keep admission per attempt: uncertain dispatched
+        // failures remain conservative; successful usage settles the hold.
+        let dispatch_started = std::time::Instant::now();
+        let estimated_input =
+            (system.chars().count() as u64 + prompt.chars().count() as u64 + 3) / 4;
+        let admission_result = match deps.request_timeout {
+            Some(timeout) => {
+                vak_llm::RequestAdmission::acquire_with_timeout(
+                    deps.provider.as_ref(),
+                    &deps.provider_route,
+                    &request.model,
+                    estimated_input,
+                    request.max_tokens as u64,
+                    timeout,
+                    cancel,
+                )
+                .await
+            }
+            None => {
+                vak_llm::RequestAdmission::acquire(
+                    deps.provider.as_ref(),
+                    &deps.provider_route,
+                    &request.model,
+                    estimated_input,
+                    request.max_tokens as u64,
+                    cancel,
+                )
+                .await
+            }
+        };
+        let mut admission = match admission_result {
+            Ok(admission) => admission,
+            Err(error) => return Err(error.to_string()),
+        };
+        let provider_cancel = admission.cancellation_token();
+        let stream = match tokio::time::timeout(
+            deps.request_timeout
+                .map(|timeout| timeout.saturating_sub(dispatch_started.elapsed()))
+                .unwrap_or(Duration::MAX),
+            deps.provider.stream(request.clone(), provider_cancel),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => Ok(stream),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(vak_llm::LlmError::Network(
+                "planner request timed out during provider stream setup".into(),
+            )),
+        };
+        let dispatched = stream.is_ok();
+        if stream.as_ref().is_err_and(|error| {
+            matches!(
+                error,
+                vak_llm::LlmError::Context(_) | vak_llm::LlmError::QuotaExhausted(_)
+            )
+        }) {
+            admission.release_before_dispatch();
+        }
+        let call = async { stream?.result().await };
+        let outcome = match deps.request_timeout {
+            Some(timeout) => {
+                match tokio::time::timeout(timeout.saturating_sub(dispatch_started.elapsed()), call)
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(vak_llm::LlmError::Network(format!(
+                        "planner request exceeded its {timeout:?} admission and dispatch budget"
+                    ))),
                 }
-                Err(e) => return Err(e.to_string()),
-            },
+            }
+            None => call.await,
+        };
+        match outcome {
+            Ok(response) => {
+                // `admission` is mutable only for successful settlement;
+                // uncertain failures remain reserved when it drops.
+                let mut admission = admission;
+                admission.settle(&response.usage);
+                return Ok(response.text_content());
+            }
+            Err(e) if !dispatched => return Err(e.to_string()),
             Err(e) if !last && e.is_retryable() => {
                 if !sleep_backoff(e.retry_after_secs(), backoff_ms, cancel).await {
                     return Err("cancelled".into());

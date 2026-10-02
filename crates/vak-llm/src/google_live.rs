@@ -17,6 +17,7 @@ use std::time::Duration;
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::http::Request;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
@@ -63,27 +64,56 @@ pub async fn transcribe(
     if cancel.is_cancelled() {
         return Err(LlmError::Aborted { partial: None });
     }
-    let body = build_transcribe_request(audio, mime);
     if config.model.trim().is_empty() {
         return Err(LlmError::InvalidRequest(
             "a discovered Gemini model is required".into(),
         ));
     }
+    let account = account_identity(config);
+    let mut quota = crate::RateLimitGate::reserve_model(
+        account.clone(),
+        &config.model,
+        (audio.len() as u64 / 3).max(1),
+        cancel,
+    )
+    .await?;
+    let _permit = match crate::RateLimitGate::admit_account(account.clone(), cancel).await {
+        Ok(permit) => permit,
+        Err(error) => {
+            quota.release();
+            return Err(error);
+        }
+    };
+    let body = build_transcribe_request(audio, mime);
     let url = format!(
         "https://{LIVE_WS_HOST}/v1beta/models/{}:generateContent",
         config.model
     );
+    let capacity_ticket =
+        crate::RateLimitGate::capacity_observation_ticket(account.clone(), &config.model);
     let response = tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-        result = reqwest::Client::new().post(url).query(&[("key", &config.api_key)]).json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
+        result = reqwest::Client::new().post(url).header("x-goog-api-key", &config.api_key).json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
     };
     let status = response.status().as_u16();
+    let headers = response.headers().clone();
     let value: Value = response
         .json()
         .await
         .map_err(|e| LlmError::Parse(e.to_string()))?;
+    observe_aux_capacity(
+        &capacity_ticket,
+        &account,
+        status,
+        &headers,
+        Some(&value.to_string()),
+    );
     if status >= 400 {
-        return Err(map_status_error(status, &value.to_string()));
+        return Err(map_status_error_with_retry(
+            status,
+            &value.to_string(),
+            crate::openai::retry_after_from_headers(&headers),
+        ));
     }
     let text = value
         .pointer("/candidates/0/content/parts/0/text")
@@ -96,6 +126,7 @@ pub async fn transcribe(
             "provider returned an empty transcript".into(),
         ));
     }
+    quota.settle_estimate();
     Ok(text)
 }
 
@@ -114,6 +145,7 @@ const OUTPUT_SAMPLE_RATE_HZ: u32 = 24_000;
 #[derive(Debug, Clone)]
 pub struct GoogleLiveConfig {
     pub api_key: String,
+    pub project_id: Option<String>,
     pub model: String,
 }
 
@@ -121,12 +153,41 @@ impl GoogleLiveConfig {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         GoogleLiveConfig {
             api_key: api_key.into(),
+            project_id: None,
             model: model.into(),
         }
     }
 }
 
+fn account_identity(config: &GoogleLiveConfig) -> String {
+    crate::google::google_account_key(
+        "https://generativelanguage.googleapis.com/v1beta",
+        &config.api_key,
+        config.project_id.as_deref(),
+    )
+}
+
+fn observe_aux_capacity(
+    ticket: &crate::CapacityObservationTicket,
+    account: &str,
+    status: u16,
+    headers: &reqwest::header::HeaderMap,
+    body: Option<&str>,
+) {
+    ticket.observe_model(crate::google::google_capacity_observation(headers, body));
+    if status == 429 || status == 503 {
+        let delay = crate::openai::retry_after_from_headers(headers).map(Duration::from_secs);
+        crate::RateLimitGate::for_key(account.to_string())
+            .observe_limit(delay, Duration::from_secs(1));
+    }
+}
+
+#[cfg(test)]
 fn map_status_error(status: u16, body: &str) -> LlmError {
+    map_status_error_with_retry(status, body, None)
+}
+
+fn map_status_error_with_retry(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
     let message = serde_json::from_str::<Value>(body)
         .ok()
         .and_then(|v| {
@@ -139,9 +200,15 @@ fn map_status_error(status: u16, body: &str) -> LlmError {
         400 | 404 | 413 | 422 => LlmError::InvalidRequest(message),
         429 => LlmError::RateLimit {
             message,
-            retry_after_secs: None,
+            retry_after_secs: retry_after,
         },
-        503 | 529 => LlmError::Overloaded(message),
+        503 | 529 => match retry_after {
+            Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
+                message,
+                retry_after_secs,
+            },
+            None => LlmError::Overloaded(message),
+        },
         _ => LlmError::Api { status, message },
     }
 }
@@ -228,21 +295,41 @@ pub async fn speak(
             text.chars().count()
         )));
     }
-    if config.model.to_ascii_lowercase().contains("tts") {
-        return speak_batch(config, text, persona, voice_name, cancel).await;
-    }
-    match tokio::time::timeout(
-        LIVE_SESSION_TIMEOUT,
-        speak_inner(config, text, persona, voice_name, cancel),
+    let account = account_identity(config);
+    let mut quota = crate::RateLimitGate::reserve_model(
+        account.clone(),
+        &config.model,
+        (text.chars().count() as u64 / 4).max(1),
+        cancel,
     )
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => Err(LlmError::Network(format!(
-            "live session timed out after {}s",
-            LIVE_SESSION_TIMEOUT.as_secs()
-        ))),
+    .await?;
+    let _permit = match crate::RateLimitGate::admit_account(account.clone(), cancel).await {
+        Ok(permit) => permit,
+        Err(error) => {
+            quota.release();
+            return Err(error);
+        }
+    };
+    let result = if config.model.to_ascii_lowercase().contains("tts") {
+        speak_batch(config, text, persona, voice_name, cancel).await
+    } else {
+        match tokio::time::timeout(
+            LIVE_SESSION_TIMEOUT,
+            speak_inner(config, text, persona, voice_name, cancel),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(LlmError::Network(format!(
+                "live session timed out after {}s",
+                LIVE_SESSION_TIMEOUT.as_secs()
+            ))),
+        }
+    };
+    if result.is_ok() {
+        quota.settle_estimate();
     }
+    result
 }
 
 /// Generate speech with a discovered Gemini TTS model through the Interactions
@@ -262,17 +349,32 @@ async fn speak_batch(
         .unwrap_or("Kore");
     let body = build_tts_interaction_request(&config.model, text, persona, voice);
     let url = format!("https://{LIVE_WS_HOST}/v1beta/interactions");
+    let account = account_identity(config);
+    let capacity_ticket =
+        crate::RateLimitGate::capacity_observation_ticket(account.clone(), &config.model);
     let response = tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
         result = reqwest::Client::new().post(url).header("x-goog-api-key", &config.api_key).json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
     };
     let status = response.status().as_u16();
+    let headers = response.headers().clone();
     let value: Value = tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
         result = response.json() => result.map_err(|e| LlmError::Parse(e.to_string()))?,
     };
+    observe_aux_capacity(
+        &capacity_ticket,
+        &account,
+        status,
+        &headers,
+        Some(&value.to_string()),
+    );
     if status >= 400 {
-        return Err(map_status_error(status, &value.to_string()));
+        return Err(map_status_error_with_retry(
+            status,
+            &value.to_string(),
+            crate::openai::retry_after_from_headers(&headers),
+        ));
     }
     let (encoded, mime) = interaction_audio(&value)
         .ok_or_else(|| LlmError::Parse("TTS response contained no audio".into()))?;
@@ -352,10 +454,17 @@ async fn speak_inner(
 ) -> Result<Vec<u8>, LlmError> {
     let _ =
         rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider());
-    let url = format!("wss://{LIVE_WS_HOST}{LIVE_WS_PATH}?key={}", config.api_key);
+    let url = format!("wss://{LIVE_WS_HOST}{LIVE_WS_PATH}");
+    let capacity_ticket =
+        crate::RateLimitGate::capacity_observation_ticket(account_identity(config), &config.model);
+    let request = Request::builder()
+        .uri(url)
+        .header("x-goog-api-key", &config.api_key)
+        .body(())
+        .map_err(|e| LlmError::InvalidRequest(e.to_string()))?;
 
-    let connect_fut = tokio_tungstenite::connect_async(&url);
-    let (mut ws, _resp) = tokio::select! {
+    let connect_fut = tokio_tungstenite::connect_async(request);
+    let (mut ws, response) = tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
         r = connect_fut => match r {
             Ok(pair) => pair,
@@ -366,11 +475,30 @@ async fn speak_inner(
                     .as_ref()
                     .map(|b| String::from_utf8_lossy(b).to_string())
                     .unwrap_or_default();
-                return Err(map_status_error(status, &body));
+                capacity_ticket.observe_model(crate::google::google_capacity_observation(
+                    resp.headers(),
+                    Some(&body),
+                ));
+                if status == 429 || status == 503 {
+                    crate::RateLimitGate::observe_account_limit(
+                        account_identity(config),
+                        crate::google::google_retry_delay(&body).map(Duration::from_secs),
+                        Duration::from_secs(1),
+                    );
+                }
+                return Err(map_status_error_with_retry(
+                    status,
+                    &body,
+                    crate::openai::retry_after_from_headers(resp.headers()),
+                ));
             }
             Err(e) => return Err(LlmError::Network(e.to_string())),
         },
     };
+    capacity_ticket.observe_model(crate::google::google_capacity_observation(
+        response.headers(),
+        None,
+    ));
 
     let setup = build_setup_message(&config.model, persona, voice_name);
     let send_setup = ws.send(Message::Text(setup.to_string()));

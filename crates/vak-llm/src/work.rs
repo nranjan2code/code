@@ -206,7 +206,10 @@ pub fn classify_error(e: &LlmError) -> (FailureDomain, Settlement) {
     match e {
         LlmError::Auth(_) => (FailureDomain::Account, Settlement::Failed),
         LlmError::RateLimit { .. } => (FailureDomain::Account, Settlement::Failed),
-        LlmError::Overloaded(_) => (FailureDomain::Provider, Settlement::Failed),
+        LlmError::QuotaExhausted(_) => (FailureDomain::Account, Settlement::Failed),
+        LlmError::Overloaded(_) | LlmError::OverloadedWithRetryAfter { .. } => {
+            (FailureDomain::Provider, Settlement::Failed)
+        }
         LlmError::InvalidRequest(_) => (FailureDomain::Request, Settlement::Failed),
         LlmError::Api { .. } => (FailureDomain::Request, Settlement::Unknown),
         LlmError::Network(_) => (FailureDomain::Network, Settlement::Unknown),

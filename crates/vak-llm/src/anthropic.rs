@@ -1,5 +1,7 @@
 use futures::StreamExt;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::Provider;
@@ -30,6 +32,64 @@ const FAST_MODE_BETA: &str = "fast-mode-2026-02-01";
 
 pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
+
+fn learned_organization_keys() -> &'static Mutex<HashMap<String, (String, std::time::Instant)>> {
+    static KEYS: OnceLock<Mutex<HashMap<String, (String, std::time::Instant)>>> = OnceLock::new();
+    KEYS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn anthropic_credential_identity(base_url: &str, api_key: &str) -> String {
+    crate::gate::credential_id(base_url.trim_end_matches('/'), api_key)
+}
+
+fn anthropic_account_capacity_key(base_url: &str, api_key: &str) -> String {
+    let credential = anthropic_credential_identity(base_url, api_key);
+    let mut keys = learned_organization_keys()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = std::time::Instant::now();
+    if let Some((organization, seen)) = keys.get_mut(&credential) {
+        *seen = now;
+        return organization.clone();
+    }
+    format!("anthropic-account:credential:{credential}")
+}
+
+fn remember_anthropic_organization(
+    base_url: &str,
+    api_key: &str,
+    headers: &reqwest::header::HeaderMap,
+) -> Option<String> {
+    let organization = headers
+        .get("anthropic-organization-id")
+        .and_then(|value| value.to_str().ok())?
+        .trim();
+    if organization.is_empty() {
+        return None;
+    }
+    // Organization IDs are private account metadata. Keep only a one-way
+    // fingerprint in the process-wide identity map and rate-limit registry.
+    let key = format!(
+        "anthropic-account:organization:{}",
+        crate::gate::credential_id(base_url.trim_end_matches('/'), organization)
+    );
+    let mut keys = learned_organization_keys()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = std::time::Instant::now();
+    let credential = anthropic_credential_identity(base_url, api_key);
+    if keys.len() >= 1024 && !keys.contains_key(&credential) {
+        if let Some(oldest) = keys
+            .iter()
+            .min_by_key(|(_, (_, seen))| *seen)
+            .map(|(credential, _)| credential.clone())
+        {
+            keys.remove(&oldest);
+        }
+    }
+    keys.insert(credential, (key.clone(), now));
+    Some(key)
+}
 
 #[derive(Debug, Clone)]
 pub struct AnthropicConfig {
@@ -275,7 +335,13 @@ pub fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> Ll
             message,
             retry_after_secs: retry_after,
         },
-        503 | 529 => LlmError::Overloaded(message),
+        503 | 529 => match retry_after {
+            Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
+                message,
+                retry_after_secs,
+            },
+            None => LlmError::Overloaded(message),
+        },
         _ => LlmError::Api { status, message },
     }
 }
@@ -556,12 +622,21 @@ impl Provider for AnthropicProvider {
         crate::gate::route_identity(self.name(), &self.config.base_url, &self.config.api_key)
     }
 
+    fn rate_limit_key(&self) -> String {
+        anthropic_account_capacity_key(&self.config.base_url, &self.config.api_key)
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
+        let capacity_identity = self.rate_limit_key();
+        let capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(
+            capacity_identity.clone(),
+            &request.model,
+        );
 
         // Fast mode is an opt-in, model-restricted research preview
         // (docs/design/68 §11): discover support once per model id in the
@@ -597,6 +672,8 @@ impl Provider for AnthropicProvider {
         if !response.status().is_success() {
             let status = response.status().as_u16();
             if status == 400 && effort_allowed {
+                let headers = response.headers().clone();
+                let observation = anthropic_capacity_observation(&headers);
                 let retry_after = retry_after_header(&response);
                 let text = response.text().await.unwrap_or_default();
                 if rejects_effort(&text) {
@@ -606,6 +683,17 @@ impl Provider for AnthropicProvider {
                         .send_once(&request, effort_allowed, fast_mode, &cancel)
                         .await?;
                 } else {
+                    observe_anthropic_capacity_response(
+                        &capacity_ticket,
+                        &capacity_identity,
+                        &self.config.base_url,
+                        &self.config.api_key,
+                        &request.model,
+                        status,
+                        retry_after,
+                        &headers,
+                        observation,
+                    );
                     return Err(map_status_error(status, &text, retry_after));
                 }
             } else if status == 429 && fast_mode {
@@ -618,10 +706,35 @@ impl Provider for AnthropicProvider {
 
         let status = response.status();
         if !status.is_success() {
+            let headers = response.headers().clone();
+            let observation = anthropic_capacity_observation(&headers);
             let retry_after = retry_after_header(&response);
             let text = response.text().await.unwrap_or_default();
+            observe_anthropic_capacity_response(
+                &capacity_ticket,
+                &capacity_identity,
+                &self.config.base_url,
+                &self.config.api_key,
+                &request.model,
+                status.as_u16(),
+                retry_after,
+                &headers,
+                observation,
+            );
             return Err(map_status_error(status.as_u16(), &text, retry_after));
         }
+
+        observe_anthropic_capacity_response(
+            &capacity_ticket,
+            &capacity_identity,
+            &self.config.base_url,
+            &self.config.api_key,
+            &request.model,
+            status.as_u16(),
+            None,
+            response.headers(),
+            anthropic_capacity_observation(response.headers()),
+        );
 
         let model = request.model.clone();
         let (sink, stream_rx) = channel(256);
@@ -663,12 +776,96 @@ impl AnthropicProvider {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn observe_anthropic_capacity_response(
+    original_ticket: &crate::CapacityObservationTicket,
+    original_identity: &str,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    status: u16,
+    retry_after: Option<u64>,
+    headers: &reqwest::header::HeaderMap,
+    observation: crate::CapacityObservation,
+) {
+    original_ticket.observe_model(observation.clone());
+    let Some(organization_identity) = remember_anthropic_organization(base_url, api_key, headers)
+    else {
+        return;
+    };
+    if organization_identity != original_identity {
+        crate::RateLimitGate::capacity_observation_ticket(&organization_identity, model)
+            .observe_model(observation);
+    }
+    if matches!(status, 429 | 529) {
+        crate::RateLimitGate::for_key(organization_identity).observe_limit(
+            retry_after.map(std::time::Duration::from_secs),
+            std::time::Duration::from_secs(1),
+        );
+    }
+}
+
 fn retry_after_header(response: &reqwest::Response) -> Option<u64> {
-    response
-        .headers()
-        .get("retry-after")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok())
+    crate::openai::retry_after_from_headers(response.headers())
+}
+
+fn anthropic_capacity_observation(
+    headers: &reqwest::header::HeaderMap,
+) -> crate::CapacityObservation {
+    let number = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse().ok())
+    };
+    let input_remaining = number("anthropic-ratelimit-input-tokens-remaining");
+    let input_limit = number("anthropic-ratelimit-input-tokens-limit");
+    let output_remaining = number("anthropic-ratelimit-output-tokens-remaining");
+    let output_limit = number("anthropic-ratelimit-output-tokens-limit");
+    let has_component_limits = input_remaining.is_some()
+        || input_limit.is_some()
+        || output_remaining.is_some()
+        || output_limit.is_some();
+    crate::CapacityObservation {
+        tokens_remaining: (!has_component_limits)
+            .then(|| number("anthropic-ratelimit-tokens-remaining"))
+            .flatten(),
+        tokens_limit: (!has_component_limits)
+            .then(|| number("anthropic-ratelimit-tokens-limit"))
+            .flatten(),
+        input_tokens_remaining: input_remaining,
+        input_tokens_limit: input_limit,
+        output_tokens_remaining: output_remaining,
+        output_tokens_limit: output_limit,
+        input_tokens_reset_after_secs: headers
+            .get("anthropic-ratelimit-input-tokens-reset")
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::openai::parse_provider_reset),
+        output_tokens_reset_after_secs: headers
+            .get("anthropic-ratelimit-output-tokens-reset")
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::openai::parse_provider_reset),
+        requests_remaining: number("anthropic-ratelimit-requests-remaining"),
+        requests_limit: number("anthropic-ratelimit-requests-limit"),
+        reset_after_secs: (!has_component_limits)
+            .then(|| {
+                headers
+                    .get("anthropic-ratelimit-tokens-reset")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(crate::openai::parse_provider_reset)
+            })
+            .flatten(),
+        requests_reset_after_secs: headers
+            .get("anthropic-ratelimit-requests-reset")
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::openai::parse_provider_reset),
+        daily_remaining: None,
+        daily_limit: None,
+        daily_requests_remaining: None,
+        daily_requests_limit: None,
+        daily_reset_after_secs: None,
+        ..Default::default()
+    }
 }
 
 async fn drive_stream<S>(

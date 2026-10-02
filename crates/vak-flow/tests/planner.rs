@@ -120,6 +120,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
     std::mem::forget(dir);
     Arc::new(ExecutorDeps {
         prompt_layers: Vec::new(),
+        provider_route: "test".into(),
         provider,
         system_prompt: "sys".into(),
         node_prompt: None,

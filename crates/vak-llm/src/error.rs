@@ -9,8 +9,15 @@ pub enum LlmError {
         message: String,
         retry_after_secs: Option<u64>,
     },
+    #[error("provider quota exhausted: {0}")]
+    QuotaExhausted(String),
     #[error("provider overloaded: {0}")]
     Overloaded(String),
+    #[error("provider overloaded: {message}")]
+    OverloadedWithRetryAfter {
+        message: String,
+        retry_after_secs: u64,
+    },
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     #[error("api error (status {status}): {message}")]
@@ -82,7 +89,10 @@ impl LlmError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            LlmError::RateLimit { .. } | LlmError::Overloaded(_) | LlmError::Network(_)
+            LlmError::RateLimit { .. }
+                | LlmError::Overloaded(_)
+                | LlmError::OverloadedWithRetryAfter { .. }
+                | LlmError::Network(_)
         ) && !self.is_terminal_quota()
     }
 
@@ -91,11 +101,16 @@ impl LlmError {
     /// budget and delays a usable fallback without changing the outcome.
     pub fn is_terminal_quota(&self) -> bool {
         let LlmError::RateLimit { message, .. } = self else {
-            return false;
+            return matches!(self, LlmError::QuotaExhausted(_));
         };
         let message = message.to_ascii_lowercase();
         [
             "free-models-per-day",
+            "insufficient_quota",
+            "perday",
+            "per_day",
+            "requestsperday",
+            "tokensperday",
             "daily quota",
             "monthly quota",
             "quota exceeded",
@@ -115,6 +130,9 @@ impl LlmError {
             LlmError::RateLimit {
                 retry_after_secs, ..
             } => *retry_after_secs,
+            LlmError::OverloadedWithRetryAfter {
+                retry_after_secs, ..
+            } => Some(*retry_after_secs),
             _ => None,
         }
     }

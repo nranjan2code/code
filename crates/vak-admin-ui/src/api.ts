@@ -13,6 +13,7 @@ import type {
   SameModelSuggestions,
   FrozenContract,
   GatewayStatus,
+  TrafficSnapshot,
   HealthInfo,
   HookConfig,
   InboxEntry,
@@ -249,6 +250,8 @@ export const api = {
 
   gatewayStatus: () =>
     fetch("/admin/api/gateway/status").then((r) => handle<GatewayStatus>(r)),
+
+  traffic: () => fetch("/admin/api/traffic").then((r) => handle<TrafficSnapshot>(r)),
 
   operations: (): Promise<OperationsSnapshot> =>
     fetch("/ops/center").then((r) => handle<OperationsSnapshot>(r)),

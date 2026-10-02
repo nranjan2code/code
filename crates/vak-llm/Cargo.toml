@@ -18,6 +18,9 @@ base64 = { workspace = true }
 percent-encoding = "2"
 tokio-tungstenite = { workspace = true }
 rustls = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+httpdate = "1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

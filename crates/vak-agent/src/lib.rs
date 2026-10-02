@@ -743,7 +743,10 @@ pub trait Approver: Send + Sync {
 fn is_transient_step_error(e: &LlmError) -> bool {
     match e {
         LlmError::RateLimit { .. } => e.is_retryable(),
-        LlmError::Overloaded(_) | LlmError::Network(_) | LlmError::Parse(_) => true,
+        LlmError::Overloaded(_)
+        | LlmError::OverloadedWithRetryAfter { .. }
+        | LlmError::Network(_)
+        | LlmError::Parse(_) => true,
         _ => false,
     }
 }
@@ -4870,6 +4873,8 @@ impl Agent {
             leg_req.model = model.clone();
             let breaker_key = provider_arc.circuit_key();
             let rate_limit_gate = vak_llm::RateLimitGate::for_key(provider_arc.rate_limit_key());
+            let model_capacity_gate =
+                vak_llm::RateLimitGate::for_model(provider_arc.rate_limit_key(), model);
             if let Some(breaker) = &self.config.circuit_breaker
                 && let Err(open) = breaker.check_key(&breaker_key)
             {
@@ -4910,7 +4915,7 @@ impl Agent {
                 .await;
                 let _ = events
                     .send(AgentEvent::RouteFallback {
-                        to_provider: route_provider,
+                        to_provider: route_provider.clone(),
                         to_model: model.clone(),
                     })
                     .await;
@@ -4924,6 +4929,11 @@ impl Agent {
                 // provider account. Wait before reserving spend or consuming
                 // a dispatch, so a cooldown is not charged as model work.
                 let waited_for_rate_limit = rate_limit_gate.wait(cancel).await?;
+                let profile = self.effective_capacity_profile();
+                let est_input = profile.estimate_tokens(
+                    messages_chars(&leg_req.messages)
+                        + prefix_chars(leg_req.system.as_deref().unwrap_or(""), &leg_req.tools),
+                );
                 // Budget admission precedes every paid dispatch (Phase D). A
                 // denial becomes one bounded budget Ask; refusal -- or no
                 // approver, which is the unattended case -- fails the step
@@ -4936,11 +4946,6 @@ impl Agent {
                         .header()
                         .map(|h| h.session_id.clone())
                         .unwrap_or_default();
-                    let profile = self.effective_capacity_profile();
-                    let est_input = profile.estimate_tokens(
-                        messages_chars(&leg_req.messages)
-                            + prefix_chars(leg_req.system.as_deref().unwrap_or(""), &leg_req.tools),
-                    );
                     let check = SpendCheck {
                         model,
                         provider: provider_arc.name(),
@@ -4972,10 +4977,78 @@ impl Agent {
                         gate.on_budget_approved();
                     }
                 }
+                // Refresh provider-published quota evidence before admission.
+                // A status outage must not suppress the existing retry/fallback
+                // ladder; an older sample expires in the capacity gate.
+                let _ = provider_arc.refresh_capacity(cancel).await;
+                let max_output = self.config.max_output as u64;
+                let model_quota = if route_provider == "bedrock" {
+                    model_capacity_gate
+                        .reserve_bedrock_mantle_demand(est_input, max_output, cancel)
+                        .await
+                } else {
+                    model_capacity_gate
+                        .reserve_demand(est_input, max_output, cancel)
+                        .await
+                };
+                let mut quota_permit = match model_quota {
+                    Ok(permit) => permit,
+                    Err(error @ (LlmError::Context(_) | LlmError::QuotaExhausted(_))) => {
+                        // A known window that cannot admit this request is a
+                        // route-local admission failure. Walk the already
+                        // planned ladder before returning it to endurance.
+                        last_err = Some(error);
+                        continue 'legs;
+                    }
+                    Err(error) => return Err(error),
+                };
+                let account_quota_observed = rate_limit_gate.has_account_token_observation()
+                    || (route_provider.starts_with("openrouter")
+                        && model.ends_with(":free")
+                        && rate_limit_gate.has_capacity_observation());
+                let mut provider_daily_permit = if account_quota_observed {
+                    let result = if route_provider == "bedrock" {
+                        rate_limit_gate
+                            .reserve_bedrock_mantle_demand(est_input, max_output, cancel)
+                            .await
+                    } else {
+                        rate_limit_gate
+                            .reserve_demand(est_input, max_output, cancel)
+                            .await
+                    };
+                    match result {
+                        Ok(permit) => Some(permit),
+                        Err(error @ (LlmError::Context(_) | LlmError::QuotaExhausted(_))) => {
+                            quota_permit.release();
+                            last_err = Some(error);
+                            continue 'legs;
+                        }
+                        Err(error) => {
+                            quota_permit.release();
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    None
+                };
+                let _capacity_permit = match rate_limit_gate.admit(cancel).await {
+                    Ok(permit) => permit,
+                    Err(error) => {
+                        quota_permit.release();
+                        if let Some(permit) = provider_daily_permit.as_mut() {
+                            permit.release();
+                        }
+                        return Err(error);
+                    }
+                };
                 // Ceiling check happens before every paid dispatch; exhaustion
                 // surfaces as a plain error that the endurance loop treats as
                 // fail-closed (never transient).
                 if let Err(c) = ledger.budget.consume() {
+                    quota_permit.release();
+                    if let Some(permit) = provider_daily_permit.as_mut() {
+                        permit.release();
+                    }
                     return Err(LlmError::Network(c.to_string()));
                 }
                 let reason = if li > 0 && attempt == 0 {
@@ -5096,6 +5169,24 @@ impl Agent {
 
                 match outcome {
                     Ok((r, first_token_ms)) => {
+                        let settled_input = if route_provider == "bedrock" {
+                            r.usage.input_tokens
+                        } else {
+                            r.usage.prompt_tokens()
+                        };
+                        if route_provider == "bedrock" {
+                            quota_permit
+                                .settle_bedrock_mantle(settled_input, r.usage.output_tokens);
+                        } else {
+                            quota_permit.settle(settled_input, r.usage.output_tokens);
+                        }
+                        if let Some(permit) = provider_daily_permit.as_mut() {
+                            if route_provider == "bedrock" {
+                                permit.settle_bedrock_mantle(settled_input, r.usage.output_tokens);
+                            } else {
+                                permit.settle(r.usage.prompt_tokens(), r.usage.output_tokens);
+                            }
+                        }
                         rate_limit_gate.record_probe_success(waited_for_rate_limit);
                         if let Some(breaker) = &self.config.circuit_breaker {
                             breaker.record_success_key(&breaker_key);
@@ -5123,13 +5214,14 @@ impl Agent {
                         return Err(e);
                     }
                     Err(e) => {
-                        if let LlmError::RateLimit {
-                            retry_after_secs, ..
-                        } = &e
-                        {
+                        if matches!(
+                            &e,
+                            LlmError::RateLimit { .. } | LlmError::OverloadedWithRetryAfter { .. }
+                        ) {
+                            let retry_after_secs = e.retry_after_secs();
                             let suggested = backoff_delay(
                                 attempt.saturating_add(1),
-                                *retry_after_secs,
+                                retry_after_secs,
                                 self.config.retry_base_backoff_ms,
                             );
                             rate_limit_gate.observe_limit(
