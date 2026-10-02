@@ -37,29 +37,32 @@ pub fn transcode_to_html(title: &str, content: &str) -> String {
 <title>{safe_title}</title>
 <style>
 :root {{
-  --bg: #0d1117;
-  --surface: #161b22;
-  --border: #30363d;
-  --text: #c9d1d9;
-  --text-bright: #f0f6fc;
-  --text-muted: #8b949e;
-  --accent: #58a6ff;
-  --accent-muted: rgba(56, 139, 253, 0.15);
-  --success: #3fb950;
-  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  color-scheme: light dark;
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --border: #dedee3;
+  --text: #202127;
+  --text-bright: #202127;
+  --text-muted: #5c5e6a;
+  --accent: #2f3c94;
+  --accent-muted: rgba(47, 60, 148, 0.1);
+  --success: #2e6b4a;
+  --danger: #a33a3a;
+  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --code-font: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace;
 }}
-@media (prefers-color-scheme: light) {{
+@media (prefers-color-scheme: dark) {{
   :root {{
-    --bg: #ffffff;
-    --surface: #f6f8fa;
-    --border: #d0d7de;
-    --text: #24292f;
-    --text-bright: #1f2328;
-    --text-muted: #57606a;
-    --accent: #0969da;
-    --accent-muted: rgba(9, 105, 218, 0.1);
-    --success: #1a7f37;
+    --bg: #18191b;
+    --surface: #202124;
+    --border: #383a42;
+    --text: #f0f0f2;
+    --text-bright: #f0f0f2;
+    --text-muted: #b5b7c0;
+    --accent: #a3adf7;
+    --accent-muted: rgba(163, 173, 247, 0.14);
+    --success: #7cc39a;
+    --danger: #f08a8a;
   }}
 }}
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -67,7 +70,7 @@ body {{
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.6;
   padding: 40px 20px;
   display: flex;
@@ -90,7 +93,7 @@ ul, ol {{ margin: 0 0 16px 24px; }}
 li {{ margin-bottom: 4px; }}
 code {{ font-family: var(--code-font); font-size: 85%; background: var(--surface); padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); }}
 pre {{ background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; margin-bottom: 20px; }}
-pre code {{ background: none; border: none; padding: 0; font-size: 13px; }}
+pre code {{ background: none; border: none; padding: 0; font-size: 14px; }}
 blockquote {{ border-left: 4px solid var(--accent); padding: 8px 16px; margin: 16px 0; background: var(--accent-muted); color: var(--text); border-radius: 0 4px 4px 0; }}
 .card-table-container {{
   background: var(--surface);
@@ -121,7 +124,7 @@ blockquote {{ border-left: 4px solid var(--accent); padding: 8px 16px; margin: 1
 table {{
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 14px;
   text-align: left;
 }}
 th {{
@@ -135,7 +138,7 @@ th {{
   white-space: nowrap;
 }}
 th:hover {{ background: var(--accent-muted); }}
-th .sort-icon {{ margin-left: 4px; opacity: 0.5; font-size: 10px; }}
+th .sort-icon {{ margin-left: 4px; opacity: 0.5; font-size: 12px; }}
 td {{
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
@@ -157,10 +160,10 @@ tbody tr:hover {{ background: var(--accent-muted); }}
   flex-direction: column;
 }}
 .decision-title {{ font-size: 16px; font-weight: 600; color: var(--text-bright); margin-bottom: 8px; }}
-.decision-summary {{ font-size: 13px; color: var(--text-muted); margin-bottom: 12px; }}
+.decision-summary {{ font-size: 14px; color: var(--text-muted); margin-bottom: 12px; }}
 .pro-list, .con-list {{ font-size: 12px; margin: 4px 0 8px 16px; }}
 .pro-list li {{ color: var(--success); }}
-.con-list li {{ color: #f85149; }}
+.con-list li {{ color: var(--danger); }}
 .citation-sup {{
   font-size: 75%;
   vertical-align: super;

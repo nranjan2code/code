@@ -79,7 +79,7 @@ export default function FeedsPanel() {
       </div>
 
       <Show when={stats()}>
-        <div style={{ padding: "8px 12px", "font-size": "11px", color: "var(--faint)", "border-bottom": "1px solid var(--border)" }}>
+        <div style={{ padding: "8px 12px", "font-size": "var(--fs-caption)", color: "var(--faint)", "border-bottom": "1px solid var(--border)" }}>
           {stats()!.total} items · {stats()!.today} today
         </div>
       </Show>
@@ -107,7 +107,7 @@ export default function FeedsPanel() {
 
         <Show when={results()}>
           <Show when={results()!.answer}>
-            <div style={{ padding: "8px 12px", "font-size": "12px", color: "var(--text-soft)", "border-bottom": "1px solid var(--border)" }}>
+            <div style={{ padding: "8px 12px", "font-size": "var(--fs-caption)", color: "var(--text-soft)", "border-bottom": "1px solid var(--border)" }}>
               {results()!.answer}
             </div>
           </Show>

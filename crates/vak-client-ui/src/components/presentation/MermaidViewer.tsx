@@ -4,13 +4,24 @@ import { uiPreferences } from "../../store";
 
 let renderIdSeq = 0;
 
-function getMermaidTheme(): "dark" | "neutral" | "base" | "default" {
-  const theme = uiPreferences.theme === "system"
-    ? (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : uiPreferences.theme;
-  if (theme === "light") return "neutral";
-  if (theme === "contrast") return "base";
-  return "dark";
+/** Diagram colours come from the live theme tokens, so every theme (and a
+ * future one) is covered without a second palette to keep in step. */
+function tokenThemeVariables(): Record<string, string | boolean> {
+  const style = getComputedStyle(document.documentElement);
+  const token = (name: string) => style.getPropertyValue(name).trim();
+  return {
+    darkMode: style.colorScheme.includes("dark"),
+    background: token("--surface"),
+    primaryColor: token("--surface-raised"),
+    primaryTextColor: token("--text"),
+    primaryBorderColor: token("--border-strong"),
+    lineColor: token("--muted"),
+    secondaryColor: token("--accent-wash"),
+    tertiaryColor: token("--bg"),
+    textColor: token("--text"),
+    noteBkgColor: token("--live-wash"),
+    noteTextColor: token("--live-ink"),
+  };
 }
 
 export default function MermaidViewer(props: { source: string; title?: string }): JSX.Element {
@@ -28,35 +39,12 @@ export default function MermaidViewer(props: { source: string; title?: string })
     setErrorMsg(null);
     try {
       const mermaid = (await import("mermaid")).default;
-      const theme = getMermaidTheme();
       mermaid.initialize({
         startOnLoad: false,
-        theme,
+        theme: "base",
         securityLevel: "strict",
         fontFamily: 'var(--sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-        themeVariables: theme === "neutral" ? {
-          primaryColor: "#f0ede5",
-          primaryTextColor: "#23211c",
-          primaryBorderColor: "#bdb5a4",
-          lineColor: "#635f54",
-          secondaryColor: "#e6e1d6",
-          tertiaryColor: "#faf8f3",
-          background: "#faf8f3",
-        } : theme === "base" ? {
-          primaryColor: "#181818",
-          primaryTextColor: "#ffffff",
-          primaryBorderColor: "#ffffff",
-          lineColor: "#ffffff",
-          background: "#080808",
-        } : {
-          primaryColor: "#1e2236",
-          primaryTextColor: "#ecebf5",
-          primaryBorderColor: "#3d4466",
-          lineColor: "#a3adf7",
-          secondaryColor: "#252a40",
-          tertiaryColor: "#171a2b",
-          background: "#0f1120",
-        },
+        themeVariables: tokenThemeVariables(),
       });
 
       const uniqueId = `mermaid-diag-${++renderIdSeq}`;

@@ -394,7 +394,7 @@ function InteractiveTable(props: {
                   title="Click to sort"
                 >
                   <InlineSequence nodes={cell} />
-                  <span style={{ "font-size": "10px", "margin-left": "4px", opacity: "0.6" }}>
+                  <span style={{ "font-size": "var(--fs-caption)", "margin-left": "4px", opacity: "0.6" }}>
                     {sortCol() === index() ? (sortAsc() ? " ▲" : " ▼") : " ↕"}
                   </span>
                 </th>

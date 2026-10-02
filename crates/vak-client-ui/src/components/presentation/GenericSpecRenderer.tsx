@@ -575,7 +575,7 @@ function renderRecipe(node: AdaptiveRenderNode, surface: RenderSurface) {
         </div>
         <div class="card-actions">
           <Show when={hasServings}>
-            <span style={{ "font-size": "12px", color: "var(--text-muted)" }}>Servings:</span>
+            <span style={{ "font-size": "var(--fs-caption)", color: "var(--muted)" }}>Servings:</span>
             <div class="servings-stepper">
               <button type="button" aria-label="Decrease servings" disabled={servings() <= 1} onClick={() => setServings(Math.max(1, servings() - 1))}>-</button>
               <span class="servings-num">{servings()}</span>
@@ -628,7 +628,7 @@ function renderRecipe(node: AdaptiveRenderNode, surface: RenderSurface) {
               return (
                 <div class="timer-action-card" classList={{ "active-timer": isRunning() }}>
                   <div>
-                    <div style={{ "font-size": "13px", "font-weight": "600", color: "var(--text-main)" }}>
+                    <div style={{ "font-size": "var(--fs-meta)", "font-weight": "600", color: "var(--text)" }}>
                       {idx() + 1}. {text}
                     </div>
                   </div>
@@ -989,13 +989,13 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
                 <path
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                   fill="none"
-                  stroke="var(--rose-wash, rgba(244, 63, 94, 0.25))"
+                  stroke="var(--rose-wash)"
                   stroke-width="3.5"
                 />
                 <path
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                   fill="none"
-                  stroke={hasReportedOutcome() ? "var(--emerald-bright)" : "var(--text-muted)"}
+                  stroke={hasReportedOutcome() ? "var(--emerald-bright)" : "var(--muted)"}
                   stroke-width="3.5"
                   stroke-dasharray={`${successPercent()}, 100`}
                   stroke-linecap="round"
@@ -1003,15 +1003,15 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
               </svg>
             </div>
             <div>
-              <div style={{ "font-size": "14px", "font-weight": "700", color: "var(--text-main)" }}>
+              <div style={{ "font-size": "var(--fs-control)", "font-weight": "700", color: "var(--text)" }}>
                 {hasReportedOutcome() ? `${successPercent()}% Success Rate` : totalCount() === 0 ? "No tests reported" : "Results unavailable"}
               </div>
-              <div style={{ "font-size": "var(--fs-caption)", color: "var(--text-muted)" }}>
+              <div style={{ "font-size": "var(--fs-caption)", color: "var(--muted)" }}>
                 {passedCount()} of {totalCount()} tests verified
               </div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: "14px", "font-size": "12px", "font-weight": "600" }}>
+          <div style={{ display: "flex", gap: "14px", "font-size": "var(--fs-caption)", "font-weight": "600" }}>
             <Show when={hasReportedOutcome()}>
               <span style={{ color: "var(--emerald-bright)" }}>● {passedCount()} Passed</span>
             </Show>
@@ -1036,17 +1036,17 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
                       <div>
                         <span
                           style={{
-                            color: failed ? "var(--rose-bright)" : passed ? "var(--emerald-bright)" : "var(--text-muted)",
+                            color: failed ? "var(--rose-bright)" : passed ? "var(--emerald-bright)" : "var(--muted)",
                             "font-weight": "bold",
                             "margin-right": "6px",
                           }}
                         >
                           {failed ? "✕" : passed ? "✓" : "•"}
                         </span>
-                        <strong style={{ color: "var(--text-main)" }}>{str(t, "name")}</strong>
+                        <strong style={{ color: "var(--text)" }}>{str(t, "name")}</strong>
                       </div>
                       <Show when={duration !== undefined}>
-                        <span style={{ color: "var(--text-muted)", "font-size": "var(--fs-caption)" }}>{duration}ms</span>
+                        <span style={{ color: "var(--muted)", "font-size": "var(--fs-caption)" }}>{duration}ms</span>
                       </Show>
                     </div>
                     <Show when={detail}>

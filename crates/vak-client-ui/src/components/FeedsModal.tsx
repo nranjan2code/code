@@ -50,7 +50,7 @@ export default function FeedsModal() {
           </Show>
 
           <Show when={answer()}>
-            <div style={{ padding: "8px 12px", "font-size": "12px", color: "var(--text-soft)", background: "var(--surface-raised)", "border-radius": "var(--radius-sm)", margin: "8px 0" }}>
+            <div style={{ padding: "8px 12px", "font-size": "var(--fs-caption)", color: "var(--text-soft)", background: "var(--surface-raised)", "border-radius": "var(--radius-sm)", margin: "8px 0" }}>
               {answer()}
             </div>
           </Show>
@@ -60,7 +60,7 @@ export default function FeedsModal() {
               <For each={followUps()}>
                 {(q) => (
                   <span
-                    style={{ "font-size": "11px", padding: "3px 8px", "border-radius": "999px", background: "var(--surface-raised)", border: "1px solid var(--border)", cursor: "pointer" }}
+                    style={{ "font-size": "var(--fs-caption)", padding: "3px 8px", "border-radius": "999px", background: "var(--surface-raised)", border: "1px solid var(--border)", cursor: "pointer" }}
                     onClick={() => searchFollowUp(q)}
                   >
                     {q}

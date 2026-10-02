@@ -1154,7 +1154,7 @@ export default function WorkbenchPanel() {
                         {/* Live Telemetry Badges */}
                         <div style={{ display: "flex", "align-items": "center", gap: "8px", "margin-left": "auto" }}>
                           <Show when={exec().durationMs !== undefined}>
-                            <span style={{ "font-size": "10.5px", color: "var(--muted)", "font-family": "monospace" }}>
+                            <span style={{ "font-size": "var(--fs-caption)", color: "var(--muted)", "font-family": "monospace" }}>
                               ⏱ {exec().durationMs! < 1000
                                 ? `${exec().durationMs}ms`
                                 : `${(exec().durationMs! / 1000).toFixed(1)}s`}
@@ -1162,7 +1162,7 @@ export default function WorkbenchPanel() {
                           </Show>
 
                           <Show when={exec().memoryBytes && exec().memoryBytes! > 0}>
-                            <span style={{ "font-size": "10.5px", color: "var(--muted)", "font-family": "monospace" }}>
+                            <span style={{ "font-size": "var(--fs-caption)", color: "var(--muted)", "font-family": "monospace" }}>
                               RAM: {formatBytes(exec().memoryBytes)}
                             </span>
                           </Show>
@@ -1175,12 +1175,12 @@ export default function WorkbenchPanel() {
                                 display: "inline-flex",
                                 "align-items": "center",
                                 gap: "4px",
-                                background: "rgba(239, 68, 68, 0.2)",
-                                color: "#f87171",
-                                border: "1px solid rgba(239, 68, 68, 0.4)",
+                                background: "color-mix(in srgb, var(--red) 20%, transparent)",
+                                color: "var(--red)",
+                                border: "1px solid color-mix(in srgb, var(--red) 40%, transparent)",
                                 "border-radius": "4px",
                                 padding: "2px 6px",
-                                "font-size": "10.5px",
+                                "font-size": "var(--fs-caption)",
                                 "font-weight": "600",
                                 cursor: "pointer",
                               }}
@@ -1390,7 +1390,7 @@ export default function WorkbenchPanel() {
                           height: "100%",
                           "min-height": "400px",
                           border: "none",
-                          background: "#ffffff",
+                          background: "var(--page)",
                           "border-radius": "6px",
                         }}
                         title="Draft page preview"
