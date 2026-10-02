@@ -50,7 +50,7 @@ fn record_voice_dispatch(
     {
         let _ = session.append_receipt(receipt.clone());
     }
-    vak_core::routing::EvidenceLedger::new(&core.sessions_home())
+    vak_core::routing::EvidenceLedger::new(&core.scope().into_root())
         .record_receipts(std::slice::from_ref(receipt), None);
     if receipt.provider != "local" {
         let source = match receipt.purpose {
@@ -58,7 +58,7 @@ fn record_voice_dispatch(
             vak_llm::WorkPurpose::VoiceSynthesis => "voice_synthesis_usage_unavailable",
             _ => "voice_usage_unavailable",
         };
-        let _ = vak_core::finops::FinOpsLedger::new(&core.shared_data_home()).append(
+        let _ = vak_core::finops::FinOpsLedger::new(&core.shared_scope().into_root()).append(
             &vak_core::finops::CostRow {
                 ts: chrono::Utc::now(),
                 model: receipt.model.clone(),

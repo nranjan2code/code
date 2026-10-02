@@ -109,8 +109,9 @@ impl AdapterRegistry {
     /// into one per surface is how a reply goes out under the wrong bot's
     /// identity (AGENTS.md invariant 24).
     fn all_bot_tokens(sessions_home: &std::path::Path, surface: &str) -> Vec<(String, String)> {
-        let Ok(raw) = std::fs::read_to_string(sessions_home.join("gateway").join("bots.json"))
-        else {
+        let Ok(raw) = std::fs::read_to_string(
+            vak_config::scope::SharedScope::new(sessions_home).gateway_bots(),
+        ) else {
             return Vec::new();
         };
         let Ok(file) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -261,9 +262,9 @@ impl DeliveryRuntime {
             })
             .map(|path| WorkerClient::new(path, WORKER_TIMEOUT));
         Self {
-            outbox: Outbox::new(core.shared_data_home().join("delivery").join("jobs")),
+            outbox: Outbox::new(core.shared_scope().delivery_jobs()),
             worker,
-            adapters: AdapterRegistry::built_in(&core.shared_data_home()),
+            adapters: AdapterRegistry::built_in(&core.shared_scope().into_root()),
             serial: tokio::sync::Mutex::new(()),
         }
     }
@@ -311,7 +312,7 @@ impl DeliveryRuntime {
 
 fn runtime(core: &Core) -> Arc<DeliveryRuntime> {
     static RUNTIMES: OnceLock<Mutex<BTreeMap<String, Arc<DeliveryRuntime>>>> = OnceLock::new();
-    let key = core.sessions_home().to_string_lossy().into_owned();
+    let key = core.scope().into_root().to_string_lossy().into_owned();
     let runtimes = RUNTIMES.get_or_init(|| Mutex::new(BTreeMap::new()));
     let mut runtimes = runtimes
         .lock()
@@ -425,8 +426,8 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
 
 fn apply_preferences(core: &Core, mut profile: DeliveryProfile) -> DeliveryProfile {
     let loaded = load_layers(
-        &core.sessions_home().join("output.toml"),
-        &core.cwd().join(".vak").join("output.toml"),
+        &core.scope().output_prefs(),
+        &core.workspace_scope().output_prefs(),
         core.project_config_trusted(),
     );
     for warning in loaded.warnings {
@@ -500,7 +501,7 @@ pub(crate) async fn render_response(
         content: DeliveryContent::Answer({
             let artifact_suffix = session_id
                 .and_then(|id| {
-                    crate::projection::sandbox_artifact_markdown(&core.sessions_home(), id)
+                    crate::projection::sandbox_artifact_markdown(&core.scope().into_root(), id)
                 })
                 .unwrap_or_default();
             let cleaned_markdown = crate::projection::clean_scaffolding(&markdown);
@@ -791,10 +792,7 @@ impl ChannelAdapter for LogAdapter {
     }
 
     async fn send(&self, core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
-        let path = core
-            .shared_data_home()
-            .join("gateway")
-            .join("deliveries.jsonl");
+        let path = core.shared_scope().gateway_deliveries();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("create deliveries directory: {error}"))?;

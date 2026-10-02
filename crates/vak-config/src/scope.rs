@@ -166,6 +166,22 @@ impl AgentScope {
         self.root.join("sandbox")
     }
 
+    /// Where a revision copy is staged before it is frozen as a candidate.
+    /// D25, as [`AgentScope::sandbox_records`].
+    pub fn sandbox_staging(&self, _session_agent: &str, id: &str) -> PathBuf {
+        self.sandbox_dir().join("staging").join(id)
+    }
+
+    /// Display names the admin console keeps for workspaces.
+    pub fn workspace_names(&self) -> PathBuf {
+        self.root.join("workspace-names.json")
+    }
+
+    /// Output preferences of the user layer.
+    pub fn output_prefs(&self) -> PathBuf {
+        self.root.join("output.toml")
+    }
+
     /// Server-side sandbox record log of the Agent that owns `_session_agent`.
     ///
     /// D25: the server writes this under its own Core's home whichever Agent
@@ -233,6 +249,31 @@ impl SharedScope {
 
     pub fn gateway_allowlist(&self) -> PathBuf {
         self.gateway().join("allowlist.json")
+    }
+
+    pub fn gateway_bindings(&self) -> PathBuf {
+        self.gateway().join("bindings.json")
+    }
+
+    pub fn gateway_bots(&self) -> PathBuf {
+        self.gateway().join("bots.json")
+    }
+
+    pub fn gateway_deliveries(&self) -> PathBuf {
+        self.gateway().join("deliveries.jsonl")
+    }
+
+    /// The durable delivery outbox.
+    pub fn delivery_jobs(&self) -> PathBuf {
+        self.root.join("delivery").join("jobs")
+    }
+
+    pub fn operations_incidents(&self) -> PathBuf {
+        self.operations().join("incidents.jsonl")
+    }
+
+    pub fn operations_actions(&self) -> PathBuf {
+        self.operations().join("actions.jsonl")
     }
 
     pub fn tasks(&self) -> PathBuf {
@@ -329,6 +370,20 @@ impl WorkspaceScope {
         self.project_dir().join("agents.json")
     }
 
+    pub fn output_prefs(&self) -> PathBuf {
+        self.project_dir().join("output.toml")
+    }
+
+    pub fn feeds_config(&self) -> PathBuf {
+        self.project_dir().join("feeds.toml")
+    }
+
+    /// `<workspace>/.vak/scratch/<agent_id>`, an Agent's quarantined
+    /// execution scratch.
+    pub fn scratch(&self, agent_id: &str) -> PathBuf {
+        self.project_dir().join("scratch").join(agent_id)
+    }
+
     pub fn worktrees(&self) -> PathBuf {
         self.project_dir().join("worktrees")
     }
@@ -390,6 +445,9 @@ mod tests {
             home.join("sandbox/executions/s1.jsonl")
         );
         assert_eq!(s.coworking_grants("a"), home.join("coworking/grants.jsonl"));
+        assert_eq!(s.sandbox_staging("a", "x"), home.join("sandbox/staging/x"));
+        assert_eq!(s.workspace_names(), home.join("workspace-names.json"));
+        assert_eq!(s.output_prefs(), home.join("output.toml"));
         assert_eq!(
             s.office_workspaces("a", "s1"),
             home.join("office-workspaces/s1")
@@ -409,6 +467,21 @@ mod tests {
         assert_eq!(s.operations(), data.join("operations"));
         assert_eq!(s.cost_log(), data.join("cost-log.jsonl"));
         assert_eq!(s.trusted(), data.join("trusted"));
+        assert_eq!(s.gateway_bindings(), data.join("gateway/bindings.json"));
+        assert_eq!(s.gateway_bots(), data.join("gateway/bots.json"));
+        assert_eq!(
+            s.gateway_deliveries(),
+            data.join("gateway/deliveries.jsonl")
+        );
+        assert_eq!(s.delivery_jobs(), data.join("delivery/jobs"));
+        assert_eq!(
+            s.operations_incidents(),
+            data.join("operations/incidents.jsonl")
+        );
+        assert_eq!(
+            s.operations_actions(),
+            data.join("operations/actions.jsonl")
+        );
         assert_eq!(s.sandbox_promotions(), data.join("sandbox/promotions"));
     }
 
@@ -425,6 +498,9 @@ mod tests {
         assert_eq!(s.prompts(), ws.join(".vak/prompts"));
         assert_eq!(s.agents_file(), ws.join(".vak/agents.json"));
         assert_eq!(s.worktrees(), ws.join(".vak/worktrees"));
+        assert_eq!(s.output_prefs(), ws.join(".vak/output.toml"));
+        assert_eq!(s.feeds_config(), ws.join(".vak/feeds.toml"));
+        assert_eq!(s.scratch("mira"), ws.join(".vak/scratch/mira"));
         assert_eq!(
             s.permissions_local(),
             ws.join(".vak/permissions.local.toml")

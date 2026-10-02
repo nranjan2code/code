@@ -174,15 +174,15 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(240);
 const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 fn bindings_path(home: &std::path::Path) -> PathBuf {
-    home.join("gateway").join("bindings.json")
+    vak_config::scope::SharedScope::new(home).gateway_bindings()
 }
 
 fn allowlist_path(home: &std::path::Path) -> PathBuf {
-    home.join("gateway").join("allowlist.json")
+    vak_config::scope::SharedScope::new(home).gateway_allowlist()
 }
 
 fn bots_path(home: &std::path::Path) -> PathBuf {
-    home.join("gateway").join("bots.json")
+    vak_config::scope::SharedScope::new(home).gateway_bots()
 }
 
 /// Multi-bot-per-channel (docs/design/34 Phase 5 follow-up): an allowlist
@@ -520,7 +520,7 @@ impl GatewayState {
     /// (`serve --gateway`).
     pub fn load(core: &Core, force: bool) -> Self {
         let mut bindings = HashMap::new();
-        if let Ok(raw) = std::fs::read_to_string(bindings_path(&core.shared_data_home()))
+        if let Ok(raw) = std::fs::read_to_string(bindings_path(&core.shared_scope().into_root()))
             && let Ok(stored) = serde_json::from_str::<StoredBindings>(&raw)
         {
             bindings = match stored {
@@ -545,7 +545,7 @@ impl GatewayState {
         // one-time import from config.toml's `chat_allowlist` seeds it the
         // first time a process ever loads (same relationship bindings.json
         // already has to route overrides — config.toml itself is untouched).
-        let path = allowlist_path(&core.shared_data_home());
+        let path = allowlist_path(&core.shared_scope().into_root());
         let allowlist: HashMap<String, AllowlistEntry> = match std::fs::read_to_string(&path) {
             Ok(raw) => serde_json::from_str::<AllowlistFile>(&raw)
                 .map(|file| {
@@ -594,7 +594,7 @@ impl GatewayState {
         // synthesizing a bot from one would be exactly the pre-baseline
         // fold-forward the baseline forbids. A bot is created explicitly,
         // through setup or the admin console, and owns its own token env.
-        let bots_file_path = bots_path(&core.shared_data_home());
+        let bots_file_path = bots_path(&core.shared_scope().into_root());
         let bots: HashMap<String, Bot> = match std::fs::read_to_string(&bots_file_path) {
             Ok(raw) => serde_json::from_str::<BotsFile>(&raw)
                 .map(|file| file.bots.into_iter().map(|b| (b.id.clone(), b)).collect())
@@ -631,7 +631,7 @@ impl GatewayState {
             .allowlist_expire_pending(core, chrono::Duration::days(gw.pending_expiry_days as i64));
         for key in expired {
             vak_core::security_events::record(
-                &core.sessions_home(),
+                &core.scope().into_root(),
                 vak_core::security_events::EventKind::ChatDenied,
                 "chat_denied",
                 &format!("key={key} reason=expiry"),
@@ -792,7 +792,7 @@ impl GatewayState {
             policy,
             std::time::Instant::now(),
         )?;
-        resolved.set_sessions_home(default_core.shared_data_home());
+        resolved.set_sessions_home(default_core.shared_scope().into_root());
         if let Some(provider) = default_core.provider_instance_override() {
             resolved.set_provider_instance(provider);
         }
@@ -1921,7 +1921,7 @@ fn persist_bindings(core: &Core, gw: &GatewayState) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let path = bindings_path(&core.shared_data_home());
+    let path = bindings_path(&core.shared_scope().into_root());
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1943,7 +1943,7 @@ fn persist_allowlist(core: &Core, gw: &GatewayState) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    let path = allowlist_path(&core.shared_data_home());
+    let path = allowlist_path(&core.shared_scope().into_root());
     write_allowlist_file(&path, &entries);
 }
 
@@ -1953,7 +1953,7 @@ fn persist_bots(core: &Core, gw: &GatewayState) {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
-    persist_bots_map(&bots_path(&core.shared_data_home()), &bots);
+    persist_bots_map(&bots_path(&core.shared_scope().into_root()), &bots);
 }
 
 /// Atomic temp-file+rename write, same pattern as `write_allowlist_file`.
@@ -2132,10 +2132,8 @@ fn turn_drafts(log: &vak_session::SessionLog, workspace: &std::path::Path) -> Ve
     }
     let mut drafts: Vec<TurnDraft> = Vec::new();
     for (id, path) in calls.into_iter().filter(|(id, _)| succeeded.contains(id)) {
-        let draft = workspace
-            .join(".vak")
-            .join("scratch")
-            .join(&agent)
+        let draft = vak_config::scope::WorkspaceScope::new(workspace)
+            .scratch(&agent)
             .join(&id)
             .join(&path);
         if !draft.is_file() {
@@ -2580,7 +2578,7 @@ async fn gateway_inbound(
             AllowlistDecision::Allowed => {}
             AllowlistDecision::Denied => {
                 vak_core::security_events::record(
-                    &state.core.sessions_home(),
+                    &state.core.scope().into_root(),
                     vak_core::security_events::EventKind::ChatDenied,
                     "chat_denied",
                     &format!("key={key}"),
@@ -2597,7 +2595,7 @@ async fn gateway_inbound(
             }
             AllowlistDecision::NewlyPending => {
                 vak_core::security_events::record(
-                    &state.core.sessions_home(),
+                    &state.core.scope().into_root(),
                     vak_core::security_events::EventKind::ChatPending,
                     "chat_pending",
                     &format!("key={key}"),
@@ -2648,7 +2646,7 @@ async fn gateway_inbound(
                 if !verdict {
                     let short = question_code(&resolved.id);
                     let _ = vak_core::inbox::record(
-                        &state.core.shared_data_home(),
+                        &state.core.shared_scope().into_root(),
                         vak_core::inbox::Kind::ApprovalDenied,
                         &format!("approval denied [{short}]"),
                         &format!(
@@ -3382,7 +3380,7 @@ fn record_prompt_drift(
         return;
     };
     vak_core::security_events::record(
-        &core.sessions_home(),
+        &core.scope().into_root(),
         vak_core::security_events::EventKind::ConfigChange,
         "prompt layers changed",
         &format!(
@@ -3625,7 +3623,7 @@ async fn execute_turn_chain(
                     // the channel reply stays a human sentence (see
                     // `outcome_text`) — never the raw `CoreError` display.
                     vak_core::security_events::record(
-                        &core.sessions_home(),
+                        &core.scope().into_root(),
                         vak_core::security_events::EventKind::ExecutionError,
                         "inbound turn failed",
                         &format!("session_id={session_id} error={e}"),
@@ -3765,7 +3763,7 @@ pub(crate) async fn deliver_and_record_with_result(
 ) -> Result<&'static str, String> {
     let dedupe_key = result_id.map(|result| format!("{target}|{result}|{}", inbox_kind as u8));
     let _ = vak_core::inbox::record_with_result_and_key(
-        &core.shared_data_home(),
+        &core.shared_scope().into_root(),
         inbox_kind,
         &title,
         text,
@@ -3818,7 +3816,7 @@ async fn deliver_approval_and_record(
     task_id: Option<&str>,
 ) -> Result<(), String> {
     let _ = vak_core::inbox::record(
-        &core.shared_data_home(),
+        &core.shared_scope().into_root(),
         inbox_kind,
         &title,
         &approval.detail,

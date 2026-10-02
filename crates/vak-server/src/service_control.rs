@@ -74,7 +74,7 @@ pub async fn reconcile(core: &vak_core::Core, port: u16) -> Result<Vec<UnitOutco
     // to exist *before* the unit is registered — otherwise the unit is
     // written, starts, and crash-loops on "gateway token missing".
     vak_core::gateway_token::ensure_gateway_token()?;
-    let data_home = core.sessions_home();
+    let data_home = core.scope().into_root();
     let gateway_url = vak_ops::OpsConfig { port }.base_url();
 
     blocking(move || {
@@ -137,7 +137,7 @@ pub struct ActivationDrift {
 
 /// Compare configured bots against registered units.
 pub async fn activation_drift(core: &vak_core::Core) -> Result<ActivationDrift, String> {
-    let data_home = core.sessions_home();
+    let data_home = core.scope().into_root();
     blocking(move || {
         let configured = vak_ops::services::configured_bot_service_names_all(&data_home);
         let paths = vak_ops::services::Paths::default();

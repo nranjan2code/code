@@ -42,10 +42,11 @@ pub(crate) struct SessionListItem {
 
 fn map_session_agents(shared: &std::path::Path) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+    if let Ok(agents) = std::fs::read_dir(vak_config::scope::SharedScope::new(shared).agents_dir())
+    {
         for agent in agents.flatten() {
             let agent_id = agent.file_name().to_string_lossy().into_owned();
-            let agent_sessions = agent.path().join("sessions");
+            let agent_sessions = vak_config::scope::AgentScope::new(agent.path()).sessions_root();
             if agent_sessions.exists() {
                 for e in walkdir::WalkDir::new(&agent_sessions)
                     .max_depth(3)
@@ -85,7 +86,7 @@ pub(crate) async fn list_sessions_admin(
     // a ledger file under this process's own workspace (see
     // `workspace_project_hash` on `/admin/api/config`).
     let archive_map = crate::read_archive(&state.core);
-    let shared = state.core.shared_data_home();
+    let shared = state.core.shared_scope().into_root();
     let trashed = vak_core::trash::trashed(&shared);
     let agent_map = map_session_agents(&shared);
 
@@ -270,14 +271,14 @@ pub(crate) async fn session_transcript_admin(
     let Some(store) = &state.store else {
         return Json(serde_json::json!({ "error": "store not available" }));
     };
-    if vak_core::trash::is_trashed(&state.core.shared_data_home(), &session_id) {
+    if vak_core::trash::is_trashed(&state.core.shared_scope().into_root(), &session_id) {
         return Json(serde_json::json!({ "error": "session is in the trash" }));
     }
     // Fetch offset+limit so we can report whether more pages exist.
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let offset = q.offset.unwrap_or(0);
     if q.refresh == Some(true) {
-        crate::import_session_sync(store, &state.core.sessions_home(), &session_id);
+        crate::import_session_sync(store, &state.core.scope().into_root(), &session_id);
     }
     let filter = vak_store::query::SearchFilter {
         session_id: Some(session_id.clone()),
@@ -360,7 +361,7 @@ pub(crate) async fn search_admin(
         role: q.role,
         kind: q.kind,
         excluded_sessions: vak_core::trash::search_exclusions(
-            &state.core.shared_data_home(),
+            &state.core.shared_scope().into_root(),
             q.exclude_session.as_deref(),
         )
         .into_iter()
@@ -423,7 +424,7 @@ pub(crate) async fn list_security_events(
     Query(q): Query<SecurityQuery>,
 ) -> Json<serde_json::Value> {
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
-    let home = state.core.sessions_home();
+    let home = state.core.scope().into_root();
     let events = vak_core::security_events::list(&home, limit);
     let filtered: Vec<SecurityEventEntry> = events
         .into_iter()
@@ -459,7 +460,7 @@ pub(crate) async fn rebuild_store(State(state): State<AppState>) -> Json<serde_j
     let Some(store) = &state.store else {
         return Json(serde_json::json!({ "ok": false, "error": "store not available" }));
     };
-    let home = state.core.sessions_home();
+    let home = state.core.scope().into_root();
     match store.rebuild(&home) {
         Ok(stats) => Json(serde_json::json!({
             "ok": true,
@@ -483,12 +484,12 @@ pub(crate) async fn import_session_store(
     let Some(store) = &state.store else {
         return Json(serde_json::json!({ "ok": false, "error": "store not available" }));
     };
-    let home = state.core.sessions_home();
-    let shared = state.core.shared_data_home();
+    let home = state.core.scope().into_root();
+    let shared = state.core.shared_scope().into_root();
 
     let mut candidate: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
 
-    let direct = home.join("sessions");
+    let direct = vak_config::scope::AgentScope::new(&home).sessions_root();
     if direct.exists() {
         for entry in walkdir::WalkDir::new(&direct)
             .min_depth(2)
@@ -509,12 +510,12 @@ pub(crate) async fn import_session_store(
 
     if let Some(agents) = candidate
         .is_none()
-        .then(|| std::fs::read_dir(shared.join("agents")).ok())
+        .then(|| std::fs::read_dir(vak_config::scope::SharedScope::new(shared).agents_dir()).ok())
         .flatten()
     {
         for agent in agents.flatten() {
             let agent_home = agent.path();
-            let agent_sessions = agent_home.join("sessions");
+            let agent_sessions = vak_config::scope::AgentScope::new(&agent_home).sessions_root();
             if agent_sessions.exists() {
                 for entry in walkdir::WalkDir::new(&agent_sessions)
                     .min_depth(2)
@@ -666,7 +667,7 @@ pub(crate) async fn get_config_admin(
         // (`sessions_home/sessions/<hash(cwd)>/`). This is that same hash,
         // matching `project_hash` on each session row — the console uses it
         // to tell which rows those actions can actually reach.
-        "workspace_project_hash": vak_core::memory::hash_cwd(core.cwd()),
+        "workspace_project_hash": vak_config::scope::workspace_key(core.cwd()),
         // The resolved rule lists the permission engine actually evaluates
         // (vak_permission::Rule syntax: `Tool`, `Tool(glob)`, with a
         // `+`/`?`/`-` prefix for allow/ask/deny). The admin console shows
@@ -907,7 +908,7 @@ pub(crate) async fn patch_gateway_workspace(
             }
         }
     };
-    let data_home = state.core.sessions_home();
+    let data_home = state.core.scope().into_root();
     if let Err(error) =
         vak_config::paths::persist_gateway_workspace_at(&data_home, selected.as_deref())
     {
@@ -939,7 +940,7 @@ pub(crate) struct WorkspaceNamePatch {
 }
 
 fn workspace_names_path(state: &AppState) -> PathBuf {
-    state.core.sessions_home().join("workspace-names.json")
+    state.core.scope().workspace_names()
 }
 
 fn read_workspace_names(state: &AppState) -> HashMap<String, String> {
@@ -1013,7 +1014,7 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
     use std::io::BufRead;
     let mut seen: Vec<String> = vec![vak_config::paths::default_workspace().display().to_string()];
     let gateway_workspace = vak_config::paths::gateway_workspace_at(
-        &state.core.sessions_home(),
+        &state.core.scope().into_root(),
         &vak_config::paths::default_workspace(),
     );
     let gateway_workspace_text = gateway_workspace.display().to_string();
@@ -1036,7 +1037,7 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
     {
         push(entry.workspace.display().to_string());
     }
-    let shared = state.core.shared_data_home();
+    let shared = state.core.shared_scope().into_root();
     let mut scan_sessions_root = |sessions_root: std::path::PathBuf| {
         let Ok(projects) = std::fs::read_dir(&sessions_root) else {
             return;
@@ -1069,10 +1070,11 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
             }
         }
     };
-    scan_sessions_root(state.core.sessions_home().join("sessions"));
-    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
+    scan_sessions_root(state.core.scope().sessions_root());
+    if let Ok(agents) = std::fs::read_dir(vak_config::scope::SharedScope::new(shared).agents_dir())
+    {
         for agent in agents.flatten() {
-            scan_sessions_root(agent.path().join("sessions"));
+            scan_sessions_root(vak_config::scope::AgentScope::new(agent.path()).sessions_root());
         }
     }
     seen
@@ -1120,7 +1122,10 @@ fn is_scratch_workspace(path: &str) -> bool {
         .components()
         .filter_map(|c| c.as_os_str().to_str())
         .collect();
-    if components.windows(2).any(|pair| pair == [".vak", "agents"]) {
+    if components
+        .windows(2)
+        .any(|pair| pair == [vak_config::scope::PROJECT_DIR, "agents"])
+    {
         return true;
     }
     // Windows temp dirs: %TEMP%, %TMP%, C:\Windows\Temp, C:\Temp.
@@ -1385,7 +1390,7 @@ fn record_permission_cap(state: &AppState, key: &str, entry: &crate::gateway::Al
         _ => "workspace",
     };
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &state.core.scope().into_root(),
         vak_core::security_events::EventKind::PermissionCapped,
         "permission_capped",
         &format!(
@@ -1425,7 +1430,7 @@ fn note_workspace_trust(state: &AppState, workspace: Option<&std::path::Path>) {
     match vak_core::trust::record(workspace) {
         Ok(()) => {
             vak_core::security_events::record(
-                &state.core.sessions_home(),
+                &state.core.scope().into_root(),
                 vak_core::security_events::EventKind::ConfigChange,
                 "workspace_trusted",
                 &format!("workspace={} by=admin", workspace.display()),
@@ -1499,7 +1504,7 @@ pub(crate) async fn approve_gateway_allowlist(
         "admin",
     );
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &state.core.scope().into_root(),
         vak_core::security_events::EventKind::ChatApproved,
         "chat_approved",
         &format!("key={key}"),
@@ -1522,7 +1527,7 @@ pub(crate) async fn deny_gateway_allowlist(
     }
     let entry = state.gateway.allowlist_deny(&state.core, &key, "admin");
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &state.core.scope().into_root(),
         vak_core::security_events::EventKind::ChatDenied,
         "chat_denied",
         &format!("key={key}"),
@@ -1691,7 +1696,7 @@ pub(crate) async fn patch_gateway_allowlist(
     // the effective route and rotates only if it really changed.
     state.gateway.invalidate_binding_revision(&state.core, &key);
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &state.core.scope().into_root(),
         vak_core::security_events::EventKind::ConfigChange,
         "chat_edited",
         &format!(
@@ -1721,7 +1726,7 @@ pub(crate) async fn revoke_gateway_allowlist(
 ) -> StatusCode {
     if state.gateway.allowlist_revoke(&state.core, &key) {
         vak_core::security_events::record(
-            &state.core.sessions_home(),
+            &state.core.scope().into_root(),
             vak_core::security_events::EventKind::ChatRevoked,
             "chat_revoked",
             &format!("key={key}"),

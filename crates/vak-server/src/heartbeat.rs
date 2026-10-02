@@ -136,10 +136,10 @@ async fn heartbeat_cycle(state: &AppState) -> Result<(), String> {
     }
     // Same day-spend read the budget alerts use; denial skips this cycle
     // silently — an unattended prober must never be what bursts a cap.
-    let mut day_total = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home())
+    let mut day_total = vak_core::finops::FinOpsLedger::new(&state.core.shared_scope().into_root())
         .day_total_usd(Utc::now());
-    if state.core.sessions_home() != state.core.shared_data_home() {
-        day_total += vak_core::finops::FinOpsLedger::new(&state.core.sessions_home())
+    if state.core.scope().into_root() != state.core.shared_scope().into_root() {
+        day_total += vak_core::finops::FinOpsLedger::new(&state.core.scope().into_root())
             .day_total_usd(Utc::now());
     }
     if let Some(cap) = state.core.config().finops.max_day_usd
@@ -178,7 +178,7 @@ async fn run_heartbeat_turn(
         })
         .map_err(|e| format!("heartbeat core failed: {e}"))?;
     core.set_provider_instance(provider);
-    core.set_sessions_home(state.core.shared_data_home());
+    core.set_sessions_home(state.core.shared_scope().into_root());
     if let Some(pin) = cfg
         .model
         .as_deref()
@@ -251,7 +251,7 @@ async fn take_persistent_session(core: &Core) -> Result<SessionLog, String> {
 async fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
     let prepared = core.prepare_turn().await;
     let path = vak_session::SessionPath::new_session_file(
-        &core.sessions_home(),
+        &core.scope().into_root(),
         core.cwd(),
         HEARTBEAT_SESSION_ID,
     );
@@ -326,7 +326,7 @@ async fn record_reply(state: &AppState, cfg: &vak_config::HeartbeatResolved, tex
     let n = stripped.len();
     let title = format!("heartbeat: {n} finding{}", if n == 1 { "" } else { "s" });
     let body = stripped.join("\n");
-    let home = state.core.shared_data_home();
+    let home = state.core.shared_scope().into_root();
     let _ = vak_core::inbox::record(
         &home,
         vak_core::inbox::Kind::Heartbeat,

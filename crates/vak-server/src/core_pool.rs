@@ -235,7 +235,7 @@ impl CorePool {
             && let Some((requested, ceiling)) = apply_permission_override(&core, requested)
         {
             vak_core::security_events::record(
-                &core.sessions_home(),
+                &core.scope().into_root(),
                 vak_core::security_events::EventKind::PermissionCapped,
                 "permission_capped",
                 &format!(

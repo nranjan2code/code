@@ -84,7 +84,7 @@ pub enum Error {
 }
 
 pub fn store_path(sessions_home: &Path) -> PathBuf {
-    sessions_home.join("coworking").join("grants.jsonl")
+    vak_config::scope::AgentScope::new(sessions_home).coworking_grants("")
 }
 
 pub fn generate_token() -> String {
