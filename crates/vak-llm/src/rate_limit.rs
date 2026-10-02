@@ -1251,10 +1251,13 @@ impl RateLimitGate {
                             .is_none_or(|remaining| remaining >= estimated_output_tokens);
                     let requests_fit = available_requests.is_none_or(|remaining| remaining >= 1)
                         && daily_requests_available.is_none_or(|remaining| remaining >= 1);
-                    if tokens_fit
-                        && requests_fit
-                        && state.quota_waiters.front().copied() == Some(ticket)
-                    {
+                    // Queue order and capacity are separate reasons to wait.
+                    // A waiter behind another one waits for the queue to
+                    // move, never for a reset: reporting it as exhausted
+                    // fails a request whose capacity was never in doubt.
+                    if state.quota_waiters.front().copied() != Some(ticket) {
+                        None
+                    } else if tokens_fit && requests_fit {
                         state.next_reservation = state.next_reservation.wrapping_add(1).max(1);
                         let reservation_id = state.next_reservation;
                         state.quota_waiters.pop_front();
@@ -1270,11 +1273,13 @@ impl RateLimitGate {
                             },
                         );
                         queue_ticket.disarm();
+                        // The next waiter is now at the front; wake it.
+                        changed.notify_waiters();
                         return Ok(QuotaPermit {
                             state: self.state.clone(),
                             reservation_id,
                         });
-                    }
+                    } else {
                     let provider_reset = [
                         state.reset_at,
                         state.requests_reset_at,
@@ -1293,23 +1298,30 @@ impl RateLimitGate {
                         .values()
                         .map(|reservation| reservation.expires_at)
                         .min();
-                    match (provider_reset, reservation_expiry) {
-                        (Some(reset), Some(expiry)) => Some(reset.min(expiry)),
-                        (Some(reset), None) => Some(reset),
-                        (None, Some(expiry)) => Some(expiry),
-                        (None, None) => None,
+                    let wait_until = match (provider_reset, reservation_expiry) {
+                        (Some(reset), Some(expiry)) => reset.min(expiry),
+                        (Some(reset), None) => reset,
+                        (None, Some(expiry)) => expiry,
+                        (None, None) => {
+                            return Err(LlmError::QuotaExhausted(
+                                "observed provider capacity is exhausted and no reset time was published"
+                                    .into(),
+                            ));
+                        }
+                    };
+                    Some(wait_until)
                     }
                 };
-                let Some(wait_until) = wait_until else {
-                    return Err(LlmError::QuotaExhausted(
-                        "observed provider capacity is exhausted and no reset time was published"
-                            .into(),
-                    ));
-                };
-                tokio::select! {
-                    _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-                    _ = tokio::time::sleep_until(wait_until) => {},
-                    _ = &mut notified => {},
+                match wait_until {
+                    Some(wait_until) => tokio::select! {
+                        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+                        _ = tokio::time::sleep_until(wait_until) => {},
+                        _ = &mut notified => {},
+                    },
+                    None => tokio::select! {
+                        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+                        _ = &mut notified => {},
+                    },
                 }
             }
         }
@@ -1691,6 +1703,51 @@ mod tests {
                 .wait(&tokio_util::sync::CancellationToken::new())
                 .await
                 .unwrap()
+        );
+    }
+
+    /// A waiter behind another one is waiting for its turn, not for capacity.
+    /// It used to fall into the reset-time branch and, with no published
+    /// reset and no outstanding reservation, fail as `QuotaExhausted`; and a
+    /// head that took its reservation never woke the waiter behind it. The
+    /// waiters are polled by hand so the interleaving is fixed: B re-checks
+    /// while A is still at the front, then A reserves.
+    #[tokio::test]
+    async fn a_queued_waiter_waits_its_turn_and_is_woken_by_the_head() {
+        use std::task::Poll;
+        let gate = RateLimitGate::for_model(test_key("queue-order"), "m");
+        let cancel = tokio_util::sync::CancellationToken::new();
+
+        // A waiter that is mid-check at the front of the queue.
+        let head = {
+            let mut state = gate.state.lock().unwrap();
+            state.next_quota_ticket += 1;
+            let ticket = state.next_quota_ticket;
+            state.quota_waiters.push_back(ticket);
+            state.queued += 1;
+            super::QuotaQueueTicket {
+                state: gate.state.clone(),
+                ticket,
+                active: true,
+            }
+        };
+
+        let a = gate.reserve_quota(10, &cancel);
+        let b = gate.reserve_quota(10, &cancel);
+        tokio::pin!(a);
+        tokio::pin!(b);
+        assert!(matches!(futures::poll!(a.as_mut()), Poll::Pending));
+        assert!(
+            matches!(futures::poll!(b.as_mut()), Poll::Pending),
+            "a waiter behind the head must wait, not fail as exhausted"
+        );
+
+        drop(head);
+        assert!(matches!(futures::poll!(b.as_mut()), Poll::Pending));
+        assert!(matches!(futures::poll!(a.as_mut()), Poll::Ready(Ok(_))));
+        assert!(
+            matches!(futures::poll!(b.as_mut()), Poll::Ready(Ok(_))),
+            "taking a reservation must wake the next waiter"
         );
     }
 
