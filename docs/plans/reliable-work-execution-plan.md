@@ -104,12 +104,15 @@ tool waiting and model work. Baseline measures joint quality and resource use.
 This inventory is based on the current source call graph, not on the deployed
 instance. “Capacity admitted” means the consumer obtains the shared
 `vak-llm::RequestAdmission`/`RateLimitGate` reservation before making the HTTP
-call; it does not imply cross-process enforcement or durable root-work
-accounting.
+call. The chat adapters also use `vak-llm::ProviderGate`: opaque endpoint/key
+fingerprints name temporary file leases that share a bounded number of
+concurrent generation slots across processes on the same host. Those leases do
+not share numeric quota observations, reservations or cooldowns, and do not
+coordinate across hosts. Durable root-work accounting remains separate.
 
 | Consumer | Owner and dispatch path | Capacity admission and accounting | Remaining boundary |
 |---|---|---|---|
-| Main agent turns, intent resolution, tools/worker turns, retry ladder | `vak-agent` through the Core turn dispatcher and `Provider::stream`; per-attempt `WorkReceipt` is attached to the owning session | `RateLimitGate` model demand, account concurrency/cooldown, adapter observations and usage settlement; route aliases use provider capacity identity | Process-local only; durable root budget and cross-process reservation are open |
+| Main agent turns, intent resolution, tools/worker turns, retry ladder | `vak-agent` through the Core turn dispatcher and `Provider::stream`; per-attempt `WorkReceipt` is attached to the owning session | `RateLimitGate` model demand, account concurrency/cooldown, adapter observations and usage settlement; route aliases use provider capacity identity; `ProviderGate` also shares generation concurrency leases on one host | Quota observations/reservations remain process-local; durable root budget and cross-host quota coordination are open |
 | Flow planning | `vak-flow/src/planner.rs` | `RequestAdmission` around planner stream; returned usage settles the reservation | No shared E1 root account; E2 process boundary remains |
 | Flow node execution | `vak-flow/src/exec.rs` creates an Agent for the node; execution is owned by the flow run | Inherits Agent dispatch admission and receipts | Root flow aggregate accounting/restart reconstruction are not E1-complete |
 | Core measured-capacity probes and cache measurements | `vak-core/src/lib.rs` background probe and cache paths | `RequestAdmission` with bounded per-call timeout; usage and admission pass through the same provider gate | Probe lifecycle/attempt throttle is process-local; probe cost lacks a durable root RunId account |
@@ -542,8 +545,9 @@ no AWS configuration, scheduling, version or deployment changes.
 - 2026-10-02: The documented AWS hosting path and installer describe one EC2
   host running one `vak serve --gateway` systemd user service; the Telegram
   bridge is a separate forwarding process, not a second inference dispatcher.
-  This supports process-local coordination for that documented topology. It
-  does not establish the live instance's deployed source or cover independent
-  local CLI/service processes, and no cross-process/global quota guarantee is
-  claimed. Reconcile this source-level finding with the deployed revision as
-  part of the remaining E0 audit.
+  The adapter's `ProviderGate` adds same-host cross-process concurrency leases
+  for generation calls, including protocol aliases that use the same endpoint
+  and credential. Quota observations/reservations and learned cooldowns remain
+  process-local, and no cross-host quota guarantee is claimed. This source
+  audit does not establish the live instance's deployed revision; reconcile it
+  as part of the remaining E0 work.
