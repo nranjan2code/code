@@ -35,6 +35,13 @@ pub(crate) fn mime_for(path: &str) -> &'static str {
     }
 }
 
+/// Where a frame in a page of the app may go. A preview runs in a sandboxed
+/// frame whose own policy cannot stop it navigating itself away (a script, a
+/// link or a refresh), so the embedding page is what holds it to the app's own
+/// files and the loopback origins previews are served from
+/// (`preview.rs`); an internet address is refused, whatever the frame does.
+const FRAME_POLICY: &str = "frame-src 'self' blob: data: http://127.0.0.1:* http://localhost:*";
+
 pub(crate) fn serve_file(dir: &'static Dir<'static>, path: &str) -> axum::response::Response {
     match dir.get_file(path) {
         Some(file) => {
@@ -45,11 +52,18 @@ pub(crate) fn serve_file(dir: &'static Dir<'static>, path: &str) -> axum::respon
             } else {
                 "no-cache"
             };
-            (
+            let mut response = (
                 [(CONTENT_TYPE, mime_for(path)), (CACHE_CONTROL, cache)],
                 file.contents(),
             )
-                .into_response()
+                .into_response();
+            if path.ends_with(".html") {
+                response.headers_mut().insert(
+                    axum::http::header::CONTENT_SECURITY_POLICY,
+                    axum::http::HeaderValue::from_static(FRAME_POLICY),
+                );
+            }
+            response
         }
         None => (axum::http::StatusCode::NOT_FOUND, "not found").into_response(),
     }

@@ -37,6 +37,26 @@ mod tests {
     use super::*;
     use crate::embedded_ui::referenced_assets;
 
+    /// A preview can navigate its own frame to any address; the app page is
+    /// what refuses an internet one (docs/design/66 §3.2).
+    #[test]
+    fn the_app_page_confines_frames_to_the_app_and_loopback() {
+        let response = serve_file(&CLIENT_UI, "index.html");
+        let policy = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap();
+        assert!(policy.starts_with("frame-src 'self'"), "{policy}");
+        for allowed in policy.split_whitespace().skip(1) {
+            assert!(
+                matches!(
+                    allowed,
+                    "'self'" | "blob:" | "data:" | "http://127.0.0.1:*" | "http://localhost:*"
+                ),
+                "{allowed}"
+            );
+        }
+    }
+
     /// The `/admin` version of this test exists because the failure it
     /// catches shipped three times. `/app` is served by the same code, so
     /// it gets the same proof rather than the same trust.

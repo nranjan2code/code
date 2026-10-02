@@ -264,8 +264,10 @@ async fn read_file(path: &std::path::Path) -> Result<Vec<u8>, StatusCode> {
 }
 
 /// What a page may do. It can load its own files and run its own script; it
-/// cannot reach any other origin, so a preview stays offline as it is in the
-/// Canvas's single-page frame. Only the app's own origins may embed it.
+/// cannot fetch from any other origin, so a preview stays offline as it is in
+/// the Canvas's single-page frame. It cannot be told where its own frame goes:
+/// that is the embedding app's `frame-src` (`embedded_ui.rs`). Only the app's
+/// own origins may embed it.
 const POLICY: &str = "default-src 'self' data: blob:; \
 script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; \
 style-src 'self' 'unsafe-inline'; \
