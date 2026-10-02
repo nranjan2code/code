@@ -44,6 +44,7 @@ pub mod security_events;
 pub mod seed;
 pub mod session_search;
 pub mod skills;
+pub mod social;
 pub mod state;
 pub mod trash;
 
@@ -5142,9 +5143,9 @@ impl Core {
         // Refined from each rung's measured prefill time; 0 means unknown
         // (no rung has reported one yet), in which case no rung is skipped.
         let mut prefill_tps_hint = 0.0_f64;
-
         // A transport failure ended the ladder before it settled.
         let mut incomplete = false;
+
         while let Some(target) = ladder.next_rung() {
             if cancel.is_cancelled() {
                 signals.push("probe cancelled before convergence".into());
@@ -5252,8 +5253,8 @@ impl Core {
             }
             if let Some(e) = transport_error {
                 signals.push(format!("rung {target} probe failed: {e}"));
-                break;
                 incomplete = true;
+                break;
             }
             if let Some(msg) = rejected {
                 signals.push(format!("rung {target} rejected: {msg}"));
@@ -5284,7 +5285,6 @@ impl Core {
             ladder.report(target, true, followed);
         }
 
-        let verified_window = ladder.verified_window();
         // An interrupted probe (a real turn wants the model) or one that never
         // got a verdict from the provider has measured nothing. Caching its
         // fallback horizon would replace the bound profile with a guess that
@@ -5293,6 +5293,7 @@ impl Core {
         if cancel.is_cancelled() || rungs.is_empty() {
             return None;
         }
+        let verified_window = ladder.verified_window();
         let horizon = ladder.result().unwrap_or_else(|| {
             let largest_followed = rungs
                 .iter()
@@ -11539,7 +11540,6 @@ mod capacity_probe_tests {
 
         vak_config::clear_override("VAK_OLLAMA_BASE_URL");
     }
-}
 
     /// Answers the first probe request only once the test has handed it the
     /// probe's cancellation token, then cancels the probe (a real turn
@@ -11676,6 +11676,7 @@ mod capacity_probe_tests {
     async fn a_rung_cancelled_after_one_sample_is_not_recorded_as_a_failure() {
         interrupted_probe_leaves_the_bound_profile(true).await;
     }
+}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]

@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "name": "social-youtube",
+  "version": "1.0.0",
+  "description": "Guidance for the owner-only YouTube Data API search preview; no agent-facing API tool is provided.",
+  "license": "MIT",
+  "homepage": "https://developers.google.com/youtube/v3",
+  "components": {
+    "skills": [
+      "skills"
+    ],
+    "presentation": [
+      "presentation"
+    ]
+  },
+  "native_adapter": "youtube-data-api-v3"
+}

@@ -650,6 +650,12 @@ export default function Settings() {
   const [inheritedPluginSources, setInheritedPluginSources] = createSignal<api.MarketplaceSource[]>([]);
   const [marketplaceEntries, setMarketplaceEntries] = createSignal<api.MarketplaceEntry[]>([]);
   const [marketplaceErrors, setMarketplaceErrors] = createSignal<string[]>([]);
+  const [socialConnectors, setSocialConnectors] = createSignal<api.SocialConnector[]>([]);
+  const [youtubeKeyConfigured, setYoutubeKeyConfigured] = createSignal(false);
+  const [youtubeKeyInput, setYoutubeKeyInput] = createSignal("");
+  const [youtubeQuery, setYoutubeQuery] = createSignal("");
+  const [youtubeResults, setYoutubeResults] = createSignal<api.YoutubePreviewItem[]>([]);
+  const [youtubeBusy, setYoutubeBusy] = createSignal(false);
   const [capabilityView, setCapabilityView] = createSignal<"discover" | "mine" | "manage">("discover");
   const [discoveryQuery, setDiscoveryQuery] = createSignal("");
   const [discoveryKind, setDiscoveryKind] = createSignal<"all" | "skills" | "plugins">("all");
@@ -735,6 +741,10 @@ export default function Settings() {
 
   async function refreshCapabilities() {
     try {
+      const socialResult = await api.listSocialConnectors(activeAgentId());
+      setSocialConnectors(socialResult.connectors ?? []);
+      const youtubeKey = await api.youtubeKeyStatus(activeAgentId());
+      setYoutubeKeyConfigured(youtubeKey.configured);
       if (scope() === "user") {
         const [skillResult, hookResult, pluginResult, sourceResult, catalogResult] = await Promise.all([
           api.listSkills(activeAgentId()),
@@ -790,6 +800,47 @@ export default function Settings() {
     } catch (e) {
       setNotice({ kind: "error", text: `Plugin action failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally { setPluginBusy(false); }
+  }
+
+  async function installSocialGuidance(id: string) {
+    if (pluginBusy()) return;
+    setPluginBusy(true);
+    try {
+      await api.installSocialConnector(id, capabilityScope(), activeAgentId());
+      await refreshCapabilities();
+      setNotice({ kind: "info", text: `${id} installed disabled. Enable its guidance separately if you want it.` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not install ${id}: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setPluginBusy(false);
+    }
+  }
+
+  async function toggleSocialGuidance(plugin: api.InstalledPlugin) {
+    if (pluginBusy()) return;
+    setPluginBusy(true);
+    try {
+      await api.pluginAction(plugin.name, plugin.enabled ? "disable" : "enable", plugin.scope, activeAgentId());
+      await refreshCapabilities();
+      setNotice({ kind: "info", text: `${plugin.name} guidance ${plugin.enabled ? "disabled" : "enabled"}.` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not change ${plugin.name}: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setPluginBusy(false);
+    }
+  }
+
+  async function installSocialPresentationPack(id: string) {
+    if (pluginBusy()) return;
+    setPluginBusy(true);
+    try {
+      const result = await api.installSocialPresentations(id, activeAgentId());
+      setNotice({ kind: "info", text: `${result.registered} ${id.replace("social-", "")} layouts added as inactive previews. Choose which layout to activate in Presentation settings.` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not add presentation layouts: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setPluginBusy(false);
+    }
   }
 
   async function installPlugin(update = false) {
@@ -2162,6 +2213,29 @@ export default function Settings() {
               </nav>
               <Show when={capabilityView() === "discover"}>
                 <div class="capability-discover-intro"><strong>Explore what is available</strong><span>Skills already on this device and packages from your registered catalogs appear here. Catalog listings are not installed automatically.</span></div>
+                <Group title="Social platform add-ons">
+                  <p class="settings-hint">Each platform is managed separately. YouTube supports an owner-only API preview; Reddit, X and LinkedIn remain unavailable. TikTok is not included.</p>
+                  <div class="capability-list"><For each={socialConnectors()}>{(connector) => {
+                    const plugin = [...plugins(), ...inheritedPlugins()].find((item) => item.name === connector.id);
+                    return <div class="capability-item capability-overview-row"><CapabilityIcon name={connector.platform} /><div><strong>{connector.platform}</strong><small>{connector.summary}</small><small>{connector.reason}</small><a href={connector.official_api} target="_blank" rel="noreferrer noopener">Official API information</a></div><span class="capability-state muted">{connector.readiness === "owner_preview" ? "Owner preview" : "API unavailable"}</span><Show when={plugin} fallback={<button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id)}>Install guidance</button>}><span class="capability-state" classList={{ ready: plugin!.enabled, muted: !plugin!.enabled }}>{plugin!.enabled ? "Guidance enabled" : "Guidance disabled"}</span><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void toggleSocialGuidance(plugin!)}>{plugin!.enabled ? "Disable" : "Enable"} guidance</button><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialPresentationPack(connector.id)}>Add presentation layouts</button></Show></div>;
+                  }}</For></div>
+                  <Show when={socialConnectors().some((connector) => connector.id === "social-youtube" && connector.readiness === "owner_preview") && [...plugins(), ...inheritedPlugins()].some((plugin) => plugin.name === "social-youtube" && plugin.enabled)}>
+                    <div class="social-youtube-preview">
+                      <h3>YouTube owner-only search preview</h3>
+                      <p class="settings-hint">A Google Cloud YouTube Data API key is separate from a Google or YouTube account and YouTube Premium. Each search consumes your project's search quota. Non-authorized data is subject to YouTube's refresh or deletion rules. Results appear here only, are not saved by Vakyartha, and are not sent to the agent.</p>
+                      <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer noopener">Create or manage a Google Cloud API key</a>
+                      <Show when={!youtubeKeyConfigured()}>
+                        <label>Google Cloud YouTube Data API key<input type="password" autocomplete="new-password" value={youtubeKeyInput()} onInput={(event) => setYoutubeKeyInput(event.currentTarget.value)} placeholder="Paste key here; it will not be shown again" /></label>
+                        <button type="button" class="settings-button" disabled={youtubeBusy() || !youtubeKeyInput().trim()} onClick={async () => { setYoutubeBusy(true); try { await api.saveYoutubeKey(youtubeKeyInput(), activeAgentId()); setYoutubeKeyInput(""); setYoutubeKeyConfigured(true); setNotice({ kind: "info", text: "YouTube API key saved securely for this Agent." }); } catch (error) { setNotice({ kind: "error", text: `Could not save YouTube API key: ${(error as Error).message}` }); } finally { setYoutubeBusy(false); } }}>Save key</button>
+                      </Show>
+                      <Show when={youtubeKeyConfigured()}>
+                        <p class="capability-state ready">API key saved for {agentName()}</p>
+                        <div class="settings-actions"><input aria-label="YouTube search query" value={youtubeQuery()} onInput={(event) => setYoutubeQuery(event.currentTarget.value)} maxlength={200} placeholder="Search public YouTube videos" /><button type="button" class="settings-button" disabled={youtubeBusy() || !youtubeQuery().trim()} onClick={async () => { setYoutubeBusy(true); try { const result = await api.searchYoutubePreview(youtubeQuery(), 5, activeAgentId()); setYoutubeResults(result.items); } catch (error) { setNotice({ kind: "error", text: `YouTube search failed: ${(error as Error).message}` }); } finally { setYoutubeBusy(false); } }}>{youtubeBusy() ? "Searching…" : "Search"}</button><button type="button" class="settings-button danger" disabled={youtubeBusy()} onClick={async () => { try { await api.removeYoutubeKey(activeAgentId()); setYoutubeKeyConfigured(false); setYoutubeResults([]); setNotice({ kind: "info", text: "YouTube API key removed." }); } catch (error) { setNotice({ kind: "error", text: `Could not remove YouTube API key: ${(error as Error).message}` }); } }}>Disconnect key</button></div>
+                        <div class="capability-list"><For each={youtubeResults()}>{(item) => <article class="capability-item"><a href={item.url} target="_blank" rel="noreferrer noopener">{item.title}</a><small>{item.channel_title} · {item.published_at}</small><p>{item.description}</p></article>}</For></div>
+                      </Show>
+                    </div>
+                  </Show>
+                </Group>
                 <div class="capability-discover-search"><Icon name="search" /><input aria-label="Search capabilities" placeholder="Search skills and catalog packages" value={discoveryQuery()} onInput={(event) => setDiscoveryQuery(event.currentTarget.value)} /></div>
                 <div class="capability-discover-filters" role="group" aria-label="Capability type">
                   <For each={(["all", "skills", "plugins"] as const)}>{(kind) => <button type="button" classList={{ active: discoveryKind() === kind }} onClick={() => setDiscoveryKind(kind)}>{kind === "all" ? "All" : kind === "skills" ? "Skills" : "Packages"}</button>}</For>

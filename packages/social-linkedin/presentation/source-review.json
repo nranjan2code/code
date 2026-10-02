@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "id": "social.linkedin.source-review",
+  "revision": 1,
+  "accepts": [
+    "social.linkedin.source_review"
+  ],
+  "root": {
+    "primitive": "stack",
+    "props": {},
+    "children": [
+      {
+        "primitive": "title",
+        "props": {
+          "text": {
+            "kind": "text",
+            "value": "LinkedIn source review"
+          }
+        },
+        "children": []
+      },
+      {
+        "primitive": "callout",
+        "props": {
+          "text": {
+            "kind": "binding",
+            "path": "$.summary",
+            "required": false,
+            "empty": "omit"
+          }
+        },
+        "children": []
+      },
+      {
+        "primitive": "source_list",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.sources",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "section",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      },
+      {
+        "primitive": "takeaway_list",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.takeaways",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "section",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      }
+    ]
+  },
+  "fallback": {
+    "kind": "document"
+  },
+  "accessibility": {
+    "summary": {
+      "path": "$.summary",
+      "required": false,
+      "empty": "empty_text"
+    }
+  },
+  "metadata": {
+    "platform": "LinkedIn",
+    "purpose": "LinkedIn source review",
+    "description": "Present only explicitly approved and user-authorized information, preserve source context, and avoid inferring member attributes. This view puts provenance before synthesis.",
+    "version": "1"
+  }
+}

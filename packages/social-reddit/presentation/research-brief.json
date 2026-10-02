@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "id": "social.reddit.research-brief",
+  "revision": 1,
+  "accepts": [
+    "social.reddit.research_brief"
+  ],
+  "root": {
+    "primitive": "research",
+    "props": {
+      "*": {
+        "kind": "binding",
+        "path": "$",
+        "required": true,
+        "empty": "omit"
+      }
+    },
+    "children": [
+      {
+        "primitive": "takeaway_list",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.takeaways",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "section",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      },
+      {
+        "primitive": "source_list",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.sources",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "section",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      }
+    ]
+  },
+  "fallback": {
+    "kind": "document"
+  },
+  "accessibility": {
+    "summary": {
+      "path": "$.summary",
+      "required": false,
+      "empty": "empty_text"
+    }
+  },
+  "metadata": {
+    "platform": "Reddit",
+    "purpose": "Reddit research brief",
+    "description": "Compare recurring themes across threads, keep claims linked to the originating discussion, and label comment coverage as partial.",
+    "version": "1"
+  }
+}

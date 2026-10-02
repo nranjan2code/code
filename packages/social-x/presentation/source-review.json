@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "id": "social.x.source-review",
+  "revision": 1,
+  "accepts": [
+    "social.x.source_review"
+  ],
+  "root": {
+    "primitive": "stack",
+    "props": {},
+    "children": [
+      {
+        "primitive": "title",
+        "props": {
+          "text": {
+            "kind": "text",
+            "value": "X source review"
+          }
+        },
+        "children": []
+      },
+      {
+        "primitive": "callout",
+        "props": {
+          "text": {
+            "kind": "binding",
+            "path": "$.summary",
+            "required": false,
+            "empty": "omit"
+          }
+        },
+        "children": []
+      },
+      {
+        "primitive": "source_list",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.sources",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "section",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      },
+      {
+        "primitive": "takeaway_list",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.takeaways",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "section",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      }
+    ]
+  },
+  "fallback": {
+    "kind": "document"
+  },
+  "accessibility": {
+    "summary": {
+      "path": "$.summary",
+      "required": false,
+      "empty": "empty_text"
+    }
+  },
+  "metadata": {
+    "platform": "X",
+    "purpose": "X source review",
+    "description": "Separate observed posts from interpretation, show posting time and source links, and make search coverage limits visible. This view puts provenance before synthesis.",
+    "version": "1"
+  }
+}

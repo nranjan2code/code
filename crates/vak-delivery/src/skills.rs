@@ -705,6 +705,18 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "media.video",
             "media.audio",
             "research.synthesis",
+            "social.reddit.research_brief",
+            "social.reddit.source_review",
+            "social.reddit.takeaway_board",
+            "social.youtube.research_brief",
+            "social.youtube.source_review",
+            "social.youtube.takeaway_board",
+            "social.x.research_brief",
+            "social.x.source_review",
+            "social.x.takeaway_board",
+            "social.linkedin.research_brief",
+            "social.linkedin.source_review",
+            "social.linkedin.takeaway_board",
             "itinerary",
             "coding.diff",
             "test.report",
@@ -1847,7 +1859,19 @@ fn validate_payload(
                     })
                 })
         }
-        "research.synthesis" => array(payload, "sources").is_some_and(|sources| {
+        "research.synthesis"
+        | "social.reddit.research_brief"
+        | "social.reddit.source_review"
+        | "social.reddit.takeaway_board"
+        | "social.youtube.research_brief"
+        | "social.youtube.source_review"
+        | "social.youtube.takeaway_board"
+        | "social.x.research_brief"
+        | "social.x.source_review"
+        | "social.x.takeaway_board"
+        | "social.linkedin.research_brief"
+        | "social.linkedin.source_review"
+        | "social.linkedin.takeaway_board" => array(payload, "sources").is_some_and(|sources| {
             sources.iter().all(|s| strings(s, &["title", "url"]))
                 && array(payload, "takeaways").is_some_and(|items| {
                     items.iter().all(|item| {

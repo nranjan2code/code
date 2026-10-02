@@ -1163,6 +1163,18 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "simulation": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Simulation")} />,
   // 1. Research & Synthesis (research.synthesis, research_brief, research, news)
   "research.synthesis": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.reddit.research_brief": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.reddit.source_review": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.reddit.takeaway_board": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.youtube.research_brief": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.youtube.source_review": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.youtube.takeaway_board": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.x.research_brief": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.x.source_review": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.x.takeaway_board": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.linkedin.research_brief": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.linkedin.source_review": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
+  "social.linkedin.takeaway_board": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
   "research_brief": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
   "news": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
 

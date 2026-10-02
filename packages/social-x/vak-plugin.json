@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "name": "social-x",
+  "version": "1.0.0",
+  "description": "Bounded reads through X's developer API; usage may be charged and requires a hard spend ceiling.",
+  "license": "MIT",
+  "homepage": "https://developer.x.com/",
+  "components": {
+    "skills": [
+      "skills"
+    ],
+    "presentation": [
+      "presentation"
+    ]
+  },
+  "native_adapter": "x-api-v2"
+}

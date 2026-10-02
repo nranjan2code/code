@@ -80,6 +80,14 @@ pub struct TaskDeps {
     /// `readonly: true`; children get these plus ReadOnly permission mode.
     pub read_only_tools: Vec<Arc<dyn Tool>>,
     pub max_turns: usize,
+    /// The parent's measured context budget, inherited by every worker.
+    pub capacity: Option<vak_context::capacity::CapacityProfile>,
+    pub capacity_key: Option<vak_context::capacity::ProfileKey>,
+    pub max_output: u64,
+    pub declared_window: u64,
+    pub ladder: Vec<(Arc<dyn Provider>, String)>,
+    pub ladder_provider_names: Vec<String>,
+    pub provider_name: Option<String>,
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
     pub request_timeout: Option<std::time::Duration>,
@@ -935,6 +943,10 @@ impl TaskTool {
         cfg.mcp_tool_index = self.deps.mcp_tool_index.clone().unwrap_or_default();
         cfg.input_normalizer = self.deps.input_normalizer.clone();
         cfg.max_turns = self.deps.max_turns;
+        cfg.capacity = self.deps.capacity.clone();
+        cfg.capacity_key = self.deps.capacity_key.clone();
+        cfg.max_output = self.deps.max_output;
+        cfg.declared_window = self.deps.declared_window;
         cfg.max_retries = self.deps.max_retries;
         cfg.retry_base_backoff_ms = self.deps.retry_base_backoff_ms;
         cfg.request_timeout = self.deps.request_timeout;
@@ -942,6 +954,9 @@ impl TaskTool {
         cfg.run_retry_attempts = self.deps.run_retry_attempts;
         cfg.run_retry_base_backoff_ms = self.deps.run_retry_base_backoff_ms;
         cfg.dispatch_ceiling = self.deps.dispatch_ceiling;
+        cfg.ladder = self.deps.ladder.clone();
+        cfg.ladder_provider_names = self.deps.ladder_provider_names.clone();
+        cfg.provider_name = self.deps.provider_name.clone();
         cfg.spend_gate = self.deps.spend_gate.clone();
         cfg.outcome = child_outcome.clone();
         cfg.parallel_tools = true;

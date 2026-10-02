@@ -54,6 +54,16 @@ contract even when the source package is imported from another ecosystem.
 }
 ```
 
+`native_adapter` is an optional Vak-owned manifest field for integrations
+whose execution needs a compiled broker-owned implementation. Its value must
+resolve in Vak's closed native adapter registry and must match the registering
+plugin identity. A package cannot supply adapter code, HTTP hosts, credentials,
+OAuth handlers, scopes, or capability grants; those details come only from the
+compiled registration. An unknown or cross-plugin adapter id fails package
+inspection. Registering an adapter is still not connection, enablement, or
+permission. A gated registration with no compiled executor contributes no
+callable tool.
+
 An installed record freezes:
 
 - normalized plugin id and semantic version;

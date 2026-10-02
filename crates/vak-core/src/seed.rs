@@ -95,6 +95,32 @@ const PLUGIN_SKILLS: &[(&str, &str, &str, &[&str])] = &[
     ),
 ];
 
+/// Social packages contain instructions only and are installed disabled.
+/// Their package bytes are embedded so setup works from installed binaries,
+/// not only from a source checkout.
+const SOCIAL_PLUGINS: &[(&str, &str, &str)] = &[
+    (
+        "social-linkedin",
+        include_str!("../../../packages/social-linkedin/vak-plugin.json"),
+        include_str!("../../../packages/social-linkedin/skills/social-linkedin/SKILL.md"),
+    ),
+    (
+        "social-reddit",
+        include_str!("../../../packages/social-reddit/vak-plugin.json"),
+        include_str!("../../../packages/social-reddit/skills/social-reddit/SKILL.md"),
+    ),
+    (
+        "social-x",
+        include_str!("../../../packages/social-x/vak-plugin.json"),
+        include_str!("../../../packages/social-x/skills/social-x/SKILL.md"),
+    ),
+    (
+        "social-youtube",
+        include_str!("../../../packages/social-youtube/vak-plugin.json"),
+        include_str!("../../../packages/social-youtube/skills/social-youtube/SKILL.md"),
+    ),
+];
+
 const SEED_MANIFEST: &str = ".seed-manifest.json";
 
 pub fn seed_shared_capabilities() -> Result<(), String> {
@@ -103,6 +129,7 @@ pub fn seed_shared_capabilities() -> Result<(), String> {
     seed_skills(&workspace.skills())
         .map_err(|error| format!("Shared skill seed failed: {error}"))?;
     seed_plugins(&root).map_err(|error| format!("Shared plugin seed failed: {error}"))?;
+    seed_social_plugins(&root).map_err(|error| format!("Social add-on seed failed: {error}"))?;
     cleanup_retired_plugins(&root)
         .map_err(|error| format!("Retired plugin cleanup failed: {error}"))?;
     let hooks = [HookConfig {
@@ -315,6 +342,52 @@ fn digest_of_directory(root: &Path) -> Result<String, Box<dyn std::error::Error>
     Ok(inspection.digest)
 }
 
+fn seed_social_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let store = PluginStore::new(root);
+    let staging = root.join(".social-seed-staging");
+    let _ = std::fs::remove_dir_all(&staging);
+    for (name, manifest, skill) in SOCIAL_PLUGINS {
+        let package = staging.join(name);
+        let skill_dir = package.join("skills");
+        std::fs::create_dir_all(&skill_dir)?;
+        std::fs::write(package.join("vak-plugin.json"), manifest)?;
+        std::fs::write(skill_dir.join("SKILL.md"), skill)?;
+        if let Some(presentation_files) = crate::social::presentations(name) {
+            let presentation_dir = package.join("presentation");
+            std::fs::create_dir_all(&presentation_dir)?;
+            for (relative, contents) in presentation_files {
+                let file_name = relative.rsplit('/').next().unwrap_or(relative);
+                std::fs::write(presentation_dir.join(file_name), contents)?;
+            }
+        }
+        if let Some(existing) = store
+            .list()?
+            .into_iter()
+            .find(|plugin| plugin.name == *name)
+        {
+            // Never reset an operator's enabled state or overwrite an edited
+            // package. A changed built-in package goes through normal review.
+            if existing.digest == digest_of_directory(&package)? {
+                continue;
+            }
+            continue;
+        }
+        let installed = store.install_local(
+            &package,
+            InstallOptions {
+                scope: InstallScope::User,
+                allow_unlicensed: false,
+            },
+        )?;
+        // install_local is disabled by construction; do not call enable here.
+        if installed.enabled {
+            return Err(format!("social add-on {name} did not remain disabled").into());
+        }
+    }
+    let _ = std::fs::remove_dir_all(&staging);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -350,5 +423,51 @@ mod tests {
         std::fs::write(&package, "operator edit\n").expect("edit plugin package");
         let _ = seed_shared_capabilities();
         assert!(package.is_file(), "edited plugin package was overwritten");
+
+        for (name, _, _) in SOCIAL_PLUGINS {
+            let social = plugins
+                .iter()
+                .find(|plugin| plugin.name == *name)
+                .expect("social add-on is seeded");
+            assert!(
+                !social.enabled,
+                "{name} must remain disabled until opted in"
+            );
+            assert_eq!(social.scope, InstallScope::User);
+        }
+    }
+
+    #[test]
+    fn installed_social_seed_matches_every_embedded_package_asset() {
+        let dir = tempfile::tempdir().expect("temporary plugin root");
+        seed_social_plugins(dir.path()).expect("seed social packages");
+        let installed = PluginStore::new(dir.path()).list().expect("list packages");
+
+        for (name, manifest, skill) in SOCIAL_PLUGINS {
+            let plugin = installed
+                .iter()
+                .find(|plugin| plugin.name == *name)
+                .unwrap_or_else(|| panic!("{name} was not installed from the built-in seed"));
+            assert!(!plugin.enabled, "{name} must seed disabled");
+            assert_eq!(
+                std::fs::read(plugin.package_path.join("vak-plugin.json")).expect("manifest"),
+                manifest.as_bytes(),
+                "{name} manifest drifted from its source package"
+            );
+            assert_eq!(
+                std::fs::read(plugin.package_path.join("skills/SKILL.md")).expect("skill"),
+                skill.as_bytes(),
+                "{name} prompt drifted from its source package"
+            );
+            for (relative, contents) in crate::social::presentations(name)
+                .unwrap_or_else(|| panic!("{name} presentation seed is missing"))
+            {
+                assert_eq!(
+                    std::fs::read(plugin.package_path.join(relative)).expect("presentation"),
+                    contents.as_bytes(),
+                    "{name} presentation {relative} drifted from its source package"
+                );
+            }
+        }
     }
 }

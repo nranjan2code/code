@@ -844,6 +844,20 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}", delete(delete_session))
         .route("/sessions/{id}/restore", post(restore_session))
         .route("/skills", get(list_skills))
+        .route("/social/connectors", get(list_social_connectors))
+        .route(
+            "/social/youtube/key",
+            get(youtube_key_status).put(save_youtube_key).delete(remove_youtube_key),
+        )
+        .route("/social/youtube/search", post(youtube_search_preview))
+        .route(
+            "/social/connectors/{id}/install",
+            post(install_social_connector),
+        )
+        .route(
+            "/social/connectors/{id}/presentations/install",
+            post(install_social_presentations),
+        )
         .route("/commands", get(list_commands))
         .route("/plugins", get(list_plugins))
         .route("/plugins/catalog", get(plugin_catalog))
@@ -10654,6 +10668,7 @@ async fn list_plugins(
                             "version": plugin.version,
                             "digest": plugin.digest,
                             "description": plugin.description,
+                            "native_adapter": plugin.native_adapter,
                             "format": plugin.format,
                             "scope": plugin.scope,
                             "enabled": plugin.enabled,
@@ -10670,6 +10685,446 @@ async fn list_plugins(
         }
     }
     Json(serde_json::json!({ "plugins": plugins })).into_response()
+}
+
+async fn list_social_connectors(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Query(query): Query<SocialAgentQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    let core = scoped_core!(&state, None, query.agent.as_deref());
+    let mut connectors = vak_core::social::CONNECTORS.to_vec();
+    let youtube_enabled = social_plugin_enabled(&core, "social-youtube");
+    let youtube_adapter = youtube_owner_preview_adapter();
+    if let Some(youtube) = connectors
+        .iter_mut()
+        .find(|connector| connector.id == "social-youtube")
+    {
+        match (youtube_enabled, youtube_adapter) {
+            (true, Some(adapter)) => {
+                youtube.readiness = vak_core::social::Readiness::OwnerPreview;
+                youtube.reason = adapter.gate_reason;
+            }
+            _ => {
+                youtube.readiness = vak_core::social::Readiness::Blocked;
+                youtube.reason = "Install and enable the YouTube add-on to use its owner-only API search preview.";
+            }
+        }
+    }
+    Json(serde_json::json!({
+        "connectors": connectors,
+        "notice": "YouTube offers an owner-only API search preview. Reddit, X, and LinkedIn remain unavailable pending their platform-specific gates."
+    }))
+    .into_response()
+}
+
+fn social_plugin_enabled(core: &vak_core::Core, name: &str) -> bool {
+    let Ok(workspace_plugins) = plugin_store(core, InstallScope::Workspace).list() else {
+        return false;
+    };
+    if let Some(workspace_plugin) = workspace_plugins.iter().find(|item| item.name == name) {
+        return workspace_plugin.enabled;
+    }
+    plugin_store(core, InstallScope::User)
+        .list()
+        .ok()
+        .is_some_and(|items| items.iter().any(|item| item.name == name && item.enabled))
+}
+
+fn youtube_owner_preview_adapter()
+-> Option<&'static vak_plugin::native_adapter::NativeAdapterRegistration> {
+    vak_plugin::native_adapter::native_adapter_for_plugin("social-youtube").filter(|adapter| {
+        adapter.id == "youtube-data-api-v3"
+            && adapter.availability == vak_plugin::native_adapter::AdapterAvailability::OwnerPreview
+            && adapter.executor
+                == vak_plugin::native_adapter::CompiledExecutor::YoutubeOwnerSearchPreview
+            && adapter.auth == vak_plugin::native_adapter::AdapterAuth::ApiKey
+            && adapter.api_host == "www.googleapis.com"
+    })
+}
+
+#[derive(serde::Deserialize)]
+struct SocialAgentQuery {
+    agent: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct YoutubeKeyRequest {
+    key: String,
+}
+
+#[derive(serde::Deserialize)]
+struct YoutubeSearchRequest {
+    query: String,
+    #[serde(default = "youtube_default_results")]
+    max_results: u8,
+}
+
+fn youtube_default_results() -> u8 {
+    5
+}
+
+async fn youtube_key_status(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Query(query): Query<SocialAgentQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    let core = scoped_core!(&state, None, query.agent.as_deref());
+    let scope = core.scope();
+    let Some(adapter) = youtube_owner_preview_adapter() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    Json(serde_json::json!({ "configured": vak_config::read_env_file_var(&scope.env_file(), adapter.credential_binding).is_some() })).into_response()
+}
+
+async fn save_youtube_key(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Query(query): Query<SocialAgentQuery>,
+    Json(body): Json<YoutubeKeyRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    let core = scoped_core!(&state, None, query.agent.as_deref());
+    let scope = core.scope();
+    let Some(adapter) = youtube_owner_preview_adapter() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let key = body.key.trim();
+    if key.is_empty() || key.len() > 512 || key.chars().any(char::is_control) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Enter a valid YouTube Data API key." })),
+        )
+            .into_response();
+    }
+    match vak_config::upsert_env_file(&scope.env_file(), adapter.credential_binding, key) {
+        Ok(()) => Json(serde_json::json!({ "configured": true })).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Could not store the key in secure credential storage." }))).into_response(),
+    }
+}
+
+async fn remove_youtube_key(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Query(query): Query<SocialAgentQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    let core = scoped_core!(&state, None, query.agent.as_deref());
+    let scope = core.scope();
+    let Some(adapter) = youtube_owner_preview_adapter() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match vak_config::remove_env_file_key(&scope.env_file(), adapter.credential_binding) {
+        Ok(()) => Json(serde_json::json!({ "configured": false })).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Could not remove the key from secure credential storage." }))).into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct YoutubeApiResponse {
+    #[serde(default)]
+    items: Vec<YoutubeApiItem>,
+}
+#[derive(serde::Deserialize)]
+struct YoutubeApiItem {
+    id: YoutubeApiId,
+    snippet: YoutubeApiSnippet,
+}
+#[derive(serde::Deserialize)]
+struct YoutubeApiId {
+    #[serde(default)]
+    video_id: Option<String>,
+    #[serde(default)]
+    channel_id: Option<String>,
+}
+#[derive(serde::Deserialize)]
+struct YoutubeApiSnippet {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    channel_title: String,
+    #[serde(default)]
+    published_at: String,
+}
+
+async fn youtube_search_preview(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Query(query): Query<SocialAgentQuery>,
+    Json(body): Json<YoutubeSearchRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    let core = scoped_core!(&state, None, query.agent.as_deref());
+    let scope = core.scope();
+    if !social_plugin_enabled(&core, "social-youtube") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Enable the YouTube add-on before searching." })),
+        )
+            .into_response();
+    }
+    let Some(adapter) = youtube_owner_preview_adapter() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "The compiled YouTube preview adapter is unavailable." })),
+        )
+            .into_response();
+    };
+    let search = body.query.trim();
+    if search.is_empty()
+        || search.len() > 200
+        || search.chars().any(char::is_control)
+        || !(1..=adapter.max_results).contains(&body.max_results)
+    {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Search text must be 1–200 characters and result count must be 1–10." }))).into_response();
+    }
+    let Some(key) = vak_config::read_env_file_var(&scope.env_file(), adapter.credential_binding)
+    else {
+        return (
+            StatusCode::PRECONDITION_FAILED,
+            Json(serde_json::json!({ "error": "Add a YouTube Data API key first." })),
+        )
+            .into_response();
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(u64::from(
+            adapter.timeout_seconds,
+        )))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    {
+        Ok(client) => client,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let search_url = format!("https://{}/youtube/v3/search", adapter.api_host);
+    let max_results = body.max_results.to_string();
+    let response = match client
+        .get(search_url)
+        .query(&[
+            ("part", "snippet"),
+            ("type", "video"),
+            ("safeSearch", "moderate"),
+            ("q", search),
+            ("maxResults", max_results.as_str()),
+            ("key", key.as_str()),
+        ])
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": "YouTube API request failed or timed out." })),
+            )
+                .into_response();
+        }
+    };
+    if !response.status().is_success() {
+        return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": "YouTube API rejected this key or request. Check the Google Cloud API and quota settings." }))).into_response();
+    }
+    if response
+        .content_length()
+        .is_some_and(|len| len as usize > adapter.max_response_bytes)
+    {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": "YouTube response exceeded the size limit." })),
+        )
+            .into_response();
+    }
+    use futures::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(chunk) if bytes.len().saturating_add(chunk.len()) <= adapter.max_response_bytes => bytes.extend_from_slice(&chunk),
+            _ => return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({ "error": "YouTube response exceeded the size limit or could not be read." }))).into_response(),
+        }
+    }
+    let data = match serde_json::from_slice::<YoutubeApiResponse>(&bytes) {
+        Ok(data) => data,
+        Err(_) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": "YouTube returned an invalid response." })),
+            )
+                .into_response();
+        }
+    };
+    let items = data.items.into_iter().filter_map(|item| {
+        let (kind, id) = item.id.video_id.map(|id| ("video", id)).or_else(|| item.id.channel_id.map(|id| ("channel", id)))?;
+        if id.is_empty() || id.len() > 128 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') { return None; }
+        let url = if kind == "video" { format!("https://www.youtube.com/watch?v={id}") } else { format!("https://www.youtube.com/channel/{id}") };
+        Some(serde_json::json!({ "kind": kind, "id": id, "url": url, "title": item.snippet.title, "description": item.snippet.description, "channel_title": item.snippet.channel_title, "published_at": item.snippet.published_at }))
+    }).collect::<Vec<_>>();
+    Json(serde_json::json!({ "items": items, "notice": "Human-only preview. Results are returned to this screen and are not sent to the agent or saved to conversation history." })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct SocialConnectorInstall {
+    scope: InstallScope,
+    #[serde(default)]
+    agent: Option<String>,
+}
+
+async fn install_social_connector(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<SocialConnectorInstall>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some((manifest, skill)) = vak_core::social::package(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let core = scoped_core!(&state, None, request.agent.as_deref());
+    let store = plugin_store(&core, request.scope);
+    let staging = store
+        .packages_root()
+        .join("social-staging")
+        .join(uuid::Uuid::now_v7().to_string());
+    let result = (|| -> Result<_, vak_plugin::PluginError> {
+        std::fs::create_dir_all(staging.join("skills")).map_err(|source| {
+            vak_plugin::PluginError::Io {
+                path: staging.clone(),
+                source,
+            }
+        })?;
+        std::fs::write(staging.join("vak-plugin.json"), manifest).map_err(|source| {
+            vak_plugin::PluginError::Io {
+                path: staging.join("vak-plugin.json"),
+                source,
+            }
+        })?;
+        std::fs::write(staging.join("skills/SKILL.md"), skill).map_err(|source| {
+            vak_plugin::PluginError::Io {
+                path: staging.join("skills/SKILL.md"),
+                source,
+            }
+        })?;
+        if let Some(presentation_files) = vak_core::social::presentations(&id) {
+            let presentation_dir = staging.join("presentation");
+            std::fs::create_dir_all(&presentation_dir).map_err(|source| {
+                vak_plugin::PluginError::Io {
+                    path: presentation_dir.clone(),
+                    source,
+                }
+            })?;
+            for (relative, contents) in presentation_files {
+                let file_name = relative.rsplit('/').next().unwrap_or(relative);
+                std::fs::write(presentation_dir.join(file_name), contents).map_err(|source| {
+                    vak_plugin::PluginError::Io {
+                        path: presentation_dir.join(file_name),
+                        source,
+                    }
+                })?;
+            }
+        }
+        store.install_local(
+            &staging,
+            InstallOptions {
+                scope: request.scope,
+                allow_unlicensed: false,
+            },
+        )
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    plugin_result(result)
+}
+
+async fn install_social_presentations(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Query(query): Query<SocialAgentQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    let Some(presentation_files) = vak_core::social::presentations(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let core = scoped_core!(&state, None, query.agent.as_deref());
+    let installed = [InstallScope::Workspace, InstallScope::User]
+        .into_iter()
+        .any(|scope| {
+            plugin_store(&core, scope)
+                .list()
+                .ok()
+                .is_some_and(|items| items.iter().any(|plugin| plugin.name == id))
+        });
+    if !installed {
+        return (
+            StatusCode::PRECONDITION_FAILED,
+            Json(serde_json::json!({"error":"Install the platform add-on before adding its presentation pack."})),
+        )
+            .into_response();
+    }
+    let mut records = Vec::new();
+    for (path, bytes) in presentation_files {
+        let spec = match vak_presentation::parse_spec(bytes.as_bytes()) {
+            Ok(spec) => spec,
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error":format!("Built-in presentation pack failed validation: {error}")})),
+                )
+                    .into_response();
+            }
+        };
+        let digest = match vak_presentation::digest(&spec) {
+            Ok(digest) => digest,
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error":format!("Could not fingerprint presentation: {error}")})),
+                )
+                    .into_response();
+            }
+        };
+        records.push(vak_presentation::StoredPresentation {
+            spec,
+            digest,
+            origin: vak_presentation::PresentationOrigin {
+                scope: vak_presentation::LibraryScope::Workspace,
+                owner: core.cwd().to_string_lossy().into_owned(),
+                plugin_id: Some(id.clone()),
+                generation: Some(format!("1.0.0:{path}")),
+            },
+            enabled: false,
+        });
+    }
+    match presentation_store(&state).register_pack(records) {
+        Ok(registered) => {
+            Json(serde_json::json!({"registered":registered,"enabled":false,"plugin_id":id}))
+                .into_response()
+        }
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":error.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 async fn plugin_audit(

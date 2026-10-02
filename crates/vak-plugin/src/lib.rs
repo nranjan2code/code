@@ -1,5 +1,7 @@
 //! Secure plugin package inspection and immutable local installation.
 
+pub mod native_adapter;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -127,6 +129,10 @@ pub struct PluginManifest {
     pub publisher: Option<Publisher>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub homepage: Option<String>,
+    /// Optional selection of a compiled, reviewed native adapter. Packages
+    /// cannot provide adapter code, hosts, credential recipients, or scopes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_adapter: Option<String>,
     #[serde(default)]
     pub components: Components,
 }
@@ -788,6 +794,7 @@ fn load_manifest(
                 license: None,
                 publisher: None,
                 homepage: None,
+                native_adapter: None,
                 components: Components {
                     skills: vec![".".into()],
                     ..Components::default()
@@ -934,6 +941,7 @@ fn normalize_client_manifest(
             license,
             publisher,
             homepage,
+            native_adapter: None,
             components,
         },
         format,
@@ -1068,6 +1076,10 @@ fn normalize_and_validate_manifest(
             "schema {} is newer than supported schema {REGISTRY_SCHEMA}",
             manifest.schema
         )));
+    }
+    if let Some(adapter_id) = manifest.native_adapter.as_deref() {
+        native_adapter::validate_native_adapter(&manifest.name, adapter_id)
+            .map_err(PluginError::InvalidManifest)?;
     }
     for (kind, declared) in manifest.components.declared_paths() {
         let relative = validate_relative_path(declared)?;
@@ -1434,6 +1446,9 @@ pub struct InstalledPlugin {
     pub version: String,
     pub digest: String,
     pub description: String,
+    /// Closed-registry adapter selected by this plugin, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_adapter: Option<String>,
     pub license: Option<String>,
     pub publisher: Option<Publisher>,
     pub format: ManifestFormat,
@@ -1994,6 +2009,7 @@ impl PluginStore {
             name: inspection.manifest.name.clone(),
             version: inspection.manifest.version.clone(),
             digest: inspection.digest.clone(),
+            native_adapter: inspection.manifest.native_adapter.clone(),
             description: inspection.manifest.description,
             license: inspection.manifest.license,
             publisher: inspection.manifest.publisher,
@@ -2076,6 +2092,7 @@ impl PluginStore {
             name: inspection.manifest.name.clone(),
             version: inspection.manifest.version.clone(),
             digest: inspection.digest.clone(),
+            native_adapter: inspection.manifest.native_adapter.clone(),
             description: inspection.manifest.description,
             license: inspection.manifest.license,
             publisher: inspection.manifest.publisher,

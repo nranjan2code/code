@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "id": "social.youtube.takeaway-board",
+  "revision": 1,
+  "accepts": [
+    "social.youtube.takeaway_board"
+  ],
+  "root": {
+    "primitive": "group",
+    "props": {},
+    "children": [
+      {
+        "primitive": "title",
+        "props": {
+          "text": {
+            "kind": "text",
+            "value": "YouTube key takeaways"
+          }
+        },
+        "children": []
+      },
+      {
+        "primitive": "takeaway_list",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.takeaways",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "section",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      },
+      {
+        "primitive": "divider",
+        "props": {},
+        "children": []
+      },
+      {
+        "primitive": "source_list",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.sources",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "section",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      }
+    ]
+  },
+  "fallback": {
+    "kind": "document"
+  },
+  "accessibility": {
+    "summary": {
+      "path": "$.summary",
+      "required": false,
+      "empty": "empty_text"
+    }
+  },
+  "metadata": {
+    "platform": "YouTube",
+    "purpose": "YouTube takeaway board",
+    "description": "Summarize selected public videos with channel and publication context, keep source links visible, and distinguish metadata from video content. This view foregrounds claims and keeps citations beside each takeaway.",
+    "version": "1"
+  }
+}

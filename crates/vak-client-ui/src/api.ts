@@ -572,6 +572,7 @@ export interface InstalledPlugin {
   version: string;
   digest: string;
   description: string;
+  native_adapter?: string;
   format: string;
   scope: "workspace" | "user";
   enabled: boolean;
@@ -581,6 +582,47 @@ export interface InstalledPlugin {
   trace_id: string;
   capabilities: Record<string, unknown>;
   warnings: string[];
+}
+
+export interface SocialConnector {
+  id: string;
+  platform: string;
+  summary: string;
+  readiness: "blocked" | "owner_preview";
+  reason: string;
+  official_api: string;
+}
+
+export function listSocialConnectors(agent?: string): Promise<{ connectors: SocialConnector[]; notice: string }> {
+  return req(withAgent("/social/connectors", agent));
+}
+
+export function installSocialConnector(id: string, scope: "user" | "workspace", agent?: string): Promise<InstalledPlugin> {
+  return req(withAgent(`/social/connectors/${encodeURIComponent(id)}/install`, agent), {
+    method: "POST",
+    body: JSON.stringify({ scope, agent }),
+  });
+}
+
+export function installSocialPresentations(id: string, agent?: string): Promise<{ registered: number; enabled: false; plugin_id: string }> {
+  return req(withAgent(`/social/connectors/${encodeURIComponent(id)}/presentations/install`, agent), {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export interface YoutubePreviewItem { kind: "video" | "channel"; id: string; url: string; title: string; description: string; channel_title: string; published_at: string }
+export async function youtubeKeyStatus(agent?: string): Promise<{ configured: boolean }> {
+  return req(withAgent("/social/youtube/key", agent));
+}
+export async function saveYoutubeKey(key: string, agent?: string): Promise<{ configured: boolean }> {
+  return req(withAgent("/social/youtube/key", agent), { method: "PUT", body: JSON.stringify({ key }) });
+}
+export async function removeYoutubeKey(agent?: string): Promise<{ configured: boolean }> {
+  return req(withAgent("/social/youtube/key", agent), { method: "DELETE" });
+}
+export async function searchYoutubePreview(query: string, maxResults = 5, agent?: string): Promise<{ items: YoutubePreviewItem[]; notice: string }> {
+  return req(withAgent("/social/youtube/search", agent), { method: "POST", body: JSON.stringify({ query, max_results: maxResults }) });
 }
 
 export interface MarketplaceSource {

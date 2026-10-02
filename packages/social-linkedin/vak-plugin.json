@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "name": "social-linkedin",
+  "version": "1.0.0",
+  "description": "LinkedIn access using only API permissions approved for this app. No general post or profile search.",
+  "license": "MIT",
+  "homepage": "https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access",
+  "components": {
+    "skills": [
+      "skills"
+    ],
+    "presentation": [
+      "presentation"
+    ]
+  },
+  "native_adapter": "linkedin-api-v2"
+}
