@@ -69,6 +69,13 @@ pub trait Provider: Send + Sync {
         self.circuit_key()
     }
 
+    /// Provider capacity identity for one model request. Most routes use the
+    /// same account bucket for every model; providers with request-scoped
+    /// capacity modes can override this while keeping credentials opaque.
+    fn rate_limit_key_for_model(&self, _model: &str) -> String {
+        self.rate_limit_key()
+    }
+
     /// Refresh provider-published capacity evidence before admission when a
     /// provider offers a bounded status endpoint. Implementations must not
     /// make a model-generation call here.

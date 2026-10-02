@@ -450,7 +450,7 @@ impl RequestAdmission {
         cancel: &CancellationToken,
     ) -> Result<Self, LlmError> {
         let _ = provider.refresh_capacity(cancel).await;
-        let account_key = provider.rate_limit_key();
+        let account_key = provider.rate_limit_key_for_model(model);
         let account_gate = RateLimitGate::for_key(account_key.clone());
         let model_gate = RateLimitGate::for_model(account_key, model);
         let bedrock_mantle = route_provider == "bedrock";

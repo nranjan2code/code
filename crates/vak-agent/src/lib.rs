@@ -4873,9 +4873,9 @@ impl Agent {
         'legs: for (li, (provider_arc, model)) in legs.iter().enumerate() {
             leg_req.model = model.clone();
             let breaker_key = provider_arc.circuit_key();
-            let rate_limit_gate = vak_llm::RateLimitGate::for_key(provider_arc.rate_limit_key());
-            let model_capacity_gate =
-                vak_llm::RateLimitGate::for_model(provider_arc.rate_limit_key(), model);
+            let capacity_identity = provider_arc.rate_limit_key_for_model(model);
+            let rate_limit_gate = vak_llm::RateLimitGate::for_key(capacity_identity.clone());
+            let model_capacity_gate = vak_llm::RateLimitGate::for_model(capacity_identity, model);
             if let Some(breaker) = &self.config.circuit_breaker
                 && let Err(open) = breaker.check_key(&breaker_key)
             {

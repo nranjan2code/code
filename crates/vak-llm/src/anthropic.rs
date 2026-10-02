@@ -42,7 +42,7 @@ fn anthropic_credential_identity(base_url: &str, api_key: &str) -> String {
     crate::gate::credential_id(base_url.trim_end_matches('/'), api_key)
 }
 
-fn anthropic_account_capacity_key(base_url: &str, api_key: &str) -> String {
+fn anthropic_account_capacity_key(base_url: &str, api_key: &str, fast_mode: bool) -> String {
     let credential = anthropic_credential_identity(base_url, api_key);
     let mut keys = learned_organization_keys()
         .lock()
@@ -50,14 +50,26 @@ fn anthropic_account_capacity_key(base_url: &str, api_key: &str) -> String {
     let now = std::time::Instant::now();
     if let Some((organization, seen)) = keys.get_mut(&credential) {
         *seen = now;
-        return organization.clone();
+        return anthropic_capacity_mode_key(organization, fast_mode);
     }
-    format!("anthropic-account:credential:{credential}")
+    anthropic_capacity_mode_key(
+        &format!("anthropic-account:credential:{credential}"),
+        fast_mode,
+    )
+}
+
+fn anthropic_capacity_mode_key(identity: &str, fast_mode: bool) -> String {
+    if fast_mode {
+        format!("{identity}:fast-mode")
+    } else {
+        identity.to_string()
+    }
 }
 
 fn remember_anthropic_organization(
     base_url: &str,
     api_key: &str,
+    fast_mode: bool,
     headers: &reqwest::header::HeaderMap,
 ) -> Option<String> {
     let organization = headers
@@ -88,7 +100,7 @@ fn remember_anthropic_organization(
         keys.remove(&oldest);
     }
     keys.insert(credential, (key.clone(), now));
-    Some(key)
+    Some(anthropic_capacity_mode_key(&key, fast_mode))
 }
 
 #[derive(Debug, Clone)]
@@ -623,7 +635,12 @@ impl Provider for AnthropicProvider {
     }
 
     fn rate_limit_key(&self) -> String {
-        anthropic_account_capacity_key(&self.config.base_url, &self.config.api_key)
+        anthropic_account_capacity_key(&self.config.base_url, &self.config.api_key, false)
+    }
+
+    fn rate_limit_key_for_model(&self, model: &str) -> String {
+        let fast_mode = self.config.fast_mode && crate::models::anthropic_fast_mode_allowed(model);
+        anthropic_account_capacity_key(&self.config.base_url, &self.config.api_key, fast_mode)
     }
 
     async fn stream(
@@ -632,12 +649,6 @@ impl Provider for AnthropicProvider {
         cancel: CancellationToken,
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
-        let capacity_identity = self.rate_limit_key();
-        let capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(
-            capacity_identity.clone(),
-            &request.model,
-        );
-
         // Fast mode is an opt-in, model-restricted research preview
         // (docs/design/68 §11): discover support once per model id in the
         // background — never blocking this request — so a later request
@@ -660,6 +671,12 @@ impl Provider for AnthropicProvider {
         let mut effort_allowed = crate::models::anthropic_effort_allowed(&request.model);
         let mut fast_mode =
             self.config.fast_mode && crate::models::anthropic_fast_mode_allowed(&request.model);
+        let mut capacity_identity =
+            anthropic_account_capacity_key(&self.config.base_url, &self.config.api_key, fast_mode);
+        let mut capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(
+            capacity_identity.clone(),
+            &request.model,
+        );
         let mut response = self
             .send_once(&request, effort_allowed, fast_mode, &cancel)
             .await?;
@@ -693,11 +710,35 @@ impl Provider for AnthropicProvider {
                         retry_after,
                         &headers,
                         observation,
+                        fast_mode,
                     );
                     return Err(map_status_error(status, &text, retry_after));
                 }
             } else if status == 429 && fast_mode {
+                let headers = response.headers().clone();
+                let retry_after = retry_after_header(&response);
+                observe_anthropic_capacity_response(
+                    &capacity_ticket,
+                    &capacity_identity,
+                    &self.config.base_url,
+                    &self.config.api_key,
+                    &request.model,
+                    status,
+                    retry_after,
+                    &headers,
+                    anthropic_capacity_observation(&headers),
+                    true,
+                );
                 fast_mode = false;
+                capacity_identity = anthropic_account_capacity_key(
+                    &self.config.base_url,
+                    &self.config.api_key,
+                    false,
+                );
+                capacity_ticket = crate::RateLimitGate::capacity_observation_ticket(
+                    capacity_identity.clone(),
+                    &request.model,
+                );
                 response = self
                     .send_once(&request, effort_allowed, fast_mode, &cancel)
                     .await?;
@@ -720,6 +761,7 @@ impl Provider for AnthropicProvider {
                 retry_after,
                 &headers,
                 observation,
+                fast_mode,
             );
             return Err(map_status_error(status.as_u16(), &text, retry_after));
         }
@@ -734,6 +776,7 @@ impl Provider for AnthropicProvider {
             None,
             response.headers(),
             anthropic_capacity_observation(response.headers()),
+            fast_mode,
         );
 
         let model = request.model.clone();
@@ -787,9 +830,11 @@ fn observe_anthropic_capacity_response(
     retry_after: Option<u64>,
     headers: &reqwest::header::HeaderMap,
     observation: crate::CapacityObservation,
+    fast_mode: bool,
 ) {
     original_ticket.observe_model(observation.clone());
-    let Some(organization_identity) = remember_anthropic_organization(base_url, api_key, headers)
+    let Some(organization_identity) =
+        remember_anthropic_organization(base_url, api_key, fast_mode, headers)
     else {
         return;
     };

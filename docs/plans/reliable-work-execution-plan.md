@@ -498,3 +498,13 @@ no AWS configuration, scheduling, version or deployment changes.
   network errors. The normalized quota error deliberately omits provider quota
   identifiers from user-visible text; the capacity observation carries only
   numeric bucket evidence. Adapter tests cover the terminal-vs-throttle split.
+
+- 2026-10-02: Anthropic fast mode now has a separate opaque account/model
+  capacity identity, matching the adapter's documented separate rate-limit
+  bucket. A fast-mode 429 records its headers and cooldown against that bucket
+  before the existing standard-speed fallback; fallback observations then use
+  the standard bucket. Model-aware identity is used by Agent and
+  `RequestAdmission` admission, and the learned organization fingerprint is
+  shared without exposing the organization id. The internal fast-to-standard
+  fallback remains one logical Agent dispatch and still needs explicit
+  sub-dispatch accounting under E1.
