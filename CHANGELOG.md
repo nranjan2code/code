@@ -1,4 +1,4 @@
-## Unreleased
+## 6.0.0 — 2026-10-03
 
 - Ship 6.0.0 as an independent major release. The separately planned data
   baseline is deferred to 7.0.0; this release does not cut over or purge data.
