@@ -4,6 +4,12 @@
 # account, external network, or developer data home is needed.
 set -euo pipefail
 
+# This suite builds much of the workspace; debug symbols and incremental state
+# are not needed for its pass/fail regression checks and can consume tens of
+# gigabytes in a local worktree.
+export CARGO_INCREMENTAL=0
+export CARGO_PROFILE_TEST_DEBUG=0
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 

@@ -2529,3 +2529,12 @@ remains open.
   the local fixture URL; no alternate browser path was used. Live-provider
   conformance, sustained 24-hour recovery, and M7 account-data erasure remain
   open.
+- 2026-10-02: The synthetic regression-pack script now disables incremental
+  compilation and test debug symbols to reduce local build-disk use. After
+  clearing the old 24.1 GB target directory, the full pack rebuilt and passed
+  with the reduced profile, including web build/fixture typecheck, 132
+  provider/vault tests, 2 MIME tests, 19 Core tests, 19 Server tests, four
+  owner-authenticated HTTP tests, one scheduled owner-API run, restart/requeue,
+  and five isolated-worker tests. A separate workspace-wide build was active
+  concurrently, so the target peak is not an isolated measurement; disk use
+  stayed below 10 GB in this worktree. No live account data was used.
