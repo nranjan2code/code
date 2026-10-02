@@ -596,11 +596,6 @@ struct CoreInner {
     /// run cap by an arbitrary multiple. Sessions are evicted explicitly
     /// (see `Core::forget_spend_gate`) rather than left to grow forever.
     spend_gates: std::sync::Mutex<HashMap<String, Arc<finops::CoreSpendGate>>>,
-    /// Shared cross-session/cross-turn day-cap admission state (see
-    /// [`finops::CoreSpendGate`]'s `DayBudget` doc) — one process-shared
-    /// tracker per data home, handed to every spend gate so concurrent
-    /// dispatches from different Core instances cannot race past the day cap.
-    day_budget: Arc<std::sync::Mutex<finops::DayBudget>>,
 }
 
 /// Learned permission rules live outside the main config so they can be
@@ -1292,7 +1287,6 @@ impl Core {
         } else {
             Vec::new()
         };
-        let day_budget = finops::shared_day_budget(&sessions_home);
         Ok(Core::from_inner(Arc::new(CoreInner {
             history_indexing: std::sync::Mutex::new(std::collections::HashSet::new()),
             history_index_failures: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -1360,7 +1354,6 @@ impl Core {
             commitment_override: std::sync::Mutex::new(None),
             beliefs: Arc::new(routing::BeliefState::new()),
             spend_gates: std::sync::Mutex::new(HashMap::new()),
-            day_budget,
             mcp_cache: std::sync::Mutex::new(None),
             capability_registry: std::sync::OnceLock::new(),
             capability_shutdown: std::sync::Mutex::new(None),
@@ -2678,6 +2671,9 @@ impl Core {
             gate.refresh_caps(&finops);
             return gate.clone();
         }
+        let scope = self.shared_scope();
+        let sessions_home = scope.root();
+        let day_budget = finops::shared_day_budget(&sessions_home);
         let gate = Arc::new(finops::CoreSpendGate::with_shared_day_budget(
             // `self.sessions_home()`, not the raw `inner.sessions_home`
             // field — the latter ignores `set_sessions_home` (the SDK
@@ -2685,9 +2681,9 @@ impl Core {
             // the ledger would silently keep writing to the original
             // location. The reflection call site already got this right;
             // the per-turn call site this replaces did not.
-            self.shared_scope().root(),
+            &sessions_home,
             &finops,
-            self.inner.day_budget.clone(),
+            day_budget,
         ));
         gates.insert(session_id.to_string(), gate.clone());
         gate
@@ -10908,6 +10904,13 @@ mod spend_gate_persistence_tests {
         core
     }
 
+    fn core_with_day_cap(cwd: &std::path::Path, data_home: &std::path::Path, cap: f64) -> Core {
+        let core = Core::new(cwd.to_path_buf()).unwrap();
+        core.set_sessions_home(data_home.to_path_buf());
+        core.apply_persisted_finops_caps(None, Some(Some(cap)));
+        core
+    }
+
     fn check(session_id: &'static str) -> SpendCheck<'static> {
         SpendCheck {
             model: "claude-sonnet",
@@ -10969,6 +10972,36 @@ mod spend_gate_persistence_tests {
             .await
             .expect_err("run cap must still reflect turn 1's spend on turn 2");
         assert!(err.contains("run budget $5.00"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn day_cap_is_shared_by_cores_with_the_same_effective_data_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared_home = dir.path().join("shared-home");
+        let core_a = core_with_day_cap(&dir.path().join("cwd-a"), &shared_home, 5.0);
+        let core_b = core_with_day_cap(&dir.path().join("cwd-b"), &shared_home, 5.0);
+        let gate_a = core_a.spend_gate_for("s1");
+        let gate_b = core_b.spend_gate_for("s2");
+
+        gate_a.authorize(&check("s1")).await.unwrap();
+        let error = gate_b
+            .authorize(&check("s2"))
+            .await
+            .expect_err("a second Core for the same data home must see the reservation");
+        assert!(error.contains("day budget $5.00"), "{error}");
+
+        let isolated = core_with_day_cap(
+            &dir.path().join("cwd-c"),
+            &dir.path().join("isolated-home"),
+            5.0,
+        );
+        assert!(
+            isolated
+                .spend_gate_for("s3")
+                .authorize(&check("s3"))
+                .await
+                .is_ok()
+        );
     }
 
     #[test]

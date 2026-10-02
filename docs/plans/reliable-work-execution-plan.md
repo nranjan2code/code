@@ -526,3 +526,8 @@ no AWS configuration, scheduling, version or deployment changes.
   Different data homes retain independent day budgets. This closes only the
   in-process Core-instance boundary; independent service processes still need
   a shared authority before claiming global quota enforcement.
+- 2026-10-02: The day-budget registry is now resolved when a spend gate is
+  created from Core's effective data-home path, so SDK/test relocation through
+  `set_sessions_home` cannot accidentally share or separate the wrong budget.
+  An integration test verifies same-home Core instances share reservations and
+  a different effective home remains isolated.
