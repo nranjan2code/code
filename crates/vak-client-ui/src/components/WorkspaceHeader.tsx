@@ -121,6 +121,15 @@ export default function WorkspaceHeader() {
     if (snapshot.state === "normal") return "Traffic · steady";
     return "Traffic · learning";
   };
+  /** The same state as a colour: green while nothing is in the way, amber
+   *  while busy or waiting, red while a provider is limiting. */
+  const trafficLevel = () => {
+    const state = traffic()?.state;
+    if (!state) return "checking";
+    if (state === "limited") return "red";
+    if (state === "busy" || state === "queued") return "amber";
+    return "green";
+  };
 
   // Markdown transcript export (docs/design/29-personal-os.md P4): the
   // shared renderer's output is fetched from the router and written to a
@@ -157,7 +166,7 @@ export default function WorkspaceHeader() {
         </Show>
         <div class="workspace-title">
           <div class="workspace-title-row">
-            <span class="run-state traffic-hint" title={`Provider activity for ${traffic()?.scope ?? "this service process"}. Provider limits may be unknown until observed.`} aria-label={trafficLabel()}>{trafficLabel()}</span>
+            <span class="traffic-dot" data-traffic={trafficLevel()} role="img" aria-label={trafficLabel()} title={`${trafficLabel()}. Provider activity for ${traffic()?.scope ?? "this service process"}; provider limits may be unknown until observed.`} />
             <Show when={technicalDetails()}>
 
             <button

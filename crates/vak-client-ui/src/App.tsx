@@ -101,7 +101,6 @@ import * as api from "./api";
 import Sidebar from "./components/Sidebar";
 import ChatPane from "./components/ChatPane";
 import Composer from "./components/Composer";
-import StatusBar from "./components/StatusBar";
 const DiffPane = lazy(() => import("./components/DiffPane"));
 const TerminalPane = lazy(() => import("./components/TerminalPane"));
 const EditorPane = lazy(() => import("./components/EditorPane"));
@@ -1499,7 +1498,6 @@ export default function App() {
               </>
             )}
           </Show>
-          <StatusBar />
           {/* Incomplete setup never blocks the workspace. An empty
               conversation's greeting carries this card instead. */}
           <Show when={greetingsShown() === 0}>

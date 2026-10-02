@@ -407,7 +407,16 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .run-state { display: inline-flex; align-items: center; gap: 5px; padding: 1px 6px; border-radius: 99px; color: var(--faint); background: var(--surface-raised); font-size: var(--fs-caption); }
 .run-state.active { color: var(--green); }
 .run-state.attention { color: var(--live-ink); background: var(--live-wash); font-weight: 600; }
-.traffic-hint { white-space: nowrap; font-size: 12px; }
+/* Provider traffic as one dot (WorkspaceHeader): green while nothing is in
+   the way, amber while busy or waiting, red while a provider is limiting.
+   Its words are its label and hover text, so colour is never the only carrier. */
+.traffic-dot { display: inline-grid; place-items: center; width: 20px; height: 20px; flex: none; }
+.traffic-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); animation: traffic-fade 2.4s ease-in-out infinite; }
+.traffic-dot[data-traffic="green"]::before { background: var(--green); }
+.traffic-dot[data-traffic="amber"]::before { background: var(--yellow); }
+.traffic-dot[data-traffic="red"]::before { background: var(--red); animation-duration: 1.2s; }
+@keyframes traffic-fade { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .traffic-dot::before { animation: none; } }
 .workspace-actions { position: relative; z-index: 40; display: flex; align-items: center; gap: 3px; min-width: 0; max-width: 62%; overflow: visible; scrollbar-width: none; flex-shrink: 0; }
 .workspace-more { position: relative; }
 .workspace-more summary { list-style: none; cursor: pointer; }
@@ -2105,7 +2114,9 @@ body.is-resizing iframe { pointer-events: none; }
 .sidechat-input textarea:focus { border-color: var(--border-strong); }
 
 /* Status */
-.statusbar { position: fixed; z-index: 60; left: 50%; bottom: calc(112px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; padding: 6px var(--space-3); border: 1px solid var(--border); border-radius: 999px; background: var(--surface-raised); box-shadow: var(--shadow-lg); color: var(--text-soft); font-size: var(--fs-meta); white-space: nowrap; }
+/* Anchored to the message box (`.composer-wrap`): just above it, centred in
+   the conversation column, whatever the box's height or the layout around it. */
+.statusbar { position: absolute; z-index: 5; left: 50%; bottom: 100%; margin-bottom: var(--space-2); transform: translateX(-50%); display: inline-flex; align-items: center; gap: 7px; padding: 6px var(--space-3); border: 1px solid var(--border); border-radius: 999px; background: var(--surface-raised); box-shadow: var(--shadow-lg); color: var(--text-soft); font-size: var(--fs-meta); white-space: nowrap; }
 .st-density { display: inline-flex; align-items: center; height: 20px; line-height: 18px; padding: 0 var(--space-1); outline: none; border: 1px solid transparent; border-radius: 4px; color: var(--faint); background: transparent; font-size: var(--fs-caption); cursor: pointer; }
 .st-density:hover { color: var(--muted); background: var(--surface-hover); }
 .st-density:focus { border-color: var(--border-soft); background: var(--surface-raised); }
@@ -3385,7 +3396,6 @@ button.artifact-canvas-result:hover, button.artifact-canvas-result:focus-visible
 }
 @container workspace-main (max-width: 440px) {
   .target-dir-pill, .run-state { display: none !important; }
-  .traffic-hint { display: inline-flex !important; }
 }
 .msg, .tool, .worker, .thinking, .approval, .sysnote,
 .transcript-skeleton, .composer-box, .composer-note { max-width: 860px; }
@@ -5432,10 +5442,6 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
    back as it was when the Canvas closes. */
 .app.canvas-active .dock,
 .app.canvas-active .dock-resizer { display: none; }
-
-/* Connection news stays over the conversation, not on top of the Canvas. */
-.app.canvas-split-active .statusbar { left: calc((100% - var(--canvas-split-width, 65%)) / 2); }
-.app.canvas-focused-active .statusbar { bottom: calc(40px + env(safe-area-inset-bottom, 0px)); }
 
 .artifact-canvas.canvas-split {
   width: var(--canvas-split-width, 65%);

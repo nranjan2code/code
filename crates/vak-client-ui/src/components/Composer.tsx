@@ -28,6 +28,7 @@ import * as api from "../api";
 import { ATTACH_FILES_EVENT } from "../attachFiles";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
+import StatusBar from "./StatusBar";
 import VoiceControl from "./VoiceControl";
 import RunControls from "./RunControls";
 
@@ -531,6 +532,8 @@ export default function Composer(props: { cwd: string }) {
 
   return (
     <div class="composer-wrap">
+      {/* Connection news sits just above the message box it is about. */}
+      <StatusBar />
       <Show when={replyTarget()}>
         {(target) => <div class="composer-target" role="status">
           <span>Replying to {target().label}</span>
