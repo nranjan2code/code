@@ -451,3 +451,12 @@ no AWS configuration, scheduling, version or deployment changes.
   fit. The fixture is synthetic and content-free; E0 still needs sanitized
   counters matched to the captured production incident before it can serve as
   the incident-specific reproducer.
+- 2026-10-02: Added adapter-level capacity evidence checks for OpenAI's model,
+  project and daily headers; Anthropic's separate input, output and request
+  windows; Gemini's typed daily input-token quota failure and unknown-success
+  behavior; and OpenRouter's free-model daily request bucket. These tests lock
+  only values actually published by the adapters and explicitly leave absent
+  limit dimensions unknown. The existing `vak-llm` unit and integration suite
+  passes (140 unit tests plus adapter integration tests; two live Gemini smoke
+  tests remain ignored). This does not close the production-source E0 fixture,
+  cross-process authority, durable root accounting, or diverse workload gates.

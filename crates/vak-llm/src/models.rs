@@ -654,7 +654,7 @@ mod tests {
     #[test]
     fn unauthorised_maps_to_auth_error() {
         assert!(matches!(
-            status_error(401, "bad key".into()),
+            status_error(401, "bad key".into(), None),
             LlmError::Auth(_)
         ));
     }

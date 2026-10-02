@@ -78,14 +78,14 @@ fn remember_anthropic_organization(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let now = std::time::Instant::now();
     let credential = anthropic_credential_identity(base_url, api_key);
-    if keys.len() >= 1024 && !keys.contains_key(&credential) {
-        if let Some(oldest) = keys
+    if keys.len() >= 1024
+        && !keys.contains_key(&credential)
+        && let Some(oldest) = keys
             .iter()
             .min_by_key(|(_, (_, seen))| *seen)
             .map(|(credential, _)| credential.clone())
-        {
-            keys.remove(&oldest);
-        }
+    {
+        keys.remove(&oldest);
     }
     keys.insert(credential, (key.clone(), now));
     Some(key)
@@ -930,6 +930,29 @@ mod build_body_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::types::{CacheBreakpoint, CacheHints, ToolDefinition};
+
+    #[test]
+    fn anthropic_capacity_parser_separates_input_output_and_request_windows() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in [
+            ("anthropic-ratelimit-input-tokens-remaining", "800"),
+            ("anthropic-ratelimit-input-tokens-limit", "1000"),
+            ("anthropic-ratelimit-output-tokens-remaining", "400"),
+            ("anthropic-ratelimit-output-tokens-limit", "500"),
+            ("anthropic-ratelimit-requests-remaining", "9"),
+            ("anthropic-ratelimit-requests-limit", "10"),
+        ] {
+            headers.insert(name, value.parse().unwrap());
+        }
+        let observed = anthropic_capacity_observation(&headers);
+        assert_eq!(observed.input_tokens_remaining, Some(800));
+        assert_eq!(observed.input_tokens_limit, Some(1000));
+        assert_eq!(observed.output_tokens_remaining, Some(400));
+        assert_eq!(observed.output_tokens_limit, Some(500));
+        assert_eq!(observed.requests_remaining, Some(9));
+        assert_eq!(observed.tokens_remaining, None);
+        assert_eq!(observed.daily_remaining, None);
+    }
 
     fn message_with_thinking(text: &str) -> Message {
         Message::assistant(vec![

@@ -2628,22 +2628,21 @@ fn mark_account_reauthentication_required(
     account: &ConnectedAccount,
     outcome: &str,
 ) {
-    if let Ok(ledger) = ConnectionLedger::for_agent(&account.owner_agent_id) {
-        if ledger
+    if let Ok(ledger) = ConnectionLedger::for_agent(&account.owner_agent_id)
+        && ledger
             .append_reauthentication_required(&account.id, Utc::now())
             .is_ok()
-        {
-            pause_routines_for_account(state, &account.owner_agent_id, &account.id);
-            record_account_event(
-                state,
-                "account_reauthentication_required",
-                &account.owner_agent_id,
-                &account.id,
-                account.provider,
-                &account.capabilities,
-                outcome,
-            );
-        }
+    {
+        pause_routines_for_account(state, &account.owner_agent_id, &account.id);
+        record_account_event(
+            state,
+            "account_reauthentication_required",
+            &account.owner_agent_id,
+            &account.id,
+            account.provider,
+            &account.capabilities,
+            outcome,
+        );
     }
 }
 

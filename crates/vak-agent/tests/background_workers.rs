@@ -46,6 +46,10 @@ impl Provider for Routed {
         "routed"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,

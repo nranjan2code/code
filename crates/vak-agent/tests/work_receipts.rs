@@ -46,6 +46,10 @@ impl Provider for AlwaysRateLimited {
         "always-429"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,
@@ -70,6 +74,10 @@ struct FailThenSucceed {
 impl Provider for FailThenSucceed {
     fn name(&self) -> &str {
         "flaky"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
     }
 
     async fn stream(
@@ -97,6 +105,10 @@ struct AbortMidStream;
 impl Provider for AbortMidStream {
     fn name(&self) -> &str {
         "aborting"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
     }
 
     async fn stream(

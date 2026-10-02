@@ -719,6 +719,36 @@ mod build_body_tests {
     use crate::types::Role;
 
     #[test]
+    fn google_quota_failure_records_daily_token_exhaustion_without_inventing_usage() {
+        let body = serde_json::json!({
+            "error": {"details": [{
+                "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                "violations": [{
+                    "quotaMetric": "generativelanguage.googleapis.com/generate_content_daily_input_token_count",
+                    "quotaId": "GenerateContentInputTokensPerDayPerProjectPerModel",
+                    "quotaValue": "120000"
+                }]
+            }]}
+        }).to_string();
+        let observed = google_capacity_observation(&reqwest::header::HeaderMap::new(), Some(&body));
+        assert_eq!(observed.daily_input_remaining, Some(0));
+        assert_eq!(observed.daily_input_limit, Some(120_000));
+        assert!(observed.daily_input_reset_after_secs.unwrap() > 0);
+        assert_eq!(observed.daily_remaining, None);
+        assert_eq!(observed.tokens_remaining, None);
+    }
+
+    #[test]
+    fn google_empty_success_headers_do_not_claim_a_known_quota() {
+        let observed = google_capacity_observation(&reqwest::header::HeaderMap::new(), None);
+        assert_eq!(observed.tokens_remaining, None);
+        assert_eq!(observed.input_tokens_remaining, None);
+        assert_eq!(observed.requests_remaining, None);
+        assert_eq!(observed.daily_remaining, None);
+        assert_eq!(observed.daily_requests_remaining, None);
+    }
+
+    #[test]
     fn provider_tool_schema_represents_json_type_unions_with_any_of() {
         let input = serde_json::json!({
             "type": "object",

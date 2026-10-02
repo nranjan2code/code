@@ -41,6 +41,10 @@ impl Provider for Scripted {
         "scripted"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-duplicate-card:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,

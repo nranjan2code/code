@@ -138,8 +138,7 @@ pub async fn calendar_event_page_with_worker(
             .await?;
         page.events
             .retain(|event| event_overlaps_range(event, range));
-        page.events
-            .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        page.events.sort_by_key(|event| event.starts_at);
         page.events.truncate(range.limit.clamp(1, 100));
         return Ok(page);
     }
@@ -176,7 +175,7 @@ pub async fn calendar_event_page_with_worker(
     // Provider-side CalDAV time-range filters are useful, but the provider
     // response is untrusted. Enforce the requested window again locally.
     events.retain(|event| event_overlaps_range(event, range));
-    events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    events.sort_by_key(|event| event.starts_at);
     let has_more = events.len() >= range.limit.clamp(1, 100);
     events.truncate(range.limit.clamp(1, 100));
     Ok(vak_mail_calendar::provider::CalendarEventPage {
@@ -229,6 +228,7 @@ pub async fn calendar_sources_with_worker(
 /// Read one selected calendar only after proving its ID is still in the
 /// current account inventory. This keeps a stale or forged UI selection from
 /// turning into an arbitrary CalDAV request.
+#[allow(clippy::too_many_arguments)] // Explicit actor/scope plus source and worker authority.
 pub async fn calendar_event_page_in_source_with_worker(
     client: &ProviderReadClient,
     account: &vak_mail_calendar::ConnectedAccount,
@@ -248,8 +248,7 @@ pub async fn calendar_event_page_in_source_with_worker(
             .await?;
         page.events
             .retain(|event| event_overlaps_range(event, range));
-        page.events
-            .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        page.events.sort_by_key(|event| event.starts_at);
         page.events.truncate(range.limit.clamp(1, 100));
         return Ok(page);
     }
@@ -284,7 +283,7 @@ pub async fn calendar_event_page_in_source_with_worker(
     let mut events: Vec<CalendarItem> = serde_json::from_value(parsed)
         .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
     events.retain(|event| event_overlaps_range(event, range));
-    events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    events.sort_by_key(|event| event.starts_at);
     let has_more = events.len() >= range.limit.clamp(1, 100);
     events.truncate(range.limit.clamp(1, 100));
     Ok(vak_mail_calendar::provider::CalendarEventPage {
@@ -297,6 +296,7 @@ pub async fn calendar_event_page_in_source_with_worker(
 /// Owner-only paged calendar preview. Google and Graph continue with their
 /// validated provider cursor; Apple repeats the bounded worker-isolated
 /// CalDAV read and advances through its locally parsed, range-bound results.
+#[allow(clippy::too_many_arguments)] // Explicit actor, source, cursor and worker scope.
 pub async fn calendar_preview_page_with_worker(
     client: &ProviderReadClient,
     account: &vak_mail_calendar::ConnectedAccount,
@@ -316,8 +316,7 @@ pub async fn calendar_preview_page_with_worker(
             .await?;
         page.events
             .retain(|event| event_overlaps_range(event, range));
-        page.events
-            .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        page.events.sort_by_key(|event| event.starts_at);
         page.events.truncate(range.limit.clamp(1, 100));
         return Ok(page);
     }
@@ -331,8 +330,7 @@ pub async fn calendar_preview_page_with_worker(
     .await?;
     page.events
         .retain(|event| event_overlaps_range(event, range));
-    page.events
-        .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    page.events.sort_by_key(|event| event.starts_at);
     let total = page.events.len();
     let limit = range.limit.clamp(1, 100);
     let end = offset.saturating_add(limit).min(total);
@@ -346,6 +344,7 @@ pub async fn calendar_preview_page_with_worker(
     Ok(page)
 }
 
+#[allow(clippy::too_many_arguments)] // Explicit actor, source, cursor and worker scope.
 pub async fn calendar_preview_page_in_source_with_worker(
     client: &ProviderReadClient,
     account: &vak_mail_calendar::ConnectedAccount,
@@ -368,8 +367,7 @@ pub async fn calendar_preview_page_in_source_with_worker(
             .await?;
         page.events
             .retain(|event| event_overlaps_range(event, range));
-        page.events
-            .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        page.events.sort_by_key(|event| event.starts_at);
         page.events.truncate(range.limit.clamp(1, 100));
         return Ok(page);
     }
@@ -383,8 +381,7 @@ pub async fn calendar_preview_page_in_source_with_worker(
     .await?;
     page.events
         .retain(|event| event_overlaps_range(event, range));
-    page.events
-        .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    page.events.sort_by_key(|event| event.starts_at);
     let total = page.events.len();
     let limit = range.limit.clamp(1, 100);
     let end = offset.saturating_add(limit).min(total);
@@ -1263,8 +1260,9 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                         .iter()
                         .map(|item| item.provider_id.clone())
                         .collect::<Vec<_>>();
-                    if let Err(_) =
-                        vault.stage_delivered_mail_ids(&scope.routine_id, &scope.account_id, &ids)
+                    if vault
+                        .stage_delivered_mail_ids(&scope.routine_id, &scope.account_id, &ids)
+                        .is_err()
                     {
                         return vak_tools::ToolOutput::error(
                             "The private mail watch cursor is unavailable; results were discarded.",
@@ -1423,6 +1421,10 @@ fn encode_citation_part(value: &str) -> String {
         }
     }
     encoded
+}
+
+fn parse_time(args: &Value, key: &str) -> Option<DateTime<Utc>> {
+    args.get(key)?.as_str()?.parse().ok()
 }
 
 #[cfg(test)]
@@ -2099,8 +2101,4 @@ mod tests {
                 .contains("restricted to its configured account")
         );
     }
-}
-
-fn parse_time(args: &Value, key: &str) -> Option<DateTime<Utc>> {
-    args.get(key)?.as_str()?.parse().ok()
 }

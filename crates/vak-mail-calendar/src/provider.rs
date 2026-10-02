@@ -715,6 +715,9 @@ impl ProviderReadClient {
             .await
     }
 
+    // The account, vault, actor and audience jointly form the authorization
+    // boundary; keep them explicit at public provider entry points.
+    #[allow(clippy::too_many_arguments)]
     pub async fn search_mail_in_folder(
         &self,
         account: &ConnectedAccount,
@@ -772,6 +775,7 @@ impl ProviderReadClient {
     /// Read one provider-backed page from a single verified folder. Unlike
     /// `recent_mail_in_folder`, this preserves the provider continuation so a
     /// Canvas can fetch later pages without re-reading or caching content.
+    #[allow(clippy::too_many_arguments)]
     pub async fn mail_preview_page(
         &self,
         account: &ConnectedAccount,
@@ -1143,6 +1147,7 @@ impl ProviderReadClient {
         Ok((ids, Some(next_cursor)))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn google_mail_watch_page(
         &self,
         token: &str,
@@ -1317,6 +1322,7 @@ impl ProviderReadClient {
 
     /// Open one explicitly selected provider conversation. Thread membership
     /// is verified from every returned message and the response is bounded.
+    #[allow(clippy::too_many_arguments)]
     pub async fn mail_thread(
         &self,
         account: &ConnectedAccount,
@@ -1851,6 +1857,7 @@ impl ProviderReadClient {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn calendar_event_page_in_source_with_cursor(
         &self,
         account: &ConnectedAccount,
@@ -2006,6 +2013,7 @@ impl ProviderReadClient {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn icloud_caldav_calendar_query_xml(
         &self,
         account: &ConnectedAccount,
@@ -2089,6 +2097,7 @@ impl ProviderReadClient {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn icloud_caldav_propfind(
         &self,
         account: &ConnectedAccount,
@@ -2126,6 +2135,7 @@ impl ProviderReadClient {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn icloud_caldav_request(
         &self,
         method: &str,
@@ -2309,6 +2319,7 @@ impl ProviderReadClient {
             .collect())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn google_events(
         &self,
         token: &str,
@@ -2366,14 +2377,13 @@ impl ProviderReadClient {
                 Some(Value::String(token)) => Some(token.clone()),
                 Some(_) => return Err(ProviderReadError::InvalidResponse),
             };
-            if let Some(token) = &page_token {
-                if token.is_empty()
+            if let Some(token) = &page_token
+                && (token.is_empty()
                     || token.len() > 4096
                     || token.chars().any(char::is_control)
-                    || !seen_tokens.insert(token.clone())
-                {
-                    return Err(ProviderReadError::InvalidResponse);
-                }
+                    || !seen_tokens.insert(token.clone()))
+            {
+                return Err(ProviderReadError::InvalidResponse);
             }
             if output.len() >= max_items {
                 return Ok(CalendarEventPage {
@@ -2403,6 +2413,7 @@ impl ProviderReadClient {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn microsoft_events(
         &self,
         token: &str,
@@ -2964,7 +2975,7 @@ where
             attachments: Vec::new(),
         });
     }
-    output.sort_by(|left, right| right.received_at.cmp(&left.received_at));
+    output.sort_by_key(|item| std::cmp::Reverse(item.received_at));
     output.truncate(limit.min(MAX_MAIL_ITEMS));
     Ok(output)
 }
@@ -4828,17 +4839,18 @@ mod tests {
             ["message-3"]
         );
         assert!(second.next_cursor.is_none());
-        let observed = page_calls.lock().unwrap();
-        assert_eq!(observed.len(), 2);
-        assert!(
-            observed
-                .iter()
-                .all(
-                    |query| query.get("labelIds").map(String::as_str) == Some("Label_projects")
-                        && query.get("q").map(String::as_str) == Some("\"quarterly budget\"")
-                )
-        );
-        assert!(observed[1].get("pageToken").map(String::as_str) == Some("opaque-next"));
+        {
+            let observed = page_calls.lock().unwrap();
+            assert_eq!(observed.len(), 2);
+            assert!(
+                observed
+                    .iter()
+                    .all(|query| query.get("labelIds").map(String::as_str)
+                        == Some("Label_projects")
+                        && query.get("q").map(String::as_str) == Some("\"quarterly budget\""))
+            );
+            assert!(observed[1].get("pageToken").map(String::as_str) == Some("opaque-next"));
+        }
         assert!(
             client
                 .mail_preview_page(
@@ -5208,7 +5220,7 @@ mod tests {
                 let query = request.uri().query().unwrap_or_default();
                 let values = url::form_urlencoded::parse(query.as_bytes()).collect::<std::collections::HashMap<_, _>>();
                 assert_eq!(values.get("$filter").map(|value| value.as_ref()), Some("conversationId eq 'conv''42'"));
-                if values.get("$skiptoken").is_some() {
+                if values.contains_key("$skiptoken") {
                     assert_eq!(values.get("$skiptoken").map(|value| value.as_ref()), Some("page-2"));
                     axum::Json(json!({"value":[
                         {"id":"msg-2","conversationId":"conv'42","subject":"Second","toRecipients":[{"emailAddress":{"address":"to@example.test"}}],"body":{"contentType":"text","content":"there"}}
@@ -7398,7 +7410,7 @@ mod tests {
         };
         let range = CalendarRange { from, to, limit: 2 };
         let google_events = client
-            .calendar_events(&google, &vault, &agent_id, &audience, range.clone())
+            .calendar_events(&google, &vault, &agent_id, &audience, range)
             .await
             .unwrap();
         assert_eq!(google_events.len(), 2);
@@ -7700,7 +7712,7 @@ mod tests {
         };
         assert!(
             client
-                .calendar_events(&google, &vault, &agent_id, &audience, range.clone())
+                .calendar_events(&google, &vault, &agent_id, &audience, range)
                 .await
                 .is_err()
         );

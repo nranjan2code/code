@@ -49,6 +49,10 @@ impl Provider for TerminalQuota {
         "quota-limited"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,
@@ -70,6 +74,10 @@ impl Provider for PanickingProvider {
         "primary-panics"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,
@@ -83,6 +91,10 @@ impl Provider for PanickingProvider {
 impl Provider for AlwaysNetwork {
     fn name(&self) -> &str {
         "primary-net-dead"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
     }
 
     async fn stream(
@@ -106,6 +118,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "fallback-ok"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
     }
 
     async fn stream(

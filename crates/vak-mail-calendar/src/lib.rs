@@ -4,6 +4,8 @@
 //! requests. Host code admits accounts and grants; adapters receive a single
 //! validated typed operation through that boundary.
 
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
+
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

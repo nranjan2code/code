@@ -51,6 +51,10 @@ impl Provider for Recording {
         "recording"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-context-tail:{:p}", self)
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,

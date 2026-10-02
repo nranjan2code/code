@@ -1020,7 +1020,7 @@ impl RateLimitGate {
             ticket,
             active: true,
         };
-        let result = async {
+        async {
             loop {
                 let changed = self
                     .state
@@ -1313,8 +1313,7 @@ impl RateLimitGate {
                 }
             }
         }
-        .await;
-        result
+        .await
     }
 
     pub fn observe(&self, observation: CapacityObservation) {
@@ -1551,12 +1550,11 @@ impl RateLimitGate {
                 snap.retry_after_secs = Some(snap.retry_after_secs.unwrap_or(0).max(seconds));
             }
             quota_limited |= has_fresh_exhausted_capacity(&s, now);
-            if s.last_observed_at
-                .is_some_and(|t| now.duration_since(t) < Duration::from_secs(300))
+            if s.model_scoped
+                && s.last_observed_at
+                    .is_some_and(|t| now.duration_since(t) < Duration::from_secs(300))
             {
-                if s.model_scoped {
-                    snap.observed_routes += 1;
-                }
+                snap.observed_routes += 1;
             }
         }
         snap.state = if snap.retry_after_secs.is_some() || quota_limited {

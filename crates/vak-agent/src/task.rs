@@ -385,7 +385,10 @@ impl WorkerRegistry {
     /// One live child of `parent`; `None` for an id that is not live or
     /// belongs to another session, which are indistinguishable by design.
     pub fn live_child(&self, parent: &str, id: &str) -> Option<ActiveWorker> {
-        let map = self.inner.lock().ok()?;
+        let map = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.get(id)
             .filter(|h| h.parent_session_id == parent)
             .map(|h| ActiveWorker::of(id, h))
@@ -407,7 +410,10 @@ impl WorkerRegistry {
         parent: &str,
         claims: &vak_tools::ResourceClaims,
     ) -> Option<String> {
-        let map = self.inner.lock().ok()?;
+        let map = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.iter()
             .filter(|(_, h)| h.parent_session_id == parent && !h.write_scopes.is_empty())
             .find(|(_, h)| {

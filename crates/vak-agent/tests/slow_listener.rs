@@ -32,6 +32,10 @@ impl Provider for LongReasoning {
         "long-reasoning"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,

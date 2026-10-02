@@ -70,6 +70,10 @@ impl Provider for Scripted {
         "scripted-goal"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-goal-mode:{:p}", self)
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,

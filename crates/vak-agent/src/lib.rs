@@ -4982,7 +4982,7 @@ impl Agent {
                 // A status outage must not suppress the existing retry/fallback
                 // ladder; an older sample expires in the capacity gate.
                 let _ = provider_arc.refresh_capacity(cancel).await;
-                let max_output = self.config.max_output as u64;
+                let max_output = self.config.max_output;
                 let model_quota = if route_provider == "bedrock" {
                     model_capacity_gate
                         .reserve_bedrock_mantle_demand(est_input, max_output, cancel)

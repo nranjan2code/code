@@ -2710,9 +2710,9 @@ mod tests {
     #[test]
     fn account_linking_rejects_prepare_but_supports_reviewed_calendar_create_scope() {
         for provider in [Provider::Google, Provider::Microsoft] {
-            for capability in [Capability::MailPrepare] {
-                assert!(scopes_for(provider, &[Capability::MailRead, capability]).is_err());
-            }
+            assert!(
+                scopes_for(provider, &[Capability::MailRead, Capability::MailPrepare]).is_err()
+            );
         }
         assert!(
             scopes_for(Provider::Google, &[Capability::CalendarWrite]).is_ok_and(

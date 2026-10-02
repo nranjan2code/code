@@ -531,7 +531,7 @@ impl AccountVault {
     }
 
     pub fn list_action_receipts(&self) -> Result<Vec<ActionReceipt>, VaultError> {
-        self.with_action_receipts(|receipts| Ok(receipts))
+        self.with_action_receipts(Ok)
     }
 
     /// Queue observed message IDs without consuming them. The encrypted
@@ -1047,7 +1047,7 @@ impl AccountVault {
     /// bounded secret-store item, never in a plaintext JSON file or browser
     /// local storage.
     pub fn list_candidates(&self) -> Result<Vec<ActionCandidate>, VaultError> {
-        self.with_work_area(|candidates| Ok(candidates))
+        self.with_work_area(Ok)
     }
 
     /// Save a candidate revision using compare-and-swap semantics. Its Agent,
@@ -1206,9 +1206,7 @@ impl AccountVault {
             operation(receipts)
         })();
         let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
-        if let Err(error) = unlock_result {
-            return Err(error);
-        }
+        unlock_result?;
         result
     }
 
@@ -1381,9 +1379,7 @@ impl AccountVault {
                 operation(cursors)
             })();
         let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
-        if let Err(error) = unlock_result {
-            return Err(error);
-        }
+        unlock_result?;
         result
     }
 
@@ -1439,9 +1435,7 @@ impl AccountVault {
             operation(runs)
         })();
         let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
-        if let Err(error) = unlock_result {
-            return Err(error);
-        }
+        unlock_result?;
         result
     }
 
@@ -1523,9 +1517,7 @@ impl AccountVault {
             operation(candidates)
         })();
         let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
-        if let Err(error) = unlock_result {
-            return Err(error);
-        }
+        unlock_result?;
         result
     }
 
@@ -1829,7 +1821,7 @@ impl AccountVault {
                 .into_iter()
                 .filter(|run| run.routine_id == routine_id && run.account_id == account_id)
                 .collect::<Vec<_>>();
-            selected.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+            selected.sort_by_key(|run| std::cmp::Reverse(run.started_at));
             Ok(selected)
         })
     }
@@ -2389,7 +2381,7 @@ mod tests {
         for page in recent_ids.chunks(MAX_ROUTINE_PENDING_IDS) {
             assert!(
                 !completed
-                    .queue_unseen_mail_ids(&routine_id, &account_id, &page.to_vec())
+                    .queue_unseen_mail_ids(&routine_id, &account_id, page)
                     .unwrap()
             );
         }

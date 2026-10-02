@@ -337,4 +337,19 @@ mod tests {
         ));
         assert!(matches!(result, Err(LlmError::InvalidRequest(_))));
     }
+
+    #[test]
+    fn openrouter_capacity_observation_is_only_the_free_model_daily_request_bucket() {
+        let gate = crate::RateLimitGate::for_key("synthetic-openrouter-capacity-scope");
+        let sequence = gate.next_observation_sequence();
+        observe_openrouter_key_capacity(
+            &serde_json::json!({"data": {"free_model_daily_requests": {
+                "limit": 50, "remaining": 12, "used": 38
+            }}}),
+            &gate,
+            sequence,
+        );
+        assert!(gate.has_capacity_observation());
+        assert!(!gate.has_account_token_observation());
+    }
 }

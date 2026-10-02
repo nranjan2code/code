@@ -1533,6 +1533,7 @@ mod tests {
 
     #[test]
     fn first_launch_uses_default_workspace_and_precedence_is_explicit() {
+        vak_config::paths::isolate_home_for_tests();
         let explicit = std::path::PathBuf::from("/tmp/explicit-vak-workspace");
         let remembered = std::path::PathBuf::from("/tmp/remembered-vak-workspace");
         assert_eq!(

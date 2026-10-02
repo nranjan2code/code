@@ -306,8 +306,8 @@ impl TaskDef {
                 name: self.name.clone(),
             });
         }
-        if let Some(scope) = &self.mail_calendar_scope {
-            if self.agent_id.as_deref().is_none_or(str::is_empty)
+        if let Some(scope) = &self.mail_calendar_scope
+            && (self.agent_id.as_deref().is_none_or(str::is_empty)
                 || self.agent_revision.is_none_or(|revision| revision == 0)
                 || self
                     .script
@@ -315,10 +315,9 @@ impl TaskDef {
                     .is_some_and(|script| !script.trim().is_empty())
                 || self.deliver_to.is_some()
                 || scope.routine_id != self.id
-                || scope.validate().is_err()
-            {
-                return Err(TaskError::InvalidMailCalendarScope);
-            }
+                || scope.validate().is_err())
+        {
+            return Err(TaskError::InvalidMailCalendarScope);
         }
         if let Some(expr) = &self.schedule {
             CronExpr::parse(expr).map_err(|reason| TaskError::BadSchedule {

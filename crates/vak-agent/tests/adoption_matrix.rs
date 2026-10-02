@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use tempfile::tempdir;
 use tokio::sync::mpsc;
@@ -38,6 +38,7 @@ fn text_msg(model: &str, t: &str) -> AssistantMessage {
 
 /// Primary leg: network-dead. Fallback leg: scripted FIFO.
 struct MatrixProvider {
+    capacity_identity: String,
     fail_primary: AtomicU32,
     fallback: std::sync::Mutex<VecDeque<AssistantMessage>>,
     seen_models: std::sync::Mutex<Vec<String>>,
@@ -45,7 +46,9 @@ struct MatrixProvider {
 
 impl MatrixProvider {
     fn new(fallbacks: Vec<AssistantMessage>) -> Arc<Self> {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         Arc::new(MatrixProvider {
+            capacity_identity: format!("test-matrix:{}", NEXT_ID.fetch_add(1, Ordering::Relaxed)),
             fail_primary: AtomicU32::new(u32::MAX),
             fallback: std::sync::Mutex::new(fallbacks.into_iter().collect()),
             seen_models: std::sync::Mutex::new(Vec::new()),
@@ -57,6 +60,10 @@ impl MatrixProvider {
 impl Provider for MatrixProvider {
     fn name(&self) -> &str {
         "matrix"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_identity.clone()
     }
 
     async fn stream(

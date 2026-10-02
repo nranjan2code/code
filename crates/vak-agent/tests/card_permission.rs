@@ -31,6 +31,10 @@ impl Provider for Scripted {
         "scripted"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-card-permission:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,

@@ -2,6 +2,8 @@
 //! the agent loop behind one entry point. TUI, server, and exec mode are
 //! thin consumers of this crate.
 
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
+
 pub mod admission;
 pub mod agent_definitions;
 pub mod agent_network;
@@ -4159,7 +4161,6 @@ impl Core {
                         .clone()
                         .map(|id| [("project_id".to_string(), id)].into())
                         .unwrap_or_default(),
-                    ..Default::default()
                 })
             }
             "openai-responses" => {
@@ -4316,7 +4317,6 @@ impl Core {
                 api_key,
                 base_url: base_url.clone(),
                 options: primary.options.clone(),
-                ..Default::default()
             })
             .collect())
     }
@@ -5179,7 +5179,7 @@ impl Core {
                     provider_client.as_ref(),
                     &leg.provider,
                     &leg.model,
-                    target as u64,
+                    target,
                     request.max_tokens as u64,
                     Self::PROBE_REQUEST_TIMEOUT,
                     cancel,
@@ -5380,9 +5380,8 @@ impl Core {
                 .messages
                 .iter()
                 .map(|message| message.text_content().chars().count() as u64)
-                .sum::<u64>()
-            + 3)
-            / 4;
+                .sum::<u64>())
+        .div_ceil(4);
         let dispatch_started = std::time::Instant::now();
         let mut admission = match vak_llm::RequestAdmission::acquire_with_timeout(
             provider_client.as_ref(),

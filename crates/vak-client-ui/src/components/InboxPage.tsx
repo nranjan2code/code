@@ -11,7 +11,7 @@ import * as api from "../api";
 import type { InboxEntry } from "../api";
 import { relAgo } from "../time";
 import Icon from "./Icon";
-import { activate } from "../App";
+import { activate, notifyOnce } from "../App";
 
 const POLL_MS = 20_000;
 // Server clamps to the same ceiling (DEFAULT_INBOX_LIMIT / MAX_SCAN).
@@ -92,8 +92,10 @@ export default function InboxPage() {
             entry.kind === "routine_failed" ||
             entry.kind === "heartbeat"
           ) {
-            void import("../App").then((m) =>
-              m.notifyOnce(`inbox:${e}`, `Vakyartha ${entry.kind.replace(/_/g, " ")}`, entry.title),
+            void notifyOnce(
+              `inbox:${e}`,
+              `Vakyartha ${entry.kind.replace(/_/g, " ")}`,
+              entry.title,
             );
           }
         }

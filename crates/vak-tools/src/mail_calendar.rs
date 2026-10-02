@@ -525,15 +525,17 @@ pub(crate) fn parse_caldav_discovery(
                 {
                     target_property = None;
                 }
-                if name.as_slice() == b"response" && mode == DiscoveryMode::CalendarCollections {
-                    if response_calendar && let Some(href) = response_href.take() {
-                        results.push(json!({
-                            "href": href,
-                            "display_name": response_displayname.take().filter(|s| !s.is_empty()),
-                        }));
-                        if results.len() > MAX_DISCOVERY_RESULTS {
-                            return Err("CalDAV response contains too many calendars".into());
-                        }
+                if name.as_slice() == b"response"
+                    && mode == DiscoveryMode::CalendarCollections
+                    && response_calendar
+                    && let Some(href) = response_href.take()
+                {
+                    results.push(json!({
+                        "href": href,
+                        "display_name": response_displayname.take().filter(|s| !s.is_empty()),
+                    }));
+                    if results.len() > MAX_DISCOVERY_RESULTS {
+                        return Err("CalDAV response contains too many calendars".into());
                     }
                 }
                 stack.pop();

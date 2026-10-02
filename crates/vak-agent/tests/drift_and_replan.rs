@@ -32,6 +32,10 @@ impl Provider for Scripted {
         "scripted"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,
@@ -61,6 +65,10 @@ struct OverLengthThenOk {
 impl Provider for OverLengthThenOk {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
     }
 
     async fn stream(

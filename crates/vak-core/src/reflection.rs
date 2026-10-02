@@ -289,9 +289,8 @@ pub async fn propose(
     req.max_tokens = MAX_TOKENS;
 
     let estimated_input = (req.system.as_deref().unwrap_or("").chars().count() as u64
-        + tail.chars().count() as u64
-        + 3)
-        / 4;
+        + tail.chars().count() as u64)
+        .div_ceil(4);
     let dispatch_started = std::time::Instant::now();
     let admission_result = match request_timeout {
         Some(timeout) => {

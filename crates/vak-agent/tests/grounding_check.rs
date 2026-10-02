@@ -42,6 +42,10 @@ impl Provider for Scripted {
         "scripted"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-grounding-check:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,

@@ -1,6 +1,7 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { activeAgentId, setPendingSettingsPage, setSettingsOpen } from "../store";
 import * as api from "../api";
+import { notifyOnce } from "../App";
 import Icon from "./Icon";
 
 const POLL_MS = 20_000;
@@ -57,12 +58,10 @@ export default function BudgetBanner() {
 
   createEffect(() => {
     if (level() === "red" && document.hidden) {
-      void import("../App").then((m) =>
-        m.notifyOnce(
-          "budget-red",
-          "Vakyartha day budget exceeded",
-          `$${spent().toFixed(2)} of $${cap().toFixed(2)} — new runs may be denied.`,
-        ),
+      void notifyOnce(
+        "budget-red",
+        "Vakyartha day budget exceeded",
+        `$${spent().toFixed(2)} of $${cap().toFixed(2)} — new runs may be denied.`,
       );
     }
   });

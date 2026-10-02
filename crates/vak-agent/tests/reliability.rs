@@ -31,6 +31,10 @@ impl Provider for Scripted {
         "scripted"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-reliability-scripted:{:p}", self)
+    }
+
     async fn stream(
         &self,
         _request: ChatRequest,
@@ -211,6 +215,9 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
         fn name(&self) -> &str {
             "hung"
         }
+        fn rate_limit_key(&self) -> String {
+            format!("test-reliability-hung:{:p}", self)
+        }
         async fn stream(
             &self,
             _r: ChatRequest,
@@ -306,6 +313,9 @@ struct HungThenGood {
 impl Provider for HungThenGood {
     fn name(&self) -> &str {
         "hung"
+    }
+    fn rate_limit_key(&self) -> String {
+        format!("test-reliability-hung-then-good:{:p}", self)
     }
     async fn stream(&self, _r: ChatRequest, c: CancellationToken) -> Result<EventStream, LlmError> {
         self.attempts

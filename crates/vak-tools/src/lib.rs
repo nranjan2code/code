@@ -3,6 +3,8 @@
 //! Contract: tools never panic and never return Err; failures are
 //! ToolOutput::error values fed back to the model for self-correction.
 
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
+
 pub mod artifact;
 pub mod bash;
 pub mod broker;

@@ -236,7 +236,15 @@ async fn serve(ws: &Path, home: &Path) -> Server {
 }
 
 async fn serve_core(core: Core, dispatches: Arc<AtomicUsize>) -> Server {
-    serve_core_with_router(core, dispatches, None).await
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router_with(core, false);
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    Server {
+        base: format!("http://{addr}"),
+        token,
+        dispatches,
+    }
 }
 
 #[cfg(feature = "test-support")]

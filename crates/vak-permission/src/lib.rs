@@ -2,6 +2,8 @@
 //! enforcement. Evaluate(tool, args, mode) -> Decision; the agent loop and
 //! UI approvers decide what Ask becomes.
 
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
+
 pub mod engine;
 pub mod rules;
 

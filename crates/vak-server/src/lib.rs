@@ -43,6 +43,8 @@
 //! - `GET  /agent-network/messages`      → receive queued workspace messages
 //! - `GET/POST /presentations`           → inspect/register validated experience-pack records
 //! - `POST /presentations/revisions`    → validate and store a disabled immutable revision preview
+
+#![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
 //! - `POST /presentations/:id/:revision/activate` → explicitly activate one scoped revision
 //! - `POST /presentations/:id/deactivate` → remove one scoped activation
 //! - `DELETE /presentations/plugins/:plugin_id` → revoke a plugin's presentation records
@@ -19341,19 +19343,18 @@ async fn fire_task_with_force(
     if let (Some(scope), Some(agent_id)) = (
         snapshot.mail_calendar_scope.as_ref(),
         snapshot.agent_id.as_deref(),
-    ) {
-        if let Err(error) = mail_calendar::prepare_routine_account(state, agent_id, scope).await {
-            if let (Some(vault), Some(run)) = (routine_vault.as_ref(), routine_run.as_ref()) {
-                let _ = vault.finish_routine_run(
-                    &scope.routine_id,
-                    &scope.account_id,
-                    &run.run_id,
-                    vak_mail_calendar::vault::RoutineRunStatus::Failed,
-                    chrono::Utc::now(),
-                );
-            }
-            return Err(refuse_task(state, &snapshot, error));
+    ) && let Err(error) = mail_calendar::prepare_routine_account(state, agent_id, scope).await
+    {
+        if let (Some(vault), Some(run)) = (routine_vault.as_ref(), routine_run.as_ref()) {
+            let _ = vault.finish_routine_run(
+                &scope.routine_id,
+                &scope.account_id,
+                &run.run_id,
+                vak_mail_calendar::vault::RoutineRunStatus::Failed,
+                chrono::Utc::now(),
+            );
         }
+        return Err(refuse_task(state, &snapshot, error));
     }
     if !force_mail_watch_run
         && let Some(scope) = snapshot

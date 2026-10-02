@@ -270,7 +270,7 @@ async fn complete_text(
         // failures remain conservative; successful usage settles the hold.
         let dispatch_started = std::time::Instant::now();
         let estimated_input =
-            (system.chars().count() as u64 + prompt.chars().count() as u64 + 3) / 4;
+            (system.chars().count() as u64 + prompt.chars().count() as u64).div_ceil(4);
         let admission_result = match deps.request_timeout {
             Some(timeout) => {
                 vak_llm::RequestAdmission::acquire_with_timeout(

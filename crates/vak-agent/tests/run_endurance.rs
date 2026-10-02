@@ -16,6 +16,7 @@ use vak_session::types::{FrozenContract, SessionHeader};
 
 /// Fails the first `failures` calls with `error`, then succeeds.
 struct FlakyThenGood {
+    capacity_identity: String,
     calls: Arc<Mutex<u32>>,
     failures: u32,
     error: LlmError,
@@ -25,6 +26,10 @@ struct FlakyThenGood {
 impl Provider for FlakyThenGood {
     fn name(&self) -> &str {
         "flaky-then-good"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_identity.clone()
     }
 
     async fn stream(
@@ -110,7 +115,7 @@ async fn run_agent(agent: &mut Agent) -> (TurnOutcome, Vec<AgentEvent>) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn endurance_bridges_transient_windows_then_completes() {
-    for err in [
+    for (case, err) in [
         LlmError::Overloaded("storm".into()),
         LlmError::RateLimit {
             message: "429".into(),
@@ -118,9 +123,13 @@ async fn endurance_bridges_transient_windows_then_completes() {
         },
         LlmError::Network("connection reset".into()),
         LlmError::Parse("stream closed before finish_reason".into()),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let calls = Arc::new(Mutex::new(0u32));
         let provider = Arc::new(FlakyThenGood {
+            capacity_identity: format!("test-flaky-transient-{case}"),
             calls: calls.clone(),
             failures: 3,
             error: err.clone(),
@@ -151,6 +160,7 @@ async fn endurance_bridges_transient_windows_then_completes() {
 async fn endurance_budget_exhaustion_fails_cleanly() {
     let calls = Arc::new(Mutex::new(0u32));
     let provider = Arc::new(FlakyThenGood {
+        capacity_identity: "test-flaky-budget-exhaustion".into(),
         calls: calls.clone(),
         failures: 10,
         error: LlmError::Overloaded("long storm".into()),
@@ -178,6 +188,7 @@ async fn permanent_errors_are_not_endured() {
     ] {
         let calls = Arc::new(Mutex::new(0u32));
         let provider = Arc::new(FlakyThenGood {
+            capacity_identity: format!("test-flaky-permanent-{err:?}"),
             calls: calls.clone(),
             failures: 99,
             error: err.clone(),

@@ -43,6 +43,10 @@ impl Provider for TaggedScripted {
         "scripted"
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!("test-provider:{:p}", self)
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,

@@ -505,6 +505,9 @@ impl ProviderEffectClient {
     /// Update one unchanged, standalone Google event with no attendees.
     /// The reviewed ETag is rechecked before dispatch and sent as If-Match to
     /// close the race between the source check and the mutation.
+    // Keep account, vault, actor, audience and source version explicit at the
+    // effect boundary so authorization and freshness are auditable together.
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_event(
         &self,
         account: &ConnectedAccount,
@@ -647,6 +650,8 @@ impl ProviderEffectClient {
     /// without replacing the event's attendee array. The ETag precondition
     /// closes the stale-review race; `sendUpdates=all` makes organizer
     /// notification an explicit, reviewable effect.
+    // Keep the authority and reviewed source tuple explicit at this boundary.
+    #[allow(clippy::too_many_arguments)]
     pub async fn respond_to_event(
         &self,
         account: &ConnectedAccount,
@@ -717,6 +722,8 @@ impl ProviderEffectClient {
 
     /// Resolve an ambiguous RSVP only when the exact event still shows the
     /// approved self response and carries this dispatch attempt's marker.
+    // Keep the reconciliation authority and attempt identity explicit.
+    #[allow(clippy::too_many_arguments)]
     pub async fn reconcile_event_response(
         &self,
         account: &ConnectedAccount,
@@ -795,6 +802,8 @@ impl ProviderEffectClient {
     /// no guests, when the connected user is its organizer. Store the attempt
     /// marker in the same conditional PATCH as `status=cancelled`, so an
     /// ambiguous result can be reconciled by reading the cancellation tombstone.
+    // Keep the authority, reviewed source version and cancellation scope explicit.
+    #[allow(clippy::too_many_arguments)]
     pub async fn cancel_event(
         &self,
         account: &ConnectedAccount,

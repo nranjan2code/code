@@ -924,6 +924,43 @@ mod build_body_tests {
     }
 
     #[test]
+    fn openai_capacity_parser_keeps_short_daily_and_project_scopes_distinct() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in [
+            ("x-ratelimit-remaining-tokens", "900"),
+            ("x-ratelimit-limit-tokens", "1000"),
+            ("x-ratelimit-reset-tokens", "1s"),
+            ("x-ratelimit-remaining-day-tokens", "9000"),
+            ("x-ratelimit-limit-day-tokens", "10000"),
+            ("x-ratelimit-reset-day-tokens", "1h"),
+            ("x-ratelimit-remaining-day-requests", "90"),
+            ("x-ratelimit-limit-day-requests", "100"),
+            ("x-ratelimit-reset-day-requests", "1h"),
+            ("x-ratelimit-remaining-project-tokens", "5000"),
+            ("x-ratelimit-limit-project-tokens", "6000"),
+            ("x-ratelimit-reset-project-tokens", "2s"),
+        ] {
+            headers.insert(name, value.parse().unwrap());
+        }
+        let model = openai_capacity_observation(&headers);
+        let account = openai_project_capacity_observation(&headers);
+        assert_eq!(
+            (model.tokens_remaining, model.tokens_limit),
+            (Some(900), Some(1000))
+        );
+        assert_eq!(
+            (model.daily_remaining, model.daily_limit),
+            (Some(9000), Some(10000))
+        );
+        assert_eq!(model.daily_requests_remaining, Some(90));
+        assert_eq!(
+            (account.tokens_remaining, account.tokens_limit),
+            (Some(5000), Some(6000))
+        );
+        assert_eq!(account.daily_remaining, None);
+    }
+
+    #[test]
     fn openrouter_flag_adds_session_id_alongside_prompt_cache_key() {
         let config = OpenAiConfig {
             cache_key: true,

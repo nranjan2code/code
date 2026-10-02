@@ -78,8 +78,10 @@ async fn reflection_writes_once_and_dedups_repeats() {
 
     let proposals = propose(
         scripted(GOOD_REPLY),
+        "openai",
         "m",
         "assistant: we shipped the deploy pipeline fix",
+        None,
         tokio_util::sync::CancellationToken::new(),
     )
     .await
@@ -97,8 +99,10 @@ async fn reflection_writes_once_and_dedups_repeats() {
     // A near-identical reflection later adds NOTHING (bounded growth).
     let again = propose(
         scripted(GOOD_REPLY),
+        "openai",
         "m",
         "same conversation again",
+        None,
         tokio_util::sync::CancellationToken::new(),
     )
     .await
@@ -127,8 +131,10 @@ async fn reflection_survives_a_long_non_ascii_conversation() {
     let transcript = format!("user: {}नमस्ते, कल की बैठक याद रखना", "a".repeat(11_993));
     let proposals = propose(
         scripted("{}"),
+        "openai",
         "m",
         &transcript,
+        None,
         tokio_util::sync::CancellationToken::new(),
     )
     .await
