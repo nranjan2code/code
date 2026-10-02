@@ -1332,14 +1332,20 @@ impl Agent {
     /// fallback (docs/design/68-context-engine.md §4), never a magic
     /// number baked into the planner itself.
     fn effective_capacity_profile(&self) -> CapacityProfile {
-        self.config.capacity.clone().unwrap_or_else(|| {
+        let mut profile = self.config.capacity.clone().unwrap_or_else(|| {
             CapacityProfile::from_metadata_only(
                 self.config.declared_window,
                 self.config.max_output,
                 "no-capacity-wired".to_string(),
                 std::time::SystemTime::now(),
             )
-        })
+        });
+        // The completion is bounded by the `max_tokens` this agent requests,
+        // not by the model's listed maximum, which can be most of its window.
+        if self.config.max_output > 0 {
+            profile.output_reserve = profile.output_reserve.min(self.config.max_output);
+        }
+        profile
     }
 
     /// Arms goal mode for the next run: durable objective + acceptance
@@ -1861,15 +1867,21 @@ impl Agent {
                 }
             };
 
-            // No usable horizon at all: the open turn alone (plus prefix,
-            // tail, output reserve) already exceeds the horizon. Nothing is
-            // plannable, so the reset-with-handoff rescue is the surviving
-            // recovery (§4's "the handoff reset stays as the recovery when
-            // a profile has no usable horizon").
-            if plan.budget == 0 {
-                let est_tokens = prefix_tokens
-                    .saturating_add(tail_tokens)
-                    .saturating_add(profile.output_reserve);
+            // No usable horizon at all: the prefix, the tail and the open turn
+            // already exceed the prompt ceiling, so the turn itself cannot be
+            // sent. (A zero history budget is not this: the turn still fits and
+            // simply carries no history.) The reset-with-handoff rescue is the
+            // surviving recovery (§4's "the handoff reset stays as the
+            // recovery when a profile has no usable horizon").
+            let open_turn_tokens = {
+                let session = self.session.lock().await;
+                profile.estimate_tokens(messages_chars(&session.open_turn_verbatim()))
+            };
+            let needed_tokens = prefix_tokens
+                .saturating_add(tail_tokens)
+                .saturating_add(open_turn_tokens);
+            if needed_tokens > profile.prompt_ceiling() {
+                let est_tokens = needed_tokens;
                 if !self.handoff_used && self.config.handoff_reset {
                     self.handoff_used = true;
                     if let Ok(handoff) = self

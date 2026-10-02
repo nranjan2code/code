@@ -227,10 +227,14 @@ Inputs: `CapacityProfile`, `TurnIndex`, the incoming directive, the assembled
 prefix size (measured, see §6), the tail size.
 
 ```
-budget      = horizon.tokens
+ceiling     = min(horizon.tokens, declared_window − output_reserve)
+              # the horizon is a measured prompt size, so output is charged
+              # only against the declared window an unprobed horizon starts at;
+              # output_reserve is the max_tokens the agent requests, never the
+              # model's listed maximum
+budget      = ceiling
             − prefix_tokens              (system + tool surface, measured)
             − tail_tokens                (time, intent, thread, nudges)
-            − output_reserve
             − current_turn_reserve       (= max observed current-turn size for this model, EWMA)
 # never split a turn: every cost check is turn-whole
 value(turn) = max(recency, relevance, anaphora)
@@ -249,6 +253,9 @@ summary     = compaction packet over the packet range, or the stored one
 
 Properties:
 
+- A zero `budget` means no room for history, not that the turn cannot run.
+  The handoff rescue fires only when prefix + tail + the open turn exceed the
+  ceiling.
 - On a small model with a 13k horizon and a 12k prefix, the working set is
   the current turn only, and the model is told so (the summary says what it
   is missing and how to `recall`). That is the correct outcome for that model

@@ -270,17 +270,26 @@ impl CapacityProfile {
         }
     }
 
-    /// Remaining input budget for a request: the horizon minus the
-    /// measured stable prefix, the tail, the output reserve, and any
-    /// reserve already committed by the current turn. Saturates to zero
-    /// rather than underflowing — a caller over budget gets "nothing left",
-    /// never a wrapped huge number.
-    pub fn budget(&self, prefix_tokens: u64, tail_tokens: u64, current_turn_reserve: u64) -> u64 {
+    /// The largest prompt a request may carry. The instruction horizon was
+    /// measured as a prompt size, so output is not charged against it; but an
+    /// unprobed horizon starts at the declared window, which covers prompt and
+    /// completion together, so the ceiling never exceeds the window less the
+    /// output reserve.
+    pub fn prompt_ceiling(&self) -> u64 {
         self.instruction_horizon
             .tokens
+            .min(self.declared_window.saturating_sub(self.output_reserve))
+    }
+
+    /// Remaining input budget for history: the prompt ceiling minus the
+    /// measured stable prefix, the tail, and any reserve already committed by
+    /// the current turn. Saturates to zero rather than underflowing. Zero
+    /// means no room for history, not that the turn cannot run: compare the
+    /// turn itself against `prompt_ceiling`.
+    pub fn budget(&self, prefix_tokens: u64, tail_tokens: u64, current_turn_reserve: u64) -> u64 {
+        self.prompt_ceiling()
             .saturating_sub(prefix_tokens)
             .saturating_sub(tail_tokens)
-            .saturating_sub(self.output_reserve)
             .saturating_sub(current_turn_reserve)
     }
 
@@ -743,8 +752,24 @@ mod tests {
     fn budget_saturates_instead_of_underflowing() {
         let profile = flat_profile_with_reserve(1_000, 0);
         assert_eq!(profile.budget(200, 100, 0), 700);
-        // prefix + tail + reserve exceed the horizon: saturates to 0, never wraps.
+        // prefix + tail exceed the horizon: saturates to 0, never wraps.
         assert_eq!(profile.budget(900, 200, 0), 0);
+    }
+
+    #[test]
+    fn output_is_not_charged_against_a_measured_horizon() {
+        // Probed horizon 13k inside a 32k window with a 4k completion reserve.
+        let mut profile = flat_profile_with_reserve(32_768, 4_096);
+        profile.instruction_horizon.tokens = 13_000;
+        assert_eq!(profile.prompt_ceiling(), 13_000);
+        assert_eq!(profile.budget(12_000, 150, 1), 849);
+    }
+
+    #[test]
+    fn an_unprobed_horizon_still_leaves_room_for_the_completion() {
+        let mut profile = flat_profile_with_reserve(8_192, 4_096);
+        profile.instruction_horizon.tokens = 8_192;
+        assert_eq!(profile.prompt_ceiling(), 4_096);
     }
 
     #[test]
