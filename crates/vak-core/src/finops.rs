@@ -4,11 +4,11 @@
 //! call. Denial is a question (budget Ask), not a crash; unattended
 //! surfaces auto-deny via the normal approver path.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use serde::{Deserialize, Serialize};
 use vak_agent::{SpendCheck, SpendGate, SpendReservationId};
@@ -305,7 +305,8 @@ pub fn rollup_by_run<'a>(rows: impl IntoIterator<Item = &'a CostRow>) -> Vec<Cos
 }
 
 /// Process-wide, cross-session admission state for the day cap, shared by
-/// every [`CoreSpendGate`] built from the same `Core`. Closes two gaps a
+/// every [`CoreSpendGate`] built for the same data home in this process.
+/// Closes two gaps a
 /// gate-local `Mutex<f64>` can't: (1) a per-turn gate used to start the
 /// run cap over from zero every turn (`Core::spend_gate_for` now hands
 /// back the SAME gate for the life of a session instead, so `run_spent_usd`
@@ -356,6 +357,32 @@ impl DayBudget {
     }
 }
 
+/// Day-cap admission is shared by every Core operating on the same data
+/// home in this process. Weak entries avoid keeping abandoned homes alive.
+pub(crate) fn shared_day_budget(data_home: &Path) -> Arc<Mutex<DayBudget>> {
+    static BUDGETS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<DayBudget>>>>> = OnceLock::new();
+    let root = std::fs::canonicalize(data_home).unwrap_or_else(|_| {
+        if data_home.is_absolute() {
+            data_home.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(data_home)
+        }
+    });
+    let registry = BUDGETS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut budgets = registry
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    budgets.retain(|_, budget| budget.strong_count() > 0);
+    if let Some(budget) = budgets.get(&root).and_then(Weak::upgrade) {
+        return budget;
+    }
+    let budget = Arc::new(Mutex::new(DayBudget::new()));
+    budgets.insert(root, Arc::downgrade(&budget));
+    budget
+}
+
 /// Core-side SpendGate: run/day caps + pricing-driven estimates.
 pub struct CoreSpendGate {
     ledger: FinOpsLedger,
@@ -385,8 +412,8 @@ impl CoreSpendGate {
     }
 
     /// Same as [`Self::new`] but sharing the day-cap admission state with
-    /// every other gate built from the same `Core` (see [`DayBudget`]).
-    /// `Core::spend_gate_for` is the only caller that needs this; direct
+    /// every other gate built for the same data home (see [`DayBudget`]).
+    /// Core-owned gates use the process-wide registry; direct
     /// `new` (tests, the one-off reflection gate) is fine with its own
     /// isolated tracker since nothing else observes it.
     pub(crate) fn with_shared_day_budget(
@@ -905,6 +932,28 @@ mod tests {
             }
         }
         (CoreSpendGate::new(dir.path(), &finops), dir)
+    }
+
+    #[tokio::test]
+    async fn day_budget_is_shared_by_cores_for_the_same_data_home_only() {
+        let first_home = tempdir().unwrap();
+        let other_home = tempdir().unwrap();
+        let first = shared_day_budget(first_home.path());
+        let second = shared_day_budget(first_home.path());
+        let separate = shared_day_budget(other_home.path());
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &separate));
+
+        let finops = vak_config::FinopsResolved {
+            max_day_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate_a = CoreSpendGate::with_shared_day_budget(first_home.path(), &finops, first);
+        let gate_b = CoreSpendGate::with_shared_day_budget(first_home.path(), &finops, second);
+        let check = check("claude-sonnet");
+        assert!(gate_a.authorize(&check).await.is_ok());
+        assert!(gate_b.authorize(&check).await.is_err());
     }
 
     fn usage(in_tok: u64, out_tok: u64) -> Usage {

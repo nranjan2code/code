@@ -597,10 +597,9 @@ struct CoreInner {
     /// (see `Core::forget_spend_gate`) rather than left to grow forever.
     spend_gates: std::sync::Mutex<HashMap<String, Arc<finops::CoreSpendGate>>>,
     /// Shared cross-session/cross-turn day-cap admission state (see
-    /// [`finops::CoreSpendGate`]'s `DayBudget` doc) — one tracker per
-    /// `Core`, handed to every spend gate it builds so concurrent
-    /// dispatches from different sessions can't jointly race past the
-    /// day cap before any of them settles.
+    /// [`finops::CoreSpendGate`]'s `DayBudget` doc) — one process-shared
+    /// tracker per data home, handed to every spend gate so concurrent
+    /// dispatches from different Core instances cannot race past the day cap.
     day_budget: Arc<std::sync::Mutex<finops::DayBudget>>,
 }
 
@@ -1293,6 +1292,7 @@ impl Core {
         } else {
             Vec::new()
         };
+        let day_budget = finops::shared_day_budget(&sessions_home);
         Ok(Core::from_inner(Arc::new(CoreInner {
             history_indexing: std::sync::Mutex::new(std::collections::HashSet::new()),
             history_index_failures: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -1360,7 +1360,7 @@ impl Core {
             commitment_override: std::sync::Mutex::new(None),
             beliefs: Arc::new(routing::BeliefState::new()),
             spend_gates: std::sync::Mutex::new(HashMap::new()),
-            day_budget: Arc::new(std::sync::Mutex::new(finops::DayBudget::new())),
+            day_budget,
             mcp_cache: std::sync::Mutex::new(None),
             capability_registry: std::sync::OnceLock::new(),
             capability_shutdown: std::sync::Mutex::new(None),

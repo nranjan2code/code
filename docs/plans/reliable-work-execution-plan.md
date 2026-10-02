@@ -521,3 +521,8 @@ no AWS configuration, scheduling, version or deployment changes.
   Legacy auxiliary callers retain the compatibility usage-only path; durable
   root accounting, restart reconstruction, and cross-process coordination remain
   open E1/E2 work.
+- 2026-10-02: UTC day-cap admission state is shared process-wide by canonical
+  data-home path, including across distinct Core instances for the same home.
+  Different data homes retain independent day budgets. This closes only the
+  in-process Core-instance boundary; independent service processes still need
+  a shared authority before claiming global quota enforcement.
