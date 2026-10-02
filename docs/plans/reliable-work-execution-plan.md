@@ -508,3 +508,8 @@ no AWS configuration, scheduling, version or deployment changes.
   shared without exposing the organization id. The internal fast-to-standard
   fallback remains one logical Agent dispatch and still needs explicit
   sub-dispatch accounting under E1.
+- 2026-10-02: Scripted provider fixtures across Agent, Core, Flow, Eval and
+  Server now use unique synthetic capacity identities. Process-wide limiter
+  state therefore cannot leak cooldowns or held reservations between unrelated
+  tests; production aliases still share only when their adapter identities
+  confirm the same account/model scope.
