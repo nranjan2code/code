@@ -76,6 +76,7 @@ mod projection;
 mod rate_limit;
 mod service_control;
 mod site;
+mod social;
 mod stream;
 pub mod surfaces;
 #[cfg(test)]
@@ -264,6 +265,8 @@ pub struct AppState {
     pub(crate) voice_requests: Arc<voice::RequestWindow>,
     /// In-memory one-time OAuth state for mail and calendar account linking.
     pub(crate) mail_calendar_oauth: Arc<vak_mail_calendar::oauth::AuthorizationStore>,
+    /// Pending, short-lived native PKCE handshakes for LinkedIn identity links.
+    pub(crate) linkedin_oauth: social::linkedin::PendingAuthorizations,
     /// In-process serialization for account refresh/disconnect so a refresh
     /// cannot persist rotated credentials after a concurrent disconnect.
     mail_calendar_account_locks:
@@ -335,6 +338,7 @@ impl AppState {
             voice_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             voice_requests: Arc::new(voice::RequestWindow::new()),
             mail_calendar_oauth: Arc::new(vak_mail_calendar::oauth::AuthorizationStore::default()),
+            linkedin_oauth: social::linkedin::PendingAuthorizations::default(),
             mail_calendar_account_locks: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(feature = "test-support")]
             mail_calendar_test_refresh_endpoints: Arc::new(Mutex::new(HashMap::new())),
@@ -850,6 +854,9 @@ fn router_with_state(state: AppState) -> Router {
             get(youtube_key_status).put(save_youtube_key).delete(remove_youtube_key),
         )
         .route("/social/youtube/search", post(youtube_search_preview))
+        .route("/social/linkedin/client-id", get(social::linkedin::client_id_status).put(social::linkedin::save_client_id).delete(social::linkedin::remove_client_id))
+        .route("/social/linkedin/account", get(social::linkedin::account_status).delete(social::linkedin::disconnect))
+        .route("/social/linkedin/connect", post(social::linkedin::begin))
         .route(
             "/social/connectors/{id}/install",
             post(install_social_connector),
@@ -10717,7 +10724,7 @@ async fn list_social_connectors(
     }
     Json(serde_json::json!({
         "connectors": connectors,
-        "notice": "YouTube offers an owner-only API search preview. Reddit, X, and LinkedIn remain unavailable pending their platform-specific gates."
+        "notice": "YouTube offers an owner-only API search preview. LinkedIn can link an owner-visible profile identity after native PKCE setup. Reddit and X remain gated; LinkedIn content search remains unavailable."
     }))
     .into_response()
 }

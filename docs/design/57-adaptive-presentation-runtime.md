@@ -49,6 +49,15 @@ the count is pinned by `seed_pack_is_rich_disabled_and_validated_by_host_types`)
 They use only the bounded primitive vocabulary and the same fallback/compiler
 path as installed packs; they are seed content, not renderer-specific branches.
 
+The shared capability seed also installs four separate social guidance add-ons
+(Reddit, YouTube, X, and LinkedIn). Each package owns three more declarative
+layouts (research brief, source review, and takeaway board), for 12 additional
+package-owned layouts. They are intentionally outside the built-in 88-entry
+catalog: installing the add-on and registering its layouts are separate
+operator actions, and registration leaves all three layouts inactive. The
+source JSON is embedded in `vak-core` and a seed-parity test checks every
+installed asset against its package source.
+
 `vak-presentation::propose_revision` now validates user-guided candidates,
 preserves identity, assigns the next immutable revision, computes its digest,
 and caps retries at two attempts. Invalid candidates never replace the active
@@ -172,7 +181,7 @@ activations take precedence. Deactivation records a durable scoped suppression
 so the default cannot silently reactivate a pack; activating it clears that
 suppression. A failed compilation leaves the existing structured card in place.
 The same effective library is loaded when a historical session is reopened.
-Conformance tests exercise selection and compilation for all 88 definitions
+Conformance tests exercise selection and compilation for all 88 built-in definitions
 against emitted payload shapes. Real browser review has covered timeline,
 table, research, and recipe; the remaining visual combinations still need
 human inspection. Packs can be searched, activated, deactivated, imported,

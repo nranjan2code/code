@@ -1056,9 +1056,10 @@ fn validate_oauth_url(url: &str) -> Result<url::Url, String> {
                     Some("login.microsoftonline.com"),
                     "/common/oauth2/v2.0/authorize"
                 )
+                | (Some("www.linkedin.com"), "/oauth/native-pkce/authorization")
         );
     if !allowed {
-        return Err("Only Google and Microsoft sign-in pages can be opened here".into());
+        return Err("Only supported provider sign-in pages can be opened here".into());
     }
     Ok(parsed)
 }
@@ -1469,11 +1470,15 @@ mod tests {
         assert!(validate_oauth_url(
             "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=client&state=state"
         ).is_ok());
+        assert!(validate_oauth_url(
+            "https://www.linkedin.com/oauth/native-pkce/authorization?client_id=client&state=state"
+        ).is_ok());
         for rejected in [
             "https://accounts.google.com.attacker.example/o/oauth2/v2/auth?state=x",
             "http://accounts.google.com/o/oauth2/v2/auth?state=x",
             "https://attacker.example/o/oauth2/v2/auth?state=x",
             "https://accounts.google.com/redirect?state=x",
+            "https://www.linkedin.com/oauth/v2/authorization?state=x",
         ] {
             assert!(validate_oauth_url(rejected).is_err(), "{rejected}");
         }

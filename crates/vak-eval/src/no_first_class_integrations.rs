@@ -135,6 +135,8 @@ fn production_lines(text: &str) -> Vec<(usize, String)> {
 ///   recipe id mirror that same `weather` semantic type on the receiving
 ///   side; the recipe id is consumed by `vak-agent`'s tests (outside this
 ///   agent's scope to rename in the same change).
+/// * `vak-presentation/src/seeds.rs` declares the same card label and maps
+///   that label to a metric primitive. Only those exact declarations qualify.
 fn is_allowed(rel_path: &str, line: &str) -> bool {
     if rel_path.starts_with("docs/") {
         return true;
@@ -150,6 +152,13 @@ fn is_allowed(rel_path: &str, line: &str) -> bool {
         if trimmed == "\"weather\"" || trimmed == "\"weather.forecast\"" {
             return true;
         }
+    }
+    if rel_path == "crates/vak-presentation/src/seeds.rs" {
+        return matches!(
+            line.trim(),
+            "(\"weather\", \"weather\"),"
+                | "\"metric\" | \"benchmark\" | \"telemetry.metric\" | \"weather\" => Primitive::Metric,"
+        );
     }
     false
 }
@@ -185,6 +194,20 @@ pub fn scan_banned_tokens() -> Result<Vec<Offense>, String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn presentation_exception_does_not_allow_topic_routing() {
+        let path = "crates/vak-presentation/src/seeds.rs";
+        assert!(is_allowed(path, "(\"weather\", \"weather\"),"));
+        assert!(!is_allowed(
+            path,
+            "if query.contains(\"weather\") { use_tool(); }"
+        ));
+        assert!(!is_allowed(
+            "crates/vak-agent/src/lib.rs",
+            "(\"weather\", \"weather\"),"
+        ));
+    }
 
     #[test]
     fn no_vendor_or_topic_routing_keys_in_production_code() {

@@ -103,7 +103,11 @@ async fn each_social_addon_registers_its_own_inactive_presentation_pack() {
             .iter()
             .find(|connector| connector["id"] == id)
             .unwrap();
-        assert_eq!(connector["readiness"], "blocked", "{id}");
+        if id == "social-linkedin" {
+            assert_eq!(connector["readiness"], "identity_link", "{id}");
+        } else {
+            assert_eq!(connector["readiness"], "blocked", "{id}");
+        }
     }
     let youtube = connectors
         .iter()
@@ -196,4 +200,131 @@ async fn addon_enable_state_gates_youtube_preview_independently() {
     .await
     .unwrap();
     assert_eq!(disabled_search.status(), reqwest::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn linkedin_identity_link_uses_native_pkce_and_requires_an_enabled_local_addon() {
+    let (addr, token) = spawn().await;
+    let client = reqwest::Client::new();
+    let auth = |request: reqwest::RequestBuilder| request.bearer_auth(&token);
+
+    let unauthorized = client
+        .get(format!("http://{addr}/social/linkedin/account?agent=vak"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let disabled = auth(
+        client
+            .post(format!("http://{addr}/social/linkedin/connect?agent=vak"))
+            .json(&serde_json::json!({})),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(disabled.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let installed = auth(
+        client
+            .post(format!(
+                "http://{addr}/social/connectors/social-linkedin/install"
+            ))
+            .json(&serde_json::json!({"scope":"workspace","agent":"vak"})),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(installed.status(), reqwest::StatusCode::OK);
+    let enabled = auth(client.post(format!(
+        "http://{addr}/plugins/social-linkedin/enable?scope=workspace&agent=vak"
+    )))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(enabled.status(), reqwest::StatusCode::OK);
+
+    let no_client_id = auth(
+        client
+            .post(format!("http://{addr}/social/linkedin/connect?agent=vak"))
+            .json(&serde_json::json!({})),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(
+        no_client_id.status(),
+        reqwest::StatusCode::PRECONDITION_FAILED
+    );
+
+    let saved = auth(
+        client
+            .put(format!("http://{addr}/social/linkedin/client-id?agent=vak"))
+            .json(&serde_json::json!({"client_id":"vak-local-client_123"})),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(saved.status(), reqwest::StatusCode::OK);
+
+    let connected = auth(client.get(format!("http://{addr}/social/linkedin/account?agent=vak")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(connected.status(), reqwest::StatusCode::OK);
+    let status: serde_json::Value = connected.json().await.unwrap();
+    assert_eq!(status["connected"], false);
+
+    let started = auth(
+        client
+            .post(format!("http://{addr}/social/linkedin/connect?agent=vak"))
+            .json(&serde_json::json!({})),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(started.status(), reqwest::StatusCode::OK);
+    let response: serde_json::Value = started.json().await.unwrap();
+    let authorization = url::Url::parse(response["authorization_url"].as_str().unwrap()).unwrap();
+    assert_eq!(authorization.host_str(), Some("www.linkedin.com"));
+    assert_eq!(authorization.path(), "/oauth/native-pkce/authorization");
+    let query = authorization
+        .query_pairs()
+        .collect::<std::collections::HashMap<_, _>>();
+    assert_eq!(
+        query.get("response_type").map(|value| value.as_ref()),
+        Some("code")
+    );
+    assert_eq!(
+        query.get("scope").map(|value| value.as_ref()),
+        Some("openid profile")
+    );
+    assert_eq!(
+        query
+            .get("code_challenge_method")
+            .map(|value| value.as_ref()),
+        Some("S256")
+    );
+    assert_eq!(
+        query.get("client_id").map(|value| value.as_ref()),
+        Some("vak-local-client_123")
+    );
+    assert_eq!(query.get("state").map(|value| value.len()), Some(43));
+    assert_eq!(
+        query.get("code_challenge").map(|value| value.len()),
+        Some(43)
+    );
+    let redirect = url::Url::parse(query.get("redirect_uri").unwrap()).unwrap();
+    assert_eq!(redirect.scheme(), "http");
+    assert_eq!(redirect.host_str(), Some("127.0.0.1"));
+    assert!(redirect.port().is_some());
+    assert_eq!(redirect.path(), "/social/linkedin/oauth/callback");
+
+    // Removing app config cancels the pending loopback listener and its
+    // authorization state; the test does not leave a background port open.
+    let removed = auth(client.delete(format!("http://{addr}/social/linkedin/client-id?agent=vak")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), reqwest::StatusCode::OK);
 }

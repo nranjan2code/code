@@ -1,0 +1,44 @@
+   Compiling vak-commit v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-commit)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.73s
+     Running tests/audit_probe_20261002.rs (target/debug/deps/audit_probe_20261002-53f239064d32bab5)
+
+running 4 tests
+test duplicate_and_unknown_episode_settlements_change_spend ... duplicate counted twice; unknown negative settlement reduced spend to $1
+ok
+test multi_result_contract_can_be_met_by_one_unrelated_sentence ... 3 strands collapse to one met deliverable
+ok
+test print_domain_and_language_matrix ... {"act":"author","confidence":0.85,"horizon":"durable","open_commitment":true,"requirements":[{"description":"produce an author result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":1,"text":"Write a poem every morning"}
+{"act":"author","confidence":0.5,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an author result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":1,"text":"Write a poem tomorrow"}
+{"act":"answer","confidence":0.5,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an answer result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"inert","strands":1,"text":"Remind me to call Mum tomorrow"}
+{"act":"answer","confidence":0.0,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an answer result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":1,"text":"हर सुबह एक कविता लिखो"}
+{"act":"answer","confidence":0.0,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an answer result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":1,"text":"Escribe un poema cada mañana"}
+{"act":"answer","confidence":0.0,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an answer result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":1,"text":"每天早上写一首诗"}
+{"act":"analyze","confidence":0.8999999999999999,"horizon":"durable","open_commitment":true,"requirements":[{"description":"produce an analyze result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"},{"description":"meet the cited evidence standard","id":"evidence-1","importance":"must","kind":"evidence","origin":"inferred","target":"primary"}],"stakes":"inert","strands":1,"text":"Research renewable energy every week and cite sources"}
+{"act":"author","confidence":0.5,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an author result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":3,"text":"Draft a letter, then translate it into French, then summarize the budget"}
+{"act":"answer","confidence":0.0,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an answer result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":1,"text":"Book a flight to Delhi"}
+{"act":"answer","confidence":0.0,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an answer result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":1,"text":"Transfer 500 dollars to Alice"}
+{"act":"answer","confidence":0.0,"horizon":"turn","open_commitment":false,"requirements":[{"description":"produce an answer result","id":"deliverable-1","importance":"must","kind":"deliverable","origin":"inferred","target":"primary"}],"stakes":"reversible","strands":1,"text":"Cancel my subscription"}
+ok
+test unrelated_requests_can_share_a_commitment_thread ... lineage=Continues { thread_id: "Write a poem every morning.0" }
+ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Compiling vak-session v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-session)
+   Compiling vak-sandbox v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-sandbox)
+   Compiling vak-context v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-context)
+   Compiling vak-store v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-store)
+   Compiling vak-commit v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-commit)
+   Compiling vak-delivery v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-delivery)
+   Compiling vak-tools v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-tools)
+   Compiling vak-agent v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-agent)
+   Compiling vak-mcp v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-mcp)
+   Compiling vak-plugin v5.3.2 (/Users/nisheethranjan/Projects/Vak/code/crates/vak-plugin)
+error[E0425]: cannot find value `CONTEXT_PLAN_LABEL` in crate `vak_session`
+    --> crates/vak-agent/src/lib.rs:2106:45
+     |
+2106 |                         label: vak_session::CONTEXT_PLAN_LABEL.into(),
+     |                                             ^^^^^^^^^^^^^^^^^^ not found in `vak_session`
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `vak-agent` (lib) due to 1 previous error

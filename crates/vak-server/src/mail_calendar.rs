@@ -3257,7 +3257,7 @@ pub(super) async fn connect_app_password(
     Json(serde_json::json!({ "connected": true })).into_response()
 }
 
-fn is_loopback_request(headers: &HeaderMap, peer: SocketAddr) -> bool {
+pub(crate) fn is_loopback_request(headers: &HeaderMap, peer: SocketAddr) -> bool {
     if !peer.ip().is_loopback() {
         return false;
     }
@@ -4728,7 +4728,7 @@ fn operator(principal: &AuthenticatedPrincipal) -> bool {
     matches!(principal, AuthenticatedPrincipal::Operator)
 }
 
-fn valid_agent(state: &AppState, agent_id: &str) -> bool {
+pub(crate) fn valid_agent(state: &AppState, agent_id: &str) -> bool {
     registered_agent(state, agent_id)
         && (agent_id == "vak"
             || agents::effective(&state.active_core()).is_ok_and(|agents| {

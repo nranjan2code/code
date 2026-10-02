@@ -16,15 +16,21 @@ optional `native_adapter` identifier, validated against a closed compiled
 registry that fixes each adapter to one plugin, platform, host, auth type,
 credential recipient, limits, and gate. Package data cannot define adapter
 code or override those values. YouTube's existing owner-only search preview
-is the only compiled executor; Reddit, X, and LinkedIn entries are gated and
-have no callable capabilities. This is the D1 registry foundation, not yet a
-general native model-tool dispatch path or a completed capability/permission
-projection. There is still no OAuth account-connection registry or browser
-OAuth callback flow. Enabled plugin MCP servers use the existing MCP pool and
-broker; they are not a bypass around the native adapter gate. Platform
-credentials may use Vak's existing credential plumbing, but there is not yet
-an account object with individual reconnect/disconnect and scope lifecycle.
-Do not describe those UI states as shipped.
+is the only compiled executor; Reddit and X are gated and LinkedIn has no
+content capabilities. LinkedIn now has a separate owner-only native PKCE/OIDC
+identity flow: it binds a temporary callback to an ephemeral IPv4 loopback
+port, requests only `openid profile`, reads the fixed LinkedIn UserInfo
+endpoint, and keeps the profile name in Settings. Its token and app Client ID
+use the selected Agent's credential path; neither is returned to the model or
+written to session history. This is not identity verification and grants no
+post, member-content, or organization access. LinkedIn must enable native PKCE
+for the app before the flow can succeed. This remains the D1 registry
+foundation, not a general native model-tool dispatch path or a completed
+capability/permission projection. There is still no generic OAuth account
+registry. Enabled plugin MCP servers use the existing MCP pool and broker;
+they are not a bypass around the native adapter gate. LinkedIn's local
+disconnect deletes its saved credential but does not revoke the grant at
+LinkedIn; generic refresh and scope lifecycle are not shipped.
 
 ## Goal
 
@@ -54,7 +60,7 @@ Initial package identities:
 | `social-reddit` | Official Data API bounded reads | Disabled guidance package and three separately installable disabled layouts; runtime access blocked pending commercial eligibility and deleted-content lifecycle support |
 | `social-youtube` | Official YouTube Data API bounded reads | Disabled guidance package and three disabled layouts, plus Agent-scoped secure API-key storage and a human-only bounded search preview; no model/tool access |
 | `social-x` | Official X API bounded reads | Disabled guidance package and three disabled layouts; runtime access blocked pending native adapter, metering, and hard spend ceiling |
-| `social-linkedin` | Sign-in identity and specifically approved member/organization operations | Disabled guidance package and three disabled layouts; runtime access blocked pending native OAuth and per-scope approval; no general feed/profile search |
+| `social-linkedin` | Owner-visible OIDC profile name; content operations only after specific product and scope approval | Disabled guidance package and three disabled layouts; local native PKCE identity link; no general feed/profile search or content tools |
 
 Each plugin owns its API adapter, OAuth scopes, secret references, connection
 health, rate-limit handling, platform terms display, and tools. Under today's
@@ -121,8 +127,15 @@ show setup instructions for the client ID and redirect URI. Public/native
 clients do not receive a fabricated client secret. A server-side confidential
 client secret, where truly required, is an operator-managed secret stored with
 `vak_config::credentials`, never plugin package data or workspace config.
-Current code has no generic OAuth callback/PKCE account-linking implementation;
-this paragraph is a target requirement, not existing behavior.
+Current code has no generic OAuth callback/PKCE account registry. LinkedIn's
+specific native OIDC link is a local-only exception: it uses the system
+browser, a ten-minute ephemeral loopback listener, random one-use state, PKCE
+S256, and fixed HTTPS exchange/UserInfo endpoints. It requests only
+`openid profile`, stores the token and profile name in the Agent credential
+path, and requires LinkedIn to enable native PKCE for the app. It has no
+refresh or provider-side revocation; reconnect after expiry and use Disconnect
+to remove the local credential. The OIDC profile does not verify a person's
+real-world identity and does not enable LinkedIn content access.
 
 ### User-supplied API keys or bearer tokens
 
@@ -200,7 +213,7 @@ be honored by the current storage model.
 | Reddit | A free Reddit account does not itself grant an app credential or establish API eligibility. Reddit documents free Data API access for eligible OAuth clients at 100 QPM per client ID. | Technically bounded public post/thread lookup only where endpoint and credentials allow. | Do not promise eligibility for Vakyartha's intended product use: Reddit's current terms require a separate agreement for commercial purposes or unapproved uses. Deleted posts/comments require deletion of related content and author identifiers; Reddit recommends routinely deleting stored content within 48 hours. The append-only session contract cannot meet that requirement for model-visible results. Until product-use eligibility and deletion propagation are resolved, Reddit is blocked for production. |
 | YouTube | Google account and developer project/API enablement are separate from YouTube Premium. Default project quota includes 100 `search.list` calls/day plus a separate 10,000-unit bucket for other endpoints; check current project console because granular quota rollout is underway. | Bounded public video/channel search and selected metadata/comments only through documented API methods. | No scraping, downloading audiovisual content, indefinite non-authorized data retention, or unapproved aggregation. Non-authorized API data normally must be refreshed or deleted within 30 days. Because invariant 1 records model-visible results in append-only sessions, confirm exact planned use is compatible before production; otherwise keep results human-opened only. Quota increase needs Google's process. |
 | X | An X account subscription does not grant API access. The developer platform currently describes a credit-based, consumption-billed model with no fixed monthly cost; endpoint prices and credits can change. | Bounded public post search/read only after the official developer console grants endpoint access and the operator sets a hard spend ceiling. | No spend-unbounded polling or collection; no scraping. Block requests when a local hard budget is reached. Recheck endpoint prices and terms at enable time. |
-| LinkedIn | Free/Premium/Sales Navigator subscription is not API authorization. Current open permissions include OpenID `profile`, `email`, and `w_member_social` (member-authorized posting/commenting/liking). Read access to member or organization social content requires the specific approved product and scopes. | Show connected identity and granted scopes if OAuth is implemented. Add member-authorized sharing only after OAuth, exact review, and a supported write flow. Organization tools require approved product and valid role. | No general public post search, member profile collection, feed scraping, browser automation, or password collection. Premium does not change these limits. Until OAuth/account state exists, this is a feasibility placeholder, not a functional connector; do not ship an empty add-on that implies public search. |
+| LinkedIn | Free/Premium/Sales Navigator subscription is not API authorization. OIDC `openid`, `profile`, and `email` are available through the Sign In with LinkedIn OIDC product; `w_member_social` allows member-authorized write actions, not general post search. Member and organization content access needs specific product approval and scopes. | A local native PKCE flow requests only `openid profile` and shows the returned profile name to the owner in Settings. This does not verify identity and does not expose profile data to the model. | No general public post search, member profile collection, feed scraping, browser automation, or password collection. Premium does not change these limits. Content tools remain gated until their exact product, scopes, policy, and retention requirements are approved. Native PKCE must be enabled for the app by LinkedIn. |
 
 Before shipping each platform, revalidate official terms, pricing, quotas,
 retention, delete/edit propagation, scopes, endpoint availability, and
@@ -228,6 +241,19 @@ web bundle is rebuilt from the current UI sources. This closes the UI/backend
 toggle mismatch only; it does not change the Reddit, X, or LinkedIn ship gates
 or create model-facing social tools.
 
+**Progress 2026-10-02 — LinkedIn identity link:** The separate owner-only
+OIDC path is implemented and tested. It requires the LinkedIn add-on to be
+installed and enabled and an operator-supplied public Client ID; the callback
+is loopback-only, uses native PKCE with one-use state, and contacts only fixed
+LinkedIn HTTPS endpoints. The Agent-scoped credential contains the access
+token and minimal profile name/expiry/scope metadata. Settings shows that
+profile and requested/reported permissions; Disconnect removes the local
+credential and fences an in-flight callback. Desktop external-browser opening
+accepts only the exact LinkedIn authorization host/path. This path is not
+identity verification, model context, content access, or provider-side grant
+revocation. LinkedIn must enable native PKCE for the app. Content operations
+remain gated, and no general OAuth account manager has shipped.
+
 ## Prompts and product copy
 
 Each social skill is the model-facing prompt layer for its platform. It states
@@ -252,9 +278,10 @@ permissions.
 - **X:** “Search public X posts through X’s developer API. X charges for API
   usage; set a spending limit before connecting. The add-on stops at that
   limit.”
-- **LinkedIn:** “Connect LinkedIn to use only API permissions LinkedIn grants
-  to this app. This does not enable general post or profile search. LinkedIn
-  Premium does not expand this API access.”
+- **LinkedIn:** “Connect an owner-visible LinkedIn profile name through OIDC
+  after native PKCE is enabled for your app. This does not verify identity or
+  enable general post or profile search. LinkedIn Premium does not expand API
+  access.”
 
 ### Connection consent prompt
 
@@ -305,11 +332,11 @@ The skill/tool descriptions should communicate these behavioral rules:
 ### Useful first-run assistant prompt
 
 > “Which platform are you interested in, and what are you trying to do? The
-> social add-ons currently provide setup guidance only; they cannot connect
-> accounts or search platform APIs yet. I can use ordinary web search as a
-> separate source where appropriate. X API access may incur usage charges,
-> and LinkedIn does not provide general post or profile search through the
-> standard app permissions.”
+> social add-ons provide platform-specific setup guidance. YouTube has an
+> owner-only search preview, and LinkedIn can connect an owner-visible profile
+> name after its app is configured for native PKCE. Neither path gives the
+> agent general LinkedIn content access. I can use ordinary web search as a
+> separate source where appropriate. X API access may incur usage charges.”
 
 ## First implementation slice
 
@@ -318,12 +345,17 @@ specific scope, limits, connection instructions, safety prompts, and available
 actions. Each is installed disabled, so the existing Add-ons screen can enable
 or disable it independently; the capability screen also offers per-platform
 installation of the guidance package. These packages contribute instructions
-only; they do **not** imply that an account is connected. Reddit, X, and
-LinkedIn API access is blocked. YouTube has an owner-only search preview that
-remains outside model context. TikTok is absent. The code does not scrape any
-platform.
+only; they do **not** imply that an account is connected. Reddit and X API
+access is blocked. LinkedIn supports only an owner-visible OIDC profile-name
+link after native PKCE is enabled for the configured app; LinkedIn content
+access remains blocked. YouTube has an owner-only search preview outside model
+context. TikTok is absent. The code does not scrape any platform.
 
-Reddit, X, and LinkedIn API credential UI, OAuth, and model tools are not shipped. YouTube search is owner-only and transient; API data is not saved in Vakyartha or sent to an agent. Existing append-only model history therefore remains outside this preview path. LinkedIn's current Posts API does document
+Reddit and X API credential UI, OAuth, and model tools are not shipped. No
+LinkedIn content credential UI or content model tools are shipped. YouTube
+search is owner-only and transient; API data is not saved in Vakyartha or sent
+to an agent. Existing append-only model history therefore remains outside
+this preview path. LinkedIn's current Posts API does document
 restricted read/write scopes for approved applications (`r_member_social`,
 `w_member_social`, and organization scopes), so do not reduce that to a claim
 that no API operations exist; standard account tiers still do not grant those
@@ -335,10 +367,10 @@ app permissions.
 |---|---|---|
 | D0 — design and terms | Lock per-platform use cases, plugin IDs, permission domains, credential scopes, and retention disclosures | Maintainer accepts scope and official terms review classifies intended uses |
 | D1 — native adapter seam | Add a closed registry of compiled, reviewed platform adapters. Plugin manifests remain declarative and select only registered adapter IDs; adapters declare fixed hosts, OAuth/API-key requirements, scopes, capability names, limits, and secret recipient. | **Partial:** unknown adapter IDs and cross-platform selections fail closed; package code/hosts/recipients cannot be supplied; the YouTube owner preview dispatches only through its compiled registration. Remaining: native model-tool dispatch and capability/permission projections for a future approved adapter. |
-| D2 — OAuth and connection lifecycle | Implement PKCE callback, account records, scope display, secret binding, refresh/revoke, and per-connection state using existing credential backend. | Tokens are not model/config/package data; connection isolation and disconnect are proven; no scope expansion |
+| D2 — OAuth and connection lifecycle | Implement PKCE callback, account records, scope display, secret binding, refresh/revoke, and per-connection state using existing credential backend. | **Partial:** LinkedIn's owner-only native OIDC flow, exact requested scopes, Agent credential storage, and local disconnect are shipped. Remaining: generic connection records, refresh, provider-side revoke, and full per-connection lifecycle; no scope expansion |
 | D3 — YouTube read slice | Independent plugin/adapter, bounded search/get tools, quota and retention gates. | Owner-only transient search preview is shipped; model-facing tools remain blocked until a compatible refresh/deletion lifecycle and broker adapter are in place |
 | D4 — Reddit eligibility then read slice | Establish terms-based fit for the intended product use, then bounded endpoints only if permitted. | Commercial/product eligibility, OAuth policy, and deleted-content requirements are satisfied before content enters model history |
-| D5 — LinkedIn feasibility/approved scopes | OAuth identity and exact-scope display; implement a tool only if a supported permission/product is approved. | No search tool without supported/approved access; no page automation; no empty connector presented as public search |
+| D5 — LinkedIn feasibility/approved scopes | OAuth identity and exact-scope display; implement a tool only if a supported permission/product is approved. | **Partial:** local OIDC profile-name link shipped when native PKCE is enabled. No content/search tool without supported, approved access; no page automation; no empty connector presented as public search |
 | D6 — optional X | Official API connector with operator-set budget ceiling, spend visibility, circuit breaker. | Budget is enforced locally and API read cost/usage is visible; hitting ceiling blocks dispatch |
 | D7 — publishing, if requested later | One platform/action at a time with exact review and single-use effect accounting. | Separate user request and new design; no implicit write scope in this plan |
 
@@ -357,6 +389,8 @@ and approvals.
 - YouTube: <https://developers.google.com/youtube/v3/getting-started>,
   <https://developers.google.com/youtube/terms/developer-policies>.
 - X: <https://developer.x.com/>.
-- LinkedIn: <https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access>
+- LinkedIn native PKCE: <https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow-native>;
+  Sign In with LinkedIn OIDC: <https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2>;
+  product access: <https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access>
   and <https://www.linkedin.com/help/linkedin/answer/a1341387/prohibited-software-and-extensions>.
 - LinkedIn Posts API scopes (current docs): <https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2026-06>.

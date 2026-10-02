@@ -588,7 +588,7 @@ export interface SocialConnector {
   id: string;
   platform: string;
   summary: string;
-  readiness: "blocked" | "owner_preview";
+  readiness: "blocked" | "owner_preview" | "identity_link";
   reason: string;
   official_api: string;
 }
@@ -623,6 +623,33 @@ export async function removeYoutubeKey(agent?: string): Promise<{ configured: bo
 }
 export async function searchYoutubePreview(query: string, maxResults = 5, agent?: string): Promise<{ items: YoutubePreviewItem[]; notice: string }> {
   return req(withAgent("/social/youtube/search", agent), { method: "POST", body: JSON.stringify({ query, max_results: maxResults }) });
+}
+
+export interface LinkedinConnection {
+  connected: boolean;
+  display_name?: string;
+  expires_at?: string;
+  scopes_requested?: string[];
+  scopes_returned?: string[] | null;
+  expired?: boolean;
+}
+export async function linkedinClientIdStatus(agent?: string): Promise<{ configured: boolean }> {
+  return req(withAgent("/social/linkedin/client-id", agent));
+}
+export async function saveLinkedinClientId(clientId: string, agent?: string): Promise<{ configured: boolean }> {
+  return req(withAgent("/social/linkedin/client-id", agent), { method: "PUT", body: JSON.stringify({ client_id: clientId }) });
+}
+export async function removeLinkedinClientId(agent?: string): Promise<{ configured: boolean }> {
+  return req(withAgent("/social/linkedin/client-id", agent), { method: "DELETE" });
+}
+export async function linkedinAccountStatus(agent?: string): Promise<LinkedinConnection> {
+  return req(withAgent("/social/linkedin/account", agent));
+}
+export async function disconnectLinkedinAccount(agent?: string): Promise<{ connected: false }> {
+  return req(withAgent("/social/linkedin/account", agent), { method: "DELETE" });
+}
+export async function beginLinkedinOAuth(agent?: string): Promise<{ authorization_url: string; expires_in_seconds: number }> {
+  return req(withAgent("/social/linkedin/connect", agent), { method: "POST", body: JSON.stringify({}) });
 }
 
 export interface MarketplaceSource {

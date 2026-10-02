@@ -1317,7 +1317,10 @@ crates/vak-presentation  the CLOSED primitive vocabulary (Primitive enum in
                      PACKS (StoredPresentation/PresentationSpec, PresentationOrigin,
                      LibraryScope) are runtime-pluggable and compose existing
                      primitives with ZERO code change; seeds.rs is the worked
-                     example (88 disabled starter definitions). Adding a
+                     example (88 disabled built-in starter definitions).
+                     Four independently installed social add-ons contribute
+                     12 more package-owned presentation layouts (three each),
+                     seeded disabled and outside the built-in catalog. Adding a
                      primitive is the only part that needs a code change
                      (docs/design/57-adaptive-presentation-runtime.md,
                      docs/design/67-presentation-renderer-guide.md)

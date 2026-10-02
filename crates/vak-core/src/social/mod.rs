@@ -9,6 +9,7 @@ use serde::Serialize;
 pub enum Readiness {
     Blocked,
     OwnerPreview,
+    IdentityLink,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -25,9 +26,9 @@ pub const CONNECTORS: [Connector; 4] = [
     Connector {
         id: "social-linkedin",
         platform: "LinkedIn",
-        summary: "LinkedIn account access using only permissions approved for this app.",
-        readiness: Readiness::Blocked,
-        reason: "Sign-in and approved LinkedIn API scopes are not connected yet. General post or profile search is not available.",
+        summary: "Owner-visible LinkedIn profile name through OIDC; content API operations remain gated.",
+        readiness: Readiness::IdentityLink,
+        reason: "An owner-only OpenID Connect profile link is available after native PKCE is enabled for your app. LinkedIn post search and content tools remain unavailable.",
         official_api: "https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access",
     },
     Connector {

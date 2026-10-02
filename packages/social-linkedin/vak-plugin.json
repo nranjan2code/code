@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "social-linkedin",
   "version": "1.0.0",
-  "description": "LinkedIn access using only API permissions approved for this app. No general post or profile search.",
+  "description": "Connect an owner-visible LinkedIn profile name through OIDC; content API operations remain gated.",
   "license": "MIT",
   "homepage": "https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access",
   "components": {

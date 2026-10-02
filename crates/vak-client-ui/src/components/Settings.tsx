@@ -656,6 +656,10 @@ export default function Settings() {
   const [youtubeQuery, setYoutubeQuery] = createSignal("");
   const [youtubeResults, setYoutubeResults] = createSignal<api.YoutubePreviewItem[]>([]);
   const [youtubeBusy, setYoutubeBusy] = createSignal(false);
+  const [linkedinClientIdConfigured, setLinkedinClientIdConfigured] = createSignal(false);
+  const [linkedinClientIdInput, setLinkedinClientIdInput] = createSignal("");
+  const [linkedinAccount, setLinkedinAccount] = createSignal<api.LinkedinConnection>({ connected: false });
+  const [linkedinBusy, setLinkedinBusy] = createSignal(false);
   const [capabilityView, setCapabilityView] = createSignal<"discover" | "mine" | "manage">("discover");
   const [discoveryQuery, setDiscoveryQuery] = createSignal("");
   const [discoveryKind, setDiscoveryKind] = createSignal<"all" | "skills" | "plugins">("all");
@@ -741,10 +745,16 @@ export default function Settings() {
 
   async function refreshCapabilities() {
     try {
-      const socialResult = await api.listSocialConnectors(activeAgentId());
+      const [socialResult, youtubeKey, linkedinClientId, linkedinConnection] = await Promise.all([
+        api.listSocialConnectors(activeAgentId()),
+        api.youtubeKeyStatus(activeAgentId()),
+        api.linkedinClientIdStatus(activeAgentId()),
+        api.linkedinAccountStatus(activeAgentId()),
+      ]);
       setSocialConnectors(socialResult.connectors ?? []);
-      const youtubeKey = await api.youtubeKeyStatus(activeAgentId());
       setYoutubeKeyConfigured(youtubeKey.configured);
+      setLinkedinClientIdConfigured(linkedinClientId.configured);
+      setLinkedinAccount(linkedinConnection);
       if (scope() === "user") {
         const [skillResult, hookResult, pluginResult, sourceResult, catalogResult] = await Promise.all([
           api.listSkills(activeAgentId()),
@@ -842,6 +852,80 @@ export default function Settings() {
       setPluginBusy(false);
     }
   }
+
+  const linkedinPlugin = () => [...plugins(), ...inheritedPlugins()].find((plugin) => plugin.name === "social-linkedin");
+
+  async function saveLinkedinClientId() {
+    const clientId = linkedinClientIdInput().trim();
+    if (!clientId || linkedinBusy()) return;
+    setLinkedinBusy(true);
+    try {
+      await api.saveLinkedinClientId(clientId, activeAgentId());
+      setLinkedinClientIdInput("");
+      setLinkedinClientIdConfigured(true);
+      setNotice({ kind: "info", text: "LinkedIn Client ID saved for this Agent." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not save LinkedIn Client ID: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setLinkedinBusy(false);
+    }
+  }
+
+  async function connectLinkedinAccount() {
+    if (linkedinBusy()) return;
+    let popup: Window | null = null;
+    if (host.kind !== "desktop") {
+      popup = window.open("about:blank", "_blank");
+      if (!popup) {
+        setNotice({ kind: "error", text: "Allow a new window to continue to LinkedIn." });
+        return;
+      }
+      popup.opener = null;
+    }
+    setLinkedinBusy(true);
+    try {
+      const result = await api.beginLinkedinOAuth(activeAgentId());
+      if (host.kind === "desktop") {
+        if (!host.openOAuthUrl) throw new Error("System browser support is unavailable.");
+        await host.openOAuthUrl(result.authorization_url);
+      } else if (popup) {
+        popup.location.replace(result.authorization_url);
+      }
+      setNotice({ kind: "info", text: "Finish LinkedIn sign-in in your browser, then return to Vakyartha. Only owner-visible profile identity is connected; LinkedIn content search remains unavailable." });
+    } catch (error) {
+      popup?.close();
+      setNotice({ kind: "error", text: `Could not start LinkedIn sign-in: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setLinkedinBusy(false);
+    }
+  }
+
+  async function disconnectLinkedinAccount() {
+    if (linkedinBusy()) return;
+    setLinkedinBusy(true);
+    try {
+      await api.disconnectLinkedinAccount(activeAgentId());
+      setLinkedinAccount({ connected: false });
+      setNotice({ kind: "info", text: "LinkedIn account disconnected and its saved credential removed." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not disconnect LinkedIn: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setLinkedinBusy(false);
+    }
+  }
+
+  const refreshLinkedinOnFocus = () => {
+    if (page() === "connections") {
+      void Promise.all([
+        api.linkedinClientIdStatus(activeAgentId()).then((result) => setLinkedinClientIdConfigured(result.configured)),
+        api.linkedinAccountStatus(activeAgentId()).then(setLinkedinAccount),
+      ]).catch((error) => setNotice({ kind: "error", text: `Could not refresh LinkedIn connection: ${error instanceof Error ? error.message : String(error)}` }));
+    }
+  };
+  onMount(() => {
+    window.addEventListener("focus", refreshLinkedinOnFocus);
+    onCleanup(() => window.removeEventListener("focus", refreshLinkedinOnFocus));
+  });
 
   async function installPlugin(update = false) {
     const path = pluginPath().trim();
@@ -2214,11 +2298,37 @@ export default function Settings() {
               <Show when={capabilityView() === "discover"}>
                 <div class="capability-discover-intro"><strong>Explore what is available</strong><span>Skills already on this device and packages from your registered catalogs appear here. Catalog listings are not installed automatically.</span></div>
                 <Group title="Social platform add-ons">
-                  <p class="settings-hint">Each platform is managed separately. YouTube supports an owner-only API preview; Reddit, X and LinkedIn remain unavailable. TikTok is not included.</p>
+                  <p class="settings-hint">Each platform is managed separately. YouTube supports an owner-only API preview; Reddit and X remain blocked. LinkedIn supports a local, owner-visible identity connection only. TikTok is not included.</p>
                   <div class="capability-list"><For each={socialConnectors()}>{(connector) => {
                     const plugin = [...plugins(), ...inheritedPlugins()].find((item) => item.name === connector.id);
-                    return <div class="capability-item capability-overview-row"><CapabilityIcon name={connector.platform} /><div><strong>{connector.platform}</strong><small>{connector.summary}</small><small>{connector.reason}</small><a href={connector.official_api} target="_blank" rel="noreferrer noopener">Official API information</a></div><span class="capability-state muted">{connector.readiness === "owner_preview" ? "Owner preview" : "API unavailable"}</span><Show when={plugin} fallback={<button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id)}>Install guidance</button>}><span class="capability-state" classList={{ ready: plugin!.enabled, muted: !plugin!.enabled }}>{plugin!.enabled ? "Guidance enabled" : "Guidance disabled"}</span><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void toggleSocialGuidance(plugin!)}>{plugin!.enabled ? "Disable" : "Enable"} guidance</button><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialPresentationPack(connector.id)}>Add presentation layouts</button></Show></div>;
+                    return <div class="capability-item capability-overview-row"><CapabilityIcon name={connector.platform} /><div><strong>{connector.platform}</strong><small>{connector.summary}</small><small>{connector.reason}</small><a href={connector.official_api} target="_blank" rel="noreferrer noopener">Official API information</a></div><span class="capability-state muted">{connector.readiness === "owner_preview" ? "Owner preview" : connector.readiness === "identity_link" ? "Identity link" : "API unavailable"}</span><Show when={plugin} fallback={<button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id)}>Install guidance</button>}><span class="capability-state" classList={{ ready: plugin!.enabled, muted: !plugin!.enabled }}>{plugin!.enabled ? "Guidance enabled" : "Guidance disabled"}</span><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void toggleSocialGuidance(plugin!)}>{plugin!.enabled ? "Disable" : "Enable"} guidance</button><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialPresentationPack(connector.id)}>Add presentation layouts</button></Show></div>;
                   }}</For></div>
+                  <Show when={linkedinPlugin()}>
+                    <div class="social-linkedin-setup">
+                      <h3>LinkedIn profile connection</h3>
+                      <p class="settings-hint">Connect only your LinkedIn profile name through OpenID Connect. This does not verify your real-world identity, search LinkedIn posts, or grant member or organization content access. Vakyartha requests <code>openid</code> and <code>profile</code>; profile details stay in Settings and are not sent to the agent.</p>
+                      <p class="settings-hint">This flow requires a LinkedIn app with the “Sign In with LinkedIn using OpenID Connect” product and native PKCE enabled by LinkedIn. Account linking works only when Vakyartha is reached directly on this machine. Never enter a LinkedIn password or client secret here.</p>
+                      <a href="https://www.linkedin.com/developers/apps" target="_blank" rel="noreferrer noopener">Open LinkedIn Developer Portal</a>
+                      <label>LinkedIn app Client ID<input aria-label="LinkedIn app Client ID" autocomplete="off" value={linkedinClientIdInput()} onInput={(event) => setLinkedinClientIdInput(event.currentTarget.value)} maxlength={256} placeholder={linkedinClientIdConfigured() ? "Enter a new Client ID to replace the saved one" : "Paste your app's Client ID"} /></label>
+                      <div class="settings-actions">
+                        <button type="button" class="settings-button" disabled={linkedinBusy() || !linkedinClientIdInput().trim()} onClick={() => void saveLinkedinClientId()}>{linkedinClientIdConfigured() ? "Update Client ID" : "Save Client ID"}</button>
+                        <Show when={linkedinClientIdConfigured()}><button type="button" class="settings-button subtle" disabled={linkedinBusy()} onClick={async () => { setLinkedinBusy(true); try { await api.removeLinkedinClientId(activeAgentId()); setLinkedinClientIdConfigured(false); setNotice({ kind: "info", text: "LinkedIn app Client ID removed. Disconnect the profile separately if you also want to remove its saved credential." }); } catch (error) { setNotice({ kind: "error", text: `Could not remove Client ID: ${error instanceof Error ? error.message : String(error)}` }); } finally { setLinkedinBusy(false); } }}>Remove Client ID</button></Show>
+                      </div>
+                      <Show when={linkedinClientIdConfigured()}>
+                        <p class="capability-state" classList={{ ready: linkedinAccount().connected && !linkedinAccount().expired, muted: !linkedinAccount().connected || linkedinAccount().expired }}>
+                          {linkedinAccount().connected ? linkedinAccount().expired ? `Connected as ${linkedinAccount().display_name ?? "LinkedIn member"}; token expired` : `Connected as ${linkedinAccount().display_name ?? "LinkedIn member"}` : "No LinkedIn profile connected"}
+                        </p>
+                        <Show when={linkedinAccount().connected}>
+                          <p class="settings-hint">Requested permissions: {(linkedinAccount().scopes_requested ?? []).join(", ") || "not reported"}. {linkedinAccount().scopes_returned?.length ? `Provider-reported permissions: ${(linkedinAccount().scopes_returned ?? []).join(", ")}.` : "LinkedIn did not return a scope list."} Token expires {linkedinAccount().expires_at ? new Date(linkedinAccount().expires_at!).toLocaleString() : "at an unknown time"}. Reconnect after expiry.</p>
+                        </Show>
+                        <div class="settings-actions">
+                          <button type="button" class="settings-button" disabled={linkedinBusy() || !linkedinPlugin()?.enabled} title={!linkedinPlugin()?.enabled ? "Enable the LinkedIn add-on first" : "Open LinkedIn sign-in"} onClick={() => void connectLinkedinAccount()}>{linkedinBusy() ? "Opening…" : linkedinAccount().connected ? "Reconnect LinkedIn" : "Connect LinkedIn"}</button>
+                          <Show when={linkedinAccount().connected}><button type="button" class="settings-button danger" disabled={linkedinBusy()} onClick={() => void disconnectLinkedinAccount()}>Disconnect profile</button></Show>
+                        </div>
+                        <Show when={!linkedinPlugin()?.enabled}><p class="settings-hint">Enable the LinkedIn add-on above before connecting. Disabling it preserves an existing profile connection but keeps connector actions unavailable.</p></Show>
+                      </Show>
+                    </div>
+                  </Show>
                   <Show when={socialConnectors().some((connector) => connector.id === "social-youtube" && connector.readiness === "owner_preview") && [...plugins(), ...inheritedPlugins()].some((plugin) => plugin.name === "social-youtube" && plugin.enabled)}>
                     <div class="social-youtube-preview">
                       <h3>YouTube owner-only search preview</h3>

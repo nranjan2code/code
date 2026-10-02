@@ -2693,6 +2693,11 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .capability-discover-filters button.active { border-color: var(--accent); color: var(--accent-bright); background: var(--surface-active); }
 .capability-overview-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); }
 .capability-overview-row strong { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text-soft); font-size: var(--fs-control); }
+.social-linkedin-setup { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--canvas-border); border-radius: 12px; background: var(--canvas-bg); }
+.social-linkedin-setup h3 { margin: 0; color: var(--text-soft); font-size: var(--fs-control); }
+.social-linkedin-setup .settings-hint { margin: 0; max-width: 760px; line-height: 1.5; }
+.social-linkedin-setup label { display: flex; flex-direction: column; gap: var(--space-1); width: min(100%, 520px); color: var(--muted); font-size: var(--fs-caption); }
+.social-linkedin-setup input { width: 100%; box-sizing: border-box; }
 .hook-editor { display: flex; flex-direction: column; gap: 10px; }
 .hook-row { display: grid; grid-template-columns: 1fr 1fr 110px; gap: 10px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .hook-row-head { grid-column: 1 / -1; justify-content: flex-end; }

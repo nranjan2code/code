@@ -21,6 +21,42 @@
     });
     systemTheme.addEventListener("change", labelTheme);
   }
+  const hero = document.querySelector(".hero-art");
+  const heroImage = hero?.querySelector("img");
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const finePointer = window.matchMedia("(pointer: fine)");
+  if (hero && heroImage && !reduceMotion.matches && finePointer.matches) {
+    let targetX = 0;
+    let targetY = 0;
+    let currentX = 0;
+    let currentY = 0;
+    let frame = 0;
+    const render = () => {
+      currentX += (targetX - currentX) * 0.075;
+      currentY += (targetY - currentY) * 0.075;
+      heroImage.style.setProperty("--hero-shift-x", `${currentX.toFixed(2)}px`);
+      heroImage.style.setProperty("--hero-shift-y", `${currentY.toFixed(2)}px`);
+      if (Math.abs(targetX - currentX) > 0.08 || Math.abs(targetY - currentY) > 0.08) {
+        frame = requestAnimationFrame(render);
+      } else {
+        frame = 0;
+      }
+    };
+    const move = (event) => {
+      const bounds = hero.getBoundingClientRect();
+      targetX = ((event.clientX - bounds.left) / bounds.width - 0.5) * 12;
+      targetY = ((event.clientY - bounds.top) / bounds.height - 0.5) * 8;
+      if (!frame) frame = requestAnimationFrame(render);
+    };
+    const reset = () => {
+      targetX = 0;
+      targetY = 0;
+      if (!frame) frame = requestAnimationFrame(render);
+    };
+    hero.dataset.pointerReady = "true";
+    hero.addEventListener("pointermove", move, { passive: true });
+    hero.addEventListener("pointerleave", reset, { passive: true });
+  }
   const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
   function selectTab(tab) {
     tabs.forEach((item) => {

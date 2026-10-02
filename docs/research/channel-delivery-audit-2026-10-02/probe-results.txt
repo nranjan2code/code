@@ -1,0 +1,83 @@
+
+running 13 tests
+test data_grid_readable_fallback_retains_rows ... 
+thread 'data_grid_readable_fallback_retains_rows' (11529283) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:80:5:
+readable="### data.grid"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test discord_heading_is_native_markdown ... 
+thread 'discord_heading_is_native_markdown' (11529284) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:20:5:
+assertion `left == right` failed
+  left: "<b>Title</b>"
+ right: "# Title"
+FAILED
+test discord_inline_code_is_not_rewritten ... 
+thread 'discord_inline_code_is_not_rewritten' (11529285) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:30:5:
+assertion `left == right` failed
+  left: "`x (<https://example.com>)`"
+ right: "`[x](https://example.com)`"
+FAILED
+test discord_long_line_obeys_cap ... 
+thread 'discord_long_line_obeys_cap' (11529286) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:64:5:
+[5000]
+FAILED
+test discord_masked_link_is_preserved ... 
+thread 'discord_masked_link_is_preserved' (11529287) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:25:5:
+assertion `left == right` failed
+  left: "site (<https://example.com>)"
+ right: "[site](https://example.com)"
+FAILED
+test ordinary_bold_remains_formatted ... ok
+test slack_long_code_line_obeys_cap ... 
+thread 'slack_long_code_line_obeys_cap' (11529289) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:71:5:
+[8, 5009, 7]
+FAILED
+test slack_plan_blocks_retain_nested_items ... 
+thread 'slack_plan_blocks_retain_nested_items' (11529290) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:88:5:
+[Object {"text": Object {"text": String("Trip"), "type": String("plain_text")}, "type": String("header")}, Object {"fields": Array [Object {"text": String("summary\nDay plan"), "type": String("plain_text")}], "type": String("section")}]
+FAILED
+test slack_second_level_heading_is_formatted ... 
+thread 'slack_second_level_heading_is_formatted' (11529291) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:35:5:
+assertion `left == right` failed
+  left: "## Summary"
+ right: "*Summary*"
+FAILED
+test telegram_chunks_preserve_html_entities ... 
+thread 'telegram_chunks_preserve_html_entities' (11529292) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:52:5:
+["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&", "amp;z"]
+FAILED
+test telegram_heading_preserves_url_and_valid_tag_case ... 
+thread 'telegram_heading_preserves_url_and_valid_tag_case' (11529293) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:41:5:
+<b><A HREF="HTTPS://EXAMPLE.COM/CASESENSITIVE">DOCS</A></b>
+FAILED
+test telegram_inline_code_escapes_once ... 
+thread 'telegram_inline_code_escapes_once' (11529294) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:46:5:
+assertion `left == right` failed
+  left: "<code>a &amp;lt; b &amp;amp; c</code>"
+ right: "<code>a &lt; b &amp; c</code>"
+FAILED
+test telegram_plain_fallback_decodes_entities ... 
+thread 'telegram_plain_fallback_decodes_entities' (11529295) panicked at /Users/nisheethranjan/Projects/Vak/code/docs/research/channel-delivery-audit-2026-10-02/probe.rs:57:5:
+assertion `left == right` failed
+  left: "A &amp; B"
+ right: "A & B"
+FAILED
+
+failures:
+
+failures:
+    data_grid_readable_fallback_retains_rows
+    discord_heading_is_native_markdown
+    discord_inline_code_is_not_rewritten
+    discord_long_line_obeys_cap
+    discord_masked_link_is_preserved
+    slack_long_code_line_obeys_cap
+    slack_plan_blocks_retain_nested_items
+    slack_second_level_heading_is_formatted
+    telegram_chunks_preserve_html_entities
+    telegram_heading_preserves_url_and_valid_tag_case
+    telegram_inline_code_escapes_once
+    telegram_plain_fallback_decodes_entities
+
+test result: FAILED. 1 passed; 12 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

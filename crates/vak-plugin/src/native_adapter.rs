@@ -118,14 +118,14 @@ pub const NATIVE_ADAPTERS: &[NativeAdapterRegistration] = &[
         auth: AdapterAuth::OAuthMember,
         credential_binding: "VAK_SOCIAL_LINKEDIN_ACCESS_TOKEN",
         secret_recipient: "vak-core/social-linkedin",
-        candidate_scopes: &["profile", "email", "w_member_social"],
+        candidate_scopes: &["openid", "profile"],
         capabilities: &[],
         max_results: 10,
         max_response_bytes: 1024 * 1024,
         timeout_seconds: 12,
         availability: AdapterAvailability::Gated,
         executor: CompiledExecutor::None,
-        gate_reason: "LinkedIn OAuth, per-scope approval, and account lifecycle are not implemented.",
+        gate_reason: "Only owner-visible OpenID Connect identity is supported; LinkedIn content scopes and tools remain gated.",
     },
 ];
 
