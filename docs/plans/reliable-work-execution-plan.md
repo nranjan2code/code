@@ -99,6 +99,35 @@ on the live account endpoint response.
 dispatch; all E0 decisions are explicit; the fixture distinguishes rate waiting,
 tool waiting and model work. Baseline measures joint quality and resource use.
 
+### Provider-dispatch consumer inventory (2026-10-02)
+
+This inventory is based on the current source call graph, not on the deployed
+instance. “Capacity admitted” means the consumer obtains the shared
+`vak-llm::RequestAdmission`/`RateLimitGate` reservation before making the HTTP
+call; it does not imply cross-process enforcement or durable root-work
+accounting.
+
+| Consumer | Owner and dispatch path | Capacity admission and accounting | Remaining boundary |
+|---|---|---|---|
+| Main agent turns, intent resolution, tools/worker turns, retry ladder | `vak-agent` through the Core turn dispatcher and `Provider::stream`; per-attempt `WorkReceipt` is attached to the owning session | `RateLimitGate` model demand, account concurrency/cooldown, adapter observations and usage settlement; route aliases use provider capacity identity | Process-local only; durable root budget and cross-process reservation are open |
+| Flow planning | `vak-flow/src/planner.rs` | `RequestAdmission` around planner stream; returned usage settles the reservation | No shared E1 root account; E2 process boundary remains |
+| Flow node execution | `vak-flow/src/exec.rs` creates an Agent for the node; execution is owned by the flow run | Inherits Agent dispatch admission and receipts | Root flow aggregate accounting/restart reconstruction are not E1-complete |
+| Core measured-capacity probes and cache measurements | `vak-core/src/lib.rs` background probe and cache paths | `RequestAdmission` with bounded per-call timeout; usage and admission pass through the same provider gate | Probe lifecycle/attempt throttle is process-local; probe cost lacks a durable root RunId account |
+| Context classification, compaction, reflection | `vak-core/src/lib.rs` auxiliary calls | `RequestAdmission`; bounded timeout; known pre-dispatch refusals release reservations and returned usage settles | Root turn accounting does not yet aggregate all auxiliary work; cross-process gate remains |
+| Provider model discovery and model-context/capability metadata | `vak-llm/src/models.rs` invoked by Core discovery/status paths | Each page/request uses account concurrency/cooldown admission and settles one request; Anthropic capability lookup follows same gate | Metadata calls are not all attached to the initiating session's root resource account |
+| OpenRouter key/credit status refresh | `vak-llm/src/provider_status.rs` | Account request gate; single-flight refresh; observed account budget updates the shared process gate | Refresh ownership/cache is process-local; key endpoints do not supply all upstream/model constraints |
+| OpenAI audio transcription/speech and Realtime | `vak-llm/src/openai.rs`, `openai_realtime.rs` | Model/account quota reservations and account dispatch slot; response/handshake observations update gates | Auxiliary usage is not yet aggregated into a durable root account; Realtime usage may be absent |
+| Gemini audio, Live and Interactions | `vak-llm/src/google_live.rs` | Account/model admission and typed quota failure observations; request settlements where response usage exists | Live successful usage and project limits may be unpublished; configured project identity is required to share across keys |
+| Eval runs | `vak-eval/src/runner.rs` creates an Agent for each case; the public live-model path accepts any `Provider` | Agent dispatch admission applies to both the deterministic scripted provider and injected live providers | Eval suite/root accounting and aggregate budgets are not durable E1 accounts |
+| Ollama local inference | `vak-llm/src/ollama.rs` | Shared account/model concurrency admission; overload is surfaced | No hosted TPM/day quota is published; host resource utilization is outside provider token accounting |
+
+This closes the source-level inventory for current direct `Provider::stream`
+consumers found by repository search. It does not prove that deployed binaries
+match this tree, account for calls hidden behind a future adapter, or satisfy
+E1 durable accounting. New provider dispatch call sites must be added here and
+must use the shared adapter admission path or document a separately bounded
+owner.
+
 ## E1 — shared accounting and exact settlement
 
 **Work**
