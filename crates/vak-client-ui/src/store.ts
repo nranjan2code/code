@@ -81,6 +81,9 @@ export function setCoworkingPresence(sessionId: string, participants: CoworkingP
   setCoworkingPresenceBySession(sessionId, participants);
 }
 export const [activeId, setActiveId] = createSignal<string | null>(null);
+const [armedStopSession, setArmedStopSession] = createSignal<string | null>(null);
+export const stopRunArmed = (id: string | null) => !!id && armedStopSession() === id;
+export function armStopRun(id: string | null) { setArmedStopSession(id); }
 /** A local send is an explicit request to follow the new turn, even when the
  * reader was previously browsing older messages. */
 export const [lastSubmittedPrompt, setLastSubmittedPrompt] = createSignal<{ sessionId: string; sequence: number } | null>(null);
@@ -1524,6 +1527,7 @@ export function markRunning(id: string, on: boolean, bucket: Bucket = "main") {
   // the server's own truth in refreshSessions) must not keep showing a
   // stale "Retrying" state from whatever it was last doing.
   if (!on) {
+    if (armedStopSession() === id) setArmedStopSession(null);
     noteRetry(id, false);
     markStopping(id, false, bucket);
   }

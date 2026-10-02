@@ -19,7 +19,7 @@ const shortcuts: [string, string][] = [
   ["/", "pick a skill or command in the composer"],
   ["↑ / ↓", "navigate prompt history (empty composer)"],
   [`${mod}/`, "this help"],
-  ["Esc", "stop the running turn"],
+  ["Esc twice", "stop the running turn"],
   ["Enter", "send / steer while running"],
   ["Shift+Enter", "newline"],
 ];
@@ -42,4 +42,3 @@ export default function ShortcutsModal() {
     </Sheet>
   );
 }
-

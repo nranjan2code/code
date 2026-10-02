@@ -4,6 +4,7 @@ import { interfaceFonts, contentFonts, codeFonts } from "./typography";
 import { watchSession, watchStatus } from "./streamHub";
 import {
   activeId,
+  armStopRun,
   appendSystem,
   appendNeedsAiService,
   sessions,
@@ -12,6 +13,7 @@ import {
   applyPresentationEvent,
   backend,
   isRunning,
+  stopRunArmed,
   markRunning,
   markStopping,
   resolveApproval,
@@ -795,6 +797,7 @@ export async function approve(
 export function stopRun() {
   const id = activeId();
   if (id && isRunning(id)) {
+    armStopRun(null);
     // `cancel` no longer synthesizes a `RunFinished` -- the run's own
     // terminal event arrives once it actually stops, which can take a
     // moment (the current tool call or provider request has to unwind).
@@ -1217,7 +1220,14 @@ export default function App() {
             const target = e.target as HTMLElement | null;
             const typing = !!target?.closest(".artifact-canvas") && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
             if (!typing) requestCanvasClose();
-          } else stopRun();
+          } else {
+            const id = activeId();
+            if (id && isRunning(id)) {
+              e.preventDefault();
+              if (stopRunArmed(id)) stopRun();
+              else armStopRun(id);
+            }
+          }
         } else if (e.key === "g" || e.key === "G") {
           pendingG = Date.now();
         } else if ((e.key === "i" || e.key === "I") && Date.now() - pendingG < 1000) {

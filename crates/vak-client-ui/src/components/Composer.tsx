@@ -5,6 +5,7 @@ import {
   armedGoal,
   health,
   isRunning,
+  stopRunArmed,
   itemsOf,
   promptHistory,
   replyTarget,
@@ -732,11 +733,13 @@ export default function Composer(props: { cwd: string }) {
               <Show when={activeId()} keyed>{(id) => <RunControls sessionId={id} />}</Show>
               <button
                 class="send-button stop"
-                title="Stop running task (Esc)"
+                title={stopRunArmed(activeId()) ? "Stop running task (click or press Enter to confirm)" : "Stop running task (Esc twice)"}
                 aria-label="Stop running task"
                 onClick={stopRun}
               >
-                <Icon name="stop" size={15} />
+                <Show when={stopRunArmed(activeId())} fallback={<Icon name="stop" size={15} />}>
+                  <span class="stop-confirm-overlay" aria-hidden="true">ESC</span>
+                </Show>
               </button>
             </Show>
           </div>
