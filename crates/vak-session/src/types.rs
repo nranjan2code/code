@@ -391,6 +391,13 @@ pub struct CompactionEntry {
     pub tokens_before: u64,
     #[serde(default)]
     pub reset_all: bool,
+    /// On a reset: the turn still open when it was written stays visible, with
+    /// its directive and every step after the reset. Set when the directive
+    /// itself fits, so the reset only has to replace the steps that outgrew the
+    /// horizon; unset when the directive is what did not fit, which the summary
+    /// (it carries the original task) then stands in for.
+    #[serde(default)]
+    pub keeps_open_turn: bool,
 }
 
 /// A durable objective with acceptance criteria (docs/design/42-managed-work-contracts.md).

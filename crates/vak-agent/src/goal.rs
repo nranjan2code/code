@@ -180,9 +180,9 @@ pub fn audit_request(model: &str, prompt: String) -> ChatRequest {
     req
 }
 
-/// Extracts a bounded digest of the conversation for judging.
+/// Extracts a bounded digest of the conversation for judging. Whole messages
+/// only, newest first; when older ones do not fit, a line says how many.
 pub fn transcript_digest(messages: &[vak_llm::Message], max_chars: usize) -> String {
-    // Render tail-first so recent, most-relevant turns survive the cap.
     let mut chunks: Vec<String> = Vec::new();
     let mut used = 0usize;
     for m in messages.iter().rev() {
@@ -193,7 +193,11 @@ pub fn transcript_digest(messages: &[vak_llm::Message], max_chars: usize) -> Str
         used += text.len();
         chunks.push(text);
     }
+    let omitted = messages.len() - chunks.len();
     chunks.reverse();
+    if omitted > 0 {
+        chunks.insert(0, format!("[{omitted} earlier messages are not shown]"));
+    }
     chunks.join("\n")
 }
 

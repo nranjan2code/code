@@ -315,7 +315,7 @@ fn active_work_survives_compaction() {
     })
     .unwrap();
     log.append_message(user_msg("keep this")).unwrap();
-    log.append_handoff_reset("old summary".into(), 9000)
+    log.append_handoff_reset("old summary".into(), 9000, false)
         .unwrap();
     assert!(
         log.tail_sections(None)

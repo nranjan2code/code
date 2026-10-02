@@ -1873,15 +1873,27 @@ impl Agent {
             // simply carries no history.) The reset-with-handoff rescue is the
             // surviving recovery (§4's "the handoff reset stays as the
             // recovery when a profile has no usable horizon").
-            let open_turn_tokens = {
+            let (open_turn_tokens, directive_tokens) = {
                 let session = self.session.lock().await;
-                profile.estimate_tokens(messages_chars(&session.open_turn_verbatim()))
+                let open = session.open_turn_verbatim();
+                (
+                    profile.estimate_tokens(messages_chars(&open)),
+                    profile.estimate_tokens(messages_chars(&open[..open.len().min(1)])),
+                )
             };
             let needed_tokens = prefix_tokens
                 .saturating_add(tail_tokens)
                 .saturating_add(open_turn_tokens);
             if needed_tokens > profile.prompt_ceiling() {
                 let est_tokens = needed_tokens;
+                // When the directive itself fits, the reset only replaces the
+                // steps that outgrew the horizon and the task stays in view;
+                // when it does not, the summary (which carries the original
+                // task) is all that can stand in for it.
+                let keeps_open_turn = prefix_tokens
+                    .saturating_add(tail_tokens)
+                    .saturating_add(directive_tokens)
+                    <= profile.prompt_ceiling();
                 if !self.handoff_used && self.config.handoff_reset {
                     self.handoff_used = true;
                     if let Ok(handoff) = self
@@ -1889,7 +1901,7 @@ impl Agent {
                         .await
                     {
                         let mut session = self.session.lock().await;
-                        match session.append_handoff_reset(handoff, est_tokens) {
+                        match session.append_handoff_reset(handoff, est_tokens, keeps_open_turn) {
                             Ok(_) => {
                                 let _ = events
                                     .send(AgentEvent::HandoffReset {
@@ -4396,7 +4408,12 @@ impl Agent {
         let digest = {
             let session = self.session.lock().await;
             let msgs = session.derive_messages();
-            goal::transcript_digest(&msgs, 20_000)
+            // The summariser request is small, so the transcript may fill
+            // what the model can follow, less its own completion and framing.
+            let profile = self.effective_capacity_profile();
+            let room = profile.prompt_ceiling().saturating_sub(2_000);
+            let chars = profile.chars_for_tokens(room).max(4_000);
+            goal::transcript_digest(&msgs, usize::try_from(chars).unwrap_or(usize::MAX))
         };
         let objective_line = if self.active_goal.is_some() || !original_prompt.is_empty() {
             format!("Original task: {original_prompt}\n\n")

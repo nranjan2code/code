@@ -256,6 +256,15 @@ Properties:
 - A zero `budget` means no room for history, not that the turn cannot run.
   The handoff rescue fires only when prefix + tail + the open turn exceed the
   ceiling.
+- The reset keeps the turn it interrupts. When the open turn's directive fits,
+  the `reset_all` entry records `keeps_open_turn`: the summary replaces the
+  steps that outgrew the horizon, and the directive and every step after the
+  reset stay in the projection (a turn that is open is never hidden, or the
+  model would hold a summary and no task). When the directive itself does not
+  fit, the entry hides the turn and the summary, which carries the original
+  task, stands in for it. Turns that had already finished are always hidden.
+  The summariser's transcript is sized from the model's prompt ceiling rather
+  than a constant, drops only whole messages, and says how many it dropped.
 - On a small model with a 13k horizon and a 12k prefix, the working set is
   the current turn only, and the model is told so (the summary says what it
   is missing and how to `recall`). That is the correct outcome for that model

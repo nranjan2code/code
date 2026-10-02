@@ -436,7 +436,7 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
     // Reset-with-handoff after the first turn: everything before it is
     // invisible to the model; the second turn, appended after, stays
     // verbatim.
-    log.append_handoff_reset("summary of the WEF research turn".into(), 999)
+    log.append_handoff_reset("summary of the WEF research turn".into(), 999, false)
         .unwrap();
     log.append_goal_update(vak_intent::GoalUpdate {
         revision: 2,

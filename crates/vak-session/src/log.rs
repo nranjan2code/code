@@ -1217,6 +1217,7 @@ impl SessionLog {
                 model: model.to_string(),
                 tokens_before,
                 reset_all: false,
+                keeps_open_turn: false,
             }),
         ))
     }
@@ -1229,6 +1230,7 @@ impl SessionLog {
         &mut self,
         summary: String,
         tokens_before: u64,
+        keeps_open_turn: bool,
     ) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
         self.append(Entry::new(
@@ -1240,6 +1242,7 @@ impl SessionLog {
                 model: String::new(),
                 tokens_before,
                 reset_all: true,
+                keeps_open_turn,
             }),
         ))
     }
@@ -1520,7 +1523,7 @@ impl SessionLog {
         if let Some(plan) = plan.filter(|plan| plan.selected_records.is_some()) {
             return self.derive_selected(plan);
         }
-        let (boundary_pos, position_owned, reset_summary) = self.reset_boundary();
+        let (_, position_owned, reset_summary) = self.reset_boundary();
         let position: HashMap<&str, usize> = position_owned
             .iter()
             .map(|(id, pos)| (id.as_str(), *pos))
@@ -1565,7 +1568,9 @@ impl SessionLog {
         let mut card_lines: Vec<String> = Vec::new();
         for (turn_number, turn) in index.turns.iter().enumerate() {
             let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
-            if turn_pos < boundary_pos {
+            // A turn still open across a reset keeps its directive and its
+            // steps after the reset (`behind_reset` is false for it).
+            if turn.behind_reset {
                 continue;
             }
             if !turn.closed {

@@ -116,7 +116,8 @@ pub struct Turn {
     /// a fresh final answer with nothing after it closes the turn.
     pub closed: bool,
     /// `true` when a reset-with-handoff entry (docs/design/42) follows this
-    /// turn on the chain: the turn is invisible to the model, so it is
+    /// turn on the chain and the turn had already finished: the turn is
+    /// invisible to the model, so it is
     /// never planned, never packeted and never listed as covered — though
     /// it stays in the index for `recall({ turn })` and turn numbering.
     pub behind_reset: bool,
@@ -326,8 +327,29 @@ impl TurnIndex {
                     }
                 }
                 EntryPayload::Compaction(c) if c.reset_all => {
-                    for turn in &mut turns {
+                    // The turn still being worked survives its own reset: the
+                    // handoff summary stands in for what it did so far, and
+                    // its directive and every later step stay visible.
+                    // Hiding it would leave the model with a summary and no
+                    // task, and every step after the reset invisible.
+                    let open = c.keeps_open_turn
+                        && turns.last().is_some_and(|turn| {
+                            !turn.raw_tail.last().is_some_and(|message| {
+                                message.role == Role::Assistant
+                                    && !message
+                                        .content
+                                        .iter()
+                                        .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
+                            })
+                        });
+                    let keep = usize::from(open);
+                    let settled = turns.len() - keep;
+                    for turn in &mut turns[..settled] {
                         turn.behind_reset = true;
+                    }
+                    if open && let Some(turn) = turns.last_mut() {
+                        turn.raw_tail.clear();
+                        turn.behind_reset = false;
                     }
                 }
                 EntryPayload::Compaction(c) => {
@@ -1429,7 +1451,7 @@ mod tests {
         check(&log);
         log.branch_at(&t3).unwrap();
         check(&log);
-        log.append_handoff_reset("selected handoff".into(), 1)
+        log.append_handoff_reset("selected handoff".into(), 1, false)
             .unwrap();
         check(&log);
     }
@@ -1776,6 +1798,7 @@ mod tests {
                 model: "fixture-model".into(),
                 tokens_before: 100,
                 reset_all: false,
+                keeps_open_turn: false,
             }),
         ))
         .unwrap();

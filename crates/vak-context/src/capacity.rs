@@ -310,6 +310,20 @@ impl CapacityProfile {
         (chars as f64 * tpc).round() as u64
     }
 
+    /// Characters that fill about `tokens`, by the measured tokens per char.
+    pub fn chars_for_tokens(&self, tokens: u64) -> u64 {
+        let tpc = if self.is_calibrated() {
+            self.tokens_per_char.value
+        } else {
+            UNCALIBRATED_TOKENS_PER_CHAR
+        };
+        if tpc > 0.0 {
+            (tokens as f64 / tpc) as u64
+        } else {
+            0
+        }
+    }
+
     /// Folds one turn's real usage into the profile (§1 "Feedback").
     /// `cache_miss` gates the prefill measurement: prefill throughput is
     /// only meaningful when the provider actually re-evaluated the prefix.

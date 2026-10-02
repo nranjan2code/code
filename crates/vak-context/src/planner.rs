@@ -860,7 +860,8 @@ mod tests {
             dir.path(),
             &[("turn one", 400, 40, &[]), ("turn two", 400, 40, &[])],
         );
-        log.append_handoff_reset("handoff".into(), 1_000).unwrap();
+        log.append_handoff_reset("handoff".into(), 1_000, false)
+            .unwrap();
         let id3 = log
             .append_message(MessageRecord {
                 message: M::user_text("turn three"),
