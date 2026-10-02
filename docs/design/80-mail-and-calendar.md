@@ -772,8 +772,10 @@ interchange model; adapter-specific mappings require conformance fixtures.
 Organizer edits, attendee RSVP, decline, removal from one's own calendar,
 and cancellation for all attendees are distinct operations. Review identifies
 one occurrence, the whole series, or a supported future-series edit, and all
-notifications the provider can cause. RSVP is included as a reviewed action;
-unsupported series edits are refused. Conference creation and resource/room
+notifications the provider can cause. RSVP is a target reviewed action, but
+an adapter must prove stale-review protection and safe reconciliation before
+it can be offered; a read-before-write comparison alone is insufficient.
+Unsupported series edits are refused. Conference creation and resource/room
 booking are explicit effects with their own capability checks. A free slot
 is a snapshot, not a reservation: refresh availability before commit and
 report conflicts without claiming a cross-calendar atomic booking.
