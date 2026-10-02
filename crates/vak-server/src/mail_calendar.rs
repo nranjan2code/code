@@ -3400,7 +3400,7 @@ fn record_account_event(
     })
     .to_string();
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &state.core.scope().into_root(),
         vak_core::security_events::EventKind::MailCalendarAccount,
         label,
         &detail,
