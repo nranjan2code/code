@@ -1,0 +1,41 @@
+[package]
+name = "vak-mail-calendar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+async-trait = { workspace = true }
+async-imap = { version = "0.11.3", default-features = false, features = ["runtime-tokio"] }
+async-native-tls = { version = "0.6.0", default-features = false, features = ["runtime-tokio"] }
+base64 = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+fs2 = "0.4"
+futures = { workspace = true }
+hex = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+ring = { workspace = true }
+reqwest = { workspace = true }
+subtle = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+zeroize = { workspace = true }
+vak-config = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true }
+vak-core = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

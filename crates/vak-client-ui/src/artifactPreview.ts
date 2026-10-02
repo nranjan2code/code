@@ -25,6 +25,7 @@ export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | n
       return api;
     case "live_server":
     case "automation":
+    case "daily_mail_calendar":
       return null;
   }
 }

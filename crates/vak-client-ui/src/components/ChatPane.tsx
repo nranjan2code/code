@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactFile, type Item } from "../store";
+import { activeId, activeAgentId, backend, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -47,6 +47,11 @@ const STARTERS: readonly { label: string; example: string; prompt: string }[] = 
   { label: "Write or rewrite", example: "Make this email warmer and shorter", prompt: "Make this email warmer and shorter: " },
   { label: "Analyze data", example: "What changed in this spreadsheet?", prompt: "What changed in this spreadsheet? " },
   { label: "Plan something", example: "A relaxed Saturday with the kids", prompt: "Plan a relaxed Saturday with the kids." },
+  {
+    label: "Plan my day",
+    example: "Check today's events and important email",
+    prompt: "Give me a brief plan for today using my connected calendar, recent email that may need attention, and open commitments if they are available to this Agent. Use only sources this Agent is allowed to read, cite each event or message you rely on, and say what you could not access. Keep this read-only: do not send email or change calendar events.",
+  },
 ];
 
 function EmptyChat(props: { hasSession: boolean }) {
@@ -1081,6 +1086,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         attachFiles(Array.from(event.dataTransfer.files));
       }}
     >
+      <button type="button" class="chat-daily-canvas-link" onClick={() => openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: agentForSession(sid()).id })}>Today</button>
       <Show when={navigableTurnCount() > 1}>
         <nav class="turn-rail" aria-label="Conversation turns">
           <div

@@ -36,7 +36,7 @@ pub struct PermissionEngine {
 /// portfolio, like `session_search` reads its own history: a model that must
 /// ask a person before it may look at its own obligations cannot answer
 /// "what are you working on?" on an unattended surface at all.
-const READ_TOOLS: [&str; 9] = [
+const READ_TOOLS: [&str; 10] = [
     "read",
     "doc_read",
     "glob",
@@ -46,6 +46,7 @@ const READ_TOOLS: [&str; 9] = [
     "session_search",
     "skill",
     "commitments",
+    "mail_calendar",
 ];
 /// Tools that only coordinate agents inside this run and touch no file,
 /// process or network: a worker asking its parent a question, and a parent
@@ -73,7 +74,16 @@ const LEARNING_TOOLS: [&str; 3] = ["remember", "forget_memory", "propose_skill"]
 /// — so the injection silently made `approval_mode = "auto-approve"` a
 /// no-op for exactly these two tools while working for every other one.
 /// A mode default must be sourced as a mode default.
-const NETWORK_TOOLS: [&str; 2] = ["webfetch", "browse"];
+const NETWORK_TOOLS: [&str; 8] = [
+    "webfetch",
+    "browse",
+    "mail_calendar_send",
+    "mail_calendar_event_create",
+    "mail_calendar_event_update",
+    "mail_calendar_event_cancel",
+    "mail_calendar_event_reconcile",
+    "mail_calendar_mail_reconcile",
+];
 
 impl PermissionEngine {
     pub fn new(rules: Vec<Rule>) -> Self {
@@ -400,6 +410,162 @@ fn normalize_scope_path(path: &Path, cwd: &Path) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mail_calendar_is_a_read_capability_but_explicit_rules_still_win() {
+        let empty = PermissionEngine::default();
+        assert_eq!(
+            empty.evaluate(
+                "mail_calendar",
+                &serde_json::json!({}),
+                Mode::ReadOnly,
+                Path::new("/workspace")
+            ),
+            Decision::Allow
+        );
+        let denied =
+            PermissionEngine::from_rule_strings(&["-mail_calendar".into()]).expect("valid rule");
+        assert!(matches!(
+            denied.evaluate(
+                "mail_calendar",
+                &serde_json::json!({}),
+                Mode::ReadOnly,
+                Path::new("/workspace")
+            ),
+            Decision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn mail_calendar_send_requires_approval_in_read_only_and_workspace_write() {
+        let engine = PermissionEngine::default();
+        for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
+            assert!(matches!(
+                engine.evaluate(
+                    "mail_calendar_send",
+                    &serde_json::json!({"candidate_id": "candidate-v7"}),
+                    mode,
+                    Path::new("/workspace")
+                ),
+                Decision::Ask { .. }
+            ));
+        }
+        let denied = PermissionEngine::from_rule_strings(&["-mail_calendar_send".into()])
+            .expect("valid rule");
+        assert!(matches!(
+            denied.evaluate(
+                "mail_calendar_send",
+                &serde_json::json!({"candidate_id": "candidate-v7"}),
+                Mode::FullAccess,
+                Path::new("/workspace")
+            ),
+            Decision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn mail_calendar_provider_reconciliation_requires_an_explicit_read_approval() {
+        let engine = PermissionEngine::default();
+        for action in [
+            "mail_calendar_mail_reconcile",
+            "mail_calendar_event_reconcile",
+        ] {
+            for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
+                assert!(
+                    matches!(
+                        engine.evaluate(
+                            action,
+                            &serde_json::json!({"candidate_id":"candidate-v7"}),
+                            mode,
+                            Path::new("/workspace")
+                        ),
+                        Decision::Ask { .. }
+                    ),
+                    "{action} in {mode:?}"
+                );
+            }
+            let denied =
+                PermissionEngine::from_rule_strings(&[format!("-{action}")]).expect("valid rule");
+            assert!(matches!(
+                denied.evaluate(
+                    action,
+                    &serde_json::json!({"candidate_id":"candidate-v7"}),
+                    Mode::FullAccess,
+                    Path::new("/workspace")
+                ),
+                Decision::Deny { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn mail_calendar_event_create_requires_approval_and_explicit_deny_wins() {
+        let engine = PermissionEngine::default();
+        for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
+            assert!(matches!(
+                engine.evaluate(
+                    "mail_calendar_event_create",
+                    &serde_json::json!({"candidate_id":"candidate-v7"}),
+                    mode,
+                    Path::new("/workspace")
+                ),
+                Decision::Ask { .. }
+            ));
+            assert!(matches!(
+                engine.evaluate(
+                    "mail_calendar_event_update",
+                    &serde_json::json!({"candidate_id":"candidate-v7"}),
+                    mode,
+                    Path::new("/workspace")
+                ),
+                Decision::Ask { .. }
+            ));
+            assert!(matches!(
+                engine.evaluate(
+                    "mail_calendar_event_cancel",
+                    &serde_json::json!({"candidate_id":"candidate-v7"}),
+                    mode,
+                    Path::new("/workspace")
+                ),
+                Decision::Ask { .. }
+            ));
+        }
+        let denied = PermissionEngine::from_rule_strings(&["-mail_calendar_event_create".into()])
+            .expect("valid rule");
+        assert!(matches!(
+            denied.evaluate(
+                "mail_calendar_event_create",
+                &serde_json::json!({}),
+                Mode::FullAccess,
+                Path::new("/workspace")
+            ),
+            Decision::Deny { .. }
+        ));
+        let denied_update =
+            PermissionEngine::from_rule_strings(&["-mail_calendar_event_update".into()])
+                .expect("valid rule");
+        assert!(matches!(
+            denied_update.evaluate(
+                "mail_calendar_event_update",
+                &serde_json::json!({}),
+                Mode::FullAccess,
+                Path::new("/workspace")
+            ),
+            Decision::Deny { .. }
+        ));
+        let denied_cancel =
+            PermissionEngine::from_rule_strings(&["-mail_calendar_event_cancel".into()])
+                .expect("valid rule");
+        assert!(matches!(
+            denied_cancel.evaluate(
+                "mail_calendar_event_cancel",
+                &serde_json::json!({}),
+                Mode::FullAccess,
+                Path::new("/workspace")
+            ),
+            Decision::Deny { .. }
+        ));
+    }
 
     #[test]
     fn test_describe_formats_task() {

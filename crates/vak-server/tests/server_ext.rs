@@ -557,6 +557,11 @@ async fn mode_switch_and_diff_endpoint() {
         .await
         .unwrap();
     assert_eq!(health["permission_mode"], "ReadOnly");
+    assert!(matches!(
+        health["automation_scheduler"]["status"].as_str(),
+        Some("starting" | "active" | "stale")
+    ));
+    assert_eq!(health["automation_scheduler"]["tick_interval_seconds"], 20);
 
     let config: serde_json::Value = client
         .get(format!("{base}/config"))

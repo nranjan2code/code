@@ -270,6 +270,7 @@ pub const REGISTRY: &[StateEntry] = &[
     ),
     agent_entry("agents/{agent}/flow-runs", "vak-flow", Kind::Ledger),
     agent_entry("agents/{agent}/agent-network", "vak-core", Kind::Config),
+    agent_entry("agents/{agent}/mail-calendar", "vak-mail-calendar", Kind::Ledger),
     agent_entry("agents/{agent}/sandbox", "vak-server", Kind::Ledger),
     agent_entry(
         "agents/{agent}/office-workspaces",

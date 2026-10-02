@@ -362,6 +362,13 @@ export interface Health {
   context_window: number;
   cwd: string;
   warnings: unknown[];
+  automation_scheduler?: {
+    status: "starting" | "active" | "stale";
+    last_tick_at: string | null;
+    age_seconds: number | null;
+    tick_interval_seconds: number;
+    stale_after_seconds: number;
+  };
 }
 
 export interface BackendInfo {
@@ -497,6 +504,7 @@ export interface TaskDef {
   last_summary?: string | null;
   last_result_id?: string | null;
   last_run_status?: string | null;
+  mail_calendar_last_check_at?: string | null;
   last_delivery_state?: string | null;
   last_wt?: { path: string; branch: string } | null;
   deliver_to?: string | null;
@@ -508,6 +516,22 @@ export interface TaskDef {
   model_pin?: string | null;
   agent_id?: string | null;
   agent_revision?: number | null;
+  mail_calendar_scope?: {
+    routine_id: string;
+    account_id: string;
+    mail_folder_id?: string | null;
+    calendar_source_id?: string | null;
+    operations: Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">;
+    max_items: number;
+    watch_new_mail: boolean;
+    read_commitments?: boolean;
+    calendar_event_trigger?: {
+      boundary: "start" | "end";
+      /** Positive means before the boundary; negative means after it. */
+      offset_minutes: number;
+      max_lateness_minutes: number;
+    } | null;
+  } | null;
   next_run_at?: string | null;
   timezone?: string | null;
 }

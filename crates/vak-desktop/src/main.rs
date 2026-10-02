@@ -1013,6 +1013,56 @@ fn open_admin(route: String) {
     open_web_path(&format!("/admin{route}"));
 }
 
+/// Open only the two provider authorization endpoints in the system browser.
+/// The URL is supplied by the authenticated loopback API, but validate it
+/// again at the native boundary before invoking an operating-system handler.
+#[tauri::command]
+fn open_oauth_url(url: String) -> Result<(), String> {
+    let parsed = validate_oauth_url(&url)?;
+
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open")
+        .arg(parsed.as_str())
+        .spawn();
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("explorer.exe")
+        .arg(parsed.as_str())
+        .spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open")
+        .arg(parsed.as_str())
+        .spawn();
+
+    result
+        .map(|_| ())
+        .map_err(|_| "Could not open the system browser".to_owned())
+}
+
+fn validate_oauth_url(url: &str) -> Result<url::Url, String> {
+    if url.len() > 8192 {
+        return Err("Provider authorization URL is too long".into());
+    }
+    let parsed = url::Url::parse(url).map_err(|_| "Invalid provider authorization URL")?;
+    let allowed = parsed.scheme() == "https"
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.port().is_none()
+        && parsed.fragment().is_none()
+        && parsed.query().is_some()
+        && matches!(
+            (parsed.host_str(), parsed.path()),
+            (Some("accounts.google.com"), "/o/oauth2/v2/auth")
+                | (
+                    Some("login.microsoftonline.com"),
+                    "/common/oauth2/v2.0/authorize"
+                )
+        );
+    if !allowed {
+        return Err("Only Google and Microsoft sign-in pages can be opened here".into());
+    }
+    Ok(parsed)
+}
+
 /// What a double-click on a window's title bar does, as set under "Double-click
 /// a window's title bar to" in System Settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1281,6 +1331,7 @@ fn main() {
             get_desktop_autostart,
             set_desktop_autostart,
             open_admin,
+            open_oauth_url,
             review_workspace,
             title_bar_double_click,
             start_backend,
@@ -1318,7 +1369,7 @@ fn main() {
 mod tests {
     use super::{
         TRAY_FLAG, TitleBarAction, connect_gateway_backend, is_tray_launch, requested_project,
-        startup_workspace,
+        startup_workspace, validate_oauth_url,
     };
 
     #[tokio::test]
@@ -1404,6 +1455,27 @@ mod tests {
         drop(stream);
         if let Some(shutdown) = running.backend.shutdown {
             let _ = shutdown.send(true);
+        }
+    }
+
+    #[test]
+    fn only_fixed_provider_authorization_urls_can_open_externally() {
+        assert!(
+            validate_oauth_url(
+                "https://accounts.google.com/o/oauth2/v2/auth?client_id=client&state=state"
+            )
+            .is_ok()
+        );
+        assert!(validate_oauth_url(
+            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=client&state=state"
+        ).is_ok());
+        for rejected in [
+            "https://accounts.google.com.attacker.example/o/oauth2/v2/auth?state=x",
+            "http://accounts.google.com/o/oauth2/v2/auth?state=x",
+            "https://attacker.example/o/oauth2/v2/auth?state=x",
+            "https://accounts.google.com/redirect?state=x",
+        ] {
+            assert!(validate_oauth_url(rejected).is_err(), "{rejected}");
         }
     }
 

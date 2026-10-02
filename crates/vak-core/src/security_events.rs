@@ -37,6 +37,9 @@ pub enum EventKind {
     PermissionDenial,
     ConfigChange,
     ProviderKeyChange,
+    /// Mail/calendar account connection, refresh, and disconnect lifecycle.
+    /// Details contain opaque Agent/account ids and capability names only.
+    MailCalendarAccount,
     FullAccessGrant,
     FullAccessRevoke,
     /// docs/design/34-channel-onboarding.md: an unknown inbound chat key

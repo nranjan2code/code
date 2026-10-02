@@ -1,11 +1,339 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **proposal, 2026-09-29. Nothing in this document is shipped.** This is
-the design-first response to the owner's request for an Office-like mail and
-calendar package with security as a first constraint. It authorizes no
-implementation milestone. Provider-specific API details and consent
-requirements must be rechecked against current provider documentation before
-implementation.
+Status: **in progress on `codex/mail-calendar` (2026-10-02).** Google,
+Microsoft, and Apple account linking and bounded owner previews are implemented
+using the current 4.x storage model. Google and Microsoft support OAuth and an
+optional, warned local App Password path; Apple supports separately verified
+Mail, Calendar, and free/busy capabilities, including combinations when each
+selected protocol verifies. Owners can search all three providers,
+select Gmail labels or Microsoft folders, and browse paginated Google
+or Microsoft conversations. Brokered Agent reads cover selected Google and
+Microsoft folders and threads with per-message citations; channel access fails
+closed without an explicit share grant.
+
+Opening an Agent citation loads further pages of that same conversation, up to
+420 messages, to locate the cited item. Remaining pages can be loaded manually.
+
+On loopback development origins, Settings and the Today view offer **Use
+synthetic demo data** as a one-click way to try the mail and calendar screens.
+It substitutes generated `example.test` accounts, mail, calendar and free/busy
+responses at the client API boundary, without making a server request. Demo
+drafts are stored separately in that browser's local storage; credentials,
+provider connections, real account drafts and routine operations are not used.
+The sample accounts have read-only capabilities, and every provider connection
+or effect request is refused while demo mode is enabled. This is a local UI and
+regression aid, not a production data mode or a substitute for provider tests.
+
+The Agent-vault work area stores revisioned local drafts and shows exact-payload
+previews. Email send Review now obtains the default sending identity from the
+connected account's protected vault entry and, for a reply, reads only the
+selected source message's provider From and Reply-To fields through a bounded
+metadata request. Review separates those source headers from the outgoing To,
+Cc, and Bcc fields, labels outgoing Reply-To as unset, and fetches context only
+after the owner opens Review. These transient Review details are owner-only;
+they are not stored in the candidate or exposed to the Agent. Sender aliases
+remain unsupported. Google and Microsoft support reviewed plain-text email sends and a
+limited timed-event create profile; Google also supports conditional update and
+cancellation for one unchanged, public, standalone timed event without
+attendees. Provider effects require opt-in scopes, owner confirmation, Core
+permission checks, and durable single-use claims. Event creation has no
+attendees, recurrence, or reminders. A draft from a selected Google or
+Microsoft conversation message preserves its source and can create a
+provider-threaded reply.
+
+Routine history is stored as bounded, content-free metadata in the owning
+Agent's encrypted vault. It records run, routine, account, optional session IDs,
+trigger, status, and timestamps. Run content remains in the Agent's append-only
+session; deleting an account or routine removes its matching vault history.
+
+Scheduled and one-minute continuous read-only routines use `TaskDef`, start
+paused for a one-off preview, and store a bounded encrypted mail backlog with
+provider cursors in the Agent vault. Event-relative triggers also use the
+existing `TaskDef` cadence: bounded provider polls queue opaque due-occurrence
+keys in the Agent vault, and the scheduled run's brokered calendar read returns
+only events matching those keys. Provider scans retain continuation status
+and are independent of the run's smaller output budget: the broker reconciles
+up to 100 matching occurrences, returns only the configured per-run batch,
+and leaves remaining matches queued for later runs. A complete observation
+drops stale moved or cancelled candidates; a provider continuation beyond the
+100-event queue bound fails the poll visibly without advancing it. Apple
+CalDAV treats a full 100-event result as possibly truncated and fails closed.
+Continuous watches show an overdue warning
+after three minutes without a successful provider poll. Settings separately
+reports whether the Vakyartha service API is reachable; a reachable process
+does not prove provider freshness or detect sleep between checks. Owners can
+select event start or end, an offset, a catch-up limit, and scheduled or
+about-once-a-minute polling in the routine editor. The full conversation
+workspace, Apple provider effects, broader Microsoft/event update and
+cancellation profiles, Microsoft and Apple RSVP, complete event-trigger browser acceptance,
+reconciliation for Microsoft event updates, live-provider conformance, full connected
+source-to-Review browser acceptance, and 24-hour service-recovery acceptance
+remain open. `/health` exposes a volatile scheduler heartbeat for starting,
+active, or stale background scheduling, but this is not the sustained
+24-hour service-recovery acceptance. Apple Calendar has not been verified
+with a live credential.
+Scheduled routines also offer an explicit **Include this Agent's open
+commitments** option. When selected, the routine receives the existing
+read-only `commitments` tool in addition to its bounded mail/calendar broker.
+The child session is stamped with the local owner audience, and the tool reads
+only commitments visible to that audience in the owning Agent's ledger. The
+option is rejected when commitments are disabled and runs are refused if that
+setting is later disabled. This is the first cross-activity integration; files,
+other services, writing commitments, and automatic provider effects remain
+separately gated or deferred.
+Mail previews and conversation pages also carry bounded sender, Reply-To, To,
+and Cc fields from Google, Microsoft Graph, and Apple IMAP where available.
+Google requests the Reply-To metadata header and Graph selects `replyTo`; Apple
+IMAP's envelope does not provide it and Apple replies are unsupported. Reply-To
+is treated as untrusted provider data. A Google or Microsoft reply draft uses
+its first parsed Reply-To mailbox when present, otherwise the sender address;
+the recipient remains editable and the exact final address is shown for review.
+Bcc is not requested from Microsoft and is never projected into the owner or
+Agent result.
+iCloud links verify each explicitly selected read capability before saving one
+account: MailRead uses fixed-host IMAP, while CalendarRead and CalendarFreeBusy
+use fixed-host CalDAV checks. Combined read selections are active only when
+every selected protocol check succeeds. Apple inbox previews expose bounded
+metadata, and the person or Agent can request one selected message body through
+a fixed-UID, read-only fetch parsed in the isolated worker. Calendar previews perform fixed-origin CalDAV discovery and
+range-bounded event reads; provider XML and iCalendar content are parsed in the
+network-denied worker. CalDAV results are filtered locally against the
+requested time range after worker parsing. A bounded worker-side MIME parser
+prefers bounded plain-text parts and uses a bounded, network-denied HTML-to-text
+fallback only when a message has no plain-text part. The worker drops scripts,
+styles, embedded documents, links' destinations, images and attachments; the
+owner preview labels sanitized HTML text. Apple free-busy uses CalDAV
+`free-busy-query`; the worker returns only busy intervals without
+event details. Apple event changes remain unavailable. No credentialed live
+Apple Calendar request has been made, so authenticated provider discovery and
+free/busy semantics still need live verification.**
+On 2026-09-30 the owner authorized mail/calendar implementation against the
+current 4.x storage model, deferring the data-architecture refactor. The owner
+authorized a feature branch after the design review. Typed contracts,
+Agent-scoped credential storage, bounded Google/Microsoft PKCE linking, an
+connection Settings panel with masked display identities, local-only Apple
+app-specific-password enrollment, and a broker-owned read tool for the local
+owner surface are implemented in that
+branch. OAuth and all provider App Password activations hold the shared connection-ledger lock
+across the Agent-vault credential write and pending-to-connected event, so a
+concurrent disconnect either prevents the new credential write or runs after
+activation and removes it. Apple enrollment records only read capabilities
+and stores the password in the Agent vault. A Mail-only selection verifies
+the app-specific password against `imap.mail.me.com:993` using TLS, read-only
+`EXAMINE`, and a fixed session byte budget. Such an account is admitted only
+for `MailRead`; inbox metadata is bounded to 20 items and an explicitly selected
+message can be fetched separately without setting `Seen`. Raw MIME is passed
+to the isolated worker and only bounded plain text is returned. A separate
+`CalendarRead`-only selection is verified through
+the fixed-host CalDAV authentication probe. The adapter discovers the
+principal, home set and calendar collections, validates each href against
+`https://caldav.icloud.com`, and sends bounded event reports to the isolated
+worker. Mixed Apple capability combinations remain unverified.
+Google also supports a separate local-only App Password path. It verifies
+`imap.gmail.com:993` with TLS and read-only `EXAMINE`, stores the credential in
+the same Agent vault, and grants only `MailRead`. Gmail inbox metadata and
+selected MIME bodies use the bounded IMAP adapter and isolated worker; routine
+watches use a provider-specific bounded UID cursor. Conversation reads,
+Calendar, sending, and all provider writes are unavailable for this sign-in
+method. The UI warns that the long-lived App Password is less secure than
+OAuth and identifies provider-side revocation. Microsoft Exchange Online has
+no app-password alternative; its connection remains OAuth-only.
+Microsoft personal Outlook.com/Live/Hotmail/MSN accounts also have an optional
+local-only app-password path, separately from OAuth. It accepts only those
+consumer address domains, verifies a fixed-host IMAP sign-in to
+`outlook.office365.com:993` over TLS with read-only `EXAMINE`, and grants only
+MailRead. Inbox metadata, selected message bodies, and bounded scheduled
+message-ID watches use the same fixed-host IMAP adapter and isolated MIME
+worker as the other password-based read paths. It offers no calendar, send,
+conversation, attachment, or provider-write access. Microsoft documents app
+passwords for personal accounts and legacy clients while its current Outlook.com
+IMAP setup requires OAuth2; Basic Authentication retirement and current
+provider enforcement mean this fallback may stop working or be rejected. The
+connect action verifies the credential before storing it. Microsoft 365 and
+work/school Exchange accounts stay OAuth-only. The app password is never the
+ordinary Microsoft password. It is local-device only, Agent-vault stored,
+zeroized on disconnect, and warned as less secure before entry.
+Google and Microsoft Agent reads are limited
+to the local owner surface; channel audiences fail closed without an explicit
+share grant. Provider previews redact private-event titles, locations,
+descriptions, and attendee counts while preserving only the busy time. Reads
+supplied to the model are retained in current append-only session history.
+Local drafts and scheduled read-only routines are implemented.
+The first plain-text email effect and one timed event-create profile are
+implemented for Google and Microsoft. Calendar creates carry a private,
+provider-side attempt marker bound to the durable single-use dispatch attempt.
+After an ambiguous response or process restart, an owner can ask the broker to
+look for that exact marker. A unique match confirms the stored receipt; no
+match or multiple matches leaves it unknown and permanently non-retryable.
+The supported Google conditional update also stores the attempt marker on the
+event; reconciliation reads that exact event and confirms only the matching
+marker. Google cancellation stores the attempt marker in the same conditional
+PATCH as `status=cancelled`; after an ambiguous response, reconciliation reads
+the event tombstone and confirms only when its ID, cancelled status, and
+private marker all match. A missing tombstone or marker remains unknown and
+non-retryable. Email sends on Gmail and Microsoft Graph carry the durable attempt id
+as an opaque Message-ID/custom Internet header. The owner can check Sent mail;
+Gmail uses the exact RFC Message-ID query, while Graph checks a bounded,
+time-filtered Sent Items page. Only a unique exact marker confirms the receipt;
+missing, duplicate, or incomplete results remain inconclusive and non-retryable.
+The marker contains only the opaque attempt UUID, not account identity,
+Agent identity, event content, or message content. Reconciliation is a
+read-only operation requiring the owning Agent's MailRead or CalendarWrite
+capability and the matching broker permission. This uses [Gmail message search
+by RFC Message-ID](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list),
+[Microsoft Graph custom Internet message headers](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0),
+[Graph message listing](https://learn.microsoft.com/en-us/graph/api/user-list-messages?view=graph-rest-1.0),
+[Google private extended properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties)
+and [Google event status and cancelled-event reads](https://developers.google.com/workspace/calendar/api/v3/reference/events)
+and [Microsoft Graph single-value extended properties](https://learn.microsoft.com/en-us/graph/api/singlevaluelegacyextendedproperty-post-singlevalueextendedproperties?view=graph-rest-1.0).
+Google owner-reviewed RSVP is limited to one complete, standalone invitation
+where the connected person is exactly one attendee and not the organizer. The
+candidate binds the event ETag and accept/maybe/decline response; the broker
+re-reads before dispatch and sends `If-Match` with `attendeesOmitted=true` so
+only the connected person's response changes. `sendUpdates=all` makes
+organizer notification explicit in Review. An opaque marker is stored in the
+person's private copy and reconciliation confirms only when that marker and
+the requested response both match. Google documents attendee-response-only
+updates through `attendeesOmitted` and writable per-copy private extended
+properties ([event update](https://developers.google.com/workspace/calendar/api/v3/reference/events/update),
+[extended properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties));
+the ETag precondition follows [Google's version-resource contract](https://developers.google.com/calendar/api/guides/version-resources).
+These effects require an unchanged saved
+candidate revision and owner-only confirmation. Unknown outcomes remain
+non-retryable and appear in the local candidate list. Google event update
+re-reads the source event and sends a conditional ETag update; stale versions
+conflict and require a fresh preview and candidate. Google cancellation
+re-reads the source event and conditionally writes its cancelled status and
+attempt marker together; reconciliation confirms only that exact marker on the
+cancelled event. Microsoft update,
+cancellation outside the single-event Google profile above, Microsoft and
+Apple RSVP operations,
+Agent-initiated effects, and 24-hour recovery acceptance remain open.
+The server checks provider/action compatibility both when saving a candidate
+and before writing its single-use effect claim. Microsoft event update remains
+disabled because the Graph v1.0 event update documentation does not establish
+a conditional-write contract for stale-review protection ([update event](https://learn.microsoft.com/graph/api/event-update?view=graph-rest-1.0), [delete event](https://learn.microsoft.com/graph/api/event-delete?view=graph-rest-1.0)).
+Google and Microsoft calendar-write consent is broader than this limited
+create operation; the credential stays in the Agent vault and effects remain
+broker-only. OAuth authorization attempts are bounded and single-use;
+disconnect serializes with new links and atomically advances a durable,
+Agent/provider OAuth fence in the append-only connection ledger. Each OAuth
+attempt captures that fence at initiation; callback credential persistence
+checks it under the same cross-process ledger lock as the vault write. A
+disconnect in another server process therefore invalidates a callback already
+in flight. The separate in-memory callback fence table is capped so eviction
+invalidates stale commits instead of authorizing them.
+The account API and Settings surface the unverified state directly. Apple
+accounts are admitted only when verified for an exact supported selection:
+MailRead alone or CalendarRead alone. Mixed capability selections remain
+`connected_unverified`, and the read adapter refuses them. Mail verification
+does not change calendar admission.
+The repository-local native package is `packages/mail-calendar`. Its only
+component is an inert skill that explains account setup and current limits; it
+declares no executable, MCP, command, hook, or data-access capability. The
+package registry inspects it through the same native manifest path used for
+other local packages; installation leaves it disabled until a separate review
+and enable action. The package itself grants no data access; mail/calendar
+reads are available only through the Core broker tool. Provider effects do not
+run through the package skill or a model tool; the send endpoint is an
+owner-authenticated broker operation.
+The owner account inventory reports whether each credential is actually
+available in the Agent vault; a connection ledger row alone is not presented
+as proof that saved sign-in material can be loaded. Owner-only bounded
+previews for Gmail and Microsoft are implemented. The Agent read tool uses
+the connected account's declared capability and the owning Agent's local
+surface grant. Calendar and availability previews accept an owner-selected
+local date range of up to 30 days and show when the result was refreshed;
+times are rendered in the device's time zone. Inbox navigation remains a
+bounded recent-message view and owner-submitted phrase search within the selected
+inbox. Owner mail previews can select Gmail labels and Microsoft top-level
+folders; Apple and Agent/watcher reads remain Inbox-only. Google and Microsoft
+owners can open a paginated thread preview with up to 20 messages per page; Gmail
+loads a bounded metadata-only thread snapshot and fetches full content only for
+the selected page, while Microsoft follows a validated provider continuation.
+Apple supports a selected-message preview without conversation grouping. These
+results are transient and search phrases are not logged or retained. Google and
+Microsoft conversation messages include bounded attachment cards; selected
+previewable files use the existing network-denied document worker. The owner
+can start a local email draft from any message in an opened Google or Microsoft
+conversation; the candidate retains that selected provider message as its
+source reference. The owner can create a provider-threaded reply. Reply drafts
+prefer the bounded provider Reply-To mailbox when available and otherwise use
+From; the owner can edit and review the exact recipient. The send
+broker requires both MailRead and MailSend, re-fetches the selected provider
+message immediately before dispatch, and blocks a changed message,
+thread/conversation ID, or subject. Google serialization uses validated
+provider Message-ID and References headers with the selected Gmail thread ID;
+Microsoft uses the selected message's `/reply` operation. IDs remain fixed-host
+path segments. Apple replies remain unsupported. Subject text alone never
+establishes thread membership. The Agent tool can now read a bounded selected
+Google/Microsoft thread page with a routine-scoped `mail_thread` permission.
+Each message is separately labelled as untrusted and carries a citation bound
+to provider, account, audience, thread, and message IDs. Click-through citation
+navigation now accepts the exact inline `mailcite:` token from that citation
+and opens the connected account's owner-only conversation preview; the server
+re-fetches the thread from the provider, and the UI scrolls to the cited
+message by following bounded provider pages up to 420 messages; any remaining
+pages can be loaded manually. The conversation is opened in a focused Today
+Canvas workspace: calendar controls, inbox filters, routines, and drafts are
+hidden while the message is open; keyboard focus moves to the subject. “Back to
+inbox” restores the same mail view and keyboard focus returns to the opened
+message. Replies are saved as Agent-scoped drafts; choosing “Draft reply in
+Canvas” reveals a focused reply-composer panel beneath the conversation. It
+hides unrelated drafts and new-draft controls while the reply is open, moves
+keyboard focus to the reply body, and keeps Preview, Save, and exact Review in
+the same Canvas context. Closing the composer returns to the conversation.
+Sending still requires the separate exact-payload Review and confirmation. The
+message itself remains a read-only preview.
+The interactive mail tool now lists a bounded set of provider folders/labels
+on an owner's request, then accepts a selected ID for recent-mail reads only
+after verifying it against the same account. Scheduled routines cannot list
+folders and remain pinned to their owner-selected source. Agent tool results
+now put connected-provider
+content under a structured `untrusted_provider_data` field beside fixed
+provenance metadata declaring that the content has no authority. This marker
+guides the model, while every permission and provider effect remains enforced
+independently by the broker; the marker itself is not a prompt-injection
+containment mechanism. Local drafts,
+scheduled read-only routines, and an explicitly
+best-effort scheduled email watch are implemented. It scans up to 100 recent
+provider IDs into a bounded encrypted Agent-vault backlog, then fetches at
+most the routine's configured batch by explicit IDs. Apple carries a
+UIDVALIDITY/UID cursor through that backlog, Gmail follows bounded history
+pages from its stored history ID, and Microsoft follows bounded Graph delta
+links for the inbox. IDs fetched by a tool are committed only after the
+scheduler observes a completed run; failed or interrupted runs requeue them.
+This gives at-least-once recovery across local restarts. Invalid or expired
+cursors fail visibly and require the owner to recreate the routine; backlog
+overflow also fails closed. A per-routine OS lease prevents duplicate
+local server-process runs through
+child completion; it does not provide multi-host coordination. Email send, a
+constrained timed event create, Google standalone event update and
+cancellation, and Google RSVP for one standalone invitation have effect-aware
+owner confirmation and supported exact-marker reconciliation paths. Other
+event update/cancellation profiles, Microsoft and Apple RSVP, standing grants,
+other receipt reconciliation, durable continuous service recovery, and
+full provider conformance remain in progress. The
+account-deletion limitation below is disclosed before content features are
+enabled.
+Google and Microsoft inbox previews now show bounded attachment metadata and
+allow a person to preview one selected PDF, Open XML document, or plain-text
+file up to 1 MiB. The provider response is revalidated against the parent
+message; bytes are read only by the existing network-denied document worker and
+only capped extracted text returns to the owner UI. HTML, archives, inline
+attachments, unsupported formats, oversized files, and Apple iCloud attachments
+remain unavailable. Attachments are not copied into Agent history unless a
+person separately asks the Agent to read or use that content.
+No crypto-shred guarantee is made. Apple Mail is available only for a verified
+Mail-only account; inbox listing returns bounded metadata and a separately
+selected message can return bounded plain text. Apple Calendar event previews
+and availability checks require separately verified CalendarRead-only and
+CalendarFreeBusy-only accounts, respectively. Availability uses a CalDAV
+`free-busy-query` and worker-side VFREEBUSY projection that exposes only busy
+intervals. Provider effects remain unavailable. No live credentialed Apple
+Calendar verification has been performed.
+Provider-specific API details and consent requirements must be rechecked
+against current provider documentation before each implementation milestone.
 
 **Review, 2026-09-29:** expanded the initial proposal with protocol semantics,
 automation safety, connection security, delivery states, and explicit release
@@ -69,6 +397,36 @@ automations, not only when a person opens a mailbox screen. Examples:
 | Weekly planning | Calendar availability and open commitments | Proposed focus blocks and reschedules, each with attendee impact |
 | Bills and renewals | Selected bill or renewal notices and relevant commitments | Due-date reminder or proposed task; payment remains a separately authorized capability |
 | Family and appointments | Authorized shared calendar and selected confirmation messages | Preparation reminder or proposed schedule change without disclosing private event details |
+
+The routine editor now offers an explicit **Include this Agent's open
+commitments** option. When selected, a scheduled routine receives the existing
+read-only `commitments` tool in addition to its bounded mail/calendar broker.
+Its child session is stamped with the local owner audience, and the tool reads
+only commitments visible to that audience in the owning Agent's ledger. The
+option is rejected when commitments are disabled and runs are refused if that
+setting is later disabled. This is the first cross-activity integration; files,
+other services, writing commitments, and automatic provider effects remain
+separately gated or deferred.
+
+An Agent conversation now offers a **Today** Canvas action alongside the
+**Plan my day** starter. The Canvas reads today's agenda, busy intervals, and
+up to eight recent messages per linked account through the owner-authenticated
+preview routes. It loads only when opened or refreshed, shows source-specific
+read failures, and opens supported messages in their provider-reverified
+conversation in Canvas. Opening it does not add provider content to session
+history or send/change anything. It reads at most two accounts concurrently
+to bound provider request bursts while retaining the combined view. While
+visible, it refreshes every five minutes, after a minute away when the owner
+returns, and when network connectivity returns. Account changes completed in
+Settings notify an open Today Canvas for immediate refresh; if a change arrives
+during a read, one follow-up refresh runs as soon as that read completes.
+Provider push subscriptions can later shorten update delay; a push is only a
+hint to fetch and verify current state, never a source of content or
+authorization. The
+starter remains an on-demand Agent conversation for a cited, read-only day
+plan. Account administration remains in Settings; routine creation and
+operation live in Today Canvas. The Canvas acceptance uses synthetic linked
+accounts; live-provider and sustained service recovery acceptance remain open.
 
 An automation definition names its trigger, connected account, selection
 rule, Agent, audience, cadence, allowed reads, possible outputs, expiry, and
@@ -140,11 +498,54 @@ controls remain available from an authenticated surface.
 ### D1 — One contract, separate provider adapters
 
 The user-facing mail and calendar operations are provider-neutral typed
-operations. Each account connection names an immutable provider, external
-principal, granted scope set, credential reference, and owner/audience scope.
-Google Workspace and Microsoft Graph can have separate adapters; adding either
-must not change the policy or Review contract. No generic arbitrary-URL,
-raw-HTTP, or model-selected MCP call is an escape hatch to the account.
+operations. Each account connection names an immutable provider, a vault
+reference for its external principal, granted scope set, credential reference,
+and owner/audience scope.
+Google Workspace, Microsoft Graph, and Apple iCloud have separate adapters;
+adding one must not change the policy or Review contract. Google and Microsoft
+use delegated OAuth. Apple now documents Apple Account authorization for
+supported third-party apps, and app-specific passwords when an app does not
+support that flow ([Apple's iCloud third-party app guide](https://support.apple.com/en-us/121539)).
+The current Vakyartha branch implements the local app-specific-password
+fallback for a verified, Mail-only IMAP read path. The credential has broader
+protocol access than Vak's selected capabilities and must be disclosed as
+such. Apple's support guide describes the user authorization and revocation
+experience.
+Apple's manual iCloud Mail configuration documents IMAP at
+`imap.mail.me.com:993` and an app-specific password
+([server settings](https://support.apple.com/en-us/102525)). In Vakyartha,
+the Mail-only connection path authenticates and runs `EXAMINE INBOX` before
+storing the credential, then the preview reads at most 20 message envelopes
+and body structures with a 512 KiB protocol-session limit. It does not fetch
+message bodies during the inbox listing. A separate selected-message request
+uses `UID FETCH BODY.PEEK[]`, checks UIDVALIDITY, caps the full message at
+128 KiB within the 512 KiB IMAP session budget, and sends raw MIME directly to
+the network-denied worker. It returns only bounded `text/plain`; HTML and
+attachments are not exposed. HTML-only bodies are reduced to bounded text in
+the isolated worker; active content, styles, links' destinations and remote
+images are not returned or fetched. Calendar event access and availability each require a separate
+capability selection and a successful fixed-host CalDAV authentication probe.
+Both paths perform bounded discovery, validate every provider href against
+the fixed Apple origin, and parse provider responses inside the network-denied
+worker. The availability path uses CalDAV `free-busy-query` and returns only
+busy intervals. Mixed capability selections remain `connected_unverified`;
+Apple effects are unavailable.
+Apple's developer OAuth service is Account & Organizational Data Sharing; its
+documented scopes are for the Apple School Manager Roster API
+(`edu.users.read`, `edu.classes.read`), not iCloud Mail or Calendar
+([authorization scopes](https://developer.apple.com/documentation/accountorganizationaldatasharing/request-an-authorization),
+[Roster API](https://developer.apple.com/documentation/rosterapi/)). EventKit
+is a native on-device calendar permission model, not a server-side account
+grant for unattended routines ([EventKit access](https://developer.apple.com/documentation/eventkit/accessing-the-event-store)).
+**Do not treat Sign in with Apple as this permission:** it authenticates a
+person to Vakyartha, rather than granting access to their iCloud Mail or
+Calendar ([Sign in with Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
+The current fixed-host IMAP, CalDAV event-read, and free/busy paths are
+implemented, but credentialed live Apple Calendar conformance, provider
+revocation behavior, and all Apple write operations remain unverified or
+unsupported. No generic arbitrary-URL, raw-HTTP, or model-selected MCP call is
+an escape hatch to the account. Custom IMAP/CalDAV hosts are out of initial
+scope.
 
 The package declares capabilities such as `mail.read`, `mail.prepare`,
 `mail.send`, `calendar.freebusy`, `calendar.read`, and `calendar.write`. These
@@ -164,6 +565,15 @@ authorized space, then narrowed to the Agent and audience allowed to use it;
 linking an account does not publish its content to every Agent or channel.
 Child runs inherit at most the parent call's scoped authority. Account
 unlinking revokes active leases before the UI reports disconnection.
+An Agent may link multiple distinct accounts for one provider, but may have
+only one active link for the same provider principal. A duplicate link cannot
+silently accumulate a second capability selection; disconnect the existing
+link before reconnecting that identity with a different selection. While a
+link is pending, another link for that provider and Agent is rejected until it
+finishes or is cleaned up. Principal comparison stays inside the Agent vault;
+the connection ledger contains no identity fingerprint or mailbox address.
+A link marked reauthentication-required is not active: its access is fenced,
+and the owner may connect again and then remove the old entry.
 
 Reads select message IDs, threads, folders, calendars, or a bounded time
 window. Search is a deliberate, scoped operation with a result cap. Free/busy
@@ -274,16 +684,62 @@ domain-wide delegation are excluded from the first release. Revocation and
 expiry fail closed and produce an actionable reconnect state.
 
 Fetched content is not copied into memory, search, RAG, or a feed by default.
-All excerpts supplied to the model, whether subsequently cited or not, and
-local candidates needed for Review are
-retained under the owning Agent/conversation and audience, with explicit
-retention. Any future background mailbox source must use the single intake
+Owner previews return bounded content directly to the UI and do not store a
+second content copy. The broker-owned Agent read tool returns bounded content
+to the model; invariant 1 records its result in append-only session history.
+Current storage has no independent retention control or selective erasure for
+those transcript copies.
+For owner conversations, its read-only `list_accounts` operation returns only
+opaque account IDs, provider names, the requested read purpose, and masked
+identity hints. The model may use an ID only when the owner named a matching
+identity; scheduled routines cannot discover accounts and stay fixed to their
+configured account. If two masked hints are identical, the owner can identify
+the provider or provide the exact address as `identity_hint`; the broker
+compares that address inside the Agent vault and returns only the matching
+opaque ID and masked hint. Provider content must never supply this
+disambiguation value. Credential material and complete account identities
+never enter the tool result.
+Local email and event drafts are now stored as bounded, revisioned candidate
+records in the owning Agent's encrypted credential vault, with compare-and-swap
+updates. Disconnect removes that account's unsent local candidates alongside
+its saved credentials. This cleanup does not erase prior copies in append-only
+session history, nor does it implement general-purpose retention or crypto-shred.
+Any future background mailbox source must use the single intake
 and catalog lifecycle proposed in `76-intake-and-knowledge.md`, after its
 data-architecture dependencies land; this document does not start M1 or a
 later data milestone. Delete, export, legal hold, and erasure must follow
 `73-data-architecture-and-lifecycle.md` and
 `74-lifecycle-and-data-administration.md` when implemented. Provider deletion
 or revocation cannot promise deletion of copies held by external recipients.
+
+### D12 — Agent boundary, account deletion, and current-storage limit
+
+Every connection belongs to exactly one Agent. Its account identifier,
+principal/display data, refresh token or app-specific password, and any
+provider-specific recovery material are stored through the vault/credential
+service; durable Agent metadata contains opaque references only. The vault
+entry is recipient-scoped to the owning Agent and connector operation. A
+different Agent, workspace, channel, or audience cannot resolve that secret
+by guessing an account id or reusing a reference. Every read, candidate,
+preview, attachment, citation, schedule, watcher cursor, and derived record
+must carry the owning Agent, account lineage, and allowed audience, and each
+read rechecks them at the broker boundary.
+
+Disconnect revokes provider authorization where supported, deletes the vault
+secrets, stops and fences schedules/watchers, cancels undispatched work, and
+leaves only a content-free revocation tombstone needed to reject stale work.
+No second durable mailbox/event cache is added. Content that reaches a model is
+recorded in the owning Agent's append-only session history to preserve model
+reconstruction. Under current 4.x storage, disconnect does not remove that
+history, and deleting an account does not erase copies already in sessions.
+
+The UI and tool description state this before enabling connected-content features and must
+distinguish account disconnection (credential removal and future-read fencing)
+from deletion of previously recorded content. Do not describe account or
+Agent deletion as complete erasure of mail/calendar content. The future data
+architecture M6/M7 work remains required for catalog-based lineage and
+crypto-shred, but this feature branch does not start those milestones. External
+recipient copies remain outside Vak's deletion control in every storage model.
 
 Audit records contain IDs, scope, policy generation, decisions, payload
 digest, provider outcome, and trace key, but no message body, subject,
@@ -293,9 +749,11 @@ access-controlled content records, not general logs.
 
 ### D7 — Mail identity and content semantics
 
-Review distinguishes From, Reply-To, To, Cc, and Bcc, showing the actual
-addresses as well as display names. Only a provider-verified sending identity
-or authorized alias may be used. A message's display name, Reply-To, or
+Review distinguishes the connected account's default From identity, source
+From and Reply-To on replies, outgoing To, Cc, Bcc, and the outgoing Reply-To
+setting, showing actual addresses as well as display names where available.
+The default From identity is read from the protected linked-account record;
+aliases are not supported. A message's display name, Reply-To, or
 authentication-looking header is not proof of a trusted sender; provider
 authentication verdicts are evidence with provenance, not permission to act.
 Reply and reply-all resolve recipients before approval and never infer a
@@ -328,8 +786,13 @@ interchange model; adapter-specific mappings require conformance fixtures.
 Organizer edits, attendee RSVP, decline, removal from one's own calendar,
 and cancellation for all attendees are distinct operations. Review identifies
 one occurrence, the whole series, or a supported future-series edit, and all
-notifications the provider can cause. RSVP is included as a reviewed action;
-unsupported series edits are refused. Conference creation and resource/room
+notifications the provider can cause. RSVP is a target reviewed action, but
+an adapter must prove stale-review protection and safe reconciliation before
+it can be offered; a read-before-write comparison alone is insufficient.
+Google supports the limited standalone-invitation profile described above;
+Microsoft RSVP and Apple calendar effects remain unavailable until they meet
+this contract.
+Unsupported series edits are refused. Conference creation and resource/room
 booking are explicit effects with their own capability checks. A free slot
 is a snapshot, not a reservation: refresh availability before commit and
 report conflicts without claiming a cross-calendar atomic booking.
@@ -341,8 +804,22 @@ PKCE, a single-use state bound to the initiating session, exact registered
 redirects, and issuer/account validation; no model-supplied authorization or
 token endpoints. Refresh-token rotation is serialized, secrets are never
 placed in URLs or logs, and reconnection cannot silently substitute another
-principal. Headless linking uses an authenticated owner browser ceremony or a
-provider-supported device flow with an explicit account confirmation. Apply
+principal. The web flow binds a callback to the authenticated initiating
+session and uses a loopback redirect. The desktop installed-client flow uses
+the RFC 8252 loopback redirect with PKCE and a high-entropy single-use state;
+its bearer-authenticated owner initiation is tied to the callback by that
+state because a Tauri webview cookie cannot cross into the system browser.
+The callback remains loopback-only, is consumed once, and exchanges the code
+only with the fixed provider token endpoint. Because the browser's
+`SameSite=Strict` application session cookie is withheld on the provider's
+cross-site top-level return, the callback also uses a separate random,
+short-lived, `HttpOnly`, `/mail-calendar`-scoped `SameSite=Lax` cookie bound to
+that pending state and initiating session. The package path lets multiple
+pending account-link flows share the browser binding without sending it to
+unrelated app routes. The callback also revalidates that the initiating
+session is still active before redeeming the authorization code. Never weaken
+the application session cookie to make OAuth work. A headless/web callback needs a separately
+configured confidential-client or device-flow contract. Apply
 [OAuth security BCP, RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html).
 
 Before fetching model context, enforce which inference providers may receive
@@ -356,12 +833,17 @@ an authorized retained observation, labelled with when it was read.
 ### D10 — Automation control and recovery
 
 Each routine has pause, resume, run-once, last-result, pending-review, and
-revoke controls. Put a finite bound on lookback, messages/events fetched,
-model cost, actions per run, and daily actions. Quiet no-change runs stay
+revoke controls. Put a finite per-run bound on total messages/events returned
+across repeated and concurrent tool calls, as well as lookback, model cost,
+actions per run, and daily actions. Quiet no-change runs stay
 quiet; meaningful changes, failures, and required action reach the configured
 audience. Configure time zone, daylight-saving schedule behavior, lateness
 limit, and missed-run policy. On restart, do not burst-replay expired reminders
 or externally effectful work.
+Unattended admission also requires a usable refresh credential and a service
+host that can renew it; if the provider did not issue a refresh token or later
+revoked it, pause the routine and request owner reconnection. A valid access
+token at setup time is not evidence of 24/7 readiness.
 
 Carry trigger causality into each action. Suppress self-generated mail and
 calendar update loops, repeated matches, bounce/auto-reply loops, and repeated
@@ -471,6 +953,110 @@ views with the same capabilities. The visual system follows `DESIGN.md` and
 | Automation workspace | Trigger and next run/check, host and freshness, scope and standing grant, preview/sample run, queued drafts, last result and history, budgets, pause/resume/run-once/revoke |
 | Activity and receipts | Separate actions waiting for review, accepted by the provider, confirmed, failed, expired, and unknown; source/run links and safe recovery actions |
 
+The current owner calendar preview implements agenda, one-day, and seven-day
+read-only layouts over its selected date range. The day and week layouts show
+local device time, all-day entries, and conflict markers; the agenda groups
+entries by local date. An owner may explicitly compare up to five other
+connected calendar accounts with CalendarRead for the same date range; partial
+read failures are shown, compared events are read-only, and detected overlaps
+identify conflicts across accounts. The owner preview also lists and selects
+one calendar source within a connected account for Google, Microsoft, and
+Apple; selection is revalidated against the provider's current calendar
+inventory before reading. Calendar source selection is read-only for provider
+effects for now: event edits and cancellation remain bound to the account's
+default calendar, and creating a new event draft uses that same default. The
+preview disables edit/cancel actions for non-default sources. This remains an
+incremental preview, not the complete calendar workspace: event attendee
+editing, proposed slots, and event occurrence/series choices remain open.
+Cancellation is limited to one standalone Google event with no attendees and
+does not cover occurrences or series. A previewed free slot is not an atomic
+booking.
+
+Owner mail previews can select among Gmail labels and up to 100 Microsoft
+folders across a bounded eight-level hierarchy, then search only inside the
+selected label or folder. Microsoft child folders are enumerated through the
+selected parent's fixed Graph childFolders endpoint; incomplete or over-bound
+trees fail visibly instead of returning a partial list.
+Apple iCloud currently exposes only Inbox. Google labels are labels and may
+contain the same message in more than one label; the UI names this choice
+"Folder or label" instead of implying identical provider semantics. Child
+folder traversal is bounded to 100 total entries and depth eight. Paging
+beyond that bounded list and the full thread workspace remain open. The Agent can list the bounded folder set during an
+interactive owner request and read a selected folder/label after the provider
+confirms it belongs to the account. Scheduled routines are pinned to one
+owner-selected folder/label and recheck membership; continuous new-mail
+watches remain Inbox-only because provider watch cursors are Inbox-scoped.
+
+The Today Canvas displays 12 recent messages at a time across linked accounts.
+The owner may narrow it to one mailbox, choose a verified provider folder or
+label, and search within that selection; All inboxes searches only the linked
+accounts' default inboxes. Folder lists load for the selected Agent/account,
+and the server revalidates membership on every read. These controls apply to
+mail previews in Canvas and do not change routine scope.
+The owner inbox preview displays 12 messages at a time from its bounded
+provider response. Canvas can fetch subsequent pages from Google Gmail,
+Microsoft Graph, and IMAP providers using provider cursors. Each cursor is
+bound to the Agent account, folder or label, search scope, page size, and
+provider origin where applicable; changing any of those starts a fresh page
+sequence. Same-source Canvas refreshes retain the current preview while
+loading; changing its Agent or source shows the initial loading state.
+Repeated mail rows and calendar cards are keyed by stable account/provider
+item identity, so a refresh updates their displayed values without tearing
+down the visible rows. A lightweight status reports background work while the
+current page, pagination, and selected event remain visible.
+
+Opening an Apple iCloud message reads only that selected message through the
+owner preview endpoint; it does not manufacture a conversation id or add the
+message to session history. Google and Microsoft conversation previews can
+show attachment metadata and, when eligible, request a bounded safe-text
+preview through the isolated attachment worker. Preview output is labelled as
+untrusted and read-only. This is a reader preview; the complete editable mail
+workspace remains open.
+
+Today also lists this Agent's mail/calendar routines, eight per page. The
+routine list is filtered by both the current Agent id and the typed
+mail/calendar scope; other Agents' tasks and unrelated schedules are omitted.
+Opening a routine uses the Canvas routine viewer for status, next run, last
+result, pause/resume, run-once, delivery retry, and per-run history. Today
+Canvas also owns routine creation and trigger/schedule setup. New routines are
+saved paused; the owner can preview a run, inspect its history, then resume or
+pause it. Routine lists are paginated, scoped to the current Agent, and retain
+existing content while refreshes settle. Routine changes notify an open Today
+view to refresh. Settings retains connected-account credentials, grants,
+connection lifecycle, and an account-level pause control; it links to the
+Canvas for routine work. Budget administration remains in Settings.
+
+The Canvas calendar lets the owner choose an inclusive date range of up to 30
+days and pages a longer range one week at a time. Refresh keeps the prior
+calendar visible while the new range loads, and a same-source response updates
+the existing Canvas subtree without remounting visible rows. Provider reads
+remain bounded to 50 events per page per connected calendar. Google and
+Microsoft use provider continuation cursors; iCloud refetches the requested
+range through the isolated CalDAV worker and slices a bounded result set. The
+owner can load later event pages without losing the current agenda. Cursor
+scope is bound to the Agent account, selected calendar, date range and page
+size. Calendar continuation and focused conversation reading are implemented.
+Reply handoff opens a focused composer in the conversation Canvas, hides
+unrelated drafts and new-draft controls, and returns focus to the conversation
+when closed. Routine setup in Today Canvas now lets the owner choose a
+5-, 10-, or 20-result per-run cap and shows the enforced cap on each routine;
+completed routine history reports how many provider items its reads returned.
+The broker counter is shared across model turns, so the same total cap cannot
+reset when a routine needs another turn.
+
+Account configuration belongs in Agent Settings; reading and working with
+mail, events, drafts, Reviews, and routine activity belongs in the shared
+Canvas work area. Settings retains connection, access, account lifecycle, and
+account-level routine pause controls. It links directly to Today Canvas, which
+contains the read-only agenda, recent mail with folder/search controls, paged
+per-Agent routine authoring and operations, and the Canvas-owned Drafts and
+Review area. Reply and event
+actions save an Agent-scoped candidate, then open it in Canvas; revision,
+digest, permission, and final-confirmation checks still gate provider effects.
+The connected Settings fixture confirms that it no longer renders
+a duplicate daily preview or draft workspace; separate Canvas fixtures cover
+the working views with synthetic provider fixtures.
+
 Preview is derived from the immutable normalized payload actually submitted
 by the adapter, not from model-written explanatory prose. Render sanitized
 structured content with remote resources blocked; do not mount mail HTML in
@@ -486,23 +1072,77 @@ Every manual or Agent edit creates a new local candidate revision and
 invalidates approval. Autosave saves the local draft only. A shared working
 draft uses the existing collaboration identity and audience checks; concurrent
 edits use a revision precondition and show conflicts instead of losing work.
+When a revision conflict occurs, the owner can explicitly discard local edits
+and load the current saved version, or keep those edits by saving a separate
+candidate. Neither choice silently overwrites the other revision.
 Choosing some actions rebuilds and verifies the resulting candidate before
 approval. Local draft saving, provider draft saving, and sending are visibly
 different operations. Closing a draft does not send, discard, or pause the
 routine that created it. A routine can leave a draft waiting while subsequent
 independent checks continue within its limits.
 
-Automation preview runs the configured selector on a bounded sample, shows
-which source items would match and what actions would be prepared, and cannot
+An owner may also create a new email or calendar draft before linking an
+account. Such an unassigned draft is encrypted in the owning Agent's vault and
+is restricted to a new send or standalone event shape with no provider source
+references. It may be incomplete while being edited. It is inert: the reserved
+local-draft identity is not a connection, cannot pass effect authorization,
+and cannot be used for replies, updates, cancellations, invitations, or any
+provider call. To prepare a provider action, the owner assigns the draft to a
+linked account, which creates a separate account-bound candidate; that
+candidate must still pass the normal freshness checks, exact Review and
+single-use confirmation before an effect. Local draft deletion remains a
+separate action.
+
+Automation preview runs the saved routine once against its authorized bounded
+source selection, shows the resulting sample in Agent run history, and cannot
 commit external effects. It still needs real read authorization and applies
-the same model-disclosure rules. The person can adjust the rule, inspect the
-new preview, then enable it. History links a trigger to its observation,
+the same model-disclosure rules. New routines are saved paused; the person can
+adjust the routine, run another preview, inspect the result, then resume its
+schedule. History links a trigger to its observation,
 candidate, approval/grant, dispatch, and receipt; technical IDs stay behind
 Show technical details, while account, audience, freshness, and safety states
 remain visible. Provide keyboard editing, labelled controls, screen-reader
 status updates, and non-colour indicators throughout.
 
 ## Provider feasibility notes
+
+### Sign-in choices and password-based fallbacks
+
+The connection screen must show the sign-in methods that actually work for
+each provider, with separate capability labels and a plain-language warning
+for every password-based fallback. OAuth is the preferred method because it
+does not collect the provider account password and can request narrower
+permissions. Never accept an ordinary account password as a fallback.
+
+| Provider | Preferred method | Additional method | Boundary and warning |
+| --- | --- | --- | --- |
+| Google | Local OAuth authorization with PKCE | Google App Password over fixed-host Gmail IMAP | App Password is a long-lived account credential and is less secure than OAuth. The local-only enrollment path verifies it against `imap.gmail.com:993`, stores it only in the owning Agent's credential vault, supports bounded Inbox metadata and selected worker-parsed message reads, and grants MailRead only. No Calendar, send, or provider-write access. Never request the user's ordinary Google password. |
+| Microsoft | Local delegated OAuth authorization with PKCE | Local app password for personal Outlook.com/Live/Hotmail/MSN accounts, IMAP MailRead only | Microsoft 365 and work/school Exchange remain OAuth-only. Microsoft documents app passwords for personal accounts and legacy clients, while Outlook.com's current IMAP setup requires OAuth2 and Microsoft is retiring Basic Authentication. This fallback may be rejected; it verifies the fixed-host IMAP connection before storing. It is a long-lived, less-secure credential and grants email reading only. Never collect the ordinary Microsoft password. OAuth setup requires a public-client registration. |
+| Apple iCloud | Apple documents account authorization for supported third-party apps, but Vak has no verified integration path for it yet | Current: Apple app-specific password over fixed-host IMAP and CalDAV | The app-specific password is broader and longer-lived than OAuth and its scope is controlled by Apple, not Vak. It is stored only in the owning Agent's credential vault; show the warning before entry and revocation steps after connection. Current support is read-only and separately verified as MailRead, CalendarFreeBusy, or CalendarRead. Never request the Apple Account password. |
+
+Password-based alternatives are local-device setup only: refuse them on a
+public/hosted listener, do not put values in the connection ledger, logs,
+session history, config, environment files, or repository, and zeroize request
+buffers. Show a warning before the user reveals the secret field and a clear
+revocation instruction after connection. Do not broaden a password-based
+account's capabilities just because its protocol technically permits writes.
+The supported choices are intentionally provider-specific: Google offers
+OAuth and its limited Gmail-only App Password fallback; Microsoft offers
+delegated OAuth plus a verified, read-only personal Outlook.com/Live/Hotmail/MSN
+app-password fallback that may be rejected under its changing legacy-auth
+policy (Microsoft 365 and work/school Exchange stay OAuth-only);
+iCloud currently uses an Apple app-specific password for the supported
+protocols; Apple's account authorization for supported third-party apps is a
+candidate to investigate, not a Vakyartha connection option until its grant
+and protocol contract are verified. No provider accepts its ordinary account password here. A device
+authorization code flow, generic IMAP/SMTP credentials, or a Sign in with Apple
+token is not silently treated as an equivalent account grant.
+Provider documentation: [Outlook.com IMAP settings](https://support.microsoft.com/en-us/outlook/pop-imap-and-smtp-settings-for-outlook.com), [Outlook.com Basic Authentication retirement](https://support.microsoft.com/en-us/support/known-issues/outlook-and-other-apps-are-unable-to-connect-to-outlook-com-when-using-basic-authentication), [Microsoft account app passwords](https://support.microsoft.com/en-us/accounts-billing/manage/how-to-get-and-use-app-passwords), and [Apple account authorization for supported third-party apps](https://support.apple.com/en-us/121539).
+For Gmail, the App Password form accepts Google's 16-character value (with
+display spaces), verifies it using TLS and read-only `EXAMINE`, and stores it
+in the Agent vault. OAuth remains the recommended Google method. The Gmail
+mail watch uses a bounded UID cursor and the same encrypted Agent backlog as
+other providers.
 
 These are constraints to validate during adapter design, not frozen scope
 names in Vak's product contract:
@@ -514,19 +1154,34 @@ names in Vak's product contract:
   control. See [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth).
 - Microsoft Graph distinguishes delegated user permissions from application
   permissions; application permissions can reach mailboxes beyond the signed-in
-  user. The first release uses delegated permissions only. See [Graph permission
+  user. The first release uses delegated permissions only. Graph's
+  [`calendar: getSchedule` API](https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0)
+  names `Calendars.ReadBasic` as the least delegated permission and does not
+  support personal Microsoft accounts. Vak should request that scope for
+  free/busy and `Calendars.Read` only for event details; the later adapter must
+  report the unsupported personal-account case. See [Graph permission
   guidance](https://learn.microsoft.com/en-us/graph/best-practices-graph-permission)
   and [Exchange application RBAC](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac).
+- Apple documents Apple Account authorization for supported third-party apps;
+  apps that do not support that flow may use an app-specific password. The
+  current branch uses the latter with fixed-host IMAP/SMTP and CalDAV. This
+  fallback is not operation-scoped by Apple, so it must remain disclosed and
+  read-only when the broker cannot constrain an effect safely. Verify a
+  supported authorization flow across desktop and always-on server clients
+  before enabling content access. See [Apple's third-party access guidance](https://support.apple.com/en-us/121539),
+  [iCloud Mail server settings](https://support.apple.com/en-us/102525), and
+  [Apple app-specific passwords](https://support.apple.com/en-us/102654).
 
 ## Implementation order and exit tests
 
 Each stage replaces any temporary path it supersedes in the same change
 (invariant 30). No stage is marked shipped from a typecheck alone.
 
-All stages below are **not started**. Before coding, create the execution
-plan in `docs/plans/` with an owner-approved starting stage, the provider
-support matrix, and the storage dependencies from D11. The current document
-is the proposed behavior and acceptance contract.
+Implementation stages, provider matrix, and dependencies are tracked in
+`docs/plans/mail-calendar-implementation-plan.md`. That plan was opened by
+the owner's explicit request on 2026-09-29; its status governs implementation
+progress. This document remains the proposed behavior and acceptance
+contract, and its stages are not claims of shipped behavior.
 
 1. **Contract and threat review.** Fix typed operations, connection identity,
    candidate and receipt schemas, policy predicates, retention, provider
@@ -548,7 +1203,7 @@ is the proposed behavior and acceptance contract.
    meeting preparation, and follow-up drafts through `TaskDef`, then narrow
    unattended grants for selected effects and continuous bounded watchers.
    Run the same acceptance scenarios
-   for both adapters and for local, web, channel, task, and CLI paths. A
+   for all three adapters and for local, web, channel, task, and CLI paths. A
    channel with no approver, a revoked grant, or a narrowed policy must fail
    closed. Exercise missed runs, duplicate triggers, quiet delivery, and
    cross-activity audience isolation. Browser checks cover desktop and phone
@@ -591,8 +1246,9 @@ light and dark themes. Save screenshots and evidence with the execution plan.
   Office/PDF: bounded worker parsing, structured preview, and portable output.
   Importing an invitation never accepts it or contacts attendees. Calendar
   file actions, alarms, and remote attachments never execute automatically.
-  PST/OST/mbox archives, S/MIME/PGP decryption and signing, IMAP/SMTP, CalDAV,
-  Apple/iCloud, and other providers are not implied by the first adapters.
+  PST/OST/mbox archives, S/MIME/PGP decryption and signing, custom IMAP/SMTP,
+  custom CalDAV, and providers beyond Google, Microsoft, and Apple are not
+  implied by the first adapters.
 - Before implementation, verify each provider's current OAuth review rules,
   scope availability, conditional-write support, send reconciliation options,
   webhook authentication, and rate limits. A missing safe reconciliation path

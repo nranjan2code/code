@@ -410,7 +410,9 @@ Five rules follow:
   what lets an erasure reach every copy (review R2).
 - **Derived writes record `derived_from`.** Memory, entities, skill
   proposals, catalog text rows and embeddings name their source
-  conversation and turn.
+  conversation and turn. Provider-derived records and all descendants also
+  retain the connected-account source id and lineage edge; the account id is
+  an internal opaque identifier, never a provider address or principal.
 - **Ledgers never hold what an object should.** Big tool results, file
   contents and stdout go to the object store, and the ledger holds the hash.
   `EvidenceBodyRecord` already points this way. This is what keeps session
@@ -541,11 +543,17 @@ dedupe (review R1). The design is:
   - The tenant KEK sits under the authority and wraps **scope keys**: one
     per conversation (spanning its session rotations), one per non-owner
     contributor within a conversation (below), one per space (checkpoints,
-    promoted files), one per artifact (saved and shared versions) and one
-    per piece (its Application store).
+    promoted files), one per artifact (saved and shared versions), one per
+    piece (its Application store), and one per connected provider account for
+    provider-derived data that must be selectively erased. Disconnect revokes
+    access and removes credentials; it does not erase content.
   - AEAD comes from `ring`, already a workspace dependency.
 - **Records are encrypted per entry** under their conversation key, so
-  appends never rewrite anything.
+  appends never rewrite anything. Provider-derived content also carries an
+  account-scope grant/key, allowing account erasure to make only those fields
+  unreadable while preserving unrelated conversation content. M2/M6 must
+  prove the wrapping and grant composition; a conversation-only key is
+  insufficient.
 - **A guest's contributions have their own key.** When someone other than
   the owner writes into a conversation (an invited person's message or
   comment, doc 69), their frames are encrypted under a
@@ -556,7 +564,9 @@ dedupe (review R1). The design is:
   "records expire per conversation" (doc 74 §1 rule 5).
 - **Content fields in shared ledgers** (inbox body, delivery text, outbox
   payload, commitment statement) are field-encrypted under the
-  conversation key they came from (§5).
+  conversation key they came from (§5). Provider-derived fields additionally
+  require the source-account grant/key described above, so deleting the
+  provider account does not erase adjacent unrelated content.
 - **Objects have their own random key.** Each scope that references an
   object stores that key wrapped under the scope key (a *key grant*). An
   object stays readable while any grant survives, so the same file in two

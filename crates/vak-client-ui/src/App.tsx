@@ -296,7 +296,10 @@ async function hydrate(id: string, background = false) {
     const unchanged = lastHydrated.get(id) === read && itemsOf(id).length > 0 && (!presentation || presentationOf(id) !== null);
     if (unchanged) return;
     lastHydrated.set(id, read);
-    if (t) {
+    // A freshly reopened running conversation has no in-memory items yet, so
+    // paint its committed history prefix. On an already-live conversation,
+    // keep the stream's current turn intact while refreshing sidecar state.
+    if (t && (!isRunning(id) || itemsOf(id).length === 0)) {
       hydrateFromTranscript(id, t.messages, t.entries, isRunning(id));
       if (presentation) hydrateFromPresentation(id, presentation);
       setUsageFor(id, t.usage);

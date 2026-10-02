@@ -93,6 +93,10 @@ export const activeHost: Host = {
     return invoke<WorkspaceReview>("review_workspace", { cwd });
   },
 
+  openOAuthUrl(url: string): Promise<void> {
+    return invoke("open_oauth_url", { url });
+  },
+
   async pickWorkspace(): Promise<string | null> {
     const dir = await openDialog({ directory: true, multiple: false, title: "Open a workspace" });
     return typeof dir === "string" ? dir : null;

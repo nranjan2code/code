@@ -50,6 +50,50 @@ impl Provider for Counting {
     }
 }
 
+struct GatedProvider {
+    calls: Arc<AtomicUsize>,
+    started: tokio::sync::mpsc::UnboundedSender<()>,
+    release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+#[async_trait::async_trait]
+impl Provider for GatedProvider {
+    fn name(&self) -> &str {
+        "gated"
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let _ = self.started.send(());
+        let release = self.release.lock().await.take();
+        if let Some(release) = release {
+            tokio::select! {
+                _ = release => {},
+                _ = cancel.cancelled() => {
+                    return Err(LlmError::Aborted { partial: None });
+                },
+            }
+        }
+        let (mut sink, rx) = stream::channel(8);
+        let done = AssistantMessage {
+            content: vec![ContentBlock::text("routine done")],
+            stop_reason: vak_llm::types::StopReason::EndTurn,
+            usage: Usage::default(),
+            model: "gated-model".into(),
+            response_id: None,
+        };
+        sink.push(stream::StreamEvent::Start {
+            partial: done.clone(),
+        });
+        sink.close_message(done).await;
+        Ok(rx)
+    }
+}
+
 struct Server {
     base: String,
     token: String,
@@ -94,6 +138,16 @@ impl Server {
     async fn run_now(&self, id: &str) -> reqwest::StatusCode {
         self.client()
             .post(format!("{}/tasks/{id}/run-now", self.base))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
+    async fn patch_task(&self, id: &str, patch: &serde_json::Value) -> reqwest::StatusCode {
+        self.client()
+            .patch(format!("{}/tasks/{id}", self.base))
+            .json(patch)
             .send()
             .await
             .unwrap()
@@ -178,15 +232,255 @@ async fn serve(ws: &Path, home: &Path) -> Server {
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     let dispatches = Arc::new(AtomicUsize::new(0));
     core.set_provider_instance(Arc::new(Counting(dispatches.clone())));
+    serve_core(core, dispatches).await
+}
+
+async fn serve_core(core: Core, dispatches: Arc<AtomicUsize>) -> Server {
+    serve_core_with_router(core, dispatches, None).await
+}
+
+#[cfg(feature = "test-support")]
+async fn serve_core_with_router(
+    core: Core,
+    dispatches: Arc<AtomicUsize>,
+    test_oauth: Option<(vak_mail_calendar::Provider, String)>,
+) -> Server {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let (app, token) = vak_server::secured_router_with(core, false);
+    let (app, token) = match test_oauth {
+        Some((provider, endpoint)) => {
+            vak_server::secured_router_with_test_oauth_endpoint(core, provider, endpoint)
+        }
+        None => vak_server::secured_router_with(core, false),
+    };
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: format!("http://{addr}"),
         token,
         dispatches,
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[cfg(feature = "test-support")]
+async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
+    use vak_mail_calendar::connection_ledger::ConnectionLedger;
+    use vak_mail_calendar::vault::{AccountSecretMaterial, AccountVault};
+    use vak_mail_calendar::{Capability, Provider};
+
+    let (_dir, ws, home) = space(true, |_| serde_json::json!([]));
+    vak_config::paths::set_home_override(&home);
+    let core = Core::new_with_trust(ws.clone(), true).unwrap();
+    core.set_sessions_home(home.clone());
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+
+    let agent_id = format!("mail-routine-{}", uuid::Uuid::now_v7());
+    let agent = vak_server::agents::find_template("writer")
+        .unwrap()
+        .to_agent_definition(&agent_id, None);
+    vak_server::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+
+    let account_id = uuid::Uuid::now_v7().to_string();
+    let refresh_calls = Arc::new(AtomicUsize::new(0));
+    let vault = AccountVault::for_agent(&agent_id).unwrap();
+    let credential_ref = AccountVault::credential_ref(&account_id).unwrap();
+    vault
+        .store(
+            &account_id,
+            AccountSecretMaterial::new(
+                "google:synthetic-subject".into(),
+                Some("demo@example.test".into()),
+                Some("synthetic-google-client-id".into()),
+                Some("expired-synthetic-access-token".into()),
+                Some("synthetic-refresh-token".into()),
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut account = vak_mail_calendar::ConnectedAccount {
+        id: account_id.clone(),
+        provider: Provider::Google,
+        status: vak_mail_calendar::AccountStatus::Pending,
+        owner_agent_id: agent_id.clone(),
+        allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+        capabilities: [Capability::MailRead].into_iter().collect(),
+        provider_scopes: ["https://www.googleapis.com/auth/gmail.readonly".into()]
+            .into_iter()
+            .collect(),
+        credential_ref: credential_ref.clone(),
+        principal_ref: credential_ref,
+        revision: 1,
+        connected_at: chrono::Utc::now() - chrono::Duration::minutes(10),
+        access_token_expires_at: Some(chrono::Utc::now() - chrono::Duration::minutes(1)),
+        refresh_token_available: true,
+        revoked_at: None,
+    };
+    let ledger = ConnectionLedger::for_agent(&agent_id).unwrap();
+    ledger.append_pending(account.clone()).unwrap();
+    account.status = vak_mail_calendar::AccountStatus::Connected;
+    account.revision = 2;
+    ledger.append_connected(account).unwrap();
+
+    let dispatches = Arc::new(AtomicUsize::new(0));
+    core.set_provider_instance(Arc::new(Counting(dispatches.clone())));
+    async fn token_refresh(
+        axum::extract::State(calls): axum::extract::State<Arc<AtomicUsize>>,
+        axum::Form(body): axum::Form<std::collections::HashMap<String, String>>,
+    ) -> axum::Json<serde_json::Value> {
+        assert_eq!(body["grant_type"], "refresh_token");
+        let call = calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(
+            body["refresh_token"],
+            if call == 0 {
+                "synthetic-refresh-token"
+            } else {
+                "rotated-synthetic-refresh-token-1"
+            }
+        );
+        axum::Json(serde_json::json!({
+            "access_token": format!("rotated-synthetic-access-token-{call}"),
+            "refresh_token": format!("rotated-synthetic-refresh-token-{}", call + 1),
+            "token_type": "Bearer",
+            "expires_in": 60,
+            "scope": "https://www.googleapis.com/auth/gmail.readonly"
+        }))
+    }
+    let token_app = axum::Router::new()
+        .route("/token", axum::routing::post(token_refresh))
+        .with_state(refresh_calls.clone());
+    let token_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let token_endpoint = format!("http://{}/token", token_listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(token_listener, token_app).await.unwrap() });
+    let server = serve_core_with_router(
+        core,
+        dispatches.clone(),
+        Some((Provider::Google, token_endpoint)),
+    )
+    .await;
+    let create = server
+        .client()
+        .post(format!("{}/tasks", server.base))
+        .json(&serde_json::json!({
+            "name": "Synthetic mail review",
+            "prompt": "Summarize the selected recent mail.",
+            "interval_secs": 3600,
+            "agent_id": agent_id,
+            "agent_revision": agent.revision,
+            "mail_calendar_scope": {
+                "account_id": account_id,
+                "operations": ["recent_mail"],
+                "max_items": 5,
+                "watch_new_mail": false,
+                "read_commitments": false
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create.status(), reqwest::StatusCode::OK);
+    let (_, task_list) = server.get("/tasks").await;
+    let created = task_list["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["name"] == "Synthetic mail review")
+        .cloned()
+        .unwrap();
+    let task_id = created["id"].as_str().unwrap();
+    assert_eq!(created["enabled"], false);
+    let run_status = server.run_now(task_id).await;
+    assert_eq!(
+        run_status,
+        reqwest::StatusCode::ACCEPTED,
+        "refusal inbox: {:?}",
+        server.inbox().await
+    );
+
+    assert!(
+        eventually(15, || async {
+            server.task(task_id).await["last_run_status"] == "complete"
+        })
+        .await,
+        "routine reaches a settled successful state"
+    );
+    assert_eq!(server.run_now(task_id).await, reqwest::StatusCode::ACCEPTED);
+    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 2 }).await);
+    let task = server.task(task_id).await;
+    let session_id = task["last_session_id"]
+        .as_str()
+        .expect("routine session is linked");
+    let (_, history) = server
+        .get(&format!(
+            "/mail-calendar/accounts/{agent_id}/routines/{task_id}/history"
+        ))
+        .await;
+    assert_eq!(history["runs"][0]["trigger"], "manual");
+    assert_eq!(history["runs"][0]["status"], "complete");
+    assert_eq!(history["runs"][0]["session_id"], session_id);
+    assert_eq!(dispatches.load(Ordering::SeqCst), 2);
+    assert_eq!(refresh_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        vault.access_token(&account_id).unwrap().as_str(),
+        "rotated-synthetic-access-token-1"
+    );
+    assert!(
+        ledger.read_all().unwrap()[0]
+            .access_token_expires_at
+            .is_some_and(|expires_at| expires_at > chrono::Utc::now())
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run_settle() {
+    let (_dir, ws, home) = space(true, |ws| {
+        let mut task = prompt_task("pause-during-run", ws, None);
+        task["enabled"] = serde_json::json!(false);
+        serde_json::json!([task])
+    });
+    vak_config::paths::set_home_override(&home);
+    let core = Core::new_with_trust(ws.clone(), true).unwrap();
+    core.set_sessions_home(home.clone());
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    core.set_provider_instance(Arc::new(GatedProvider {
+        calls: calls.clone(),
+        started: started_tx,
+        release: tokio::sync::Mutex::new(Some(release_rx)),
+    }));
+    let server = serve_core(core, calls.clone()).await;
+
+    assert_eq!(
+        server.run_now("pause-during-run").await,
+        reqwest::StatusCode::ACCEPTED
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), started_rx.recv())
+        .await
+        .expect("run started before pause")
+        .expect("provider signaled run start");
+
+    assert_eq!(
+        server
+            .patch_task("pause-during-run", &serde_json::json!({"enabled": false}))
+            .await,
+        reqwest::StatusCode::OK
+    );
+    release_tx.send(()).expect("active run still waiting");
+    assert!(
+        eventually(15, || async {
+            server.task("pause-during-run").await["last_run_status"] == "complete"
+        })
+        .await,
+        "pausing prevents later admission without corrupting the active run"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(server.task("pause-during-run").await["enabled"], false);
 }
 
 async fn eventually<F, Fut>(secs: u64, mut check: F) -> bool

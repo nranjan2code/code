@@ -7,6 +7,7 @@ import PdfViewer from "./PdfViewer";
 import ServerViewer from "./ServerViewer";
 import SourceViewer from "./SourceViewer";
 import AutomationViewer from "./AutomationViewer";
+import DailyMailCalendarViewer from "./DailyMailCalendarViewer";
 import TableViewer from "./TableViewer";
 import type { ViewerProps } from "./types";
 
@@ -20,4 +21,5 @@ export const VIEWERS: Record<ArtifactDisplayType, Component<ViewerProps>> = {
   pdf: PdfViewer,
   office: OfficeViewer,
   automation: AutomationViewer,
+  daily_mail_calendar: DailyMailCalendarViewer,
 };

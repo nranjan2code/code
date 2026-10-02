@@ -89,10 +89,80 @@ Read before changing behaviour in these areas:
   `crates/vak-pdf`, carried by the Office loop's own surfaces: `doc_read`,
   `office_apply`, Review with choices and shared drafts; its deferred list
   says what is not built and why).
-- **Mail and calendar** — `80-mail-and-calendar.md` (proposal only: governed
-  account reads, continuous and scheduled routines, a shared preview and
-  working area, local drafts, Review, committed provider effects, and their
-  security boundaries; no implementation milestone has started).
+- **Mail and calendar** — `80-mail-and-calendar.md` (Agent account linking,
+  owner-only bounded Google/Microsoft previews, and a broker-owned read tool
+  on the local owner surface are implemented on `codex/mail-calendar` against
+  current 4.x storage. Channel reads fail closed. The
+  bounded Agent-vault working area with local email/event drafts is
+  implemented. Owner-reviewed plain-text send and a constrained timed event
+  create are available for Google and Microsoft through separate opt-in grants,
+  Core permission checks, and durable single-use claims. Event create has no
+  attendees, recurrence, or reminders. Google also has an exact-reviewed,
+  conditional ETag update for standalone timed events with no attendees;
+  Microsoft update, cancel/RSVP and reconciliation,
+  standing grants, and reliable
+  continuous routines remain in progress. Scheduled read-only routines now
+  support an explicitly best-effort email watch with bounded encrypted
+  deduplication IDs. The first scheduled read-only routine slice
+  uses the existing `TaskDef` scheduler, pins an Agent revision/account/read
+  allowlist, restricts its unattended child to the brokered mail/calendar
+  tool, and pauses when its account is disconnected. The watch polls only
+  provider IDs and skips model dispatch when unchanged. An Agent-vault OS
+  lease prevents duplicate runs of one routine across local server processes
+  through child completion. Apple UID, Gmail history, and Microsoft Graph
+  per-folder delta cursors now advance atomically with the encrypted backlog;
+  multi-host fencing remains outstanding. Startup catch-up now evaluates cron slots in the task's
+  configured IANA timezone and compares absolute instants across DST changes.
+  Disconnect removes credentials and unsent
+  drafts for that account and fences future reads, but cannot erase
+  content already recorded in append-only Agent sessions; disclose this until
+  lifecycle erasure ships. A first Stage 3 increment enables explicitly
+  opted-in Google/Microsoft plain-text email sending through an owner-confirmed
+  exact-candidate Review, Agent Core permission evaluation, and an encrypted
+  single-use action claim. Provider acceptance is not delivery; unknown
+  outcomes cannot be retried. Apple MailRead-only links verify sign-in against
+  fixed-host IMAP and allow bounded inbox metadata reads through a read-only
+  session with a 512 KiB transport budget. A selected Apple message is fetched
+  by UID with `BODY.PEEK[]`, checked against UIDVALIDITY, capped at 128 KiB,
+  and parsed in the network-denied worker; only bounded plain text is returned.
+  Apple event changes remain unavailable. Selected Apple MailRead,
+  CalendarRead, and CalendarFreeBusy capabilities can now be combined only
+  after each selected IMAP/CalDAV protocol check succeeds. CalendarRead-only
+  links verify fixed-host CalDAV and expose bounded previews after
+  worker-isolated discovery and parsing, followed by a local time-range
+  overlap check; Apple free/busy,
+  Apple Mail HTML bodies and Apple event changes are unavailable. Inbox
+  metadata and selected plain-text message reads are implemented; messages
+  without plain text are labelled. Combined capabilities never bypass their
+  separate provider protocol verification.
+  Microsoft event update/cancel/RSVP, attachments, aliases, reply
+  semantics, and model-initiated effects remain unavailable. Google supports
+  OAuth plus an explicitly warned, local-only App Password fallback for
+  MailRead. Microsoft supports OAuth plus a warned, local-only App Password
+  fallback for personal Outlook.com/Live/Hotmail/MSN MailRead; Microsoft 365
+  and work/school Exchange stay OAuth-only. Apple uses a warned app-specific
+  password for explicitly selected MailRead, CalendarRead, and/or
+  CalendarFreeBusy capabilities after separate protocol verification; Apple's
+  newer account authorization is not yet a verified integration path for
+  Vakyartha. The owner preview projects bounded From, To,
+  and Cc fields for all three providers and never exposes Bcc. Synthetic load
+  tests cover 5,000 listed Gmail messages and 1,000 calendar events while
+  enforcing the preview limits. Google RSVP is additionally available for
+  complete standalone invitations through conditional ETag updates and exact
+  Review. The synthetic connected-account Canvas fixture covers source-to-
+  Review for a reply, a Google event update, and RSVP, with provider effects
+  blocked. Apple conversation workspaces, live provider checks, and the 24-hour
+  service recovery test remain open. Current 4.x session history cannot be
+  selectively erased, so account-deletion erasure remains incomplete. Calendar event-relative
+  routines use the existing `TaskDef` cadence, a bounded provider poll, opaque
+  encrypted Agent-vault occurrence keys, and brokered reads of matching events;
+  Google and Graph calendar reads follow bounded continuation pages with
+  same-origin Graph validation. Event-trigger scans detect incomplete pages,
+  retain queued occurrences beyond each run's output batch, and fail closed at
+  the 100-event queue ceiling; live-provider, browser, and 24-hour recovery
+  acceptance remain open);
+  implementation stages and provider support matrix are in
+  `docs/plans/mail-calendar-implementation-plan.md`.
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
   `74-lifecycle-and-data-administration.md` (the pending data architecture

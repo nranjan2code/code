@@ -2447,6 +2447,38 @@ mod tests {
     }
 
     #[test]
+    fn mail_calendar_package_is_installable_but_declares_no_executable_access() {
+        let package_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/mail-calendar");
+        let inspected = inspect_package(&package_root).unwrap();
+
+        assert_eq!(inspected.manifest.name, "mail-calendar");
+        assert_eq!(inspected.manifest.license.as_deref(), Some("MIT"));
+        assert_eq!(inspected.capabilities.skills, ["mail-calendar"]);
+        assert!(inspected.capabilities.commands.is_empty());
+        assert!(inspected.capabilities.mcp_manifests.is_empty());
+        assert!(inspected.capabilities.hooks.is_empty());
+        assert!(inspected.capabilities.scripts.is_empty());
+        assert!(inspected.capabilities.executables.is_empty());
+
+        let skill = fs::read_to_string(package_root.join("skills/mail-calendar/SKILL.md")).unwrap();
+        assert!(skill.contains("Agents cannot dispatch that effect"));
+        assert!(skill.contains("or work around this boundary"));
+
+        let home = tempfile::tempdir().unwrap();
+        let store = PluginStore::new(home.path());
+        let installed = store
+            .install_local(&package_root, InstallOptions::default())
+            .unwrap();
+        assert!(!installed.enabled);
+        assert_eq!(installed.capabilities.skills, ["mail-calendar"]);
+        assert!(installed.capabilities.commands.is_empty());
+        assert!(installed.capabilities.mcp_manifests.is_empty());
+        assert!(installed.capabilities.hooks.is_empty());
+        assert!(store.enabled().unwrap().is_empty());
+    }
+
+    #[test]
     fn changing_content_changes_digest() {
         let temp = tempfile::tempdir().unwrap();
         package(temp.path());

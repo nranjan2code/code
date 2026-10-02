@@ -1999,8 +1999,6 @@ mod tests {
         let state = test_state();
         let token = (*state.auth_token).clone();
         let app = authed_app(&state);
-        // `?token=` is loopback-only (invariant 34), so the request is the
-        // desktop shell's: a loopback Host from a loopback peer.
         let mut req = Request::builder()
             .uri(format!("/sessions/does-not-exist/events?token={token}"))
             .header(axum::http::header::HOST, "127.0.0.1")
@@ -2027,10 +2025,16 @@ mod tests {
     async fn a_wrong_token_query_parameter_is_still_rejected() {
         let state = test_state();
         let app = authed_app(&state);
-        let req = Request::builder()
+        let mut req = Request::builder()
             .uri("/sessions/does-not-exist/events?token=vk_not-the-real-token")
+            .header(axum::http::header::HOST, "127.0.0.1:41783")
             .body(Body::empty())
             .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                41783,
+            ))));
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }

@@ -12,6 +12,7 @@
 
 import { safeUrl, isLocalArtifactPath, cleanArtifactPath } from "./safeUrl";
 import { parseOfficeCitation } from "./officeFiles";
+import { parseMailCalendarCitation } from "./mailCalendarCitation";
 
 function esc(s: string): string {
   return s
@@ -26,6 +27,10 @@ function inline(s: string): string {
   // inline code; path-looking spans become clickable editor links
   out = out.replace(/`([^`\n]+)`/g, (_m, rawCode: string) => {
     const code = rawCode.trim();
+    const mailCitation = parseMailCalendarCitation(code);
+    if (mailCitation) {
+      return `<code class="ic mail-calendar-cite" role="button" tabindex="0" data-mail-account="${esc(mailCitation.accountId)}" data-mail-thread="${esc(mailCitation.threadId)}" data-mail-message="${esc(mailCitation.messageId)}" title="Open cited conversation">${esc(code)}</code>`;
+    }
     // A cited place in an Office file opens the file's view there.
     const citation = parseOfficeCitation(code);
     if (citation) {

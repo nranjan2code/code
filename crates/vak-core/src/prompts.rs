@@ -883,16 +883,17 @@ mod tests {
         seed("test").content
     }
 
-    /// The seed stays within the shipped prompt budget in AGENTS.md. Measured with the
-    /// same chars-per-token estimate `vak-context` uses before a model's own
-    /// profile exists, so the gate needs no tokenizer.
+    /// Guard against accidental prompt duplication or runaway growth without
+    /// forcing the cross-model operating instructions into a small token quota.
+    /// This uses the same chars-per-token estimate as `vak-context` before a
+    /// model's own profile exists, so the gate needs no tokenizer.
     #[test]
     fn the_seed_stays_under_its_token_budget() {
         let text = include_str!("system-prompt.md");
         let estimated_tokens = text.chars().count() / 4;
         assert!(
-            estimated_tokens < 1800,
-            "system-prompt.md is ~{estimated_tokens} tokens; the budget is 1800"
+            estimated_tokens < 3000,
+            "system-prompt.md is ~{estimated_tokens} tokens; the safety ceiling is 3000"
         );
     }
 

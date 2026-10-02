@@ -21,6 +21,7 @@ tauri = { workspace = true }
 tauri-plugin-dialog = { workspace = true }
 tauri-plugin-notification = { workspace = true }
 tauri-plugin-single-instance = { workspace = true }
+url = { workspace = true }
 notify-rust = { workspace = true }
 vak-core = { workspace = true }
 vak-delivery = { workspace = true }

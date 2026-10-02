@@ -1,6 +1,7 @@
 import { host } from "./host";
 import type { PreviewSource } from "./canvasSubject";
 import { restartStream, setStreamOpener } from "./streamHub";
+import { syntheticMailCalendarEnabled, syntheticMailCalendarRequest } from "./mailCalendarDemo";
 import type {
   ClientEvent,
   BackendInfo,
@@ -105,6 +106,16 @@ function refusal(res: Response, parsed: unknown): ApiError {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  if (syntheticMailCalendarEnabled() && path.startsWith("/mail-calendar/")) {
+    try {
+      const result = syntheticMailCalendarRequest(path, init);
+      if (result !== undefined) return result as T;
+      throw new ApiError("This mail and calendar request is not available in Synthetic demo mode", 403, "synthetic_demo_read_only");
+    } catch (error) {
+      const refusal = error as { message?: string; status?: number; kind?: string };
+      throw new ApiError(refusal.message ?? "Synthetic demo request refused", refusal.status ?? 403, refusal.kind ?? "synthetic_demo_read_only");
+    }
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...((init?.headers as Record<string, string>) ?? {}),
@@ -130,6 +141,247 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     throw refusal(res, parsed);
   }
   return parsed as T;
+}
+
+export type MailCalendarProvider = "google" | "microsoft" | "apple_icloud";
+export type MailCalendarAccountStatus = "pending" | "connected" | "connected_unverified" | "reauthentication_required";
+export type MailCalendarCapability = "mail_read" | "mail_prepare" | "mail_send" | "calendar_free_busy" | "calendar_read" | "calendar_write";
+export interface MailCalendarAccount {
+  id: string;
+  provider: MailCalendarProvider;
+  status: MailCalendarAccountStatus;
+  identity_masked: string | null;
+  auth_method?: "oauth" | "app_password" | null;
+  credential_available: boolean;
+  superseded_by_active_link: boolean;
+  capabilities: MailCalendarCapability[];
+  connected_at: string;
+  access_token_expires_at: string | null;
+  refresh_token_available: boolean;
+  revoked_at: string | null;
+}
+
+/** Notify open mail/calendar views after an account-level change completes. */
+export function notifyMailCalendarChanged(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("vak:mail-calendar-changed"));
+}
+
+export async function listMailCalendarAccounts(agentId: string): Promise<{ accounts: MailCalendarAccount[] }> {
+  return req(`/mail-calendar/accounts?agent_id=${encodeURIComponent(agentId)}`);
+}
+
+export async function beginMailCalendarOAuth(agentId: string, provider: MailCalendarProvider, capabilities: MailCalendarCapability[]): Promise<{ authorization_url: string }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/oauth`, {
+    method: "POST",
+    body: JSON.stringify({ provider, capabilities }),
+  });
+}
+
+export async function connectIcloudAccount(agentId: string, email: string, appSpecificPassword: string, capabilities: MailCalendarCapability[]): Promise<{ connected: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/icloud`, {
+    method: "POST",
+    body: JSON.stringify({ email, app_specific_password: appSpecificPassword, capabilities }),
+  });
+}
+
+export async function connectGoogleAppPassword(agentId: string, email: string, appPassword: string): Promise<{ connected: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/google-app-password`, {
+    method: "POST",
+    body: JSON.stringify({ email, app_specific_password: appPassword, capabilities: ["mail_read"] }),
+  });
+}
+
+export async function connectMicrosoftAppPassword(agentId: string, email: string, appPassword: string): Promise<{ connected: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/microsoft-app-password`, {
+    method: "POST",
+    body: JSON.stringify({ email, app_specific_password: appPassword, capabilities: ["mail_read"] }),
+  });
+}
+
+export async function refreshMailCalendarAccount(agentId: string, accountId: string): Promise<{ account: MailCalendarAccount }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/refresh`, { method: "POST", body: "{}" });
+}
+
+export interface MailCalendarMailPreview {
+  provider_id: string;
+  thread_id: string | null;
+  from: string | null;
+  reply_to?: string | null;
+  to: string | null;
+  cc: string | null;
+  subject: string;
+  received_at: string | null;
+  preview: string;
+  body_text: string | null;
+  body_status?: "available" | "sanitized_html" | "no_plain_text" | "unavailable";
+  has_attachments: boolean;
+  attachments?: MailCalendarAttachmentPreview[];
+}
+export interface MailCalendarThread { provider_id: string; messages: MailCalendarMailPreview[]; next_cursor?: string | null }
+export interface MailCalendarAttachmentPreview {
+  provider_id: string;
+  filename: string;
+  mime_type: string | null;
+  size_bytes: number;
+  previewable: boolean;
+}
+export interface MailCalendarFolder { provider_id: string; name: string }
+export interface MailCalendarEventPreview {
+  provider_id: string;
+  account_id?: string;
+  account_name?: string;
+  version: string | null;
+  title: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  starts_on: string | null;
+  ends_on: string | null;
+  all_day: boolean;
+  location: string | null;
+  description: string | null;
+  attendee_count: number;
+  recurring: boolean;
+  private: boolean;
+  can_cancel?: boolean;
+  can_respond?: boolean;
+}
+export interface MailCalendarBusySlot { starts_at: string; ends_at: string }
+export interface MailCalendarRoutineRun {
+  run_id: string;
+  routine_id: string;
+  account_id: string;
+  session_id: string | null;
+  trigger: "manual" | "scheduled";
+  status: "running" | "complete" | "failed" | "no_changes" | "interrupted";
+  started_at: string;
+  finished_at: string | null;
+  items_returned: number;
+}
+
+export function listMailCalendarRoutineRuns(agentId: string, routineId: string): Promise<{ runs: MailCalendarRoutineRun[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/history`);
+}
+
+export function listMailCalendarFolders(agentId: string, accountId: string): Promise<{ folders: MailCalendarFolder[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-folders`);
+}
+export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10, query?: string, folderId?: string, cursor?: string): Promise<{ messages: MailCalendarMailPreview[]; next_cursor?: string | null }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-preview`, {
+    method: "POST", body: JSON.stringify({ limit, ...(query?.trim() ? { query: query.trim() } : {}), ...(folderId ? { folder_id: folderId } : {}), ...(cursor ? { cursor } : {}) }),
+  });
+}
+export function previewMailCalendarMessage(agentId: string, accountId: string, providerId: string): Promise<{ provider_id: string; body_text: string | null; body_status: "available" | "sanitized_html" | "no_plain_text" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/message-preview`, {
+    method: "POST", body: JSON.stringify({ provider_id: providerId }),
+  });
+}
+export function previewMailCalendarThread(agentId: string, accountId: string, threadId: string, cursor?: string): Promise<MailCalendarThread> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/thread-preview`, {
+    method: "POST", body: JSON.stringify({ thread_id: threadId, ...(cursor ? { cursor } : {}) }),
+  });
+}
+export function previewMailCalendarAttachment(agentId: string, accountId: string, messageId: string, attachmentId: string): Promise<{ filename: string; mime_type: string | null; size_bytes: number; text: string }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/attachment-preview`, {
+    method: "POST", body: JSON.stringify({ message_id: messageId, attachment_id: attachmentId }),
+  });
+}
+export interface MailCalendarSource { provider_id: string; name: string; primary: boolean }
+export function listMailCalendarSources(agentId: string, accountId: string): Promise<{ sources: MailCalendarSource[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/calendar-sources`);
+}
+export function previewMailCalendarEvents(agentId: string, accountId: string, from: string, to: string, limit = 50, calendarId?: string, cursor?: string): Promise<{ events: MailCalendarEventPreview[]; next_cursor?: string | null }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/calendar-preview`, {
+    method: "POST", body: JSON.stringify({ from, to, limit, ...(calendarId ? { calendar_id: calendarId } : {}), ...(cursor ? { cursor } : {}) }),
+  });
+}
+export function previewMailCalendarFreeBusy(agentId: string, accountId: string, from: string, to: string): Promise<{ busy: MailCalendarBusySlot[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/free-busy-preview`, {
+    method: "POST", body: JSON.stringify({ from, to }),
+  });
+}
+
+export type MailCalendarDraftAction =
+  | { kind: "send_mail"; draft: { from_alias: string | null; to: Array<{ address: string; display_name: string | null }>; cc: Array<{ address: string; display_name: string | null }>; bcc: Array<{ address: string; display_name: string | null }>; subject: string; body_text: string; attachment_refs: string[]; reply_to_message_id: string | null; reply_to_thread_id: string | null } }
+  | { kind: "create_event"; draft: { title: string; description: string; location: string | null; starts_at: string; ends_at: string; time_zone: string; all_day: boolean; attendee_addresses: Array<{ address: string; display_name: string | null }>; recurrence: string | null; occurrence_id: string | null } }
+  | { kind: "update_event"; event_id: string; source_version: string; draft: { title: string; description: string; location: string | null; starts_at: string; ends_at: string; time_zone: string; all_day: boolean; attendee_addresses: Array<{ address: string; display_name: string | null }>; recurrence: string | null; occurrence_id: string | null } }
+  | { kind: "cancel_event"; event_id: string; source_version: string; occurrence_id: string | null; whole_series: boolean }
+  | { kind: "respond_to_event"; event_id: string; source_version: string; response: "accept" | "tentative" | "decline" };
+export interface MailCalendarCandidate {
+  id: string;
+  account_id: string;
+  agent_id: string;
+  audience_id: string;
+  source_refs: Array<{ item_id: string; version: string | null; label: string | null }>;
+  action: MailCalendarDraftAction;
+  revision: number;
+  created_at: string;
+  candidate_digest?: string;
+  action_state?: "prepared" | "awaiting_approval" | "dispatching" | "provider_accepted" | "confirmed" | "failed" | "unknown" | "cancelled" | "expired";
+}
+export interface MailCalendarReviewContext {
+  candidate_id: string;
+  revision: number;
+  sender: string;
+  source_from: string | null;
+  source_reply_to: string | null;
+}
+export function listMailCalendarCandidates(agentId: string): Promise<{ candidates: MailCalendarCandidate[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates`);
+}
+export function getMailCalendarReviewContext(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<MailCalendarReviewContext> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/review-context`, {
+    method: "POST", body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest }),
+  });
+}
+export function saveMailCalendarCandidate(agentId: string, payload: { account_id: string; candidate_id?: string; expected_revision?: number; source_refs?: MailCalendarCandidate["source_refs"]; action: MailCalendarDraftAction }): Promise<{ candidate: MailCalendarCandidate }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates`, { method: "POST", body: JSON.stringify(payload) });
+}
+export function deleteMailCalendarCandidate(agentId: string, candidateId: string, expectedRevision: number): Promise<{ deleted: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}`, { method: "DELETE", body: JSON.stringify({ expected_revision: expectedRevision }) });
+}
+export function sendMailCalendarCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/send`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
+  });
+}
+export function createMailCalendarEventCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/create-event`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
+  });
+}
+export function updateMailCalendarEventCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/update-event`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
+  });
+}
+export function cancelMailCalendarEventCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/cancel-event`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
+  });
+}
+export function respondMailCalendarEventCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/respond-event`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
+  });
+}
+export function reconcileMailCalendarEventCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ matched: boolean; state?: string; receipt?: { state: string; provider_item_id?: string | null; detail_code?: string | null }; message?: string }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/reconcile-event`, {
+    method: "POST", body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest }),
+  });
+}
+export function reconcileMailCalendarMailCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ matched: boolean; state?: string; receipt?: { state: string; provider_item_id?: string | null; detail_code?: string | null }; message?: string }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/reconcile-mail`, {
+    method: "POST", body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest }),
+  });
+}
+
+export async function disconnectMailCalendarAccount(agentId: string, accountId: string): Promise<{ disconnected: boolean; already_disconnected: boolean; provider_grant_revoked: boolean; provider_revocation: "confirmed" | "unsupported" | "unconfirmed" | "not_retried"; content_erased: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/disconnect`, { method: "POST", body: "{}" });
 }
 
 /**
@@ -1610,6 +1862,24 @@ export interface TaskDraft {
   model_pin?: string | null;
   agent_id?: string | null;
   agent_revision?: number | null;
+  mail_calendar_scope?: {
+    routine_id?: string;
+    account_id: string;
+    mail_folder_id?: string | null;
+    calendar_source_id?: string | null;
+    operations: Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">;
+    max_items: number;
+    watch_new_mail: boolean;
+    read_commitments: boolean;
+    calendar_event_trigger?: {
+      boundary: "start" | "end";
+      /** Positive means before the boundary; negative means after it. */
+      offset_minutes: number;
+      max_lateness_minutes: number;
+    } | null;
+  } | null;
+  timezone?: string | null;
+  deliver_to?: string | null;
 }
 
 export function createTask(draft: TaskDraft): Promise<unknown> {

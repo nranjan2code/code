@@ -229,6 +229,11 @@ pub struct TaskDef {
     pub last_result_id: Option<String>,
     #[serde(default)]
     pub last_run_status: Option<String>,
+    /// Last successful source poll for a continuous mail/calendar routine.
+    /// Kept separate from `last_run_at`, which also records failed runs and
+    /// model-run starts and therefore cannot establish source freshness.
+    #[serde(default)]
+    pub mail_calendar_last_check_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub last_delivery_state: Option<String>,
     #[serde(default)]
@@ -260,6 +265,10 @@ pub struct TaskDef {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub agent_revision: Option<u64>,
+    /// A read-only mail/calendar routine pinned to one Agent account and
+    /// operation allowlist. Its scheduler is still this TaskDef scheduler.
+    #[serde(default)]
+    pub mail_calendar_scope: Option<vak_mail_calendar::RoutineScope>,
 }
 
 fn default_interval() -> u64 {
@@ -272,6 +281,8 @@ pub enum TaskError {
     PromptScriptXor { name: String },
     #[error("invalid schedule '{expr}': {reason}")]
     BadSchedule { expr: String, reason: String },
+    #[error("mail/calendar routines require a valid read scope and pinned Agent revision")]
+    InvalidMailCalendarScope,
     #[error("io error on {path}: {source}")]
     Io {
         path: PathBuf,
@@ -294,6 +305,20 @@ impl TaskDef {
             return Err(TaskError::PromptScriptXor {
                 name: self.name.clone(),
             });
+        }
+        if let Some(scope) = &self.mail_calendar_scope {
+            if self.agent_id.as_deref().is_none_or(str::is_empty)
+                || self.agent_revision.is_none_or(|revision| revision == 0)
+                || self
+                    .script
+                    .as_deref()
+                    .is_some_and(|script| !script.trim().is_empty())
+                || self.deliver_to.is_some()
+                || scope.routine_id != self.id
+                || scope.validate().is_err()
+            {
+                return Err(TaskError::InvalidMailCalendarScope);
+            }
         }
         if let Some(expr) = &self.schedule {
             CronExpr::parse(expr).map_err(|reason| TaskError::BadSchedule {
@@ -726,6 +751,7 @@ mod tests {
             last_summary: None,
             last_result_id: None,
             last_run_status: None,
+            mail_calendar_last_check_at: None,
             last_delivery_state: None,
             last_wt: None,
             deliver_to: None,
@@ -736,6 +762,7 @@ mod tests {
             model_pin: None,
             agent_id: None,
             agent_revision: None,
+            mail_calendar_scope: None,
         }
     }
 
@@ -764,6 +791,84 @@ mod tests {
             ..base_task()
         };
         assert!(watchdog.validate().is_ok());
+    }
+
+    #[test]
+    fn mail_calendar_routine_requires_a_pinned_agent_and_safe_read_scope() {
+        let task_id = uuid::Uuid::now_v7().to_string();
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let scope = vak_mail_calendar::RoutineScope {
+            routine_id: task_id.clone(),
+            account_id,
+            mail_folder_id: None,
+            calendar_source_id: None,
+            operations: [vak_mail_calendar::RoutineOperation::RecentMail]
+                .into_iter()
+                .collect(),
+            max_items: 5,
+            watch_new_mail: true,
+            read_commitments: false,
+            calendar_event_trigger: None,
+        };
+        let mut task = base_task();
+        task.id = task_id;
+        task.agent_id = Some("agent-one".into());
+        task.agent_revision = Some(1);
+        task.mail_calendar_scope = Some(scope.clone());
+        assert!(task.validate().is_ok());
+        let mut other_task = task.clone();
+        other_task.id = uuid::Uuid::now_v7().to_string();
+        assert!(matches!(
+            other_task.validate(),
+            Err(TaskError::InvalidMailCalendarScope)
+        ));
+        let mut calendar_only = task.clone();
+        calendar_only
+            .mail_calendar_scope
+            .as_mut()
+            .unwrap()
+            .operations = [vak_mail_calendar::RoutineOperation::FreeBusy]
+            .into_iter()
+            .collect();
+        assert!(matches!(
+            calendar_only.validate(),
+            Err(TaskError::InvalidMailCalendarScope)
+        ));
+
+        task.deliver_to = Some("log:shared".into());
+        assert!(matches!(
+            task.validate(),
+            Err(TaskError::InvalidMailCalendarScope)
+        ));
+        task.deliver_to = None;
+        task.agent_revision = None;
+        assert!(matches!(
+            task.validate(),
+            Err(TaskError::InvalidMailCalendarScope)
+        ));
+        task.agent_revision = Some(1);
+        task.script = Some("echo unsafe".into());
+        assert!(matches!(
+            task.validate(),
+            Err(TaskError::PromptScriptXor { .. })
+        ));
+
+        let mut folder_watch = scope.clone();
+        folder_watch.mail_folder_id = Some("SENT".into());
+        assert!(matches!(
+            folder_watch.validate(),
+            Err(vak_mail_calendar::ContractError::InvalidRoutineScope)
+        ));
+        let mut folder_without_mail = scope;
+        folder_without_mail.mail_folder_id = Some("INBOX".into());
+        folder_without_mail.operations = [vak_mail_calendar::RoutineOperation::CalendarEvents]
+            .into_iter()
+            .collect();
+        folder_without_mail.watch_new_mail = false;
+        assert!(matches!(
+            folder_without_mail.validate(),
+            Err(vak_mail_calendar::ContractError::InvalidRoutineScope)
+        ));
     }
 
     #[test]
@@ -839,6 +944,7 @@ mod tests {
         assert_eq!(t.schedule, None);
         assert_eq!(t.script, None);
         assert_eq!(t.model_pin, None);
+        assert_eq!(t.mail_calendar_last_check_at, None);
 
         store.save().unwrap();
         let reloaded = TaskStore::load(dir.path()).unwrap();
@@ -861,6 +967,7 @@ mod tests {
         t.script = Some("systemctl is-active nginx".into());
         t.schedule = Some("0 7 * * 1-5".into());
         t.model_pin = Some("haiku-fast".into());
+        t.mail_calendar_last_check_at = Some(Utc::now());
         store.put(t.clone());
         store.save().unwrap();
 
@@ -869,6 +976,10 @@ mod tests {
         assert_eq!(got.script.as_deref(), Some("systemctl is-active nginx"));
         assert_eq!(got.schedule.as_deref(), Some("0 7 * * 1-5"));
         assert_eq!(got.model_pin.as_deref(), Some("haiku-fast"));
+        assert_eq!(
+            got.mail_calendar_last_check_at,
+            t.mail_calendar_last_check_at
+        );
         assert!(got.validate().is_ok());
     }
 

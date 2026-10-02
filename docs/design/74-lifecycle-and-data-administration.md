@@ -236,6 +236,26 @@ These are ephemeral or telemetry classes with no per-item lifecycle, only
 size and age limits and a boot sweep of `runtime/`. They never hold content
 (plan M5), so erasure never needs them.
 
+### 2.15 Connected provider accounts
+
+Provider connections are Agent-owned Desired state; credentials and account
+principal/display data live only in the credential vault. Durable records use
+an opaque connection id and retain account lineage on every fetched object,
+candidate, excerpt, citation, automation cursor, and derived/indexed copy.
+Authorization also carries the owning Agent and audience, and is rechecked at
+each broker read or effect.
+
+The lifecycle is `connected → paused | revoked → erase requested → erased`.
+Disconnect/revoke immediately removes the secret, fences watchers and
+schedules, and cancels undispatched work; it does not claim to erase retained
+content. Account deletion is an erasure request scoped to that connection id.
+The M6 catalog must find copies across Agents and conversations; M7 must
+selectively crypto-shred account-derived data, remove derived plaintext and
+backup restore paths, preserve unrelated conversation content, and issue a
+receipt. The key/grant design for selective erasure is an M2/M6 exit gate.
+Provider systems, recipients, and other processors outside Vak's control are
+listed in the receipt as external copies that Vak cannot erase.
+
 ## 3. Policies
 
 ### 3.1 Retention labels
@@ -360,21 +380,26 @@ Two rules make that true:
 
 An erasure of scope S then runs these steps:
 
-1. **Resolve** S to its conversations through the catalog (for a person:
-   every conversation whose audience includes them).
+1. **Resolve** S to its conversations and source records through the catalog
+   (for a person: every conversation whose audience includes them; for a
+   provider account: every source and descendant carrying that account's
+   lineage, including copies in multiple Agents and conversations).
 2. **Check holds.** Any hold in scope blocks the whole request, recorded as
    `blocked{hold}` with the hold ids.
-3. **Walk lineage outward** from those conversations: Documents with
-   `derived_from`, artifact versions, catalog rows, embeddings, key grants,
-   run and effect records, delivery jobs, inbox entries. For artifacts: a
-   version made in an erased conversation that was never Saved, starred or
-   shared holds only that conversation's grant and is erased with it; a
-   Saved version holds the artifact's own grant and survives as the
-   person's document, with its lineage edge to the conversation tombstoned
-   and any label quoting the conversation erased (doc 73 §7.3).
-4. **Destroy conversation keys**, or for a person's contributions to
-   someone else's conversation, that person's contributor keys. Records,
-   field-encrypted content and key grants become unreadable.
+3. **Walk lineage outward** from the source records and affected
+   conversations: Documents with `derived_from`, artifacts produced and not
+   promoted elsewhere, catalog rows, embeddings, key grants, run and effect
+   records, delivery jobs and inbox entries. For artifacts, an unsaved,
+   unstarred and unshared version holds only its conversation grant and is
+   erased with it. A Saved version holds its own artifact grant and survives
+   as the person's document; tombstone its lineage edge to the conversation
+   and erase any label quoting that conversation (doc 73 §7.3).
+4. **Destroy the relevant scope keys.** For conversation erasure, destroy its
+   conversation key, or the contributor key for one person's contributions
+   to another's conversation. For provider-account erasure, destroy the
+   account-scoped grants/key so provider-derived content becomes unreadable
+   without destroying unrelated conversation content. The exact wrapping
+   and grant composition is an M2/M6 exit requirement.
 5. **Remove derived plaintext:**
    - catalog rows, with `secure_delete` and a WAL checkpoint;
    - embeddings;
@@ -473,6 +498,7 @@ receipts. "Guard" names the confirmation a destructive action needs.
 | A17 | System › Diagnostics › Traces & logs | search by run id or trace fields; span waterfall; log tail filtered by trace; telemetry quota | none (read-only) | M5 |
 | A18 | Operate › Data › Sync | remotes, push/pull lag, pending objects and segments, leases held, conflicts, last error | push/pull now, release a stale lease (recorded) | M9 |
 | A19 | System › FinOps | existing charts, plus per Agent and per run (cost rows now carry both) | existing | M1 (data), M4 (views) |
+| A20 | Configure › Agents › Mail and calendar connections | provider, masked identity resolved from vault at request time, granted capabilities, audiences, schedules/watchers, freshness, retention label, pending effects and last erasure receipt | pause, reconnect, revoke, request account erasure (impact preview → typed confirmation) | package UI; M7 erasure |
 
 ### 6.3 Client app (people, not operators)
 

@@ -36,6 +36,35 @@ browser at 1440 px wide: below 1100 px the layout switch is hidden by design.
 The pure rules are in `canvas-subject.mjs`, `canvas-stack.mjs` and
 `preview-isolation.mjs` (`node tests/<file>`).
 
+# Daily mail and calendar Canvas
+
+Open `/app/tests/mail-calendar-daily.html?run` in the Vite web dev server. This
+mounts the real daily Canvas viewer over local HTTP fixtures: nine synthetic
+accounts, 72 mail rows, 300 events, and 24 free/busy intervals. Loading it with
+`?run` runs `window.runChecks()` and prints the assertions. It checks that the
+account request carries the owning Agent ID, each provider uses only its
+granted mail/calendar operation, source labels survive aggregation, free/busy
+shows no event titles, and provider requests stay within a two-account
+concurrency limit. It has no provider credentials, provider traffic, or session
+writes.
+
+`/app/tests/mail-calendar-demo.html?run` exercises the product's explicit
+**Use synthetic demo data** mode. It checks sample accounts and previews,
+browser-local draft save/reopen, hard refusal of OAuth/provider effects, and
+that no mail/calendar API request reaches `fetch`. It is loopback-only and
+uses no credentials or session data.
+
+`/app/tests/mail-calendar-connected-review.html?run` mounts the real Settings
+panel against a same-origin fake connected Google account. It verifies that
+Settings offers a direct entry to the daily Canvas, contains no duplicate inbox,
+calendar, or draft workspace, and still supports Agent-scoped account and
+routine administration. Its synthetic event-trigger routine remains paused
+until explicitly resumed, exposes run history, and can be paused while running.
+It asserts that no provider effect route or external request was made. The daily
+Canvas fixture separately covers mail/calendar browsing, paging, draft editing,
+and local Review preparation. These fixtures use fabricated data and do not
+replace live provider conformance checks.
+
 # Result card
 
 `result-card.html` renders the real timeline over file results shaped like

@@ -3,6 +3,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -16,6 +17,9 @@ pub const PERSISTENT_WORKER_SUBCOMMAND: &str = "__persistent_tool_worker";
 pub(crate) const WORKER_ENV: &str = "VAK_INTERNAL_TOOL_WORKER";
 const PROTOCOL_VERSION: u8 = 3;
 const MAX_PROTOCOL_BYTES: u64 = 2 * 1024 * 1024;
+/// Mail attachment previews cross the worker protocol as base64 JSON, so keep
+/// raw file bytes below the protocol ceiling with ample encoding overhead.
+pub const MAX_MAIL_ATTACHMENT_PREVIEW_BYTES: usize = 1024 * 1024;
 /// Wall-clock bound on one verification worker. A hostile package that
 /// pins the CPU fails its checks instead of holding a candidate open.
 pub const VERIFY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
@@ -71,6 +75,23 @@ enum WorkerTask {
         draft: PathBuf,
         keep: Vec<String>,
         out: PathBuf,
+    },
+    IcalendarParse {
+        data: String,
+    },
+    IcalendarFreeBusyParse {
+        data: String,
+    },
+    MailMimeParse {
+        data: Vec<u8>,
+    },
+    MailAttachmentPreview {
+        filename: String,
+        data: String,
+    },
+    CalDavDiscoveryParse {
+        data: String,
+        mode: crate::mail_calendar::DiscoveryMode,
     },
 }
 
@@ -601,6 +622,73 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::IcalendarParse { data } => {
+            let (content, is_error) = match crate::mail_calendar::parse_calendar_data(&data) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
+        WorkerTask::IcalendarFreeBusyParse { data } => {
+            let (content, is_error) = match crate::mail_calendar::parse_freebusy_data(&data) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
+        WorkerTask::MailMimeParse { data } => {
+            let (content, is_error) = match crate::mail_calendar::parse_mail_mime(&data) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
+        WorkerTask::MailAttachmentPreview { filename, data } => {
+            let (content, is_error) =
+                match preview_mail_attachment_in_worker(&filename, &data).await {
+                    Ok(content) => (content, false),
+                    Err(error) => (error, true),
+                };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
+        WorkerTask::CalDavDiscoveryParse { data, mode } => {
+            let (content, is_error) =
+                match crate::mail_calendar::parse_caldav_discovery(&data, mode) {
+                    Ok(content) => (content, false),
+                    Err(error) => (error, true),
+                };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::VerifyTargets { root, checks } => {
             let results = vak_sandbox::default_target_verifiers().verify(&root, &checks);
             let content = serde_json::to_string(&results).unwrap_or_default();
@@ -732,6 +820,188 @@ pub async fn verify_targets(
         Ok(results) if results.len() == checks.len() => results,
         Ok(_) => failed("worker answered a different number of checks".into()),
         Err(error) => failed(format!("worker returned invalid results: {error}")),
+    }
+}
+
+/// Parse untrusted iCalendar content in the isolated tool worker. The worker
+/// gets an empty private directory, no network, and the bounded input over
+/// its versioned IPC channel; unsupported platforms fail closed.
+pub async fn parse_icalendar(worker_exe: &Path, data: &str) -> Result<Value, String> {
+    if data.is_empty() || data.len() > 256 * 1024 {
+        return Err("calendar response exceeds the parser input limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("calendar parsing requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-calendar-parse-")
+            .tempdir()
+            .map_err(|_| "calendar parser workspace is unavailable".to_owned())?;
+        let task = WorkerTask::IcalendarParse {
+            data: data.to_owned(),
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content)
+            .map_err(|_| "calendar worker returned an invalid result".to_owned())
+    }
+}
+
+/// Parse a provider VFREEBUSY response in the network-denied worker. The
+/// projection returns only UTC intervals; event properties never leave it.
+pub async fn parse_icalendar_freebusy(worker_exe: &Path, data: &str) -> Result<Value, String> {
+    if data.is_empty() || data.len() > 256 * 1024 {
+        return Err("free/busy response exceeds the parser input limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("free/busy parsing requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-calendar-freebusy-")
+            .tempdir()
+            .map_err(|_| "free/busy parser workspace is unavailable".to_owned())?;
+        let task = WorkerTask::IcalendarFreeBusyParse {
+            data: data.to_owned(),
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content)
+            .map_err(|_| "free/busy worker returned an invalid result".to_owned())
+    }
+}
+
+/// Decode an untrusted email MIME document in the network-denied tool worker.
+pub async fn parse_mail_mime(worker_exe: &Path, data: &[u8]) -> Result<Value, String> {
+    if data.is_empty() || data.len() > 256 * 1024 {
+        return Err("email message exceeds the local size limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("email parsing requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-mail-parse-")
+            .tempdir()
+            .map_err(|_| "email parser workspace is unavailable".to_owned())?;
+        let task = WorkerTask::MailMimeParse {
+            data: data.to_vec(),
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content).map_err(|_| "email parser returned invalid data".into())
+    }
+}
+
+/// Read a selected mail attachment with the existing document reader inside
+/// the network-denied tool worker. The original filename is never used as a
+/// path; only a small allowlisted extension chooses the reader.
+pub async fn preview_mail_attachment(
+    worker_exe: &Path,
+    filename: &str,
+    data: &[u8],
+) -> Result<String, String> {
+    if data.is_empty() || data.len() > MAX_MAIL_ATTACHMENT_PREVIEW_BYTES {
+        return Err("attachment exceeds the local preview size limit".into());
+    }
+    let extension = filename
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .filter(|extension| {
+            matches!(
+                extension.as_str(),
+                "pdf" | "docx" | "xlsx" | "pptx" | "vsdx" | "txt" | "csv" | "md"
+            )
+        })
+        .ok_or_else(|| "this attachment type cannot be previewed".to_owned())?;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("attachment preview requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-mail-attachment-")
+            .tempdir()
+            .map_err(|_| "attachment preview workspace is unavailable".to_owned())?;
+        let task = WorkerTask::MailAttachmentPreview {
+            filename: format!("attachment.{extension}"),
+            data: STANDARD.encode(data),
+        };
+        run_task(worker_exe, scratch.path(), &[scratch.path()], true, task).await
+    }
+}
+
+async fn preview_mail_attachment_in_worker(
+    filename: &str,
+    encoded_data: &str,
+) -> Result<String, String> {
+    let data = STANDARD
+        .decode(encoded_data)
+        .map_err(|_| "attachment data could not be decoded".to_owned())?;
+    if data.is_empty() || data.len() > MAX_MAIL_ATTACHMENT_PREVIEW_BYTES {
+        return Err("attachment exceeds the local preview size limit".into());
+    }
+    if Path::new(filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some(filename)
+        || !filename.starts_with("attachment.")
+        || filename.contains(['/', '\\'])
+    {
+        return Err("attachment preview filename is invalid".into());
+    }
+    let cwd = std::env::current_dir().map_err(|_| "attachment preview workspace is unavailable")?;
+    tokio::fs::write(cwd.join(filename), data)
+        .await
+        .map_err(|_| "attachment preview could not stage the selected file")?;
+    let tool = crate::default_tools()
+        .into_iter()
+        .find(|tool| tool.name() == "doc_read")
+        .ok_or_else(|| "the document reader is unavailable".to_owned())?;
+    let context = ToolContext::new(cwd);
+    let output = tool
+        .execute(
+            &serde_json::json!({"path": filename, "view": "text", "limit": 100}),
+            &context,
+        )
+        .await;
+    if output.is_error {
+        return Err("the selected attachment could not be read by the document reader".into());
+    }
+    let mut content = output.content;
+    if content.len() > 32 * 1024 {
+        let mut boundary = 32 * 1024;
+        while !content.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        content.truncate(boundary);
+        content.push_str("\n[attachment preview truncated]");
+    }
+    Ok(content)
+}
+
+/// Extract only the expected hrefs or calendar collections from untrusted
+/// CalDAV discovery XML inside the same network-denied worker boundary.
+pub async fn parse_caldav_discovery(
+    worker_exe: &Path,
+    data: &str,
+    mode: crate::mail_calendar::DiscoveryMode,
+) -> Result<Value, String> {
+    if data.is_empty() || data.len() > 256 * 1024 {
+        return Err("CalDAV discovery response exceeds its parser limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("CalDAV discovery requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-caldav-discovery-")
+            .tempdir()
+            .map_err(|_| "CalDAV parser workspace is unavailable".to_owned())?;
+        let task = WorkerTask::CalDavDiscoveryParse {
+            data: data.to_owned(),
+            mode,
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content)
+            .map_err(|_| "CalDAV worker returned invalid discovery data".to_owned())
     }
 }
 

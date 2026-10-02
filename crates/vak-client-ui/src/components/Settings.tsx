@@ -1,6 +1,8 @@
 import { trapFocus } from "../focusTrap";
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
 import { host } from "../host";
+import { canOfferSyntheticMailCalendar, setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../mailCalendarDemo";
+import { SyntheticMailCalendarDemoControl } from "./SyntheticMailCalendarDemoControl";
 import {
   technicalDetails,
   openConnect,
@@ -12,6 +14,7 @@ import {
   setNotice,
   setProviders,
   setSettingsOpen,
+  openArtifactCanvas,
   setSetupEpoch,
   setSettingsScope,
   settingsScope,
@@ -25,11 +28,14 @@ import {
   backend,
   activeAgentId,
   activeAgent,
+  connection,
+  health,
   setAgentPickerOpen,
   setAgentPickerTab,
+  setTranscriptViewId,
 } from "../store";
 import type { SettingsPageId } from "../store";
-import type { ConfigSnapshot, SessionSummary } from "../types";
+import type { ConfigSnapshot, SessionSummary, TaskDef } from "../types";
 import * as api from "../api";
 import { interfaceFonts, contentFonts, codeFonts } from "../typography";
 import { watchConfig } from "../streamHub";
@@ -68,7 +74,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string; group: Nav
 
 /** Pages that read or write one agent's configuration, so the Shared
  * defaults switch applies to them. */
-const SCOPED_PAGES = new Set<Page>(["agent", "connections", "privacy", "prompts"]);
+const SCOPED_PAGES = new Set<Page>(["agent", "connections", "mail-calendar", "privacy", "prompts"]);
 
 const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
   { id: "identity", label: "Identity", help: "Who the agent is. This agent's version replaces the shared one." },
@@ -91,12 +97,12 @@ function Switch(props: { checked: boolean; onChange: (next: boolean) => void; la
   return <button type="button" class="switch" classList={{ on: props.checked }} role="switch" aria-checked={props.checked} aria-label={props.label} onClick={() => props.onChange(!props.checked)}><span /></button>;
 }
 
-function Row(props: { title: string; description: string; children: JSX.Element; danger?: boolean }) {
-  return <div class="setting-row" classList={{ danger: props.danger }}><div class="setting-copy"><strong>{props.title}</strong><span>{props.description}</span></div><div class="setting-control">{props.children}</div></div>;
+function Row(props: { title: string; description: string; children: JSX.Element; danger?: boolean; className?: string }) {
+  return <div class={`setting-row${props.className ? ` ${props.className}` : ""}`} classList={{ danger: props.danger }}><div class="setting-copy"><strong>{props.title}</strong><span>{props.description}</span></div><div class="setting-control">{props.children}</div></div>;
 }
 
 function Group(props: { title?: string; id?: string; children: JSX.Element }) {
-  return <section id={props.id} class="settings-group"><Show when={props.title}><h3>{props.title}</h3></Show><div class="settings-card">{props.children}</div></section>;
+  return <section id={props.id} class="settings-group"><Show when={props.title}><h2>{props.title}</h2></Show><div class="settings-card">{props.children}</div></section>;
 }
 
 /** A closed "Technical details" row whose values stay intact behind it
@@ -158,7 +164,23 @@ async function copySettingText(value: string, label: string): Promise<void> {
   }
 }
 
+const MAIL_CALENDAR_CAPABILITY_LABELS: Record<api.MailCalendarCapability, string> = {
+  mail_read: "Read email",
+  mail_prepare: "Prepare email drafts",
+  mail_send: "Send email",
+  calendar_write: "Create or update calendar events after review",
+  calendar_free_busy: "Check availability",
+  calendar_read: "Read calendar events",
+};
+
+function describeMailCalendarCapabilities(capabilities: api.MailCalendarCapability[]): string {
+  return capabilities.map((capability) => MAIL_CALENDAR_CAPABILITY_LABELS[capability]).join(", ") || "No access";
+}
+
+const DEFAULT_MAIL_CALENDAR_CAPABILITIES: api.MailCalendarCapability[] = ["mail_read", "calendar_free_busy"];
+
 export default function Settings() {
+  const [syntheticMailDemo, setSyntheticMailDemo] = createSignal(syntheticMailCalendarEnabled());
   // Presentation memos can run during component setup and read this signal.
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [privacyLayer, setPrivacyLayer] = createSignal<Awaited<ReturnType<typeof api.getPrivacyConfigLayer>> | null>(null);
@@ -1078,6 +1100,196 @@ export default function Settings() {
   };
   const agentName = () => activeAgentId() === "vak" ? "Vakyartha" : activeAgent()?.name ?? "Vakyartha";
   const agentLook = () => activeAgentId() === "vak" ? { character: "vak", animation: "subtle" as const } : { character: activeAgent()?.character ?? "vak", animation: activeAgent()?.animation ?? "subtle" };
+  const [mailCalendarAccounts, { refetch: refreshMailCalendarAccounts }] = createResource(
+    () => page() === "mail-calendar" ? `${activeAgentId()}:${syntheticMailDemo()}` : null,
+    (source) => source ? api.listMailCalendarAccounts(source.split(":")[0]) : Promise.resolve({ accounts: [] }),
+  );
+  const [mailCalendarTasks, { refetch: refreshMailCalendarTasks }] = createResource(
+    () => page() === "mail-calendar" && !syntheticMailDemo() ? activeAgentId() : null,
+    async (agentId) => (await api.listTasks()).tasks.filter(
+      (task) => !!task.mail_calendar_scope && task.agent_id === agentId,
+    ),
+  );
+  const [mailCalendarPausing, setMailCalendarPausing] = createSignal<string | null>(null);
+  const refreshMailCalendarOnFocus = () => {
+    if (page() === "mail-calendar") {
+      void Promise.resolve(refreshMailCalendarAccounts()).then(() => api.notifyMailCalendarChanged());
+    }
+  };
+  onMount(() => {
+    window.addEventListener("focus", refreshMailCalendarOnFocus);
+    onCleanup(() => window.removeEventListener("focus", refreshMailCalendarOnFocus));
+  });
+  const [mailCalendarBusy, setMailCalendarBusy] = createSignal(false);
+  const [mailCalendarCapabilities, setMailCalendarCapabilities] = createSignal<api.MailCalendarCapability[]>([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
+  const [icloudEmail, setIcloudEmail] = createSignal("");
+  const [icloudAppPassword, setIcloudAppPassword] = createSignal("");
+  const [googleAppEmail, setGoogleAppEmail] = createSignal("");
+  const [googleAppPassword, setGoogleAppPassword] = createSignal("");
+  const [microsoftAppEmail, setMicrosoftAppEmail] = createSignal("");
+  const [microsoftAppPassword, setMicrosoftAppPassword] = createSignal("");
+  const canAddLocalAppPassword = () => host.kind === "desktop"
+    || (typeof window !== "undefined" && ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname));
+  const connectMailCalendar = async (provider: api.MailCalendarProvider) => {
+    if (host.kind === "desktop") {
+      setMailCalendarBusy(true);
+      try {
+        const result = await api.beginMailCalendarOAuth(activeAgentId(), provider, mailCalendarCapabilities());
+        if (!host.openOAuthUrl) throw new Error("System browser support is unavailable.");
+        await host.openOAuthUrl(result.authorization_url);
+        setNotice({ kind: "info", text: "Finish signing in in your system browser, then return here. The account list refreshes when this window regains focus." });
+      } catch (error) {
+        setNotice({ kind: "error", text: `Could not start account linking: ${error instanceof Error ? error.message : String(error)}` });
+      } finally {
+        setMailCalendarBusy(false);
+      }
+      return;
+    }
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      setNotice({ kind: "error", text: "Allow a new window to continue to your provider." });
+      return;
+    }
+    popup.opener = null;
+    setMailCalendarBusy(true);
+    try {
+      const result = await api.beginMailCalendarOAuth(activeAgentId(), provider, mailCalendarCapabilities());
+      popup.location.replace(result.authorization_url);
+    } catch (error) {
+      popup.close();
+      setNotice({ kind: "error", text: `Could not start account linking: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarBusy(false);
+    }
+  };
+  const connectIcloud = async () => {
+    const email = icloudEmail();
+    const selectedCapabilities = mailCalendarCapabilities();
+    let appPassword = icloudAppPassword();
+    // Do not keep the secret in reactive UI state while the request is in
+    // flight; retain only the short-lived local needed for this submission.
+    setIcloudAppPassword("");
+    setIcloudEmail("");
+    setMailCalendarBusy(true);
+    try {
+      await api.connectIcloudAccount(activeAgentId(), email, appPassword, selectedCapabilities);
+      appPassword = "";
+      await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
+      setNotice({ kind: "info", text: `iCloud sign-in was verified separately for the selected access: ${describeMailCalendarCapabilities(selectedCapabilities)}. Only these read capabilities are enabled; revoke the app-specific password at Apple when you disconnect.` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not connect the iCloud account: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      appPassword = "";
+      setMailCalendarBusy(false);
+    }
+  };
+  const connectGoogleAppPassword = async () => {
+    const email = googleAppEmail();
+    let password = googleAppPassword();
+    setGoogleAppEmail("");
+    setGoogleAppPassword("");
+    setMailCalendarBusy(true);
+    try {
+      await api.connectGoogleAppPassword(activeAgentId(), email, password);
+      password = "";
+      await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
+      setNotice({ kind: "info", text: "Gmail sign-in was verified. This account can read bounded inbox metadata only. Revoke the App Password from your Google Account security settings." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not connect Gmail with an App Password: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      password = "";
+      setMailCalendarBusy(false);
+    }
+  };
+  const connectMicrosoftAppPassword = async () => {
+    const email = microsoftAppEmail();
+    let password = microsoftAppPassword();
+    setMicrosoftAppEmail("");
+    setMicrosoftAppPassword("");
+    setMailCalendarBusy(true);
+    try {
+      await api.connectMicrosoftAppPassword(activeAgentId(), email, password);
+      password = "";
+      await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
+      setNotice({ kind: "info", text: "Outlook.com app-password sign-in was verified. This connection can read email only; calendar and provider changes are unavailable." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not connect the Outlook.com account: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      password = "";
+      setMailCalendarBusy(false);
+    }
+  };
+  const disconnectMailCalendar = (account: api.MailCalendarAccount) => setConfirmConfig({
+    title: account.revoked_at ? "Finish disconnect cleanup?" : "Disconnect this account?",
+    description: account.revoked_at
+      ? "Retry removing any Vakyartha sign-in details left by an interrupted disconnect. This does not erase saved copies of messages or events in Vakyartha."
+      : "Vakyartha will remove this Agent's saved sign-in details and try to revoke provider access where supported. This does not delete messages or events from your provider or erase copies already saved in Vakyartha.",
+    confirmLabel: account.revoked_at ? "Finish cleanup" : "Disconnect account",
+    isDanger: true,
+    onConfirm: async () => {
+      setMailCalendarBusy(false);
+      const result = await api.disconnectMailCalendarAccount(activeAgentId(), account.id);
+      await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
+      setNotice({ kind: "info", text: result.already_disconnected
+        ? "Local credential cleanup was retried. Provider revocation was not attempted again, and provider content was not erased."
+        : result.provider_revocation === "confirmed"
+          ? "The account was disconnected and its provider grant was revoked."
+          : result.provider_revocation === "unsupported"
+            ? "Local access was removed. This provider does not offer grant revocation through Vakyartha; manage connected-app access with the provider."
+            : "Local access was removed, but the provider did not confirm revocation. Check connected-app access with the provider." });
+    },
+  });
+  const refreshMailCalendarAccount = async (account: api.MailCalendarAccount) => {
+    setMailCalendarBusy(true);
+    try {
+      await api.refreshMailCalendarAccount(activeAgentId(), account.id);
+      await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
+      setNotice({ kind: "info", text: "The provider sign-in was refreshed securely." });
+    } catch (error) {
+      await refreshMailCalendarAccounts();
+      setNotice({ kind: "error", text: `Could not refresh the provider sign-in: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarBusy(false);
+    }
+  };
+  const pauseMailCalendarTask = async (task: TaskDef) => {
+    await api.patchTask(task.id, { enabled: false });
+    if (task.last_run_status === "working" && task.last_session_id) {
+      await api.cancelRun(task.last_session_id);
+    }
+  };
+  const pauseMailCalendarRoutines = async (accountId?: string) => {
+    const scope = accountId ?? "all";
+    const selected = (mailCalendarTasks() ?? []).filter((task) =>
+      task.enabled && (!accountId || task.mail_calendar_scope?.account_id === accountId),
+    );
+    if (selected.length === 0) return;
+    setMailCalendarPausing(scope);
+    try {
+      const results = await Promise.allSettled(selected.map(pauseMailCalendarTask));
+      let refreshed = true;
+      try {
+        await refreshMailCalendarTasks();
+      } catch {
+        refreshed = false;
+      }
+      const paused = results.filter((result) => result.status === "fulfilled").length;
+      const failed = results.length - paused;
+      setNotice({
+        kind: failed === 0 && refreshed ? "info" : "error",
+        text: failed === 0 && refreshed
+          ? `Paused ${paused} ${paused === 1 ? "routine" : "routines"}${accountId ? " for this account" : ""}. Any active run was asked to stop.`
+          : `Paused ${paused} ${paused === 1 ? "routine" : "routines"}; ${failed ? `${failed} could not be fully paused` : "the updated status could not be reloaded"}. Check their status and retry.`,
+      });
+    } finally {
+      setMailCalendarPausing(null);
+    }
+  };
   const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
   const [trashedSessions, setTrashedSessions] = createSignal<SessionSummary[]>([]);
   const refreshTrash = async () => {
@@ -1347,7 +1559,7 @@ export default function Settings() {
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id || (item.id === "privacy" && page() === "archived") }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
           </For>
           <Show when={agentEntries().length > 0}>
-            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <><button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button><Show when={scope() === "workspace" && activeAgentId() === agent.id}><div class="settings-agent-subnav" aria-label={`${agent.name} settings`}><button type="button" classList={{ active: page() === "agent" }} onClick={() => selectPage("agent")}>Overview</button><button type="button" classList={{ active: page() === "connections" }} onClick={() => { setCapabilityView("mine"); selectPage("connections"); }}>Capabilities</button><button type="button" classList={{ active: page() === "privacy" }} onClick={() => selectPage("privacy")}>Privacy and safety</button><Show when={technicalDetails()}><button type="button" classList={{ active: page() === "prompts" }} onClick={() => selectPage("prompts")}>Prompts</button></Show></div></Show></>}</For></nav></div>
+            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <><button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button><Show when={scope() === "workspace" && activeAgentId() === agent.id}><div class="settings-agent-subnav" aria-label={`${agent.name} settings`}><button type="button" classList={{ active: page() === "agent" }} onClick={() => selectPage("agent")}>Overview</button><button type="button" classList={{ active: page() === "connections" }} onClick={() => { setCapabilityView("mine"); selectPage("connections"); }}>Capabilities</button><button type="button" classList={{ active: page() === "mail-calendar" }} onClick={() => selectPage("mail-calendar")}>Email and calendar</button><button type="button" classList={{ active: page() === "privacy" }} onClick={() => selectPage("privacy")}>Privacy and safety</button><Show when={technicalDetails()}><button type="button" classList={{ active: page() === "prompts" }} onClick={() => selectPage("prompts")}>Prompts</button></Show></div></Show></>}</For></nav></div>
           </Show>
           <For each={pageGroups().filter(([group]) => group === "Advanced")}>
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
@@ -1839,6 +2051,104 @@ export default function Settings() {
             <Show when={page() === "services"}>
               <OperationsPanel onNotice={(text) => setNotice({ kind: "error", text })} />
               <DigestCard />
+            </Show>
+
+            <Show when={page() === "mail-calendar"}>
+              <header class="mail-calendar-settings-header"><div class="mail-calendar-settings-intro"><h1>Connected accounts and access</h1><p>Manage the accounts and permissions available to {agentName()}.</p><p class="settings-hint">Mail, calendar, drafts, Review and routine setup are in Canvas. This page manages account access and lifecycle.</p></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open Today in Canvas</button><p class="settings-hint">Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
+                <p class="settings-hint" role="status">
+                  <Show when={connection() === "offline"} fallback={connection() === "live" && health()
+                    ? health()?.automation_scheduler?.status === "stale"
+                      ? "The service API answers, but its background scheduler has not checked in recently. The service may be starting, paused, stalled, or the computer may have slept; scheduled work has not been confirmed during this period."
+                      : health()?.automation_scheduler?.status === "starting"
+                        ? "The service API answers; its background scheduler is starting. Routine status and provider-check times will update when the scheduler begins reporting."
+                        : "Scheduled and continuous routines run on this Vakyartha service. The computer or server running it must stay awake and connected; each routine's last successful provider check shows source freshness."
+                    : "Connecting to the Vakyartha service. Routine status and source freshness will appear when it is reachable."}>
+                    The Vakyartha service is offline, so its scheduled and continuous routines cannot run. Missed work follows the task schedule and configured catch-up behavior.
+                  </Show>
+                </p>
+              </header>
+              <Show when={canOfferSyntheticMailCalendar()}>
+                <Group title="Safe practice mode">
+                  <SyntheticMailCalendarDemoControl checked={syntheticMailDemo()} onChange={(enabled) => { setSyntheticMailCalendarEnabled(enabled); setSyntheticMailDemo(enabled); }} />
+                </Group>
+              </Show>
+              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews open in Canvas and do not add provider content to conversation history. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
+              <Show when={!syntheticMailDemo()}>
+              <Group title="Choose access">
+                <p class="settings-hint">Read access is selected by default. Email sending and calendar changes are optional and request separate provider permissions. Every effect requires exact review and your confirmation. Event creation supports one timed event without attendees, invitations, recurrence, or reminders. Google event updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer; cancellation applies to that event only. Provider calendar-write consent is broader than these actions; Vakyartha exposes only the reviewed operations.</p>
+                <div class="capability-list">
+                  {([["mail_read", "Read email"], ["mail_send", "Send email after review"], ["calendar_free_busy", "Check availability"], ["calendar_read", "Read calendar events"], ["calendar_write", "Create or change calendar events after review"]] as const).map(([capability, label]) => <label class="capability-item"><input type="checkbox" checked={mailCalendarCapabilities().includes(capability)} onChange={(event) => setMailCalendarCapabilities((current) => event.currentTarget.checked ? [...new Set([...current, capability])] : current.filter((item) => item !== capability))} /><span>{label}</span></label>)}
+                </div>
+              </Group>
+              <Group title="Connect an account">
+                <Row title="Google · OAuth (recommended)" description="Sign in with Google using a local PKCE flow. Only the access you select is requested. If setup is missing, configure VAK_GOOGLE_OAUTH_CLIENT_ID on this host with a Desktop OAuth client."><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar("google")}>Connect with Google</button></Row>
+                <Show when={canAddLocalAppPassword()} fallback={<p class="settings-hint">Google App Password setup is available only when Vakyartha and this browser run on the same device. OAuth remains the recommended method.</p>}>
+                  <Row title="Google Gmail · App Password" description="Optional older sign-in for MailRead only. It cannot access Calendar or send email." className="mail-calendar-credential-row">
+                    <p class="settings-hint">Warning: an App Password is a long-lived account credential and is less secure than OAuth. Use a separate password for Vakyartha, then revoke it in your Google Account security settings when you disconnect. Never enter your regular Google password.</p>
+                    <div class="settings-actions mail-calendar-credential-fields"><input type="email" aria-label="Google account email" autocomplete="username" value={googleAppEmail()} onInput={(event) => setGoogleAppEmail(event.currentTarget.value)} placeholder="name@gmail.com" /><input type="password" aria-label="Google App Password" autocomplete="new-password" value={googleAppPassword()} onInput={(event) => setGoogleAppPassword(event.currentTarget.value)} placeholder="Google App Password" /><button class="settings-button" disabled={mailCalendarBusy() || !googleAppEmail() || !googleAppPassword()} onClick={() => void connectGoogleAppPassword()}>Connect Gmail</button></div>
+                  </Row>
+                </Show>
+                <Row title="Microsoft · OAuth (recommended)" description="Outlook email and calendar through local delegated OAuth with PKCE. Configure VAK_MICROSOFT_OAUTH_CLIENT_ID with an Entra public client. No client secret is used."><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar("microsoft")}>Connect with Microsoft</button></Row>
+                <p class="settings-hint">Exchange Online and Microsoft 365 accounts require OAuth. Never enter your regular Microsoft password here.</p>
+                <Show when={canAddLocalAppPassword()} fallback={<p class="settings-hint">Outlook.com app-password setup is available only when Vakyartha and this browser run on the same device.</p>}>
+                  <Row title="Outlook.com · App password (email only)" description="For personal Outlook.com, Live, Hotmail, or MSN accounts only. Vakyartha verifies the fixed-host IMAP sign-in before saving it." className="mail-calendar-credential-row">
+                    <p class="settings-hint">Security warning: this is a long-lived credential using Microsoft's legacy IMAP sign-in and is less secure than OAuth. Microsoft may reject it or disable this path. It grants email reading only; no calendar, send, or provider changes. Create a unique app password in Microsoft Account security settings, then revoke it there when disconnected. Do not use your regular Microsoft password or a work/school Exchange password.</p>
+                    <div class="settings-actions mail-calendar-credential-fields"><input type="email" aria-label="Microsoft account email" autocomplete="username" value={microsoftAppEmail()} onInput={(event) => setMicrosoftAppEmail(event.currentTarget.value)} placeholder="name@outlook.com" /><input type="password" aria-label="Microsoft app password" autocomplete="new-password" value={microsoftAppPassword()} onInput={(event) => setMicrosoftAppPassword(event.currentTarget.value)} placeholder="Microsoft app password" /><button class="settings-button" disabled={mailCalendarBusy() || !microsoftAppEmail() || !microsoftAppPassword()} onClick={() => void connectMicrosoftAppPassword()}>Connect Outlook.com</button></div>
+                  </Row>
+                </Show>
+                <Show when={canAddLocalAppPassword()} fallback={<p class="settings-hint">For security, add iCloud app-specific passwords only from Vakyartha running on this device. The credential form is unavailable on hosted servers.</p>}>
+                  <Row title="Apple iCloud · App-specific password" description="This build uses a password generated at account.apple.com. Apple also documents account authorization for supported third-party apps, but Vakyartha has no verified integration for it yet." className="mail-calendar-credential-row">
+                    <p class="settings-hint">Security warning: this provider password can grant broader iCloud access than the read capabilities selected here. It is stored in this Agent's local credential vault, but Apple controls its scope. Use a unique app-specific password, select only the access you need, and revoke it at account.apple.com when you disconnect. Vakyartha verifies each selected protocol before saving the link; if any check fails, no active account is created. Never enter your Apple Account password.</p>
+                    <div class="settings-actions mail-calendar-credential-fields"><input type="email" aria-label="iCloud account email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" aria-label="iCloud app-specific password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
+                  </Row>
+                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. “Read email” provides bounded inbox metadata and separately selected plain-text message reads; “Check availability” returns busy intervals only; “Read calendar events” provides a bounded calendar preview. You may select more than one read capability; Vakyartha verifies IMAP and CalDAV separately and enables only the checked capabilities. Provider changes remain unavailable. Remove the password at Apple to revoke it.</p>
+                </Show>
+                <p class="settings-hint">Google and Microsoft sign-in currently requires Vakyartha and your browser on the same device. The callback uses a loopback address; hosted or public-server callbacks are not enabled.</p>
+              </Group>
+              </Show>
+              <Group title={`Accounts for ${agentName()}`}>
+                <Show when={!mailCalendarAccounts.loading} fallback={<div class="settings-hint">Loading connected accounts…</div>}>
+                  <Show when={(mailCalendarAccounts()?.accounts.length ?? 0) > 0} fallback={<p class="settings-hint">No accounts are connected to this Agent.</p>}>
+                    <For each={mailCalendarAccounts()?.accounts ?? []}>{(account) => {
+                      const label = account.provider === "google" ? "Google account" : account.provider === "microsoft" ? "Microsoft account" : "Apple iCloud account";
+                      const needsNewOAuthLink = account.status === "reauthentication_required"
+                        && account.credential_available
+                        && !account.superseded_by_active_link;
+                      const connectionState = account.revoked_at
+                        ? "Disconnected"
+                          : account.status === "pending"
+                            ? "Connection incomplete · cleanup needed"
+                            : !account.credential_available
+                              ? "Saved sign-in details are unavailable · disconnect this entry, then connect again"
+                              : account.status === "connected_unverified"
+                                ? "Credential saved · not verified or available to Agents"
+                              : account.status === "reauthentication_required"
+                            ? account.superseded_by_active_link
+                                ? "Reconnected · remove this old entry"
+                                : "New sign-in required · connect again, then remove this entry"
+                              : account.status === "connected" && !account.refresh_token_available
+                                ? "Sign-in cannot be renewed · disconnect this entry, then connect again"
+                              : "Connected";
+                      const canPreview = account.status === "connected" && account.credential_available && !account.revoked_at;
+                      const enabledAccountRoutines = () => (mailCalendarTasks() ?? []).filter(
+                        (task) => task.enabled && task.mail_calendar_scope?.account_id === account.id,
+                      );
+                      const pauseAccountKey = `account:${account.id}`;
+                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${syntheticMailDemo() ? "Synthetic sample · no provider connected" : connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.auth_method === "app_password" ? "App Password · revoke at provider" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}>
+                        <div class="settings-actions">
+                          <button class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open in Canvas</button>
+                          <Show when={!syntheticMailDemo()}>
+                            <Show when={enabledAccountRoutines().length > 0}><button class="settings-button" disabled={mailCalendarPausing() !== null} onClick={() => void pauseMailCalendarRoutines(account.id)}>{mailCalendarPausing() === pauseAccountKey ? "Pausing…" : "Pause routines for this account"}</button></Show>
+                            <Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show>
+                            <Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show>
+                            <button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button>
+                          </Show>
+                        </div>
+                      </Row>;
+                    }}</For>
+                  </Show>
+                </Show>
+              </Group>
             </Show>
 
             <Show when={page() === "connections"}>
