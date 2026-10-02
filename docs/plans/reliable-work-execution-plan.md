@@ -489,3 +489,12 @@ no AWS configuration, scheduling, version or deployment changes.
   passes (140 unit tests plus adapter integration tests; two live Gemini smoke
   tests remain ignored). This does not close the production-source E0 fixture,
   cross-process authority, durable root accounting, or diverse workload gates.
+- 2026-10-02: Explicit provider quota codes now map to `QuotaExhausted` instead
+  of generic retryable 429s for OpenAI-compatible endpoints and metadata calls;
+  Gemini structured daily `QuotaFailure` records do the same for GenerateContent,
+  discovery and Live calls. Ordinary rate-limit codes remain retryable. OpenAI
+  Realtime WebSocket handshake failures now retain HTTP status, capacity headers,
+  Retry-After and the shared typed error mapping instead of becoming blind
+  network errors. The normalized quota error deliberately omits provider quota
+  identifiers from user-visible text; the capacity observation carries only
+  numeric bucket evidence. Adapter tests cover the terminal-vs-throttle split.

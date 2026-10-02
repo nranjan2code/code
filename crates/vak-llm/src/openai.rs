@@ -381,7 +381,7 @@ fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
     Ok(())
 }
 
-fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
+pub(crate) fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
     let parsed = serde_json::from_str::<Value>(body).ok();
     let code = parsed
         .as_ref()
@@ -403,12 +403,7 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
             _ => LlmError::invalid_request_for_endpoint("/v1/chat/completions", message),
         },
         404 | 413 | 422 => LlmError::invalid_request_for_endpoint("/v1/chat/completions", message),
-        429 => LlmError::RateLimit {
-            message: code
-                .map(|code| format!("{code}: {message}"))
-                .unwrap_or(message),
-            retry_after_secs: retry_after,
-        },
+        429 => LlmError::from_rate_limit_code(code, message, retry_after),
         503 | 529 => match retry_after {
             Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
                 message,
@@ -882,6 +877,17 @@ mod build_body_tests {
             breakpoints: Vec::new(),
         });
         req
+    }
+
+    #[test]
+    fn openai_insufficient_quota_code_is_typed_as_terminal() {
+        let error = map_status_error(
+            429,
+            r#"{"error":{"code":"insufficient_quota","message":"budget exhausted"}}"#,
+            Some(30),
+        );
+        assert!(matches!(error, LlmError::QuotaExhausted(_)));
+        assert!(!error.is_retryable());
     }
 
     #[test]

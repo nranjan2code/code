@@ -141,9 +141,23 @@ pub async fn round_trip(
         .map_err(|e| LlmError::InvalidRequest(e.to_string()))?;
     let capacity_ticket =
         crate::RateLimitGate::capacity_observation_ticket(account.clone(), &config.model);
-    let (mut socket, handshake) = tokio::select! {
+    let connect = tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-        result = tokio_tungstenite::connect_async(request) => result.map_err(|e| LlmError::Network(e.to_string()))?,
+        result = tokio_tungstenite::connect_async(request) => result,
+    };
+    let (mut socket, handshake) = match connect {
+        Ok(pair) => pair,
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+            let body = response.body().as_deref().unwrap_or_default();
+            return Err(map_handshake_rejection(
+                response.status().as_u16(),
+                body,
+                response.headers(),
+                &account,
+                &capacity_ticket,
+            ));
+        }
+        Err(error) => return Err(LlmError::Network(error.to_string())),
     };
     capacity_ticket.observe_model(crate::openai::openai_capacity_observation(
         handshake.headers(),
@@ -215,6 +229,25 @@ pub async fn round_trip(
     Ok(output)
 }
 
+fn map_handshake_rejection(
+    status: u16,
+    body: &[u8],
+    headers: &tokio_tungstenite::tungstenite::http::HeaderMap,
+    account: &str,
+    ticket: &crate::CapacityObservationTicket,
+) -> LlmError {
+    ticket.observe_model(crate::openai::openai_capacity_observation(headers));
+    ticket.observe_account(crate::openai::openai_project_capacity_observation(headers));
+    let retry_after = crate::openai::retry_after_from_headers(headers);
+    if matches!(status, 429 | 503 | 529) {
+        crate::RateLimitGate::for_key(account.to_string()).observe_limit(
+            retry_after.map(std::time::Duration::from_secs),
+            std::time::Duration::from_secs(1),
+        );
+    }
+    crate::openai::map_status_error(status, &String::from_utf8_lossy(body), retry_after)
+}
+
 use base64::Engine;
 
 #[cfg(test)]
@@ -239,5 +272,40 @@ mod tests {
         let body = build_audio_append(&[1, 2, 3]).unwrap();
         assert_eq!(body["audio"], "AQID");
         assert!(build_audio_append(&[]).is_err());
+    }
+
+    #[test]
+    fn realtime_handshake_preserves_quota_class_and_retry_after() {
+        let account = "test-realtime-handshake-quota";
+        let ticket = crate::RateLimitGate::capacity_observation_ticket(account, "model");
+        let mut headers = tokio_tungstenite::tungstenite::http::HeaderMap::new();
+        headers.insert("retry-after", "7".parse().unwrap());
+        headers.insert("x-ratelimit-remaining-tokens", "40".parse().unwrap());
+
+        let quota = map_handshake_rejection(
+            429,
+            br#"{"error":{"code":"insufficient_quota","message":"exhausted"}}"#,
+            &headers,
+            account,
+            &ticket,
+        );
+        assert!(matches!(quota, LlmError::QuotaExhausted(_)));
+        assert!(crate::RateLimitGate::for_model(account, "model").has_capacity_observation());
+
+        let throttle_ticket = crate::RateLimitGate::capacity_observation_ticket(account, "model");
+        let throttle = map_handshake_rejection(
+            429,
+            br#"{"error":{"code":"rate_limit_exceeded","message":"slow"}}"#,
+            &headers,
+            account,
+            &throttle_ticket,
+        );
+        assert!(matches!(
+            throttle,
+            LlmError::RateLimit {
+                retry_after_secs: Some(7),
+                ..
+            }
+        ));
     }
 }

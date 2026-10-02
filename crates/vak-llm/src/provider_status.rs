@@ -68,6 +68,10 @@ async fn json(response: reqwest::Response) -> Result<(u16, serde_json::Value), L
 }
 
 fn status_error(status: u16, value: &serde_json::Value, secret: &str) -> LlmError {
+    let code = value
+        .pointer("/error/code")
+        .or_else(|| value.pointer("/error/type"))
+        .and_then(serde_json::Value::as_str);
     let message = value
         .get("error")
         .and_then(|error| error.get("message"))
@@ -83,10 +87,7 @@ fn status_error(status: u16, value: &serde_json::Value, secret: &str) -> LlmErro
     };
     match status {
         401 | 403 => LlmError::Auth(message),
-        429 => LlmError::RateLimit {
-            message,
-            retry_after_secs: None,
-        },
+        429 => LlmError::from_rate_limit_code(code, message, None),
         _ => LlmError::Api { status, message },
     }
 }

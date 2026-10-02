@@ -292,9 +292,12 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
         401 | 403 => LlmError::Auth(message),
         400 => LlmError::classify_400(message),
         404 | 413 | 422 => LlmError::InvalidRequest(message),
-        429 => LlmError::RateLimit {
-            message,
-            retry_after_secs: retry_after,
+        429 => match google_daily_quota_exhaustion(body) {
+            Some(quota) => LlmError::QuotaExhausted(quota),
+            None => LlmError::RateLimit {
+                message,
+                retry_after_secs: retry_after,
+            },
         },
         503 | 529 => match retry_after {
             Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
@@ -305,6 +308,37 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
         },
         _ => LlmError::Api { status, message },
     }
+}
+
+pub(crate) fn google_daily_quota_exhaustion(body: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let details = value.pointer("/error/details")?.as_array()?;
+    let found_daily_quota = details
+        .iter()
+        .filter(|detail| {
+            detail
+                .get("@type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.ends_with("QuotaFailure"))
+        })
+        .flat_map(|detail| {
+            detail
+                .get("violations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .any(|violation| {
+            let quota_id = violation.get("quotaId").and_then(Value::as_str);
+            let metric = violation.get("quotaMetric").and_then(Value::as_str);
+            [quota_id, metric].into_iter().flatten().any(|name| {
+                let normalized = name.to_ascii_lowercase();
+                normalized.contains("perday")
+                    || normalized.contains("per_day")
+                    || normalized.contains("daily")
+            })
+        });
+    found_daily_quota.then(|| "provider reported exhausted daily quota".to_string())
 }
 
 pub(crate) fn google_retry_delay(body: &str) -> Option<u64> {
@@ -717,6 +751,19 @@ mod build_body_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::types::Role;
+
+    #[test]
+    fn google_daily_quota_failure_is_typed_separately_from_short_throttling() {
+        let daily = r#"{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaId":"GenerateContentRequestsPerDayPerProjectPerModel","quotaMetric":"generativelanguage.googleapis.com/generate_content_requests"}]}]}}"#;
+        let error = map_status_error(429, daily, Some(5));
+        assert!(matches!(error, LlmError::QuotaExhausted(_)));
+        assert!(!error.is_retryable());
+
+        let short = r#"{"error":{"message":"too many requests"}}"#;
+        let error = map_status_error(429, short, Some(5));
+        assert!(matches!(error, LlmError::RateLimit { .. }));
+        assert!(error.is_retryable());
+    }
 
     #[test]
     fn google_quota_failure_records_daily_token_exhaustion_without_inventing_usage() {

@@ -198,9 +198,12 @@ fn map_status_error_with_retry(status: u16, body: &str, retry_after: Option<u64>
     match status {
         401 | 403 => LlmError::Auth(message),
         400 | 404 | 413 | 422 => LlmError::InvalidRequest(message),
-        429 => LlmError::RateLimit {
-            message,
-            retry_after_secs: retry_after,
+        429 => match crate::google::google_daily_quota_exhaustion(body) {
+            Some(quota) => LlmError::QuotaExhausted(quota),
+            None => LlmError::RateLimit {
+                message,
+                retry_after_secs: retry_after,
+            },
         },
         503 | 529 => match retry_after {
             Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
@@ -782,6 +785,12 @@ mod tests {
         assert!(
             matches!(map_status_error(503, r#"{"error":{"message":"busy"}}"#), LlmError::Overloaded(message) if message == "busy")
         );
+
+        let daily = r#"{"error":{"details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaId":"GenerateContentRequestsPerDayPerProjectPerModel"}]}]}}"#;
+        assert!(matches!(
+            map_status_error(429, daily),
+            LlmError::QuotaExhausted(_)
+        ));
     }
 
     #[test]

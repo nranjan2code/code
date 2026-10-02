@@ -82,6 +82,11 @@ async fn send_admitted(
 /// use, so callers can distinguish "your key is wrong" from "provider is
 /// down" without parsing strings.
 fn status_error(status: u16, body: String, retry_after_secs: Option<u64>) -> LlmError {
+    let parsed = serde_json::from_str::<serde_json::Value>(&body).ok();
+    let code = parsed
+        .as_ref()
+        .and_then(|value| value.pointer("/error/code").or_else(|| value.get("code")))
+        .and_then(serde_json::Value::as_str);
     let message = if body.trim().is_empty() {
         "no response body".to_string()
     } else {
@@ -89,9 +94,9 @@ fn status_error(status: u16, body: String, retry_after_secs: Option<u64>) -> Llm
     };
     match status {
         401 | 403 => LlmError::Auth(message),
-        429 => LlmError::RateLimit {
-            message,
-            retry_after_secs,
+        429 => match crate::google::google_daily_quota_exhaustion(&body) {
+            Some(quota) => LlmError::QuotaExhausted(quota),
+            None => LlmError::from_rate_limit_code(code, message, retry_after_secs),
         },
         400 => LlmError::classify_400(message),
         404 | 422 => LlmError::InvalidRequest(message),

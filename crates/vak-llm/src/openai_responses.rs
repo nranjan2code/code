@@ -231,12 +231,7 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
         401 | 403 => LlmError::Auth(message),
         400 => LlmError::classify_400(message),
         404 | 413 | 422 => LlmError::InvalidRequest(message),
-        429 => LlmError::RateLimit {
-            message: code
-                .map(|code| format!("{code}: {message}"))
-                .unwrap_or(message),
-            retry_after_secs: retry_after,
-        },
+        429 => LlmError::from_rate_limit_code(code, message, retry_after),
         503 | 529 => match retry_after {
             Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
                 message,
@@ -298,14 +293,9 @@ impl Accumulator {
                     .and_then(Value::as_u64)
                     .or(self.retry_after_secs);
                 Err(match code {
-                    "rate_limit_exceeded" => LlmError::RateLimit {
-                        message,
-                        retry_after_secs,
-                    },
-                    "insufficient_quota" => LlmError::RateLimit {
-                        message: format!("insufficient_quota: {message}"),
-                        retry_after_secs: None,
-                    },
+                    "rate_limit_exceeded" | "insufficient_quota" => {
+                        LlmError::from_rate_limit_code(Some(code), message, retry_after_secs)
+                    }
                     "server_error" => LlmError::Overloaded(message),
                     "invalid_api_key" | "authentication_error" => LlmError::Auth(message),
                     "context_length_exceeded" | "invalid_request_error" => {
@@ -593,6 +583,17 @@ impl Provider for OpenAiResponsesProvider {
 mod build_body_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    #[test]
+    fn responses_http_quota_code_is_terminal() {
+        let error = map_status_error(
+            429,
+            r#"{"error":{"code":"insufficient_quota","message":"budget exhausted"}}"#,
+            Some(10),
+        );
+        assert!(matches!(error, LlmError::QuotaExhausted(_)));
+        assert!(!error.is_retryable());
+    }
     use crate::types::CacheHints;
 
     fn config() -> OpenAiResponsesConfig {

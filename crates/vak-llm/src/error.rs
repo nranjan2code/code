@@ -50,6 +50,42 @@ const OVER_LENGTH_MARKERS: [&str; 4] = [
 ];
 
 impl LlmError {
+    /// Preserve provider-declared quota exhaustion as a terminal account
+    /// condition. Unrecognized codes remain ordinary retryable throttles.
+    pub fn from_rate_limit_code(
+        code: Option<&str>,
+        message: String,
+        retry_after_secs: Option<u64>,
+    ) -> Self {
+        let normalized_code = code.unwrap_or_default().trim().to_ascii_lowercase();
+        if matches!(
+            normalized_code.as_str(),
+            "insufficient_quota"
+                | "billing_hard_limit_reached"
+                | "billing_limit_exceeded"
+                | "free-models-per-day"
+                | "daily_limit_exceeded"
+                | "monthly_limit_exceeded"
+        ) {
+            let detail = if normalized_code.is_empty() {
+                message
+            } else {
+                format!("{normalized_code}: {message}")
+            };
+            Self::QuotaExhausted(detail)
+        } else {
+            let message = if normalized_code.is_empty() {
+                message
+            } else {
+                format!("{normalized_code}: {message}")
+            };
+            Self::RateLimit {
+                message,
+                retry_after_secs,
+            }
+        }
+    }
+
     /// Classify a 400-class rejection: over-length phrasing becomes
     /// `Context` (recoverable by re-planning the working set and retrying),
     /// everything else stays `InvalidRequest` (a permanent per-request
@@ -160,6 +196,25 @@ mod tests {
         };
         assert!(!error.is_terminal_quota());
         assert!(error.is_retryable());
+    }
+
+    #[test]
+    fn provider_declared_quota_codes_are_terminal_but_throttle_codes_retry() {
+        let quota = LlmError::from_rate_limit_code(
+            Some("insufficient_quota"),
+            "budget exhausted".into(),
+            Some(30),
+        );
+        assert!(matches!(quota, LlmError::QuotaExhausted(_)));
+        assert!(!quota.is_retryable());
+
+        let throttle = LlmError::from_rate_limit_code(
+            Some("rate_limit_exceeded"),
+            "slow down".into(),
+            Some(2),
+        );
+        assert!(matches!(throttle, LlmError::RateLimit { .. }));
+        assert!(throttle.is_retryable());
     }
 
     #[test]
