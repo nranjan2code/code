@@ -3170,6 +3170,7 @@ fn secured_router_with_port_and_test_oauth_endpoint(
             AuthPolicy {
                 token: token.clone(),
                 home: state.core.scope().into_root(),
+                shared: state.core.shared_scope().into_root(),
                 trusted_hosts: state.core.config().server.trusted_hosts.clone(),
                 public_url: state.core.config().server.public_url.clone(),
                 browser_sessions: state.browser_sessions.clone(),
@@ -3734,6 +3735,9 @@ fn origin_is_trusted(origin: Option<&str>, host: Option<&str>, public_url: Optio
 pub(crate) struct AuthPolicy {
     pub(crate) token: String,
     pub(crate) home: std::path::PathBuf,
+    /// The shared data home: coworking grants live in each Agent's home
+    /// under it, and a participant token is checked against all of them.
+    pub(crate) shared: std::path::PathBuf,
     /// Non-loopback `Host` names this server answers to (`[server]
     /// trusted_hosts`). Empty on a default install.
     pub(crate) trusted_hosts: Vec<String>,
@@ -3831,6 +3835,7 @@ pub(crate) async fn require_bearer(
     let AuthPolicy {
         token,
         home,
+        shared,
         trusted_hosts,
         public_url,
         browser_sessions,
@@ -3982,10 +3987,10 @@ pub(crate) async fn require_bearer(
             .insert(AuthenticatedPrincipal::Operator);
         next.run(req).await
     } else if let Some(participant_token) = participant_token {
-        // The middleware knows no session, so it cannot name the session's
-        // Agent; the grant store is the configured home's (D25, M3b).
-        match coworking::verify(
-            &coworking::store_path(&vak_config::scope::AgentScope::new(&home), "vak"),
+        // The middleware knows no session; a token is a random secret, so
+        // it is matched against every Agent's grants (doc 73 D25).
+        match coworking::verify_any(
+            &vak_config::scope::SharedScope::new(&shared),
             participant_token,
             chrono::Utc::now(),
         ) {
@@ -8555,7 +8560,7 @@ async fn delegate_coworking_approval(
     let Some(audience_id) = conversation_audience(&state, &conversation_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let path = coworking::store_path(&state.core.scope(), crate::session_agent(&state));
+    let path = coworking::store_path(&crate::session_agent_scope(&state, &conversation_id));
     let Ok(grants) = coworking::list(&path, &conversation_id, chrono::Utc::now()) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
@@ -8734,7 +8739,7 @@ async fn coworking_updates(
             ))
         }
     };
-    let grant_path = coworking::store_path(&state.core.scope(), crate::session_agent(&state));
+    let grant_path = coworking::store_path(&crate::session_agent_scope(&state, &conversation_id));
     let stream = futures::stream::unfold(
         (
             handle.events_tx.subscribe(),
@@ -8795,7 +8800,7 @@ async fn list_coworking_invitations(
         return StatusCode::NOT_FOUND.into_response();
     }
     match coworking::list(
-        &coworking::store_path(&state.core.scope(), crate::session_agent(&state)),
+        &coworking::store_path(&crate::session_agent_scope(&state, &conversation_id)),
         &conversation_id,
         chrono::Utc::now(),
     ) {
@@ -8853,7 +8858,7 @@ async fn create_coworking_invitation(
         actor: Some(request_actor(&state)),
     };
     match coworking::invite(
-        &coworking::store_path(&state.core.scope(), crate::session_agent(&state)),
+        &coworking::store_path(&crate::session_agent_scope(&state, &conversation_id)),
         grant.clone(),
     ) {
         Ok(()) => (
@@ -8887,7 +8892,7 @@ async fn revoke_coworking_invitation(
     if let Err(status) = operator_only(&principal) {
         return status.into_response();
     }
-    let path = coworking::store_path(&state.core.scope(), crate::session_agent(&state));
+    let path = coworking::store_path(&crate::session_agent_scope(&state, &conversation_id));
     let invitations = match coworking::list(&path, &conversation_id, chrono::Utc::now()) {
         Ok(invitations) => invitations,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -12062,19 +12067,49 @@ async fn write_file(State(state): State<AppState>, Json(body): Json<WriteBody>) 
 /// The Agent whose home the server-side stores of a session resolve under:
 /// the server Core's own today, whichever Agent owns the session (D25). M3b
 /// resolves the session's Agent here and in the scope accessors.
-pub(crate) fn session_agent(state: &AppState) -> &str {
-    state
-        .core
-        .agent_identity()
-        .map_or("vak", |agent| agent.id.as_str())
+/// The home of the Agent that owns `session_id` (doc 73 D25): the live
+/// session's Agent, else the one its ledger header names, else the built-in
+/// Agent. Records about a session live with that session's Agent, never
+/// under whichever Agent the serving Core happens to be.
+pub(crate) fn session_agent_scope(
+    state: &AppState,
+    session_id: &str,
+) -> vak_config::scope::AgentScope {
+    let agent = state
+        .get(session_id)
+        .and_then(|handle| handle.core.agent_identity().map(|agent| agent.id.clone()))
+        .or_else(|| {
+            read_historical_header(state, session_id, None)
+                .and_then(|header| header.agent)
+                .map(|agent| agent.id)
+        })
+        .unwrap_or_else(|| "vak".to_string());
+    state.core.shared_scope().agent(&agent)
 }
 
-fn sandbox_records_path(state: &AppState) -> std::path::PathBuf {
-    state.core.scope().sandbox_records(session_agent(state))
+fn sandbox_records_path(state: &AppState, session_id: &str) -> std::path::PathBuf {
+    session_agent_scope(state, session_id).sandbox_records()
 }
 
-fn sandbox_candidates_root(state: &AppState) -> std::path::PathBuf {
-    state.core.scope().sandbox_candidates(session_agent(state))
+/// Every Agent's sandbox records, for views that span sessions.
+fn all_sandbox_records(state: &AppState) -> Vec<vak_sandbox::DurableRecord> {
+    let shared = state.core.shared_scope();
+    std::fs::read_dir(shared.agents_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|agent| {
+            vak_sandbox::load_records(
+                &vak_config::scope::AgentScope::new(agent.path()).sandbox_records(),
+            )
+            .ok()
+        })
+        .flatten()
+        .collect()
+}
+
+fn sandbox_candidates_root(state: &AppState, session_id: &str) -> std::path::PathBuf {
+    session_agent_scope(state, session_id).sandbox_candidates()
 }
 
 fn sandbox_promotions_root(state: &AppState) -> std::path::PathBuf {
@@ -12082,10 +12117,7 @@ fn sandbox_promotions_root(state: &AppState) -> std::path::PathBuf {
 }
 
 fn session_sandbox_events_path(state: &AppState, session_id: &str) -> std::path::PathBuf {
-    state
-        .core
-        .scope()
-        .sandbox_executions(session_agent(state), session_id)
+    session_agent_scope(state, session_id).sandbox_executions(session_id)
 }
 
 fn sandbox_session_workspace(state: &AppState, session_id: &str) -> Option<std::path::PathBuf> {
@@ -12284,8 +12316,7 @@ fn append_session_sandbox_event(
 
 async fn list_sandbox_records(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let path = sandbox_records_path(&state);
-    match vak_sandbox::load_records(&path) {
+    match Ok::<_, vak_sandbox::Error>(all_sandbox_records(&state)) {
         Ok(records) => Json(serde_json::json!({ "records": records })).into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -12300,7 +12331,7 @@ async fn list_session_sandbox_records(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let path = sandbox_records_path(&state);
+    let path = sandbox_records_path(&state, &id);
     match vak_sandbox::load_records(&path) {
         Ok(records) => {
             let records = records
@@ -12503,6 +12534,7 @@ async fn export_sandbox_candidate(
     Json(body): Json<SandboxCandidateBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let records_path = sandbox_records_path(&state, &session_id);
     let (turn_id, result_id) = match sandbox_result_binding(&state, &session_id, &body.execution_id)
     {
         Ok(binding) => binding,
@@ -12561,8 +12593,8 @@ async fn export_sandbox_candidate(
             .into_response();
     };
     let id = uuid::Uuid::now_v7().to_string();
-    let frozen_root = sandbox_candidates_root(&state).join(&id);
-    if let Err(error) = std::fs::create_dir_all(sandbox_candidates_root(&state)) {
+    let frozen_root = sandbox_candidates_root(&state, &session_id).join(&id);
+    if let Err(error) = std::fs::create_dir_all(sandbox_candidates_root(&state, &session_id)) {
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
     }
     match vak_sandbox::freeze_candidate(&id, &source, &destination, &frozen_root) {
@@ -12604,7 +12636,7 @@ async fn export_sandbox_candidate(
                 revision_session_id: None,
                 narrowed: None,
             });
-            match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
+            match vak_sandbox::append_record(&records_path, &record) {
                 Ok(()) => Json(record).into_response(),
                 Err(error) => {
                     let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
@@ -12630,7 +12662,7 @@ async fn sandbox_candidate_file_bytes(
     candidate_id: &str,
     relative_path: &str,
 ) -> Result<Vec<u8>, StatusCode> {
-    let records = match vak_sandbox::load_records(&sandbox_records_path(state)) {
+    let records = match vak_sandbox::load_records(&sandbox_records_path(state, session_id)) {
         Ok(records) => records,
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
@@ -12651,7 +12683,7 @@ async fn sandbox_candidate_file_bytes(
     else {
         return Err(StatusCode::NOT_FOUND);
     };
-    let expected_root = sandbox_candidates_root(state).join(candidate_id);
+    let expected_root = sandbox_candidates_root(state, session_id).join(candidate_id);
     if candidate.source_root != expected_root {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -12673,7 +12705,7 @@ fn saved_candidate(
     session_id: &str,
     candidate_id: &str,
 ) -> Result<vak_sandbox::CandidateRecord, StatusCode> {
-    let records = vak_sandbox::load_records(&sandbox_records_path(state))
+    let records = vak_sandbox::load_records(&sandbox_records_path(state, session_id))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     records
         .into_iter()
@@ -13088,7 +13120,7 @@ async fn narrow_sandbox_candidate_office(
             "choose changes from the full draft, not from a version made from it".into(),
         );
     }
-    let applied = vak_sandbox::load_records(&sandbox_records_path(&state))
+    let applied = vak_sandbox::load_records(&sandbox_records_path(&state, &session_id))
         .map(|records| {
             records.iter().any(|record| {
                 matches!(record, vak_sandbox::DurableRecord::Promotion(promoted)
@@ -13153,7 +13185,7 @@ async fn narrow_sandbox_candidate_office(
         let _ = std::fs::remove_dir_all(&staging);
         return refuse(StatusCode::UNPROCESSABLE_ENTITY, error);
     }
-    let frozen_root = sandbox_candidates_root(&state).join(&id);
+    let frozen_root = sandbox_candidates_root(&state, &session_id).join(&id);
     let frozen =
         vak_sandbox::freeze_revision_candidate(&id, &staging, &saved.candidate, &frozen_root);
     let _ = std::fs::remove_dir_all(&staging);
@@ -13197,7 +13229,7 @@ async fn narrow_sandbox_candidate_office(
             keep: body.keep,
         }),
     });
-    match vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
+    match vak_sandbox::append_record(&sandbox_records_path(&state, &session_id), &record) {
         Ok(()) => Json(record).into_response(),
         Err(error) => {
             let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
@@ -13272,7 +13304,7 @@ async fn list_sandbox_candidate_comments(
     Path((session_id, candidate_id)): Path<(String, String)>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state, &session_id)) {
         Ok(records) => records,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -13350,7 +13382,7 @@ async fn comment_on_sandbox_candidate(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state, &session_id)) {
         Ok(records) => records,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -13579,7 +13611,7 @@ async fn dispatch_candidate_revision(
         )
             .into_response();
     };
-    let records_path = sandbox_records_path(&state);
+    let records_path = sandbox_records_path(&state, &saved.session_id);
     let records = match vak_sandbox::load_records(&records_path) {
         Ok(records) => records,
         Err(error) => {
@@ -13825,7 +13857,7 @@ async fn dispatch_candidate_revision(
                     *slot = Some(log);
                 }
                 let id = uuid::Uuid::now_v7().to_string();
-                let frozen_root = sandbox_candidates_root(&state).join(&id);
+                let frozen_root = sandbox_candidates_root(&state, &saved.session_id).join(&id);
                 match vak_sandbox::adopt_revision_drafts(&task_root, &drafts).and_then(|()| {
                     vak_sandbox::freeze_revision_candidate(
                         &id,
@@ -13966,7 +13998,7 @@ async fn request_revision_from_candidate_comment(
     Path((session_id, candidate_id, comment_id)): Path<(String, String, String)>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state, &session_id)) {
         Ok(records) => records,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -14049,6 +14081,7 @@ async fn promote_sandbox_candidate(
     Json(body): Json<SandboxPromotionBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let records_path = sandbox_records_path(&state, &session_id);
     if body.files.is_empty()
         || body
             .files
@@ -14063,7 +14096,7 @@ async fn promote_sandbox_candidate(
         )
             .into_response();
     }
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+    let records = match vak_sandbox::load_records(&sandbox_records_path(&state, &session_id)) {
         Ok(records) => records,
         Err(error) => {
             return (
@@ -14110,7 +14143,7 @@ async fn promote_sandbox_candidate(
         .unwrap_or_else(|_| candidate.source_root.clone());
     let destination_root = std::fs::canonicalize(&candidate.destination_root)
         .unwrap_or_else(|_| candidate.destination_root.clone());
-    let frozen_root = sandbox_candidates_root(&state).join(&body.candidate_id);
+    let frozen_root = sandbox_candidates_root(&state, &session_id).join(&body.candidate_id);
     let source_ok =
         std::fs::canonicalize(&frozen_root).is_ok_and(|expected| source_root == expected);
     let destination_ok = destination_root == workspace;
@@ -14175,7 +14208,7 @@ async fn promote_sandbox_candidate(
         workspace_checks: selected_workspace_checks,
         updated_at: chrono::Utc::now().to_rfc3339(),
     });
-    if let Err(error) = vak_sandbox::append_record(&sandbox_records_path(&state), &record) {
+    if let Err(error) = vak_sandbox::append_record(&records_path, &record) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
@@ -14248,7 +14281,7 @@ async fn undo_sandbox_promotion(
     Path((session_id, candidate_id)): Path<(String, String)>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let records_path = sandbox_records_path(&state);
+    let records_path = sandbox_records_path(&state, &session_id);
     let records = match vak_sandbox::load_records(&records_path) {
         Ok(records) => records,
         Err(error) => {
@@ -14331,7 +14364,7 @@ async fn run_sandbox_workspace_check(
     Json(body): Json<WorkspaceCheckBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let records_path = sandbox_records_path(&state);
+    let records_path = sandbox_records_path(&state, &session_id);
     let records = match vak_sandbox::load_records(&records_path) {
         Ok(records) => records,
         Err(error) => {
@@ -21296,7 +21329,7 @@ fn launch_root(
         return Ok(workspace.to_path_buf());
     };
     let saved = saved_launch_candidate(state, session_id, candidate_id)?;
-    let expected = sandbox_candidates_root(state).join(candidate_id);
+    let expected = sandbox_candidates_root(state, session_id).join(candidate_id);
     if saved.candidate.source_root != expected {
         return Err("saved draft root is invalid".into());
     }
@@ -21316,7 +21349,7 @@ fn saved_launch_candidate(
     session_id: &str,
     candidate_id: &str,
 ) -> Result<vak_sandbox::CandidateRecord, String> {
-    vak_sandbox::load_records(&sandbox_records_path(state))
+    vak_sandbox::load_records(&sandbox_records_path(state, session_id))
         .map_err(|error| error.to_string())?
         .into_iter()
         .rev()
@@ -21444,7 +21477,7 @@ fn append_preview_preparation(
             evidence: evidence.into(),
             updated_at: chrono::Utc::now().to_rfc3339(),
         });
-    vak_sandbox::append_record(&sandbox_records_path(state), &record)
+    vak_sandbox::append_record(&sandbox_records_path(state, &saved.session_id), &record)
         .map_err(|error| error.to_string())
 }
 
@@ -21461,7 +21494,7 @@ async fn prepare_launch(
         Ok(saved) => saved,
         Err(error) => return (StatusCode::NOT_FOUND, error).into_response(),
     };
-    let frozen = sandbox_candidates_root(&state).join(candidate_id);
+    let frozen = sandbox_candidates_root(&state, &id).join(candidate_id);
     if saved.candidate.source_root != frozen
         || verify_launch_tree(&saved.candidate, &frozen).is_err()
     {
@@ -23180,6 +23213,51 @@ mod sandbox_promotion_tests {
     }
 
     /// A session whose workspace is `cwd`, as an Agent's own folder is.
+    /// Doc 73 D25: what the server records about a session lives in that
+    /// session's Agent home, not the serving Core's.
+    #[test]
+    fn agent_records_live_in_their_agent_scope() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let shared = vak_config::scope::SharedScope::new(dir.path().join("home"));
+        core.set_shared_scope(shared.clone());
+        let state = AppState::new(core.clone());
+        let writer = shared.agent("writer");
+        let mut identity = vak_core::vak_agent_identity();
+        identity.id = "writer".into();
+        // A session the writer owns, kept where the writer keeps it.
+        let mut header = seed_session_at(&core, "s-template", core.cwd())
+            .header()
+            .cloned()
+            .unwrap();
+        header.session_id = "s-writer".into();
+        header.agent = Some(identity);
+        vak_session::SessionLog::create(writer.session_file(core.cwd(), "s-writer"), header)
+            .unwrap();
+
+        let owner = session_agent_scope(&state, "s-writer");
+        assert_eq!(owner, writer);
+        assert_eq!(
+            sandbox_records_path(&state, "s-writer"),
+            writer.sandbox_records()
+        );
+        assert_eq!(
+            sandbox_candidates_root(&state, "s-writer"),
+            writer.sandbox_candidates()
+        );
+        assert_eq!(
+            session_sandbox_events_path(&state, "s-writer"),
+            writer.sandbox_executions("s-writer")
+        );
+        assert_eq!(coworking::store_path(&owner), writer.coworking_grants());
+        assert_eq!(
+            owner.office_workspaces("s-writer"),
+            writer.office_workspaces("s-writer")
+        );
+        assert!(!writer.sandbox_records().starts_with(core.scope().root()));
+    }
+
     fn seed_session_at(
         core: &Core,
         session_id: &str,
@@ -24644,7 +24722,7 @@ mod sandbox_promotion_tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(!dir.path().join("result.json").exists());
         assert_eq!(
-            vak_sandbox::load_records(&sandbox_records_path(&state))
+            vak_sandbox::load_records(&sandbox_records_path(&state, "session-1"))
                 .unwrap()
                 .len(),
             3
@@ -24732,7 +24810,10 @@ mod sandbox_promotion_tests {
         let candidate_id = candidate.candidate.candidate_id;
 
         let root = launch_root(&state, "session-1", Some(&candidate_id), dir.path()).unwrap();
-        assert_eq!(root, sandbox_candidates_root(&state).join(&candidate_id));
+        assert_eq!(
+            root,
+            sandbox_candidates_root(&state, "session-1").join(&candidate_id)
+        );
         let launch = detect_launch(&root);
         assert_eq!(launch.len(), 1);
         assert_eq!(launch[0].name, "flask");
@@ -25105,7 +25186,8 @@ mod sandbox_promotion_tests {
         assert_eq!(response.status(), StatusCode::ACCEPTED);
         let newer = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
-                let records = vak_sandbox::load_records(&sandbox_records_path(&state)).unwrap();
+                let records =
+                    vak_sandbox::load_records(&sandbox_records_path(&state, "session-1")).unwrap();
                 if let Some(record) = records.iter().rev().find_map(|record| match record {
                     vak_sandbox::DurableRecord::Candidate(candidate)
                         if candidate.parent_candidate_id.as_deref()
@@ -25235,7 +25317,8 @@ mod sandbox_promotion_tests {
         assert_eq!(response.status(), StatusCode::ACCEPTED);
         let newer = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
-                let records = vak_sandbox::load_records(&sandbox_records_path(&state)).unwrap();
+                let records =
+                    vak_sandbox::load_records(&sandbox_records_path(&state, "session-1")).unwrap();
                 if let Some(failed) = records.iter().rev().find_map(|record| match record {
                     vak_sandbox::DurableRecord::CandidateRevision(revision)
                         if revision.status == vak_sandbox::CandidateRevisionStatus::Failed =>
@@ -25871,12 +25954,12 @@ mod sandbox_promotion_tests {
             actor: None,
         };
         coworking::invite(
-            &coworking::store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak"),
+            &coworking::store_path(&session_agent_scope(&state, "session-1")),
             grant,
         )
         .unwrap();
         coworking::invite(
-            &coworking::store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak"),
+            &coworking::store_path(&session_agent_scope(&state, "session-1")),
             coworking::AudienceGrant {
                 grant_id: "grant-wrong-audience".into(),
                 principal_id: "person-wrong-audience".into(),
@@ -25903,13 +25986,14 @@ mod sandbox_promotion_tests {
             )
             .with_state(state.clone())
             .layer(axum::middleware::from_fn_with_state(
-                state,
+                state.clone(),
                 enforce_participant_audience,
             ))
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {
                     token: "operator-secret".into(),
                     home: dir.path().into(),
+                    shared: dir.path().into(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: web::BrowserSessions::default(),
@@ -25967,7 +26051,7 @@ mod sandbox_promotion_tests {
             StatusCode::FORBIDDEN
         );
         coworking::revoke(
-            &coworking::store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak"),
+            &coworking::store_path(&session_agent_scope(&state, "session-1")),
             "grant-http",
             "operator",
         )
@@ -26010,11 +26094,7 @@ mod sandbox_promotion_tests {
         );
         let token = "participant-message-token";
         coworking::invite(
-            &coworking::store_path(
-                &core.scope(),
-                core.agent_identity()
-                    .map_or("vak", |agent| agent.id.as_str()),
-            ),
+            &coworking::store_path(&core.scope()),
             coworking::AudienceGrant {
                 grant_id: "grant-message".into(),
                 principal_id: "person-message".into(),
@@ -26040,6 +26120,7 @@ mod sandbox_promotion_tests {
                 AuthPolicy {
                     token: "operator-secret".into(),
                     home: core.scope().into_root(),
+                    shared: core.shared_scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: web::BrowserSessions::default(),
@@ -26121,11 +26202,7 @@ mod sandbox_promotion_tests {
         );
         let token = "participant-approval-token";
         coworking::invite(
-            &coworking::store_path(
-                &core.scope(),
-                core.agent_identity()
-                    .map_or("vak", |agent| agent.id.as_str()),
-            ),
+            &coworking::store_path(&core.scope()),
             coworking::AudienceGrant {
                 grant_id: "grant-approval".into(),
                 principal_id: "person-approval".into(),
@@ -26142,11 +26219,7 @@ mod sandbox_promotion_tests {
         )
         .unwrap();
         coworking::invite(
-            &coworking::store_path(
-                &core.scope(),
-                core.agent_identity()
-                    .map_or("vak", |agent| agent.id.as_str()),
-            ),
+            &coworking::store_path(&core.scope()),
             coworking::AudienceGrant {
                 grant_id: "grant-other".into(),
                 principal_id: "person-other".into(),
@@ -26180,6 +26253,7 @@ mod sandbox_promotion_tests {
                 AuthPolicy {
                     token: "operator-secret".into(),
                     home: core.scope().into_root(),
+                    shared: core.shared_scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: web::BrowserSessions::default(),
@@ -26331,11 +26405,7 @@ mod sandbox_promotion_tests {
         );
 
         let token = "participant-comment-token";
-        let grants = coworking::store_path(
-            &core.scope(),
-            core.agent_identity()
-                .map_or("vak", |agent| agent.id.as_str()),
-        );
+        let grants = coworking::store_path(&core.scope());
         coworking::invite(
             &grants,
             coworking::AudienceGrant {
@@ -26368,6 +26438,7 @@ mod sandbox_promotion_tests {
                 AuthPolicy {
                     token: "operator-secret".into(),
                     home: core.scope().into_root(),
+                    shared: core.shared_scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: web::BrowserSessions::default(),

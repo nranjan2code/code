@@ -205,7 +205,7 @@ impl AgentScope {
 
     /// Where a revision copy is staged before it is frozen as a candidate.
     /// D25, as [`AgentScope::sandbox_records`].
-    pub fn sandbox_staging(&self, _session_agent: &str, id: &str) -> PathBuf {
+    pub fn sandbox_staging(&self, id: &str) -> PathBuf {
         self.sandbox_dir().join("staging").join(id)
     }
 
@@ -219,35 +219,31 @@ impl AgentScope {
         self.root.join("output.toml")
     }
 
-    /// Server-side sandbox record log of the Agent that owns `_session_agent`.
-    ///
-    /// D25: the server writes this under its own Core's home whichever Agent
-    /// owns the session, so the Agent argument is accepted and ignored today.
-    /// M3b resolves it to the session's Agent here, in this one place.
-    pub fn sandbox_records(&self, _session_agent: &str) -> PathBuf {
+    /// Server-side sandbox records of this Agent's sessions. The caller
+    /// picks the session's Agent (doc 73 D25).
+    pub fn sandbox_records(&self) -> PathBuf {
         self.sandbox_dir().join("records.jsonl")
     }
 
-    /// Candidate roots. D25, as [`AgentScope::sandbox_records`].
-    pub fn sandbox_candidates(&self, _session_agent: &str) -> PathBuf {
+    /// Candidate roots of this Agent's sessions.
+    pub fn sandbox_candidates(&self) -> PathBuf {
         self.sandbox_dir().join("candidates")
     }
 
-    /// One session's execution stream. D25, as [`AgentScope::sandbox_records`].
-    pub fn sandbox_executions(&self, _session_agent: &str, session_id: &str) -> PathBuf {
+    /// One of this Agent's sessions' execution stream.
+    pub fn sandbox_executions(&self, session_id: &str) -> PathBuf {
         self.sandbox_dir()
             .join("executions")
             .join(format!("{session_id}.jsonl"))
     }
 
-    /// Coworking grants. D25, as [`AgentScope::sandbox_records`].
-    pub fn coworking_grants(&self, _session_agent: &str) -> PathBuf {
+    /// Coworking grants of this Agent's conversations.
+    pub fn coworking_grants(&self) -> PathBuf {
         self.root.join("coworking").join("grants.jsonl")
     }
 
-    /// Shared Office rooms of one session. D25, as
-    /// [`AgentScope::sandbox_records`].
-    pub fn office_workspaces(&self, _session_agent: &str, session_id: &str) -> PathBuf {
+    /// Shared Office rooms of one of this Agent's sessions.
+    pub fn office_workspaces(&self, session_id: &str) -> PathBuf {
         crate::paths::office_workspaces_at(&self.root, session_id)
     }
 }
@@ -499,20 +495,17 @@ mod tests {
         assert_eq!(s.inbox_dedupe_lock(), home.join("inbox.dedupe.lock"));
         assert_eq!(s.env_file(), home.join(".env"));
         assert_eq!(s.managed_flow_runs(), home.join("flow-runs/managed"));
-        assert_eq!(s.sandbox_records("a"), home.join("sandbox/records.jsonl"));
-        assert_eq!(s.sandbox_candidates("a"), home.join("sandbox/candidates"));
+        assert_eq!(s.sandbox_records(), home.join("sandbox/records.jsonl"));
+        assert_eq!(s.sandbox_candidates(), home.join("sandbox/candidates"));
         assert_eq!(
-            s.sandbox_executions("a", "s1"),
+            s.sandbox_executions("s1"),
             home.join("sandbox/executions/s1.jsonl")
         );
-        assert_eq!(s.coworking_grants("a"), home.join("coworking/grants.jsonl"));
-        assert_eq!(s.sandbox_staging("a", "x"), home.join("sandbox/staging/x"));
+        assert_eq!(s.coworking_grants(), home.join("coworking/grants.jsonl"));
+        assert_eq!(s.sandbox_staging("x"), home.join("sandbox/staging/x"));
         assert_eq!(s.workspace_names(), home.join("workspace-names.json"));
         assert_eq!(s.output_prefs(), home.join("output.toml"));
-        assert_eq!(
-            s.office_workspaces("a", "s1"),
-            home.join("office-workspaces/s1")
-        );
+        assert_eq!(s.office_workspaces("s1"), home.join("office-workspaces/s1"));
     }
 
     #[test]

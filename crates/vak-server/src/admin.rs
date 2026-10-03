@@ -1778,6 +1778,7 @@ mod tests {
             crate::AuthPolicy {
                 token: (*state.auth_token).clone(),
                 home: state.core.scope().into_root(),
+                shared: state.core.shared_scope().into_root(),
                 trusted_hosts: Vec::new(),
                 public_url: None,
                 browser_sessions: state.browser_sessions.clone(),
@@ -2014,6 +2015,7 @@ mod tests {
                 crate::AuthPolicy {
                     token: (*state.auth_token).clone(),
                     home: state.core.scope().into_root(),
+                    shared: state.core.shared_scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: state.browser_sessions.clone(),
@@ -2069,6 +2071,7 @@ mod tests {
                 crate::AuthPolicy {
                     token: (*state.auth_token).clone(),
                     home: state.core.scope().into_root(),
+                    shared: state.core.shared_scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: state.browser_sessions.clone(),

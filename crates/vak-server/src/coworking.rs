@@ -85,8 +85,10 @@ pub enum Error {
 
 /// The coworking grant store of `session_agent`'s home (D25, as
 /// [`vak_config::scope::AgentScope::coworking_grants`]).
-pub fn store_path(scope: &vak_config::scope::AgentScope, session_agent: &str) -> PathBuf {
-    scope.coworking_grants(session_agent)
+/// Grants of the conversations of the Agent whose `scope` this is; pass
+/// the conversation's own Agent (`session_agent_scope`).
+pub fn store_path(scope: &vak_config::scope::AgentScope) -> PathBuf {
+    scope.coworking_grants()
 }
 
 pub fn generate_token() -> String {
@@ -161,6 +163,30 @@ pub fn revoke(path: &Path, grant_id: &str, actor_id: &str) -> Result<(), Error> 
             actor_id: actor_id.into(),
         },
     )
+}
+
+/// `verify` against the grants of every Agent under `shared`: the first
+/// grant that answers for the token wins; a store that cannot be read is
+/// an error only when no other store answered.
+pub fn verify_any(
+    shared: &vak_config::scope::SharedScope,
+    token: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<VerifiedPrincipal>, Error> {
+    let mut failure = None;
+    for agent in std::fs::read_dir(shared.agents_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+    {
+        let path = store_path(&vak_config::scope::AgentScope::new(agent.path()));
+        match verify(&path, token, now) {
+            Ok(Some(principal)) => return Ok(Some(principal)),
+            Ok(None) => {}
+            Err(error) => failure = Some(error),
+        }
+    }
+    failure.map_or(Ok(None), Err)
 }
 
 pub fn verify(
@@ -285,7 +311,7 @@ mod tests {
     #[test]
     fn verifies_scope_without_storing_raw_token() {
         let dir = tempfile::tempdir().unwrap();
-        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak");
+        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
         let token = generate_token();
         invite(&path, grant(&token, "2026-09-22T00:00:00Z")).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -306,7 +332,7 @@ mod tests {
     #[test]
     fn expiry_and_revocation_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
-        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak");
+        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
         invite(&path, grant("expired", "2026-09-20T00:00:00Z")).unwrap();
         let now = chrono::DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
             .unwrap()
@@ -323,7 +349,7 @@ mod tests {
     #[test]
     fn listing_omits_tokens_and_reports_lifecycle() {
         let dir = tempfile::tempdir().unwrap();
-        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak");
+        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
         invite(&path, grant("secret-token", "2026-09-22T00:00:00Z")).unwrap();
         let duplicate = invite(&path, grant("replacement", "2026-09-23T00:00:00Z"));
         assert!(duplicate.is_err());

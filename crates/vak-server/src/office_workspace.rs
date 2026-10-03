@@ -137,10 +137,8 @@ fn room_path(state: &AppState, session_id: &str, room_id: &str) -> Option<PathBu
         return None;
     }
     Some(
-        state
-            .core
-            .scope()
-            .office_workspaces(crate::session_agent(state), session_id)
+        crate::session_agent_scope(state, session_id)
+            .office_workspaces(session_id)
             .join(format!("{room_id}.json")),
     )
 }
@@ -303,10 +301,7 @@ pub(super) async fn list(
     if let Err(status) = authority(&state, &session_id, &principal, false) {
         return status.into_response();
     }
-    let root = state
-        .core
-        .scope()
-        .office_workspaces(crate::session_agent(&state), &session_id);
+    let root = crate::session_agent_scope(&state, &session_id).office_workspaces(&session_id);
     let entries = match fs::read_dir(root) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -655,10 +650,7 @@ async fn create_revision(
         return StatusCode::CONFLICT.into_response();
     };
     let id = uuid::Uuid::now_v7().to_string();
-    let staging_root = state
-        .core
-        .scope()
-        .sandbox_staging(crate::session_agent(state), &id);
+    let staging_root = crate::session_agent_scope(state, &session_id).sandbox_staging(&id);
     if vak_sandbox::prepare_revision_copy(&parent.candidate, &staging_root).is_err() {
         return StatusCode::CONFLICT.into_response();
     }
@@ -719,7 +711,7 @@ async fn create_revision(
         let _ = fs::remove_dir_all(&staging_root);
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
-    let frozen_root = super::sandbox_candidates_root(state).join(&id);
+    let frozen_root = super::sandbox_candidates_root(state, &session_id).join(&id);
     let candidate = match vak_sandbox::freeze_revision_candidate(
         &id,
         &staging_root,
@@ -773,7 +765,7 @@ async fn create_revision(
         narrowed: None,
     };
     if vak_sandbox::append_record(
-        &super::sandbox_records_path(state),
+        &super::sandbox_records_path(state, &session_id),
         &vak_sandbox::DurableRecord::Candidate(saved.clone()),
     )
     .is_err()
