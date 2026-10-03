@@ -16,7 +16,8 @@ not core.
 The workspace `Cargo.toml` version is the only authoritative version stamp —
 `scripts/check-version.sh` verifies every copy of it, and this document
 deliberately does not carry a second one to drift. The supported baseline is
-`2.0.0` (invariant 29); nothing below it is read, repaired, or migrated. Two
+`7.0.0`, the data baseline (invariant 29); nothing below it is read, repaired,
+or migrated. Two
 earlier version lines are retired: the original `0.1.0`–`0.11.51`, and the
 short `0.2.0`–`0.2.4` line created by the reset in `fc9c78f`. `1.0.0` sorts
 above both, so version ordering is meaningful again. CHANGELOG.md is the
@@ -230,7 +231,9 @@ M1 is done (2026-10-02:
 the trace key is minted at admission, invariant 40, and every ledger row type
 names its actor); M2 slices 1 and 2 are on main (plan §4 lists what remains).
 M3a is done (2026-10-03): `Core` exposes its homes only as typed scopes.
-M3b is next. No session starts a later step unasked.
+M3b is in progress: slice 1 is done (2026-10-03; 7.0.0-dev, the 7.0
+baseline, tenant tree and runtime root, wholesale purge, the registry by
+data class). No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -738,10 +741,12 @@ in progress, and the rest of V4 follows it.
     ordered by layer breadth, never alphabetically; that list is an audit
     snapshot, not authority. An empty list means *unknown baseline*, not
     *everything changed*. An inbound message may never write a prompt layer.
-29. **2.0.0 is the supported baseline.** No code may accept, migrate, or
+29. **7.0.0 is the supported baseline.** No code may accept, migrate, or
     special-case state written by an earlier version. A data home, install
     manifest, gateway store, or config file that predates the baseline is
-    refused by the one shared message — which names the file, says the
+    refused by the one shared message (`vak_core::baseline`; a data home is
+    7.0 when it has its `tenants/` tree, and `7.0.0-dev` is the baseline
+    line) — which names the file, says the
     install predates the baseline, and gives the single command that
     resolves it (`vak self uninstall --purge`, then install and run setup).
     It is never partially read, never repaired in place, and never migrated.

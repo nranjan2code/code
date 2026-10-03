@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is next. Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is in progress (slice 1 done). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -494,7 +494,16 @@ M3b's touchpoints to type.
 no 6.x release; 6.x fixes go on `release/6`. Each slice ships its own tests
 and may purge dev data homes. 7.0.0 is released after slice 6.
 
-**Slice 1 — baseline, purge and runtime root**
+**Slice 1 — baseline, purge and runtime root** — done 2026-10-03. Version 7.0.0-dev;
+`BASELINE` is 7.0.0 and a data home with sessions or Agent state but no
+`tenants/` tree is refused (`pre_baseline_home_refused_with_one_message`);
+`paths::runtime_dir`/`tenant_home_at`, the agent-network socket in the
+runtime root; purge removes owned roots wholesale
+(`purge_removes_owned_roots_wholesale`); the registry is classes × roots
+(doc 73 §5) with snapshots carrying the class; doctor checks the baseline.
+`release/6` is cut at the last 6.x commit. Not done in this slice: listing
+Vak runtime leftovers in known spaces (review R7), which slice 4 makes moot
+by moving runtime state out of the project tree.
 - Version 7.0.0-dev; invariant 29 becomes "7.0.0 is the supported
   baseline". Pre-baseline state is refused by the one message.
 - Purge: Vak-owned roots (data, cache, logs, runtime) are removed
