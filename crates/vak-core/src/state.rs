@@ -269,7 +269,7 @@ const fn agent_entry(path: &'static str, owner: &'static str, class: Class) -> S
 /// file that appears here without a declaration.
 pub const REGISTRY: &[StateEntry] = &[
     StateEntry {
-        path: "auth",
+        path: "tenants/{tenant}/auth",
         root: Root::Data,
         owner: "vak-server",
         schema: Some(1),
@@ -352,6 +352,24 @@ pub const REGISTRY: &[StateEntry] = &[
         owner: "vak-core",
         schema: None,
         class: Class::Record,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
+        path: "activity-log",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: None,
+        class: Class::Record,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
+        // Which secrets exist per scope, never their values, so trust
+        // decisions can ask without a keychain enumeration.
+        path: "credential_index.json",
+        root: Root::Data,
+        owner: "vak-config",
+        schema: None,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
     },
     StateEntry {
@@ -503,7 +521,7 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
-        path: "feeds",
+        path: "tenants/{tenant}/feeds",
         root: Root::Data,
         owner: "vak-server (scripts/feeds)",
         schema: None,
@@ -513,7 +531,7 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
-        path: "feeds.toml",
+        path: "tenants/{tenant}/feeds.toml",
         root: Root::Data,
         owner: "vak-server",
         schema: None,

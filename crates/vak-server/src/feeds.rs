@@ -49,25 +49,33 @@ fn authorize_feed_scope(scope: &str, mode: vak_config::PermissionMode) -> Result
     }
 }
 
+/// The tenant tree feeds keep their store, log and config in (doc 73 §6).
+fn tenant_home() -> PathBuf {
+    vak_config::paths::tenant_home_at(
+        &vak_config::paths::data_home(),
+        &vak_session::trace::local::tenant().to_string(),
+    )
+}
+
 /// What a feed script is told about where it runs. Every path it writes is
-/// decided here, from the canonical data home (so an overridden `VAK_HOME`
-/// holds everything), never guessed by the script.
+/// decided here, in the tenant tree under the canonical data home (so an
+/// overridden `VAK_HOME` holds everything), never guessed by the script.
 fn feed_environment(
     cwd: &std::path::Path,
     scripts: &std::path::Path,
 ) -> Vec<(&'static str, String)> {
-    let data = vak_config::paths::data_home();
+    let tenant = tenant_home();
     let path = |p: PathBuf| p.to_string_lossy().into_owned();
     let mut env = vec![
         ("PYTHONPATH", path(scripts.to_path_buf())),
         ("VAK_FEED_WORKSPACE", path(cwd.to_path_buf())),
         (
             "VAK_FEEDS_DB",
-            path(data.join("feeds").join("feeds.duckdb")),
+            path(tenant.join("feeds").join("feeds.duckdb")),
         ),
         (
             "VAK_FEEDS_LOG",
-            path(data.join("feeds").join("security.log")),
+            path(tenant.join("feeds").join("security.log")),
         ),
         ("VAK_FEEDS_CONFIG", path(global_feeds_config_path())),
     ];
@@ -153,7 +161,7 @@ fn feeds_config_path(_cwd: &std::path::Path) -> PathBuf {
 }
 
 fn global_feeds_config_path() -> PathBuf {
-    vak_config::paths::data_home().join("feeds.toml")
+    tenant_home().join("feeds.toml")
 }
 
 /// Run a Python feed script and return its JSON output.
@@ -1320,8 +1328,8 @@ mod tests {
                 .find(|(key, _)| *key == name)
                 .unwrap_or_else(|| panic!("{name} is passed"));
             assert!(
-                std::path::Path::new(value).starts_with(&home),
-                "{name} = {value} is outside {}",
+                std::path::Path::new(value).starts_with(home.join("tenants")),
+                "{name} = {value} is outside the tenant tree of {}",
                 home.display()
             );
         }

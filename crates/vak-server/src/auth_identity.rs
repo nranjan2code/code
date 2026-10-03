@@ -65,10 +65,17 @@ fn principal_for(id: Uuid) -> PrincipalId {
     PrincipalId::from_uuid(id).unwrap_or_else(|| PrincipalId::derived(&id.to_string()))
 }
 
+fn auth_root(data_home: &std::path::Path) -> PathBuf {
+    vak_config::paths::tenant_home_at(data_home, &vak_session::trace::local::tenant().to_string())
+        .join("auth")
+}
+
 impl OwnerAuth {
+    /// The owner's credentials are the tenant's Desired state, at
+    /// `tenants/<t>/auth` (doc 73 §6).
     pub(crate) fn new(data_home: PathBuf) -> Self {
         Self {
-            root: data_home.join("auth"),
+            root: auth_root(&data_home),
             pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -829,9 +836,9 @@ mod tests {
         assert_eq!(auth.principal(), None, "no owner enrolled yet");
 
         let id = Uuid::now_v7();
-        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
+        std::fs::create_dir_all(auth_root(dir.path())).unwrap();
         std::fs::write(
-            dir.path().join("auth/owner.json"),
+            auth_root(dir.path()).join("owner.json"),
             serde_json::json!({
                 "version": 1,
                 "id": id,
@@ -848,7 +855,7 @@ mod tests {
 
         let owner = auth.read().unwrap().unwrap();
         auth.write(&owner).unwrap();
-        let text = std::fs::read_to_string(dir.path().join("auth/owner.json")).unwrap();
+        let text = std::fs::read_to_string(auth_root(dir.path()).join("owner.json")).unwrap();
         assert!(text.contains(&principal.to_string()), "persisted: {text}");
         assert_eq!(auth.principal(), Some(principal));
     }
