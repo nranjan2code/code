@@ -532,6 +532,29 @@ Also built (2026-10-03), finishing G1:
 G1 is complete. Splits (`split_from`) and `retracts` stay with G2, where
 edges are stored rather than derived per request.
 
+`GET /sessions/{id}/context` shows each turn's links, the effects its
+calls recorded and every recorded context plan with its link paths, so why
+a turn was in context can be checked through the app.
+
+Live check, 2026-10-03, against the configured hosted model on a dev
+server (port 8931, a disposable `/tmp` workspace): turn 1 wrote
+`notes/plan.md`, turns 2 to 4 were unrelated one-liners, and turn 5 said
+"Do that again, but make it two lines." Read through the endpoint:
+
+- turn 5's strand continued turn 1's thread, and its plan put turn 1 at
+  `Full` through that thread link (`retrieved` and `links` both name it),
+  with turns 2 to 4 as cards. Before G1, anaphora would have pointed at
+  turn 4. The model edited `notes/plan.md`, as asked;
+- turn 1's write and turn 5's read recorded the same SHA-256, and turn 5's
+  write a new one;
+- every record carried its turn. Plan cost: 255 of a 104,735-token budget.
+
+What it showed is missing: a turn's plan is frozen before its first tool
+call (invariant 36), so the files the open turn reads cannot link it to
+anything for that plan; only threads and commitments are anchors at plan
+time. The anchor §6.3 lists for this, files the directive names, is not
+built. It is the next G1-sized step.
+
 - Edge extraction over `TurnIndex`, intent records and presentation records,
   in `vak-session` beside the turn index.
 - The `link` signal, path weights, hub discount and bounded walk in
