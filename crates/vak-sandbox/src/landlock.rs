@@ -9,6 +9,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use landlock::ABI;
+
 use super::backend::{Sandbox, SandboxMode};
 
 pub const SANDBOX_SUBCOMMAND: &str = "__sandbox";
