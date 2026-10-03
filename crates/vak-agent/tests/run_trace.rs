@@ -183,6 +183,7 @@ async fn one_run_one_trace_id() {
     cfg.tools = vec![
         probe.clone(),
         Arc::new(TaskTool::new(TaskDeps {
+            objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
             parent_agent_identity: None,
             role_prompts: Default::default(),
             provider: provider.clone(),

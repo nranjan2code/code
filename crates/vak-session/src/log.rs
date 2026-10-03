@@ -112,6 +112,11 @@ pub struct SessionLog {
     current_turn: Option<String>,
     /// An id `begin_turn` reserved; the next directive appended takes it.
     reserved_turn: Option<String>,
+    /// Where this ledger's large payloads live; attached by the owner of
+    /// the tenant (`with_objects`). Writing one without it fails closed.
+    objects: Option<std::sync::Arc<dyn crate::objects::Objects>>,
+    /// Bodies already read through `objects`, by object id.
+    fetched: std::sync::Mutex<HashMap<String, String>>,
 }
 
 impl SessionLog {
@@ -146,6 +151,8 @@ impl SessionLog {
             warnings: Vec::new(),
             current_turn: None,
             reserved_turn: None,
+            objects: None,
+            fetched: Default::default(),
         };
         log.append(Entry::new(None, EntryPayload::Header(header)))?;
         Ok(log)
@@ -308,6 +315,8 @@ impl SessionLog {
             warnings: parsed.warnings,
             current_turn: None,
             reserved_turn: None,
+            objects: None,
+            fetched: Default::default(),
         }
         .with_current_turn())
     }
@@ -331,6 +340,8 @@ impl SessionLog {
             warnings: parsed.warnings,
             current_turn: None,
             reserved_turn: None,
+            objects: None,
+            fetched: Default::default(),
         }
         .with_current_turn())
     }
@@ -604,20 +615,67 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Presentation(record)))
     }
 
+    /// Attaches the tenant object store this ledger's large payloads use.
+    pub fn with_objects(mut self, objects: std::sync::Arc<dyn crate::objects::Objects>) -> Self {
+        self.set_objects(objects);
+        self
+    }
+
+    pub fn set_objects(&mut self, objects: std::sync::Arc<dyn crate::objects::Objects>) {
+        self.objects = Some(objects);
+    }
+
+    fn object_scope(&self) -> Result<String, SessionError> {
+        self.header()
+            .map(|header| crate::objects::conversation_scope(&header.session_id))
+            .ok_or_else(|| SessionError::Objects("ledger has no header".into()))
+    }
+
+    /// Stores `bytes` as one of this conversation's objects.
+    pub fn put_object(&self, bytes: &[u8]) -> Result<crate::objects::ObjectRef, SessionError> {
+        let objects = self
+            .objects
+            .as_ref()
+            .ok_or_else(|| SessionError::Objects("no object store attached".into()))?;
+        objects.put(bytes, &self.object_scope()?)
+    }
+
+    /// Reads one of this conversation's objects as text, or `None` when no
+    /// store is attached or the object cannot be read.
+    pub fn object_text(&self, object: &crate::objects::ObjectRef) -> Option<String> {
+        let mut fetched = self.fetched.lock().ok()?;
+        if let Some(text) = fetched.get(&object.id) {
+            return Some(text.clone());
+        }
+        let bytes = self
+            .objects
+            .as_ref()?
+            .get(object, &self.object_scope().ok()?)
+            .ok()?;
+        let text = String::from_utf8(bytes).ok()?;
+        fetched.insert(object.id.clone(), text.clone());
+        Some(text)
+    }
+
     /// Records the whole result behind a windowed `ToolResult` block
-    /// (docs/design/68-context-engine.md §3), so `recall` and the closed-turn
-    /// digests read what the tool returned, not what the request carried.
+    /// (docs/design/68-context-engine.md §3) as an object, so `recall` and
+    /// the closed-turn digests read what the tool returned, not what the
+    /// request carried.
     pub fn append_evidence_body(
         &mut self,
         tool_use_id: &str,
         content: String,
     ) -> Result<Entry, SessionError> {
+        let body = self.put_object(content.as_bytes())?;
+        if let Ok(mut fetched) = self.fetched.lock() {
+            fetched.insert(body.id.clone(), content);
+        }
         let parent = self.tail_id.clone();
         self.append(Entry::new(
             parent,
             EntryPayload::EvidenceBody(crate::types::EvidenceBodyRecord {
                 tool_use_id: tool_use_id.to_string(),
-                content,
+                body,
             }),
         ))
     }
@@ -707,7 +765,7 @@ impl SessionLog {
         let tool = tool?;
         let body = chain.iter().find_map(|entry| match &entry.payload {
             EntryPayload::EvidenceBody(body) if body.tool_use_id == tool_use_id => {
-                Some(body.content.clone())
+                self.object_text(&body.body)
             }
             _ => None,
         });
@@ -996,8 +1054,23 @@ impl SessionLog {
     /// `TurnCapabilitiesRef` to that entry.
     pub fn append_turn_capabilities(
         &mut self,
-        bound: crate::types::TurnCapabilitiesBound,
+        binding: crate::types::TurnBinding,
     ) -> Result<Entry, SessionError> {
+        let interface = serde_json::to_vec(&serde_json::json!({
+            "system_prompt": binding.system_prompt,
+            "tool_schemas": binding.tool_schemas,
+            "tool_index": binding.tool_index,
+        }))
+        .map_err(|error| SessionError::Objects(error.to_string()))?;
+        let bound = crate::types::TurnCapabilitiesBound {
+            epoch: binding.epoch,
+            capability_ids: binding.capability_ids,
+            excluded_ids: binding.excluded_ids,
+            core_tool_names: binding.core_tool_names,
+            deferred_tool_names: binding.deferred_tool_names,
+            tool_domains: binding.tool_domains,
+            interface: self.put_object(&interface)?,
+        };
         let digest = bound.digest();
         let previous = self
             .active_entries_rev()
@@ -1566,7 +1639,7 @@ impl SessionLog {
             cursor = entry.parent_id.as_deref();
         }
         entries.reverse();
-        TurnIndex::from_entries(entries)
+        TurnIndex::from_entries_resolving(entries, &|body| self.object_text(body))
     }
 
     pub fn chain_to_root(&self) -> Vec<&Entry> {
@@ -1936,7 +2009,7 @@ impl SessionLog {
                 continue;
             }
             entries.reverse();
-            let index = TurnIndex::from_entries(entries);
+            let index = TurnIndex::from_entries_resolving(entries, &|body| self.object_text(body));
             let Some(turn) = index.turn_by_id(turn_id).filter(|turn| turn.closed) else {
                 continue;
             };

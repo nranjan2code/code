@@ -3505,8 +3505,11 @@ mod tests {
                 },
             },
         )
-        .expect("create session");
-        log.append_turn_capabilities(vak_session::types::TurnCapabilitiesBound {
+        .expect("create session")
+        .with_objects(std::sync::Arc::new(
+            vak_session::objects::MemoryObjects::default(),
+        ));
+        log.append_turn_capabilities(vak_session::types::TurnBinding {
             epoch: 1,
             capability_ids: Vec::new(),
             excluded_ids: Vec::new(),

@@ -159,6 +159,12 @@ pub struct StateEntry {
 /// (`vak_config::paths::agent_home`), so each subpath of every Agent home is
 /// declared once rather than the whole `agents/` tree as one entry.
 pub const AGENT_SEGMENT: &str = "{agent}";
+/// One tenant's directory under `tenants/`, matched like [`AGENT_SEGMENT`].
+pub const TENANT_SEGMENT: &str = "{tenant}";
+
+fn is_segment(part: &std::ffi::OsStr) -> bool {
+    part == AGENT_SEGMENT || part == TENANT_SEGMENT
+}
 
 impl StateEntry {
     /// What an update may do to this entry: its class's rule.
@@ -179,7 +185,7 @@ impl StateEntry {
             let Some(found) = actual.next() else {
                 return false;
             };
-            let wildcard = expected.as_os_str() == AGENT_SEGMENT
+            let wildcard = is_segment(expected.as_os_str())
                 && matches!(found, std::path::Component::Normal(_));
             if !wildcard && expected != found {
                 return false;
@@ -196,7 +202,7 @@ impl StateEntry {
     pub fn expand(&self, base: &Path) -> Vec<PathBuf> {
         let mut found = vec![PathBuf::new()];
         for part in Path::new(self.path).components() {
-            if part.as_os_str() == AGENT_SEGMENT {
+            if is_segment(part.as_os_str()) {
                 found = found
                     .into_iter()
                     .flat_map(|prefix| {
@@ -278,6 +284,25 @@ pub const REGISTRY: &[StateEntry] = &[
         owner: "vak-session",
         schema: None,
         class: Class::Record,
+        on_purge: OnPurge::Remove,
+    },
+    // ---- the tenant tree (docs/design/73 §6) ----
+    StateEntry {
+        path: "tenants/{tenant}/objects",
+        root: Root::Data,
+        owner: "vak-session",
+        schema: None,
+        // Ledger payloads, sealed per object and granted per conversation.
+        class: Class::Object,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
+        path: "tenants/{tenant}/keys",
+        root: Root::Data,
+        owner: "vak-session",
+        schema: None,
+        // Revoked scopes and the open lock; the KEKs are in the credential store.
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
     },
     // ---- every Agent home, one entry per subpath ----
@@ -718,10 +743,7 @@ pub fn remove_empty_pattern_dirs(root: Root, base: &Path) {
     let mut parents: Vec<PathBuf> = Vec::new();
     for entry in entries_for(root) {
         let components: Vec<_> = Path::new(entry.path).components().collect();
-        let Some(at) = components
-            .iter()
-            .position(|c| c.as_os_str() == AGENT_SEGMENT)
-        else {
+        let Some(at) = components.iter().position(|c| is_segment(c.as_os_str())) else {
             continue;
         };
         let parent: PathBuf = components[..at].iter().collect();

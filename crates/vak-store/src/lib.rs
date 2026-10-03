@@ -952,7 +952,10 @@ mod tests {
             None,
             EntryPayload::EvidenceBody(vak_session::types::EvidenceBodyRecord {
                 tool_use_id: "evidence-call".into(),
-                content: "opaque evidence body".into(),
+                body: vak_session::objects::ObjectRef {
+                    id: "opaque-evidence-body".into(),
+                    len: 20,
+                },
             }),
         );
         let mut file = vak_storage::segments::SegmentSet::open(&path)
@@ -981,7 +984,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            matches!(loaded.payload, EntryPayload::EvidenceBody(record) if record.content == "opaque evidence body")
+            matches!(loaded.payload, EntryPayload::EvidenceBody(record) if record.body.id == "opaque-evidence-body")
         );
         drop(store);
         let reopened = Store::open(dir.path()).unwrap();

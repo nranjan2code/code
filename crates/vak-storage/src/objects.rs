@@ -33,7 +33,6 @@ pub struct LocalObjectStore {
     root: PathBuf,
     id_key: IdKey,
     authority: Arc<dyn KeyAuthority>,
-    seq: AtomicU64,
 }
 
 fn valid_id(id: &ObjectId) -> Result<()> {
@@ -53,7 +52,6 @@ impl LocalObjectStore {
             root: root.to_path_buf(),
             id_key,
             authority,
-            seq: AtomicU64::new(0),
         })
     }
 
@@ -71,7 +69,10 @@ impl LocalObjectStore {
 
     /// Write-then-rename, so a reader never sees a partial file.
     fn write_atomic(&self, dest: &Path, bytes: &[u8]) -> Result<()> {
-        let n = self.seq.fetch_add(1, Ordering::Relaxed);
+        // Process-wide: two stores over one root in one process must never
+        // share a temporary name.
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
         let tmp = self
             .root
             .join("tmp")
@@ -251,6 +252,31 @@ mod tests {
 
     fn store(dir: &Path, id_key: [u8; 32], a: &Arc<MemoryKeyAuthority>) -> LocalObjectStore {
         LocalObjectStore::open(dir, IdKey::new(&id_key), a.clone()).unwrap()
+    }
+
+    #[test]
+    fn two_stores_over_one_root_in_one_process_never_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = Arc::new(MemoryKeyAuthority::new().unwrap());
+        let first = Arc::new(store(dir.path(), [7; 32], &a));
+        let second = Arc::new(store(dir.path(), [7; 32], &a));
+        let writers: Vec<_> = (0..8)
+            .map(|i| {
+                let s = if i % 2 == 0 {
+                    first.clone()
+                } else {
+                    second.clone()
+                };
+                std::thread::spawn(move || {
+                    let body = format!("body {i} ").repeat(1000);
+                    (s.put(body.as_bytes(), "c").unwrap(), body)
+                })
+            })
+            .collect();
+        for writer in writers {
+            let (id, body) = writer.join().unwrap();
+            assert_eq!(first.get(&id, "c").unwrap(), body.as_bytes());
+        }
     }
 
     #[test]

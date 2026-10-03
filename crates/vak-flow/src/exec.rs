@@ -60,6 +60,8 @@ pub type NodePrompt = Arc<dyn Fn(&[&str]) -> String + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ExecutorDeps {
+    /// The tenant object store node ledgers keep their large payloads in.
+    pub objects: Arc<dyn vak_session::objects::Objects>,
     pub provider: Arc<dyn Provider>,
     /// Configured route name (distinct from the wire adapter's `Provider::name`).
     pub provider_route: String,
@@ -582,7 +584,8 @@ async fn execute_node(
             };
             let path = SessionPath::new_session_file(&deps.sessions_home, &deps.cwd, &session_id);
             let log = SessionLog::create(path, header)
-                .map_err(|e| format!("cannot create node session: {e}"))?;
+                .map_err(|e| format!("cannot create node session: {e}"))?
+                .with_objects(deps.objects.clone());
 
             let mut cfg = AgentConfig::new(system_prompt);
             cfg.outcome = deps.outcome.clone();

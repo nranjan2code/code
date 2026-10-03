@@ -96,7 +96,33 @@ pub struct FrozenContract {
     pub prompt_layers: Vec<PromptLayerDescriptor>,
 }
 
-/// The exact capability interface bound for one model turn. This is
+/// The exact capability interface bound for one model turn, as the host
+/// assembled it. Recorded by `SessionLog::append_turn_capabilities` as a
+/// `TurnCapabilitiesBound` whose large parts (system prompt, tool schemas,
+/// tool index) are one object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnBinding {
+    pub epoch: u64,
+    pub capability_ids: Vec<String>,
+    pub excluded_ids: Vec<String>,
+    pub system_prompt: String,
+    pub tool_schemas: Vec<serde_json::Value>,
+    /// Tool names sent with full schemas in the stable prefix this turn
+    /// (docs/design/68-context-engine.md §5).
+    pub core_tool_names: Vec<String>,
+    /// Tool names withheld from the prefix this turn — reachable via
+    /// `find_tools`, or via Anthropic `defer_loading` on legs that support
+    /// it.
+    pub deferred_tool_names: Vec<String>,
+    /// The rendered `tool_index` text sent this turn: one line per deferred
+    /// tool, no schemas.
+    pub tool_index: String,
+    /// Declared domains (`vak_core::capability::domain::Domain::as_str`)
+    /// per bound tool name.
+    pub tool_domains: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// One turn's bound capability interface as the ledger records it. This is
 /// append-only audit data: it is not projected into model messages, but it
 /// makes the provider request reconstructable after live capabilities move.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,29 +130,16 @@ pub struct TurnCapabilitiesBound {
     pub epoch: u64,
     pub capability_ids: Vec<String>,
     pub excluded_ids: Vec<String>,
-    pub system_prompt: String,
-    #[serde(default)]
-    pub tool_schemas: Vec<serde_json::Value>,
-    /// Tool names sent with full schemas in the stable prefix this turn
-    /// (docs/design/68-context-engine.md §5). Empty on entries written
-    /// before the tool surface split existed.
-    #[serde(default)]
     pub core_tool_names: Vec<String>,
-    /// Tool names withheld from the prefix this turn — reachable via
-    /// `find_tools`, or via Anthropic `defer_loading` on legs that support
-    /// it. Empty on entries written before the split existed.
-    #[serde(default)]
     pub deferred_tool_names: Vec<String>,
-    /// The rendered `tool_index` text sent this turn: one line per deferred
-    /// tool, no schemas.
-    #[serde(default)]
-    pub tool_index: String,
-    /// Declared domains (`vak_core::capability::domain::Domain::as_str`)
-    /// per bound tool name, so a later projection can recover "what did this
-    /// tool declare it serves" without re-touching the live capability
-    /// registry (docs/design/68 §9's `SignalContext.domains`).
-    #[serde(default)]
+    /// Declared domains per bound tool name, so a later projection can
+    /// recover "what did this tool declare it serves" without re-touching
+    /// the live capability registry (docs/design/68 §9's
+    /// `SignalContext.domains`).
     pub tool_domains: std::collections::BTreeMap<String, Vec<String>>,
+    /// `{system_prompt, tool_schemas, tool_index}` as one conversation-scoped
+    /// object; equal interfaces are one object.
+    pub interface: crate::objects::ObjectRef,
 }
 
 impl TurnCapabilitiesBound {
@@ -1044,7 +1057,8 @@ pub struct ContextSelectionRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EvidenceBodyRecord {
     pub tool_use_id: String,
-    pub content: String,
+    /// The whole result, as a conversation-scoped tenant object.
+    pub body: crate::objects::ObjectRef,
 }
 
 /// The closing record for one turn (docs/design/68-context-engine.md §10).
@@ -1137,6 +1151,8 @@ pub enum SessionError {
     Exists(std::path::PathBuf),
     #[error("session is locked by another process: {0}")]
     Locked(std::path::PathBuf),
+    #[error("object store: {0}")]
+    Objects(String),
 }
 
 #[cfg(test)]

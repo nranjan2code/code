@@ -135,6 +135,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
     std::fs::create_dir_all(&home).unwrap();
     std::mem::forget(dir);
     Arc::new(ExecutorDeps {
+        objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         prompt_layers: Vec::new(),
         provider_route: "test".into(),
         provider,

@@ -7,7 +7,7 @@ use tempfile::tempdir;
 
 use vak_llm::{ContentBlock, Message, Role, Usage};
 use vak_session::types::{
-    EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader, TurnCapabilitiesBound,
+    EntryPayload, FrozenContract, MessageMeta, MessageRecord, SessionHeader, TurnBinding,
     WorkContract, WorkEvent, WorkEventKind, WorkItemDefinition, WorkOwner,
 };
 use vak_session::{
@@ -804,8 +804,12 @@ fn total_usage_counts_active_chain_only() {
 fn turn_capability_binding_roundtrips_without_entering_context() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("s.jsonl");
-    let mut log = SessionLog::create(path.clone(), header()).unwrap();
-    log.append_turn_capabilities(TurnCapabilitiesBound {
+    let mut log = SessionLog::create(path.clone(), header())
+        .unwrap()
+        .with_objects(std::sync::Arc::new(
+            vak_session::objects::MemoryObjects::default(),
+        ));
+    log.append_turn_capabilities(TurnBinding {
         epoch: 7,
         capability_ids: vec!["Tool:read".into()],
         excluded_ids: vec!["Tool:bash".into()],
@@ -835,8 +839,12 @@ fn turn_capability_binding_roundtrips_without_entering_context() {
 fn unchanged_capabilities_not_rewritten() {
     let dir = tempdir().unwrap();
     let path = dir.path().join("s.jsonl");
-    let mut log = SessionLog::create(path.clone(), header()).unwrap();
-    let bound = |epoch: u64, prompt: &str| TurnCapabilitiesBound {
+    let mut log = SessionLog::create(path.clone(), header())
+        .unwrap()
+        .with_objects(std::sync::Arc::new(
+            vak_session::objects::MemoryObjects::default(),
+        ));
+    let bound = |epoch: u64, prompt: &str| TurnBinding {
         epoch,
         capability_ids: vec!["Tool:read".into()],
         excluded_ids: Vec::new(),
@@ -869,9 +877,9 @@ fn unchanged_capabilities_not_rewritten() {
         }
         other => panic!("an unchanged binding was rewritten: {other:?}"),
     }
-    // Frames are compressed, so a full binding is already small on disk;
-    // the reference is still the smaller write.
+    // The interface is an object, so neither write carries the prompt.
     assert!(referenced < full, "{referenced} vs {full}");
+    assert!(!SessionLog::text(&path).contains("system system"));
 
     let third = log
         .append_turn_capabilities(bound(2, "a different system prompt "))

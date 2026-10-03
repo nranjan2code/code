@@ -198,7 +198,8 @@ fn agent(
         SessionPath::new_session_file(&home, dir.path(), session_id),
         header(dir, session_id),
     )
-    .unwrap();
+    .unwrap()
+    .with_objects(Arc::new(vak_session::objects::MemoryObjects::default()));
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
     cfg.mode = Mode::FullAccess;
@@ -210,6 +211,7 @@ fn agent(
 
 fn task_tool(dir: &tempfile::TempDir, provider: Arc<Scripted>, parent: &str) -> Arc<dyn Tool> {
     Arc::new(TaskTool::new(TaskDeps {
+        objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         parent_agent_identity: None,
         role_prompts: Default::default(),
         provider,
@@ -400,11 +402,11 @@ async fn an_over_long_result_is_windowed_in_the_request_and_whole_in_the_ledger(
         .into_iter()
         .find_map(|entry| match &entry.payload {
             EntryPayload::EvidenceBody(body) if body.tool_use_id == "b1" => {
-                Some(body.content.clone())
+                session.object_text(&body.body)
             }
             _ => None,
         })
-        .expect("the whole result is in the ledger");
+        .expect("the whole result is an object the ledger names");
     assert_eq!(body, big_output());
     assert_eq!(
         session.evidence("b1").expect("evidence").content,

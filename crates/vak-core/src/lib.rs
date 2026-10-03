@@ -204,7 +204,14 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             .header()
             .map(|header| header.contract.prompt_layers.clone())
             .unwrap_or_default();
+        let objects = match self.core.objects() {
+            Ok(objects) => objects,
+            Err(error) => {
+                return vak_tools::ToolOutput::error(format!("object store unavailable: {error}"));
+            }
+        };
         let deps = vak_flow::ExecutorDeps {
+            objects,
             provider: match self.core.provider() {
                 Ok(provider) => provider,
                 Err(error) => return vak_tools::ToolOutput::error(error.to_string()),
@@ -449,6 +456,8 @@ fn vak_core_ledger(core: &Core) -> finops::FinOpsLedger {
 }
 
 struct CoreInner {
+    /// The tenant's object store, opened on first use (`Core::objects`).
+    objects: std::sync::OnceLock<Arc<dyn vak_session::objects::Objects>>,
     history_indexing: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     history_index_failures: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     config: vak_config::Config,
@@ -1306,6 +1315,7 @@ impl Core {
             Vec::new()
         };
         Ok(Core::from_inner(Arc::new(CoreInner {
+            objects: std::sync::OnceLock::new(),
             history_indexing: std::sync::Mutex::new(std::collections::HashSet::new()),
             history_index_failures: std::sync::Mutex::new(std::collections::HashSet::new()),
             config,
@@ -3203,6 +3213,22 @@ impl Core {
         self
     }
 
+    /// The tenant's object store, where ledgers keep their large payloads
+    /// (docs/design/73-data-architecture-and-lifecycle.md §5). Opened once;
+    /// a failure is returned, never replaced by a store that loses data.
+    pub fn objects(&self) -> Result<Arc<dyn vak_session::objects::Objects>, CoreError> {
+        if let Some(objects) = self.inner.objects.get() {
+            return Ok(objects.clone());
+        }
+        let tenant = vak_config::paths::tenant_home_at(
+            &self.inner.sessions_home,
+            &vak_session::trace::local::tenant().to_string(),
+        );
+        let opened: Arc<dyn vak_session::objects::Objects> =
+            Arc::new(vak_session::objects::TenantObjects::open(&tenant)?);
+        Ok(self.inner.objects.get_or_init(|| opened).clone())
+    }
+
     /// Reopens an existing session ledger for resumed runs.
     pub async fn open_session(&self, session_id: &str) -> Result<SessionLog, CoreError> {
         self.refuse_trashed(session_id)?;
@@ -3211,7 +3237,7 @@ impl Core {
             &self.inner.cwd,
             session_id,
         );
-        Ok(SessionLog::open(path)?)
+        Ok(SessionLog::open(path)?.with_objects(self.objects()?))
     }
 
     /// Opens an existing session ledger in read-only mode without acquiring an exclusive write lock.
@@ -3222,7 +3248,7 @@ impl Core {
             &self.inner.cwd,
             session_id,
         );
-        Ok(SessionLog::open_read_only(path)?)
+        Ok(SessionLog::open_read_only(path)?.with_objects(self.objects()?))
     }
 
     /// A trashed session is hidden everywhere, so nothing reopens it: a
@@ -5761,7 +5787,7 @@ impl Core {
                 prompt_layers: resolution.descriptors,
             },
         };
-        Ok(SessionLog::create(path, header)?)
+        Ok(SessionLog::create(path, header)?.with_objects(self.objects()?))
     }
 
     pub async fn run_turn(
@@ -6335,6 +6361,9 @@ impl Core {
         goal: Option<(String, Vec<String>)>,
         work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        // Every turn writes its large payloads to this Core's tenant,
+        // whoever opened the ledger.
+        session.set_objects(self.objects()?);
         let vak_session::MessageRecord {
             message: prompt,
             meta: prompt_meta,
@@ -7006,6 +7035,7 @@ impl Core {
                 child_core.system_prompt_for_capabilities(&child_capability_set);
             let role_prompts = child_core.role_prompts(&child_capability_set);
             tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {
+                objects: self.objects()?,
                 parent_agent_identity: self.agent_identity().cloned(),
                 outcome_objective: Some(prompt_text.to_string()),
                 outcome: cfg.outcome.clone(),
@@ -7210,19 +7240,17 @@ impl Core {
                 }
             }
         }
-        if let Err(error) =
-            session.append_turn_capabilities(vak_session::types::TurnCapabilitiesBound {
-                epoch: cap_set.epoch,
-                capability_ids: selected_ids.iter().cloned().collect(),
-                excluded_ids: all_ids.difference(&selected_ids).cloned().collect(),
-                system_prompt: cfg.system_prefix.clone(),
-                tool_schemas,
-                core_tool_names,
-                deferred_tool_names,
-                tool_index: tool_catalogue,
-                tool_domains,
-            })
-        {
+        if let Err(error) = session.append_turn_capabilities(vak_session::types::TurnBinding {
+            epoch: cap_set.epoch,
+            capability_ids: selected_ids.iter().cloned().collect(),
+            excluded_ids: all_ids.difference(&selected_ids).cloned().collect(),
+            system_prompt: cfg.system_prefix.clone(),
+            tool_schemas,
+            core_tool_names,
+            deferred_tool_names,
+            tool_index: tool_catalogue,
+            tool_domains,
+        }) {
             return Err(CoreError::Session(error));
         }
         // Hooks come from TurnCapabilities: the same admission as every

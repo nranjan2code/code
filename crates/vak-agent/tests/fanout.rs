@@ -261,6 +261,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
+        objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         parent_agent_identity: None,
         role_prompts: Default::default(),
         provider: provider.clone(),

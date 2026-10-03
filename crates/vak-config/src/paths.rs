@@ -351,8 +351,15 @@ pub fn set_home_override(path: &std::path::Path) {
 /// which every `Core::new` reads. A test that must write it runs in a
 /// binary of its own, on a private home per test — see
 /// `crates/vak-server/tests/shared_config_layer.rs`.
+static ISOLATED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Whether this process pinned a private test home. Its secrets then stay
+/// in that home's encrypted file, never the OS keychain.
+pub fn home_is_isolated_for_tests() -> bool {
+    ISOLATED.get().is_some()
+}
+
 pub fn isolate_home_for_tests() -> PathBuf {
-    static ISOLATED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     ISOLATED
         .get_or_init(|| {
             let dir = fresh_test_home();

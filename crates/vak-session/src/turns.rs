@@ -452,12 +452,21 @@ impl TurnIndex {
     /// intent notes — `MessageRecord::control_kind().is_some()`) are not
     /// turns and not steps: they never start a turn and never become a step.
     pub fn from_log(log: &SessionLog) -> TurnIndex {
-        Self::from_entries(log.chain_to_root())
+        Self::from_entries_resolving(log.chain_to_root(), &|body| log.object_text(body))
     }
 
     /// Reconstruct only an already-authorized, chronologically ordered range.
     /// The caller owns scope, branch membership and byte/count limits.
     pub fn from_entries<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> TurnIndex {
+        Self::from_entries_resolving(entries, &|_| None)
+    }
+
+    /// `from_entries`, reading each evidence body through `resolve`; a body
+    /// it cannot read leaves the result as the request carried it.
+    pub fn from_entries_resolving<'a>(
+        entries: impl IntoIterator<Item = &'a Entry>,
+        resolve: &dyn Fn(&crate::objects::ObjectRef) -> Option<String>,
+    ) -> TurnIndex {
         let chain: Vec<&Entry> = entries.into_iter().collect();
         let mut turns: Vec<Turn> = Vec::new();
         let mut packets: Vec<Packet> = Vec::new();
@@ -583,9 +592,11 @@ impl TurnIndex {
                     }
                 }
                 EntryPayload::EvidenceBody(body) => {
-                    if let Some(turn) = turns.last_mut() {
+                    if let Some(turn) = turns.last_mut()
+                        && let Some(content) = resolve(&body.body)
+                    {
                         turn.evidence_bodies
-                            .insert(body.tool_use_id.clone(), body.content.clone());
+                            .insert(body.tool_use_id.clone(), content);
                     }
                 }
                 EntryPayload::Compaction(c) if c.reset_all => {

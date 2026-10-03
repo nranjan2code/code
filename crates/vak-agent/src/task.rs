@@ -39,6 +39,8 @@ fn vak_core_identity() -> vak_session::types::AgentIdentity {
 }
 
 pub struct TaskDeps {
+    /// The tenant object store child ledgers keep their large payloads in.
+    pub objects: Arc<dyn vak_session::objects::Objects>,
     /// Resolved parent Agent identity; inherited by default-delegated children.
     pub parent_agent_identity: Option<vak_session::types::AgentIdentity>,
     /// Parent outcome context carried into the child for alignment only.
@@ -919,7 +921,7 @@ impl TaskTool {
             },
         };
         let log = match SessionLog::create(path, header) {
-            Ok(l) => l,
+            Ok(l) => l.with_objects(self.deps.objects.clone()),
             Err(e) => return ToolOutput::error(format!("cannot create child session: {e}")),
         };
 

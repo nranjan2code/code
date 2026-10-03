@@ -121,7 +121,11 @@ fn open(dir: &std::path::Path) -> SessionLog {
             prompt_layers: Vec::new(),
         },
     };
-    SessionLog::create(dir.join("s.jsonl"), header).unwrap()
+    SessionLog::create(dir.join("s.jsonl"), header)
+        .unwrap()
+        .with_objects(std::sync::Arc::new(
+            vak_session::objects::MemoryObjects::default(),
+        ))
 }
 
 fn past_turn(log: &mut SessionLog, question: &str, answer: &str) {

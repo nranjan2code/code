@@ -60,6 +60,9 @@ fn scope_key_for(hint_path: &Path) -> String {
 }
 
 fn store() -> &'static dyn CredentialStore {
+    if crate::paths::home_is_isolated_for_tests() {
+        return &EncryptedFileStore;
+    }
     static STORE: OnceLock<Box<dyn CredentialStore>> = OnceLock::new();
     STORE
         .get_or_init(|| {

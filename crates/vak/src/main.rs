@@ -1025,7 +1025,15 @@ async fn run_flow_exec(
     let mut outcome =
         vak_intent::OutcomeSpec::from_reading(name.clone(), &vak_intent::Reading::default(), 0);
     outcome.max_turns = Some(core.effective_max_turns());
+    let objects = match core.objects() {
+        Ok(objects) => objects,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
     let deps = vak_flow::ExecutorDeps {
+        objects,
         prompt_layers: Vec::new(),
         provider_route: core.effective_provider().to_string(),
         provider,
@@ -1922,7 +1930,15 @@ async fn run_plan(
     let mut outcome =
         vak_intent::OutcomeSpec::from_reading(task.clone(), &vak_intent::Reading::default(), 0);
     outcome.max_turns = Some(core.effective_max_turns());
+    let objects = match core.objects() {
+        Ok(objects) => objects,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return 2;
+        }
+    };
     let deps = vak_flow::ExecutorDeps {
+        objects,
         prompt_layers: Vec::new(),
         provider_route: core.effective_provider().to_string(),
         provider,

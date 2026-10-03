@@ -4,6 +4,9 @@
 use crate::seal::{self, KEY_LEN};
 use crate::{Result, StorageError};
 use std::collections::HashSet;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// A key wrapped under one KEK version and bound to a scope name.
@@ -157,6 +160,170 @@ impl KeyAuthority for MemoryKeyAuthority {
     }
 }
 
+/// Where a durable authority keeps its KEKs: a secret store outside the
+/// data it protects (locally, the OS credential store).
+pub trait KekVault: Send + Sync {
+    fn get(&self, name: &str) -> Option<String>;
+    fn set(&self, name: &str, value: &str) -> std::io::Result<()>;
+}
+
+const KEK_CURRENT: &str = "VAK_TENANT_KEK_CURRENT";
+const ID_KEY: &str = "VAK_TENANT_OBJECT_ID_KEY";
+
+fn kek_name(version: u32) -> String {
+    format!("VAK_TENANT_KEK_{version}")
+}
+
+fn decode_key(hex: &str) -> Result<[u8; KEY_LEN]> {
+    let bad = StorageError::Malformed("vault key");
+    if hex.len() != KEY_LEN * 2 {
+        return Err(bad);
+    }
+    let mut out = [0u8; KEY_LEN];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(
+            hex.get(i * 2..i * 2 + 2)
+                .ok_or(StorageError::Malformed("vault key"))?,
+            16,
+        )
+        .map_err(|_| StorageError::Malformed("vault key"))?;
+    }
+    Ok(out)
+}
+
+/// The tenant KEKs held in a `KekVault`, with revocations recorded in a
+/// file beside the data. Opening creates version 0 when the vault holds
+/// none; the caller serialises opens of one tenant (a file lock), so two
+/// processes never mint competing first keys.
+pub struct VaultKeyAuthority {
+    vault: Box<dyn KekVault>,
+    revoked_path: PathBuf,
+    state: Mutex<MemState>,
+}
+
+impl VaultKeyAuthority {
+    pub fn open(vault: Box<dyn KekVault>, revoked_path: &Path) -> Result<Self> {
+        let unavailable = |what: &str| StorageError::AuthorityUnavailable(what.into());
+        let keks = match vault.get(KEK_CURRENT) {
+            Some(current) => {
+                let current: u32 = current
+                    .trim()
+                    .parse()
+                    .map_err(|_| StorageError::Malformed("kek version"))?;
+                (0..=current)
+                    .map(|v| {
+                        vault
+                            .get(&kek_name(v))
+                            .ok_or_else(|| unavailable("a kek version is missing"))
+                            .and_then(|hex| decode_key(&hex))
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            }
+            None => {
+                let first: [u8; KEY_LEN] = seal::random()?;
+                vault.set(&kek_name(0), &seal::hex(&first))?;
+                vault.set(KEK_CURRENT, "0")?;
+                vec![first]
+            }
+        };
+        let revoked = match fs::read_to_string(revoked_path) {
+            Ok(text) => text
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashSet::new(),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(Self {
+            vault,
+            revoked_path: revoked_path.to_path_buf(),
+            state: Mutex::new(MemState {
+                keks,
+                revoked,
+                healthy: true,
+            }),
+        })
+    }
+
+    /// The tenant's object id key, minted into the vault on first use.
+    pub fn id_key(&self) -> Result<crate::objects::IdKey> {
+        let bytes = match self.vault.get(ID_KEY) {
+            Some(hex) => decode_key(&hex)?,
+            None => {
+                let fresh: [u8; KEY_LEN] = seal::random()?;
+                self.vault.set(ID_KEY, &seal::hex(&fresh))?;
+                fresh
+            }
+        };
+        Ok(crate::objects::IdKey::new(&bytes))
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, MemState>> {
+        self.state
+            .lock()
+            .map_err(|_| StorageError::AuthorityUnavailable("state poisoned".into()))
+    }
+}
+
+impl KeyAuthority for VaultKeyAuthority {
+    fn wrap(&self, scope: &str, key: &[u8]) -> Result<WrappedKey> {
+        let s = self.lock()?;
+        if s.revoked.contains(scope) {
+            return Err(StorageError::Revoked(scope.into()));
+        }
+        let version = (s.keks.len() - 1) as u32;
+        let bytes = seal::seal(&s.keks[version as usize], &aad(scope, version), key)?;
+        Ok(WrappedKey {
+            version,
+            scope: scope.into(),
+            bytes,
+        })
+    }
+
+    fn unwrap(&self, w: &WrappedKey) -> Result<Vec<u8>> {
+        let s = self.lock()?;
+        if s.revoked.contains(&w.scope) {
+            return Err(StorageError::Revoked(w.scope.clone()));
+        }
+        let kek = s
+            .keks
+            .get(w.version as usize)
+            .ok_or(StorageError::Crypto("unknown kek version"))?;
+        seal::open(kek, &aad(&w.scope, w.version), &w.bytes)
+    }
+
+    fn rotate(&self) -> Result<u32> {
+        let mut s = self.lock()?;
+        let next: [u8; KEY_LEN] = seal::random()?;
+        let version = s.keks.len() as u32;
+        self.vault.set(&kek_name(version), &seal::hex(&next))?;
+        self.vault.set(KEK_CURRENT, &version.to_string())?;
+        s.keks.push(next);
+        Ok(version)
+    }
+
+    fn revoke(&self, scope: &str) -> Result<()> {
+        let mut s = self.lock()?;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.revoked_path)?;
+        file.write_all(format!("{scope}\n").as_bytes())?;
+        file.sync_all()?;
+        s.revoked.insert(scope.into());
+        Ok(())
+    }
+
+    fn health(&self) -> Result<()> {
+        drop(self.lock()?);
+        self.vault
+            .get(KEK_CURRENT)
+            .map(|_| ())
+            .ok_or_else(|| StorageError::AuthorityUnavailable("vault unreachable".into()))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -188,5 +355,38 @@ mod tests {
         assert!(matches!(a.unwrap(&w), Err(StorageError::Revoked(_))));
         let rt = WrappedKey::decode(&w.encode()).unwrap();
         assert_eq!(rt, w);
+    }
+
+    struct MapVault(Mutex<std::collections::HashMap<String, String>>);
+
+    impl KekVault for std::sync::Arc<MapVault> {
+        fn get(&self, name: &str) -> Option<String> {
+            self.0.lock().unwrap().get(name).cloned()
+        }
+        fn set(&self, name: &str, value: &str) -> std::io::Result<()> {
+            self.0.lock().unwrap().insert(name.into(), value.into());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn vault_authority_survives_reopen_rotation_and_revocation() {
+        let dir = tempfile::tempdir().unwrap();
+        let revoked = dir.path().join("revoked");
+        let vault = std::sync::Arc::new(MapVault(Mutex::new(Default::default())));
+        let a = VaultKeyAuthority::open(Box::new(vault.clone()), &revoked).unwrap();
+        let (k, w) = new_scope_key(&a, "conv").unwrap();
+        let id = a.id_key().unwrap().id(b"x");
+        assert_eq!(a.rotate().unwrap(), 1);
+        let (_, gone) = new_scope_key(&a, "gone").unwrap();
+        a.revoke("gone").unwrap();
+        drop(a);
+
+        let b = VaultKeyAuthority::open(Box::new(vault.clone()), &revoked).unwrap();
+        assert_eq!(b.unwrap(&w).unwrap(), k);
+        assert_eq!(b.wrap("conv", &k).unwrap().version, 1);
+        assert_eq!(b.id_key().unwrap().id(b"x"), id);
+        assert!(matches!(b.unwrap(&gone), Err(StorageError::Revoked(_))));
+        b.health().unwrap();
     }
 }
