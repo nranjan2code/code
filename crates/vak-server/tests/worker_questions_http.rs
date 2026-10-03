@@ -108,7 +108,9 @@ async fn a_worker_question_is_listed_answered_once_and_reaches_the_worker() {
     )
     .unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions-home"),
+    ));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     let provider = Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
@@ -247,7 +249,9 @@ async fn a_client_that_cannot_show_questions_ends_the_question_at_once() {
     )
     .unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions-home"),
+    ));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     let provider = Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),

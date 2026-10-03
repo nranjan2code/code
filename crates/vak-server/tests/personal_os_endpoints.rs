@@ -84,7 +84,7 @@ async fn spawn_server(config_toml: &str) -> Server {
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     // A REAL worker executable: the test harness itself cannot speak the
     // broker protocol.

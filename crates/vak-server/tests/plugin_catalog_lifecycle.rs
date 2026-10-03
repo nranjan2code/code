@@ -51,7 +51,9 @@ async fn catalog_package_installs_disabled_then_uses_existing_lifecycle() {
     .unwrap();
 
     let core = vak_core::Core::new_with_trust(workspace, true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions"),
+    ));
     let app = vak_server::router(core);
     let (status, source) = call(
         &app,

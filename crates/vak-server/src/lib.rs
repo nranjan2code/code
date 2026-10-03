@@ -89,13 +89,13 @@ mod web;
 pub(crate) mod test_support {
     /// A throwaway `AppState` rooted in a temp dir.
     ///
-    /// `set_sessions_home` is not optional: without it `sessions_home()`
+    /// `set_shared_scope` is not optional: without it `scope()`
     /// falls back to the developer's real data home, and `AppState::new`
     /// loads (and can seed) the gateway allowlist store there.
     pub(crate) fn state() -> crate::AppState {
         let dir = tempfile::tempdir().unwrap();
         let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         // The TempDir guard is deliberately leaked: these states outlive
         // the call and a removed directory would fail reads mid-test.
         std::mem::forget(dir);
@@ -513,7 +513,7 @@ mod eviction_tests {
 
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
 
         let mut ids = Vec::new();
@@ -7972,7 +7972,7 @@ mod active_transcript_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let sessions_home = dir.path().join("home");
-        core.set_sessions_home(sessions_home.clone());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(sessions_home.clone()));
         let state = AppState::new(core.clone());
         let id = "active-transcript";
         let path = sessions_home
@@ -13699,7 +13699,9 @@ async fn dispatch_candidate_revision(
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
         }
     };
-    child_core.set_sessions_home(state.core.shared_scope().into_root());
+    child_core.set_shared_scope(vak_config::scope::SharedScope::new(
+        state.core.shared_scope().into_root(),
+    ));
     child_core.set_tool_worker_exe(parent.core.tool_worker_exe());
     child_core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
     child_core.set_route(
@@ -18754,7 +18756,9 @@ async fn spawn_isolated_run(
     // The shared root: the child resolves its own Agent's home beneath it,
     // as every Core does. Seeding it with this Core's (already Agent-scoped)
     // home nested one Agent's home inside another's.
-    child_core.set_sessions_home(state.core.shared_scope().into_root());
+    child_core.set_shared_scope(vak_config::scope::SharedScope::new(
+        state.core.shared_scope().into_root(),
+    ));
     if let Some(pin) = model_pin.map(str::trim).filter(|p| !p.is_empty()) {
         let (pin_provider, pin_model) = split_model_pin(pin, &child_core.effective_provider());
         child_core.set_route(pin_provider, pin_model);
@@ -22457,7 +22461,7 @@ mod configuration_control_tests {
     fn control_state(dir: &std::path::Path) -> AppState {
         vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.to_path_buf()).unwrap();
-        core.set_sessions_home(dir.join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.join("home")));
         AppState::new(core)
     }
 
@@ -22514,7 +22518,7 @@ mod configuration_control_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         let session = core.start_session().await.unwrap();
         let id = session.header().unwrap().session_id.clone();
@@ -22563,7 +22567,7 @@ mod configuration_control_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         let session = core.start_session().await.unwrap();
         let id = session.header().unwrap().session_id.clone();
@@ -22605,7 +22609,7 @@ mod configuration_control_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         let session = core.start_session().await.unwrap();
         let id = session.header().unwrap().session_id.clone();
@@ -22709,7 +22713,7 @@ mod configuration_control_tests {
     async fn a_stamped_answerability_loses_to_the_installed_approver() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
 
         // Default is "attended"; AutoDeny says otherwise.
         assert!(core.approver_answerable());
@@ -22885,7 +22889,7 @@ mod configuration_control_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         let session = core.start_session().await.unwrap();
         let id = session.header().unwrap().session_id.clone();
@@ -22922,7 +22926,7 @@ mod configuration_control_tests {
     async fn cross_process_memory_refresh_takes_effect_without_restart() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert!(core.effective_memory_search_enabled(), "default is on");
 
         vak_config::persist_project_memory_prefs(dir.path(), Some(false), None, None, None)
@@ -22946,7 +22950,7 @@ mod configuration_control_tests {
     async fn patch_config_memory_flags_apply_live_and_persist() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
 
         let response = patch_config(
@@ -22971,7 +22975,7 @@ mod configuration_control_tests {
         // Persisted to disk, not just the in-process override — a fresh
         // Core over the same cwd sees it too.
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
-        fresh.set_sessions_home(dir.path().join("home"));
+        fresh.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert!(!fresh.effective_memory_write_enabled());
     }
 
@@ -22983,7 +22987,7 @@ mod configuration_control_tests {
     async fn patch_config_workers_applies_live_and_persists() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         assert!(core.effective_workers(), "default is on");
 
@@ -23002,7 +23006,7 @@ mod configuration_control_tests {
         );
 
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
-        fresh.set_sessions_home(dir.path().join("home"));
+        fresh.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert!(!fresh.effective_workers(), "must be persisted to disk too");
     }
 
@@ -23014,7 +23018,7 @@ mod configuration_control_tests {
     async fn patch_finops_sets_and_clears_caps_live_and_persisted() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         assert_eq!(core.effective_finops_max_run_usd(), None);
 
@@ -23032,7 +23036,7 @@ mod configuration_control_tests {
         assert_eq!(core.effective_finops_max_run_usd(), Some(5.0));
 
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
-        fresh.set_sessions_home(dir.path().join("home"));
+        fresh.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert_eq!(
             fresh.effective_finops_max_run_usd(),
             Some(5.0),
@@ -23062,7 +23066,7 @@ mod configuration_control_tests {
     async fn patch_finops_rejects_negative_cap() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         let status = patch_finops(
             State(state),
@@ -23247,7 +23251,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let agent = dir.path().join(".vak/agents/helper/workspace");
         std::fs::create_dir_all(&agent).unwrap();
         std::fs::write(agent.join("counter.html"), "<p>made by the agent</p>").unwrap();
@@ -23307,7 +23311,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let log = seed_bound_result(&core, "session-1", "exec-1");
         let scratch = dir.path().join(".vak/scratch/vak/exec-1");
         std::fs::create_dir_all(&scratch).unwrap();
@@ -23478,7 +23482,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let workbook = dir.path().join("budget.xlsx");
         tokio::fs::write(&workbook, vak_ooxml::fixtures::xlsx())
             .await
@@ -23770,7 +23774,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core);
         pin_test_tool_worker(&state.core);
         let tool = vak_tools::brokered_default_tools(state.core.tool_worker_exe())
@@ -23918,7 +23922,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core);
         pin_test_tool_worker(&state.core);
         let worker = state.core.tool_worker_exe();
@@ -24120,7 +24124,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core);
         pin_test_tool_worker(&state.core);
         let report = dir.path().join("report.pdf");
@@ -24331,7 +24335,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_session_at(&core, "canvas-session", dir.path());
         let state = AppState::new(core);
         pin_test_tool_worker(&state.core);
@@ -24475,7 +24479,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core);
         pin_test_tool_worker(&state.core);
         tokio::fs::write(dir.path().join("budget.xlsx"), vak_ooxml::fixtures::xlsx())
@@ -24578,7 +24582,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
         let scratch = dir.path().join(".vak/scratch/e1");
@@ -24650,7 +24654,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
         let scratch = dir.path().join(".vak/scratch/e1");
@@ -24680,7 +24684,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
         let scratch = dir.path().join(".vak/scratch/e1");
@@ -24708,7 +24712,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
         let scratch = dir.path().join(".vak/scratch/e1");
@@ -24768,7 +24772,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
         let scratch = dir.path().join(".vak/scratch/e1");
@@ -24959,7 +24963,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
         let scratch = dir.path().join(".vak/scratch/e1");
@@ -25040,7 +25044,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         core.set_permission_mode(vak_config::PermissionMode::FullAccess);
         core.set_route("revision-test".into(), "test-model".into());
         let worker = std::env::current_exe()
@@ -25170,7 +25174,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         core.set_route("revision-test".into(), "test-model".into());
         pin_test_tool_worker(&core);
         let version_one = vak_ooxml::fixtures::docx();
@@ -25293,7 +25297,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
         let path = core
@@ -25834,7 +25838,9 @@ mod sandbox_promotion_tests {
 
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            dir.path().to_path_buf(),
+        ));
         seed_bound_result(&core, "session-1", "execution-1");
         let state = AppState::new(core);
         let token = "participant-secret";
@@ -25972,7 +25978,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-message", "exec-message");
         let state = AppState::new(core.clone());
         let path = core
@@ -26068,7 +26074,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-approval", "exec-approval");
         let state = AppState::new(core.clone());
         let path = core
@@ -26287,7 +26293,7 @@ mod sandbox_promotion_tests {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
         let scratch = dir.path().join(".vak/scratch/e1");
@@ -26680,7 +26686,7 @@ mod scheduler_state_tests {
         let core = Core::new_with_trust(ws.to_path_buf(), true)
             .unwrap()
             .with_agent_identity(agent);
-        core.set_sessions_home(home.to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(home.to_path_buf()));
         core.set_provider_instance(Arc::new(Answers {
             capacity_key: capacity_key(),
         }));

@@ -71,7 +71,7 @@ async fn spawn_secured(
     .unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     // The real brokered-tool worker: under `cargo test`, `current_exe()` is
     // the test harness, which answers a preview launch with "0 tests" and
     // exits (as in gateway.rs and scheduler_personal_os.rs).
@@ -265,7 +265,7 @@ async fn sessions_list_attach_and_title_roundtrip() {
     let cwd = dir.path().to_path_buf();
     vak_config::paths::isolate_home_for_tests();
     let core_a = Core::new(cwd.clone()).unwrap();
-    core_a.set_sessions_home(cwd.join("home"));
+    core_a.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     std::mem::forget(dir);
 
     let mut log = core_a.start_session().await.unwrap();
@@ -292,7 +292,7 @@ async fn sessions_list_attach_and_title_roundtrip() {
     // A fresh server over the same store: lists the session, resumes it.
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(cwd.join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
@@ -345,7 +345,7 @@ async fn persisted_conversation_accepts_followup_and_streams_without_explicit_at
     let cwd = dir.path().to_path_buf();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(cwd.join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     let mut session = core.start_session().await.unwrap();
     let id = session.header().unwrap().session_id.clone();
     session
@@ -371,7 +371,7 @@ async fn persisted_conversation_accepts_followup_and_streams_without_explicit_at
     // A new process has no live handle. EventSources reconnect before the
     // browser sends a follow-up, so both streams and /run must recover it.
     let resumed = Core::new(cwd.clone()).unwrap();
-    resumed.set_sessions_home(cwd.join("home"));
+    resumed.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     resumed.set_provider_instance(Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("Follow-up answer")])),
@@ -429,7 +429,7 @@ async fn sessions_list_hides_abandoned_header_only_drafts() {
     let cwd = dir.path().to_path_buf();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(cwd.join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     let draft = core.start_session().await.unwrap();
     let draft_id = draft.header().unwrap().session_id.clone();
     drop(draft);
@@ -1446,7 +1446,7 @@ async fn archive_toggle_is_reflected_in_session_list() {
     let cwd = dir.path().to_path_buf();
     vak_config::paths::isolate_home_for_tests();
     let core_a = Core::new(cwd.clone()).unwrap();
-    core_a.set_sessions_home(cwd.join("home"));
+    core_a.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     std::mem::forget(dir);
 
     let mut log = core_a.start_session().await.unwrap();
@@ -1464,7 +1464,7 @@ async fn archive_toggle_is_reflected_in_session_list() {
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(cwd.join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
@@ -1565,7 +1565,7 @@ async fn delete_all_archived_never_touches_a_different_workspaces_session() {
     async fn make_archived_session(cwd: &std::path::Path, home: &std::path::Path) -> String {
         vak_config::paths::isolate_home_for_tests();
         let core = Core::new(cwd.to_path_buf()).unwrap();
-        core.set_sessions_home(home.to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(home.to_path_buf()));
         let mut log = core.start_session().await.unwrap();
         let id = log.header().unwrap().session_id.clone();
         log.append_message(vak_session::MessageRecord {
@@ -1603,7 +1603,7 @@ async fn delete_all_archived_never_touches_a_different_workspaces_session() {
     // A server bound to workspace B only.
     vak_config::paths::isolate_home_for_tests();
     let core_b = Core::new(cwd_b.clone()).unwrap();
-    core_b.set_sessions_home(home.clone());
+    core_b.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core_b);
@@ -1654,7 +1654,7 @@ async fn skills_listing_and_pascalcase_mode() {
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(cwd.join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
@@ -1724,7 +1724,7 @@ async fn providers_listing_and_key_storage_roundtrip() {
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(cwd.join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     // Hermetic secret store: never touch the developer's real ~/.vak.
     let user_env = cwd.join("user-home/.vak/.env");
     core.set_user_env_path(user_env.clone());
@@ -2078,7 +2078,7 @@ async fn bot_token_storage_roundtrip() {
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(cwd.join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     // Hermetic secret store: never touch the developer's real home.
     let user_env = cwd.join("user-home/.vak/.env");
     std::fs::create_dir_all(user_env.parent().unwrap()).unwrap();

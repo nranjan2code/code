@@ -79,7 +79,7 @@ async fn spawn_gateway(allow_key: &str, reply: &str) -> String {
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_provider_instance(Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text(reply)])),

@@ -87,7 +87,7 @@ async fn search_endpoint_returns_ranked_hits() {
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_provider_instance(Arc::new(Empty {
         capacity_key: crate::support::CapacityKey::default(),
     }));

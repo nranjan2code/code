@@ -152,7 +152,7 @@ async fn spawn_full(
     let dispatches = Arc::new(AtomicUsize::new(0));
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     // A REAL worker executable: a cargo test harness cannot speak the
     // broker protocol.
@@ -455,7 +455,7 @@ async fn missing_worker_delivers_typed_error_not_silence() {
     let home = dir.path().join("home");
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_provider_instance(Arc::new(Counting {
         capacity_key: crate::support::CapacityKey::default(),
         dispatches: Arc::new(AtomicUsize::new(0)),

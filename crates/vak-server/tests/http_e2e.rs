@@ -162,7 +162,7 @@ async fn spawn_server(
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(mode);
     core.set_tool_worker_exe(std::path::PathBuf::from(env!(
         "CARGO_BIN_EXE_vak-tool-worker"
@@ -353,7 +353,7 @@ async fn secured_operations_center_uses_the_bound_port() {
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -422,7 +422,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     let sessions_home = dir.path().join("home");
-    core.set_sessions_home(sessions_home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(sessions_home.clone()));
     let account_audit_home = core.scope().into_root();
     let agent_workspace = core.cwd().to_path_buf();
     let mut paused_agent = vak_server::agents::find_template("writer")
@@ -1161,7 +1161,7 @@ async fn mail_calendar_native_oauth_start_is_owner_authenticated_and_uses_native
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     std::mem::forget(dir);
 
     vak_config::set_override("VAK_GOOGLE_OAUTH_CLIENT_ID", "google-desktop-client");
@@ -1354,7 +1354,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     let agent_id = format!("mail-drafts-{}", uuid::Uuid::now_v7());
     let agent = vak_server::agents::find_template("writer")
         .unwrap()

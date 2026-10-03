@@ -207,7 +207,9 @@ pub(crate) fn pinned_core_for_workspace(
         // future custom data-home setting). Every agent's data must live
         // under the *same* root, just in its own agent-scoped subdirectory
         // (`Core::sessions_home` already layers that on top).
-        resolved.set_sessions_home(active.shared_scope().into_root());
+        resolved.set_shared_scope(vak_config::scope::SharedScope::new(
+            active.shared_scope().into_root(),
+        ));
         if let Some(provider) = active.provider_instance_override() {
             resolved.set_provider_instance(provider);
         }

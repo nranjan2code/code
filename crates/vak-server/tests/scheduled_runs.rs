@@ -238,7 +238,7 @@ fn space(
 async fn serve(ws: &Path, home: &Path) -> Server {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(ws.to_path_buf(), true).unwrap();
-    core.set_sessions_home(home.to_path_buf());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.to_path_buf()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     let dispatches = Arc::new(AtomicUsize::new(0));
@@ -293,7 +293,7 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     let (_dir, ws, home) = space(true, |_| serde_json::json!([]));
     vak_config::paths::set_home_override(&home);
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
 
@@ -467,7 +467,7 @@ async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run
     });
     vak_config::paths::set_home_override(&home);
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     let calls = Arc::new(AtomicUsize::new(0));

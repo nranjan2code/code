@@ -39,7 +39,7 @@ async fn bus_credentials_never_written_to_a_file() {
     let (ws, home) = (dir.path().join("ws"), dir.path().join("home"));
     std::fs::create_dir_all(&ws).unwrap();
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = vak_server::router(core.clone());

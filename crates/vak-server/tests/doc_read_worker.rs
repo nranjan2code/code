@@ -149,7 +149,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
     .unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = vak_core::Core::new_with_trust(workspace.clone(), true).unwrap();
-    core.set_sessions_home(home);
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home));
     let worker = PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker"));
     core.set_tool_worker_exe(worker.clone());
     let tools = vak_tools::brokered_default_tools(worker);

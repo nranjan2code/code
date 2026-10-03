@@ -120,7 +120,9 @@ async fn setup() -> (Router, Arc<Hung>, tempfile::TempDir) {
     )
     .unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions-home"),
+    ));
     let provider = Arc::new(Hung::default());
     core.set_provider_instance(provider.clone());
     let app = vak_server::router(core);

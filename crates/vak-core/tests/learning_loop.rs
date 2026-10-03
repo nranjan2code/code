@@ -82,7 +82,7 @@ async fn remember_propose_recall_promote_loop() {
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
     core.set_provider_instance(Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),

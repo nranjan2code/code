@@ -120,7 +120,7 @@ async fn editing_an_agent_changes_the_next_turn_of_its_open_conversation() {
     let core = Core::new_with_trust(cwd.clone(), true)
         .unwrap()
         .with_agent_identity(Some(identity("Audit carefully", 1)));
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_provider_instance(provider.clone());
 
     let session = core.start_session().await.unwrap();
@@ -206,7 +206,7 @@ async fn a_paused_agent_refuses_its_next_turn_and_resumes_when_active() {
     let core = Core::new_with_trust(workspace.clone(), true)
         .unwrap()
         .with_agent_identity(Some(identity("Audit carefully", 3)));
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_provider_instance(provider.clone());
 
     let session = core.start_session().await.unwrap();

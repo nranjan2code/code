@@ -77,7 +77,7 @@ fn core_in(dir: &tempfile::TempDir, project_config: &str) -> vak_core::Core {
     std::fs::write(project.join("config.toml"), project_config).unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core
 }
 

@@ -1817,12 +1817,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().to_path_buf();
         let core = vak_core::Core::new(cwd).unwrap();
-        // Without this, `sessions_home()` falls back to the developer's
+        // Without this, `scope()` falls back to the developer's
         // real $XDG_DATA_HOME/vak — any test that persists something
         // (gateway bindings, the allowlist store) would leak state across
         // test runs and across the machine. Every other test module in
         // this crate isolates it the same way.
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         AppState::new(core)
     }
 

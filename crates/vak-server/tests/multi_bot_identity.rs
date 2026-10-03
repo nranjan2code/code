@@ -83,7 +83,7 @@ async fn spawn_gateway(allowlist: &[&str]) -> String {
     let _ = std::fs::write(cwd.join(".vak/config.toml"), &config);
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_provider_instance(Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("hello")])),

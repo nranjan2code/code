@@ -106,7 +106,7 @@ async fn spawn_full_seeded(
     let reply = Arc::new(Mutex::new(reply_text.to_string()));
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     core.set_provider_instance(Arc::new(Scripted {

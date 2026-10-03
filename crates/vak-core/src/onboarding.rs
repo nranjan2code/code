@@ -672,7 +672,7 @@ mod tests {
     fn core_in(dir: &Path) -> Core {
         crate::isolate_global_config();
         let core = Core::new(dir.to_path_buf()).unwrap();
-        core.set_sessions_home(dir.join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.join("home")));
         core
     }
 
@@ -719,7 +719,7 @@ mod tests {
         std::fs::write(dir.path().join(".vak/config.toml"), "").unwrap();
         crate::isolate_global_config();
         let core = Core::new_with_trust(dir.path().to_path_buf(), false).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = derive(&core, &ProbedFacts::default());
         assert!(state.trust.is_satisfied());
         assert!(

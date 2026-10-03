@@ -16,7 +16,7 @@ async fn spawn() -> (SocketAddr, String) {
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     // Outlives the test body; a removed directory would fail reads midway.
     std::mem::forget(dir);
 

@@ -58,7 +58,7 @@ async fn checkpoint_label_has_no_prompt() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     let home = dir.path().join("home");
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_provider_instance(Arc::new(Echo {
         capacity_key: crate::support::CapacityKey::default(),
     }));

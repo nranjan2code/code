@@ -905,7 +905,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(home.path().to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            home.path().to_path_buf(),
+        ));
 
         let report = collect(&core, None);
 
@@ -977,7 +979,9 @@ mod tests {
         let workspace = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
         let core = Core::new(workspace.path().to_path_buf()).unwrap();
-        core.set_sessions_home(home.path().to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            home.path().to_path_buf(),
+        ));
         let mut voice = core.effective_voice();
         voice.enabled = false;
         core.apply_persisted_voice(voice);
@@ -1070,7 +1074,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(home.path().to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            home.path().to_path_buf(),
+        ));
 
         let header = SessionHeader {
             space: None,
@@ -1139,7 +1145,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(home.path().to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            home.path().to_path_buf(),
+        ));
 
         let agent1 = home.path().join("agents").join("researcher");
         let agent2 = home.path().join("agents").join("writer");

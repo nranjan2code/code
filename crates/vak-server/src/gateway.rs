@@ -792,7 +792,9 @@ impl GatewayState {
             policy,
             std::time::Instant::now(),
         )?;
-        resolved.set_sessions_home(default_core.shared_scope().into_root());
+        resolved.set_shared_scope(vak_config::scope::SharedScope::new(
+            default_core.shared_scope().into_root(),
+        ));
         if let Some(provider) = default_core.provider_instance_override() {
             resolved.set_provider_instance(provider);
         }
@@ -4428,7 +4430,7 @@ mod tests {
     fn legacy_session_map_loads_as_versioned_binding_records() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let path = bindings_path(&core.shared_scope().into_root());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"telegram:42":"old-session"}"#).unwrap();
@@ -4444,7 +4446,7 @@ mod tests {
     async fn route_change_rotates_binding_without_rewriting_old_session() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         let old = core
             .start_session_with_route("provider-a".into(), "model-a".into())
@@ -4489,7 +4491,7 @@ mod tests {
     async fn agent_change_rotates_binding_without_rewriting_old_session() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
         let old = core
             .start_session_with_route("provider-a".into(), "model-a".into())
@@ -4552,7 +4554,7 @@ mod tests {
     async fn identity_block_is_the_persona_with_voice_config_as_fallback() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
 
         state.gateway.bot_upsert(
@@ -4644,7 +4646,7 @@ mod tests {
     async fn prompt_layer_change_preserves_binding_without_forced_rotation() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let session = core
             .start_session_with_route(core.effective_provider(), core.effective_model())
             .await
@@ -4691,7 +4693,7 @@ mod tests {
     async fn capability_snapshot_change_preserves_binding() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let current = core
             .start_session_with_route("provider-a".into(), "model-a".into())
             .await
@@ -4734,7 +4736,7 @@ mod tests {
         std::fs::create_dir_all(cwd.join(".vak")).unwrap();
         std::fs::write(cwd.join(".vak/config.toml"), toml).unwrap();
         let core = Core::new_with_trust(cwd.clone(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         (dir, core)
     }
 

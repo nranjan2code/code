@@ -176,7 +176,7 @@ mod tests {
     fn core_with_channels(entries: serde_json::Value) -> (tempfile::TempDir, Core) {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let path = health::allowlist_path(&core.shared_scope().into_root());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(

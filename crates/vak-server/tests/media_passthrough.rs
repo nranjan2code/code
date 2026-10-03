@@ -78,7 +78,7 @@ async fn gateway_inbound_carries_images_to_the_model() {
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_provider_instance(core_provider);
     std::mem::forget(dir);

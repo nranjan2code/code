@@ -11,7 +11,7 @@ async fn spawn() -> (SocketAddr, String) {
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     std::mem::forget(dir);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

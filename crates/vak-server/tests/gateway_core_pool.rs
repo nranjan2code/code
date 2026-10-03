@@ -67,7 +67,9 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
         "[memory]\nreflection = false\n[gateway]\nchat_allowlist_open = false\n",
     );
     let core = Core::new_with_trust(default_cwd.clone(), true).unwrap();
-    core.set_sessions_home(vak_home.path().join("default-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        vak_home.path().join("default-home"),
+    ));
     core.set_provider_instance(Arc::new(NoCred {
         capacity_key: crate::support::CapacityKey::default(),
     }));

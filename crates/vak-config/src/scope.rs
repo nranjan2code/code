@@ -11,9 +11,9 @@
 //! accessor only joins path components.
 //!
 //! - [`AgentScope`]: one Agent's private home, the value
-//!   `Core::sessions_home()` returns.
+//!   `Core::scope` resolves.
 //! - [`SharedScope`]: the data home shared by every Agent, the value
-//!   `Core::shared_data_home()` returns.
+//!   `Core::shared_scope` resolves.
 //! - [`WorkspaceScope`]: a workspace directory and its project layer
 //!   (`<workspace>/.vak/`).
 
@@ -42,7 +42,7 @@ pub struct AgentScope {
 
 impl AgentScope {
     /// The scope rooted at an Agent home already resolved by the caller
-    /// (`Core::sessions_home()`, `paths::agent_home`).
+    /// (`Core::scope`, `paths::agent_home`).
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }
     }

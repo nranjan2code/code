@@ -640,7 +640,9 @@ mod tests {
         /// the gateway's pool builds for a channel.
         fn core(&self) -> Core {
             let core = Core::new(self.dir.path().to_path_buf()).unwrap();
-            core.set_sessions_home(self.dir.path().join("home"));
+            core.set_shared_scope(vak_config::scope::SharedScope::new(
+                self.dir.path().join("home"),
+            ));
             core
         }
     }

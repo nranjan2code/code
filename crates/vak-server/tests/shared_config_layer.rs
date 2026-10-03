@@ -76,7 +76,9 @@ async fn a_global_write_on_the_default_workspace_is_not_its_own_shadow() {
     vak_core::trust::record(&workspace).unwrap();
 
     let core = Core::new_with_trust(workspace.clone(), true).unwrap();
-    core.set_sessions_home(workspace.join(".sessions"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        workspace.join(".sessions"),
+    ));
     assert_eq!(
         vak_config::project_path(core.cwd()),
         global,
@@ -114,7 +116,7 @@ async fn a_global_write_under_a_project_pin_persists_without_taking_effect() {
     .unwrap();
     vak_core::trust::record(dir.path()).unwrap();
     let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     assert_eq!(
         core.effective_permission_mode(),
         vak_config::PermissionMode::ReadOnly
@@ -192,7 +194,7 @@ async fn removing_retired_plugins_prunes_the_layer_of_each_scope() {
     std::fs::write(&project, grants).unwrap();
     vak_core::trust::record(dir.path()).unwrap();
     let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     let app = vak_server::router(core);
 
     let response = app
@@ -240,7 +242,7 @@ async fn route_backups_write_one_layer_and_apply_live() {
     .unwrap();
     vak_core::trust::record(dir.path()).unwrap();
     let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     let app = vak_server::router(core.clone());
 
     let (status, _) = patch_global(

@@ -74,7 +74,7 @@ async fn mcp_servers_get_put_roundtrip_and_persist() {
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).expect("core");
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_provider_instance(Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("ok")])),
@@ -181,7 +181,7 @@ async fn put_mcp_and_patch_config_at_the_same_moment_both_land() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).expect("core");
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     let app = vak_server::router(core);
     let send = |method: &'static str, uri: &'static str, body: serde_json::Value| {
         let request = Request::builder()

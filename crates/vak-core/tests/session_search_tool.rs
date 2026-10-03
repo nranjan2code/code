@@ -142,7 +142,7 @@ async fn session_search_tool_is_available_and_logged() {
     // Live run: the scripted model reaches for memory, then answers.
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_provider_instance(Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),

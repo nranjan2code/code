@@ -96,7 +96,7 @@ async fn spawn_gateway(
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     // Gateway turns run unattended with AutoDeny; give the fixture bash
     // execution so scripted tool flows behave like an interactive session.
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
@@ -136,7 +136,7 @@ async fn spawn_gateway_bare(
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_provider_instance(provider);
     std::mem::forget(dir);
@@ -155,7 +155,7 @@ async fn spawn_plain(provider: Arc<dyn Provider>) -> (String, tokio::task::JoinH
     let cwd = dir.path().to_path_buf();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_provider_instance(provider);
     std::mem::forget(dir);
 
@@ -436,7 +436,7 @@ async fn bindings_survive_process_restart() {
 
     vak_config::paths::isolate_home_for_tests();
     let core2 = Core::new(cwd.clone()).unwrap();
-    core2.set_sessions_home(cwd.join("home"));
+    core2.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
     core2.set_provider_instance(Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("reborn")])),
@@ -726,7 +726,7 @@ async fn empty_chat_allowlist_denies_by_default() {
     );
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_provider_instance(provider);
     std::mem::forget(dir);

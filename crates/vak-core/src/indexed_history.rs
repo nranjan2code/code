@@ -363,7 +363,7 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, Core, String, String) {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let session_id = uuid::Uuid::now_v7().to_string();
         let header = SessionHeader {
             space: None,

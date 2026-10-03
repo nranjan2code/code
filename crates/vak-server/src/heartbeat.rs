@@ -178,7 +178,9 @@ async fn run_heartbeat_turn(
         })
         .map_err(|e| format!("heartbeat core failed: {e}"))?;
     core.set_provider_instance(provider);
-    core.set_sessions_home(state.core.shared_scope().into_root());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        state.core.shared_scope().into_root(),
+    ));
     if let Some(pin) = cfg
         .model
         .as_deref()

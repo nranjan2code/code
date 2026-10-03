@@ -9,7 +9,9 @@ async fn spawn() -> (SocketAddr, String) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path()).unwrap();
     let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-    core.set_sessions_home(dir.path().join("sessions"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        dir.path().join("sessions"),
+    ));
     std::mem::forget(dir);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

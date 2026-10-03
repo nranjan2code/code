@@ -40,7 +40,9 @@ async fn search_reads_the_resolved_agents_own_memory() {
     let cwd = temp.path().join("workspace");
     std::fs::create_dir_all(&cwd).unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions-home"),
+    ));
     let app = vak_server::router(core);
 
     let (status, body) = call(

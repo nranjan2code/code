@@ -77,7 +77,9 @@ async fn explicit_new_agent_conversation_gets_a_distinct_durable_identity() {
     let cwd = temp.path().join("workspace");
     std::fs::create_dir_all(&cwd).unwrap();
     let core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions-home"),
+    ));
     let app = vak_server::router(core.clone());
     let (status, existing) = call(&app, "POST", "/agents/vak/open", json!({})).await;
     assert_eq!(status, StatusCode::OK);
@@ -120,7 +122,7 @@ async fn agent_open_skips_a_corrupt_sibling_ledger() {
     std::fs::create_dir_all(&cwd).unwrap();
     let core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
     let sessions_home = temp.path().join("sessions-home");
-    core.set_sessions_home(sessions_home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(sessions_home.clone()));
     let app = vak_server::router(core.clone());
 
     let dir = SessionPath::sessions_dir(&sessions_home, &cwd);
@@ -182,7 +184,9 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     )
     .unwrap();
     let core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions-home"),
+    ));
     let capture = Arc::new(Capture::default());
     core.set_provider_instance(capture.clone());
     let app = vak_server::router(core.clone());
@@ -207,7 +211,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     // Newsy, a user-created agent, is resolved through a freshly-constructed
     // Core rooted at its own workspace (see agent_chats::open), but that
     // Core is repointed at the same sessions/data-home root the test's Vak
-    // Core already uses (`set_sessions_home` above), just under its own
+    // Core already uses (`set_shared_scope` above), just under its own
     // agent-scoped subdirectory — every agent's data lives under one root.
     let newsy_home = vak_config::paths::agent_home_at(&core.shared_scope().into_root(), "newsy");
     let newsy_cwd = vak_config::paths::agent_workspace(&cwd, "newsy");
@@ -368,7 +372,9 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     let other_dir = temp.path().join("other-workspace");
     std::fs::create_dir_all(&other_dir).unwrap();
     let other_core = vak_core::Core::new_with_trust(other_dir, true).unwrap();
-    other_core.set_sessions_home(core.shared_scope().into_root());
+    other_core.set_shared_scope(vak_config::scope::SharedScope::new(
+        core.shared_scope().into_root(),
+    ));
     other_core.set_provider_instance(capture);
     let other_app = vak_server::router(other_core);
     call(
@@ -384,7 +390,9 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     // Concurrent process simulation: a second server instance sharing the same workspace
     // and sessions home (e.g. gateway service when desktop application holds the writer lock).
     let concurrent_core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
-    concurrent_core.set_sessions_home(core.shared_scope().into_root());
+    concurrent_core.set_shared_scope(vak_config::scope::SharedScope::new(
+        core.shared_scope().into_root(),
+    ));
     concurrent_core.set_provider_instance(Arc::new(Capture::default()));
     let concurrent_app = vak_server::router(concurrent_core);
 
@@ -425,7 +433,9 @@ async fn memory_and_proposals_are_scoped_per_agent() {
     let cwd = temp.path().join("workspace");
     std::fs::create_dir_all(&cwd).unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions-home"),
+    ));
     let app = vak_server::router(core);
     assert_eq!(
         call(
@@ -502,7 +512,9 @@ async fn two_agent_app() -> (Router, vak_core::Core, tempfile::TempDir) {
     let cwd = temp.path().join("workspace");
     std::fs::create_dir_all(&cwd).unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions-home"),
+    ));
     let app = vak_server::router(core.clone());
     assert_eq!(
         call(
@@ -929,7 +941,9 @@ async fn browser_fixture() {
     )
     .unwrap();
     let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(temp.path().join("sessions"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(
+        temp.path().join("sessions"),
+    ));
     core.set_provider_instance(Arc::new(Capture::default()));
     let app = vak_server::router(core);
     call(

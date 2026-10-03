@@ -811,7 +811,9 @@ mod continuation_receipt_tests {
     async fn only_capped_same_thread_unchanged_saved_file_can_carry_forward() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("sessions"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            dir.path().join("sessions"),
+        ));
         let mut session = core.start_session().await.unwrap();
         let file = dir.path().join("report.csv");
         std::fs::write(&file, "value\n60\n").unwrap();
@@ -2681,8 +2683,8 @@ impl Core {
         let sessions_home = scope.root();
         let day_budget = finops::shared_day_budget(sessions_home);
         let gate = Arc::new(finops::CoreSpendGate::with_shared_day_budget(
-            // `self.sessions_home()`, not the raw `inner.sessions_home`
-            // field — the latter ignores `set_sessions_home` (the SDK
+            // `self.scope().into_root()`, not the raw `inner.sessions_home`
+            // field — the latter ignores `set_shared_scope` (the SDK
             // seam tests/embedded runtimes use to relocate storage), so
             // the ledger would silently keep writing to the original
             // location. The reflection call site already got this right;
@@ -3226,9 +3228,10 @@ impl Core {
         Ok(())
     }
 
-    /// SDK seam: relocate session storage (tests, embedded runtimes).
-    pub fn set_sessions_home(&self, path: PathBuf) {
-        Self::write_override(&self.inner.sessions_home_override, Some(path));
+    /// SDK seam: relocate the data home every Agent home sits under (tests,
+    /// embedded runtimes).
+    pub fn set_shared_scope(&self, shared: vak_config::scope::SharedScope) {
+        Self::write_override(&self.inner.sessions_home_override, Some(shared.into_root()));
     }
 
     /// Redirects the user-level secret store (tests, portable installs).
@@ -3261,7 +3264,8 @@ impl Core {
         }
     }
 
-    pub fn sessions_home(&self) -> PathBuf {
+    /// This Core's Agent home. Private: callers go through [`Core::scope`].
+    fn agent_root(&self) -> PathBuf {
         let base = Self::read_override(&self.inner.sessions_home_override)
             .unwrap_or_else(|| self.inner.sessions_home.clone());
         if let Some(agent) = self.agent_identity.as_ref() {
@@ -3272,21 +3276,22 @@ impl Core {
         base
     }
 
-    /// Root shared data home across all agents (gateway allowlist, scheduler tasks, FinOps ledger).
-    pub fn shared_data_home(&self) -> PathBuf {
+    /// The data home shared by every Agent. Private: callers go through
+    /// [`Core::shared_scope`].
+    fn shared_root(&self) -> PathBuf {
         Self::read_override(&self.inner.sessions_home_override)
             .unwrap_or_else(|| self.inner.sessions_home.clone())
     }
 
-    /// The typed scope over this Core's Agent home, resolved exactly as
-    /// [`Core::sessions_home`] is.
+    /// The typed scope over this Core's Agent home: under the shared data
+    /// home, in its Agent's directory when the Core has a named Agent.
     pub fn scope(&self) -> vak_config::scope::AgentScope {
-        vak_config::scope::AgentScope::new(self.sessions_home())
+        vak_config::scope::AgentScope::new(self.agent_root())
     }
 
     /// The typed scope over the data home shared by every Agent.
     pub fn shared_scope(&self) -> vak_config::scope::SharedScope {
-        vak_config::scope::SharedScope::new(self.shared_data_home())
+        vak_config::scope::SharedScope::new(self.shared_root())
     }
 
     /// The typed scope over this Core's workspace and its project layer.
@@ -3300,7 +3305,7 @@ impl Core {
     pub fn cache_home(&self) -> PathBuf {
         // Overridden homes are self-contained sandboxes, so the cache
         // lives inside them. Resolved from the cloned override rather
-        // than by calling `sessions_home()` under the guard, which
+        // than by calling `agent_root()` under the guard, which
         // re-locked the same non-reentrant mutex and hung the thread.
         match Self::read_override(&self.inner.sessions_home_override) {
             Some(home) => home.join("cache"),
@@ -8449,7 +8454,7 @@ mod capability_contract_tests {
         )
         .unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let session = core
             .start_session_with_route("ollama".into(), "test-model".into())
             .await
@@ -8688,7 +8693,7 @@ mod channel_mcp_network_tests {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&cwd).unwrap();
         let core = Core::new_with_trust(cwd.clone(), true).unwrap();
-        core.set_sessions_home(home.clone());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
         for kind in ["invariant", "procedural"] {
             crate::memory::append_note(
                 core.scope().root(),
@@ -10042,7 +10047,7 @@ mod plugin_runtime_tests {
         )
         .unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let store = vak_plugin::PluginStore::new(dir.path().join(".vak"));
         store
             .install_local(package.as_path(), vak_plugin::InstallOptions::default())
@@ -10084,7 +10089,7 @@ mod plugin_runtime_tests {
         .unwrap();
         isolate_global_config();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let store = vak_plugin::PluginStore::new(dir.path().join(".vak"));
         store
             .install_local(package.as_path(), vak_plugin::InstallOptions::default())
@@ -10461,7 +10466,7 @@ mod capability_reach_tests {
         let core = Core::new_with_trust(dir.path().to_path_buf(), true)
             .unwrap()
             .with_approver_answerable(answerable);
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         core
     }
 
@@ -10769,7 +10774,7 @@ mod capability_reach_tests {
 
 /// Every `Core` accessor must terminate while session-scoped overrides are
 /// set. `cache_home` once locked `sessions_home_override` and then called
-/// `sessions_home()`, which locks the same non-reentrant mutex — the
+/// `agent_root()`, which locks the same non-reentrant mutex — the
 /// thread wedged forever. It surfaced only in tests, because production
 /// leaves the override unset and never entered the branch, and it made
 /// `cargo test --workspace` hang rather than fail.
@@ -10808,7 +10813,7 @@ mod override_deadlock {
     fn core_with_override() -> (tempfile::TempDir, Core) {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         (dir, core)
     }
 
@@ -10847,7 +10852,7 @@ mod override_deadlock {
             (
                 "sessions_home",
                 Box::new(|c: Arc<Core>| {
-                    c.sessions_home();
+                    c.scope().into_root();
                 }),
             ),
             (
@@ -10980,7 +10985,7 @@ mod route_control_tests {
     async fn explicit_session_route_does_not_mutate_the_shared_default() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let default = core.effective_route();
         let session = core
             .start_session_with_route("channel-provider".into(), "channel-model".into())
@@ -10996,7 +11001,7 @@ mod route_control_tests {
     async fn every_new_core_session_gets_local_conversation_admission() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let session = core.start_session().await.unwrap();
         let header = session.header().unwrap();
         let context = header
@@ -11035,14 +11040,14 @@ mod spend_gate_persistence_tests {
 
     fn core_with_run_cap(dir: &std::path::Path, cap: f64) -> Core {
         let core = Core::new(dir.join("cwd")).unwrap();
-        core.set_sessions_home(dir.join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.join("home")));
         core.apply_persisted_finops_caps(Some(Some(cap)), None);
         core
     }
 
     fn core_with_day_cap(cwd: &std::path::Path, data_home: &std::path::Path, cap: f64) -> Core {
         let core = Core::new(cwd.to_path_buf()).unwrap();
-        core.set_sessions_home(data_home.to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(data_home.to_path_buf()));
         core.apply_persisted_finops_caps(None, Some(Some(cap)));
         core
     }
@@ -11257,7 +11262,9 @@ mod spend_gate_persistence_tests {
         let dir = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
         let mut core = Core::new(dir.path().to_path_buf()).unwrap();
-        core.set_sessions_home(home.path().to_path_buf());
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            home.path().to_path_buf(),
+        ));
         core.set_user_env_path(home.path().join(".env"));
 
         vak_config::upsert_env_file(

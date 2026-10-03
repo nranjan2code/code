@@ -125,7 +125,7 @@ async fn an_mcp_server_starts_on_demand_and_its_catalog_reaches_the_next_turn() 
         .unwrap();
 
     let core = Core::new_with_trust(cwd, true).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     let mut mcp = vak_config::McpConfig::default();
     mcp.servers.insert(

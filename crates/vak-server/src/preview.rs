@@ -375,7 +375,7 @@ mod tests {
     fn state_in(dir: &std::path::Path) -> AppState {
         vak_config::paths::isolate_home_for_tests();
         let core = vak_core::Core::new(dir.to_path_buf()).unwrap();
-        core.set_sessions_home(dir.join("home"));
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.join("home")));
         AppState::new(core)
     }
 

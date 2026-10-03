@@ -52,7 +52,7 @@ async fn a_real_run_writes_only_declared_durable_state() {
 
     let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).expect("core");
     let sessions_home = home.join("state-registry-run");
-    core.set_sessions_home(sessions_home.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(sessions_home.clone()));
 
     // Real durable writes: a session ledger, and an audit entry.
     let _session = core.start_session().await.expect("session");
@@ -90,7 +90,7 @@ async fn agent_home_subpaths_are_declared() {
 
     let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).expect("core");
     let data = home.join("state-registry-agent-home");
-    core.set_sessions_home(data.clone());
+    core.set_shared_scope(vak_config::scope::SharedScope::new(data.clone()));
     let agent_home = core.scope().into_root();
     assert!(
         agent_home.starts_with(data.join("agents")),
