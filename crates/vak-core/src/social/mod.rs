@@ -118,3 +118,52 @@ pub fn presentations(id: &str) -> Option<[(&'static str, &'static str); 3]> {
         ("presentation/takeaway-board.json", files[2]),
     ])
 }
+
+/// Writes the built-in package for `id` into `dir`, exactly as it is installed.
+/// The one layout the seed, the install endpoint and the update check share.
+pub fn stage_package(id: &str, dir: &std::path::Path) -> std::io::Result<()> {
+    let Some((manifest, skill)) = package(id) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("no built-in social package {id}"),
+        ));
+    };
+    std::fs::create_dir_all(dir.join("skills"))?;
+    std::fs::write(dir.join("vak-plugin.json"), manifest)?;
+    std::fs::write(dir.join("skills/SKILL.md"), skill)?;
+    if let Some(files) = presentations(id) {
+        std::fs::create_dir_all(dir.join("presentation"))?;
+        for (relative, contents) in files {
+            std::fs::write(dir.join(relative), contents)?;
+        }
+    }
+    Ok(())
+}
+
+/// Digest of the built-in package for `id`, as the plugin store computes it,
+/// so a client can tell an installed copy from an older built-in one.
+pub fn package_digest(id: &str) -> Option<String> {
+    static DIGESTS: std::sync::OnceLock<std::collections::HashMap<&'static str, String>> =
+        std::sync::OnceLock::new();
+    DIGESTS
+        .get_or_init(|| {
+            CONNECTORS
+                .iter()
+                .filter_map(|connector| {
+                    let dir = std::env::temp_dir().join(format!(
+                        "vak-social-digest-{}-{}",
+                        connector.id,
+                        uuid::Uuid::now_v7()
+                    ));
+                    let digest = stage_package(connector.id, &dir)
+                        .ok()
+                        .and_then(|()| vak_plugin::inspect_package(&dir).ok())
+                        .map(|inspection| inspection.digest);
+                    let _ = std::fs::remove_dir_all(&dir);
+                    digest.map(|digest| (connector.id, digest))
+                })
+                .collect()
+        })
+        .get(id)
+        .cloned()
+}

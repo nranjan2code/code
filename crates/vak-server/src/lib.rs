@@ -10802,6 +10802,15 @@ async fn list_social_connectors(
             _ => "Install and enable the X add-on to use its owner-only search preview.",
         };
     }
+    let connectors = connectors
+        .iter()
+        .map(|connector| {
+            let mut value = serde_json::to_value(connector).unwrap_or_default();
+            value["guidance_digest"] =
+                serde_json::json!(vak_core::social::package_digest(connector.id));
+            value
+        })
+        .collect::<Vec<_>>();
     Json(serde_json::json!({
         "connectors": connectors,
         "notice": "YouTube, Reddit and X offer owner-only search previews. LinkedIn can link an owner-visible profile identity after native PKCE setup; LinkedIn content search remains unavailable."
@@ -11075,15 +11084,21 @@ struct SocialConnectorInstall {
     agent: Option<String>,
 }
 
+/// Installs a built-in social add-on, or stages its newer built-in version as
+/// a disabled update the owner reviews and re-enables (rollback stays open).
 async fn install_social_connector(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
     Json(request): Json<SocialConnectorInstall>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let Some((manifest, skill)) = vak_core::social::package(&id) else {
+    if let Err(status) = operator_only(&principal) {
+        return status.into_response();
+    }
+    if vak_core::social::package(&id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
-    };
+    }
     let core = scoped_core!(&state, None, request.agent.as_deref());
     let store = plugin_store(&core, request.scope);
     let staging = store
@@ -11091,49 +11106,21 @@ async fn install_social_connector(
         .join("social-staging")
         .join(uuid::Uuid::now_v7().to_string());
     let result = (|| -> Result<_, vak_plugin::PluginError> {
-        std::fs::create_dir_all(staging.join("skills")).map_err(|source| {
+        vak_core::social::stage_package(&id, &staging).map_err(|source| {
             vak_plugin::PluginError::Io {
                 path: staging.clone(),
                 source,
             }
         })?;
-        std::fs::write(staging.join("vak-plugin.json"), manifest).map_err(|source| {
-            vak_plugin::PluginError::Io {
-                path: staging.join("vak-plugin.json"),
-                source,
-            }
-        })?;
-        std::fs::write(staging.join("skills/SKILL.md"), skill).map_err(|source| {
-            vak_plugin::PluginError::Io {
-                path: staging.join("skills/SKILL.md"),
-                source,
-            }
-        })?;
-        if let Some(presentation_files) = vak_core::social::presentations(&id) {
-            let presentation_dir = staging.join("presentation");
-            std::fs::create_dir_all(&presentation_dir).map_err(|source| {
-                vak_plugin::PluginError::Io {
-                    path: presentation_dir.clone(),
-                    source,
-                }
-            })?;
-            for (relative, contents) in presentation_files {
-                let file_name = relative.rsplit('/').next().unwrap_or(relative);
-                std::fs::write(presentation_dir.join(file_name), contents).map_err(|source| {
-                    vak_plugin::PluginError::Io {
-                        path: presentation_dir.join(file_name),
-                        source,
-                    }
-                })?;
-            }
+        let options = InstallOptions {
+            scope: request.scope,
+            allow_unlicensed: false,
+        };
+        if store.list()?.iter().any(|plugin| plugin.name == id) {
+            store.update_local(&staging, options)
+        } else {
+            store.install_local(&staging, options)
         }
-        store.install_local(
-            &staging,
-            InstallOptions {
-                scope: request.scope,
-                allow_unlicensed: false,
-            },
-        )
     })();
     let _ = std::fs::remove_dir_all(&staging);
     plugin_result(result)

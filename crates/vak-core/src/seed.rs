@@ -346,30 +346,12 @@ fn seed_social_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let store = PluginStore::new(root);
     let staging = root.join(".social-seed-staging");
     let _ = std::fs::remove_dir_all(&staging);
-    for (name, manifest, skill) in SOCIAL_PLUGINS {
+    for (name, _, _) in SOCIAL_PLUGINS {
         let package = staging.join(name);
-        let skill_dir = package.join("skills");
-        std::fs::create_dir_all(&skill_dir)?;
-        std::fs::write(package.join("vak-plugin.json"), manifest)?;
-        std::fs::write(skill_dir.join("SKILL.md"), skill)?;
-        if let Some(presentation_files) = crate::social::presentations(name) {
-            let presentation_dir = package.join("presentation");
-            std::fs::create_dir_all(&presentation_dir)?;
-            for (relative, contents) in presentation_files {
-                let file_name = relative.rsplit('/').next().unwrap_or(relative);
-                std::fs::write(presentation_dir.join(file_name), contents)?;
-            }
-        }
-        if let Some(existing) = store
-            .list()?
-            .into_iter()
-            .find(|plugin| plugin.name == *name)
-        {
-            // Never reset an operator's enabled state or overwrite an edited
-            // package. A changed built-in package goes through normal review.
-            if existing.digest == digest_of_directory(&package)? {
-                continue;
-            }
+        crate::social::stage_package(name, &package)?;
+        // Never reset an operator's enabled state or replace an installed
+        // copy here: Settings offers a newer built-in as a reviewed update.
+        if store.list()?.iter().any(|plugin| plugin.name == *name) {
             continue;
         }
         let installed = store.install_local(

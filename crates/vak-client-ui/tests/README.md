@@ -36,6 +36,17 @@ browser at 1440 px wide: below 1100 px the layout switch is hidden by design.
 The pure rules are in `canvas-subject.mjs`, `canvas-stack.mjs` and
 `preview-isolation.mjs` (`node tests/<file>`).
 
+# Office presentation
+
+`office-presentation.html` mounts the real Office view with a synthetic
+two-slide PowerPoint projection. It checks the actual Canvas and presenter
+components without a provider call or an on-disk document: the first slide has
+an image and a chart with cached values, and the second has a table. In a web
+dev server, open `/app/tests/office-presentation.html` and run
+`window.runChecks()` in the browser console. It checks that presenter view
+keeps the image, populated chart and table, and that the slide frame stays
+16:9.
+
 # Daily mail and calendar Canvas
 
 Open `/app/tests/mail-calendar-daily.html?run` in the Vite web dev server. This

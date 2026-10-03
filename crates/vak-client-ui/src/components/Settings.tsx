@@ -852,15 +852,15 @@ export default function Settings() {
     } finally { setPluginBusy(false); }
   }
 
-  async function installSocialGuidance(id: string) {
+  async function installSocialGuidance(id: string, platform: string, installScope: "user" | "workspace" = capabilityScope(), update = false) {
     if (pluginBusy()) return;
     setPluginBusy(true);
     try {
-      await api.installSocialConnector(id, capabilityScope(), activeAgentId());
+      await api.installSocialConnector(id, installScope, activeAgentId());
       await refreshCapabilities();
-      setNotice({ kind: "info", text: `${id} installed disabled. Enable its guidance separately if you want it.` });
+      setNotice({ kind: "info", text: update ? `${platform} add-on updated. It is off until you review and turn it on again.` : `${platform} add-on installed. Turn it on when you are ready.` });
     } catch (error) {
-      setNotice({ kind: "error", text: `Could not install ${id}: ${error instanceof Error ? error.message : String(error)}` });
+      setNotice({ kind: "error", text: `Could not ${update ? "update" : "install"} the ${platform} add-on: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
       setPluginBusy(false);
     }
@@ -885,7 +885,7 @@ export default function Settings() {
     setPluginBusy(true);
     try {
       const result = await api.installSocialPresentations(id, activeAgentId());
-      setNotice({ kind: "info", text: `${result.registered} ${id.replace("social-", "")} layouts added as inactive previews. Choose which layout to activate in Presentation settings.` });
+      setNotice({ kind: "info", text: `${result.registered} ${socialConnectors().find((connector) => connector.id === id)?.platform ?? ""} layouts added, all off. Choose one to use in Settings, General, Presentation styles.` });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not add presentation layouts: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
@@ -2350,7 +2350,8 @@ export default function Settings() {
                     <Show when={connector.readiness === "blocked"}><p class="settings-hint">{connector.reason}</p></Show>
                     <ol class="social-steps">
                       <li><div class="social-step-title"><span class="social-step-num">1</span><strong>Add-on</strong></div>
-                        <div class="settings-actions"><Show when={plugin()} fallback={<button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id)}>Install</button>}><span class="settings-hint">{plugin()!.enabled ? "Enabled" : "Installed, disabled"}</span><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void toggleSocialGuidance(plugin()!)}>{plugin()!.enabled ? "Disable" : "Enable"}</button><button type="button" class="settings-button subtle" disabled={pluginBusy()} onClick={() => void installSocialPresentationPack(connector.id)}>Add layouts</button></Show></div></li>
+                        <div class="settings-actions"><Show when={plugin()} fallback={<button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id, connector.platform)}>Install</button>}><span class="settings-hint">{plugin()!.enabled ? "Enabled" : "Installed, disabled"}</span><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void toggleSocialGuidance(plugin()!)}>{plugin()!.enabled ? "Disable" : "Enable"}</button><button type="button" class="settings-button subtle" disabled={pluginBusy()} onClick={() => void installSocialPresentationPack(connector.id)}>Add layouts</button></Show></div>
+                        <Show when={plugin() && connector.guidance_digest && plugin()!.digest !== connector.guidance_digest}><p class="settings-hint">A newer version of this add-on is built in. Updating turns it off until you turn it on again, and you can roll back under Capabilities.</p><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id, connector.platform, plugin()!.scope, true)}>Update add-on</button></Show></li>
                       <Show when={isYoutube && plugin()?.enabled}><li><div class="social-step-title"><span class="social-step-num">2</span><strong>API key</strong><Show when={inherited()}><span class="social-badge">Using the Shared key</span></Show></div>
                         <p class="settings-hint">A Google Cloud YouTube Data API key, separate from your Google account. Each search uses your project's quota.</p>
                         <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer noopener">Create or manage a key</a>

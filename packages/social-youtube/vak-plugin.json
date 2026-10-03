@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "name": "social-youtube",
-  "version": "1.0.0",
-  "description": "Guidance for the owner-only YouTube Data API search preview; no agent-facing API tool is provided.",
+  "version": "1.1.0",
+  "description": "Owner-only YouTube search preview through the Data API, using your own API key; no agent access.",
   "license": "MIT",
   "homepage": "https://developers.google.com/youtube/v3",
   "components": {

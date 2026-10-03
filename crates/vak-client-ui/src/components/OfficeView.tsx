@@ -64,6 +64,8 @@ export default function OfficeView(props: {
   const [showPresentation, setShowPresentation] = createSignal(false);
   const [presentationIndex, setPresentationIndex] = createSignal(0);
   const [presentationUnits, setPresentationUnits] = createSignal<api.OfficeUnit[]>([]);
+  const [presentationMedia, setPresentationMedia] = createSignal<api.OfficeMediaPreview[]>([]);
+  const [presentationImageObjectIds, setPresentationImageObjectIds] = createSignal<Record<string, string>>({});
   const [presentationLoading, setPresentationLoading] = createSignal(false);
   const [presentationError, setPresentationError] = createSignal<string | null>(null);
   const [showNotes, setShowNotes] = createSignal(false);
@@ -264,6 +266,8 @@ export default function OfficeView(props: {
     setShowNotes(false);
     setPresentationError(null);
     setPresentationUnits([]);
+    setPresentationMedia([]);
+    setPresentationImageObjectIds({});
     setPresentationLoading(true);
     const generation = ++presentationRequest;
     // Mobile browsers often reject fullscreen for an element. The viewport
@@ -273,14 +277,20 @@ export default function OfficeView(props: {
     }
     try {
       const collected: api.OfficeUnit[] = [];
+      const media = new Map<string, api.OfficeMediaPreview>();
+      const imageObjectIds: Record<string, string> = {};
       let from: number | null = 0;
       while (from !== null) {
         const page: api.OfficeProjection = await api.readOfficeProjection(props.source, from);
         if (generation !== presentationRequest) return;
         collected.push(...page.units);
+        for (const preview of page.media ?? []) media.set(preview.object_id, preview);
+        Object.assign(imageObjectIds, page.image_object_ids ?? {});
         from = page.next;
       }
       setPresentationUnits(collected);
+      setPresentationMedia([...media.values()]);
+      setPresentationImageObjectIds(imageObjectIds);
     } catch (cause) {
       if (generation === presentationRequest) setPresentationError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -322,12 +332,15 @@ export default function OfficeView(props: {
             <main onClick={() => showSlide(presentationIndex() + 1)}>
               <Show when={presentationLoading()}><p role="status">Preparing slides…</p></Show>
               <Show when={presentationError()}>{(message) => <p role="alert">Could not prepare the presentation: {message()}</p>}</Show>
-              <Show when={slide()}>{(current) => <>
-                <Show when={current().title}><h1>{current().title}</h1></Show>
-                <For each={current().units.filter((unit) => unit.kind !== "slide" && unit.kind !== "notes" && !(unit.kind === "shape" && unit.text === current().title))}>
-                  {(unit) => <div class="office-presentation-shape"><For each={unit.text.split(PARAGRAPH_BREAK)}>{(paragraph) => <p><Redline text={paragraph} /></p>}</For></div>}
-                </For>
-              </>}</Show>
+              <Show when={slide()}>{(current) => <DeckUnits
+                outline={[]}
+                units={current().units.filter((unit) => unit.kind !== "notes")}
+                media={presentationMedia()}
+                imageObjectIds={presentationImageObjectIds()}
+                jump={() => undefined}
+                unitProps={() => ({})}
+                presenting
+              />}</Show>
             </main>
             <Show when={showNotes() && slide()?.units.some((unit) => unit.kind === "notes")}><aside class="office-presentation-notes"><For each={slide()?.units.filter((unit) => unit.kind === "notes")}>{(unit) => <p>{unit.text}</p>}</For></aside></Show>
             <footer><button type="button" disabled={presentationIndex() === 0} onClick={() => showSlide(presentationIndex() - 1)}>Previous</button><button type="button" disabled={presentationIndex() >= slides().length - 1} onClick={() => showSlide(presentationIndex() + 1)}>Next</button><button type="button" onClick={() => setShowNotes(!showNotes())}>{showNotes() ? "Hide notes" : "Show notes"}</button><span>Use ← and → to navigate · Esc to exit</span></footer>
@@ -647,7 +660,7 @@ function DocumentUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Of
 /** The reader's break between the paragraphs of one shape (vak_ooxml::read::PARAGRAPH_BREAK). */
 const PARAGRAPH_BREAK = " ¶ ";
 
-function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.OfficeUnit[]; media: api.OfficeMediaPreview[]; imageObjectIds: Record<string, string>; jump: (entry: api.OfficeOutlineEntry) => void; unitProps: UnitProps }) {
+function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.OfficeUnit[]; media: api.OfficeMediaPreview[]; imageObjectIds: Record<string, string>; jump: (entry: api.OfficeOutlineEntry) => void; unitProps: UnitProps; presenting?: boolean }) {
   const slides = createMemo(() => {
     const groups: { anchor: string; units: api.OfficeUnit[] }[] = [];
     for (const unit of props.units) {
@@ -668,7 +681,7 @@ function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Office
     });
   });
   return (
-    <div class="office-view-body">
+    <div classList={{ "office-view-body": true, "office-presentation-deck": props.presenting }}>
       <OutlineRail outline={props.outline} jump={props.jump} label="Slides" />
       <div class="office-units office-deck-canvas" role="list">
         <For each={slides()}>{(slide) => (
@@ -678,7 +691,7 @@ function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Office
               const positionLabel = positionedUnit.labels.find((label) => label.startsWith("chart position: ") || label.startsWith("table position: ") || label.startsWith("image position: ") || label.startsWith("shape position: "));
               const position = positionLabel?.replace(/^(chart|table|image|shape) position: /, "");
               const match = position?.match(/x ([\d.]+) in from left, y ([\d.]+) in from top(?:, width ([\d.]+) in, height ([\d.]+) in)?/);
-              const positionStyle = match ? { left: `${Number(match[1]) * 72}px`, top: `${Number(match[2]) * 72 + 36}px`, width: match[3] ? `${Number(match[3]) * 72}px` : undefined, minHeight: match[4] ? `${Number(match[4]) * 72}px` : undefined } : undefined;
+              const positionStyle = match ? { left: `${Number(match[1]) / 13.333 * 100}%`, top: `${(Number(match[2]) + 0.5) / 7.5 * 100}%`, width: match[3] ? `${Number(match[3]) / 13.333 * 100}%` : undefined, height: match[4] ? `${Number(match[4]) / 7.5 * 100}%` : undefined } : undefined;
               const content = block.kind === "chart" ? (
                 <OfficeChart anchor={block.anchor} rows={block.rows} placement={position} unitProps={props.unitProps} />
               ) : block.kind === "table" ? (

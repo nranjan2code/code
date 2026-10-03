@@ -6435,7 +6435,7 @@ code.ic[data-previewable="true"]:hover {
 .office-label-stale, .office-label-external { border-color: color-mix(in srgb, var(--yellow) 45%, var(--border-soft)); color: var(--text); }
 .office-label-sensitivity { border-color: var(--border-strong); color: var(--text); }
 .office-slide { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; padding: var(--space-2); border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); }
-.office-deck-canvas .office-slide { position: relative; display: block; width: 960px; min-height: 576px; overflow: auto; }
+.office-deck-canvas .office-slide { position: relative; display: block; flex: none; box-sizing: border-box; width: min(960px, 100%); aspect-ratio: 16 / 9; min-height: 0; padding: 0; overflow: hidden; }
 .office-slide-object { position: absolute; overflow: auto; }
 .office-slide-object > .office-unit, .office-slide-object > .office-unit-table, .office-slide-object > .office-chart, .office-slide-object > .office-image { box-sizing: border-box; width: 100%; height: 100%; min-height: 0; margin: 0; overflow: auto; }
 .office-slide-object > .office-image img { width: 100%; height: calc(100% - 38px); max-height: none; object-fit: contain; }
@@ -6444,7 +6444,10 @@ code.ic[data-previewable="true"]:hover {
 .office-presentation > header, .office-presentation > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; color: var(--text-soft); font-size: var(--fs-control); }
 .office-presentation button { border: 1px solid var(--border-strong); border-radius: 6px; padding: 8px 14px; background: var(--surface-raised); color: var(--text); font: inherit; }
 .office-presentation button:disabled { opacity: .45; }
-.office-presentation > main { width: min(94vw, calc(85dvh * 16 / 9)); aspect-ratio: 16 / 9; max-height: 100%; margin: auto; padding: clamp(24px, 5vw, 72px); overflow: auto; background: var(--surface); color: var(--text); box-shadow: 0 24px 80px color-mix(in srgb, var(--text) 25%, transparent); }
+.office-presentation > main { width: min(94vw, calc(85dvh * 16 / 9)); aspect-ratio: 16 / 9; max-height: 100%; margin: auto; padding: 0; overflow: hidden; background: var(--surface); color: var(--text); box-shadow: 0 24px 80px color-mix(in srgb, var(--text) 25%, transparent); }
+.office-presentation-deck.office-view-body { display: block; width: 100%; height: 100%; }
+.office-presentation-deck .office-units { height: 100%; overflow: hidden; padding: 0; }
+.office-presentation-deck .office-slide { width: 100%; height: 100%; margin: 0; }
 .office-presentation > main h1 { margin: 0 0 5vh; font-size: clamp(32px, 5vw, 64px); line-height: 1.08; }
 .office-presentation-shape { margin: 0 0 3vh; font-size: clamp(18px, 2.2vw, 30px); line-height: 1.35; }
 .office-presentation-shape p { margin: 0 0 1.2em; white-space: pre-wrap; }

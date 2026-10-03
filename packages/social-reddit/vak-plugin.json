@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "name": "social-reddit",
-  "version": "1.0.0",
-  "description": "Reddit Data API access, subject to eligibility, rate limits, and deleted-content requirements.",
+  "version": "1.1.0",
+  "description": "Owner-only Reddit search preview through the official Data API, using your own installed-app Client ID; no agent access.",
   "license": "MIT",
   "homepage": "https://redditinc.com/policies/data-api-terms",
   "components": {
