@@ -9938,10 +9938,10 @@ async fn restore_checkpoint(
         .unwrap_or_else(|| core.cwd().clone());
     // The blob store the manifest's hashes resolve against lives under
     // whichever home the manifest itself was found in.
-    let (cp, checkpoints_home) = match vak_core::checkpoints::load(&core.scope(), &id, seq) {
-        Ok(cp) => (cp, core.scope().into_root()),
+    let cp = match vak_core::checkpoints::load(&core.scope(), &id, seq) {
+        Ok(cp) => cp,
         Err(_) => match vak_core::checkpoints::load(&core.shared_scope().as_agent(), &id, seq) {
-            Ok(cp) => (cp, core.shared_scope().into_root()),
+            Ok(cp) => cp,
             Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
@@ -9951,12 +9951,18 @@ async fn restore_checkpoint(
             }
         },
     };
+    let objects = match core.objects() {
+        Ok(objects) => objects,
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({ "error": format!("object store unavailable: {error}") })),
+            )
+                .into_response();
+        }
+    };
     match tokio::task::spawn_blocking(move || {
-        vak_core::checkpoints::restore(
-            &cwd,
-            &vak_config::scope::AgentScope::new(&checkpoints_home),
-            &cp,
-        )
+        vak_core::checkpoints::restore(&cwd, objects.as_ref(), &cp)
     })
     .await
     {

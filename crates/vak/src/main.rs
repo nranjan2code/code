@@ -240,7 +240,12 @@ async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
         }
         CheckpointAction::Restore { session, seq } => {
             match vak_core::checkpoints::load(&core.scope(), &session, seq) {
-                Ok(cp) => match vak_core::checkpoints::restore(core.cwd(), &core.scope(), &cp) {
+                Ok(cp) => match core
+                    .objects()
+                    .map_err(std::io::Error::other)
+                    .and_then(|objects| {
+                        vak_core::checkpoints::restore(core.cwd(), objects.as_ref(), &cp)
+                    }) {
                     Ok((restored, deleted)) => {
                         println!("restored {restored} files, removed {deleted} (checkpoint {seq})");
                         0

@@ -123,6 +123,11 @@ impl LocalObjectStore {
         Ok(None)
     }
 
+    /// The id `put` gives `plaintext`, without storing it.
+    pub fn id(&self, plaintext: &[u8]) -> ObjectId {
+        self.id_key.id(plaintext)
+    }
+
     /// Stores `plaintext` (once per tenant) and grants `scope` access.
     pub fn put(&self, plaintext: &[u8], scope: &str) -> Result<ObjectId> {
         self.authority.health()?;

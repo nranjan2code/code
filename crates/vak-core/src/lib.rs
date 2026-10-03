@@ -6846,11 +6846,12 @@ impl Core {
 
         // MEA substrate (Phase H): auditor sees the workspace delta between
         // this run's start checkpoint and the live tree.
-        {
+        if let Ok(objects) = self.objects() {
             let home = self.scope().into_root();
             let seq = self.next_checkpoint_seq(&sid);
             let cwd = self.inner.cwd.clone();
             cfg.workspace_delta = Some(Arc::new(CheckpointDelta {
+                objects,
                 home: home.clone(),
                 sid: sid.clone(),
                 seq,
@@ -7401,14 +7402,17 @@ impl Core {
             if !expects_effect && !first_of_session {
                 // Nothing will be executed or written; skip the capture.
             } else {
-                if let Ok((cp, _stats)) = checkpoints::capture(
-                    &self.inner.cwd,
-                    &self.scope(),
-                    &h.session_id,
-                    seq,
-                    &format!("turn: {turn_id}"),
-                ) {
-                    let _ = checkpoints::store(&self.scope(), &cp);
+                if let Ok(objects) = self.objects()
+                    && let Ok((cp, _stats)) = checkpoints::capture(
+                        &self.inner.cwd,
+                        &self.scope(),
+                        objects.as_ref(),
+                        &h.session_id,
+                        seq,
+                        &format!("turn: {turn_id}"),
+                    )
+                {
+                    let _ = checkpoints::store(&self.scope(), objects.as_ref(), &cp);
                 }
             }
         }
@@ -7567,9 +7571,11 @@ impl Core {
             ) && let Some(header) = session.header()
                 && let Ok(list) = checkpoints::list(&self.scope(), &header.session_id)
                 && let Some(first) = list.iter().map(|cp| cp.seq).min()
+                && let Ok(objects) = self.objects()
                 && let Ok(delta) = checkpoints::delta_summary(
                     &self.inner.cwd,
                     &self.scope(),
+                    objects.as_ref(),
                     &header.session_id,
                     first,
                     8_192,
@@ -9938,6 +9944,7 @@ fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
 
 /// Phase H MEA provider: diff the run-start checkpoint against disk.
 struct CheckpointDelta {
+    objects: Arc<dyn vak_session::objects::Objects>,
     home: PathBuf,
     sid: String,
     seq: u32,
@@ -9949,6 +9956,7 @@ impl vak_agent::WorkspaceDelta for CheckpointDelta {
         checkpoints::delta_summary(
             &self.cwd.clone(),
             &vak_config::scope::AgentScope::new(self.home.clone()),
+            self.objects.as_ref(),
             self.sid.as_str(),
             self.seq,
             8192,

@@ -3,31 +3,26 @@
 //! and removes files created after the checkpoint. Bash mutations are
 //! covered because manifests are state-based, not operation-based.
 //!
-//! Storage is split in two, both under `<sessions_home>/checkpoints/`:
-//! a small per-checkpoint **manifest** (`<session_id>/<seq>.json`: path,
-//! content hash, size, and mtime per file, plus the observed set) and a
-//! **content-addressed blob store** (`blobs/<hash prefix>/<hash>`) shared
-//! by every manifest under this sessions home, across sessions. A file
-//! whose (size, mtime) match its entry in the immediately preceding
-//! manifest is assumed unchanged and its hash is reused without being
-//! re-read or re-hashed; this is the standard rsync/make-style fast path
-//! and trades an astronomically small risk (a same-second, same-size
-//! content change with untouched mtime, on a filesystem coarse enough to
-//! collide) for turning a multi-thousand-file workspace's per-turn
-//! capture into a handful of stats plus however many files actually
-//! changed.
+//! A per-checkpoint **manifest** (`<session_id>/<seq>.json` under the
+//! Agent's checkpoints root: path, object id, size and mtime per file, plus
+//! the observed set) names file contents held as tenant objects granted to
+//! the conversation (plan M3b slice 2), so equal contents are stored once.
+//! A file whose (size, mtime) match its entry in the immediately preceding
+//! manifest is assumed unchanged and its id is reused without being
+//! re-read; this is the standard rsync/make-style fast path and trades an
+//! astronomically small risk (a same-second, same-size content change with
+//! untouched mtime, on a filesystem coarse enough to collide) for turning
+//! a multi-thousand-file workspace's per-turn capture into a handful of
+//! stats plus however many files actually changed.
 //!
 //! Safety contract: `restore` only deletes files that were OBSERVED at
 //! capture time and are absent from the stored set's deletion candidates
 //! -- i.e. files the capture walk never saw (over budget, unreadable,
 //! secret, gitignored, or beyond the walk break) are left untouched. A
 //! rewind can lose the changes made during a session; it must never
-//! destroy files it knows nothing about. `store` prunes old manifests
-//! and garbage-collects blobs no remaining manifest (in any session under
-//! this sessions home) references; a blob written in the last
-//! [`GC_GRACE`] is never collected, so a concurrent capture that has
-//! written a blob but not yet stored the manifest pointing to it cannot
-//! race a prune elsewhere. A checkpoint file from before this manifest
+//! destroy files it knows nothing about. `store` prunes old manifests and
+//! releases the conversation's grant on contents no remaining manifest of
+//! that session names. A checkpoint file from before this manifest
 //! format (which embedded base64 file content directly) fails to
 //! deserialize -- missing `hash`/`size`/`mtime_ns` -- and is simply not
 //! read (AGENTS.md invariant 29): it is never partially read or migrated.
@@ -36,7 +31,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use vak_session::objects::{ObjectRef, Objects, conversation_scope};
 use walkdir::WalkDir;
 
 const IGNORED_DIRS: [&str; 5] = [
@@ -56,15 +51,8 @@ const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 /// Checkpoints accumulate once per turn; keep only the newest N per session.
 const MAX_STORED_CHECKPOINTS: usize = 20;
-/// A blob younger than this is never garbage-collected, whether or not a
-/// scan finds it referenced: it may belong to a capture that has written
-/// its blobs but not yet stored the manifest that references them.
-const GC_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
-/// Fan-out width for the blob store's directory prefix, so one directory
-/// never holds more than ~1/256th of all blobs.
-const BLOB_PREFIX_LEN: usize = 2;
 
-/// One captured file. Content lives in the blob store keyed by `hash`;
+/// One captured file. Content is the tenant object whose id is `hash`;
 /// `size`/`mtime_ns` are the fast-path signature the next capture compares
 /// against to decide whether it can reuse `hash` without reading the file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,28 +234,8 @@ fn checkpoint_root(scope: &vak_config::scope::AgentScope) -> PathBuf {
     scope.checkpoints()
 }
 
-/// "blobs" is a reserved session id: a real session id is `uuid_like()`
-/// generated, so the collision this would take is not worth guarding
-/// further, matching how `.git`/`.vak`/etc. are already reserved names
-/// elsewhere in this file.
 fn manifest_dir(scope: &vak_config::scope::AgentScope, session_id: &str) -> PathBuf {
     checkpoint_root(scope).join(session_id)
-}
-
-fn blobs_dir(scope: &vak_config::scope::AgentScope) -> PathBuf {
-    checkpoint_root(scope).join("blobs")
-}
-
-fn blob_path(scope: &vak_config::scope::AgentScope, hash: &str) -> PathBuf {
-    let split = BLOB_PREFIX_LEN.min(hash.len());
-    let (prefix, rest) = hash.split_at(split);
-    blobs_dir(scope).join(prefix).join(rest)
-}
-
-fn hash_bytes(content: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content);
-    format!("{:x}", hasher.finalize())
 }
 
 fn mtime_nanos(meta: &std::fs::Metadata) -> Option<u64> {
@@ -280,35 +248,6 @@ fn mtime_nanos(meta: &std::fs::Metadata) -> Option<u64> {
 /// hash is the content, so a lost race between two writers rewrites the
 /// same bytes, and the atomic rename means a reader never observes a
 /// partial blob.
-fn write_blob(
-    scope: &vak_config::scope::AgentScope,
-    hash: &str,
-    content: &[u8],
-) -> std::io::Result<()> {
-    let path = blob_path(scope, hash);
-    if path.is_file() {
-        return Ok(());
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension(format!(
-        "tmp-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    ));
-    std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, &path)?;
-    Ok(())
-}
-
-fn read_blob(scope: &vak_config::scope::AgentScope, hash: &str) -> std::io::Result<Vec<u8>> {
-    std::fs::read(blob_path(scope, hash))
-}
-
 /// Every stored sequence number for `session_id`, ascending. Reads only
 /// the manifest directory's file names -- never opens or parses a
 /// manifest -- so this is cheap even with the full `MAX_STORED_CHECKPOINTS`
@@ -359,6 +298,7 @@ fn latest_manifest(scope: &vak_config::scope::AgentScope, session_id: &str) -> O
 pub fn capture(
     cwd: &Path,
     scope: &vak_config::scope::AgentScope,
+    objects: &dyn Objects,
     session_id: &str,
     seq: u32,
     label: &str,
@@ -446,13 +386,12 @@ pub fn capture(
 
         match std::fs::read(entry.path()) {
             Ok(content) => {
-                let hash = hash_bytes(&content);
-                if write_blob(scope, &hash, &content).is_err() {
+                let Ok(object) = objects.put(&content, &conversation_scope(session_id)) else {
                     continue;
-                }
+                };
                 files.push(ManifestEntry {
                     rel_path: rel_str,
-                    hash,
+                    hash: object.id,
                     size,
                     mtime_ns: mtime_ns.unwrap_or_default(),
                 });
@@ -478,12 +417,16 @@ pub fn capture(
     ))
 }
 
-/// Persists a manifest atomically, prunes manifests older than the newest
-/// [`MAX_STORED_CHECKPOINTS`] for this session, and -- only when that
-/// prune actually removed something -- garbage-collects blobs no
-/// remaining manifest anywhere under `sessions_home` references. Returns
+/// Persists a manifest atomically and prunes manifests older than the
+/// newest [`MAX_STORED_CHECKPOINTS`] for this session. A pruned manifest's
+/// contents lose this session's grant unless a surviving manifest still
+/// names them, and objects no scope holds any more are collected. Returns
 /// the new manifest file's path.
-pub fn store(scope: &vak_config::scope::AgentScope, m: &Manifest) -> std::io::Result<PathBuf> {
+pub fn store(
+    scope: &vak_config::scope::AgentScope,
+    objects: &dyn Objects,
+    m: &Manifest,
+) -> std::io::Result<PathBuf> {
     let dir = manifest_dir(scope, &m.session_id);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{:04}.json", m.seq));
@@ -493,84 +436,36 @@ pub fn store(scope: &vak_config::scope::AgentScope, m: &Manifest) -> std::io::Re
 
     let seqs = list_seqs(scope, &m.session_id)?;
     if seqs.len() > MAX_STORED_CHECKPOINTS {
-        let mut pruned_any = false;
-        for oldest in &seqs[..seqs.len() - MAX_STORED_CHECKPOINTS] {
-            if std::fs::remove_file(dir.join(format!("{oldest:04}.json"))).is_ok() {
-                pruned_any = true;
+        let (pruned, kept) = seqs.split_at(seqs.len() - MAX_STORED_CHECKPOINTS);
+        let contents = |seq: &u32| -> Vec<ManifestEntry> {
+            load(scope, &m.session_id, *seq)
+                .map(|manifest| manifest.files)
+                .unwrap_or_default()
+        };
+        let live: HashSet<String> = kept
+            .iter()
+            .flat_map(contents)
+            .map(|entry| entry.hash)
+            .collect();
+        let grant = conversation_scope(&m.session_id);
+        let mut released = false;
+        for oldest in pruned {
+            for entry in contents(oldest) {
+                if !live.contains(&entry.hash) {
+                    let object = ObjectRef {
+                        id: entry.hash,
+                        len: entry.size,
+                    };
+                    released |= objects.release(&object, &grant).is_ok();
+                }
             }
+            let _ = std::fs::remove_file(dir.join(format!("{oldest:04}.json")));
         }
-        if pruned_any {
-            let _ = gc_blobs(scope);
+        if released {
+            let _ = objects.collect();
         }
     }
     Ok(path)
-}
-
-/// Deletes every blob under `sessions_home` that no currently-stored
-/// manifest (in any session) references, skipping anything younger than
-/// [`GC_GRACE`]. Best-effort: a read or remove failure is skipped rather
-/// than aborting the sweep, since a failed GC pass must never block the
-/// checkpoint that triggered it.
-fn gc_blobs(scope: &vak_config::scope::AgentScope) -> std::io::Result<()> {
-    let root = checkpoint_root(scope);
-    let Ok(sessions) = std::fs::read_dir(&root) else {
-        return Ok(());
-    };
-    let mut referenced: HashSet<String> = HashSet::new();
-    for session_entry in sessions.flatten() {
-        let path = session_entry.path();
-        if !path.is_dir() || session_entry.file_name() == "blobs" {
-            continue;
-        }
-        let Ok(files) = std::fs::read_dir(&path) else {
-            continue;
-        };
-        for f in files.flatten() {
-            let name = f.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || !name.ends_with(".json") {
-                continue;
-            }
-            if let Ok(bytes) = std::fs::read(f.path())
-                && let Ok(manifest) = serde_json::from_slice::<Manifest>(&bytes)
-            {
-                referenced.extend(manifest.files.into_iter().map(|e| e.hash));
-            }
-        }
-    }
-
-    let Ok(prefixes) = std::fs::read_dir(blobs_dir(scope)) else {
-        return Ok(());
-    };
-    for prefix_entry in prefixes.flatten() {
-        let prefix_path = prefix_entry.path();
-        if !prefix_path.is_dir() {
-            continue;
-        }
-        let prefix = prefix_entry.file_name().to_string_lossy().into_owned();
-        let Ok(blob_files) = std::fs::read_dir(&prefix_path) else {
-            continue;
-        };
-        for blob_entry in blob_files.flatten() {
-            let name = blob_entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name.contains(".tmp-") {
-                continue;
-            }
-            if referenced.contains(&format!("{prefix}{name}")) {
-                continue;
-            }
-            let recent = blob_entry
-                .metadata()
-                .ok()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.elapsed().ok())
-                .is_some_and(|age| age < GC_GRACE);
-            if recent {
-                continue;
-            }
-            let _ = std::fs::remove_file(blob_entry.path());
-        }
-    }
-    Ok(())
 }
 
 /// Every manifest stored for `session_id`, oldest first. A file that
@@ -618,6 +513,7 @@ pub fn load(
 pub fn delta_summary(
     cwd: &Path,
     scope: &vak_config::scope::AgentScope,
+    objects: &dyn Objects,
     session_id: &str,
     seq: u32,
     max_bytes: usize,
@@ -667,7 +563,7 @@ pub fn delta_summary(
                     continue;
                 }
                 let bytes = std::fs::read(entry.path()).unwrap_or_default();
-                if bytes.len() as u64 == old.size && hash_bytes(&bytes) == old.hash {
+                if bytes.len() as u64 == old.size && objects.id_of(&bytes) == old.hash {
                     // mtime moved (e.g. a touch or a checkout) but the
                     // content did not.
                     continue;
@@ -733,21 +629,23 @@ pub fn delta_summary(
     Ok(out)
 }
 
-/// Restores the snapshot: rewrites snapshotted files from the blob store
+/// Restores the snapshot: rewrites snapshotted files from their objects
 /// and deletes ONLY files that exist now but were never observed at
 /// capture time (i.e. created after the checkpoint, tracked scope).
 /// Anything the capture could not vouch for -- oversized, unreadable,
 /// secret, gitignored, or beyond-budget -- is left untouched.
-pub fn restore(
-    cwd: &Path,
-    scope: &vak_config::scope::AgentScope,
-    m: &Manifest,
-) -> std::io::Result<(usize, usize)> {
+pub fn restore(cwd: &Path, objects: &dyn Objects, m: &Manifest) -> std::io::Result<(usize, usize)> {
     let mut restored = 0usize;
     let mut deleted = 0usize;
 
     for f in &m.files {
-        let content = read_blob(scope, &f.hash)?;
+        let object = ObjectRef {
+            id: f.hash.clone(),
+            len: f.size,
+        };
+        let content = objects
+            .get(&object, &conversation_scope(&m.session_id))
+            .map_err(std::io::Error::other)?;
         let target = cwd.join(&f.rel_path);
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
@@ -805,6 +703,12 @@ pub fn restore(
 mod tests {
     use super::*;
 
+    fn objects() -> &'static vak_session::objects::MemoryObjects {
+        static OBJECTS: std::sync::LazyLock<vak_session::objects::MemoryObjects> =
+            std::sync::LazyLock::new(Default::default);
+        &OBJECTS
+    }
+
     fn write(p: &Path, rel: &str, content: &str) {
         let target = p.join(rel);
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
@@ -827,6 +731,7 @@ mod tests {
         let (cp, stats) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "s1",
             0,
             "initial",
@@ -855,12 +760,13 @@ mod tests {
         let (cp, _) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "sess",
             3,
             "third",
         )
         .unwrap();
-        store(&vak_config::scope::AgentScope::new(&home), &cp).unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), objects(), &cp).unwrap();
 
         let list = list(&vak_config::scope::AgentScope::new(&home), "sess").unwrap();
         assert_eq!(list.len(), 1);
@@ -875,9 +781,17 @@ mod tests {
             .hash
             .clone();
         assert_eq!(
-            read_blob(&vak_config::scope::AgentScope::new(&home), &hash).unwrap(),
+            objects()
+                .get(
+                    &ObjectRef {
+                        id: hash,
+                        len: binary.len() as u64,
+                    },
+                    &conversation_scope("sess"),
+                )
+                .unwrap(),
             binary.to_vec(),
-            "binary content must round-trip through the blob store"
+            "binary content must round-trip through the object store"
         );
     }
 
@@ -896,12 +810,13 @@ mod tests {
         let (cp, _) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "s",
             0,
             "before",
         )
         .unwrap();
-        store(&vak_config::scope::AgentScope::new(&home), &cp).unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), objects(), &cp).unwrap();
 
         // Mutate after the checkpoint: edit one file, delete another, add a third.
         write(dir.path(), "src/lib.rs", "rewritten!");
@@ -909,12 +824,7 @@ mod tests {
         write(dir.path(), "created-later.txt", "new junk");
 
         let restored_cp = load(&vak_config::scope::AgentScope::new(&home), "s", 0).unwrap();
-        let (restored, deleted) = restore(
-            dir.path(),
-            &vak_config::scope::AgentScope::new(&home),
-            &restored_cp,
-        )
-        .unwrap();
+        let (restored, deleted) = restore(dir.path(), objects(), &restored_cp).unwrap();
 
         assert!(restored >= 2);
         assert_eq!(
@@ -947,30 +857,38 @@ mod tests {
         let (cp0, _) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "sess-a",
             0,
             "a0",
         )
         .unwrap();
-        store(&vak_config::scope::AgentScope::new(&home), &cp0).unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), objects(), &cp0).unwrap();
         let (cp1, _) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "sess-a",
             1,
             "a1",
         )
         .unwrap();
-        store(&vak_config::scope::AgentScope::new(&home), &cp1).unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), objects(), &cp1).unwrap();
         let (cp_other, _) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "sess-b",
             0,
             "b0",
         )
         .unwrap();
-        store(&vak_config::scope::AgentScope::new(&home), &cp_other).unwrap();
+        store(
+            &vak_config::scope::AgentScope::new(&home),
+            objects(),
+            &cp_other,
+        )
+        .unwrap();
 
         assert_eq!(
             list(&vak_config::scope::AgentScope::new(&home), "sess-a")
@@ -1020,6 +938,7 @@ mod tests {
         let (cp, _) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "s",
             0,
             "before",
@@ -1032,8 +951,7 @@ mod tests {
         assert!(cp.observed.contains(&"asset.bin".to_string()));
         assert!(cp.observed.contains(&".env".to_string()));
 
-        let (restored, deleted) =
-            restore(dir.path(), &vak_config::scope::AgentScope::new(&home), &cp).unwrap();
+        let (restored, deleted) = restore(dir.path(), objects(), &cp).unwrap();
         assert!(restored >= 1);
         assert_eq!(
             deleted, 0,
@@ -1059,6 +977,7 @@ mod tests {
         let (cp, _) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "s",
             0,
             "c",
@@ -1066,7 +985,7 @@ mod tests {
         .unwrap();
 
         write(dir.path(), "created-later.txt", "junk");
-        restore(dir.path(), &vak_config::scope::AgentScope::new(&home), &cp).unwrap();
+        restore(dir.path(), objects(), &cp).unwrap();
 
         assert!(!dir.path().join("created-later.txt").exists());
         assert!(dir.path().join("base.txt").exists());
@@ -1091,6 +1010,7 @@ mod tests {
         let (cp, _) = capture(
             dir.path(),
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "s",
             0,
             "c",
@@ -1106,7 +1026,7 @@ mod tests {
     }
 
     #[test]
-    fn store_prunes_old_checkpoints_and_gcs_their_blobs() {
+    fn store_prunes_old_checkpoints_and_releases_their_contents() {
         let dir = tempfile::tempdir().unwrap();
         // A sibling temp dir, never nested inside `dir` — sessions_home is
         // never inside a real workspace either, and capturing the blob
@@ -1121,44 +1041,39 @@ mod tests {
             let (cp, _) = capture(
                 dir.path(),
                 &vak_config::scope::AgentScope::new(&home),
+                objects(),
                 "s",
                 seq,
                 "turn",
             )
             .unwrap();
-            store(&vak_config::scope::AgentScope::new(&home), &cp).unwrap();
+            store(&vak_config::scope::AgentScope::new(&home), objects(), &cp).unwrap();
         }
         let list = list(&vak_config::scope::AgentScope::new(&home), "s").unwrap();
         assert_eq!(list.len(), 20, "old checkpoints must be pruned");
         assert_eq!(list[0].seq, 5, "oldest pruned first");
 
-        // GC only skips blobs younger than GC_GRACE; force the sweep to
-        // see everything as eligible rather than sleeping in a test.
-        let mut remaining = 0usize;
-        let mut referenced = std::collections::HashSet::new();
-        for m in &list {
-            for f in &m.files {
-                referenced.insert(f.hash.clone());
-            }
-        }
-        for prefix in std::fs::read_dir(blobs_dir(&vak_config::scope::AgentScope::new(&home)))
-            .unwrap()
-            .flatten()
-        {
-            for blob in std::fs::read_dir(prefix.path()).unwrap().flatten() {
-                remaining += 1;
-                let hash = format!(
-                    "{}{}",
-                    prefix.file_name().to_string_lossy(),
-                    blob.file_name().to_string_lossy()
-                );
-                assert!(
-                    referenced.contains(&hash) || !GC_GRACE.is_zero(),
-                    "blob {hash} is unreferenced but within the GC grace period, which is fine"
-                );
-            }
-        }
-        assert!(remaining >= 20, "each surviving manifest's blob exists");
+        let grant = conversation_scope("s");
+        let readable = |seq: u32| {
+            let body = format!("v{seq}");
+            objects()
+                .get(
+                    &ObjectRef {
+                        id: objects().id_of(body.as_bytes()),
+                        len: body.len() as u64,
+                    },
+                    &grant,
+                )
+                .is_ok()
+        };
+        assert!(
+            (0..5).all(|seq| !readable(seq)),
+            "pruned contents are released"
+        );
+        assert!(
+            (5..25).all(readable),
+            "each surviving manifest's contents remain"
+        );
     }
 
     #[test]
@@ -1182,13 +1097,14 @@ mod tests {
         let (cp0, stats0) = capture(
             &cwd,
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "perf",
             0,
             "first",
         )
         .unwrap();
         let first_elapsed = t0.elapsed();
-        store(&vak_config::scope::AgentScope::new(&home), &cp0).unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), objects(), &cp0).unwrap();
         assert_eq!(cp0.files.len(), TOTAL);
         assert_eq!(stats0.files_read, TOTAL, "first capture reads everything");
         assert_eq!(stats0.files_reused, 0);
@@ -1204,6 +1120,7 @@ mod tests {
         let (cp1, stats1) = capture(
             &cwd,
             &vak_config::scope::AgentScope::new(&home),
+            objects(),
             "perf",
             1,
             "second",

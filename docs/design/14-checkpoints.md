@@ -4,19 +4,17 @@ Status: implemented in 2.0.0
 ## Checkpoints
 
 State-based workspace snapshots captured automatically at the start of every
-run (`run_turn_with`). Storage is split in two, both under
-`<sessions_home>/checkpoints/`: a small per-checkpoint **manifest**
-(`<session_id>/<seq>.json` — path, content hash, size and mtime per file,
-plus the observed set) and a **content-addressed blob store**
-(`blobs/<hash prefix>/<hash>`, fan-out width 2) shared by every manifest
-under that sessions home, across sessions. A checkpoint file from before
-this manifest format (which embedded base64 file content directly) fails to
-deserialize — missing `hash`/`size`/`mtime_ns` — and is simply not read
-(AGENTS.md invariant 29): never partially read, never migrated.
+run (`run_turn_with`). A small per-checkpoint **manifest**
+(`<session_id>/<seq>.json` under the Agent's checkpoints root — path, object
+id, size and mtime per file, plus the observed set) names file contents held
+as tenant objects (`tenants/<t>/objects`, sealed per object) granted to the
+conversation, so equal contents are stored once (data-architecture plan, M3b
+slice 2). A manifest that does not deserialize is simply not read (AGENTS.md
+invariant 29): never partially read, never migrated.
 
 - **Incremental capture**: a file whose `(size, mtime)` match its entry in
   the immediately preceding manifest is assumed unchanged and its hash is
-  reused without being re-read or re-hashed (the standard rsync/make-style
+  reused without being re-read (the standard rsync/make-style
   fast path) — a multi-thousand-file workspace's per-turn capture becomes a
   handful of stats plus however many files actually changed. `CaptureStats`
   (`files_observed`/`files_reused`/`files_read`) lets callers and tests
@@ -35,11 +33,10 @@ deserialize — missing `hash`/`size`/`mtime_ns` — and is simply not read
   legacy checkpoint with no manifest deletes nothing.
 - **Why state-based, not operation-based**: bash mutations are not invertible;
   snapshots cover them by construction. Cost is bounded by the caps above.
-- **Retention**: `store` keeps only the newest 20 checkpoints per session and
-  garbage-collects any blob no remaining manifest (in any session under this
-  sessions home) references; a blob younger than 60s is never collected, so
-  a concurrent capture that wrote a blob but not yet its manifest cannot
-  race a prune elsewhere.
+- **Retention**: `store` keeps only the newest 20 checkpoints per session.
+  Contents a pruned manifest names lose the conversation's grant unless a
+  surviving manifest of that session still names them, and objects no scope
+  holds are then collected.
 
 CLI:
 

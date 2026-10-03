@@ -24,6 +24,13 @@ pub struct ObjectRef {
 pub trait Objects: Send + Sync {
     fn put(&self, bytes: &[u8], scope: &str) -> Result<ObjectRef, SessionError>;
     fn get(&self, object: &ObjectRef, scope: &str) -> Result<Vec<u8>, SessionError>;
+    /// The id `put` would give `bytes`, without storing them.
+    fn id_of(&self, bytes: &[u8]) -> String;
+    /// Removes `scope`'s grant; the object lives on while another scope
+    /// holds one.
+    fn release(&self, object: &ObjectRef, scope: &str) -> Result<(), SessionError>;
+    /// Deletes every object no scope holds a grant for; returns how many.
+    fn collect(&self) -> Result<usize, SessionError>;
 }
 
 /// The scope a conversation's objects are granted to.
@@ -87,6 +94,20 @@ impl Objects for TenantObjects {
             .get(&ObjectId(object.id.clone()), scope)
             .map_err(objects_error)
     }
+
+    fn id_of(&self, bytes: &[u8]) -> String {
+        self.store.id(bytes).0
+    }
+
+    fn release(&self, object: &ObjectRef, scope: &str) -> Result<(), SessionError> {
+        self.store
+            .remove_grant(&ObjectId(object.id.clone()), scope)
+            .map_err(objects_error)
+    }
+
+    fn collect(&self) -> Result<usize, SessionError> {
+        self.store.gc().map_err(objects_error)
+    }
 }
 
 /// Objects held in memory: for tests and for a ledger with no tenant.
@@ -97,11 +118,7 @@ pub struct MemoryObjects {
 
 impl Objects for MemoryObjects {
     fn put(&self, bytes: &[u8], scope: &str) -> Result<ObjectRef, SessionError> {
-        use sha2::{Digest, Sha256};
-        let id = Sha256::digest(bytes)
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
+        let id = self.id_of(bytes);
         self.bodies
             .lock()
             .map_err(|_| SessionError::Objects("memory objects poisoned".into()))?
@@ -119,5 +136,25 @@ impl Objects for MemoryObjects {
             .get(&(object.id.clone(), scope.to_string()))
             .cloned()
             .ok_or_else(|| SessionError::Objects("no such object in this scope".into()))
+    }
+
+    fn id_of(&self, bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    fn release(&self, object: &ObjectRef, scope: &str) -> Result<(), SessionError> {
+        self.bodies
+            .lock()
+            .map_err(|_| SessionError::Objects("memory objects poisoned".into()))?
+            .remove(&(object.id.clone(), scope.to_string()));
+        Ok(())
+    }
+
+    fn collect(&self) -> Result<usize, SessionError> {
+        Ok(0)
     }
 }
