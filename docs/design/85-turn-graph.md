@@ -564,6 +564,16 @@ at plan time, before the open turn has run a call
 (`a_named_file_links_at_plan_time`,
 `named_files_are_paths_not_urls_or_numbers`).
 
+Live check, 2026-10-03, same setup as above: turn 1 wrote
+`recipes/tomato-bisque.md` (the model chose the name), turns 2 and 3 were
+unrelated, and turn 4 asked to "append exactly one short garnish line near
+the end of tomato-bisque.md". The resolver gave turn 4 a thread of its own,
+so no thread linked it; its plan put turn 1 at `Full` with
+`links: file:recipes/tomato-bisque.md`, turns 2 and 3 as cards, at 716 of
+a 104,531-token budget. Turn 4 read the file with the digest turn 1 wrote
+and wrote a new one. The plan records the link, not whether word search
+would also have found turn 1; the path is in turn 1's card too.
+
 - Edge extraction over `TurnIndex`, intent records and presentation records,
   in `vak-session` beside the turn index.
 - The `link` signal, path weights, hub discount and bounded walk in
