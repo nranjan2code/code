@@ -17,7 +17,7 @@ import * as api from "../api";
 import "../focusTrap";
 import { assistantParts, cleanAssistantText, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
 import Skeleton from "./Skeleton";
-import { approvalNetworkNote, approvalSubjects } from "../approvalSubject";
+import { approvalNetworkNote, approvalSubjects, approvalTitle } from "../approvalSubject";
 export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
@@ -471,7 +471,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
   return (
     <Show when={!props.item.resolved}>
     <div class="approval" data-approval={props.item.id} role={props.item.resolved ? "status" : "alert"} aria-live={props.item.resolved ? "polite" : "assertive"} aria-label={`${props.item.resolved ? "Approval resolved" : "Approval requested"} for ${props.item.tool}`}>
-    <div class="ap-head">Vakyartha wants to use {props.item.tool}</div>
+    <div class="ap-head">Vakyartha wants to use {approvalTitle(props.item.tool, props.item.argsJson)}</div>
     <For each={subjects()}>
       {(subject) => (
         <code class="ap-primary">

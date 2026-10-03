@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { approvalNetworkNote, approvalSubjects } from "../src/approvalSubject.ts";
+import { approvalNetworkNote, approvalSubjects, approvalTitle } from "../src/approvalSubject.ts";
 
 const long = `curl -s https://example.com | head -3 ${"x".repeat(400)} && rm -rf /tmp/after-the-fold`;
 assert.deepEqual(approvalSubjects(JSON.stringify({ command: "curl -s https://example.com | head -3" })), [
@@ -30,4 +30,15 @@ assert.deepEqual(approvalSubjects(JSON.stringify({ command: "ls", cwd: "." }), W
 assert.deepEqual(approvalSubjects(JSON.stringify({ command: "ls", cwd: "./sub/dir" }), `${W}/`)[1], { key: "in", value: `${W}/sub/dir` });
 assert.deepEqual(approvalSubjects(JSON.stringify({ command: "ls", cwd: ".." }), W)[1], { key: "in", value: `${W}/..` }, "a climbing folder is shown as written, never resolved away");
 assert.equal(approvalSubjects(JSON.stringify({ command: "ls" })).length, 1, "the workspace unknown: no claim about the default");
+const call = JSON.stringify({ action: "call", server: "files", tool: "delete_all", arguments: { path: "/tmp/x", force: true } });
+assert.equal(approvalTitle("mcp", call), "delete_all from files", "the server's tool is named, not the mcp door");
+assert.deepEqual(approvalSubjects(call), [
+  { key: "server", value: "files" },
+  { key: "tool", value: "delete_all" },
+  { key: "with", value: '{"path":"/tmp/x","force":true}' },
+]);
+assert.deepEqual(approvalSubjects(JSON.stringify({ action: "call", server: "s", tool: "t" })).map((r) => r.key), ["server", "tool"]);
+assert.equal(approvalTitle("mcp", JSON.stringify({ action: "list" })), "mcp", "a list is not a call");
+assert.equal(approvalTitle("bash", JSON.stringify({ command: "ls" })), "bash");
+assert.equal(approvalTitle("mcp", "not json"), "mcp");
 console.log("approval-subject: ok");

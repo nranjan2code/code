@@ -21,6 +21,7 @@ const adaptive = (turn: string, root: { primitive: string; props: Record<string,
 const toolError = (turn: string): OutputItem => ({ id: `${turn}-tool`, turn_id: turn, timestamp: at, role: "tool", kind: "error", status: "failed", content: { type: "error", message: "denied outside the workspace" }, actions: [], fallback_text: "denied outside the workspace" } as unknown as OutputItem);
 
 const approval = (turn: string, command: string): OutputItem => ({ id: `${turn}-approval`, turn_id: turn, timestamp: at, role: "assistant", kind: "approval", status: "pending", content: { type: "approval", request_id: "req-1", tool: "bash", args_json: JSON.stringify({ command }), reason: null }, actions: [], fallback_text: "" } as unknown as OutputItem);
+const mcpApproval = (turn: string): OutputItem => ({ id: `${turn}-mcp`, turn_id: turn, timestamp: at, role: "assistant", kind: "approval", status: "pending", content: { type: "approval", request_id: "req-2", tool: "mcp", args_json: JSON.stringify({ action: "call", server: "files", tool: "delete_all", arguments: { force: true } }), reason: null }, actions: [], fallback_text: "" } as unknown as OutputItem);
 const longCommand = `curl -s https://example.com | head -3 # ${"padding ".repeat(60)}&& echo tail-end-marker`;
 
 const linkOnly = "The file /etc/hosts is outside the workspace, and curl returned no output.";
@@ -35,6 +36,8 @@ const timeline = { schema_version: 2, session_id: sid, diagnostics: [], items: [
   message("t2", "assistant", afterFailure),
   message("t3", "user", "fetch the page"),
   approval("t3", longCommand),
+  message("t4", "user", "tidy up"),
+  mcpApproval("t4"),
 ] } as unknown as OutputTimeline;
 
 store.setHealth({ status: "ok", provider: "x", model: "y", permission_mode: "WorkspaceWrite", sandbox: "seatbelt", context_window: 1, cwd: "/", warnings: [] } as never);
@@ -55,6 +58,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
     assert(document.querySelector(".semantic-approval .ap-primary")?.textContent?.includes("tail-end-marker"), "an approval shows the whole command without opening details"),
     assert(document.querySelector(".semantic-approval .ap-network-note")?.textContent?.includes("no internet access"), "a sandboxed approval says the command has no internet"),
     assert([...document.querySelectorAll(".semantic-approval .ap-primary")].some((row) => row.textContent?.includes("in/Users/me/vak-home")), "the card names the folder the command runs in, even when none was given"),
+    assert([...document.querySelectorAll(".semantic-approval .ap-head")].some((head) => head.textContent?.includes("delete_all from files")), "an mcp approval names the server's tool, not mcp"),
     assert(!document.querySelector(".semantic-approval details[open]"), "the command is visible while the details stay closed"),
   ];
 };

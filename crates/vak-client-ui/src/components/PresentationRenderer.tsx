@@ -38,7 +38,7 @@ import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPrev
 import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
 import { relAgo } from "../time";
 import Skeleton from "./Skeleton";
-import { approvalNetworkNote, approvalSubjects } from "../approvalSubject";
+import { approvalNetworkNote, approvalSubjects, approvalTitle } from "../approvalSubject";
 import * as api from "../api";
 import { host } from "../host";
 import { isDocumentPath, parseOfficeCitation } from "../officeFiles";
@@ -889,7 +889,7 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
       aria-atomic="true"
       aria-label={`${pending() ? "Approval requested" : "Approval resolved"} for ${content.tool}`}
     >
-      <div class="ap-head">Vakyartha wants to use {content.tool}</div>
+      <div class="ap-head">Vakyartha wants to use {approvalTitle(content.tool, content.args_json)}</div>
       <For each={approvalSubjects(content.args_json, sessions().find((session) => session.session_id === props.sessionId)?.cwd)}>{(subject) => <code class="ap-primary"><span class="ap-primary-key">{subject.key}</span>{subject.value}</code>}</For>
       <div class="ap-reason">This needs your approval before it can continue.</div>
       <Show when={approvalNetworkNote(content.tool, health()?.permission_mode, health()?.sandbox)}>{(note) => <div class="ap-reason ap-network-note">{note()}</div>}</Show>
