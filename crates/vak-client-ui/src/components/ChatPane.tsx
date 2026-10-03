@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
 import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item } from "../store";
@@ -17,7 +17,8 @@ import * as api from "../api";
 import "../focusTrap";
 import { assistantParts, cleanAssistantText, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
 import Skeleton from "./Skeleton";
-import { approvalNetworkNote, approvalSubjects, approvalTitle } from "../approvalSubject";
+import { approvalNetworkNote, approvalSubjects, approvalTitle, mcpServerName } from "../approvalSubject";
+import { mcpServerNetwork } from "../mcpNetwork";
 export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
@@ -452,6 +453,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       setDelegateError(error instanceof Error ? error.message : String(error));
     } finally { setDelegating(false); }
   };
+  const [mcpNetwork] = createResource(() => mcpServerName(props.item.argsJson), (server) => mcpServerNetwork(server, activeAgentId()));
   const subjects = createMemo(() => approvalSubjects(props.item.argsJson, sessions().find((session) => session.session_id === props.sessionId)?.cwd));
   const summary = createMemo(() => {
     try {
@@ -481,7 +483,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       )}
     </For>
     <div class="ap-reason">This needs your approval before it can continue.</div>
-    <Show when={approvalNetworkNote(props.item.tool, health()?.permission_mode, health()?.sandbox)}>{(note) => <div class="ap-reason ap-network-note">{note()}</div>}</Show>
+    <Show when={approvalNetworkNote(props.item.tool, health()?.permission_mode, health()?.sandbox, mcpNetwork())}>{(note) => <div class="ap-reason ap-network-note">{note()}</div>}</Show>
     <div class="ap-summary">{summary()}</div>
     <details class="ap-details">
       <summary>View request details</summary>
