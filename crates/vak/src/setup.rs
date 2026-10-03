@@ -208,7 +208,7 @@ pub fn run_seed() -> i32 {
         eprintln!("error: {error}");
         return 1;
     }
-    let skills = root.join(".vak/skills");
+    let skills = vak_config::scope::WorkspaceScope::new(&root).skills();
     let count = std::fs::read_dir(&skills)
         .map(|e| e.flatten().filter(|e| e.path().is_dir()).count())
         .unwrap_or(0);

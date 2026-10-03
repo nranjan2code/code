@@ -7418,6 +7418,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.20",
+ "vak-config",
  "vak-ooxml",
  "vak-pdf",
  "vak-session",

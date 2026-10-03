@@ -589,7 +589,7 @@ pub const REGISTRY: &[StateEntry] = &[
     },
     // ---- the Shared layer ----
     StateEntry {
-        path: ".vak/config.toml",
+        path: vak_config::scope::PROJECT_CONFIG,
         root: Root::Shared,
         owner: "vak-config",
         schema: None,
@@ -599,7 +599,7 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     StateEntry {
-        path: ".vak/skills",
+        path: vak_config::scope::PROJECT_SKILLS,
         root: Root::Shared,
         owner: "vak-core",
         schema: None,
@@ -611,7 +611,7 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     StateEntry {
-        path: ".vak/.seed-manifest.json",
+        path: vak_config::scope::SEED_MANIFEST,
         root: Root::Shared,
         owner: "vak-core",
         schema: Some(1),
@@ -621,7 +621,7 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     StateEntry {
-        path: ".vak/plugins",
+        path: vak_config::scope::PROJECT_PLUGINS,
         root: Root::Shared,
         owner: "vak-plugin",
         schema: Some(1),

@@ -633,7 +633,7 @@ fn copies_delivered_draft<'a>(
     command: &str,
     delivered: impl IntoIterator<Item = &'a String>,
 ) -> Option<&'a String> {
-    if !command.contains(".vak/scratch/") {
+    if !command.contains(&format!("{}/", vak_config::scope::SCRATCH_DIR)) {
         return None;
     }
     delivered.into_iter().find(|path| {

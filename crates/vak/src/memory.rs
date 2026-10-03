@@ -122,9 +122,7 @@ fn store_path(home: &Path, workspace: &Path, profile: bool) -> PathBuf {
     if profile {
         memory::profile_path(home)
     } else {
-        home.join("memory")
-            .join(memory::hash_cwd(workspace))
-            .join("MEMORY.md")
+        vak_config::scope::AgentScope::new(home).memory_notes(workspace)
     }
 }
 
@@ -193,7 +191,7 @@ mod tests {
         assert_eq!(
             store_path(home, &ws, false),
             home.join("memory")
-                .join(memory::hash_cwd(&ws))
+                .join(vak_config::scope::workspace_key(&ws))
                 .join("MEMORY.md")
         );
     }

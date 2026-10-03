@@ -21,6 +21,15 @@ use std::path::{Path, PathBuf};
 
 /// The project-layer directory inside a workspace.
 pub const PROJECT_DIR: &str = ".vak";
+/// Workspace-relative paths of the project layer, for code that declares a
+/// path as data (the state registry) or matches text rather than resolving
+/// one; everything else goes through [`WorkspaceScope`].
+pub const PROJECT_CONFIG: &str = ".vak/config.toml";
+pub const PROJECT_CONFIG_STEM: &str = ".vak/config";
+pub const PROJECT_SKILLS: &str = ".vak/skills";
+pub const PROJECT_PLUGINS: &str = ".vak/plugins";
+pub const SEED_MANIFEST: &str = ".vak/.seed-manifest.json";
+pub const SCRATCH_DIR: &str = ".vak/scratch";
 
 /// Fixed-hash identity of a workspace directory (FNV-1a over its path, so a
 /// session or memory directory stays reachable across toolchain upgrades).
@@ -403,8 +412,20 @@ impl WorkspaceScope {
 
     /// `<workspace>/.vak/scratch/<agent_id>`, an Agent's quarantined
     /// execution scratch.
+    pub fn scratch_root(&self) -> PathBuf {
+        self.root.join(SCRATCH_DIR)
+    }
+
+    pub fn launch_file(&self) -> PathBuf {
+        self.project_dir().join("launch.toml")
+    }
+
+    pub fn seed_manifest(&self) -> PathBuf {
+        self.root.join(SEED_MANIFEST)
+    }
+
     pub fn scratch(&self, agent_id: &str) -> PathBuf {
-        self.project_dir().join("scratch").join(agent_id)
+        self.scratch_root().join(agent_id)
     }
 
     pub fn worktrees(&self) -> PathBuf {

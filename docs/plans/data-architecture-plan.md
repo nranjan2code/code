@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is in progress and M3a is next. Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is next. Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -451,7 +451,7 @@ expensive after (review 2 R48–R53).
   tenant and differ across tenants.
 - Fuzz targets for the frame and segment readers.
 
-### M3a — Scope API on the current layout (L, no behaviour change; after M1)
+### M3a — Scope API on the current layout (L, no behaviour change; after M1) — done 2026-10-03
 
 - `vak_config::paths` gains `Scope`/`StorageHandle` accessors that resolve
   to *today's* paths.
@@ -469,6 +469,24 @@ expensive after (review 2 R48–R53).
 **Exit:** the full `cargo test --workspace` passes with zero behaviour
 diff; the layout scan (blast-radius §0) finds no raw home-path use outside
 `vak-config`.
+
+**Done (2026-10-03).** Every production helper that took a raw home now
+takes a typed scope (security events, inbox, trash, checkpoints, learning,
+digest, operations); the D25 stores resolve through the `AgentScope` D25
+accessors with one `session_agent(state)` naming the Agent; `Core` has no
+public raw home getter (`set_shared_scope(SharedScope)` replaces
+`set_sessions_home`, and `scope()`/`shared_scope()` are the only way in);
+project-layer paths are `WorkspaceScope` accessors or `vak_config::scope`
+constants; `hash_cwd` is gone for `workspace_key`. The layout scan finds
+zero `sessions_home()`, `shared_data_home()`, `.vak` literals and
+`hash_cwd(` outside `vak-config`, the full suite passes, and the ratchet is
+deleted. Two deviations: no separate `TestScope` type, because tests use
+`AgentScope`/`SharedScope` directly and a second wrapper would be two ways
+to say one thing (invariant 30); and stores that still take a root path
+(`CommitmentLedger::new`, `TaskStore`, `FinOpsLedger`, `RateLimiter`, the
+agent-network socket, memory and learning tool structs holding a
+`sessions_home: PathBuf`) are reached through `scope().into_root()` and are
+M3b's touchpoints to type.
 
 ### M3b — The data baseline, 7.0 (XL, in six slices)
 

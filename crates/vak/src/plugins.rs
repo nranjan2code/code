@@ -318,7 +318,7 @@ pub(crate) fn run_plugins(cwd: PathBuf, action: PluginAction) -> i32 {
 fn store(cwd: &Path, scope: PluginScopeArg) -> PluginStore {
     let home = match scope {
         PluginScopeArg::User => vak_config::paths::data_home(),
-        PluginScopeArg::Workspace => cwd.join(".vak"),
+        PluginScopeArg::Workspace => vak_config::scope::WorkspaceScope::new(cwd).project_dir(),
     };
     PluginStore::new(home)
 }

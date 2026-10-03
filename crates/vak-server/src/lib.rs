@@ -2754,10 +2754,7 @@ async fn append_memory(
 fn memory_store_path(core: &vak_core::Core, scope: MemoryScope) -> PathBuf {
     let home = core.scope().into_root();
     match scope {
-        MemoryScope::Workspace => home
-            .join("memory")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
-            .join("MEMORY.md"),
+        MemoryScope::Workspace => core.scope().memory_notes(core.cwd()),
         MemoryScope::Profile => vak_core::memory::profile_path(&home),
     }
 }
@@ -7977,7 +7974,7 @@ mod active_transcript_tests {
         let id = "active-transcript";
         let path = sessions_home
             .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(vak_config::scope::workspace_key(core.cwd()))
             .join(format!("{id}.jsonl"));
         let mut log = vak_session::SessionLog::create(
             path,
@@ -8942,10 +8939,7 @@ fn markdown_response(md: String) -> axum::response::Response {
 /// Find a session log on disk across current sessions_home and all agent directories.
 fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog> {
     let home = core.scope().into_root();
-    let path = home
-        .join("sessions")
-        .join(vak_core::memory::hash_cwd(core.cwd()))
-        .join(format!("{id}.jsonl"));
+    let path = core.scope().session_file(core.cwd(), id);
     if let Ok(s) = vak_session::SessionLog::open_read_only(path) {
         return Some(s);
     }
@@ -9055,12 +9049,7 @@ pub(crate) fn read_historical_header(
 /// but the append-only ledger file is durable — restore from it so the
 /// session does not stay wedged as "run in progress" forever.
 fn reopen_ledger(core: &vak_core::Core, id: &str) -> Option<vak_session::SessionLog> {
-    let path = core
-        .scope()
-        .into_root()
-        .join("sessions")
-        .join(vak_core::memory::hash_cwd(core.cwd()))
-        .join(format!("{id}.jsonl"));
+    let path = core.scope().session_file(core.cwd(), id);
     vak_session::SessionLog::open(path).ok()
 }
 
@@ -10202,8 +10191,9 @@ async fn list_skills(
     // `~/vak-home/.vak/skills` root), and a workspace skill is a very different
     // trust proposition from a Shared skill
     // one -- the admin console groups by this.
-    let workspace_root = core.cwd().join(".vak/skills");
-    let shared_root = vak_config::paths::default_workspace().join(".vak/skills");
+    let workspace_root = vak_config::scope::WorkspaceScope::new(core.cwd()).skills();
+    let shared_root =
+        vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace()).skills();
     let skills: Vec<serde_json::Value> = core
         .skills_with_shadowed()
         .iter()
@@ -10287,8 +10277,11 @@ fn default_marketplace_trust() -> MarketplaceTrust {
 
 fn plugin_store(core: &vak_core::Core, scope: InstallScope) -> PluginStore {
     let root = match scope {
-        InstallScope::User => vak_config::paths::default_workspace().join(".vak"),
-        InstallScope::Workspace => core.cwd().join(".vak"),
+        InstallScope::User => {
+            vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace())
+                .project_dir()
+        }
+        InstallScope::Workspace => vak_config::scope::WorkspaceScope::new(core.cwd()).project_dir(),
     };
     PluginStore::new(root)
 }
@@ -12546,7 +12539,9 @@ async fn export_sandbox_candidate(
     // they belong; only an execution that ran inside `.vak/scratch/` has a
     // draft to promote. Freezing the workspace as its own candidate would
     // promote it onto itself.
-    let scratch_root = std::fs::canonicalize(workspace.join(".vak").join("scratch")).ok();
+    let scratch_root =
+        std::fs::canonicalize(vak_config::scope::WorkspaceScope::new(&workspace).scratch_root())
+            .ok();
     let in_scratch = std::fs::canonicalize(&execution_scratch)
         .ok()
         .zip(scratch_root)
@@ -12870,11 +12865,13 @@ fn office_lineage(
             .map(|part| part.as_os_str().to_string_lossy().into_owned())
             .collect();
         match parts.as_slice() {
-            [vak, scratch, _agent, earlier, rest @ ..] if vak == ".vak" && scratch == "scratch" => {
+            [vak, scratch, _agent, earlier, rest @ ..]
+                if vak == vak_config::scope::PROJECT_DIR && scratch == "scratch" =>
+            {
                 call_id = earlier.clone();
                 wanted = rest.iter().collect();
             }
-            [vak, ..] if vak == ".vak" => {
+            [vak, ..] if vak == vak_config::scope::PROJECT_DIR => {
                 return Err("a draft's source is inside .vak but not an earlier draft".into());
             }
             _ => {
@@ -15577,7 +15574,7 @@ async fn put_bus_config(
         changed.push(var);
     }
     if let Err(error) = vak_config::persist_bus_settings(
-        core.cwd().join(".vak").join("config.toml"),
+        vak_config::scope::WorkspaceScope::new(core.cwd()).config_file(),
         body.nats_url.as_deref().map(Some),
         body.workspace_secret_env.as_deref().map(Some),
     ) {
@@ -15635,7 +15632,7 @@ async fn delete_bus_config(State(state): State<AppState>) -> axum::response::Res
         let _ = vak_config::remove_env_file_key(&project_scope, var);
     }
     if let Err(error) = vak_config::persist_bus_settings(
-        core.cwd().join(".vak").join("config.toml"),
+        vak_config::scope::WorkspaceScope::new(core.cwd()).config_file(),
         Some(None),
         Some(None),
     ) {
@@ -17558,7 +17555,7 @@ async fn get_hooks(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let path = core.cwd().join(".vak/config.toml");
+    let path = vak_config::scope::WorkspaceScope::new(core.cwd()).config_file();
     let hooks = if path.is_file() {
         match std::fs::read_to_string(&path)
             .ok()
@@ -18322,7 +18319,7 @@ async fn fs_tree(
         ".venv",
         "venv",
         "__pycache__",
-        ".vak",
+        vak_config::scope::PROJECT_DIR,
         ".next",
         ".cache",
         "coverage",
@@ -21044,7 +21041,7 @@ pub fn start_launch_reaper(state: &AppState) {
 }
 
 fn parse_launch_toml(cwd: &std::path::Path) -> Result<Vec<LaunchConfig>, String> {
-    let path = cwd.join(".vak/launch.toml");
+    let path = vak_config::scope::WorkspaceScope::new(cwd).launch_file();
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -23188,7 +23185,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_core::memory::hash_cwd(cwd))
+            .join(vak_config::scope::workspace_key(cwd))
             .join(format!("{session_id}.jsonl"));
         vak_session::SessionLog::create(
             path,
@@ -24976,7 +24973,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(vak_config::scope::workspace_key(core.cwd()))
             .join("session-1.jsonl");
         let comment_id = "comment-from-asha";
         let mut log = SessionLog::open(session_path.clone()).unwrap();
@@ -25304,7 +25301,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(vak_config::scope::workspace_key(core.cwd()))
             .join("session-1.jsonl");
         let session = SessionLog::open(path).unwrap();
         register_handle(
@@ -25985,7 +25982,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(vak_config::scope::workspace_key(core.cwd()))
             .join("session-message.jsonl");
         let session = SessionLog::open(path).unwrap();
         let handle = register_handle(
@@ -26081,7 +26078,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(vak_config::scope::workspace_key(core.cwd()))
             .join("session-approval.jsonl");
         let session = SessionLog::open(path).unwrap();
         let handle = register_handle(
@@ -26306,7 +26303,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(vak_config::scope::workspace_key(core.cwd()))
             .join("session-1.jsonl");
         let session = SessionLog::open(session_path).unwrap();
         register_handle(

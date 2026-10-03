@@ -73,7 +73,7 @@ impl Tool for BashTool {
         // invisible to `read`, and a small model looped rewriting it. Runtime
         // state (temp files, tool caches) still goes to scratch (invariant 35).
         let agent_id = ctx.agent_id.as_deref().unwrap_or("vak");
-        let scratch_root = ctx.cwd.join(".vak").join("scratch").join(agent_id);
+        let scratch_root = vak_config::scope::WorkspaceScope::new(&ctx.cwd).scratch(agent_id);
         let temp_dir = ctx
             .sandbox_sink
             .as_ref()
@@ -620,7 +620,7 @@ fn skip_workspace_dir(path: &std::path::Path) -> bool {
                     // `.vak/agents/<id>/workspace` (see
                     // vak_config::paths::agent_workspace) — an artifact scan
                     // must never wander into another Agent's files.
-                    | ".vak"
+                    | vak_config::scope::PROJECT_DIR
                     | ".vak-home"
                     | ".venv"
                     | "venv"
@@ -689,9 +689,13 @@ fn interrupted_output(stdout: &str, stderr: &str, reason: &str) -> String {
 }
 
 fn references_control_file(command: &str) -> bool {
-    [".env", ".vak/config.toml", ".vak/config"]
-        .iter()
-        .any(|needle| command.contains(needle))
+    [
+        ".env",
+        vak_config::scope::PROJECT_CONFIG,
+        vak_config::scope::PROJECT_CONFIG_STEM,
+    ]
+    .iter()
+    .any(|needle| command.contains(needle))
 }
 
 fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {

@@ -11,12 +11,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Utc};
 
-/// FNV-1a 64-bit, matching vak-session's cwd hashing so every per-workspace
-/// store keys off the same identity.
-pub fn hash_cwd(cwd: &Path) -> String {
-    vak_config::scope::workspace_key(cwd)
-}
-
 fn fnv1a(data: &[u8]) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in data {
@@ -668,7 +662,10 @@ mod tests {
             "## {} [decision] tag=y session=s2\nbeta note\n",
             b.ts.to_rfc3339()
         );
-        let path = home.join("memory").join(hash_cwd(&cwd)).join("MEMORY.md");
+        let path = home
+            .join("memory")
+            .join(vak_config::scope::workspace_key(&cwd))
+            .join("MEMORY.md");
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             format!("{block_a}\n{block_b}\n")
@@ -700,7 +697,10 @@ mod tests {
 
         let n = append_note(home, &cwd, "fact", "", "s3", "original body").unwrap();
         let header = format!("## {} [fact] tag= session=s3", n.ts.to_rfc3339());
-        let path = home.join("memory").join(hash_cwd(&cwd)).join("MEMORY.md");
+        let path = home
+            .join("memory")
+            .join(vak_config::scope::workspace_key(&cwd))
+            .join("MEMORY.md");
 
         amend_note(&path, &n.id, "revised body with more detail").unwrap();
 
@@ -743,7 +743,10 @@ mod tests {
         let home = dir.path();
         let cwd = dir.path().join("ws");
         std::fs::create_dir_all(&cwd).unwrap();
-        let path = home.join("memory").join(hash_cwd(&cwd)).join("MEMORY.md");
+        let path = home
+            .join("memory")
+            .join(vak_config::scope::workspace_key(&cwd))
+            .join("MEMORY.md");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let raw = "prelude scribble\n\n## 2026-08-23T10:00:00+00:00 [fact] tag=a session=s1\nfirst note\nHUMAN GARBAGE ## fake header here\nmore scribble\n\n## 2026-08-23T11:00:00+00:00 [decision] tag=b session=s2\nsecond note";
         std::fs::write(&path, raw).unwrap();

@@ -212,7 +212,7 @@ delivery provenance. Bots are transport identities and channels are
 endpoints; internal tasks are implementation details behind the Agent
 conversation. Global infrastructure (gateway, operations, FinOps, tasks, the
 archive and the trash) stays shared at the top of the data home via
-`Core::shared_data_home()`; the FTS index is in the cache home. Doc 64's
+`Core::shared_scope()`; the FTS index is in the cache home. Doc 64's
 topology section draws the tree. Invariant 37 states the enforceable half of
 this.
 
@@ -229,7 +229,8 @@ L6–L12), and the two 5.x guards landed the same day. Plan revision 4
 M1 is done (2026-10-02:
 the trace key is minted at admission, invariant 40, and every ledger row type
 names its actor); M2 slices 1 and 2 are on main (plan §4 lists what remains).
-M3a is next. No session starts a later step unasked.
+M3a is done (2026-10-03): `Core` exposes its homes only as typed scopes.
+M3b is next. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -307,11 +308,9 @@ M3a is next. No session starts a later step unasked.
   4.x tree.
 
 **The two 5.x guards, done 2026-10-01:**
-- The home-path ratchet (`home_path_uses_do_not_grow`,
-  `crates/vak-core/tests/home_path_ratchet.rs`) holds raw
-  `sessions_home()`, `shared_data_home()`, `.vak` literal and `hash_cwd(`
-  uses at their ceilings in `home_path_ratchet.txt`; lower a ceiling in the
-  change that removes uses.
+- The home-path ratchet held raw `sessions_home()`, `shared_data_home()`,
+  `.vak` literal and `hash_cwd(` uses at falling ceilings until M3a brought
+  every count to zero outside `vak-config`; it was then deleted (plan §4).
 - The registry declares each Agent-home subpath as its own
   `agents/{agent}/…` entry; backup, purge and the upgrade gate expand the
   segment (`agent_home_subpaths_are_declared`).
@@ -322,18 +321,21 @@ M3a is next. No session starts a later step unasked.
 - The trash hides; it never erases. Erasure is M7a.
 - Server-side sandbox records, execution streams, Office rooms and coworking
   grants are written under the server Core's Agent home, whichever Agent
-  owns the session (D25). M3a marks those call sites and M3b fixes them;
-  until then filter them by the session header's Agent.
+  owns the session (D25). They resolve through the `AgentScope` D25
+  accessors with the Agent named by `session_agent(state)` (M3a); M3b
+  resolves the session's Agent in that one place. Until then filter them by
+  the session header's Agent.
 
 **Until the next milestone lands, don't deepen the debt:**
 - Build no second schedule or trigger model: scheduled work is a `TaskDef`,
   which grows into Triggers at M4. Docs 76, 80 and 81 use that model.
 - Build no second identity for "the root of this work": durable accounting
   keys by M1's `RunId` (the reliable-work plan's E1 waits for it).
-- Resolve every new path through `vak_config::paths`, and reach a `Core`
-  home through an existing helper rather than a new raw `sessions_home()` or
-  `shared_data_home()` call; the ratchet fails on a new raw call, `.vak`
-  literal or `hash_cwd(`.
+- Resolve every new path through `vak_config::paths` and `vak_config::scope`,
+  and reach a `Core` home through `Core::scope()` or `Core::shared_scope()`
+  and their accessors; `Core` has no raw home getter. A project-layer path is
+  a `WorkspaceScope` accessor or a `vak_config::scope` constant, never a
+  `.vak` literal.
 - Declare every new durable file in `vak_core::state::REGISTRY`, including
   each new subpath of an Agent home as an `agents/{agent}/…` entry with its
   real kind.
@@ -937,7 +939,7 @@ in progress, and the rest of V4 follows it.
     `<workspace>/.vak/scratch/<agent_id>/`. Cross-agent infrastructure (the
     gateway allowlist, bots, operations incidents, actions receipts, FinOps
     ledger, scheduled tasks, the archive and the trash) remains shared at the
-    top of the data home via `Core::shared_data_home()`. Agent identity is resolved
+    top of the data home via `Core::shared_scope()`. Agent identity is resolved
     at admission and cannot be supplied by untrusted client text; a saved
     Agent's definition and lifecycle are re-read every turn. Bots
     identify transport credentials; channels identify endpoints; neither is an

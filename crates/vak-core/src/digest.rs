@@ -416,7 +416,9 @@ mod tests {
 
         let old_header =
             "## 2026-01-01T00:00:00+00:00 [fact] tag=stale session=old\nancient note\n";
-        let mem_dir = home.join("memory").join(memory::hash_cwd(&cwd));
+        let mem_dir = home
+            .join("memory")
+            .join(vak_config::scope::workspace_key(&cwd));
         std::fs::create_dir_all(&mem_dir).unwrap();
         let fresh = std::fs::read_to_string(mem_dir.join("MEMORY.md")).unwrap();
         std::fs::write(mem_dir.join("MEMORY.md"), format!("{fresh}{old_header}")).unwrap();

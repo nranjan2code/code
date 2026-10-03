@@ -15,7 +15,7 @@ directories, with `#[cfg(test)]` items removed by brace matching and `//`
 comment lines skipped. Test code is the rest. The patterns are written out
 below so the next run is comparable. The home-path ratchet (plan §4,
 "Now") holds the `sessions_home()`, `shared_data_home()`, `.vak` literal and
-`hash_cwd(` rows in `crates/vak-core/tests/home_path_ratchet.txt`.
+`hash_cwd(` rows until M3a brought them to zero and deleted it (2026-10-03).
 
 | Measure | Pattern | `767db1d0` | `438cfcd5` |
 |---|---|---|---|

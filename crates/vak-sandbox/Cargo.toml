@@ -16,6 +16,7 @@ image = { workspace = true }
 dom_query = { workspace = true }
 vak-ooxml = { workspace = true }
 vak-pdf = { workspace = true }
+vak-config = { workspace = true }
 vak-session = { workspace = true }
 
 [dev-dependencies]

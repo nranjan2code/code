@@ -68,7 +68,7 @@ async fn memory_and_proposal_endpoints() {
     .unwrap();
     let pdir = home
         .join("skill-proposals")
-        .join(vak_core::memory::hash_cwd(&cwd));
+        .join(vak_config::scope::workspace_key(&cwd));
     std::fs::create_dir_all(&pdir).unwrap();
     std::fs::write(
         pdir.join("aabbccddeeff11223344556677889900112233445566778899aabbccddeeff00.md"),

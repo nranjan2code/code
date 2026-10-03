@@ -830,10 +830,9 @@ pub fn candidate_manifest(
             .strip_prefix(source_root)
             .ok()
             .is_some_and(|relative| {
-                relative
-                    .components()
-                    .next()
-                    .is_some_and(|component| component.as_os_str() == ".vak")
+                relative.components().next().is_some_and(|component| {
+                    component.as_os_str() == vak_config::scope::PROJECT_DIR
+                })
             })
         {
             continue;
@@ -1103,10 +1102,10 @@ pub struct RevisionDraft {
 /// version.
 pub fn adopt_revision_drafts(task_root: &Path, drafts: &[RevisionDraft]) -> Result<(), Error> {
     for draft in drafts {
-        if Path::new(&draft.path).starts_with(".vak") {
+        if Path::new(&draft.path).starts_with(vak_config::scope::PROJECT_DIR) {
             return Err(Error::PathEscape(draft.path.clone()));
         }
-        if !Path::new(&draft.draft).starts_with(".vak/scratch") {
+        if !Path::new(&draft.draft).starts_with(vak_config::scope::SCRATCH_DIR) {
             return Err(Error::PathEscape(draft.draft.clone()));
         }
         let source = confined(task_root, &draft.draft)?;

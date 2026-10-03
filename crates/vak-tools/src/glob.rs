@@ -118,6 +118,11 @@ pub fn is_ignored(path: &Path) -> bool {
         // let a glob/grep from one Agent's session read another Agent's
         // supposedly isolated files. `fs_tree`'s directory-browser walk
         // already excludes it for the same reason.
-        .map(|f| f == ".git" || f == "node_modules" || f == "target" || f == ".vak")
+        .map(|f| {
+            f == ".git"
+                || f == "node_modules"
+                || f == "target"
+                || f == vak_config::scope::PROJECT_DIR
+        })
         .unwrap_or(false)
 }

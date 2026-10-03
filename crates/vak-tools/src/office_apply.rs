@@ -226,7 +226,7 @@ impl Tool for OfficeApplyTool {
         let Ok(relative) = destination.strip_prefix(&root).map(Path::to_path_buf) else {
             return ToolOutput::error(format!("access denied: {path} is outside the workspace"));
         };
-        if relative.starts_with(".vak") {
+        if relative.starts_with(vak_config::scope::PROJECT_DIR) {
             return ToolOutput::error(format!(
                 "{path} is inside .vak; name the workspace file the draft is for, and pass an earlier draft as source"
             ));
@@ -401,7 +401,7 @@ const DEFAULT_AGENT: &str = "vak";
 /// call's id and the agent is the session's Agent id, so the ledger alone
 /// locates every draft a session delivered.
 pub fn draft_dir(agent_id: Option<&str>, execution: &str) -> PathBuf {
-    Path::new(".vak")
+    Path::new(vak_config::scope::PROJECT_DIR)
         .join("scratch")
         .join(agent_id.unwrap_or(DEFAULT_AGENT))
         .join(execution)

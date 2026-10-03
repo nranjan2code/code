@@ -120,7 +120,7 @@ fn run_skills(cwd: PathBuf, action: SkillsAction) -> i32 {
             let roots = path.map_or_else(
                 || {
                     vec![
-                        cwd.join(".vak/skills"),
+                        vak_config::scope::WorkspaceScope::new(&cwd).skills(),
                         vak_config::paths::data_home().join("skills"),
                     ]
                 },
@@ -721,7 +721,7 @@ pub(crate) fn print_config_warnings(core: &Core) {
 
 fn flow_dirs(cwd: &std::path::Path) -> Vec<PathBuf> {
     vec![
-        cwd.join(".vak/flows"),
+        vak_config::scope::WorkspaceScope::new(cwd).flows(),
         vak_config::paths::data_home().join("flows"),
     ]
 }
@@ -763,7 +763,7 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
             0
         }
         FlowAction::Adopt { from, name, force } => {
-            let flows_dir = cwd.join(".vak/flows");
+            let flows_dir = vak_config::scope::WorkspaceScope::new(&cwd).flows();
             let out_path = flows_dir.join(format!("{name}.toml"));
             if out_path.exists() && !force {
                 eprintln!(
