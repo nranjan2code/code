@@ -74,6 +74,7 @@ mod operations;
 mod preview;
 mod projection;
 mod rate_limit;
+mod sandbox_output;
 mod service_control;
 mod site;
 mod social;
@@ -4268,6 +4269,10 @@ pub(crate) fn register_handle(
         core
     };
     let durable_home = core.scope().into_root();
+    let output_objects = core
+        .objects()
+        .inspect_err(|error| eprintln!("[warn] execution output will not be persisted: {error}"))
+        .ok();
     let latest_intent = session.chain_to_root().iter().rev().find_map(|entry| {
         if let vak_session::EntryPayload::Intent(record) = &entry.payload {
             Some((**record).clone())
@@ -4306,12 +4311,18 @@ pub(crate) fn register_handle(
     });
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
         let durable_session_id = id.clone();
+        let mut spool = sandbox_output::OutputSpool::new(output_objects, &durable_session_id);
         runtime.spawn(async move {
             loop {
                 match presentation_rx.recv().await {
                     Ok(framed) => {
                         let event = framed.event.clone();
-                        append_session_sandbox_event(&durable_home, &durable_session_id, &event);
+                        append_session_sandbox_event(
+                            &durable_home,
+                            &durable_session_id,
+                            &mut spool,
+                            &event,
+                        );
                         crate::projection::project_frame(
                             &mut presentation_state
                                 .lock()
@@ -12231,10 +12242,19 @@ async fn session_sandbox_executions(
     Json(serde_json::json!({ "session_id": id, "events": events })).into_response()
 }
 
-fn append_session_sandbox_event(home: &std::path::Path, session_id: &str, event: &AgentEvent) {
+fn append_session_sandbox_event(
+    home: &std::path::Path,
+    session_id: &str,
+    spool: &mut sandbox_output::OutputSpool,
+    event: &AgentEvent,
+) {
     let AgentEvent::Sandbox(sandbox) = event else {
         return;
     };
+    let lines = spool.record(sandbox);
+    if lines.is_empty() {
+        return;
+    }
     let path = home
         .join("sandbox")
         .join("executions")
@@ -12252,11 +12272,10 @@ fn append_session_sandbox_event(home: &std::path::Path, session_id: &str, event:
     else {
         return;
     };
-    let Ok(line) = serde_json::to_string(sandbox) else {
-        return;
-    };
     use std::io::Write;
-    let _ = writeln!(file, "{line}");
+    for line in lines {
+        let _ = writeln!(file, "{line}");
+    }
 }
 
 async fn list_sandbox_records(State(state): State<AppState>) -> axum::response::Response {
@@ -23359,6 +23378,7 @@ mod sandbox_promotion_tests {
         append_session_sandbox_event(
             &state.core.scope().into_root(),
             "session-1",
+            &mut crate::sandbox_output::test_spool(),
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-1".into(),
                 owner_session_id: Some("session-1".into()),
@@ -23510,6 +23530,7 @@ mod sandbox_promotion_tests {
         append_session_sandbox_event(
             &state.core.scope().into_root(),
             "session-1",
+            &mut crate::sandbox_output::test_spool(),
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-2".into(),
                 owner_session_id: Some("session-1".into()),
@@ -23779,6 +23800,7 @@ mod sandbox_promotion_tests {
         append_session_sandbox_event(
             &state.core.scope().into_root(),
             "session-1",
+            &mut crate::sandbox_output::test_spool(),
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-1".into(),
                 owner_session_id: Some("session-1".into()),
@@ -23937,6 +23959,7 @@ mod sandbox_promotion_tests {
         append_session_sandbox_event(
             &state.core.scope().into_root(),
             "session-structured",
+            &mut crate::sandbox_output::test_spool(),
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-structured".into(),
                 owner_session_id: Some("session-structured".into()),
@@ -24139,6 +24162,7 @@ mod sandbox_promotion_tests {
         append_session_sandbox_event(
             &state.core.scope().into_root(),
             "session-1",
+            &mut crate::sandbox_output::test_spool(),
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-1".into(),
                 owner_session_id: Some("session-1".into()),
@@ -24491,6 +24515,7 @@ mod sandbox_promotion_tests {
         append_session_sandbox_event(
             &state.core.scope().into_root(),
             "session-1",
+            &mut crate::sandbox_output::test_spool(),
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-1".into(),
                 owner_session_id: Some("session-1".into()),
@@ -25341,8 +25366,18 @@ mod sandbox_promotion_tests {
             duration_ms: 42,
             artifacts: vec!["result.txt".into()],
         });
-        append_session_sandbox_event(dir.path(), "parent-session", &start);
-        append_session_sandbox_event(dir.path(), "parent-session", &finish);
+        append_session_sandbox_event(
+            dir.path(),
+            "parent-session",
+            &mut crate::sandbox_output::test_spool(),
+            &start,
+        );
+        append_session_sandbox_event(
+            dir.path(),
+            "parent-session",
+            &mut crate::sandbox_output::test_spool(),
+            &finish,
+        );
         let path = dir.path().join("sandbox/executions/parent-session.jsonl");
         let lines = std::fs::read_to_string(path).unwrap();
         assert_eq!(lines.lines().count(), 2);
