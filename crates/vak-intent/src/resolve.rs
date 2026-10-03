@@ -64,10 +64,11 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// resolve an explicit deictic follow-up, but never classifies a new directive
 /// on its own. 9 — a strand that names a second open thread with at least
 /// `MERGE_MIN_OVERLAP` shared words merges it (`Lineage::Continues::merges`);
-/// the lexicon is unchanged. The test
+/// the lexicon is unchanged. 10 — question words, auxiliaries and pronouns
+/// are not keywords, so sharing "what" no longer continues a thread. The test
 /// `lexicon_digest_matches_resolver_version` pins the tables to this number
 /// so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 9;
+pub const RESOLVER_VERSION: u32 = 10;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1383,7 +1384,7 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            9,
+            10,
             "1c3149e2a620e896ddf606f725316261de379ff56c5ca088cf93d55fb4d30d0f",
         );
         let digest = crate::signals::lexicon_digest();
@@ -1827,6 +1828,36 @@ mod tests {
         assert_eq!(
             threads,
             vec!["s0.0", "s1.0"],
+            "{:?}",
+            intent.strands[0].lineage
+        );
+    }
+
+    /// The live false link of 2026-10-03: a question about a file shared
+    /// only the word "what" with an arithmetic question, and continued its
+    /// thread.
+    #[test]
+    fn a_shared_question_word_does_not_continue_a_thread() {
+        let text = "Kindly show me exactly what status.txt currently contains, word for word, nothing more.";
+        let act = resolve_text(text).intent().reading.act;
+        let mut req = request(text);
+        req.history.turn_index = 2;
+        req.history.open_threads = vec![ThreadFact {
+            thread_id: "s1.0".into(),
+            act,
+            domains: BTreeSet::new(),
+            keywords: crate::strand::keywords("What is 17 times 23?"),
+        }];
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+        assert_eq!(
+            intent.strands[0].lineage,
+            Lineage::New,
             "{:?}",
             intent.strands[0].lineage
         );

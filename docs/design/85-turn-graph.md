@@ -485,8 +485,11 @@ both.
 Finding: turn 3's plan also put turn 2 (the arithmetic question) at `Full`,
 through a thread link: the resolver read turn 3 as continuing turn 2's
 thread. Lineage that only cost a duplicate thread before G1 now costs
-context. Tightening it (for example, not linking on a deictic word alone
-when the reading's act is a plain question) is the next fix.
+context. Fixed the same day: the link came from the one keyword the two
+requests shared, "what". Question words, auxiliaries, pronouns and
+quantifiers are no longer keywords (`strand::keywords`), so they cannot
+continue a thread (`a_shared_question_word_does_not_continue_a_thread`,
+`question_words_are_not_keywords`); `RESOLVER_VERSION` is 10.
 
 Nothing in G1 to G3 is sound until §2.4 holds. Each item is a new field or
 entry, added under invariant 29's additive rule, or folded into M3a/M3b

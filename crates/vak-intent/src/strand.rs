@@ -384,10 +384,109 @@ fn split_on_markers(text: &str) -> Vec<(&str, Boundary)> {
 /// are dropped so "the" does not link every thread to every other.
 pub fn keywords(text: &str) -> BTreeSet<String> {
     const STOP: &[&str] = &[
-        "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "it", "this", "that", "is",
-        "are", "be", "with", "as", "at", "by", "from", "me", "my", "we", "our", "you", "your",
-        "please", "can", "could", "would", "should", "do", "does", "did", "then", "also", "just",
-        "now", "so", "if", "but", "not", "no", "yes", "into", "about",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "to",
+        "of",
+        "in",
+        "on",
+        "for",
+        "it",
+        "this",
+        "that",
+        "is",
+        "are",
+        "be",
+        "with",
+        "as",
+        "at",
+        "by",
+        "from",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "please",
+        "can",
+        "could",
+        "would",
+        "should",
+        "do",
+        "does",
+        "did",
+        "then",
+        "also",
+        "just",
+        "now",
+        "so",
+        "if",
+        "but",
+        "not",
+        "no",
+        "yes",
+        "into",
+        "about",
+        // Question words, auxiliaries, pronouns and quantifiers: two requests
+        // sharing one of these share no subject ("What is 17 times 23?" and
+        // "what does status.txt contain"), and a shared keyword is what links
+        // a strand to an open thread (docs/design/85-turn-graph.md).
+        "what",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "when",
+        "where",
+        "why",
+        "how",
+        "was",
+        "were",
+        "will",
+        "has",
+        "have",
+        "had",
+        "been",
+        "being",
+        "they",
+        "them",
+        "their",
+        "there",
+        "here",
+        "these",
+        "those",
+        "its",
+        "his",
+        "her",
+        "she",
+        "him",
+        "all",
+        "any",
+        "some",
+        "more",
+        "most",
+        "other",
+        "than",
+        "very",
+        "too",
+        "out",
+        "over",
+        "again",
+        "same",
+        "one",
+        "kindly",
+        "exactly",
+        "currently",
+        "show",
+        "tell",
+        "give",
+        "let",
+        "make",
+        "get",
     ];
     text.to_ascii_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -487,5 +586,18 @@ mod tests {
         let k = keywords("Explain the parser and then refactor it");
         assert!(k.contains("parser") && k.contains("refactor") && k.contains("explain"));
         assert!(!k.contains("the") && !k.contains("and") && !k.contains("it"));
+    }
+
+    #[test]
+    fn question_words_are_not_keywords() {
+        let arithmetic = keywords("What is 17 times 23?");
+        let file = keywords(
+            "Kindly show me exactly what status.txt currently contains, word for word, nothing more.",
+        );
+        assert!(
+            arithmetic.intersection(&file).next().is_none(),
+            "{arithmetic:?} {file:?}"
+        );
+        assert!(file.contains("status") && file.contains("contains"));
     }
 }

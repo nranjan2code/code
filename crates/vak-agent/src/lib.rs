@@ -7348,7 +7348,9 @@ async fn execute_one(
                 let mut effects = Vec::new();
                 for path in reported {
                     let path = path.trim_start_matches("./").to_string();
-                    if std::path::Path::new(&path).starts_with(vak_config::scope::PROJECT_DIR) || declared.as_deref() == Some(path.as_str()) {
+                    if std::path::Path::new(&path).starts_with(vak_config::scope::PROJECT_DIR)
+                        || declared.as_deref() == Some(path.as_str())
+                    {
                         continue;
                     }
                     effects.push(file_effect(cwd, vak_tools::FileAccess::Write, path).await);
