@@ -49,7 +49,7 @@ fn derived_writes_record_provenance() {
         reflected.derived_from.unwrap().turn.as_deref(),
         Some("trn-3")
     );
-    let queue = learning::list_proposals(&home, &cwd);
+    let queue = learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
     assert_eq!(queue.len(), 1);
     assert_eq!(
         queue[0].derived_from,

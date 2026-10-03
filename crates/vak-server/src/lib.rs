@@ -1717,10 +1717,13 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
             evidence: vec!["service:gateway".to_string()],
         });
     }
-    let incidents = operations::reconcile(&state.core.sessions_home(), candidates)
-        .into_iter()
-        .map(|incident| serde_json::to_value(incident).unwrap_or_else(|_| serde_json::json!({})))
-        .collect::<Vec<_>>();
+    let incidents = operations::reconcile(
+        &vak_config::scope::SharedScope::new(state.core.scope().root()),
+        candidates,
+    )
+    .into_iter()
+    .map(|incident| serde_json::to_value(incident).unwrap_or_else(|_| serde_json::json!({})))
+    .collect::<Vec<_>>();
     let mut all_agents = vec![serde_json::json!({
         "id": "vak",
         "name": "Vakyartha",
@@ -1766,20 +1769,20 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
         "bus": state.hub.bus_status(),
         "security": security,
         "incidents": incidents,
-        "actions": operations::recent_actions(&state.core.sessions_home(), 50),
+        "actions": operations::recent_actions(&vak_config::scope::SharedScope::new(state.core.scope().root()), 50),
         "ops_port": ops_port,
     }))
 }
 
 async fn operations_actions(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "actions": operations::recent_actions(&state.core.sessions_home(), 200),
+        "actions": operations::recent_actions(&vak_config::scope::SharedScope::new(state.core.scope().root()), 200),
     }))
 }
 
 async fn operations_incidents(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "incidents": operations::list(&state.core.sessions_home()),
+        "incidents": operations::list(&vak_config::scope::SharedScope::new(state.core.scope().root())),
     }))
 }
 
@@ -1876,8 +1879,11 @@ async fn replay_operations_outbox(
                 trace: Some(request_trace(&state, "ops-replay")),
                 actor: Some(request_actor(&state)),
             };
-            receipt.persisted =
-                operations::record_action(&state.core.sessions_home(), &receipt).is_ok();
+            receipt.persisted = operations::record_action(
+                &vak_config::scope::SharedScope::new(state.core.scope().root()),
+                &receipt,
+            )
+            .is_ok();
             Json(serde_json::json!({
                 "ok": true,
                 "job_id": job_id,
@@ -2336,7 +2342,11 @@ async fn ops_action(
         trace: Some(request_trace(&state, "ops-action")),
         actor: Some(request_actor(&state)),
     };
-    receipt.persisted = operations::record_action(&state.core.sessions_home(), &receipt).is_ok();
+    receipt.persisted = operations::record_action(
+        &vak_config::scope::SharedScope::new(state.core.scope().root()),
+        &receipt,
+    )
+    .is_ok();
     let receipt_json = serde_json::to_value(&receipt).unwrap_or_else(|_| serde_json::json!({}));
     let mut result = result;
     if let Some(object) = result.as_object_mut() {
@@ -2871,9 +2881,9 @@ async fn amend_memory_note(
 }
 
 fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
-    let mut proposals = vak_core::learning::list_proposals(&core.sessions_home(), core.cwd());
+    let mut proposals = vak_core::learning::list_proposals(&core.scope(), core.cwd());
     if proposals.is_empty() && core.shared_data_home() != core.sessions_home() {
-        proposals = vak_core::learning::list_proposals(&core.shared_data_home(), core.cwd());
+        proposals = vak_core::learning::list_proposals(&core.shared_scope().as_agent(), core.cwd());
     }
     proposals
         .iter()
@@ -2903,10 +2913,10 @@ async fn promote_proposal(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let res = vak_core::learning::promote(&core.sessions_home(), core.cwd(), &id);
+    let res = vak_core::learning::promote(&core.scope(), core.cwd(), &id);
     let res = match res {
         Err(_) if state.core.shared_data_home() != core.sessions_home() => {
-            vak_core::learning::promote(&state.core.shared_data_home(), core.cwd(), &id)
+            vak_core::learning::promote(&state.core.shared_scope().as_agent(), core.cwd(), &id)
         }
         other => other,
     };
@@ -2931,10 +2941,10 @@ async fn reject_proposal(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let res = vak_core::learning::reject(&core.sessions_home(), core.cwd(), &id);
+    let res = vak_core::learning::reject(&core.scope(), core.cwd(), &id);
     let res = match res {
         Err(_) if state.core.shared_data_home() != core.sessions_home() => {
-            vak_core::learning::reject(&state.core.shared_data_home(), core.cwd(), &id)
+            vak_core::learning::reject(&state.core.shared_scope().as_agent(), core.cwd(), &id)
         }
         other => other,
     };
@@ -9432,8 +9442,8 @@ async fn digest_report(
 ) -> Json<vak_core::digest::DigestReport> {
     let days = q.days.unwrap_or(7).clamp(1, 90);
     Json(vak_core::digest::digest(
-        &state.core.sessions_home(),
-        &state.core.shared_data_home(),
+        &state.core.scope(),
+        &state.core.shared_scope(),
         days,
     ))
 }

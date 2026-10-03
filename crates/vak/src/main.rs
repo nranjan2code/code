@@ -76,7 +76,7 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
     };
     match action {
         SkillsReviewAction::List => {
-            let proposals = vak_core::learning::list_proposals(&core.sessions_home(), core.cwd());
+            let proposals = vak_core::learning::list_proposals(&core.scope(), core.cwd());
             if proposals.is_empty() {
                 println!("no pending skill proposals");
                 return 0;
@@ -87,7 +87,7 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
             0
         }
         SkillsReviewAction::Promote { id } => {
-            match vak_core::learning::promote(&core.sessions_home(), core.cwd(), &id) {
+            match vak_core::learning::promote(&core.scope(), core.cwd(), &id) {
                 Ok(name) => {
                     println!("promoted skill '{name}'");
                     0
@@ -99,7 +99,7 @@ fn run_skills_review(cwd: PathBuf, action: SkillsReviewAction) -> i32 {
             }
         }
         SkillsReviewAction::Reject { id } => {
-            match vak_core::learning::reject(&core.sessions_home(), core.cwd(), &id) {
+            match vak_core::learning::reject(&core.scope(), core.cwd(), &id) {
                 Ok(()) => {
                     println!("rejected proposal {id}");
                     0

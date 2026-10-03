@@ -245,6 +245,12 @@ impl SharedScope {
         self.root.join("agents")
     }
 
+    /// The shared home read as an Agent-shaped layout: shared skills and
+    /// their proposals sit at the same relative paths as an Agent's own.
+    pub fn as_agent(&self) -> AgentScope {
+        AgentScope::new(self.root.clone())
+    }
+
     pub fn agent(&self, agent_id: &str) -> AgentScope {
         AgentScope::new(crate::paths::agent_home_at(&self.root, agent_id))
     }

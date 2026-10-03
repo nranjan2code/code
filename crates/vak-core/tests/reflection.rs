@@ -103,7 +103,10 @@ async fn reflection_writes_once_and_dedups_repeats() {
     assert_eq!(notes, 1);
     assert!(queued);
     assert_eq!(memory::list_notes(&home, &cwd).len(), 1);
-    assert_eq!(learning::list_proposals(&home, &cwd).len(), 1);
+    assert_eq!(
+        learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd).len(),
+        1
+    );
 
     // A near-identical reflection later adds NOTHING (bounded growth).
     let again = propose(
@@ -120,7 +123,11 @@ async fn reflection_writes_once_and_dedups_repeats() {
     assert_eq!(notes2, 0, "near-duplicate note must be skipped");
     // A second identical skill proposal queues under a distinct id; review
     // queue dedup is the human reviewer's call.
-    assert!(!queued2 || !learning::list_proposals(&home, &cwd).is_empty(),);
+    assert!(
+        !queued2
+            || !learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd)
+                .is_empty(),
+    );
 }
 
 #[test]

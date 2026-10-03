@@ -187,8 +187,8 @@ pub fn proposal_provenance(body: &str) -> Option<vak_session::trace::DerivedFrom
     Some(vak_session::trace::DerivedFrom { conversation, turn })
 }
 
-fn proposals_dir(home: &Path, cwd: &Path) -> PathBuf {
-    vak_config::scope::AgentScope::new(home).skill_proposals(cwd)
+fn proposals_dir(scope: &vak_config::scope::AgentScope, cwd: &Path) -> PathBuf {
+    scope.skill_proposals(cwd)
 }
 
 pub struct ProposeSkillTool {
@@ -257,14 +257,20 @@ impl vak_tools::Tool for ProposeSkillTool {
         }
 
         let id = uuid::Uuid::now_v7().simple().to_string();
-        let dir = proposals_dir(&self.sessions_home, &self.cwd);
+        let dir = proposals_dir(
+            &vak_config::scope::AgentScope::new(&self.sessions_home),
+            &self.cwd,
+        );
         if let Err(e) = std::fs::create_dir_all(&dir) {
             return vak_tools::ToolOutput::error(format!("create proposals dir: {e}"));
         }
         let dup_line = match duplicate_of(
             &name,
             prose(instructions),
-            &accepted_skill_bodies(&self.sessions_home, &self.cwd),
+            &accepted_skill_bodies(
+                &vak_config::scope::AgentScope::new(&self.sessions_home),
+                &self.cwd,
+            ),
         ) {
             Some(dup) => format!("{DUPLICATE_KEY}: \"{dup}\"\n"),
             None => String::new(),
@@ -315,7 +321,11 @@ pub fn sanitize_name(raw: &str) -> Option<String> {
 
 // ---- Review queue API -------------------------------------------------------
 
-fn list_proposals_in_dir(dir: &Path, home: &Path, cwd: &Path) -> Vec<SkillProposal> {
+fn list_proposals_in_dir(
+    dir: &Path,
+    scope: &vak_config::scope::AgentScope,
+    cwd: &Path,
+) -> Vec<SkillProposal> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -332,7 +342,7 @@ fn list_proposals_in_dir(dir: &Path, home: &Path, cwd: &Path) -> Vec<SkillPropos
     }
     let mut out = Vec::with_capacity(found.len());
     if !found.is_empty() {
-        let accepted = accepted_skill_bodies(home, cwd);
+        let accepted = accepted_skill_bodies(scope, cwd);
         for (id, path, skill) in found {
             let tag = screen_proposal(&path, &skill.name, &accepted);
             out.push(SkillProposal {
@@ -354,15 +364,19 @@ fn list_proposals_in_dir(dir: &Path, home: &Path, cwd: &Path) -> Vec<SkillPropos
 /// `[duplicate-of: <name>]` suffix (every review surface renders the
 /// description) and the flag persists as a `duplicate-of:` frontmatter line
 /// so hand edits and later listings agree.
-pub fn list_proposals(home: &Path, cwd: &Path) -> Vec<SkillProposal> {
-    let mut proposals = list_proposals_in_dir(&proposals_dir(home, cwd), home, cwd);
+pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<SkillProposal> {
+    let mut proposals = list_proposals_in_dir(&proposals_dir(scope, cwd), scope, cwd);
     if proposals.is_empty() {
-        let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
+        let agents_dir = scope.agents_dir();
         if let Ok(entries) = std::fs::read_dir(&agents_dir) {
             for entry in entries.flatten() {
                 let p = entry.path();
                 if p.is_dir() {
-                    let agent_props = list_proposals_in_dir(&proposals_dir(&p, cwd), home, cwd);
+                    let agent_props = list_proposals_in_dir(
+                        &proposals_dir(&vak_config::scope::AgentScope::new(&p), cwd),
+                        scope,
+                        cwd,
+                    );
                     proposals.extend(agent_props);
                 }
             }
@@ -374,13 +388,17 @@ pub fn list_proposals(home: &Path, cwd: &Path) -> Vec<SkillProposal> {
 
 /// Install a proposal into user-level discovery. Refuses to silently
 /// overwrite an existing skill of the same name.
-pub fn promote(home: &Path, cwd: &Path, id: &str) -> Result<String, String> {
-    let proposals = list_proposals(home, cwd);
+pub fn promote(
+    scope: &vak_config::scope::AgentScope,
+    cwd: &Path,
+    id: &str,
+) -> Result<String, String> {
+    let proposals = list_proposals(scope, cwd);
     let p = proposals
         .iter()
         .find(|p| p.id == id)
         .ok_or_else(|| format!("no proposal '{id}'"))?;
-    let target_dir = vak_config::scope::AgentScope::new(home).skill(&p.name);
+    let target_dir = scope.skill(&p.name);
     let target = target_dir.join("SKILL.md");
     if target.exists() {
         return Err(format!(
@@ -395,8 +413,8 @@ pub fn promote(home: &Path, cwd: &Path, id: &str) -> Result<String, String> {
     Ok(p.name.clone())
 }
 
-pub fn reject(home: &Path, cwd: &Path, id: &str) -> Result<(), String> {
-    let proposals = list_proposals(home, cwd);
+pub fn reject(scope: &vak_config::scope::AgentScope, cwd: &Path, id: &str) -> Result<(), String> {
+    let proposals = list_proposals(scope, cwd);
     let p = proposals
         .iter()
         .find(|p| p.id == id)
@@ -504,12 +522,15 @@ fn with_duplicate_note(description: &str, dup: Option<&str>) -> String {
 
 /// (name, instructions) pairs for every discovered project/user skill — the
 /// same roots skills::discover walks, read-only from this side.
-fn accepted_skill_bodies(home: &Path, cwd: &Path) -> Vec<(String, String)> {
+fn accepted_skill_bodies(
+    scope: &vak_config::scope::AgentScope,
+    cwd: &Path,
+) -> Vec<(String, String)> {
     let mut roots = vec![
         vak_config::scope::WorkspaceScope::new(cwd).skills(),
-        vak_config::scope::AgentScope::new(home).skills(),
+        scope.skills(),
     ];
-    let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
+    let agents_dir = scope.agents_dir();
     if let Ok(entries) = std::fs::read_dir(&agents_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
@@ -651,11 +672,14 @@ mod tests {
     }
 
     fn pending_paths(home: &Path, cwd: &Path) -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = std::fs::read_dir(proposals_dir(home, cwd))
-            .unwrap()
-            .flatten()
-            .map(|e| e.path())
-            .collect();
+        let mut v: Vec<PathBuf> = std::fs::read_dir(proposals_dir(
+            &vak_config::scope::AgentScope::new(home),
+            cwd,
+        ))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
         v.sort();
         v
     }
@@ -707,7 +731,7 @@ mod tests {
             assert!(!text.contains("[duplicate-of:"));
         }
 
-        let listed = list_proposals(&home, &cwd);
+        let listed = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
         assert_eq!(listed.len(), 2);
         for p in &listed {
             assert!(
@@ -720,7 +744,10 @@ mod tests {
 
         // A flagged proposal is still promotable by explicit human decision.
         let id = listed[0].id.clone();
-        assert_eq!(promote(&home, &cwd, &id).unwrap(), "rotate-release-tags-v2");
+        assert_eq!(
+            promote(&vak_config::scope::AgentScope::new(&home), &cwd, &id).unwrap(),
+            "rotate-release-tags-v2"
+        );
         let installed = home.join("skills/rotate-release-tags-v2/SKILL.md");
         assert!(installed.exists());
         let parsed = crate::skills::parse(&installed).unwrap();
@@ -760,7 +787,7 @@ mod tests {
             let text = std::fs::read_to_string(&path).unwrap();
             assert!(!text.contains("duplicate-of"), "{text}");
         }
-        let listed = list_proposals(&home, &cwd);
+        let listed = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].description, "festival logistics");
     }
@@ -776,7 +803,7 @@ mod tests {
         );
 
         // Exact write format of the reflection queue entry point.
-        let dir = proposals_dir(&home, &cwd);
+        let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("aaa111.md");
         std::fs::write(
@@ -785,7 +812,7 @@ mod tests {
         )
         .unwrap();
 
-        let first = list_proposals(&home, &cwd);
+        let first = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
         assert_eq!(first.len(), 1);
         assert!(
             first[0]
@@ -803,7 +830,7 @@ mod tests {
         );
 
         // Repeat listings never stack a second tag line.
-        let second = list_proposals(&home, &cwd);
+        let second = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
         assert_eq!(second[0].description, first[0].description);
         assert_eq!(
             std::fs::read_to_string(&file)
@@ -814,14 +841,14 @@ mod tests {
         );
 
         // Rejection is unchanged for flagged drafts.
-        assert!(reject(&home, &cwd, "aaa111").is_ok());
-        assert!(list_proposals(&home, &cwd).is_empty());
+        assert!(reject(&vak_config::scope::AgentScope::new(&home), &cwd, "aaa111").is_ok());
+        assert!(list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd).is_empty());
     }
 
     #[test]
     fn tagged_header_is_inert_to_consumer_parsers() {
         let (_dir, home, cwd) = temp_home_cwd();
-        let dir = proposals_dir(&home, &cwd);
+        let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("bbb222.md");
         std::fs::write(
@@ -838,7 +865,7 @@ mod tests {
 
         // Replicates the server payload shape and TUI/CLI row rendering,
         // which all show the flag via description without their own changes.
-        let listed = list_proposals(&home, &cwd);
+        let listed = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
         let p = &listed[0];
         let payload = serde_json::json!({"id": p.id, "name": p.name, "description": p.description});
         assert_eq!(payload["name"], "hand-tagged");

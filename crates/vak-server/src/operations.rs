@@ -9,18 +9,18 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-fn log_path(home: &Path) -> PathBuf {
-    vak_config::scope::SharedScope::new(home).operations_incidents()
+fn log_path(shared: &vak_config::scope::SharedScope) -> PathBuf {
+    shared.operations_incidents()
 }
 
-fn actions_path(home: &Path) -> PathBuf {
-    vak_config::scope::SharedScope::new(home).operations_actions()
+fn actions_path(shared: &vak_config::scope::SharedScope) -> PathBuf {
+    shared.operations_actions()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -90,8 +90,8 @@ struct IncidentEvent {
     incident: IncidentRecord,
 }
 
-fn read_events(home: &Path) -> Vec<IncidentEvent> {
-    let Ok(raw) = std::fs::read_to_string(log_path(home)) else {
+fn read_events(shared: &vak_config::scope::SharedScope) -> Vec<IncidentEvent> {
+    let Ok(raw) = std::fs::read_to_string(log_path(shared)) else {
         return Vec::new();
     };
     raw.lines()
@@ -100,9 +100,9 @@ fn read_events(home: &Path) -> Vec<IncidentEvent> {
         .collect()
 }
 
-fn folded(home: &Path) -> Vec<IncidentRecord> {
+fn folded(shared: &vak_config::scope::SharedScope) -> Vec<IncidentRecord> {
     let mut records = HashMap::<String, IncidentRecord>::new();
-    for event in read_events(home) {
+    for event in read_events(shared) {
         records.insert(event.incident.id.clone(), event.incident);
     }
     let mut values: Vec<_> = records.into_values().collect();
@@ -110,8 +110,8 @@ fn folded(home: &Path) -> Vec<IncidentRecord> {
     values
 }
 
-fn append(home: &Path, event: &IncidentEvent) {
-    let path = log_path(home);
+fn append(shared: &vak_config::scope::SharedScope, event: &IncidentEvent) {
+    let path = log_path(shared);
     let Some(parent) = path.parent() else { return };
     if std::fs::create_dir_all(parent).is_err() {
         return;
@@ -132,8 +132,11 @@ fn append(home: &Path, event: &IncidentEvent) {
 /// Persist an operation receipt. Receipts are append-only so an operator can
 /// prove what was requested, what the service manager returned, and what a
 /// follow-up state probe observed.
-pub fn record_action(home: &Path, receipt: &ActionReceipt) -> Result<(), String> {
-    let path = actions_path(home);
+pub fn record_action(
+    shared: &vak_config::scope::SharedScope,
+    receipt: &ActionReceipt,
+) -> Result<(), String> {
+    let path = actions_path(shared);
     let Some(parent) = path.parent() else {
         return Err("operations path has no parent".to_string());
     };
@@ -152,8 +155,8 @@ pub fn record_action(home: &Path, receipt: &ActionReceipt) -> Result<(), String>
 }
 
 /// Return the newest durable action receipts, newest first.
-pub fn recent_actions(home: &Path, limit: usize) -> Vec<ActionReceipt> {
-    let Ok(raw) = std::fs::read_to_string(actions_path(home)) else {
+pub fn recent_actions(shared: &vak_config::scope::SharedScope, limit: usize) -> Vec<ActionReceipt> {
+    let Ok(raw) = std::fs::read_to_string(actions_path(shared)) else {
         return Vec::new();
     };
     raw.lines()
@@ -186,9 +189,12 @@ fn new_record(candidate: IncidentCandidate, now: DateTime<Utc>) -> IncidentRecor
 
 /// Reconcile the current probe candidates into durable incident records.
 /// Returns open records first, followed by the most recently resolved records.
-pub fn reconcile(home: &Path, candidates: Vec<IncidentCandidate>) -> Vec<IncidentRecord> {
+pub fn reconcile(
+    shared: &vak_config::scope::SharedScope,
+    candidates: Vec<IncidentCandidate>,
+) -> Vec<IncidentRecord> {
     let now = Utc::now();
-    let mut all = folded(home);
+    let mut all = folded(shared);
     let mut by_fingerprint: HashMap<String, usize> = all
         .iter()
         .enumerate()
@@ -214,7 +220,7 @@ pub fn reconcile(home: &Path, candidates: Vec<IncidentCandidate>) -> Vec<Inciden
                 record.last_seen = now;
                 record.occurrences = record.occurrences.saturating_add(1);
                 append(
-                    home,
+                    shared,
                     &IncidentEvent {
                         ts: now,
                         event: if was_resolved { "reopened" } else { "observed" }.to_string(),
@@ -225,7 +231,7 @@ pub fn reconcile(home: &Path, candidates: Vec<IncidentCandidate>) -> Vec<Inciden
         } else {
             let record = new_record(candidate, now);
             append(
-                home,
+                shared,
                 &IncidentEvent {
                     ts: now,
                     event: "opened".to_string(),
@@ -244,7 +250,7 @@ pub fn reconcile(home: &Path, candidates: Vec<IncidentCandidate>) -> Vec<Inciden
                 Some("No longer present in current control-plane probes".to_string());
             record.last_seen = now;
             append(
-                home,
+                shared,
                 &IncidentEvent {
                     ts: now,
                     event: "resolved".to_string(),
@@ -263,8 +269,8 @@ pub fn reconcile(home: &Path, candidates: Vec<IncidentCandidate>) -> Vec<Inciden
 }
 
 /// Read the folded incident history without creating new records.
-pub fn list(home: &Path) -> Vec<IncidentRecord> {
-    folded(home)
+pub fn list(shared: &vak_config::scope::SharedScope) -> Vec<IncidentRecord> {
+    folded(shared)
 }
 
 #[cfg(test)]
@@ -287,18 +293,27 @@ mod tests {
     #[test]
     fn opens_and_folds_a_durable_incident() {
         let dir = tempfile::tempdir().unwrap();
-        let rows = reconcile(dir.path(), vec![candidate("test")]);
+        let rows = reconcile(
+            &vak_config::scope::SharedScope::new(dir.path()),
+            vec![candidate("test")],
+        );
         assert_eq!(rows.len(), 1);
         assert!(rows[0].id.starts_with("INC-"));
         assert_eq!(rows[0].status, "investigating");
-        assert_eq!(list(dir.path()), rows);
+        assert_eq!(list(&vak_config::scope::SharedScope::new(dir.path())), rows);
     }
 
     #[test]
     fn repeated_observation_groups_instead_of_creating_duplicates() {
         let dir = tempfile::tempdir().unwrap();
-        let first = reconcile(dir.path(), vec![candidate("test")]);
-        let second = reconcile(dir.path(), vec![candidate("test")]);
+        let first = reconcile(
+            &vak_config::scope::SharedScope::new(dir.path()),
+            vec![candidate("test")],
+        );
+        let second = reconcile(
+            &vak_config::scope::SharedScope::new(dir.path()),
+            vec![candidate("test")],
+        );
         assert_eq!(second.len(), 1);
         assert_eq!(second[0].id, first[0].id);
         assert_eq!(second[0].occurrences, 1);
@@ -307,11 +322,17 @@ mod tests {
     #[test]
     fn disappearance_records_resolution_and_reappearance_reopens() {
         let dir = tempfile::tempdir().unwrap();
-        let first = reconcile(dir.path(), vec![candidate("test")]);
-        let resolved = reconcile(dir.path(), Vec::new());
+        let first = reconcile(
+            &vak_config::scope::SharedScope::new(dir.path()),
+            vec![candidate("test")],
+        );
+        let resolved = reconcile(&vak_config::scope::SharedScope::new(dir.path()), Vec::new());
         assert_eq!(resolved[0].id, first[0].id);
         assert_eq!(resolved[0].status, "resolved");
-        let reopened = reconcile(dir.path(), vec![candidate("test")]);
+        let reopened = reconcile(
+            &vak_config::scope::SharedScope::new(dir.path()),
+            vec![candidate("test")],
+        );
         assert_eq!(reopened[0].id, first[0].id);
         assert_eq!(reopened[0].status, "investigating");
         assert_eq!(reopened[0].occurrences, 2);
@@ -337,7 +358,10 @@ mod tests {
             trace: None,
             actor: None,
         };
-        record_action(dir.path(), &receipt).unwrap();
-        assert_eq!(recent_actions(dir.path(), 10), vec![receipt]);
+        record_action(&vak_config::scope::SharedScope::new(dir.path()), &receipt).unwrap();
+        assert_eq!(
+            recent_actions(&vak_config::scope::SharedScope::new(dir.path()), 10),
+            vec![receipt]
+        );
     }
 }

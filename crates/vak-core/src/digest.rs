@@ -63,19 +63,19 @@ pub struct DigestReport {
     pub skill_proposals_opened: usize,
 }
 
-fn cost_log_path(home: &Path) -> PathBuf {
-    vak_config::scope::AgentScope::new(home).cost_log()
+fn cost_log_path(scope: &vak_config::scope::AgentScope) -> PathBuf {
+    scope.cost_log()
 }
 
 /// Stream the cost ledger once, folding priced/unpriced rows inside the
 /// window into the running aggregates.
 fn fold_costs(
-    home: &Path,
+    scope: &vak_config::scope::AgentScope,
     since: chrono::DateTime<chrono::Utc>,
     sessions: &mut BTreeSet<String>,
     report: &mut DigestReport,
 ) {
-    let Ok(f) = std::fs::File::open(cost_log_path(home)) else {
+    let Ok(f) = std::fs::File::open(cost_log_path(scope)) else {
         return;
     };
     for line in BufReader::new(f).lines().map_while(Result::ok) {
@@ -149,9 +149,9 @@ fn count_fresh_notes(path: &Path, since: chrono::DateTime<chrono::Utc>) -> usize
 
 /// Every markdown store under `<home>/memory/` — per-workspace MEMORY.md
 /// files plus the global USER.md profile tier.
-fn memory_files(home: &Path) -> Vec<PathBuf> {
+fn memory_files(scope: &vak_config::scope::AgentScope) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let root = vak_config::scope::AgentScope::new(home).memory_root();
+    let root = scope.memory_root();
     let Ok(read) = std::fs::read_dir(&root) else {
         return out;
     };
@@ -198,7 +198,11 @@ fn proposal_opened_ts(path: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
 /// `shared_home` holds what every Agent shares: the cost ledger and the
 /// trash. Spend stays whole, because it was spent; a trashed session is left
 /// out of `distinct_sessions`, the one place a digest names a session.
-pub fn digest(home: &Path, shared_home: &Path, days: u32) -> DigestReport {
+pub fn digest(
+    scope: &vak_config::scope::AgentScope,
+    shared: &vak_config::scope::SharedScope,
+    days: u32,
+) -> DigestReport {
     let mut report = DigestReport {
         days,
         ..Default::default()
@@ -210,19 +214,19 @@ pub fn digest(home: &Path, shared_home: &Path, days: u32) -> DigestReport {
     report.since = Some(since);
 
     let mut sessions = BTreeSet::new();
-    fold_costs(shared_home, since, &mut sessions, &mut report);
-    let trashed = crate::trash::trashed(&vak_config::scope::SharedScope::new(shared_home));
+    fold_costs(&shared.as_agent(), since, &mut sessions, &mut report);
+    let trashed = crate::trash::trashed(shared);
     report.distinct_sessions = sessions
         .into_iter()
         .filter(|id| !trashed.contains(id))
         .collect();
 
-    for path in memory_files(home) {
+    for path in memory_files(scope) {
         report.memory_notes_appended += count_fresh_notes(&path, since);
     }
 
     let mut proposals: Vec<PathBuf> = Vec::new();
-    let root = vak_config::scope::AgentScope::new(home).skill_proposals_root();
+    let root = scope.skill_proposals_root();
     if let Ok(read) = std::fs::read_dir(&root) {
         for project in read.flatten() {
             let Ok(files) = std::fs::read_dir(project.path()) else {
@@ -276,7 +280,11 @@ mod tests {
     #[test]
     fn missing_files_yield_zeros_not_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let r = digest(dir.path(), dir.path(), 7);
+        let r = digest(
+            &vak_config::scope::AgentScope::new(dir.path()),
+            &vak_config::scope::SharedScope::new(dir.path()),
+            7,
+        );
         assert_eq!(r.total_usd, 0.0);
         assert_eq!(r.dispatches, 0);
         assert!(r.by_model.is_empty());
@@ -286,7 +294,15 @@ mod tests {
         assert_eq!(r.skill_proposals_opened, 0);
         // Empty home with no memory/ dir at all must behave identically.
         let empty = tempfile::tempdir().unwrap();
-        assert_eq!(digest(empty.path(), empty.path(), 30).dispatches, 0);
+        assert_eq!(
+            digest(
+                &vak_config::scope::AgentScope::new(empty.path()),
+                &vak_config::scope::SharedScope::new(empty.path()),
+                30
+            )
+            .dispatches,
+            0
+        );
     }
 
     #[test]
@@ -296,7 +312,11 @@ mod tests {
         ledger
             .append(&row(chrono::Utc::now(), "m", "p", Some(1.0), "s"))
             .unwrap();
-        let r = digest(dir.path(), dir.path(), 0);
+        let r = digest(
+            &vak_config::scope::AgentScope::new(dir.path()),
+            &vak_config::scope::SharedScope::new(dir.path()),
+            0,
+        );
         assert_eq!(r.dispatches, 0);
         assert!(r.since.is_none());
     }
@@ -354,7 +374,11 @@ mod tests {
             ))
             .unwrap();
 
-        let r = digest(dir.path(), dir.path(), 7);
+        let r = digest(
+            &vak_config::scope::AgentScope::new(dir.path()),
+            &vak_config::scope::SharedScope::new(dir.path()),
+            7,
+        );
         assert!((r.total_usd - 2.75).abs() < 1e-9, "{}", r.total_usd);
         assert_eq!(r.unpriced_rows, 1);
         assert_eq!(r.dispatches, 4);
@@ -399,7 +423,11 @@ mod tests {
 
         memory::append_profile_note(home, "preference", "editor", "vim bindings", "su").unwrap();
 
-        let r = digest(home, home, 7);
+        let r = digest(
+            &vak_config::scope::AgentScope::new(home),
+            &vak_config::scope::SharedScope::new(home),
+            7,
+        );
         assert_eq!(
             r.memory_notes_appended, 2,
             "fresh workspace + profile notes"
@@ -427,7 +455,11 @@ mod tests {
         // No parseable comment → falls back to mtime (now) → counts.
         std::fs::write(proj.join("mtime-only.md"), "no comment here").unwrap();
 
-        let r = digest(home, home, 7);
+        let r = digest(
+            &vak_config::scope::AgentScope::new(home),
+            &vak_config::scope::SharedScope::new(home),
+            7,
+        );
         assert_eq!(r.skill_proposals_opened, 2);
     }
 }

@@ -158,7 +158,8 @@ async fn remember_propose_recall_promote_loop() {
     assert!(logged.contains("queued for review"), "{logged}");
 
     // Proposal is pending, not installed.
-    let pending = vak_core::learning::list_proposals(&home, &cwd);
+    let pending =
+        vak_core::learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].name, "deploy-safely");
     assert!(!home.join("skills/deploy-safely/SKILL.md").exists());
@@ -216,10 +217,14 @@ async fn remember_propose_recall_promote_loop() {
 
     // ---- Promotion closes the loop ---------------------------------------
     let id = pending[0].id.clone();
-    let promoted = vak_core::learning::promote(&home, &cwd, &id).unwrap();
+    let promoted =
+        vak_core::learning::promote(&vak_config::scope::AgentScope::new(&home), &cwd, &id).unwrap();
     assert_eq!(promoted, "deploy-safely");
     assert!(home.join("skills/deploy-safely/SKILL.md").exists());
-    assert!(vak_core::learning::list_proposals(&home, &cwd).is_empty());
+    assert!(
+        vak_core::learning::list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd)
+            .is_empty()
+    );
     let discovered = vak_core::skills::discover(&cwd, &home);
     assert!(
         discovered
@@ -229,5 +234,7 @@ async fn remember_propose_recall_promote_loop() {
     );
 
     // Promoting twice or promoting after rejection fails cleanly.
-    assert!(vak_core::learning::promote(&home, &cwd, &id).is_err());
+    assert!(
+        vak_core::learning::promote(&vak_config::scope::AgentScope::new(&home), &cwd, &id).is_err()
+    );
 }
