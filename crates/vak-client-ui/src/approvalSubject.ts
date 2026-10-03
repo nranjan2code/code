@@ -32,3 +32,13 @@ export function approvalSubjects(argsJson: string): ApprovalSubject[] {
   }
   return [];
 }
+
+/** The sandbox that runs an approved `bash` command has no network. Whether
+ *  the command wants one is never guessed from its words: every command run
+ *  there is held to this, so the note is shown for every one. FullAccess and
+ *  an unsandboxed install keep the network, and say nothing. */
+export function approvalNetworkNote(tool: string, mode: string | undefined, sandbox: string | undefined): string | null {
+  if (tool !== "bash" || !mode || mode === "FullAccess") return null;
+  if (!sandbox || sandbox === "off") return null;
+  return "It runs in a protected area with no internet access, so a command that downloads or contacts another computer will fail. Allowing it does not change that.";
+}

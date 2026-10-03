@@ -24,6 +24,7 @@ import {
   isRunning,
   presentationOf,
   technicalDetails,
+  health,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
@@ -36,7 +37,7 @@ import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPrev
 import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
 import { relAgo } from "../time";
 import Skeleton from "./Skeleton";
-import { approvalSubjects } from "../approvalSubject";
+import { approvalNetworkNote, approvalSubjects } from "../approvalSubject";
 import * as api from "../api";
 import { host } from "../host";
 import { isDocumentPath, parseOfficeCitation } from "../officeFiles";
@@ -890,6 +891,7 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
       <div class="ap-head">Vakyartha wants to use {content.tool}</div>
       <For each={approvalSubjects(content.args_json)}>{(subject) => <code class="ap-primary"><span class="ap-primary-key">{subject.key}</span>{subject.value}</code>}</For>
       <div class="ap-reason">This needs your approval before it can continue.</div>
+      <Show when={approvalNetworkNote(content.tool, health()?.permission_mode, health()?.sandbox)}>{(note) => <div class="ap-reason ap-network-note">{note()}</div>}</Show>
       <details class="ap-details"><summary>View request details</summary><pre class="ap-args">{argsPretty()}</pre></details>
       <Show when={pending()} fallback={<div class="ap-done">{props.item.status}</div>}>
         <div class="ap-actions">

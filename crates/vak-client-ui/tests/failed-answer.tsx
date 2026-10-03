@@ -37,6 +37,7 @@ const timeline = { schema_version: 2, session_id: sid, diagnostics: [], items: [
   approval("t3", longCommand),
 ] } as unknown as OutputTimeline;
 
+store.setHealth({ status: "ok", provider: "x", model: "y", permission_mode: "WorkspaceWrite", sandbox: "seatbelt", context_window: 1, cwd: "/", warnings: [] } as never);
 store.setActiveId(sid);
 store.hydrateFromPresentation(sid, timeline);
 render(() => <main style="max-width: 820px; margin: 0 auto; padding: 24px 16px"><PresentationTimelineView timeline={store.presentationOf(sid)!} sessionId={sid} /></main>, document.getElementById("root")!);
@@ -51,6 +52,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
     assert(text.includes(linkOnly), "a link-only card never hides the answer that reports a failure"),
     assert(text.includes(afterFailure), "a turn with an unrecovered tool failure keeps the answer's prose"),
     assert(document.querySelector(".semantic-approval .ap-primary")?.textContent?.includes("tail-end-marker"), "an approval shows the whole command without opening details"),
+    assert(document.querySelector(".semantic-approval .ap-network-note")?.textContent?.includes("no internet access"), "a sandboxed approval says the command has no internet"),
     assert(!document.querySelector(".semantic-approval details[open]"), "the command is visible while the details stay closed"),
   ];
 };
