@@ -7096,6 +7096,8 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "uuid",
+ "vak-intent",
  "vak-llm",
  "vak-session",
 ]
