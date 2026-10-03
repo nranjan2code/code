@@ -62,6 +62,11 @@ pub struct SessionLog {
     tail_id: Option<String>,
     tail_hash: Option<String>,
     warnings: Vec<String>,
+    /// The turn later appends belong to: the latest directive on the active
+    /// chain, or the id reserved by `begin_turn` for the next one.
+    current_turn: Option<String>,
+    /// An id `begin_turn` reserved; the next directive appended takes it.
+    reserved_turn: Option<String>,
 }
 
 impl SessionLog {
@@ -96,6 +101,8 @@ impl SessionLog {
             tail_id: None,
             tail_hash: None,
             warnings: Vec::new(),
+            current_turn: None,
+            reserved_turn: None,
         };
         log.append(Entry::new(None, EntryPayload::Header(header)))?;
         Ok(log)
@@ -256,7 +263,10 @@ impl SessionLog {
             tail_id: parsed.tail_id,
             tail_hash: parsed.tail_hash,
             warnings: parsed.warnings,
-        })
+            current_turn: None,
+            reserved_turn: None,
+        }
+        .with_current_turn())
     }
 
     /// Open an existing session for reading and inspection without acquiring an
@@ -277,7 +287,10 @@ impl SessionLog {
             tail_id: parsed.tail_id,
             tail_hash: parsed.tail_hash,
             warnings: parsed.warnings,
-        })
+            current_turn: None,
+            reserved_turn: None,
+        }
+        .with_current_turn())
     }
 
     /// Returns whether this SessionLog was opened read-only.
@@ -304,6 +317,21 @@ impl SessionLog {
         }
         let mut entry = entry;
         entry.prev_hash = self.tail_hash.clone();
+        if entry.is_directive() {
+            if let Some(reserved) = self.reserved_turn.take() {
+                if self.by_id.contains_key(&reserved) {
+                    return Err(SessionError::Corrupt {
+                        line: 0,
+                        message: format!("turn id {reserved} is already an entry"),
+                    });
+                }
+                entry.id = reserved;
+            }
+            self.current_turn = Some(entry.id.clone());
+        }
+        if entry.at_turn.is_none() {
+            entry.at_turn = self.current_turn.clone();
+        }
         let line = serde_json::to_string(&entry).map_err(|e| SessionError::Corrupt {
             line: 0,
             message: e.to_string(),
@@ -582,25 +610,8 @@ impl SessionLog {
     /// any real user message exists.
     pub fn latest_directive_entry_id(&self) -> Option<String> {
         self.active_entries_rev()
-            .find_map(|entry| match &entry.payload {
-                EntryPayload::Message(record)
-                    if record.message.role == vak_llm::Role::User
-                        && record.control_kind().is_none()
-                        && record
-                            .message
-                            .content
-                            .iter()
-                            .any(|b| matches!(b, vak_llm::ContentBlock::Text { .. }))
-                        && !record
-                            .message
-                            .content
-                            .iter()
-                            .any(|b| matches!(b, vak_llm::ContentBlock::ToolResult { .. })) =>
-                {
-                    Some(entry.id.clone())
-                }
-                _ => None,
-            })
+            .find(|entry| entry.is_directive())
+            .map(|entry| entry.id.clone())
     }
 
     /// Ids of every non-card tool result already committed to the ledger
@@ -1207,7 +1218,29 @@ impl SessionLog {
             });
         }
         self.tail_id = Some(entry_id.to_string());
+        self.reserved_turn = None;
+        self.current_turn = self.latest_directive_entry_id();
         Ok(())
+    }
+
+    /// Opens a turn whose directive is not written yet. Everything appended
+    /// from now on names `turn_id` as its turn, and the next directive is
+    /// written with `turn_id` as its entry id, so the records admission
+    /// writes first (the intent and its strands) and the turn the context
+    /// engine indexes are one id (docs/design/85-turn-graph.md, G0).
+    pub fn begin_turn(&mut self, turn_id: &str) {
+        self.reserved_turn = Some(turn_id.to_string());
+        self.current_turn = Some(turn_id.to_string());
+    }
+
+    /// The turn later appends belong to.
+    pub fn current_turn(&self) -> Option<&str> {
+        self.current_turn.as_deref()
+    }
+
+    fn with_current_turn(mut self) -> Self {
+        self.current_turn = self.latest_directive_entry_id();
+        self
     }
 
     /// Appends one compaction packet over the inclusive turn range

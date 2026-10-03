@@ -6381,13 +6381,27 @@ impl Core {
             }
         };
         let mut cfg = AgentConfig::new(frozen_system_prompt.clone());
+        // The turn id is minted here, once, and opened on the session before
+        // anything is written: the intent, its strands and threads, the
+        // commitments keyed by them, the directive's own entry id and every
+        // record of the turn name it (docs/design/85-turn-graph.md, G0).
+        let turn_id = uuid_like();
+        session.begin_turn(&turn_id);
         // The run's identity, minted once here and carried by value from now
-        // on (docs/design/73 §4).
-        let run_trace = self.mint_trace(
-            prompt_meta
-                .as_ref()
-                .and_then(|meta| meta.request_id.as_deref()),
-        );
+        // on (docs/design/73 §4). It names its turn, so every side-ledger row
+        // written under it joins back to the turn.
+        let run_trace = self
+            .mint_trace(
+                prompt_meta
+                    .as_ref()
+                    .and_then(|meta| meta.request_id.as_deref()),
+            )
+            .in_turn(
+                session
+                    .header()
+                    .map_or("", |header| header.session_id.as_str()),
+                &turn_id,
+            );
         cfg.trace = Some(run_trace.clone());
 
         // ---- intent resolution (docs/design/47-commitment-kernel.md) ----
@@ -6395,11 +6409,6 @@ impl Core {
         // from it narrows: the projections in `crate::intent` take a baseline
         // and return something no wider, so a misread can make this turn more
         // cautious and never less.
-        //
-        // The turn id is minted here, once: every strand and thread id this
-        // turn records derives from it, so threads — and the commitments
-        // keyed by them — are unique across turns and sessions.
-        let turn_id = uuid_like();
         let resolved_intent = self
             .resolve_turn_intent_with_escalation(&mut session, &prompt, &turn_id, &cancel)
             .await;

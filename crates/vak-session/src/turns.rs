@@ -286,7 +286,7 @@ impl TurnIndex {
         let chain: Vec<&Entry> = entries.into_iter().collect();
         let mut turns: Vec<Turn> = Vec::new();
         let mut packets: Vec<Packet> = Vec::new();
-        let mut pending_reading: Option<ReadingKey> = None;
+        let mut pending_readings: HashMap<String, ReadingKey> = HashMap::new();
 
         for entry in &chain {
             match &entry.payload {
@@ -327,7 +327,7 @@ impl TurnIndex {
                                     behind_reset: false,
                                     presentation_records: Vec::new(),
                                     evidence_bodies: HashMap::new(),
-                                    reading: pending_reading.take(),
+                                    reading: pending_readings.remove(&entry.id),
                                     raw_tail: Vec::new(),
                                 });
                             } else if has_tool_result && let Some(turn) = turns.last_mut() {
@@ -371,28 +371,19 @@ impl TurnIndex {
                     }
                 }
                 EntryPayload::Intent(record) => {
+                    // An intent names its turn by id (`Entry::at_turn`): the
+                    // admission record is written before the directive it
+                    // serves, so it waits for that directive; a revision
+                    // belongs to the turn it was written in.
+                    let Some(turn_id) = &entry.at_turn else {
+                        continue;
+                    };
                     let reading = ReadingKey::from_record(record);
-                    // Core resolves admission before appending the new directive.
-                    // An intent following a final answer belongs to the NEXT turn,
-                    // never to the already settled preceding turn.
-                    // Revision zero is the admission baseline, written before
-                    // the directive it serves: it belongs to the NEXT turn
-                    // whatever state the last one ended in (a cancelled or
-                    // failed turn has no final answer, and used to take it).
-                    let admission = record.outcome.as_ref().is_some_and(|o| o.revision == 0);
-                    if !admission
-                        && let Some(turn) = turns.last_mut()
-                        && !turn.raw_tail.last().is_some_and(|message| {
-                            message.role == Role::Assistant
-                                && !message
-                                    .content
-                                    .iter()
-                                    .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
-                        })
-                    {
-                        turn.reading = Some(reading);
-                    } else {
-                        pending_reading = Some(reading);
+                    match turns.iter_mut().rev().find(|turn| &turn.id == turn_id) {
+                        Some(turn) => turn.reading = Some(reading),
+                        None => {
+                            pending_readings.insert(turn_id.clone(), reading);
+                        }
                     }
                 }
                 EntryPayload::EvidenceBody(body) => {
@@ -1849,6 +1840,7 @@ mod tests {
         let mut log = open_log(dir.path());
         log.append_message(user_text("old spreadsheet")).unwrap();
         log.append_message(assistant_text("created")).unwrap();
+        log.begin_turn(&uuid::Uuid::now_v7().to_string());
         log.append_intent(IntentRecord {
             reading: vak_intent::Reading::general(),
             engagement: vak_intent::Engagement::general(),
@@ -1865,6 +1857,94 @@ mod tests {
         let index = TurnIndex::from_log(&log);
         assert!(index.turns[0].reading.is_none());
         assert_eq!(index.turns[1].reading.as_ref().unwrap().act, "answer");
+    }
+
+    fn general_intent() -> IntentRecord {
+        IntentRecord {
+            reading: vak_intent::Reading::general(),
+            engagement: vak_intent::Engagement::general(),
+            provenance: vak_intent::Provenance::new(vak_intent::Tier::General, 1, Vec::new()),
+            outcome: None,
+            model_visible: None,
+            commitment_id: None,
+            strands: Vec::new(),
+            strand_commitments: Default::default(),
+        }
+    }
+
+    #[test]
+    fn one_turn_one_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let turn_id = uuid::Uuid::now_v7().to_string();
+        log.begin_turn(&turn_id);
+        let intent = log.append_intent(general_intent()).unwrap();
+        let directive = log.append_message(user_text("weather")).unwrap();
+        assert_eq!(directive.id, turn_id, "the directive takes the reserved id");
+        assert_eq!(intent.at_turn.as_deref(), Some(turn_id.as_str()));
+        assert_eq!(directive.at_turn.as_deref(), Some(turn_id.as_str()));
+        let index = TurnIndex::from_log(&log);
+        assert_eq!(index.turns[0].id, turn_id);
+        assert!(index.turns[0].reading.is_some());
+    }
+
+    #[test]
+    fn every_turn_record_names_its_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let first = log.append_message(user_text("one")).unwrap();
+        log.append_message(assistant_text("a")).unwrap();
+        let second_id = uuid::Uuid::now_v7().to_string();
+        log.begin_turn(&second_id);
+        log.append_intent(general_intent()).unwrap();
+        log.append_message(user_text("two")).unwrap();
+        log.append_message(assistant_text("b")).unwrap();
+        let steering = log.append_message(user_text("and three")).unwrap();
+        log.append_message(assistant_text("c")).unwrap();
+        let turns: Vec<Option<String>> = log
+            .chain_to_root()
+            .into_iter()
+            .filter(|entry| !matches!(entry.payload, EntryPayload::Header(_)))
+            .map(|entry| entry.at_turn.clone())
+            .collect();
+        let expected = [
+            &first.id,
+            &first.id,
+            &second_id,
+            &second_id,
+            &second_id,
+            &steering.id,
+            &steering.id,
+        ];
+        assert_eq!(
+            turns,
+            expected
+                .iter()
+                .map(|id| Some((*id).clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_reserved_turn_id_already_used_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let first = log.append_message(user_text("one")).unwrap();
+        log.begin_turn(&first.id);
+        assert!(log.append_message(user_text("two")).is_err());
+    }
+
+    #[test]
+    fn a_reopened_ledger_keeps_its_current_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = {
+            let mut log = open_log(dir.path());
+            let directive = log.append_message(user_text("one")).unwrap();
+            (log.path().to_path_buf(), directive.id)
+        };
+        let mut log = SessionLog::open(path.0).unwrap();
+        let reply = log.append_message(assistant_text("a")).unwrap();
+        assert_eq!(reply.at_turn, Some(path.1));
     }
 
     #[test]

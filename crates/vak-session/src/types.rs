@@ -1007,6 +1007,13 @@ pub struct Entry {
     /// entry is reported as a warning and never a read failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prev_hash: Option<String>,
+    /// The turn this entry belongs to: the entry id of the directive that
+    /// opened it, which is also the turn id the intent side used for its
+    /// strands, threads and commitments. Stamped by `SessionLog::append`, so
+    /// a record names its turn by id and no reader joins by position. `None`
+    /// only before the first turn (the header, admission records).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_turn: Option<String>,
     #[serde(flatten)]
     pub payload: EntryPayload,
 }
@@ -1018,7 +1025,30 @@ impl Entry {
             parent_id,
             ts: Utc::now(),
             prev_hash: None,
+            at_turn: None,
             payload,
+        }
+    }
+
+    /// Whether this entry is a directive: a person's message that opens a
+    /// turn (text, not a tool result, not runtime scaffolding).
+    pub fn is_directive(&self) -> bool {
+        match &self.payload {
+            EntryPayload::Message(record) => {
+                record.message.role == vak_llm::Role::User
+                    && record.control_kind().is_none()
+                    && record
+                        .message
+                        .content
+                        .iter()
+                        .any(|b| matches!(b, vak_llm::ContentBlock::Text { .. }))
+                    && !record
+                        .message
+                        .content
+                        .iter()
+                        .any(|b| matches!(b, vak_llm::ContentBlock::ToolResult { .. }))
+            }
+            _ => false,
         }
     }
 }

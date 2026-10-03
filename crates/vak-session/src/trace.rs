@@ -150,6 +150,17 @@ impl TraceKey {
 }
 
 impl TraceKey {
+    /// The same key, naming the session and turn it runs in, so every row
+    /// written under it (and under its child spans) joins to its turn.
+    /// An id that is not a full UUIDv7 leaves the field unset rather than
+    /// inventing one.
+    pub fn in_turn(mut self, session_id: &str, turn_id: &str) -> Self {
+        let parse = |s: &str| uuid::Uuid::parse_str(s).ok();
+        self.session = parse(session_id).and_then(SessionId::from_uuid);
+        self.turn = parse(turn_id).and_then(TurnId::from_uuid);
+        self
+    }
+
     /// The same key, naming who acted and for whom.
     pub fn acting(mut self, actor: PrincipalId, on_behalf_of: Option<PrincipalId>) -> Self {
         self.actor = Some(actor);

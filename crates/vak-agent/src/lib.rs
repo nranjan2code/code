@@ -5001,40 +5001,20 @@ impl Agent {
     ) -> std::collections::HashMap<String, std::collections::BTreeSet<String>> {
         use vak_session::types::EntryPayload;
 
-        let mut by_turn = std::collections::HashMap::new();
-        let mut pending_threads = None;
-        for entry in log.chain_to_root() {
-            match &entry.payload {
-                EntryPayload::Intent(record) => {
-                    pending_threads = Some(
-                        record
-                            .strands
-                            .iter()
-                            .map(|strand| strand.thread_id.clone())
-                            .collect::<std::collections::BTreeSet<_>>(),
-                    );
-                }
-                EntryPayload::Message(record)
-                    if record.message.role == vak_llm::Role::User
-                        && record.control_kind().is_none()
-                        && record
-                            .message
-                            .content
-                            .iter()
-                            .any(|block| matches!(block, vak_llm::ContentBlock::Text { .. }))
-                        && !record.message.content.iter().any(|block| {
-                            matches!(block, vak_llm::ContentBlock::ToolResult { .. })
-                        }) =>
-                {
-                    by_turn.insert(entry.id.clone(), pending_threads.take().unwrap_or_default());
-                }
-                EntryPayload::Compaction(compaction) if compaction.reset_all => {
-                    pending_threads = None;
-                }
-                _ => {}
-            }
-        }
-        by_turn
+        log.chain_to_root()
+            .into_iter()
+            .filter_map(|entry| match (&entry.payload, &entry.at_turn) {
+                (EntryPayload::Intent(record), Some(turn)) => Some((
+                    turn.clone(),
+                    record
+                        .strands
+                        .iter()
+                        .map(|strand| strand.thread_id.clone())
+                        .collect(),
+                )),
+                _ => None,
+            })
+            .collect()
     }
 
     fn directives_are_unrelated(
