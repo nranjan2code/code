@@ -1482,7 +1482,14 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       lead = [];
     };
     const grouping = !showOperatorChrome();
+    // A card may stand in for the answer's prose only when the turn did what
+    // was asked: a tool that failed and was not recovered is something the
+    // person must read, and a bare link preview never answers anything.
+    const turnHadFailure = props.items.some((item) => item.role === "tool" && item.kind === "error");
     const isPrimaryCard = (entry: { item: OutputItem }) => {
+      if (turnHadFailure) return false;
+      const content = entry.item.content;
+      if (content.type === "adaptive" && content.tree.root.primitive === "link_preview") return false;
       const source = entry.item.provenance?.source ?? "";
       return ((entry.item.content.type === "structured" || entry.item.content.type === "adaptive") && source.startsWith("emit_") && source.endsWith("_card")) ||
         (entry.item.content.type === "adaptive" && source === "adaptive_library");
