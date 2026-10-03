@@ -1,8 +1,10 @@
 # 85 — The turn graph: linked context across turns, sessions and years
 
-Status: proposal (2026-10-03). Nothing here is built. Phase G0 gives every
-turn, call and record an id that names its turn and call (§2.4 is the
-audit). Phase G1 changes the in-session planner and adds no store. Phases G2 and G3 ride
+Status: in progress. G0's first part is built (2026-10-03): one turn id,
+every session entry naming its turn (`Entry::at_turn`), and the run's trace
+key naming its session and turn (§10). The rest of G0 and G1 to G3 are
+proposed. §2.4 is the audit, taken before G0 started. Phase G1 changes the
+in-session planner and adds no store. Phases G2 and G3 ride
 data-architecture M6 (the data catalog, `docs/design/73-data-architecture-and-lifecycle.md`
 §9) and start only when the maintainer says so. This document extends
 `docs/design/68-context-engine.md` (the planner), `docs/design/47-commitment-kernel.md`
@@ -403,6 +405,25 @@ ledger (invariant 1); a card records its skill version and schema version.
 ## 10. Phases
 
 ### G0 — Identity first
+
+Built (2026-10-03):
+
+- One turn id: `Core::run` mints it and calls `SessionLog::begin_turn`,
+  and the next directive is written with that id as its entry id. A
+  reserved id that already names an entry is refused.
+- `Entry::at_turn`, stamped by `SessionLog::append` on every entry of a
+  turn, including the intent written before its directive. It replaces two
+  joins by position: `TurnIndex` attaching a reading to its turn, and the
+  drift check's thread lookup.
+- `TraceKey::in_turn`: the run's key names its session and turn, so every
+  side-ledger row written under it does.
+- Tests: `one_turn_one_id`, `every_turn_record_names_its_turn`,
+  `a_reserved_turn_id_already_used_is_refused`,
+  `a_reopened_ledger_keeps_its_current_turn` (vak-session) and
+  `one_turn_one_id_from_intent_to_side_ledgers` (vak-core).
+
+Not yet built: approvals, hooks and activities naming their call, episodes
+naming their turn and strand, file effects with digests, MCP attribution.
 
 Nothing in G1 to G3 is sound until §2.4 holds. Each item is a new field or
 entry, added under invariant 29's additive rule, or folded into M3a/M3b

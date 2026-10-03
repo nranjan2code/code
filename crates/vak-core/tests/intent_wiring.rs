@@ -356,6 +356,107 @@ async fn strands_are_recorded_and_become_open_threads() {
     );
 }
 
+/// One turn, one id (docs/design/85-turn-graph.md, G0): the directive's
+/// entry id is the turn id the intent minted its strands from, every record
+/// of the turn names it, and a side-ledger row written under the run joins
+/// back to it through its trace key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn one_turn_one_id_from_intent_to_side_ledgers() {
+    let (core, cwd) = core_with("[memory]\nreflection = false\n", vec![text("two files")]);
+    let session = core.start_session().await.unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(64);
+    let (_, session) = core
+        .run_turn_with(
+            session,
+            "list the config files",
+            CancellationToken::new(),
+            None,
+            None,
+            None,
+            tx,
+        )
+        .await
+        .unwrap();
+    let chain = session.chain_to_root();
+    let directive = chain
+        .iter()
+        .find(|entry| entry.is_directive())
+        .expect("a directive");
+    let turn_id = directive.id.clone();
+    let intent = chain
+        .iter()
+        .find(|entry| matches!(entry.payload, vak_session::EntryPayload::Intent(_)))
+        .expect("an intent");
+    let vak_session::EntryPayload::Intent(record) = &intent.payload else {
+        unreachable!()
+    };
+    assert!(!record.strands.is_empty());
+    for strand in &record.strands {
+        assert!(
+            strand.strand_id.starts_with(&format!("{turn_id}.")),
+            "{} is not of turn {turn_id}",
+            strand.strand_id
+        );
+    }
+    let first_of_turn = chain
+        .iter()
+        .position(|entry| entry.id == intent.id)
+        .unwrap();
+    for entry in &chain[first_of_turn..] {
+        assert_eq!(
+            entry.at_turn.as_deref(),
+            Some(turn_id.as_str()),
+            "{:?} does not name its turn",
+            entry.payload
+        );
+    }
+    assert!(
+        chain[first_of_turn..]
+            .iter()
+            .any(|entry| matches!(entry.payload, vak_session::EntryPayload::Receipt(_)))
+    );
+
+    let evidence = walk(&cwd.join("home"))
+        .into_iter()
+        .find(|path| path.ends_with("routing-evidence.jsonl"))
+        .expect("a routing evidence ledger");
+    let row: serde_json::Value = serde_json::from_str(
+        std::fs::read_to_string(evidence)
+            .unwrap()
+            .lines()
+            .next()
+            .expect("an evidence row"),
+    )
+    .unwrap();
+    let trace: vak_session::trace::TraceKey = serde_json::from_value(row["trace"].clone()).unwrap();
+    assert_eq!(
+        trace.turn.map(|turn| turn.to_string()),
+        Some(format!("trn_{turn_id}"))
+    );
+    assert_eq!(
+        trace.session.map(|session| session.to_string()),
+        session
+            .header()
+            .map(|header| format!("ses_{}", header.session_id))
+    );
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
 /// `Defer`: a gate nobody can answer is parked in the inbox and suspends the
 /// commitment, and the turn still fails closed.
 #[tokio::test]

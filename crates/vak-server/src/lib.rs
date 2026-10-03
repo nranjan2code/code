@@ -5163,7 +5163,7 @@ impl TurnStart {
 /// Result of admitting input at the busy boundary.
 enum Admission {
     /// The ledger was idle; the caller now owns it and must run a chain.
-    Started(SessionLog),
+    Started(Box<SessionLog>),
     /// Busy: `message` was pushed onto `handle.steering` durably.
     Queued,
     /// Busy, and this input kind (goal/managed/auto) cannot be queued.
@@ -5187,7 +5187,7 @@ fn admit_or_queue(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(taken) = slot.take() {
-        return Admission::Started(taken);
+        return Admission::Started(Box::new(taken));
     }
     if restricted {
         return Admission::RejectedBusy;
@@ -5656,7 +5656,7 @@ async fn run_prompt(
             )
                 .into_response();
         }
-        Admission::Started(taken) => taken,
+        Admission::Started(taken) => *taken,
     };
 
     if taken.is_read_only() {
@@ -6169,6 +6169,7 @@ async fn send_steering(
                 .into_response()
         }
         Admission::Started(taken) => {
+            let taken = *taken;
             // The activity recorded above is durable now (whether it was
             // written straight into the ledger or is about to be, via this
             // very chain) — the in-memory admission guard can be released.
