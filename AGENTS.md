@@ -890,7 +890,9 @@ in progress, and the rest of V4 follows it.
     prose-narrated trace, which a small model imitates as prose), `Card`
     (one `TurnCard` line) or `Packet` fidelity chosen by the
     `WorkingSetPlanner` against the measured budget by descending
-    `max(recency, relevance, anaphora)` value, never a reserved share. A
+    `max(recency, relevance, anaphora, link)` value, never a reserved share
+    (`link`: what the turn shares with the open turn through a thread, a
+    file or a commitment, docs/design/85-turn-graph.md). A
     compaction packet is a cache keyed by the turn range it summarises,
     never a boundary: the projection renders it only when the current plan
     asks for exactly that range, so a packet written under a small model
@@ -1462,7 +1464,8 @@ crates/vak-context   the context engine, pure functions over the ledger
                      feedback -- Core drives the probe and records it, this
                      crate owns the math. `planner.rs`: the pure
                      `WorkingSetPlan` -- per closed turn, `Full`/`Card` fill
-                     by descending max(recency, relevance, anaphora) value
+                     by descending max(recency, relevance, anaphora,
+                     link) value
                      against the measured budget, overflow collapses into
                      one packet, never a reserved share; `plan_for_session`
                      is the one entry point the loop, `/compact` and the

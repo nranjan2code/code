@@ -248,10 +248,15 @@ budget      = ceiling
             − tail_tokens                (time, intent, thread, nudges)
             − current_turn_reserve       (= max observed current-turn size for this model, EWMA)
 # never split a turn: every cost check is turn-whole
-value(turn) = max(recency, relevance, anaphora)
-              recency   = 1 / (1 + age), only for a relevant or referenced turn
+value(turn) = max(recency, relevance, anaphora, link)
+              recency   = 1 / (1 + age), only for a relevant, referenced or linked turn
               relevance = subject-token search of the directive / best score
-              anaphora  = 1.0 for the preceding turn when the directive refers back
+              anaphora  = 1.0 for the turn the directive refers back to: the last
+                          turn of the thread the open turn continues, else the
+                          preceding turn
+              link      = shared threads, files and commitments with the open
+                          turn, weighted and hub-discounted
+                          (docs/design/85-turn-graph.md §6.1)
 cost each rendered Full record and Card line with the current profile;
 never trust a stored estimate that omits tool arguments
 full_history_budget = min(budget, 12,000 tokens)

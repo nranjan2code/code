@@ -1,9 +1,8 @@
 # 85 — The turn graph: linked context across turns, sessions and years
 
-Status: in progress. G0's first part is built (2026-10-03): one turn id,
-every session entry naming its turn (`Entry::at_turn`), and the run's trace
-key naming its session and turn (§10). The rest of G0 and G1 to G3 are
-proposed. §2.4 is the audit, taken before G0 started. Phase G1 changes the
+Status: in progress. G0 is built apart from the items its §10 list leaves
+open, and G1's first cut is built (2026-10-03): turn links and the
+planner's `link` signal (§10). G2 and G3 are proposed. §2.4 is the audit, taken before G0 started. Phase G1 changes the
 in-session planner and adds no store. Phases G2 and G3 ride
 data-architecture M6 (the data catalog, `docs/design/73-data-architecture-and-lifecycle.md`
 §9) and start only when the maintainer says so. This document extends
@@ -495,6 +494,27 @@ Exit tests:
 - `mcp_result_names_its_server`.
 
 ### G1 — In-session links (no storage change)
+
+Built (2026-10-03):
+
+- `Turn::links` (`TurnLink`, `LinkKind`): each turn's threads (own or
+  continued), files read or written (from `CallEffect` entries) and
+  commitments, collected by `Entry::at_turn`.
+- The planner's fourth signal, `link` (`link_values` in
+  `crates/vak-context/src/planner.rs`): for every node the open turn shares
+  with a closed turn, both ends' link weights times an inverse-frequency
+  discount, summed and capped at 1.0. At most `MAX_TURNS_PER_NODE` (8)
+  turns, the most recent, are reached through one node. The walk is one
+  shared node deep in this first cut.
+- Anaphora points at the last turn of the thread the open turn continues.
+- `WorkingSetPlan::links` records the nodes behind each linked `Full` turn,
+  and the audit activity carries them; the plan policy version is 3.
+- Tests: `linked_turn_promoted_without_shared_words`,
+  `hub_artifact_does_not_link_everything`, `anaphora_follows_the_thread`,
+  `link_weights_are_pinned`.
+
+Not yet built from the list below: `recalled` and evidence edges, walks
+deeper than one shared node, and many threads per strand (waits on D1).
 
 - Edge extraction over `TurnIndex`, intent records and presentation records,
   in `vak-session` beside the turn index.

@@ -91,6 +91,7 @@ fn full_fidelity_projects_the_two_message_record() {
         per_turn: ids.iter().map(|id| (id.clone(), Fidelity::Full)).collect(),
         packet_range: None,
         retrieved: Vec::new(),
+        links: Default::default(),
         budget: 10_000,
         spent: 0,
     };
@@ -123,6 +124,7 @@ fn card_fidelity_collapses_into_one_turns_block() {
         ],
         packet_range: None,
         retrieved: Vec::new(),
+        links: Default::default(),
         budget: 10_000,
         spent: 0,
     };
@@ -156,6 +158,7 @@ fn a_packet_range_with_no_stored_packet_renders_as_cards_never_as_nothing() {
         per_turn: vec![(ids[2].clone(), Fidelity::Full)],
         packet_range: Some((ids[0].clone(), ids[1].clone())),
         retrieved: Vec::new(),
+        links: Default::default(),
         budget: 100,
         spent: 50,
     };
@@ -220,6 +223,7 @@ fn incremental_compaction_writes_a_packet_that_survives_reopen_and_hides_nothing
         per_turn: vec![(ids[2].clone(), Fidelity::Full)],
         packet_range: Some((ids[0].clone(), ids[1].clone())),
         retrieved: Vec::new(),
+        links: Default::default(),
         budget: 100,
         spent: 50,
     };

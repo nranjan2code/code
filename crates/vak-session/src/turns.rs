@@ -106,6 +106,11 @@ pub struct Turn {
     pub evidence: Vec<String>,
     /// Presentation ledger-entry ids answered by this turn, in emit order.
     pub presentations: Vec<String>,
+    /// What this turn is linked to besides its words: the threads its
+    /// strands belong to, the files its calls read or wrote, the commitments
+    /// it served (docs/design/85-turn-graph.md, G1). Built from entries that
+    /// name this turn in `Entry::at_turn`.
+    pub links: Vec<TurnLink>,
     /// The turn's closing card, once written (`EntryPayload::TurnCard`).
     pub card: Option<TurnCard>,
     /// Canonical closing-card entry address for selected projection.
@@ -192,6 +197,11 @@ pub struct WorkingSetPlan {
     /// Turn ids promoted to `Full` by relevance (search, reading overlap,
     /// or anaphora) rather than by the recency fill.
     pub retrieved: Vec<String>,
+    /// For each turn promoted by a link, the nodes it shares with the open
+    /// turn (`thread:…`, `file:…`, `commitment:…`), so a transcript can say
+    /// why the turn was in context (docs/design/85-turn-graph.md, G1).
+    #[serde(default)]
+    pub links: std::collections::BTreeMap<String, Vec<String>>,
     pub budget: u64,
     pub spent: u64,
 }
@@ -201,7 +211,7 @@ pub const CONTEXT_PLAN_LABEL: &str = "context-plan";
 
 /// The planner's rules version recorded with each plan. Bump it with a change
 /// to how a plan is computed, so an old record is read for what it was.
-pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 2;
+pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 3;
 
 impl WorkingSetPlan {
     /// The plan as the `data` of its audit activity: the `Full` turns, the
@@ -231,6 +241,12 @@ impl WorkingSetPlan {
             "retrieved".into(),
             serde_json::to_string(&self.retrieved).unwrap_or_default(),
         );
+        if !self.links.is_empty() {
+            data.insert(
+                "links".into(),
+                serde_json::to_string(&self.links).unwrap_or_default(),
+            );
+        }
         if let Some((first, last)) = &self.packet_range {
             data.insert("packet_first".into(), first.clone());
             data.insert("packet_last".into(), last.clone());
@@ -258,10 +274,89 @@ impl WorkingSetPlan {
             selected_records: None,
             packet_range,
             retrieved,
+            links: data
+                .get("links")
+                .and_then(|links| serde_json::from_str(links).ok())
+                .unwrap_or_default(),
             budget: data.get("budget")?.parse().ok()?,
             spent: data.get("spent")?.parse().ok()?,
         };
         Some((plan, data.get("leaf")?.clone()))
+    }
+}
+
+/// How a turn is linked to a node (docs/design/85-turn-graph.md §4.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LinkKind {
+    /// A strand of the turn opened this thread.
+    OwnThread,
+    /// A strand of the turn continues or corrects this thread (inferred by
+    /// the resolver unless an explicit command set it).
+    ContinuesThread,
+    /// A call read this workspace file.
+    ReadFile,
+    /// A call wrote this workspace file.
+    WroteFile,
+    /// The turn served this commitment.
+    ServesCommitment,
+}
+
+/// One link from a turn to a node, keyed `thread:…`, `file:…` or
+/// `commitment:…`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TurnLink {
+    pub node: String,
+    pub kind: LinkKind,
+}
+
+impl TurnLink {
+    fn from_intent(record: &crate::types::IntentRecord) -> Vec<TurnLink> {
+        let mut links: Vec<TurnLink> = record
+            .strands
+            .iter()
+            .map(|strand| TurnLink {
+                node: format!("thread:{}", strand.thread_id),
+                kind: if strand.lineage.continued_thread().is_some() {
+                    LinkKind::ContinuesThread
+                } else {
+                    LinkKind::OwnThread
+                },
+            })
+            .collect();
+        links.extend(
+            record
+                .commitment_id
+                .iter()
+                .chain(record.strand_commitments.values())
+                .map(|commitment| TurnLink {
+                    node: format!("commitment:{commitment}"),
+                    kind: LinkKind::ServesCommitment,
+                }),
+        );
+        links
+    }
+
+    fn from_effect(effect: &crate::types::CallEffect) -> Option<TurnLink> {
+        let (path, kind) = match effect {
+            crate::types::CallEffect::FileRead { path, .. } => (path, LinkKind::ReadFile),
+            crate::types::CallEffect::FileWrite { path, .. } => (path, LinkKind::WroteFile),
+            crate::types::CallEffect::Mcp(_) => return None,
+        };
+        let path = path.trim_start_matches("./");
+        Some(TurnLink {
+            node: format!("file:{path}"),
+            kind,
+        })
+    }
+}
+
+/// Adds links not already present: a link is a set member, so a file read
+/// ten times in one turn is one link.
+fn add_links(into: &mut Vec<TurnLink>, links: Vec<TurnLink>) {
+    for link in links {
+        if !into.contains(&link) {
+            into.push(link);
+        }
     }
 }
 
@@ -287,6 +382,7 @@ impl TurnIndex {
         let mut turns: Vec<Turn> = Vec::new();
         let mut packets: Vec<Packet> = Vec::new();
         let mut pending_readings: HashMap<String, ReadingKey> = HashMap::new();
+        let mut pending_links: HashMap<String, Vec<TurnLink>> = HashMap::new();
 
         for entry in &chain {
             match &entry.payload {
@@ -328,6 +424,7 @@ impl TurnIndex {
                                     presentation_records: Vec::new(),
                                     evidence_bodies: HashMap::new(),
                                     reading: pending_readings.remove(&entry.id),
+                                    links: pending_links.remove(&entry.id).unwrap_or_default(),
                                     raw_tail: Vec::new(),
                                 });
                             } else if has_tool_result && let Some(turn) = turns.last_mut() {
@@ -379,11 +476,30 @@ impl TurnIndex {
                         continue;
                     };
                     let reading = ReadingKey::from_record(record);
+                    let links = TurnLink::from_intent(record);
                     match turns.iter_mut().rev().find(|turn| &turn.id == turn_id) {
-                        Some(turn) => turn.reading = Some(reading),
+                        Some(turn) => {
+                            turn.reading = Some(reading);
+                            add_links(&mut turn.links, links);
+                        }
                         None => {
                             pending_readings.insert(turn_id.clone(), reading);
+                            add_links(pending_links.entry(turn_id.clone()).or_default(), links);
                         }
+                    }
+                }
+                EntryPayload::CallEffect(record) => {
+                    let (Some(turn_id), Some(link)) =
+                        (&entry.at_turn, TurnLink::from_effect(&record.effect))
+                    else {
+                        continue;
+                    };
+                    match turns.iter_mut().rev().find(|turn| &turn.id == turn_id) {
+                        Some(turn) => add_links(&mut turn.links, vec![link]),
+                        None => add_links(
+                            pending_links.entry(turn_id.clone()).or_default(),
+                            vec![link],
+                        ),
                     }
                 }
                 EntryPayload::EvidenceBody(body) => {
