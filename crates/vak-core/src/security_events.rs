@@ -1,10 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-fn security_events_path(home: &Path) -> PathBuf {
-    vak_config::scope::AgentScope::new(home).security_events()
+fn security_events_path(scope: &vak_config::scope::AgentScope) -> PathBuf {
+    scope.security_events()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,7 +78,7 @@ pub enum EventKind {
 /// Append a security event to `<home>/security-events.jsonl`.
 /// Best-effort: never panics, returns the event on success.
 pub fn record(
-    home: &Path,
+    scope: &vak_config::scope::AgentScope,
     kind: EventKind,
     label: &str,
     detail: &str,
@@ -93,12 +93,15 @@ pub fn record(
         trace: None,
         actor: None,
     };
-    let _ = append_event(home, &event);
+    let _ = append_event(scope, &event);
     event
 }
 
-fn append_event(home: &Path, event: &SecurityEvent) -> Result<(), std::io::Error> {
-    let path = security_events_path(home);
+fn append_event(
+    scope: &vak_config::scope::AgentScope,
+    event: &SecurityEvent,
+) -> Result<(), std::io::Error> {
+    let path = security_events_path(scope);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -112,8 +115,8 @@ fn append_event(home: &Path, event: &SecurityEvent) -> Result<(), std::io::Error
 }
 
 /// Read all security events (newest first), capped at `limit`.
-pub fn list(home: &Path, limit: usize) -> Vec<SecurityEvent> {
-    let path = security_events_path(home);
+pub fn list(scope: &vak_config::scope::AgentScope, limit: usize) -> Vec<SecurityEvent> {
+    let path = security_events_path(scope);
     let Ok(raw) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
@@ -137,14 +140,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let ev = record(
-            home,
+            &vak_config::scope::AgentScope::new(home),
             EventKind::AuthFailure,
             "bad_token",
             "wrong bearer supplied",
             Some("127.0.0.1"),
         );
         assert_eq!(ev.kind, EventKind::AuthFailure);
-        let events = list(home, 10);
+        let events = list(&vak_config::scope::AgentScope::new(home), 10);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].label, "bad_token");
         assert_eq!(events[0].ip.as_deref(), Some("127.0.0.1"));
@@ -154,10 +157,22 @@ mod tests {
     fn list_returns_newest_first() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        record(home, EventKind::RateLimit, "first", "", None);
+        record(
+            &vak_config::scope::AgentScope::new(home),
+            EventKind::RateLimit,
+            "first",
+            "",
+            None,
+        );
         std::thread::sleep(std::time::Duration::from_millis(10));
-        record(home, EventKind::RateLimit, "second", "", None);
-        let events = list(home, 10);
+        record(
+            &vak_config::scope::AgentScope::new(home),
+            EventKind::RateLimit,
+            "second",
+            "",
+            None,
+        );
+        let events = list(&vak_config::scope::AgentScope::new(home), 10);
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].label, "second");
         assert_eq!(events[1].label, "first");
@@ -169,20 +184,20 @@ mod tests {
         let home = dir.path();
         for i in 0..5 {
             record(
-                home,
+                &vak_config::scope::AgentScope::new(home),
                 EventKind::ConfigChange,
                 &format!("change_{i}"),
                 "",
                 None,
             );
         }
-        assert_eq!(list(home, 3).len(), 3);
+        assert_eq!(list(&vak_config::scope::AgentScope::new(home), 3).len(), 3);
     }
 
     #[test]
     fn missing_file_returns_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let events = list(dir.path(), 10);
+        let events = list(&vak_config::scope::AgentScope::new(dir.path()), 10);
         assert!(events.is_empty());
     }
 }

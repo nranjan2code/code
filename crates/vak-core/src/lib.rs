@@ -3042,7 +3042,7 @@ impl Core {
             return;
         }
         security_events::record(
-            self.scope().root(),
+            &self.scope(),
             security_events::EventKind::ConfigChange,
             "answerability_mismatch",
             &format!(
@@ -7061,7 +7061,7 @@ impl Core {
         let turn_standings = self.capability_standings();
         for detail in reach::audit_details(&turn_standings) {
             security_events::record(
-                self.scope().root(),
+                &self.scope(),
                 security_events::EventKind::CapabilityUnreachable,
                 "capability_unreachable",
                 &detail,

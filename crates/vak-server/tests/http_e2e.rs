@@ -63,7 +63,7 @@ fn seed_icloud_fixture(
         .append_connected_if_pending(account, || vault.store(&account_id_for_vault, material))
         .unwrap();
     vak_core::security_events::record(
-        audit_home,
+        &vak_config::scope::AgentScope::new(audit_home),
         vak_core::security_events::EventKind::MailCalendarAccount,
         "account_connected",
         &serde_json::json!({
@@ -1031,10 +1031,13 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     let paused_vault = vak_mail_calendar::vault::AccountVault::for_agent("mail-paused").unwrap();
     assert!(paused_vault.load(&paused_account_id).is_err());
 
-    let account_events = vak_core::security_events::list(&account_audit_home, 200)
-        .into_iter()
-        .filter(|event| event.kind == vak_core::security_events::EventKind::MailCalendarAccount)
-        .collect::<Vec<_>>();
+    let account_events = vak_core::security_events::list(
+        &vak_config::scope::AgentScope::new(account_audit_home),
+        200,
+    )
+    .into_iter()
+    .filter(|event| event.kind == vak_core::security_events::EventKind::MailCalendarAccount)
+    .collect::<Vec<_>>();
     assert!(
         account_events.iter().any(|event| {
             event.label == "account_connected"

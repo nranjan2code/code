@@ -429,7 +429,7 @@ pub(crate) async fn list_security_events(
 ) -> Json<serde_json::Value> {
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let home = state.core.scope().into_root();
-    let events = vak_core::security_events::list(&home, limit);
+    let events = vak_core::security_events::list(&vak_config::scope::AgentScope::new(home), limit);
     let filtered: Vec<SecurityEventEntry> = events
         .into_iter()
         .filter(|e| {
@@ -1394,7 +1394,7 @@ fn record_permission_cap(state: &AppState, key: &str, entry: &crate::gateway::Al
         _ => "workspace",
     };
     vak_core::security_events::record(
-        &state.core.scope().into_root(),
+        &state.core.scope(),
         vak_core::security_events::EventKind::PermissionCapped,
         "permission_capped",
         &format!(
@@ -1434,7 +1434,7 @@ fn note_workspace_trust(state: &AppState, workspace: Option<&std::path::Path>) {
     match vak_core::trust::record(workspace) {
         Ok(()) => {
             vak_core::security_events::record(
-                &state.core.scope().into_root(),
+                &state.core.scope(),
                 vak_core::security_events::EventKind::ConfigChange,
                 "workspace_trusted",
                 &format!("workspace={} by=admin", workspace.display()),
@@ -1508,7 +1508,7 @@ pub(crate) async fn approve_gateway_allowlist(
         "admin",
     );
     vak_core::security_events::record(
-        &state.core.scope().into_root(),
+        &state.core.scope(),
         vak_core::security_events::EventKind::ChatApproved,
         "chat_approved",
         &format!("key={key}"),
@@ -1531,7 +1531,7 @@ pub(crate) async fn deny_gateway_allowlist(
     }
     let entry = state.gateway.allowlist_deny(&state.core, &key, "admin");
     vak_core::security_events::record(
-        &state.core.scope().into_root(),
+        &state.core.scope(),
         vak_core::security_events::EventKind::ChatDenied,
         "chat_denied",
         &format!("key={key}"),
@@ -1700,7 +1700,7 @@ pub(crate) async fn patch_gateway_allowlist(
     // the effective route and rotates only if it really changed.
     state.gateway.invalidate_binding_revision(&state.core, &key);
     vak_core::security_events::record(
-        &state.core.scope().into_root(),
+        &state.core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "chat_edited",
         &format!(
@@ -1730,7 +1730,7 @@ pub(crate) async fn revoke_gateway_allowlist(
 ) -> StatusCode {
     if state.gateway.allowlist_revoke(&state.core, &key) {
         vak_core::security_events::record(
-            &state.core.scope().into_root(),
+            &state.core.scope(),
             vak_core::security_events::EventKind::ChatRevoked,
             "chat_revoked",
             &format!("key={key}"),
@@ -2413,7 +2413,7 @@ mod tests {
         assert_eq!(json["effective_permission_mode"], "read-only");
         assert_eq!(json["permission_capped"], true);
 
-        let events = vak_core::security_events::list(&state.core.sessions_home(), 50);
+        let events = vak_core::security_events::list(&state.core.scope(), 50);
         assert!(
             events.iter().any(
                 |e| e.kind == vak_core::security_events::EventKind::PermissionCapped

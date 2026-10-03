@@ -241,7 +241,7 @@ fn fail(code: StatusCode, message: &'static str) -> Response {
 
 fn audit(state: &AppState, label: &str, failure: bool) {
     vak_core::security_events::record(
-        &state.core.shared_scope().into_root(),
+        &vak_config::scope::AgentScope::new(state.core.shared_scope().into_root()),
         if failure {
             vak_core::security_events::EventKind::AuthFailure
         } else {

@@ -196,7 +196,7 @@ pub async fn rate_limit_layer(
     {
         let ip_str = ip.to_string();
         vak_core::security_events::record(
-            &limiter.home,
+            &vak_config::scope::AgentScope::new(&limiter.home),
             vak_core::security_events::EventKind::RateLimit,
             "rate_limit",
             &format!("path={path} limit={key}:{max}/min"),

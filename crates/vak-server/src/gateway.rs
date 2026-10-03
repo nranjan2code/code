@@ -631,7 +631,7 @@ impl GatewayState {
             .allowlist_expire_pending(core, chrono::Duration::days(gw.pending_expiry_days as i64));
         for key in expired {
             vak_core::security_events::record(
-                &core.scope().into_root(),
+                &core.scope(),
                 vak_core::security_events::EventKind::ChatDenied,
                 "chat_denied",
                 &format!("key={key} reason=expiry"),
@@ -2586,7 +2586,7 @@ async fn gateway_inbound(
             AllowlistDecision::Allowed => {}
             AllowlistDecision::Denied => {
                 vak_core::security_events::record(
-                    &state.core.scope().into_root(),
+                    &state.core.scope(),
                     vak_core::security_events::EventKind::ChatDenied,
                     "chat_denied",
                     &format!("key={key}"),
@@ -2603,7 +2603,7 @@ async fn gateway_inbound(
             }
             AllowlistDecision::NewlyPending => {
                 vak_core::security_events::record(
-                    &state.core.scope().into_root(),
+                    &state.core.scope(),
                     vak_core::security_events::EventKind::ChatPending,
                     "chat_pending",
                     &format!("key={key}"),
@@ -3387,7 +3387,7 @@ fn record_prompt_drift(
         return;
     };
     vak_core::security_events::record(
-        &core.scope().into_root(),
+        &core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "prompt layers changed",
         &format!(
@@ -3630,7 +3630,7 @@ async fn execute_turn_chain(
                     // the channel reply stays a human sentence (see
                     // `outcome_text`) — never the raw `CoreError` display.
                     vak_core::security_events::record(
-                        &core.scope().into_root(),
+                        &core.scope(),
                         vak_core::security_events::EventKind::ExecutionError,
                         "inbound turn failed",
                         &format!("session_id={session_id} error={e}"),

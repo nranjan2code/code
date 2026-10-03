@@ -57,7 +57,7 @@ async fn a_real_run_writes_only_declared_durable_state() {
     // Real durable writes: a session ledger, and an audit entry.
     let _session = core.start_session().await.expect("session");
     vak_core::security_events::record(
-        &sessions_home,
+        &vak_config::scope::AgentScope::new(&sessions_home),
         vak_core::security_events::EventKind::ConfigChange,
         "registry_probe",
         "state-registry test",
@@ -127,7 +127,7 @@ async fn agent_home_subpaths_are_declared() {
     )
     .expect("entity");
     vak_core::security_events::record(
-        &agent_home,
+        &vak_config::scope::AgentScope::new(agent_home),
         vak_core::security_events::EventKind::ConfigChange,
         "registry_probe",
         "state-registry test",

@@ -235,7 +235,7 @@ impl CorePool {
             && let Some((requested, ceiling)) = apply_permission_override(&core, requested)
         {
             vak_core::security_events::record(
-                &core.scope().into_root(),
+                &core.scope(),
                 vak_core::security_events::EventKind::PermissionCapped,
                 "permission_capped",
                 &format!(
@@ -522,7 +522,7 @@ mod tests {
         // real `Core`s), so scope the assertion to this test's own unique
         // tempdir workspace rather than to the whole event log.
         let marker = format!("workspace={}", canonical(ws.path()).display());
-        let events = vak_core::security_events::list(&core.sessions_home(), 500);
+        let events = vak_core::security_events::list(&core.scope(), 500);
         let capped: Vec<_> = events
             .iter()
             .filter(|e| {

@@ -174,7 +174,7 @@ pub(crate) async fn login(
         .into();
     if !ok {
         vak_core::security_events::record(
-            &state.core.scope().into_root(),
+            &state.core.scope(),
             vak_core::security_events::EventKind::AuthFailure,
             "login_failed",
             "invalid token on /auth/login",

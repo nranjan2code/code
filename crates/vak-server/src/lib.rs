@@ -1634,7 +1634,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
                 .len()
         })
         .sum::<usize>();
-    let security = vak_core::security_events::list(&state.core.sessions_home(), 30)
+    let security = vak_core::security_events::list(&state.core.scope(), 30)
         .into_iter()
         .map(|event| serde_json::to_value(event).unwrap_or_else(|_| serde_json::json!({})))
         .collect::<Vec<_>>();
@@ -2123,7 +2123,7 @@ async fn patch_finops(
         );
         core.apply_persisted_finops_prices(prices);
         vak_core::security_events::record(
-            &core.sessions_home(),
+            &core.scope(),
             vak_core::security_events::EventKind::ConfigChange,
             "finops_price_patched",
             &format!("model={}", price.model.trim()),
@@ -2141,7 +2141,7 @@ async fn patch_finops(
     }
     core.apply_persisted_finops_caps(body.max_run_usd, body.max_day_usd);
     vak_core::security_events::record(
-        &core.sessions_home(),
+        &core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "finops_caps_patched",
         &format!(
@@ -2355,7 +2355,7 @@ async fn ops_action(
     }
     if succeeded {
         vak_core::security_events::record(
-            &state.core.sessions_home(),
+            &state.core.scope(),
             vak_core::security_events::EventKind::ConfigChange,
             "service_action",
             &format!("service={service} action={action}"),
@@ -2480,7 +2480,7 @@ async fn cleanup_memory(
         report.removed_empty_dirs += home_report.removed_empty_dirs;
     }
     vak_core::security_events::record(
-        &core.sessions_home(),
+        &core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "memory_cleanup",
         &format!(
@@ -2725,7 +2725,7 @@ async fn append_memory(
                 MemoryScope::Profile => "profile",
             };
             vak_core::security_events::record(
-                &home,
+                &vak_config::scope::AgentScope::new(home),
                 vak_core::security_events::EventKind::ConfigChange,
                 "memory_append",
                 &format!("scope={scope_str} note_id={}", note.id),
@@ -2781,7 +2781,7 @@ async fn forget_memory_note(
     match result {
         Ok(bytes) => {
             vak_core::security_events::record(
-                &core.sessions_home(),
+                &core.scope(),
                 vak_core::security_events::EventKind::ConfigChange,
                 "memory_forget",
                 &format!("scope={:?} note_id={note_id}", q.scope.unwrap_or_default()),
@@ -2847,7 +2847,7 @@ async fn amend_memory_note(
     match result {
         Ok(()) => {
             vak_core::security_events::record(
-                &core.sessions_home(),
+                &core.scope(),
                 vak_core::security_events::EventKind::ConfigChange,
                 "memory_amend",
                 &format!(
@@ -3876,7 +3876,7 @@ pub(crate) async fn require_bearer(
                 && !auth_exempt_path(req.uri().path())))
     {
         vak_core::security_events::record(
-            &home,
+            &vak_config::scope::AgentScope::new(home),
             vak_core::security_events::EventKind::AuthFailure,
             "cross_origin_rejected",
             &format!(
@@ -3993,7 +3993,7 @@ pub(crate) async fn require_bearer(
             Ok(None) => unauthorized_response(&home, &req, provided.as_deref()),
             Err(error) => {
                 vak_core::security_events::record(
-                    &home,
+                    &vak_config::scope::AgentScope::new(home),
                     vak_core::security_events::EventKind::AuthFailure,
                     "coworking_grant_store_unavailable",
                     &format!("path={} error={error}", req.uri().path()),
@@ -4025,7 +4025,7 @@ fn unauthorized_response(
         provided.is_some()
     );
     vak_core::security_events::record(
-        home,
+        &vak_config::scope::AgentScope::new(home),
         vak_core::security_events::EventKind::AuthFailure,
         "auth_failure",
         &detail,
@@ -6880,7 +6880,7 @@ async fn answer_approval(
             Ok(args) => match handle.core.learn_from_call(&tool, &args) {
                 Ok(spec) => {
                     vak_core::security_events::record(
-                        &state.core.sessions_home(),
+                        &state.core.scope(),
                         vak_core::security_events::EventKind::ConfigChange,
                         "permission_rule_learned",
                         &format!("session={id} rule={spec}"),
@@ -9209,7 +9209,7 @@ async fn onboarding_trust(
     match vak_core::trust::record(&path) {
         Ok(()) => {
             vak_core::security_events::record(
-                &state.core.sessions_home(),
+                &state.core.scope(),
                 vak_core::security_events::EventKind::ConfigChange,
                 "workspace_trusted",
                 &path.display().to_string(),
@@ -14483,7 +14483,7 @@ async fn set_permission_mode(
             apply_permission_mode(&core, &state, mode, true);
             if old != mode {
                 vak_core::security_events::record(
-                    &core.sessions_home(),
+                    &core.scope(),
                     vak_core::security_events::EventKind::ConfigChange,
                     "permission_mode_changed",
                     &format!("{old:?} -> {mode:?}"),
@@ -14627,7 +14627,7 @@ async fn put_gateway_approvals(
 
     if previous != installed.approvals || installed.approvals == "forward" {
         vak_core::security_events::record(
-            &state.core.sessions_home(),
+            &state.core.scope(),
             vak_core::security_events::EventKind::ConfigChange,
             "gateway_approvals_changed",
             &format!(
@@ -14810,7 +14810,7 @@ async fn put_permission_rules(
             .into_response();
     }
     vak_core::security_events::record(
-        &core.sessions_home(),
+        &core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "permission_rules_changed",
         &format!(
@@ -14867,7 +14867,7 @@ fn apply_permission_mode(
     let dropped = state.gateway.core_pool.invalidate_pooled();
     if dropped > 0 {
         vak_core::security_events::record(
-            &state.core.sessions_home(),
+            &state.core.scope(),
             vak_core::security_events::EventKind::ConfigChange,
             "core_pool_invalidated",
             &format!("permission_mode={mode:?} dropped={dropped}"),
@@ -14957,7 +14957,7 @@ async fn pause_agent(
         0
     };
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &state.core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "agent_lifecycle_changed",
         &format!(
@@ -15131,7 +15131,7 @@ async fn delete_provider_key(
     match core.remove_provider_key_scoped(&body.provider, scope.is_workspace()) {
         Ok(removed) => {
             vak_core::security_events::record(
-                &core.sessions_home(),
+                &core.scope(),
                 vak_core::security_events::EventKind::ProviderKeyChange,
                 "provider_key_removed",
                 &format!(
@@ -15325,7 +15325,7 @@ async fn put_provider_key(
     match core.set_provider_key_scoped(&body.provider, &body.key, scope.is_workspace()) {
         Ok(env_var) => {
             vak_core::security_events::record(
-                &core.sessions_home(),
+                &core.scope(),
                 vak_core::security_events::EventKind::ProviderKeyChange,
                 "provider_key_set",
                 &format!("provider={} scope={}", body.provider, scope.label()),
@@ -15463,7 +15463,7 @@ async fn put_server_web_config(
     }
     state.hub.emit_config_changed("server_web_saved", "web");
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &state.core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "server_web_saved",
         "Shared web address changed; gateway restart required",
@@ -15565,7 +15565,7 @@ async fn put_bus_config(
         state.hub.emit_config_changed("bus_config_set", key);
     }
     vak_core::security_events::record(
-        &core.sessions_home(),
+        &core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "bus_config_set",
         &format!("secrets={}", changed.join(", ")),
@@ -15850,7 +15850,7 @@ async fn put_bot_id_token(
     match state.core.set_bot_token(&bot.token_env, &body.token) {
         Ok(env_var) => {
             vak_core::security_events::record(
-                &state.core.sessions_home(),
+                &state.core.scope(),
                 vak_core::security_events::EventKind::ProviderKeyChange,
                 "bot_token_set",
                 &id,
@@ -15891,7 +15891,7 @@ async fn delete_bot_id_token(
     match state.core.remove_bot_token(&bot.token_env) {
         Ok(removed) => {
             vak_core::security_events::record(
-                &state.core.sessions_home(),
+                &state.core.scope(),
                 vak_core::security_events::EventKind::ProviderKeyChange,
                 "bot_token_removed",
                 &format!("id={id} shadowed={}", removed.shadowed_by_env),
@@ -16965,7 +16965,7 @@ async fn patch_config_scope(
     }
     if !changes.is_empty() {
         vak_core::security_events::record(
-            &core.sessions_home(),
+            &core.scope(),
             vak_core::security_events::EventKind::ConfigChange,
             "config_patched",
             &changes.join(", "),
@@ -17691,7 +17691,7 @@ async fn put_hooks(
     core.apply_persisted_hooks(hooks);
     let enabled_count = body.hooks.iter().filter(|h| h.enabled).count();
     vak_core::security_events::record(
-        &core.sessions_home(),
+        &core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "hooks_updated",
         &format!("enabled={enabled_count} total={}", body.hooks.len()),
@@ -18240,7 +18240,7 @@ async fn put_mcp_servers(
     };
     core.apply_persisted_mcp_servers(cfg);
     vak_core::security_events::record(
-        &core.sessions_home(),
+        &core.scope(),
         vak_core::security_events::EventKind::ConfigChange,
         "mcp_servers_updated",
         &format!("count={}", body.servers.len()),

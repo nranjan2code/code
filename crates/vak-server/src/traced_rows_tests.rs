@@ -442,7 +442,7 @@ fn records_reference_is_current() {
 fn a_row_without_a_trace_omits_the_fields_and_ignores_unknown_ones() {
     let dir = tempfile::tempdir().unwrap();
     let event = vak_core::security_events::record(
-        dir.path(),
+        &vak_config::scope::AgentScope::new(dir.path()),
         vak_core::security_events::EventKind::RateLimit,
         "l",
         "d",

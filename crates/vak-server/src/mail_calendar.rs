@@ -3399,7 +3399,7 @@ fn record_account_event(
     })
     .to_string();
     vak_core::security_events::record(
-        &state.core.scope().into_root(),
+        &state.core.scope(),
         vak_core::security_events::EventKind::MailCalendarAccount,
         label,
         &detail,
