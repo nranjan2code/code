@@ -489,7 +489,10 @@ context. Fixed the same day: the link came from the one keyword the two
 requests shared, "what". Question words, auxiliaries, pronouns and
 quantifiers are no longer keywords (`strand::keywords`), so they cannot
 continue a thread (`a_shared_question_word_does_not_continue_a_thread`,
-`question_words_are_not_keywords`); `RESOLVER_VERSION` is 10.
+`question_words_are_not_keywords`); `RESOLVER_VERSION` is 10. Live
+re-check with the same three turns: turn 3 opened a thread of its own, and
+its plan put only turn 1 at `Full`, through `file:logs/status.txt`
+(288 tokens of history); the model answered "ready".
 
 Nothing in G1 to G3 is sound until §2.4 holds. Each item is a new field or
 entry, added under invariant 29's additive rule, or folded into M3a/M3b
