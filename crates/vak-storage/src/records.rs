@@ -240,6 +240,21 @@ pub struct RecordWriter {
     file: File,
     head: [u8; 32],
     seq: u64,
+    /// Frames written since the last sync.
+    dirty: bool,
+}
+
+static SYNCS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Record syncs this process has issued: what a durability budget counts.
+pub fn syncs() -> u64 {
+    SYNCS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Drop for RecordWriter {
+    fn drop(&mut self) {
+        let _ = self.sync();
+    }
 }
 
 impl RecordWriter {
@@ -270,7 +285,19 @@ impl RecordWriter {
             file,
             head: r.head,
             seq: r.entries,
+            dirty: false,
         })
+    }
+
+    /// Makes every frame appended so far durable; a no-op when nothing
+    /// is pending.
+    pub fn sync(&mut self) -> Result<()> {
+        if self.dirty {
+            self.file.sync_data()?;
+            SYNCS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.dirty = false;
+        }
+        Ok(())
     }
 
     pub fn head(&self) -> [u8; 32] {
@@ -288,6 +315,15 @@ impl RecordWriter {
     /// Compresses, then seals under `key` when given (plaintext frame when
     /// `None`), then appends and syncs.
     pub fn append(&mut self, entry: &[u8], key: Option<&ScopeKey>) -> Result<[u8; 32]> {
+        let head = self.append_unsynced(entry, key)?;
+        self.sync()?;
+        Ok(head)
+    }
+
+    /// As `append`, without syncing: the frame is durable at the next
+    /// `sync` (group commit). A crash before it loses whole frames from the
+    /// tail, which `truncate_torn_tail` repairs; the chain stays valid.
+    pub fn append_unsynced(&mut self, entry: &[u8], key: Option<&ScopeKey>) -> Result<[u8; 32]> {
         let compressed = seal::compress(entry)?;
         let (flags, payload) = match key {
             Some(k) => (SEALED, seal::seal(&k.0, &aad(self.seq), &compressed)?),
@@ -305,7 +341,7 @@ impl RecordWriter {
         frame.extend_from_slice(&body);
         frame.extend_from_slice(&h);
         self.file.write_all(&frame)?;
-        self.file.sync_data()?;
+        self.dirty = true;
         self.head = h;
         self.seq += 1;
         Ok(h)

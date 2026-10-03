@@ -63,6 +63,21 @@ impl Drop for LedgerDir {
     }
 }
 
+/// Whether `entry` is a commit point, synced with everything before it:
+/// the header, what a person or a tool result put in (the directive, a
+/// steering message, tool results; never a runtime nudge), an effect outside the ledger, and the
+/// card that closes a turn. Everything else becomes durable at the next
+/// commit point or when the ledger closes.
+fn commits(entry: &Entry) -> bool {
+    match &entry.payload {
+        EntryPayload::Header(_) | EntryPayload::TurnCard(_) | EntryPayload::CallEffect(_) => true,
+        EntryPayload::Message(record) => {
+            record.message.role == vak_llm::Role::User && record.control_kind().is_none()
+        }
+        _ => false,
+    }
+}
+
 /// The segment numbers present in a ledger directory, ascending, and
 /// whether the newest is still open (has a `.log`).
 fn segment_numbers(dir: &Path) -> Vec<(u64, bool)> {
@@ -353,6 +368,8 @@ impl SessionLog {
         let Some((number, writer)) = self.ledger.writer.take() else {
             return Err(SessionError::Locked(self.path.clone()));
         };
+        let mut writer = writer;
+        writer.sync().map_err(storage_error)?;
         drop(writer);
         self.ledger.segments.seal(number).map_err(storage_error)?;
         let next = self
@@ -506,11 +523,16 @@ impl SessionLog {
         let Some((_, writer)) = self.ledger.writer.as_mut() else {
             return Err(SessionError::Locked(self.path.clone()));
         };
-        // One frame per entry, synced before it counts: the frame chain over
-        // the stored bytes is the ledger's integrity (docs/design/73 §6).
+        // One frame per entry; the frame chain over the stored bytes is the
+        // ledger's integrity (docs/design/73 §6). Group commit: a commit
+        // point syncs every frame before it, so a turn costs a few syncs,
+        // not one per entry.
         writer
-            .append(line.as_bytes(), None)
+            .append_unsynced(line.as_bytes(), None)
             .map_err(storage_error)?;
+        if commits(&entry) {
+            writer.sync().map_err(storage_error)?;
+        }
         self.by_id.insert(entry.id.clone(), self.entries.len());
         self.tail_id = Some(entry.id.clone());
         self.entries.push(entry.clone());

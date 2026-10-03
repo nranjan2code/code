@@ -7138,6 +7138,7 @@ dependencies = [
  "vak-plugin",
  "vak-sandbox",
  "vak-session",
+ "vak-storage",
  "vak-store",
  "vak-tools",
  "vak-voice",

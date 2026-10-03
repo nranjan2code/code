@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is in progress (slice 1 done). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is in progress (slices 1 and 2 done). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -513,7 +513,26 @@ by moving runtime state out of the project tree.
   registry becomes classes × roots, driven by the §6 matrix. The upgrade
   gate uses class snapshots.
 
-**Slice 2 — sessions on segments, slim ledgers**
+**Slice 2 — sessions on segments, slim ledgers** — done 2026-10-03. A
+session ledger is a directory of `vak-storage` record segments
+(`seg-NNNNNNNN.log`/`.sealed`, `seals.log`, `LOCK`); every reader goes
+through `SessionLog` (`read_header`, `scan`, `text`, `segment_files`) and
+the FTS index locates frames by (segment, offset). The tenant object store
+(`tenants/<t>/objects`) has a durable key authority: the KEKs and object id
+key are in the credential store (`VaultKeyAuthority`), revocations in
+`tenants/<t>/keys`. Objects are granted per conversation. A windowed tool
+result's whole body, the capability binding's prompt, schemas and index,
+execution stdout/stderr (one object per 64 KiB per stream) and checkpoint
+file contents are objects; writing one without a store fails closed. The
+ledger syncs at commit points only (header, a person's message, tool
+results, effects, the turn card, close). Measured on a scripted read-then-
+answer turn: 6.1 KB and 3 record syncs per turn (`bytes_per_turn_budget`,
+`fsyncs_per_turn_budget`); `derive_messages_identical_across_seal`.
+Deviations: frames are written unencrypted because no tenant policy turns
+encryption on yet, so the budget is measured without it (a sealed frame adds
+a nonce and tag, well inside the margin); ledgers stay under the Agent home,
+named by session id, and move with the D25 work in slice 3; checkpoints
+keep `MAX_STORED_CHECKPOINTS` until retention policy lands in M7a.
 - Session ledgers become record segments (encrypted per entry when tenant
   policy is on), keyed by TraceKey, so every Agent's records live in that
   Agent's scope (fixes D25 for sessions).

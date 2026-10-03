@@ -233,7 +233,8 @@ names its actor); M2 slices 1 and 2 are on main (plan §4 lists what remains).
 M3a is done (2026-10-03): `Core` exposes its homes only as typed scopes.
 M3b is in progress: slice 1 is done (2026-10-03; 7.0.0-dev, the 7.0
 baseline, tenant tree and runtime root, wholesale purge, the registry by
-data class). No session starts a later step unasked.
+data class), and so is slice 2 (2026-10-03; session ledgers are segment
+directories with group commit, and large payloads are tenant objects). No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -347,7 +348,12 @@ data class). No session starts a later step unasked.
 - Keep conversation content out of logs.
 - Read a session for a person or the model through a path that honours the
   trash (`open_historical_session`, `Core::open_session`, or
-  `vak_core::trash`), never by opening its ledger file directly.
+  `vak_core::trash`), never by opening its ledger directly. A ledger is a
+  directory of record segments; read its bytes only through `SessionLog`
+  (`read_header`, `scan`, `text`), never as a JSONL file.
+- Put a large payload in a ledger as a tenant object (`SessionLog::put_object`,
+  `Core::objects`), never inline; a ledger Core runs a turn on has its
+  store attached.
 
 ### Pending: the visual refresh (V1, V2, V3 and V4.4 done; V4 in progress)
 
@@ -406,7 +412,7 @@ in progress, and the rest of V4 follows it.
 ## Non-negotiable invariants
 
 1. **Model-visible means logged.** Anything that reaches a model request must
-   be reconstructable from the session JSONL via `derive_messages()`. New
+   be reconstructable from the session ledger via `derive_messages()`. New
    model-visible input ⇒ new session entry type. Tests enforce this.
 2. **Append-only sessions.** Never rewrite or delete session entries.
    Branching = new entry with `parent_id`. Compaction = an entry, never deletion.
@@ -679,7 +685,7 @@ in progress, and the rest of V4 follows it.
     explicit; operational metrics must never be mock, sample, or placeholder
     values. Operations URLs preserve `workspace` and `time` query context, and
     every internal drill-down link carries that context forward. Resource
-    detail views stop at raw session JSONL, provider work receipts, durable
+    detail views stop at the raw session ledger, provider work receipts, durable
     outbox records, incident evidence, or manager state. Incident fingerprints
     reconcile open, resolved, and reopened records in
     `<sessions_home>/operations/incidents.jsonl`; service and delivery actions
@@ -1306,18 +1312,19 @@ crates/vak-voice     the voice vocabulary: the closed `VoiceProvider` set and
                      offline engine executables. The HTTP/socket surface is
                      crates/vak-server/src/voice.rs
                      (docs/design/49-live-voice.md)
-crates/vak-session   append-only JSONL trees, frozen contract, projection,
+crates/vak-session   append-only ledger trees on record segments, tenant
+                     objects (objects.rs), frozen contract, projection,
                      receipt, presentation and turn-card entries (audit-only,
                      projection-neutral), TurnIndex and fidelity projections
                      (docs/design/68-context-engine.md),
                      dependency-free cross-session search w/ mtime-indexed
                      cache + cross-project search_all (docs/design/
                      23-memory.md)
-crates/vak-store     SQLite FTS5 rebuildable index over session JSONL:
+crates/vak-store     SQLite FTS5 rebuildable index over session ledgers:
                      BM25 full-text search (all content blocks incl. tool
                      calls/results/thinking), structured metadata queries,
                      idempotent import, WAL mode — docs/design/23 +
-                     33 (JSONL stays source of truth)
+                     33 (the ledger stays source of truth)
 crates/vak-storage   the storage substrate, NO vak dependencies (docs/design/
                      73-data-architecture-and-lifecycle.md §5-§7.3): keys
                      (KeyAuthority, fail-closed wrap/unwrap/rotate/revoke),

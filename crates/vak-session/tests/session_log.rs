@@ -1110,3 +1110,56 @@ fn historical_tool_result_projects_as_a_trace_line_and_evidence_returns_it_whole
     assert_eq!(evidence.tool, "search");
     assert!(!evidence.is_error);
 }
+
+/// Sealing a segment changes how its frames are stored, never what the
+/// model is sent: the projection is the same before the seal, after it,
+/// after reopening, and with entries appended to the next segment.
+#[test]
+fn derive_messages_identical_across_seal() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("sealed");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    for n in 0..4 {
+        log.append_message(MessageRecord {
+            message: vak_llm::Message::user_text(format!("question {n}")),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(MessageRecord {
+            message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(format!(
+                "answer {n}"
+            ))]),
+            meta: None,
+        })
+        .unwrap();
+    }
+    let projected = |log: &SessionLog| serde_json::to_string(&log.derive_messages()).unwrap();
+    let before = projected(&log);
+
+    log.seal_segment().unwrap();
+    assert_eq!(projected(&log), before, "sealing changed the projection");
+    drop(log);
+
+    let mut reopened = SessionLog::open(path.clone()).unwrap();
+    assert_eq!(
+        projected(&reopened),
+        before,
+        "a sealed ledger reads back differently"
+    );
+    assert!(
+        SessionLog::segment_files(&path)
+            .iter()
+            .any(|segment| segment.extension().is_some_and(|ext| ext == "sealed")),
+        "the first segment is sealed"
+    );
+
+    reopened
+        .append_message(MessageRecord {
+            message: vak_llm::Message::user_text("after the seal"),
+            meta: None,
+        })
+        .unwrap();
+    let extended = projected(&reopened);
+    drop(reopened);
+    assert_eq!(projected(&SessionLog::open(path).unwrap()), extended);
+}

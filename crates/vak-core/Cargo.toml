@@ -45,4 +45,5 @@ walkdir = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+vak-storage = { workspace = true }
 tempfile = { workspace = true }
