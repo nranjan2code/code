@@ -22,6 +22,14 @@ const TOTAL_TIMEOUT: Duration = Duration::from_secs(TOTAL_TIMEOUT_SECS);
 const MAX_BODY_BYTES: usize = 512 * 1024;
 const MAX_REDIRECTS: usize = 3;
 
+/// Sites such as Wikipedia and the GitHub API refuse a request with no
+/// `User-Agent`; this one names the product and where to read about it.
+const USER_AGENT: &str = concat!(
+    "vak/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://vakyartha.com)"
+);
+
 /// Arbitrary port: `ToSocketAddrs` needs one, but only the resolved IP is
 /// screened; no connection is made on it.
 const SCREEN_PORT: u16 = 80;
@@ -150,6 +158,16 @@ fn redirect_policy() -> reqwest::redirect::Policy {
     })
 }
 
+/// No cookie store and no default auth headers: the only header added to
+/// every request is the `User-Agent`.
+fn build_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .redirect(redirect_policy())
+        .timeout(TOTAL_TIMEOUT)
+        .build()
+}
+
 fn content_type_allowed(content_type: &str) -> bool {
     let mime = content_type
         .split(';')
@@ -248,11 +266,7 @@ impl WebFetchTool {
             return ToolOutput::error(rejection.to_string());
         }
 
-        let client = match reqwest::Client::builder()
-            .redirect(redirect_policy())
-            .timeout(TOTAL_TIMEOUT)
-            .build()
-        {
+        let client = match build_client() {
             Ok(c) => c,
             Err(e) => return ToolOutput::error(format!("client build failed: {e}")),
         };
@@ -470,6 +484,45 @@ mod tests {
                 "expected {rejected:?} to be rejected"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn client_sends_a_descriptive_user_agent_and_no_credentials() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = sock.read(&mut chunk).await.unwrap();
+                assert!(n > 0, "connection closed before headers ended");
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            sock.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .unwrap();
+            String::from_utf8(buf).unwrap().to_ascii_lowercase()
+        });
+
+        let resp = build_client()
+            .unwrap()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
+        let request = server.await.unwrap();
+
+        let expected = format!(
+            "user-agent: vak/{} (+https://vakyartha.com)\r\n",
+            env!("CARGO_PKG_VERSION")
+        );
+        assert!(request.contains(&expected), "{request}");
+        assert!(!request.contains("\r\ncookie:"), "{request}");
+        assert!(!request.contains("\r\nauthorization:"), "{request}");
     }
 
     #[tokio::test]
