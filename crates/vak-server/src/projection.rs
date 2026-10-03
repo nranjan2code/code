@@ -8,8 +8,8 @@ use vak_delivery::{
     ArtifactRef, ArtifactStatus, DeliveryAction, OutputContent, OutputItem, OutputKind,
     OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline,
     PresentationDocument, PresentationPlanner, ResultOutcome, SignalContext, built_in_adapters,
-    compile_markdown, link_previews_from_text, signals_from_context, structured_markdown,
-    structured_outputs_from_text, structured_outputs_from_tool_result_with,
+    compile_markdown, signals_from_context, structured_markdown, structured_outputs_from_text,
+    structured_outputs_from_tool_result_with,
 };
 
 fn status_for_completion(completion: Option<&str>) -> OutputStatus {
@@ -899,14 +899,11 @@ fn snapshot_inner(
                                 continue;
                             }
                             let text = &cleaned_text_storage;
-                            let mut candidates = if assistant {
+                            let candidates = if assistant {
                                 structured_outputs_from_text(text)
                             } else {
                                 Vec::new()
                             };
-                            if assistant {
-                                candidates.extend(link_previews_from_text(text));
-                            }
                             let assistant_tool_call_id = assistant_tool_context
                                 .get(&entry.id)
                                 .map(|(id, ..)| id.clone());
@@ -3337,10 +3334,11 @@ mod tests {
                 .map(String::as_str),
             Some("needs_work")
         );
-        assert!(first.items.iter().any(|item| matches!(
-            &item.content,
-            OutputContent::Structured { output } if output.semantic_type == "link.preview"
-        )));
+        assert_eq!(
+            link_cards(&first),
+            0,
+            "a URL in the answer's text is not a card"
+        );
     }
 
     #[test]
@@ -4840,6 +4838,55 @@ mod tests {
             note.map(String::as_str),
             Some("The holiday dip needs review.")
         );
+    }
+
+    fn link_cards(timeline: &vak_delivery::OutputTimeline) -> usize {
+        timeline
+            .items
+            .iter()
+            .filter(|item| match &item.content {
+                OutputContent::Structured { output } => output.semantic_type == "link.preview",
+                _ => false,
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_url_in_plain_text_is_not_turned_into_a_card() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "plain-url");
+        log.append_message(MessageRecord {
+            message: Message::user_text("what is on example.com"),
+            meta: None,
+        })
+        .expect("user");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(
+                "I could not fetch https://example.com, the network is closed.",
+            )]),
+            meta: None,
+        })
+        .expect("answer");
+        assert_eq!(link_cards(&super::snapshot("plain-url", &log)), 0);
+    }
+
+    #[test]
+    fn a_link_the_model_emitted_as_a_card_still_shows() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "typed-url");
+        log.append_message(MessageRecord {
+            message: Message::user_text("point me at the docs"),
+            meta: None,
+        })
+        .expect("user");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(
+                "Here.\n\n```vak\n{\"semantic_type\":\"link.preview\",\"payload\":{\"url\":\"https://example.com\",\"title\":\"Example\"}}\n```\n",
+            )]),
+            meta: None,
+        })
+        .expect("answer");
+        assert_eq!(link_cards(&super::snapshot("typed-url", &log)), 1);
     }
 
     #[test]

@@ -40,8 +40,8 @@ pub use skills::{
     MediaOutput, Metric, PRESENTATION_SKILL_API, PlanDiagnostic, PresentationDecision,
     PresentationPlan, PresentationPlanner, PresentationRecipe, PresentationSkillManifest,
     RecipeCatalog, RendererBinding, RendererDecision, SignalContext, SkillError, SkillRegistry,
-    StructuredOutput, built_in_recipes, built_in_skill_registry, link_previews_from_text,
-    parse_fragment, parse_fragment_with, project_structured_fences, project_structured_fences_with,
+    StructuredOutput, built_in_recipes, built_in_skill_registry, parse_fragment,
+    parse_fragment_with, project_structured_fences, project_structured_fences_with,
     signals_from_context, signals_from_text, structured_markdown, structured_outputs_from_text,
     structured_outputs_from_text_with,
 };

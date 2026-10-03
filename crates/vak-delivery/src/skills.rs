@@ -1159,25 +1159,6 @@ pub fn signals_from_context(ctx: &SignalContext<'_>) -> Vec<String> {
     signals
 }
 
-pub fn link_previews_from_text(text: &str) -> Vec<StructuredOutput> {
-    let mut seen = std::collections::BTreeSet::new();
-    text.split_whitespace()
-        .filter_map(|token| {
-            let url = token.trim_matches(|character: char| "()[]{}<>.,;\"'".contains(character));
-            (url.starts_with("https://") || url.starts_with("http://")).then(|| url.to_string())
-        })
-        .filter(|url| seen.insert(url.clone()))
-        .take(12)
-        .map(|url| StructuredOutput {
-            semantic_type: "link.preview".into(),
-            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
-            skill_id: "core".into(),
-            skill_version: "1.0.0".into(),
-            payload: serde_json::json!({"url": url, "title": "Open source link"}),
-        })
-        .collect()
-}
-
 /// Extract explicitly typed `vak` fragments from model/tool text. This is
 /// intentionally domain-neutral: the registry, not this parser, decides what
 /// semantic types exist and whether a surface may render them.
@@ -2441,15 +2422,6 @@ mod tests {
         assert_eq!(terminal_recipe.renderer, "builtin:generic");
         assert_eq!(terminal_recipe.disposition, DecisionDisposition::Fallback);
         assert_eq!(terminal.renderers[0].renderer, "builtin:generic");
-    }
-
-    #[test]
-    fn link_extractor_deduplicates_and_limits_urls() {
-        let items = link_previews_from_text(
-            "See https://example.com/a, https://example.com/a and http://example.org",
-        );
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].semantic_type, "link.preview");
     }
 
     #[test]

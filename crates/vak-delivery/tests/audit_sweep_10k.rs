@@ -43,9 +43,8 @@ use vak_delivery::discord;
 use vak_delivery::outbox::{Outbox, OutboxError, OutboxState};
 use vak_delivery::skills::{
     PRESENTATION_SKILL_API, PresentationSkillManifest, SignalContext, StructuredOutput,
-    built_in_recipes, built_in_skill_registry, link_previews_from_text, parse_fragment,
-    project_structured_fences, signals_from_context, signals_from_text,
-    structured_outputs_from_text,
+    built_in_recipes, built_in_skill_registry, parse_fragment, project_structured_fences,
+    signals_from_context, signals_from_text, structured_outputs_from_text,
 };
 use vak_delivery::slack;
 use vak_delivery::telegram;

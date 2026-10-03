@@ -49,8 +49,8 @@ use vak_delivery::{
     skills::{
         PRESENTATION_SKILL_API, PresentationSkillManifest, RendererBinding, SignalContext,
         SkillError, SkillRegistry, StructuredOutput, built_in_recipes, built_in_skill_registry,
-        link_previews_from_text, parse_fragment, project_structured_fences, signals_from_context,
-        signals_from_text, structured_outputs_from_text,
+        parse_fragment, project_structured_fences, signals_from_context, signals_from_text,
+        structured_outputs_from_text,
     },
 };
 use vak_delivery::{compile_markdown, render};
@@ -2732,32 +2732,6 @@ fn audit_structured_outputs() {
             assert!(outputs.is_empty(), "expected empty for {f}");
         }));
     }
-
-    let link_texts: &[&str] = &[
-        "Check https://example.com for details",
-        "Visit http://test.org\nAnd https://another.com",
-        "No links here",
-        "Multiple https://a.com https://b.com https://c.com",
-        "",
-    ];
-    for (i, text) in link_texts.iter().enumerate() {
-        let t = text.to_string();
-        scenarios.push(tc(&format!("link_preview_{i}"), move || {
-            let previews = link_previews_from_text(&t);
-            assert!(previews.len() <= 12);
-        }));
-    }
-
-    scenarios.push(tc("link_preview_dedup", || {
-        let previews = link_previews_from_text("https://a.com https://a.com");
-        assert_eq!(previews.len(), 1);
-    }));
-
-    scenarios.push(tc("link_preview_max_12", || {
-        let urls: Vec<String> = (0..15).map(|i| format!("https://example{i}.com")).collect();
-        let text = urls.join(" ");
-        assert_eq!(link_previews_from_text(&text).len(), 12);
-    }));
 
     // project_structured_fences
     let fence_cases: &[&str] = &[
