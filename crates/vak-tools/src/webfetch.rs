@@ -19,7 +19,8 @@ use crate::{ResourceClaims, Tool, ToolContext, ToolOutput};
 
 const TOTAL_TIMEOUT_SECS: u64 = 15;
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(TOTAL_TIMEOUT_SECS);
-const MAX_BODY_BYTES: usize = 512 * 1024;
+/// Guards memory against a hostile or endless stream; not a context budget.
+const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
 
 /// Sites such as Wikipedia and the GitHub API refuse a request with no
