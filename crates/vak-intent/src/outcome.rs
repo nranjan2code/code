@@ -610,20 +610,58 @@ pub fn evaluate_completion(
     }
 }
 
+/// The tool failures of one turn that nothing later repaired. A failure is
+/// repaired by a later successful call of the same tool, never by the
+/// answer's wording, so a turn that reports a failure honestly is still not
+/// established evidence.
+#[derive(Debug, Default, Clone)]
+pub struct ToolFailureLedger {
+    names: std::collections::HashMap<String, String>,
+    unrecovered: std::collections::HashMap<String, String>,
+}
+
+impl ToolFailureLedger {
+    pub fn call(&mut self, call_id: &str, tool: &str) {
+        self.names.insert(call_id.into(), tool.into());
+    }
+
+    pub fn failed(&mut self, call_id: &str) {
+        if let Some(tool) = self.names.get(call_id) {
+            self.unrecovered.insert(call_id.into(), tool.clone());
+        }
+    }
+
+    pub fn succeeded(&mut self, call_id: &str) {
+        if let Some(tool) = self.names.get(call_id) {
+            self.unrecovered.retain(|_, failed| failed != tool);
+        }
+    }
+
+    pub fn has_unrecovered(&self) -> bool {
+        !self.unrecovered.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.names.clear();
+        self.unrecovered.clear();
+    }
+}
+
 pub fn evaluate_response(response: Option<&str>, failed: bool, cancelled: bool) -> OutcomeStatus {
     evaluate_response_with_failures(response, failed, cancelled, false)
 }
 
-/// As `evaluate_response`, but downgraded to `Unknown` when the supporting
-/// tool calls failed with a correctable fault the runtime could not recover
-/// within the run repair budget (i.e. the model was nudged/instructed to
-/// repair and did not). A non-empty fallback answer after such a failure is
-/// not established evidence, so it must not be signed `Produced`.
+/// As `evaluate_response`, but downgraded to `Unknown` when a tool call
+/// failed and no later call of the same tool succeeded in the turn. The
+/// caller decides what counts as failed; the kind of error does not matter,
+/// because an answer written after an unrecovered failure, even one that
+/// reports it honestly, is not established evidence and must not be signed
+/// `Produced`.
 pub fn evaluate_response_with_failures(
     response: Option<&str>,
     failed: bool,
     cancelled: bool,
-    unresolved_correctable: bool,
+    unresolved_failure: bool,
 ) -> OutcomeStatus {
     if failed {
         return OutcomeStatus::Failed;
@@ -631,7 +669,7 @@ pub fn evaluate_response_with_failures(
     if cancelled {
         return OutcomeStatus::Cancelled;
     }
-    if unresolved_correctable {
+    if unresolved_failure {
         return OutcomeStatus::Unknown;
     }
     match response.map(str::trim) {
@@ -1699,5 +1737,55 @@ mod tests {
             .find(|e| e.requirement_id == "integ-1")
             .unwrap();
         assert_eq!(bad_integ.status, RequirementStatus::Unmet);
+    }
+}
+
+#[cfg(test)]
+mod tool_failure_ledger_tests {
+    use super::*;
+
+    #[test]
+    fn an_unrecovered_failure_downgrades_an_honest_answer() {
+        let mut ledger = ToolFailureLedger::default();
+        ledger.call("1", "read");
+        ledger.call("2", "bash");
+        ledger.failed("1");
+        ledger.succeeded("2");
+        assert!(
+            ledger.has_unrecovered(),
+            "a bash success does not repair a read"
+        );
+        let status = evaluate_response_with_failures(
+            Some("The file is outside the workspace."),
+            false,
+            false,
+            ledger.has_unrecovered(),
+        );
+        assert_eq!(status, OutcomeStatus::Unknown);
+    }
+
+    #[test]
+    fn a_later_success_of_the_same_tool_repairs_it() {
+        let mut ledger = ToolFailureLedger::default();
+        ledger.call("1", "read");
+        ledger.failed("1");
+        ledger.call("2", "read");
+        ledger.succeeded("2");
+        assert!(!ledger.has_unrecovered());
+        let mut later = ToolFailureLedger::default();
+        later.call("1", "read");
+        later.succeeded("1");
+        later.call("2", "read");
+        later.failed("2");
+        assert!(later.has_unrecovered(), "a failure after a success stays");
+    }
+
+    #[test]
+    fn a_new_turn_forgets_the_last_one() {
+        let mut ledger = ToolFailureLedger::default();
+        ledger.call("1", "read");
+        ledger.failed("1");
+        ledger.clear();
+        assert!(!ledger.has_unrecovered());
     }
 }

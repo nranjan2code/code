@@ -7647,7 +7647,7 @@ impl Core {
             let mut successful_receipts = std::collections::HashSet::new();
             let mut written_paths = std::collections::HashSet::<String>::new();
             let mut successful_effect_inputs = Vec::<String>::new();
-            let mut failed_correctable = std::collections::HashSet::new();
+            let mut failures = vak_intent::ToolFailureLedger::default();
             for entry in session.chain_to_root() {
                 if let vak_session::EntryPayload::Message(record) = &entry.payload {
                     if record.message.role == vak_llm::Role::User
@@ -7662,7 +7662,7 @@ impl Core {
                         successful_receipts.clear();
                         written_paths.clear();
                         successful_effect_inputs.clear();
-                        failed_correctable.clear();
+                        failures.clear();
                     }
                     for block in &record.message.content {
                         match block {
@@ -7678,6 +7678,7 @@ impl Core {
                                 )
                                 .then(|| input.to_string().to_ascii_lowercase());
                                 tool_calls.insert(id.clone(), (path, effect_input));
+                                failures.call(id, canonical);
                             }
                             vak_llm::ContentBlock::ToolResult {
                                 tool_use_id,
@@ -7685,6 +7686,7 @@ impl Core {
                                 ..
                             } if tool_calls.contains_key(tool_use_id) => {
                                 successful_receipts.insert(tool_use_id.clone());
+                                failures.succeeded(tool_use_id);
                                 if let Some((Some(path), _)) = tool_calls.get(tool_use_id) {
                                     written_paths.insert(path.clone());
                                 }
@@ -7698,9 +7700,10 @@ impl Core {
                                 content,
                                 ..
                             } if tool_calls.contains_key(tool_use_id)
-                                && vak_tools::ToolErrorKind::classify(content).is_correctable() =>
+                                && vak_tools::ToolErrorKind::classify(content)
+                                    != vak_tools::ToolErrorKind::Cancelled =>
                             {
-                                failed_correctable.insert(tool_use_id.clone());
+                                failures.failed(tool_use_id);
                             }
                             _ => {}
                         }
@@ -7719,8 +7722,7 @@ impl Core {
                         ),
                     )
                 });
-            let unresolved_correctable =
-                !failed_correctable.is_empty() && successful_receipts.is_empty();
+            let unresolved_failure = failures.has_unrecovered();
             let mut status = vak_intent::evaluate_response_with_failures(
                 response_text.as_deref(),
                 matches!(
@@ -7728,7 +7730,7 @@ impl Core {
                     TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached
                 ),
                 matches!(outcome, TurnOutcome::Aborted { .. }),
-                unresolved_correctable,
+                unresolved_failure,
             );
             // A named saved-file request needs an observed tool result. A
             // model's sentence saying it wrote the file is not a deliverable.
