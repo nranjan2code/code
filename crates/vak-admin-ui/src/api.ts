@@ -675,7 +675,9 @@ export const api = {
 
   socialConnectors: (agent?: string): Promise<{ connectors: { id: string; platform: string; summary: string; readiness: "blocked" | "owner_preview" | "identity_link"; reason: string; official_api: string }[] }> =>
     fetch(withAgent("/social/connectors", agent)).then((r) => handle(r)),
-  socialCredential: (path: "youtube/key" | "linkedin/client-id" | "linkedin/account", agent?: string, scope?: "user"): Promise<{ configured?: boolean; inherited?: boolean; connected?: boolean; display_name?: string; expired?: boolean }> => {
+  socialXUsage: (agent?: string): Promise<{ month: string; limit: number; used: number }> =>
+    fetch(withAgent("/social/x/usage", agent)).then((r) => handle(r)),
+  socialCredential: (path: "youtube/key" | "linkedin/client-id" | "linkedin/account" | "reddit/client-id" | "x/token", agent?: string, scope?: "user"): Promise<{ configured?: boolean; inherited?: boolean; connected?: boolean; display_name?: string; expired?: boolean }> => {
     const url = withAgent(`/social/${path}`, agent);
     return fetch(scope ? `${url}${url.includes("?") ? "&" : "?"}scope=user` : url).then((r) => handle(r));
   },

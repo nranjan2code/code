@@ -32,6 +32,20 @@ they are not a bypass around the native adapter gate. LinkedIn's local
 disconnect deletes its saved credential but does not revoke the grant at
 LinkedIn; generic refresh and scope lifecycle are not shipped.
 
+**Reddit and X previews (2026-10-03):** both now have a compiled owner-only
+search preview, built like YouTube's: results go to Settings only, are not
+saved, are not recorded in a session and never reach a model. Reddit uses the
+installed-app grant (`grant_type=installed_client`), so only a public Client ID
+is held and no client secret is accepted; sign-in uses `www.reddit.com`, search
+`oauth.reddit.com`. Posts marked over 18 are excluded and authors are not
+returned. X uses an app bearer token with `GET /2/tweets/search/recent`, and
+every search is counted against a monthly request ceiling (default 20, 1 to
+1000, shared by all Agents because one token is one bill) before it is sent, so
+a failed attempt still counts; the ceiling bounds searches, not price. Agent
+tools remain blocked: Reddit's deleted-content erasure cannot be met by
+append-only sessions, and X has no price metering. The live provider checks,
+including a real Reddit app and an X token, are not yet run.
+
 **Management surfaces (2026-10-03):** Settings has a Social accounts page
 (Shared defaults and per agent) and the admin console a read-only Social tab
 under Integrations. The YouTube key and LinkedIn Client ID resolve Agent, then
@@ -63,9 +77,9 @@ Initial package identities:
 
 | Plugin | Purpose | Initial status |
 |---|---|---|
-| `social-reddit` | Official Data API bounded reads | Disabled guidance package and three separately installable disabled layouts; runtime access blocked pending commercial eligibility and deleted-content lifecycle support |
+| `social-reddit` | Official Data API bounded reads | Disabled guidance package and three separately installable disabled layouts; owner-only search preview shipped; agent access blocked pending commercial eligibility and deleted-content lifecycle support |
 | `social-youtube` | Official YouTube Data API bounded reads | Disabled guidance package and three disabled layouts, plus Agent-scoped secure API-key storage and a human-only bounded search preview; no model/tool access |
-| `social-x` | Official X API bounded reads | Disabled guidance package and three disabled layouts; runtime access blocked pending native adapter, metering, and hard spend ceiling |
+| `social-x` | Official X API bounded reads | Disabled guidance package and three disabled layouts; owner-only search preview with a hard monthly request ceiling shipped; agent access blocked pending price metering |
 | `social-linkedin` | Owner-visible OIDC profile name; content operations only after specific product and scope approval | Disabled guidance package and three disabled layouts; local native PKCE identity link; no general feed/profile search or content tools |
 
 Each plugin owns its API adapter, OAuth scopes, secret references, connection
@@ -357,7 +371,7 @@ link after native PKCE is enabled for the configured app; LinkedIn content
 access remains blocked. YouTube has an owner-only search preview outside model
 context. TikTok is absent. The code does not scrape any platform.
 
-Reddit and X API credential UI, OAuth, and model tools are not shipped. No
+Reddit and X model tools are not shipped (their owner-only previews are, above). No
 LinkedIn content credential UI or content model tools are shipped. YouTube
 search is owner-only and transient; API data is not saved in Vakyartha or sent
 to an agent. Existing append-only model history therefore remains outside

@@ -6,7 +6,7 @@ serves: live-data
 
 # Reddit add-on
 
-The Reddit API connector is currently unavailable in this Vakyartha build. Do not claim that an account is connected, do not claim to search Reddit, and do not use browser automation, HTML scraping, copied session cookies, or unofficial endpoints. Ask the user to use ordinary web search separately if suitable, and label those results as web results rather than Reddit API results.
+The Reddit connector gives its owner a search preview in Settings; it has no tool you can call, and its results are never shown to you. Do not claim that an account is connected, do not claim to search Reddit, and do not use browser automation, HTML scraping, copied session cookies, or unofficial endpoints. Ask the user to use ordinary web search separately if suitable, and label those results as web results rather than Reddit API results.
 
 Reddit account access and API eligibility are separate. Reddit may require a separate agreement for commercial or other unapproved use. Its rules require honoring deleted content; Vakyartha's current conversation history is append-only and cannot selectively erase retrieved content. Do not suggest workarounds or bulk collection.
 

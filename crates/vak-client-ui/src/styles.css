@@ -6560,7 +6560,6 @@ code.ic[data-previewable="true"]:hover {
 .social-group-head small { color: var(--muted); }
 .social-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: var(--space-3); }
 .social-card { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--canvas-border); border-radius: 14px; background: var(--canvas-bg); box-shadow: var(--canvas-shadow); }
-.social-card.is-blocked { opacity: .8; }
 .social-card-head { display: flex; align-items: flex-start; gap: var(--space-3); }
 .social-card-head > div { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .social-card-head small { color: var(--muted); }

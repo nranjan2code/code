@@ -1002,13 +1002,16 @@ function SocialView(props: { ctx: ExtensionsCtx }) {
     () => selectedAgentId(),
     async () => {
       const agent = selectedAgentIdOrUndefined();
-      const [list, youtube, clientId, account] = await Promise.all([
+      const [list, youtube, clientId, account, reddit, x, xUsage] = await Promise.all([
         api.socialConnectors(agent),
         api.socialCredential("youtube/key", agent).catch(() => ({ configured: undefined })),
         api.socialCredential("linkedin/client-id", agent).catch(() => ({ configured: undefined })),
         api.socialCredential("linkedin/account", agent).catch(() => ({ connected: undefined })),
+        api.socialCredential("reddit/client-id", agent).catch(() => ({ configured: undefined })),
+        api.socialCredential("x/token", agent).catch(() => ({ configured: undefined })),
+        api.socialXUsage(agent).catch(() => undefined),
       ]);
-      return { connectors: list.connectors, youtube, clientId, account };
+      return { connectors: list.connectors, youtube, clientId, account, reddit, x, xUsage };
     },
   );
   const credential = (id: string): string => {
@@ -1020,7 +1023,11 @@ function SocialView(props: { ctx: ExtensionsCtx }) {
       if (!s.clientId.configured && !s.clientId.inherited) return "No Client ID";
       return s.account.connected ? `Connected${s.account.display_name ? ` as ${s.account.display_name}` : ""}${s.account.expired ? " (expired)" : ""}` : "Client ID set; not connected";
     }
-    return "Not accepted yet";
+    const simple = id === "social-reddit" ? s.reddit : s.x;
+    if (simple.configured === undefined) return "Unknown";
+    const noun = id === "social-reddit" ? "Client ID" : "token";
+    const base = simple.configured ? `Own ${noun}` : simple.inherited ? `Shared ${noun}` : `No ${noun}`;
+    return id === "social-x" && s.xUsage ? `${base} · ${s.xUsage.used}/${s.xUsage.limit} searches in ${s.xUsage.month}` : base;
   };
   const readiness = (r: string) => (r === "owner_preview" ? "Owner preview" : r === "identity_link" ? "Identity link" : "Blocked");
   return (

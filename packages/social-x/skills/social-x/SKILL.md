@@ -6,7 +6,7 @@ serves: live-data
 
 # X add-on
 
-The X API connector is currently unavailable in this Vakyartha build. Do not claim that an account or developer API access is connected, do not claim to search X, and do not scrape pages, automate a browser, or use unofficial endpoints. Ordinary web search may be used separately when appropriate, but identify it as web search rather than X API search.
+The X connector gives its owner a search preview in Settings, under a monthly limit; it has no tool you can call, and its results are never shown to you. Do not claim that an account or developer API access is connected, do not claim to search X, and do not scrape pages, automate a browser, or use unofficial endpoints. Ordinary web search may be used separately when appropriate, but identify it as web search rather than X API search.
 
 An X account subscription does not grant API access. API access and charges are controlled separately through the X developer platform and may change. Never make a request on the user's behalf until the official adapter reports access and an operator-set hard spending ceiling is active.
 

@@ -666,6 +666,20 @@ export default function Settings() {
   const [socialConnectors, setSocialConnectors] = createSignal<api.SocialConnector[]>([]);
   const [youtubeKeyConfigured, setYoutubeKeyConfigured] = createSignal(false);
   const [youtubeInherited, setYoutubeInherited] = createSignal(false);
+  const [redditConfigured, setRedditConfigured] = createSignal(false);
+  const [redditInherited, setRedditInherited] = createSignal(false);
+  const [redditInput, setRedditInput] = createSignal("");
+  const [redditQuery, setRedditQuery] = createSignal("");
+  const [redditResults, setRedditResults] = createSignal<api.RedditPreviewItem[]>([]);
+  const [redditBusy, setRedditBusy] = createSignal(false);
+  const [xConfigured, setXConfigured] = createSignal(false);
+  const [xInherited, setXInherited] = createSignal(false);
+  const [xInput, setXInput] = createSignal("");
+  const [xQuery, setXQuery] = createSignal("");
+  const [xResults, setXResults] = createSignal<api.XPreviewItem[]>([]);
+  const [xBusy, setXBusy] = createSignal(false);
+  const [xUsage, setXUsage] = createSignal<api.XUsage | null>(null);
+  const [xLimitInput, setXLimitInput] = createSignal("");
   const [linkedinInherited, setLinkedinInherited] = createSignal(false);
   const credScope = () => (scope() === "user" ? "user" as const : undefined);
   const [youtubeKeyInput, setYoutubeKeyInput] = createSignal("");
@@ -761,16 +775,24 @@ export default function Settings() {
 
   async function refreshCapabilities() {
     try {
-      const [socialResult, youtubeKey, linkedinClientId, linkedinConnection] = await Promise.all([
+      const [socialResult, youtubeKey, linkedinClientId, linkedinConnection, redditId, xToken, xUsageResult] = await Promise.all([
         api.listSocialConnectors(activeAgentId()),
         api.youtubeKeyStatus(activeAgentId(), credScope()),
         api.linkedinClientIdStatus(activeAgentId(), credScope()),
         api.linkedinAccountStatus(activeAgentId()),
+        api.redditClientIdStatus(activeAgentId(), credScope()),
+        api.xTokenStatus(activeAgentId(), credScope()),
+        api.xUsageStatus(activeAgentId()).catch(() => null),
       ]);
       setSocialConnectors(socialResult.connectors ?? []);
       setYoutubeKeyConfigured(youtubeKey.configured);
       setYoutubeInherited(youtubeKey.inherited);
       setLinkedinInherited(linkedinClientId.inherited);
+      setRedditConfigured(redditId.configured);
+      setRedditInherited(redditId.inherited);
+      setXConfigured(xToken.configured);
+      setXInherited(xToken.inherited);
+      setXUsage(xUsageResult);
       setLinkedinClientIdConfigured(linkedinClientId.configured);
       setLinkedinAccount(linkedinConnection);
       if (scope() === "user") {
@@ -2308,23 +2330,24 @@ export default function Settings() {
 
             <Show when={page() === "social"}>
               <header><h1>Social accounts</h1><p>{scope() === "user" ? "Set up social platforms once for every agent. An agent can still use its own credential instead." : `Connect the social platforms ${agentName()} may use. A credential saved under Shared applies here unless this agent has its own.`}</p></header>
-              <For each={[{ title: "Available now", note: "Owner-only previews. Nothing here is sent to the agent.", ids: ["social-youtube", "social-linkedin"] }, { title: "Blocked by platform rules", note: "These accept no credentials yet, because nothing could use one safely.", ids: ["social-reddit", "social-x"] }]}>{(groupDef) => <section class="social-group">
+              <For each={[{ title: "Platforms", note: "Owner-only previews. Results stay on this screen and are never sent to the agent or saved.", ids: ["social-youtube", "social-reddit", "social-x", "social-linkedin"] }]}>{(groupDef) => <section class="social-group">
                 <div class="social-group-head"><h2>{groupDef.title}</h2><small>{groupDef.note}</small></div>
                 <div class="social-grid"><For each={socialConnectors().filter((connector) => groupDef.ids.includes(connector.id))}>{(connector) => {
                   const plugin = () => [...plugins(), ...inheritedPlugins()].find((item) => item.name === connector.id);
                   const isYoutube = connector.id === "social-youtube";
                   const isLinkedin = connector.id === "social-linkedin";
-                  const credentialSet = () => isYoutube ? youtubeKeyConfigured() : isLinkedin ? linkedinClientIdConfigured() : false;
-                  const inherited = () => isYoutube ? youtubeInherited() : isLinkedin ? linkedinInherited() : false;
-                  const status = () => connector.readiness === "blocked" && !isYoutube && !isLinkedin ? { text: "Blocked", cls: "muted" }
-                    : !plugin() ? { text: "Not installed", cls: "muted" }
+                  const isReddit = connector.id === "social-reddit";
+                  const isX = connector.id === "social-x";
+                  const credentialSet = () => isYoutube ? youtubeKeyConfigured() : isLinkedin ? linkedinClientIdConfigured() : isReddit ? redditConfigured() : xConfigured();
+                  const inherited = () => isYoutube ? youtubeInherited() : isLinkedin ? linkedinInherited() : isReddit ? redditInherited() : xInherited();
+                  const status = () => !plugin() ? { text: "Not installed", cls: "muted" }
                     : !plugin()!.enabled ? { text: "Disabled", cls: "muted" }
                     : isLinkedin && linkedinAccount().connected ? { text: "Connected", cls: "ready" }
                     : credentialSet() || inherited() ? { text: "Ready", cls: "ready" }
                     : { text: "Needs credential", cls: "warn" };
-                  return <article class="social-card" classList={{ "is-blocked": !isYoutube && !isLinkedin }}>
+                  return <article class="social-card">
                     <div class="social-card-head"><SocialIcon platform={connector.id} /><div><strong>{connector.platform}</strong><small>{connector.summary}</small></div><span class="capability-state" classList={{ ready: status().cls === "ready", muted: status().cls === "muted" }}>{status().text}</span></div>
-                    <Show when={!isYoutube && !isLinkedin}><p class="settings-hint">{connector.reason}</p></Show>
+                    <Show when={connector.readiness === "blocked"}><p class="settings-hint">{connector.reason}</p></Show>
                     <ol class="social-steps">
                       <li><div class="social-step-title"><span class="social-step-num">1</span><strong>Add-on</strong></div>
                         <div class="settings-actions"><Show when={plugin()} fallback={<button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id)}>Install</button>}><span class="settings-hint">{plugin()!.enabled ? "Enabled" : "Installed, disabled"}</span><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void toggleSocialGuidance(plugin()!)}>{plugin()!.enabled ? "Disable" : "Enable"}</button><button type="button" class="settings-button subtle" disabled={pluginBusy()} onClick={() => void installSocialPresentationPack(connector.id)}>Add layouts</button></Show></div></li>
@@ -2340,6 +2363,38 @@ export default function Settings() {
                       <Show when={scope() !== "user" && (youtubeKeyConfigured() || inherited())}><li><div class="social-step-title"><span class="social-step-num">3</span><strong>Try a search</strong></div>
                         <div class="settings-actions"><input aria-label="YouTube search query" value={youtubeQuery()} onInput={(event) => setYoutubeQuery(event.currentTarget.value)} maxlength={200} placeholder="Search public YouTube videos" /><button type="button" class="settings-button" disabled={youtubeBusy() || !youtubeQuery().trim()} onClick={async () => { setYoutubeBusy(true); try { const result = await api.searchYoutubePreview(youtubeQuery(), 5, activeAgentId()); setYoutubeResults(result.items); } catch (error) { setNotice({ kind: "error", text: `YouTube search failed: ${(error as Error).message}` }); } finally { setYoutubeBusy(false); } }}>{youtubeBusy() ? "Searching…" : "Search"}</button></div>
                         <div class="capability-list"><For each={youtubeResults()}>{(item) => <article class="capability-item"><a href={item.url} target="_blank" rel="noreferrer noopener">{item.title}</a><small>{item.channel_title} · {item.published_at}</small><p>{item.description}</p></article>}</For></div>
+                      </li></Show></Show>
+                      <Show when={isReddit && plugin()?.enabled}><li><div class="social-step-title"><span class="social-step-num">2</span><strong>App Client ID</strong><Show when={inherited()}><span class="social-badge">Using the Shared Client ID</span></Show></div>
+                        <p class="settings-hint">Create an app at Reddit’s app page and choose <strong>installed app</strong>. Any redirect address works, for example <code>http://localhost</code>. Copy the ID shown under the app name. No client secret is needed or accepted.</p>
+                        <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noreferrer noopener">Open Reddit app preferences</a>
+                        <label>Client ID<input aria-label="Reddit app Client ID" autocomplete="off" value={redditInput()} onInput={(event) => setRedditInput(event.currentTarget.value)} maxlength={128} placeholder={redditConfigured() ? "Enter a new Client ID to replace the saved one" : inherited() ? "Enter an ID to override the Shared one" : "Paste your app's Client ID"} /></label>
+                        <div class="settings-actions">
+                          <button type="button" class="settings-button" disabled={redditBusy() || !redditInput().trim()} onClick={async () => { setRedditBusy(true); try { await api.saveRedditClientId(redditInput(), activeAgentId(), credScope()); setRedditInput(""); await refreshCapabilities(); setNotice({ kind: "info", text: scope() === "user" ? "Reddit Client ID saved for every agent." : "Reddit Client ID saved for this agent." }); } catch (error) { setNotice({ kind: "error", text: `Could not save Reddit Client ID: ${(error as Error).message}` }); } finally { setRedditBusy(false); } }}>{redditConfigured() ? "Update Client ID" : "Save Client ID"}</button>
+                          <Show when={redditConfigured()}><button type="button" class="settings-button subtle" disabled={redditBusy()} onClick={async () => { try { await api.removeRedditClientId(activeAgentId(), credScope()); setRedditResults([]); await refreshCapabilities(); setNotice({ kind: "info", text: "Reddit Client ID removed." }); } catch (error) { setNotice({ kind: "error", text: `Could not remove Client ID: ${(error as Error).message}` }); } }}>Remove</button></Show>
+                        </div>
+                        <p class="settings-hint">Reddit’s terms apply, including its rule to delete content that was deleted on Reddit. Results appear here only: they are not saved or sent to the agent. Commercial use may need a separate Reddit agreement.</p>
+                      </li>
+                      <Show when={scope() !== "user" && (redditConfigured() || inherited())}><li><div class="social-step-title"><span class="social-step-num">3</span><strong>Try a search</strong></div>
+                        <div class="settings-actions"><input aria-label="Reddit search query" value={redditQuery()} onInput={(event) => setRedditQuery(event.currentTarget.value)} maxlength={200} placeholder="Search public Reddit posts" /><button type="button" class="settings-button" disabled={redditBusy() || !redditQuery().trim()} onClick={async () => { setRedditBusy(true); try { const result = await api.searchRedditPreview(redditQuery(), 5, activeAgentId()); setRedditResults(result.items); if (result.items.length === 0) setNotice({ kind: "info", text: "No Reddit posts matched." }); } catch (error) { setNotice({ kind: "error", text: `Reddit search failed: ${(error as Error).message}` }); } finally { setRedditBusy(false); } }}>{redditBusy() ? "Searching…" : "Search"}</button></div>
+                        <div class="capability-list"><For each={redditResults()}>{(item) => <article class="capability-item"><a href={item.url} target="_blank" rel="noreferrer noopener">{item.title}</a><small>{item.subreddit} · {item.score} points · {item.comments} comments · {item.created_at ? new Date(item.created_at).toLocaleDateString() : ""}</small><Show when={item.snippet}><p>{item.snippet}</p></Show></article>}</For></div>
+                      </li></Show></Show>
+                      <Show when={isX && plugin()?.enabled}><li><div class="social-step-title"><span class="social-step-num">2</span><strong>Bearer token</strong><Show when={inherited()}><span class="social-badge">Using the Shared token</span></Show></div>
+                        <p class="settings-hint">An app bearer token from the X developer console. X bills API use, and an X subscription does not include API access. Set a spending limit in the console too.</p>
+                        <a href="https://developer.x.com/en/portal/dashboard" target="_blank" rel="noreferrer noopener">Open the X developer console</a>
+                        <Show when={!xConfigured()}>
+                          <label>Bearer token<input type="password" autocomplete="new-password" value={xInput()} onInput={(event) => setXInput(event.currentTarget.value)} placeholder={inherited() ? "Enter a token to override the Shared one" : "Paste token; it will not be shown again"} /></label>
+                          <div class="settings-actions"><button type="button" class="settings-button" disabled={xBusy() || !xInput().trim()} onClick={async () => { setXBusy(true); try { await api.saveXToken(xInput(), activeAgentId(), credScope()); setXInput(""); await refreshCapabilities(); setNotice({ kind: "info", text: scope() === "user" ? "X token saved for every agent." : "X token saved for this agent." }); } catch (error) { setNotice({ kind: "error", text: `Could not save X token: ${(error as Error).message}` }); } finally { setXBusy(false); } }}>Save token</button></div>
+                        </Show>
+                        <Show when={xConfigured()}><div class="settings-actions"><span class="capability-state ready">{scope() === "user" ? "Shared token saved" : `Token saved for ${agentName()}`}</span><button type="button" class="settings-button danger" disabled={xBusy()} onClick={async () => { try { await api.removeXToken(activeAgentId(), credScope()); setXResults([]); await refreshCapabilities(); setNotice({ kind: "info", text: "X token removed." }); } catch (error) { setNotice({ kind: "error", text: `Could not remove X token: ${(error as Error).message}` }); } }}>Remove token</button></div></Show>
+                      </li>
+                      <li><div class="social-step-title"><span class="social-step-num">3</span><strong>Monthly search limit</strong><span class="social-badge">Shared by every agent</span></div>
+                        <p class="settings-hint">Every search counts before it is sent, including one that fails, and searching stops at the limit. This bounds how many searches Vakyartha makes. It is not a price: check your X billing for cost.</p>
+                        <Show when={xUsage()}><p class="capability-state" classList={{ ready: xUsage()!.used < xUsage()!.limit, muted: xUsage()!.used >= xUsage()!.limit }}>{xUsage()!.used} of {xUsage()!.limit} searches used in {xUsage()!.month}{xUsage()!.used >= xUsage()!.limit ? " — limit reached" : ""}</p></Show>
+                        <div class="settings-actions"><input type="number" min="1" max="1000" aria-label="Monthly X search limit" value={xLimitInput()} onInput={(event) => setXLimitInput(event.currentTarget.value)} placeholder={xUsage() ? String(xUsage()!.limit) : "20"} /><button type="button" class="settings-button" disabled={xBusy() || !Number.isInteger(Number(xLimitInput())) || Number(xLimitInput()) < 1} onClick={async () => { setXBusy(true); try { setXUsage(await api.setXLimit(Number(xLimitInput()), activeAgentId())); setXLimitInput(""); } catch (error) { setNotice({ kind: "error", text: `Could not set the limit: ${(error as Error).message}` }); } finally { setXBusy(false); } }}>Set limit</button></div>
+                      </li>
+                      <Show when={scope() !== "user" && (xConfigured() || inherited())}><li><div class="social-step-title"><span class="social-step-num">4</span><strong>Try a search</strong></div>
+                        <div class="settings-actions"><input aria-label="X search query" value={xQuery()} onInput={(event) => setXQuery(event.currentTarget.value)} maxlength={200} placeholder="Search recent public posts" /><button type="button" class="settings-button" disabled={xBusy() || !xQuery().trim()} onClick={async () => { setXBusy(true); try { const result = await api.searchXPreview(xQuery(), 5, activeAgentId()); setXResults(result.items); setXUsage(result.usage); } catch (error) { setNotice({ kind: "error", text: `X search failed: ${(error as Error).message}` }); await refreshCapabilities(); } finally { setXBusy(false); } }}>{xBusy() ? "Searching…" : "Search"}</button></div>
+                        <div class="capability-list"><For each={xResults()}>{(item) => <article class="capability-item"><a href={item.url} target="_blank" rel="noreferrer noopener">@{item.handle}</a><small>{item.likes} likes · {item.reposts} reposts · {item.created_at ? new Date(item.created_at).toLocaleDateString() : ""}</small><p>{item.text}</p></article>}</For></div>
                       </li></Show></Show>
                       <Show when={isLinkedin && plugin()?.enabled}><li><div class="social-step-title"><span class="social-step-num">2</span><strong>App Client ID</strong><Show when={inherited()}><span class="social-badge">Using the Shared Client ID</span></Show></div>
                         <p class="settings-hint">From a LinkedIn app with “Sign In with LinkedIn using OpenID Connect” and native PKCE enabled. Never enter a password or client secret here.</p>

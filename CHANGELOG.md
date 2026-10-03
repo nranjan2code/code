@@ -13,6 +13,9 @@
 - Give the social add-ons their own Social accounts page in Settings, as grouped
   platform cards, and an oversight tab in the admin console. YouTube keys and
   LinkedIn Client IDs can be saved once under Shared and overridden per agent.
+- Add owner-only Reddit and X search previews. Reddit needs only an installed-app
+  Client ID; every X search counts against a monthly limit you set. Results are
+  never saved or shown to the agent.
 - Complete the `/` and `@` composer menus with chaining, and show the text
   people entered in search results and other human-facing views.
 - Tighten Bash and sandbox execution boundaries, enforce parent worker

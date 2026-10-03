@@ -399,3 +399,135 @@ async fn shared_social_key_is_inherited_and_an_agent_key_overrides_it() {
         (Some(false), Some(false))
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reddit_and_x_previews_are_gated_by_addon_credential_and_a_hard_ceiling() {
+    let (addr, token) = spawn().await;
+    let client = reqwest::Client::new();
+    let send = |request: reqwest::RequestBuilder| request.bearer_auth(&token).send();
+
+    for (id, search, body) in [
+        (
+            "social-reddit",
+            "reddit",
+            serde_json::json!({"query":"rust","max_results":1}),
+        ),
+        (
+            "social-x",
+            "x",
+            serde_json::json!({"query":"rust","max_results":1}),
+        ),
+    ] {
+        let url = format!("http://{addr}/social/{search}/search?agent=vak");
+        let blocked = send(client.post(&url).json(&body)).await.unwrap();
+        assert_eq!(
+            blocked.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "{id} before install"
+        );
+        let installed = send(
+            client
+                .post(format!("http://{addr}/social/connectors/{id}/install"))
+                .json(&serde_json::json!({"scope":"workspace","agent":"vak"})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(installed.status(), reqwest::StatusCode::OK);
+        let disabled = send(client.post(&url).json(&body)).await.unwrap();
+        assert_eq!(
+            disabled.status(),
+            reqwest::StatusCode::FORBIDDEN,
+            "{id} disabled"
+        );
+        let enabled = send(client.post(format!(
+            "http://{addr}/plugins/{id}/enable?scope=workspace&agent=vak"
+        )))
+        .await
+        .unwrap();
+        assert_eq!(enabled.status(), reqwest::StatusCode::OK);
+        let no_credential = send(client.post(&url).json(&body)).await.unwrap();
+        assert_eq!(
+            no_credential.status(),
+            reqwest::StatusCode::PRECONDITION_FAILED,
+            "{id} without credential"
+        );
+    }
+
+    let rejected = send(
+        client
+            .put(format!("http://{addr}/social/x/token?agent=vak"))
+            .json(&serde_json::json!({"token":"has space"})),
+    )
+    .await
+    .unwrap();
+    assert_eq!(rejected.status(), reqwest::StatusCode::BAD_REQUEST);
+    let saved = send(
+        client
+            .put(format!("http://{addr}/social/x/token?agent=vak&scope=user"))
+            .json(&serde_json::json!({"token":"shared-token"})),
+    )
+    .await
+    .unwrap();
+    assert!(saved.status().is_success());
+    let agent: serde_json::Value =
+        send(client.get(format!("http://{addr}/social/x/token?agent=vak")))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(
+        (agent["configured"].as_bool(), agent["inherited"].as_bool()),
+        (Some(false), Some(true))
+    );
+
+    let id_saved = send(
+        client
+            .put(format!("http://{addr}/social/reddit/client-id?agent=vak"))
+            .json(&serde_json::json!({"client_id":"abc123"})),
+    )
+    .await
+    .unwrap();
+    assert!(id_saved.status().is_success());
+    let status: serde_json::Value =
+        send(client.get(format!("http://{addr}/social/reddit/client-id?agent=vak")))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(status["configured"], true);
+
+    let usage: serde_json::Value =
+        send(client.get(format!("http://{addr}/social/x/usage?agent=vak")))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(
+        (usage["limit"].as_u64(), usage["used"].as_u64()),
+        (Some(20), Some(0))
+    );
+    for bad in [0u32, 1001] {
+        let response = send(
+            client
+                .put(format!("http://{addr}/social/x/usage?agent=vak"))
+                .json(&serde_json::json!({"limit": bad})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    }
+    let set: serde_json::Value = send(
+        client
+            .put(format!("http://{addr}/social/x/usage?agent=vak"))
+            .json(&serde_json::json!({"limit": 1})),
+    )
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(set["limit"], 1);
+}
