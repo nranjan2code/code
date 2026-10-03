@@ -306,7 +306,7 @@ fn scan_candidates(
         return candidates;
     };
     for entry in entries.flatten() {
-        if entry.path().extension().and_then(|s| s.to_str()) != Some("jsonl") {
+        if vak_config::scope::ledger_session_id(&entry.path()).is_none() {
             continue;
         }
         let h = match header(&entry.path()) {
@@ -474,7 +474,7 @@ pub(crate) async fn open(
                 cache_key,
                 CachedAgentSession {
                     session_id: sid.clone(),
-                    ledger_path: dir.join(format!("{sid}.jsonl")),
+                    ledger_path: vak_config::scope::session_ledger(&dir, &sid),
                     agent: admitted.clone(),
                 },
             );
@@ -502,7 +502,7 @@ pub(crate) async fn open(
             cache_key,
             CachedAgentSession {
                 session_id: sid.clone(),
-                ledger_path: dir.join(format!("{sid}.jsonl")),
+                ledger_path: vak_config::scope::session_ledger(&dir, &sid),
                 agent: identity.clone(),
             },
         );

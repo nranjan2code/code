@@ -2402,7 +2402,7 @@ impl SessionPath {
     }
 
     pub fn new_session_file(home: &Path, cwd: &Path, session_id: &str) -> PathBuf {
-        Self::sessions_dir(home, cwd).join(format!("{session_id}.jsonl"))
+        vak_config::scope::session_ledger(&Self::sessions_dir(home, cwd), session_id)
     }
 }
 

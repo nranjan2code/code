@@ -591,7 +591,8 @@ fn has_any_session(sessions_home: &Path) -> bool {
     };
     workspaces.flatten().any(|workspace| {
         std::fs::read_dir(workspace.path()).is_ok_and(|mut files| {
-            files.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|e| e == "jsonl")))
+            files
+                .any(|f| f.is_ok_and(|f| vak_config::scope::ledger_session_id(&f.path()).is_some()))
         })
     })
 }

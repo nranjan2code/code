@@ -4477,7 +4477,7 @@ pub(crate) fn import_session_sync(
     let dir = home.join("sessions");
     if let Ok(read) = std::fs::read_dir(&dir) {
         for project in read.flatten() {
-            let candidate = project.path().join(format!("{session_id}.jsonl"));
+            let candidate = vak_config::scope::session_ledger(&project.path(), session_id);
             if candidate.is_file() && store.import_session(home, &candidate).is_ok() {
                 return true;
             }
@@ -4496,7 +4496,7 @@ pub(crate) fn import_session_sync(
             let agent_sessions = agent_home.join("sessions");
             if let Ok(projects) = std::fs::read_dir(&agent_sessions) {
                 for project in projects.flatten() {
-                    let candidate = project.path().join(format!("{session_id}.jsonl"));
+                    let candidate = vak_config::scope::session_ledger(&project.path(), session_id);
                     if candidate.is_file() && store.import_session(&agent_home, &candidate).is_ok()
                     {
                         return true;
@@ -4710,10 +4710,7 @@ async fn list_sessions(
     }
     for entry in entries {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-            continue;
-        }
-        let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
+        let Some(session_id) = vak_config::scope::ledger_session_id(&path) else {
             continue;
         };
         if trashed.contains(&session_id) != query.trash {
@@ -7970,10 +7967,12 @@ mod active_transcript_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(sessions_home.clone()));
         let state = AppState::new(core.clone());
         let id = "active-transcript";
-        let path = sessions_home
-            .join("sessions")
-            .join(vak_config::scope::workspace_key(core.cwd()))
-            .join(format!("{id}.jsonl"));
+        let path = vak_config::scope::session_ledger(
+            &sessions_home
+                .join("sessions")
+                .join(vak_config::scope::workspace_key(core.cwd())),
+            id,
+        );
         let mut log = vak_session::SessionLog::create(
             path,
             vak_session::types::SessionHeader {
@@ -8943,7 +8942,7 @@ fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog
     }
     if let Ok(entries) = std::fs::read_dir(home.join("sessions")) {
         for entry in entries.flatten() {
-            let candidate = entry.path().join(format!("{id}.jsonl"));
+            let candidate = vak_config::scope::session_ledger(&entry.path(), id);
             if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
                 return Some(s);
             }
@@ -8952,7 +8951,7 @@ fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog
     let shared = core.shared_scope().into_root();
     if let Ok(entries) = std::fs::read_dir(shared.join("sessions")) {
         for entry in entries.flatten() {
-            let candidate = entry.path().join(format!("{id}.jsonl"));
+            let candidate = vak_config::scope::session_ledger(&entry.path(), id);
             if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
                 return Some(s);
             }
@@ -8962,7 +8961,7 @@ fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog
         for agent in agents.flatten() {
             if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
                 for project in projects.flatten() {
-                    let candidate = project.path().join(format!("{id}.jsonl"));
+                    let candidate = vak_config::scope::session_ledger(&project.path(), id);
                     if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
                         return Some(s);
                     }
@@ -9012,7 +9011,7 @@ pub(crate) fn read_historical_header(
     }
     if let Ok(entries) = std::fs::read_dir(state.core.scope().sessions_root()) {
         for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
-            let path = project.path().join(format!("{id}.jsonl"));
+            let path = vak_config::scope::session_ledger(&project.path(), id);
             if let Some(header) = read(&path) {
                 return Some(header);
             }
@@ -9021,7 +9020,7 @@ pub(crate) fn read_historical_header(
     let shared = state.core.shared_scope().into_root();
     if let Ok(entries) = std::fs::read_dir(shared.join("sessions")) {
         for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
-            let path = project.path().join(format!("{id}.jsonl"));
+            let path = vak_config::scope::session_ledger(&project.path(), id);
             if let Some(header) = read(&path) {
                 return Some(header);
             }
@@ -9031,7 +9030,7 @@ pub(crate) fn read_historical_header(
         for agent in agents.flatten().filter(|entry| entry.path().is_dir()) {
             if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
                 for project in projects.flatten().filter(|entry| entry.path().is_dir()) {
-                    let path = project.path().join(format!("{id}.jsonl"));
+                    let path = vak_config::scope::session_ledger(&project.path(), id);
                     if let Some(header) = read(&path) {
                         return Some(header);
                     }
@@ -10017,19 +10016,18 @@ fn write_archive(core: &Core, map: &HashMap<String, bool>) {
 }
 
 fn find_session_in_cwd(core: &Core, id: &str) -> bool {
-    let direct = core
-        .scope()
-        .sessions_dir(core.cwd())
-        .join(format!("{id}.jsonl"));
-    if direct.is_file() {
+    let direct = core.scope().session_file(core.cwd(), id);
+    if direct.exists() {
         return true;
     }
     let shared = core.shared_scope().into_root();
     if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
         for agent in agents.flatten() {
-            let candidate = vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd())
-                .join(format!("{id}.jsonl"));
-            if candidate.is_file() {
+            let candidate = vak_config::scope::session_ledger(
+                &vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd()),
+                id,
+            );
+            if candidate.exists() {
                 return true;
             }
         }
@@ -23179,12 +23177,7 @@ mod sandbox_promotion_tests {
         session_id: &str,
         cwd: &std::path::Path,
     ) -> vak_session::SessionLog {
-        let path = core
-            .scope()
-            .into_root()
-            .join("sessions")
-            .join(vak_config::scope::workspace_key(cwd))
-            .join(format!("{session_id}.jsonl"));
+        let path = core.scope().session_file(cwd, session_id);
         vak_session::SessionLog::create(
             path,
             vak_session::types::SessionHeader {
@@ -26901,7 +26894,7 @@ mod scheduler_state_tests {
         let ledger = std::fs::read_dir(home.join("agents").join("writer").join("sessions"))
             .unwrap()
             .flatten()
-            .any(|project| project.path().join(format!("{session}.jsonl")).is_file());
+            .any(|project| vak_config::scope::session_ledger(&project.path(), &session).exists());
         assert!(ledger, "the run's ledger is under the writer's own home");
         assert!(
             !home.join("agents").join("vak").join("agents").exists(),

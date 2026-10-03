@@ -65,7 +65,7 @@ impl Store {
             {
                 let entry = entry.map_err(|e| std::io::Error::other(e.to_string()))?;
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                if vak_config::scope::ledger_session_id(path).is_none() {
                     continue;
                 }
                 let stats = self.import_file(conn, &home, path)?;

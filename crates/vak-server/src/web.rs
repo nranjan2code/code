@@ -375,7 +375,7 @@ fn workspace_of_ledger_dir(dir: &Path) -> Option<String> {
     let read = std::fs::read_dir(dir).ok()?;
     for entry in read.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        if vak_config::scope::ledger_session_id(&path).is_none() {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else {

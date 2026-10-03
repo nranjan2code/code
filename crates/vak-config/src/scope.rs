@@ -34,6 +34,21 @@ pub const SCRATCH_DIR: &str = ".vak/scratch";
 /// Fixed-hash identity of a workspace directory (FNV-1a over its path, so a
 /// session or memory directory stays reachable across toolchain upgrades).
 /// Every per-workspace store keys off this one function.
+/// The ledger of session `session_id` inside a sessions directory: the one
+/// place a session ledger's on-disk name is decided.
+pub fn session_ledger(dir: &Path, session_id: &str) -> PathBuf {
+    dir.join(format!("{session_id}.jsonl"))
+}
+
+/// The session id of a ledger found in a sessions directory, or `None`
+/// when `path` is not a session ledger.
+pub fn ledger_session_id(path: &Path) -> Option<String> {
+    if path.extension()? != "jsonl" {
+        return None;
+    }
+    path.file_stem()?.to_str().map(str::to_string)
+}
+
 pub fn workspace_key(cwd: &Path) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in cwd.to_string_lossy().as_bytes() {
@@ -74,7 +89,7 @@ impl AgentScope {
     }
 
     pub fn session_file(&self, cwd: &Path, session_id: &str) -> PathBuf {
-        self.sessions_dir(cwd).join(format!("{session_id}.jsonl"))
+        session_ledger(&self.sessions_dir(cwd), session_id)
     }
 
     pub fn checkpoints(&self) -> PathBuf {

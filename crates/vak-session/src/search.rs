@@ -145,11 +145,7 @@ pub fn search_extended(
         if let Ok(read) = std::fs::read_dir(&dir) {
             for file_entry in read.flatten() {
                 let path = file_entry.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                    continue;
-                }
-                let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from)
-                else {
+                let Some(session_id) = vak_config::scope::ledger_session_id(&path) else {
                     continue;
                 };
                 if excluded.contains(&session_id) || !seen_sessions.insert(session_id.clone()) {
@@ -241,11 +237,7 @@ pub fn search_all_extended(
         let mut files: Vec<PathBuf> = read.flatten().map(|e| e.path()).collect();
         files.sort();
         for path in files {
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from)
-            else {
+            let Some(session_id) = vak_config::scope::ledger_session_id(&path) else {
                 continue;
             };
             if excluded.contains(&session_id) {
