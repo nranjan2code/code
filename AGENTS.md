@@ -189,7 +189,12 @@ Read before changing behaviour in these areas:
   them; Continue working attaches an artifact to its Agent's own
   conversation (doc 64), never a new one. It is the product spec for doc
   74's C4 and A6. Its L1 and L2 are a prototype before the data
-  architecture, whose data M3b discards; later phases ride M4, M6 and M8).
+  architecture, whose data M3b discards; later phases ride M4, M6 and M8),
+  `85-turn-graph.md` (the proposed turn graph: an identity audit and fix so
+  every turn, call and record names its turn and call by id, typed edges
+  between turns, threads, evidence, cards, files and commitments, a link
+  signal in the context planner, and cross-session recall over the
+  data-architecture catalog at M6).
   Docs 76, 79, 80, 81 and 82 use the data architecture's shared primitives
   (triggers, cursors, effects, fencing, connections, principals) from plan
   revision 3 rather than building their own.
