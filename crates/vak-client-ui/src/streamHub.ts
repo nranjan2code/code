@@ -202,7 +202,10 @@ function sharedTransport(): Transport {
           opened = true;
           window.clearTimeout(giveUp);
         }
-        setStatus(message.data.status);
+        // Until the worker has opened once, its trouble is not yet this
+        // tab's: it may be about to hand the tab its own stream, and a
+        // status shown meanwhile is a pill that flashes and goes.
+        if (opened) setStatus(message.data.status);
       }
     };
     current.start();

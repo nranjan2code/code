@@ -34,17 +34,17 @@ pub const CONNECTORS: [Connector; 4] = [
     Connector {
         id: "social-reddit",
         platform: "Reddit",
-        summary: "Bounded Reddit Data API reads, subject to Reddit eligibility and deletion rules.",
-        readiness: Readiness::Blocked,
-        reason: "Production access is blocked until Vakyartha's use is eligible and deleted content can be removed from stored history.",
+        summary: "Owner-only Reddit search preview through the official Data API.",
+        readiness: Readiness::OwnerPreview,
+        reason: "Owner-only search preview with your own Reddit app Client ID. Results stay on this screen and are never saved or sent to the agent, so Reddit's deleted-content rule has nothing to remove. Agent use stays blocked until Reddit eligibility and erasure are resolved.",
         official_api: "https://redditinc.com/policies/data-api-terms",
     },
     Connector {
         id: "social-x",
         platform: "X",
-        summary: "Bounded X API reads with an operator-set spending ceiling.",
-        readiness: Readiness::Blocked,
-        reason: "The official API adapter, usage metering, and a hard spending ceiling are not implemented.",
+        summary: "Owner-only X search preview with a hard monthly request ceiling.",
+        readiness: Readiness::OwnerPreview,
+        reason: "Owner-only search preview with your own bearer token. Every search counts against a monthly ceiling you set, and searching stops at it. Results are not saved or sent to the agent.",
         official_api: "https://developer.x.com/",
     },
     Connector {

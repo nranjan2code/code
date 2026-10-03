@@ -854,6 +854,11 @@ fn router_with_state(state: AppState) -> Router {
             get(youtube_key_status).put(save_youtube_key).delete(remove_youtube_key),
         )
         .route("/social/youtube/search", post(youtube_search_preview))
+        .route("/social/reddit/client-id", get(social::preview::reddit_client_id_status).put(social::preview::reddit_client_id_save).delete(social::preview::reddit_client_id_remove))
+        .route("/social/reddit/search", post(social::preview::reddit_search))
+        .route("/social/x/token", get(social::preview::x_token_status).put(social::preview::x_token_save).delete(social::preview::x_token_remove))
+        .route("/social/x/usage", get(social::preview::x_usage_status).put(social::preview::x_usage_limit))
+        .route("/social/x/search", post(social::preview::x_search))
         .route("/social/linkedin/client-id", get(social::linkedin::client_id_status).put(social::linkedin::save_client_id).delete(social::linkedin::remove_client_id))
         .route("/social/linkedin/account", get(social::linkedin::account_status).delete(social::linkedin::disconnect))
         .route("/social/linkedin/connect", post(social::linkedin::begin))
@@ -10776,26 +10781,30 @@ async fn list_social_connectors(
     }
     let core = scoped_core!(&state, None, query.agent.as_deref());
     let mut connectors = vak_core::social::CONNECTORS.to_vec();
-    let youtube_enabled = social_plugin_enabled(&core, "social-youtube");
-    let youtube_adapter = youtube_owner_preview_adapter();
-    if let Some(youtube) = connectors
-        .iter_mut()
-        .find(|connector| connector.id == "social-youtube")
-    {
-        match (youtube_enabled, youtube_adapter) {
-            (true, Some(adapter)) => {
-                youtube.readiness = vak_core::social::Readiness::OwnerPreview;
-                youtube.reason = adapter.gate_reason;
-            }
-            _ => {
-                youtube.readiness = vak_core::social::Readiness::Blocked;
-                youtube.reason = "Install and enable the YouTube add-on to use its owner-only API search preview.";
-            }
+    for connector in connectors.iter_mut() {
+        let (name, registered) = match connector.id {
+            "social-youtube" => ("YouTube", youtube_owner_preview_adapter().is_some()),
+            "social-reddit" => ("Reddit", social::preview::reddit_registered()),
+            "social-x" => ("X", social::preview::x_registered()),
+            _ => continue,
+        };
+        if registered && social_plugin_enabled(&core, connector.id) {
+            continue;
         }
+        connector.readiness = vak_core::social::Readiness::Blocked;
+        connector.reason = match name {
+            "YouTube" => {
+                "Install and enable the YouTube add-on to use its owner-only API search preview."
+            }
+            "Reddit" => {
+                "Install and enable the Reddit add-on to use its owner-only search preview."
+            }
+            _ => "Install and enable the X add-on to use its owner-only search preview.",
+        };
     }
     Json(serde_json::json!({
         "connectors": connectors,
-        "notice": "YouTube offers an owner-only API search preview. LinkedIn can link an owner-visible profile identity after native PKCE setup. Reddit and X remain gated; LinkedIn content search remains unavailable."
+        "notice": "YouTube, Reddit and X offer owner-only search previews. LinkedIn can link an owner-visible profile identity after native PKCE setup; LinkedIn content search remains unavailable."
     }))
     .into_response()
 }

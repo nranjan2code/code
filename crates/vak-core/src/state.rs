@@ -327,6 +327,17 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     StateEntry {
+        path: "social-x-usage.json",
+        root: Root::Data,
+        owner: "vak-server",
+        schema: None,
+        // The X preview's monthly request ceiling and the count spent so far.
+        kind: Kind::Config,
+        on_update: OnUpdate::AdditiveOnly,
+        on_purge: OnPurge::Remove,
+        in_backup: true,
+    },
+    StateEntry {
         path: "archive.json",
         root: Root::Data,
         owner: "vak-server",

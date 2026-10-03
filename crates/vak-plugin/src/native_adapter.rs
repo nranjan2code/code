@@ -17,11 +17,15 @@ pub enum AdapterAuth {
     OAuthMember,
     OAuthUser,
     BearerToken,
+    /// An installed-app OAuth grant that needs only a public Client ID.
+    OAuthInstalledApp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompiledExecutor {
     YoutubeOwnerSearchPreview,
+    RedditOwnerSearchPreview,
+    XOwnerSearchPreview,
     None,
 }
 
@@ -61,17 +65,17 @@ pub const NATIVE_ADAPTERS: &[NativeAdapterRegistration] = &[
         platform: "Reddit",
         api_version: "v1",
         api_host: "oauth.reddit.com",
-        auth: AdapterAuth::OAuthUser,
-        credential_binding: "VAK_SOCIAL_REDDIT_ACCESS_TOKEN",
-        secret_recipient: "vak-core/social-reddit",
+        auth: AdapterAuth::OAuthInstalledApp,
+        credential_binding: "VAK_SOCIAL_REDDIT_CLIENT_ID",
+        secret_recipient: "vak-server/social-reddit-preview",
         candidate_scopes: &["read"],
-        capabilities: &[],
+        capabilities: &["social.reddit.owner_search_preview"],
         max_results: 10,
         max_response_bytes: 1024 * 1024,
         timeout_seconds: 12,
-        availability: AdapterAvailability::Gated,
-        executor: CompiledExecutor::None,
-        gate_reason: "Reddit eligibility and deleted-content erasure are not satisfied.",
+        availability: AdapterAvailability::OwnerPreview,
+        executor: CompiledExecutor::RedditOwnerSearchPreview,
+        gate_reason: "Owner-only preview; model-facing use is blocked until Reddit eligibility and deleted-content erasure are satisfied.",
     },
     NativeAdapterRegistration {
         id: "youtube-data-api-v3",
@@ -99,15 +103,15 @@ pub const NATIVE_ADAPTERS: &[NativeAdapterRegistration] = &[
         api_host: "api.x.com",
         auth: AdapterAuth::BearerToken,
         credential_binding: "VAK_SOCIAL_X_BEARER_TOKEN",
-        secret_recipient: "vak-core/social-x",
+        secret_recipient: "vak-server/social-x-preview",
         candidate_scopes: &[],
-        capabilities: &[],
+        capabilities: &["social.x.owner_search_preview"],
         max_results: 10,
         max_response_bytes: 1024 * 1024,
         timeout_seconds: 12,
-        availability: AdapterAvailability::Gated,
-        executor: CompiledExecutor::None,
-        gate_reason: "X API dispatch, metering, and a hard local spending ceiling are not implemented.",
+        availability: AdapterAvailability::OwnerPreview,
+        executor: CompiledExecutor::XOwnerSearchPreview,
+        gate_reason: "Owner-only preview with a hard local monthly request ceiling; model-facing use is not available.",
     },
     NativeAdapterRegistration {
         id: "linkedin-api-v2",

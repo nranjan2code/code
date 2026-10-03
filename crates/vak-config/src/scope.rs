@@ -291,6 +291,12 @@ impl SharedScope {
         self.root.join("deleted.json")
     }
 
+    /// The X preview's monthly request ceiling and usage count. Shared, because
+    /// one bearer token is one bill however many Agents use it.
+    pub fn social_x_usage(&self) -> PathBuf {
+        self.root.join("social-x-usage.json")
+    }
+
     /// The archive sidecar.
     pub fn archive(&self) -> PathBuf {
         self.root.join("archive.json")

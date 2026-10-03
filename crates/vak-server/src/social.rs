@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 pub(crate) mod linkedin;
+pub(crate) mod preview;
 
 /// Where a social credential is written: `scope=user` is the Shared layer every
 /// Agent inherits, anything else is the selected Agent's own scope.

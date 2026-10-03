@@ -631,6 +631,40 @@ export async function searchYoutubePreview(query: string, maxResults = 5, agent?
   return req(withAgent("/social/youtube/search", agent), { method: "POST", body: JSON.stringify({ query, max_results: maxResults }) });
 }
 
+export interface RedditPreviewItem { id: string; url: string; title: string; subreddit: string; snippet: string; score: number; comments: number; created_at: string }
+export interface XPreviewItem { id: string; url: string; handle: string; text: string; likes: number; reposts: number; created_at: string }
+export interface XUsage { month: string; limit: number; used: number }
+export async function redditClientIdStatus(agent?: string, scope?: SocialCredentialScope): Promise<SocialCredentialState> {
+  return req(withCredentialScope("/social/reddit/client-id", agent, scope));
+}
+export async function saveRedditClientId(clientId: string, agent?: string, scope?: SocialCredentialScope): Promise<{ configured: boolean }> {
+  return req(withCredentialScope("/social/reddit/client-id", agent, scope), { method: "PUT", body: JSON.stringify({ client_id: clientId }) });
+}
+export async function removeRedditClientId(agent?: string, scope?: SocialCredentialScope): Promise<{ configured: boolean }> {
+  return req(withCredentialScope("/social/reddit/client-id", agent, scope), { method: "DELETE" });
+}
+export async function searchRedditPreview(query: string, maxResults = 5, agent?: string): Promise<{ items: RedditPreviewItem[]; notice: string }> {
+  return req(withAgent("/social/reddit/search", agent), { method: "POST", body: JSON.stringify({ query, max_results: maxResults }) });
+}
+export async function xTokenStatus(agent?: string, scope?: SocialCredentialScope): Promise<SocialCredentialState> {
+  return req(withCredentialScope("/social/x/token", agent, scope));
+}
+export async function saveXToken(token: string, agent?: string, scope?: SocialCredentialScope): Promise<{ configured: boolean }> {
+  return req(withCredentialScope("/social/x/token", agent, scope), { method: "PUT", body: JSON.stringify({ token }) });
+}
+export async function removeXToken(agent?: string, scope?: SocialCredentialScope): Promise<{ configured: boolean }> {
+  return req(withCredentialScope("/social/x/token", agent, scope), { method: "DELETE" });
+}
+export async function xUsageStatus(agent?: string): Promise<XUsage> {
+  return req(withAgent("/social/x/usage", agent));
+}
+export async function setXLimit(limit: number, agent?: string): Promise<XUsage> {
+  return req(withAgent("/social/x/usage", agent), { method: "PUT", body: JSON.stringify({ limit }) });
+}
+export async function searchXPreview(query: string, maxResults = 5, agent?: string): Promise<{ items: XPreviewItem[]; notice: string; usage: XUsage }> {
+  return req(withAgent("/social/x/search", agent), { method: "POST", body: JSON.stringify({ query, max_results: maxResults }) });
+}
+
 export interface LinkedinConnection {
   connected: boolean;
   display_name?: string;
