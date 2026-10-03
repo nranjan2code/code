@@ -5,7 +5,6 @@
 //! a fresh scan.
 
 use std::collections::{HashMap, VecDeque};
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Instant, SystemTime};
@@ -70,11 +69,17 @@ fn evict_to_capacity(map: &mut HashMap<PathBuf, CacheSlot>) {
 /// when the file's mtime and length are unchanged since the last scan.
 pub(crate) fn ledger(path: &Path) -> Result<Arc<Vec<CachedMessage>>, SearchError> {
     let key = path.canonicalize()?;
-    let meta = std::fs::metadata(path)?;
-    let fingerprint = Fingerprint {
-        mtime: meta.modified()?,
-        len: meta.len(),
+    // A ledger is a directory of segments: it changed when any segment did,
+    // so the fingerprint is the newest segment mtime and the total length.
+    let mut fingerprint = Fingerprint {
+        mtime: std::time::SystemTime::UNIX_EPOCH,
+        len: 0,
     };
+    for segment in crate::log::SessionLog::segment_files(path) {
+        let meta = std::fs::metadata(&segment)?;
+        fingerprint.mtime = fingerprint.mtime.max(meta.modified()?);
+        fingerprint.len += meta.len();
+    }
     {
         let mut map = lock(cache());
         if let Some(slot) = map.get_mut(&key)
@@ -106,24 +111,26 @@ pub(crate) fn ledger(path: &Path) -> Result<Arc<Vec<CachedMessage>>, SearchError
 }
 
 fn scan(path: &Path) -> Result<Vec<CachedMessage>, SearchError> {
-    let file = std::fs::File::open(path)?;
-    let reader = std::io::BufReader::new(file);
     // Ring buffer keeps memory bounded on huge ledgers while preserving
-    // "trailing lines" semantics.
-    let mut ring: VecDeque<String> = VecDeque::with_capacity(MAX_SCAN_LINES);
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
+    // "trailing entries" semantics.
+    let mut ring: VecDeque<Vec<u8>> = VecDeque::with_capacity(MAX_SCAN_LINES);
+    for segment in crate::log::SessionLog::segment_files(path) {
+        let Ok(frames) = vak_storage::segments::frame_bytes(&segment) else {
             continue;
+        };
+        let Ok(located) = vak_storage::records::located_entries(&frames, 0) else {
+            continue;
+        };
+        for frame in located {
+            if ring.len() == MAX_SCAN_LINES {
+                ring.pop_front();
+            }
+            ring.push_back(frame.entry);
         }
-        if ring.len() == MAX_SCAN_LINES {
-            ring.pop_front();
-        }
-        ring.push_back(line);
     }
     let mut messages = Vec::new();
-    for line in ring {
-        let Ok(entry) = serde_json::from_str::<Entry>(&line) else {
+    for bytes in ring {
+        let Ok(entry) = serde_json::from_slice::<Entry>(&bytes) else {
             continue;
         };
         let EntryPayload::Message(record) = entry.payload else {

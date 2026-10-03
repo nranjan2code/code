@@ -209,7 +209,7 @@ async fn nothing_reply_records_nothing_anywhere() {
         "a nothing-reply must never be delivered"
     );
     assert!(
-        heartbeat_ledger(&fx).is_file(),
+        heartbeat_ledger(&fx).exists(),
         "the dedicated persistent session must exist on disk"
     );
 }

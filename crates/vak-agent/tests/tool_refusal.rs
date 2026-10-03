@@ -276,7 +276,7 @@ async fn the_repair_directive_is_recorded_as_control_not_as_the_persons_words() 
             tx,
         )
         .await;
-    let ledger = std::fs::read_to_string(&ledger).unwrap();
+    let ledger = vak_session::SessionLog::text(&ledger);
     let directives: Vec<&str> = ledger
         .lines()
         .filter(|line| line.contains("[repair-directive]"))

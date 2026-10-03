@@ -53,17 +53,13 @@ fn map_session_agents(shared: &std::path::Path) -> HashMap<String, String> {
             let agent_sessions = vak_config::scope::AgentScope::new(agent.path()).sessions_root();
             if agent_sessions.exists() {
                 for e in walkdir::WalkDir::new(&agent_sessions)
-                    .max_depth(3)
+                    .min_depth(2)
+                    .max_depth(2)
                     .into_iter()
                     .flatten()
                 {
-                    let path = e.path();
-                    let maybe_stem = (e.file_type().is_file()
-                        && path.extension().is_some_and(|ext| ext == "jsonl"))
-                    .then(|| path.file_stem().and_then(|s| s.to_str()))
-                    .flatten();
-                    if let Some(stem) = maybe_stem {
-                        map.insert(stem.to_string(), agent_id.clone());
+                    if let Some(id) = vak_config::scope::ledger_session_id(e.path()) {
+                        map.insert(id, agent_id.clone());
                     }
                 }
             }
@@ -491,56 +487,23 @@ pub(crate) async fn import_session_store(
     let home = state.core.scope().into_root();
     let shared = state.core.shared_scope().into_root();
 
-    let mut candidate: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
+    let mut candidate: Option<(std::path::PathBuf, std::path::PathBuf)>;
 
-    let direct = vak_config::scope::AgentScope::new(&home).sessions_root();
-    if direct.exists() {
-        for entry in walkdir::WalkDir::new(&direct)
-            .min_depth(2)
-            .max_depth(2)
-            .into_iter()
-            .filter_entry(|e| e.file_type().is_file())
+    let find = |root: &std::path::Path| {
+        std::fs::read_dir(vak_config::scope::AgentScope::new(root).sessions_root())
+            .ok()?
             .flatten()
-        {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-                && path.file_stem().and_then(|s| s.to_str()) == Some(&session_id)
-            {
-                candidate = Some((home.clone(), path.to_path_buf()));
-                break;
-            }
-        }
-    }
-
-    if let Some(agents) = candidate
-        .is_none()
-        .then(|| std::fs::read_dir(vak_config::scope::SharedScope::new(&shared).agents_dir()).ok())
-        .flatten()
+            .map(|hash| hash.path().join(&session_id))
+            .find(|path| vak_config::scope::ledger_session_id(path).is_some())
+    };
+    candidate = find(&home).map(|path| (home.clone(), path));
+    if candidate.is_none()
+        && let Ok(agents) =
+            std::fs::read_dir(vak_config::scope::SharedScope::new(&shared).agents_dir())
     {
-        for agent in agents.flatten() {
-            let agent_home = agent.path();
-            let agent_sessions = vak_config::scope::AgentScope::new(&agent_home).sessions_root();
-            if agent_sessions.exists() {
-                for entry in walkdir::WalkDir::new(&agent_sessions)
-                    .min_depth(2)
-                    .max_depth(2)
-                    .into_iter()
-                    .filter_entry(|e| e.file_type().is_file())
-                    .flatten()
-                {
-                    let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-                        && path.file_stem().and_then(|s| s.to_str()) == Some(&session_id)
-                    {
-                        candidate = Some((agent_home.clone(), path.to_path_buf()));
-                        break;
-                    }
-                }
-            }
-            if candidate.is_some() {
-                break;
-            }
-        }
+        candidate = agents
+            .flatten()
+            .find_map(|agent| find(&agent.path()).map(|path| (agent.path(), path)));
     }
 
     if let Some((agent_home, path)) = candidate {
@@ -1015,7 +978,6 @@ async fn patch_workspace_name(
 /// first line of one file per project directory — no store rebuild, no
 /// `Core` start.
 fn known_workspaces(state: &AppState) -> Vec<String> {
-    use std::io::BufRead;
     let mut seen: Vec<String> = vec![vak_config::paths::default_workspace().display().to_string()];
     let gateway_workspace = vak_config::paths::gateway_workspace_at(
         &state.core.scope().into_root(),
@@ -1052,23 +1014,8 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
             };
             for file in files.flatten() {
                 let path = file.path();
-                if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                    continue;
-                }
-                let Ok(handle) = std::fs::File::open(&path) else {
-                    continue;
-                };
-                let mut first = String::new();
-                if std::io::BufReader::new(handle)
-                    .read_line(&mut first)
-                    .is_err()
-                {
-                    continue;
-                }
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&first)
-                    && let Some(cwd) = v["cwd"].as_str()
-                {
-                    push(cwd.to_string());
+                if let Ok(header) = vak_session::SessionLog::read_header(&path) {
+                    push(header.cwd.display().to_string());
                     break;
                 }
             }

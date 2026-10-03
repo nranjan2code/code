@@ -7500,6 +7500,7 @@ dependencies = [
  "vak-config",
  "vak-intent",
  "vak-llm",
+ "vak-storage",
 ]
 
 [[package]]
@@ -7531,6 +7532,7 @@ dependencies = [
  "vak-llm",
  "vak-presentation",
  "vak-session",
+ "vak-storage",
  "walkdir",
 ]
 

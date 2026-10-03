@@ -710,9 +710,9 @@ fn torn_trailing_line_is_skipped_not_fatal() {
     use std::io::Write as _;
     let mut f = std::fs::OpenOptions::new()
         .append(true)
-        .open(&path)
+        .open(path.join("seg-00000001.log"))
         .unwrap();
-    write!(f, "{{\"id\":\"torn\", \"pay").unwrap();
+    f.write_all(&[9, 0, 0, 0, 1, 2]).unwrap();
     drop(f);
 
     let reopened = SessionLog::open(path).unwrap();
@@ -847,7 +847,12 @@ fn unchanged_capabilities_not_rewritten() {
         tool_index: String::new(),
         tool_domains: Default::default(),
     };
-    let size = || std::fs::metadata(&path).unwrap().len();
+    let size = || {
+        SessionLog::segment_files(&path)
+            .iter()
+            .map(|segment| std::fs::metadata(segment).unwrap().len())
+            .sum::<u64>()
+    };
 
     let before = size();
     let first = log.append_turn_capabilities(bound(1, "system ")).unwrap();
@@ -864,7 +869,9 @@ fn unchanged_capabilities_not_rewritten() {
         }
         other => panic!("an unchanged binding was rewritten: {other:?}"),
     }
-    assert!(referenced * 10 < full, "{referenced} vs {full}");
+    // Frames are compressed, so a full binding is already small on disk;
+    // the reference is still the smaller write.
+    assert!(referenced < full, "{referenced} vs {full}");
 
     let third = log
         .append_turn_capabilities(bound(2, "a different system prompt "))

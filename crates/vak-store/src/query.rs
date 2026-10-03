@@ -291,7 +291,7 @@ mod tests {
 
     use super::*;
     use crate::Store;
-    use std::io::Write;
+
     use std::path::Path;
     use vak_llm::types::{ContentBlock, Message};
     use vak_session::log::SessionPath;
@@ -347,16 +347,17 @@ mod tests {
 
     fn write_session(home: &Path, cwd: &Path, id: &str, msgs: &[MessageRecord]) {
         let path = SessionPath::new_session_file(home, cwd, id);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let file = std::fs::File::create(&path).unwrap();
-        let mut w = std::io::BufWriter::new(file);
+        let _ = std::fs::remove_dir_all(&path);
+        let mut w = vak_storage::segments::SegmentSet::open(&path)
+            .unwrap()
+            .writer(1)
+            .unwrap();
         let header = Entry::new(None, EntryPayload::Header(test_header(id)));
-        serde_json::to_writer(&mut w, &header).unwrap();
-        w.write_all(b"\n").unwrap();
+        w.append(&serde_json::to_vec(&header).unwrap(), None)
+            .unwrap();
         let mut parent = Some(header.id.clone());
         for m in msgs {
             let entry = Entry {
-                prev_hash: None,
                 at_turn: None,
                 id: uuid::Uuid::now_v7().to_string(),
                 parent_id: parent.clone(),
@@ -364,10 +365,9 @@ mod tests {
                 payload: EntryPayload::Message(m.clone()),
             };
             parent = Some(entry.id.clone());
-            serde_json::to_writer(&mut w, &entry).unwrap();
-            w.write_all(b"\n").unwrap();
+            w.append(&serde_json::to_vec(&entry).unwrap(), None)
+                .unwrap();
         }
-        w.flush().unwrap();
     }
 
     #[test]

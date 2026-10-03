@@ -97,6 +97,17 @@ pub fn decode_sealed(bytes: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
+/// The frame bytes of a segment file, open (`.log`) or sealed (`.sealed`,
+/// decoded), so a reader addresses frames the same way in both.
+pub fn frame_bytes(path: &Path) -> Result<Vec<u8>> {
+    let data = fs::read(path)?;
+    if path.extension().is_some_and(|ext| ext == "sealed") {
+        decode_sealed(&data)
+    } else {
+        Ok(data)
+    }
+}
+
 pub struct SegmentSet {
     dir: PathBuf,
 }

@@ -94,6 +94,7 @@ pub(crate) mod test_support {
     /// loads (and can seed) the gateway allowlist store there.
     pub(crate) fn state() -> crate::AppState {
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         // The TempDir guard is deliberately leaked: these states outlive
@@ -512,6 +513,7 @@ mod eviction_tests {
         let _restore = RestoreCap;
 
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
@@ -4478,7 +4480,7 @@ pub(crate) fn import_session_sync(
     if let Ok(read) = std::fs::read_dir(&dir) {
         for project in read.flatten() {
             let candidate = vak_config::scope::session_ledger(&project.path(), session_id);
-            if candidate.is_file() && store.import_session(home, &candidate).is_ok() {
+            if candidate.exists() && store.import_session(home, &candidate).is_ok() {
                 return true;
             }
         }
@@ -4497,8 +4499,7 @@ pub(crate) fn import_session_sync(
             if let Ok(projects) = std::fs::read_dir(&agent_sessions) {
                 for project in projects.flatten() {
                     let candidate = vak_config::scope::session_ledger(&project.path(), session_id);
-                    if candidate.is_file() && store.import_session(&agent_home, &candidate).is_ok()
-                    {
+                    if candidate.exists() && store.import_session(&agent_home, &candidate).is_ok() {
                         return true;
                     }
                 }
@@ -4716,9 +4717,7 @@ async fn list_sessions(
         if trashed.contains(&session_id) != query.trash {
             continue;
         }
-        let updated_at = std::fs::metadata(&path)
-            .ok()
-            .and_then(|m| m.modified().ok())
+        let updated_at = vak_session::SessionLog::modified(&path)
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
         let (created_at, title, entry_count, cwd, agent, conversation) = summarize_jsonl(&path);
         // A user-created Agent lives in its own isolated workspace (see
@@ -4779,73 +4778,58 @@ fn summarize_jsonl(
     Option<vak_session::types::AgentIdentity>,
     Option<vak_session::types::ConversationContext>,
 ) {
-    use std::io::BufRead;
-    let Ok(file) = std::fs::File::open(path) else {
-        return (None, None, 0, None, None, None);
-    };
-    let mut reader = std::io::BufReader::new(file);
     let mut created_at = None;
     let mut title = None;
     let mut cwd = None;
     let mut agent = None;
     let mut conversation = None;
-    let mut entries = 0u64;
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(_) => {
-                entries += 1;
-                if let Ok(entry) = serde_json::from_str::<vak_session::Entry>(line.trim()) {
-                    match entry.payload {
-                        vak_session::EntryPayload::Header(h) => {
-                            created_at = Some(h.created_at.to_rfc3339());
-                            cwd = Some(h.cwd.to_string_lossy().into_owned());
-                            agent = h.agent;
-                            conversation = h.conversation;
-                        }
-                        vak_session::EntryPayload::Message(rec) => {
-                            if title.is_none()
-                                && rec.message.role == vak_llm::Role::User
-                                && rec.control_kind().is_none()
-                            {
-                                let text = rec.message.text_content();
-                                let text = text.trim();
-                                if !text.is_empty() {
-                                    let first_line = text.lines().next().unwrap_or(text).trim();
-                                    let mut snippet: String = first_line.chars().take(72).collect();
-                                    if first_line.chars().count() > 72 {
-                                        snippet.push('…');
-                                    }
-                                    title = Some(snippet);
-                                }
+    let mut seen = 0u64;
+    let entries = vak_session::SessionLog::scan(path, |entry| {
+        seen += 1;
+        if let Some(entry) = entry.cloned() {
+            match entry.payload {
+                vak_session::EntryPayload::Header(h) => {
+                    created_at = Some(h.created_at.to_rfc3339());
+                    cwd = Some(h.cwd.to_string_lossy().into_owned());
+                    agent = h.agent;
+                    conversation = h.conversation;
+                }
+                vak_session::EntryPayload::Message(rec) => {
+                    if title.is_none()
+                        && rec.message.role == vak_llm::Role::User
+                        && rec.control_kind().is_none()
+                    {
+                        let text = rec.message.text_content();
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            let first_line = text.lines().next().unwrap_or(text).trim();
+                            let mut snippet: String = first_line.chars().take(72).collect();
+                            if first_line.chars().count() > 72 {
+                                snippet.push('…');
                             }
+                            title = Some(snippet);
                         }
-                        vak_session::EntryPayload::Compaction(_) => {}
-                        vak_session::EntryPayload::Receipt(_) => {}
-                        vak_session::EntryPayload::Goal(_) => {}
-                        vak_session::EntryPayload::GoalUpdate(_) => {}
-                        vak_session::EntryPayload::Activity(_) => {}
-                        vak_session::EntryPayload::Work(_) => {}
-                        vak_session::EntryPayload::Intent(_) => {}
-                        vak_session::EntryPayload::TurnCapabilitiesBound(_)
-                        | vak_session::EntryPayload::TurnCapabilitiesRef(_) => {}
-                        vak_session::EntryPayload::ChildRun { .. } => {}
-                        vak_session::EntryPayload::Presentation(_) => {}
-                        vak_session::EntryPayload::TurnCard(_) => {}
-                        vak_session::EntryPayload::EvidenceBody(_)
-                        | vak_session::EntryPayload::CallEffect(_) => {}
-                        vak_session::EntryPayload::ContextSelection(_) => {}
                     }
                 }
-                if title.is_some() && entries > 400 {
-                    break;
-                }
+                vak_session::EntryPayload::Compaction(_) => {}
+                vak_session::EntryPayload::Receipt(_) => {}
+                vak_session::EntryPayload::Goal(_) => {}
+                vak_session::EntryPayload::GoalUpdate(_) => {}
+                vak_session::EntryPayload::Activity(_) => {}
+                vak_session::EntryPayload::Work(_) => {}
+                vak_session::EntryPayload::Intent(_) => {}
+                vak_session::EntryPayload::TurnCapabilitiesBound(_)
+                | vak_session::EntryPayload::TurnCapabilitiesRef(_) => {}
+                vak_session::EntryPayload::ChildRun { .. } => {}
+                vak_session::EntryPayload::Presentation(_) => {}
+                vak_session::EntryPayload::TurnCard(_) => {}
+                vak_session::EntryPayload::EvidenceBody(_)
+                | vak_session::EntryPayload::CallEffect(_) => {}
+                vak_session::EntryPayload::ContextSelection(_) => {}
             }
-            Err(_) => break,
         }
-    }
+        !(title.is_some() && seen > 400)
+    });
     (created_at, title, entries, cwd, agent, conversation)
 }
 
@@ -22705,6 +22689,7 @@ mod configuration_control_tests {
     #[tokio::test]
     async fn a_stamped_answerability_loses_to_the_installed_approver() {
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
 
@@ -22918,6 +22903,7 @@ mod configuration_control_tests {
     #[tokio::test]
     async fn cross_process_memory_refresh_takes_effect_without_restart() {
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert!(core.effective_memory_search_enabled(), "default is on");
@@ -22942,6 +22928,7 @@ mod configuration_control_tests {
     #[tokio::test]
     async fn patch_config_memory_flags_apply_live_and_persist() {
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
@@ -22967,6 +22954,7 @@ mod configuration_control_tests {
 
         // Persisted to disk, not just the in-process override — a fresh
         // Core over the same cwd sees it too.
+        vak_config::paths::isolate_home_for_tests();
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
         fresh.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert!(!fresh.effective_memory_write_enabled());
@@ -22979,6 +22967,7 @@ mod configuration_control_tests {
     #[tokio::test]
     async fn patch_config_workers_applies_live_and_persists() {
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
@@ -22998,6 +22987,7 @@ mod configuration_control_tests {
             "must apply live without a restart"
         );
 
+        vak_config::paths::isolate_home_for_tests();
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
         fresh.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert!(!fresh.effective_workers(), "must be persisted to disk too");
@@ -23010,6 +23000,7 @@ mod configuration_control_tests {
     #[tokio::test]
     async fn patch_finops_sets_and_clears_caps_live_and_persisted() {
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
@@ -23028,6 +23019,7 @@ mod configuration_control_tests {
         assert_eq!(status.status(), StatusCode::OK);
         assert_eq!(core.effective_finops_max_run_usd(), Some(5.0));
 
+        vak_config::paths::isolate_home_for_tests();
         let fresh = Core::new(dir.path().to_path_buf()).unwrap();
         fresh.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         assert_eq!(
@@ -23058,6 +23050,7 @@ mod configuration_control_tests {
     #[tokio::test]
     async fn patch_finops_rejects_negative_cap() {
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let state = AppState::new(core.clone());
@@ -24965,7 +24958,7 @@ mod sandbox_promotion_tests {
             .into_root()
             .join("sessions")
             .join(vak_config::scope::workspace_key(core.cwd()))
-            .join("session-1.jsonl");
+            .join("session-1");
         let comment_id = "comment-from-asha";
         let mut log = SessionLog::open(session_path.clone()).unwrap();
         log.append_activity(vak_session::ActivityRecord {
@@ -25293,7 +25286,7 @@ mod sandbox_promotion_tests {
             .into_root()
             .join("sessions")
             .join(vak_config::scope::workspace_key(core.cwd()))
-            .join("session-1.jsonl");
+            .join("session-1");
         let session = SessionLog::open(path).unwrap();
         register_handle(
             &state,
@@ -25825,6 +25818,7 @@ mod sandbox_promotion_tests {
         use tower::ServiceExt;
 
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(
             dir.path().to_path_buf(),
@@ -25974,7 +25968,7 @@ mod sandbox_promotion_tests {
             .into_root()
             .join("sessions")
             .join(vak_config::scope::workspace_key(core.cwd()))
-            .join("session-message.jsonl");
+            .join("session-message");
         let session = SessionLog::open(path).unwrap();
         let handle = register_handle(
             &state,
@@ -26070,7 +26064,7 @@ mod sandbox_promotion_tests {
             .into_root()
             .join("sessions")
             .join(vak_config::scope::workspace_key(core.cwd()))
-            .join("session-approval.jsonl");
+            .join("session-approval");
         let session = SessionLog::open(path).unwrap();
         let handle = register_handle(
             &state,
@@ -26295,7 +26289,7 @@ mod sandbox_promotion_tests {
             .into_root()
             .join("sessions")
             .join(vak_config::scope::workspace_key(core.cwd()))
-            .join("session-1.jsonl");
+            .join("session-1");
         let session = SessionLog::open(session_path).unwrap();
         register_handle(
             &state,
@@ -26671,6 +26665,7 @@ mod scheduler_state_tests {
             "[memory]\nreflection = false\n",
         )
         .unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new_with_trust(ws.to_path_buf(), true)
             .unwrap()
             .with_agent_identity(agent);

@@ -15,7 +15,7 @@ use vak_llm::{
     EventStream, LlmError, Provider, stream,
     types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage},
 };
-use vak_session::{Entry, EntryPayload, SessionPath};
+use vak_session::SessionPath;
 
 #[derive(Default)]
 struct Capture(Mutex<Vec<ChatRequest>>, crate::support::CapacityKey);
@@ -94,11 +94,7 @@ async fn explicit_new_agent_conversation_gets_a_distinct_durable_identity() {
     assert_ne!(created["session_id"], existing["session_id"]);
     let created_id = created["session_id"].as_str().unwrap();
     let ledger = SessionPath::new_session_file(&core.scope().into_root(), &cwd, created_id);
-    let first = std::fs::read_to_string(ledger).unwrap();
-    let first: Entry = serde_json::from_str(first.lines().next().unwrap()).unwrap();
-    let EntryPayload::Header(header) = first.payload else {
-        panic!("new conversation must begin with a header");
-    };
+    let header = vak_session::SessionLog::read_header(&ledger).unwrap();
     assert!(
         header
             .conversation
@@ -229,15 +225,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
         !SessionPath::new_session_file(&core.scope().into_root(), &cwd, &sid).exists(),
         "Newsy session must not be in Vak workspace"
     );
-    let first = std::fs::read_to_string(ledger)
-        .unwrap()
-        .lines()
-        .next()
-        .map(|line| serde_json::from_str::<Entry>(line).unwrap())
-        .unwrap();
-    let EntryPayload::Header(header) = first.payload else {
-        panic!("agent admission ledger must begin with a header");
-    };
+    let header = vak_session::SessionLog::read_header(&ledger).unwrap();
     let context = header
         .conversation
         .expect("Agent admission must stamp conversation context");

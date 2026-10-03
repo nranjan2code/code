@@ -254,11 +254,9 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.starts_with("child-") {
             found_child = true;
-            let content = std::fs::read_to_string(entry.path()).unwrap();
-            let first: serde_json::Value =
-                serde_json::from_str(content.lines().next().unwrap()).unwrap();
+            let header = vak_session::SessionLog::read_header(&entry.path()).unwrap();
             assert_eq!(
-                first["parent_session_id"].as_str(),
+                header.parent_session_id.as_deref(),
                 Some(parent_id.as_str()),
                 "child session must link to its parent"
             );

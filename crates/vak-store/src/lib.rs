@@ -798,18 +798,29 @@ mod tests {
         }
     }
 
+    /// One record frame holding `entry`, for appending raw (torn-write tests).
+    fn frame_of(entry: &[u8]) -> Vec<u8> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("frame.log");
+        let mut writer = vak_storage::records::RecordWriter::open(&path).unwrap();
+        writer.append(entry, None).unwrap();
+        std::fs::read(path).unwrap()
+    }
+
     fn write_session(home: &Path, cwd: &Path, id: &str, msgs: &[MessageRecord]) {
         let path = SessionPath::new_session_file(home, cwd, id);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let file = std::fs::File::create(&path).unwrap();
-        let mut w = std::io::BufWriter::new(file);
+        // A fixture replaces any ledger already at this path.
+        let _ = std::fs::remove_dir_all(&path);
+        let mut w = vak_storage::segments::SegmentSet::open(&path)
+            .unwrap()
+            .writer(1)
+            .unwrap();
         let header = Entry::new(None, EntryPayload::Header(test_header(id)));
-        serde_json::to_writer(&mut w, &header).unwrap();
-        w.write_all(b"\n").unwrap();
+        w.append(&serde_json::to_vec(&header).unwrap(), None)
+            .unwrap();
         let mut parent = Some(header.id.clone());
         for m in msgs {
             let entry = Entry {
-                prev_hash: None,
                 at_turn: None,
                 id: uuid::Uuid::now_v7().to_string(),
                 parent_id: parent.clone(),
@@ -817,10 +828,9 @@ mod tests {
                 payload: EntryPayload::Message(m.clone()),
             };
             parent = Some(entry.id.clone());
-            serde_json::to_writer(&mut w, &entry).unwrap();
-            w.write_all(b"\n").unwrap();
+            w.append(&serde_json::to_vec(&entry).unwrap(), None)
+                .unwrap();
         }
-        w.flush().unwrap();
     }
 
     #[test]
@@ -906,15 +916,15 @@ mod tests {
         assert!(warm.bytes_read <= 16384, "{:?}", warm);
         let entry = Entry::new(None, EntryPayload::Message(user_msg("new bounded subject")));
         let serialized = serde_json::to_vec(&entry).unwrap();
+        let frame = frame_of(&serialized);
         let mut file = std::fs::OpenOptions::new()
             .append(true)
-            .open(&path)
+            .open(path.join("seg-00000001.log"))
             .unwrap();
-        file.write_all(&serialized[..serialized.len() / 2]).unwrap();
+        file.write_all(&frame[..frame.len() / 2]).unwrap();
         let partial = store.import_session(dir.path(), &path).unwrap();
         assert_eq!(partial.entries_indexed, 0);
-        file.write_all(&serialized[serialized.len() / 2..]).unwrap();
-        file.write_all(b"\n").unwrap();
+        file.write_all(&frame[frame.len() / 2..]).unwrap();
         let appended = store.import_session(dir.path(), &path).unwrap();
         assert_eq!(appended.entries_indexed, 1);
         assert!(appended.bytes_read < 20000, "{:?}", appended);
@@ -945,11 +955,12 @@ mod tests {
                 content: "opaque evidence body".into(),
             }),
         );
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
+        let mut file = vak_storage::segments::SegmentSet::open(&path)
+            .unwrap()
+            .writer(1)
             .unwrap();
-        writeln!(file, "{}", serde_json::to_string(&evidence).unwrap()).unwrap();
+        file.append(&serde_json::to_vec(&evidence).unwrap(), None)
+            .unwrap();
         let store = Store::open(dir.path()).unwrap();
         store.import_session(dir.path(), &path).unwrap();
         let location = store.locate_entry("opaque", &evidence.id).unwrap().unwrap();
@@ -962,7 +973,7 @@ mod tests {
                 .is_empty()
         );
         let loaded = vak_session::SessionLog::read_record_at(
-            &path,
+            &location.path,
             location.offset,
             location.length,
             &location.entry_id,
@@ -1045,9 +1056,9 @@ mod tests {
         let log = vak_session::SessionLog::open(path.clone()).unwrap();
         let mut parent = log.tail_id().cloned();
         drop(log);
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
+        let mut file = vak_storage::segments::SegmentSet::open(&path)
+            .unwrap()
+            .writer(1)
             .unwrap();
         let mut last_id = String::new();
         for number in 0..1000 {
@@ -1055,7 +1066,8 @@ mod tests {
                 parent,
                 EntryPayload::Message(user_msg(&format!("indexed subject number {number}"))),
             );
-            writeln!(file, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
+            file.append(&serde_json::to_vec(&entry).unwrap(), None)
+                .unwrap();
             parent = Some(entry.id.clone());
             last_id = entry.id;
         }
@@ -1083,7 +1095,13 @@ mod tests {
         let store = Store::open(dir.path()).unwrap();
         let stable = store.import_session_chunk(dir.path(), &path, 4096).unwrap();
         assert!(!stable.made_progress);
-        file.write_all(b"{\"incomplete\":").unwrap();
+        let torn = frame_of(b"{\"incomplete\":true}");
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(path.join("seg-00000001.log"))
+            .unwrap()
+            .write_all(&torn[..torn.len() / 2])
+            .unwrap();
         let partial = store.import_session_chunk(dir.path(), &path, 4096).unwrap();
         assert!(!partial.made_progress);
         assert_eq!(partial.committed_offset, previous_offset);
@@ -1109,12 +1127,13 @@ mod tests {
             None,
             EntryPayload::Message(user_msg("uncommitted zanzibar")),
         );
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
+        let mut file = vak_storage::segments::SegmentSet::open(&path)
+            .unwrap()
+            .writer(1)
             .unwrap();
-        writeln!(file, "{}", serde_json::to_string(&addition).unwrap()).unwrap();
-        writeln!(file, "corrupt complete record").unwrap();
+        file.append(&serde_json::to_vec(&addition).unwrap(), None)
+            .unwrap();
+        file.append(b"corrupt complete record", None).unwrap();
         assert!(store.import_session_chunk(dir.path(), &path, 4096).is_err());
         assert!(store.locate_sequence("chunk-error", 0).unwrap().is_some());
         assert!(store.locate_sequence("chunk-error", 1).unwrap().is_some());
@@ -1155,13 +1174,19 @@ mod tests {
         store.import_session(dir.path(), &path).unwrap();
         let entry = Entry::new(
             None,
-            EntryPayload::Message(user_msg(&"large new body ".repeat(10000))),
+            EntryPayload::Message(user_msg(
+                &(0..2000)
+                    .map(|_| uuid::Uuid::now_v7().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            )),
         );
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
+        let mut file = vak_storage::segments::SegmentSet::open(&path)
+            .unwrap()
+            .writer(1)
             .unwrap();
-        writeln!(file, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
+        file.append(&serde_json::to_vec(&entry).unwrap(), None)
+            .unwrap();
         assert!(
             store
                 .import_session_bounded(dir.path(), &path, 1024)
@@ -1188,12 +1213,13 @@ mod tests {
             None,
             EntryPayload::Message(user_msg("uncommitted addition")),
         );
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
+        let mut file = vak_storage::segments::SegmentSet::open(&path)
+            .unwrap()
+            .writer(1)
             .unwrap();
-        writeln!(file, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
-        writeln!(file, "corrupt completed record").unwrap();
+        file.append(&serde_json::to_vec(&entry).unwrap(), None)
+            .unwrap();
+        file.append(b"corrupt completed record", None).unwrap();
         assert!(store.import_session(dir.path(), &path).is_err());
         assert!(
             store

@@ -59,17 +59,7 @@ fn session_in_scope(
             }
         }
     }
-    let Ok(file) = std::fs::File::open(path) else {
-        return false;
-    };
-    use std::io::BufRead;
-    let Some(Ok(line)) = std::io::BufReader::new(file).lines().next() else {
-        return false;
-    };
-    let Ok(entry) = serde_json::from_str::<vak_session::Entry>(&line) else {
-        return false;
-    };
-    let vak_session::EntryPayload::Header(header) = entry.payload else {
+    let Ok(header) = vak_session::SessionLog::read_header(&path) else {
         return false;
     };
     let agent_matches = agent_id.is_none_or(|wanted| {

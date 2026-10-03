@@ -37,16 +37,18 @@ pub const SCRATCH_DIR: &str = ".vak/scratch";
 /// The ledger of session `session_id` inside a sessions directory: the one
 /// place a session ledger's on-disk name is decided.
 pub fn session_ledger(dir: &Path, session_id: &str) -> PathBuf {
-    dir.join(format!("{session_id}.jsonl"))
+    dir.join(session_id)
 }
 
 /// The session id of a ledger found in a sessions directory, or `None`
-/// when `path` is not a session ledger.
+/// when `path` is not a session ledger: a ledger is a directory of record
+/// segments (docs/design/73 §6), named by its session id.
 pub fn ledger_session_id(path: &Path) -> Option<String> {
-    if path.extension()? != "jsonl" {
+    let first = ["seg-00000001.log", "seg-00000001.sealed"];
+    if !first.iter().any(|segment| path.join(segment).is_file()) {
         return None;
     }
-    path.file_stem()?.to_str().map(str::to_string)
+    path.file_name()?.to_str().map(str::to_string)
 }
 
 pub fn workspace_key(cwd: &Path) -> String {
@@ -465,7 +467,7 @@ mod tests {
         assert_eq!(s.sessions_dir(cwd), home.join("sessions").join(&key));
         assert_eq!(
             s.session_file(cwd, "abc"),
-            home.join("sessions").join(&key).join("abc.jsonl")
+            home.join("sessions").join(&key).join("abc")
         );
         assert_eq!(s.checkpoints(), home.join("checkpoints"));
         assert_eq!(

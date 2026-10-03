@@ -158,7 +158,12 @@ pub fn entries_from_bytes(
 
 /// Cuts an incomplete trailing frame so the log can be appended to again.
 pub fn truncate_torn_tail(path: &Path) -> Result<ChainReport> {
-    let r = verify_chain(path)?;
+    truncate_torn_tail_from(path, GENESIS)
+}
+
+/// As `truncate_torn_tail`, for a segment whose chain starts at `prev`.
+pub fn truncate_torn_tail_from(path: &Path, prev: [u8; 32]) -> Result<ChainReport> {
+    let r = verify_chain_from(path, prev)?;
     if r.torn_tail.is_some() {
         let f = OpenOptions::new().write(true).open(path)?;
         f.set_len(r.valid_len)?;
@@ -168,6 +173,67 @@ pub fn truncate_torn_tail(path: &Path) -> Result<ChainReport> {
         torn_tail: None,
         ..r
     })
+}
+
+/// One plaintext entry located in a segment's frame bytes: where its frame
+/// starts, its length on disk, and the entry itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocatedEntry {
+    pub offset: u64,
+    pub len: u64,
+    pub entry: Vec<u8>,
+}
+
+/// The plaintext entries of `data` from the frame at `from` onward, without
+/// verifying the chain: an index that already holds a segment's prefix reads
+/// only its suffix, and checks each entry against its own digest. A torn
+/// tail ends the list; a sealed frame is `Undecryptable`.
+pub fn located_entries(data: &[u8], from: u64) -> Result<Vec<LocatedEntry>> {
+    let mut out = Vec::new();
+    let mut pos = usize::try_from(from).map_err(|_| StorageError::Malformed("offset"))?;
+    while pos < data.len() {
+        let rest = &data[pos..];
+        if rest.len() < 4 {
+            break;
+        }
+        let len = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]) as usize;
+        if len == 0 || len > MAX_FRAME {
+            return Err(StorageError::Malformed("frame length"));
+        }
+        let total = 4 + len + HASH;
+        if rest.len() < total {
+            break;
+        }
+        out.push(LocatedEntry {
+            offset: pos as u64,
+            len: total as u64,
+            entry: plaintext(&rest[4..4 + len])?,
+        });
+        pos += total;
+    }
+    Ok(out)
+}
+
+/// The plaintext entry of the one frame at `offset` (`len` bytes on disk).
+pub fn entry_at(data: &[u8], offset: u64, len: u64) -> Result<Vec<u8>> {
+    let start = usize::try_from(offset).map_err(|_| StorageError::Malformed("offset"))?;
+    let total = usize::try_from(len).map_err(|_| StorageError::Malformed("length"))?;
+    let frame = data
+        .get(start..start.saturating_add(total))
+        .filter(|frame| frame.len() == total && total > 4 + HASH)
+        .ok_or(StorageError::Malformed("frame out of range"))?;
+    let body_len = u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
+    if 4 + body_len + HASH != total {
+        return Err(StorageError::Malformed("frame length"));
+    }
+    plaintext(&frame[4..4 + body_len])
+}
+
+fn plaintext(body: &[u8]) -> Result<Vec<u8>> {
+    if body[0] & SEALED != 0 {
+        return Err(StorageError::Undecryptable);
+    }
+    seal::decompress(&body[1..])
 }
 
 pub struct RecordWriter {

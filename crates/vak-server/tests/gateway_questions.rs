@@ -261,14 +261,14 @@ fn worker_ledgers(home: &Path) -> String {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path
+            let child = path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("child-") && n.ends_with(".jsonl"))
-            {
-                out.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
+                .is_some_and(|n| n.starts_with("child-"));
+            if child && vak_config::scope::ledger_session_id(&path).is_some() {
+                out.push_str(&vak_session::SessionLog::text(&path));
+            } else if path.is_dir() {
+                walk(&path, out);
             }
         }
     }

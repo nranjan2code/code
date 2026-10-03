@@ -541,7 +541,7 @@ mod tests {
     use super::*;
     use crate::SessionLog;
     use crate::types::{Entry, EntryPayload, MessageRecord, SessionHeader};
-    use std::io::Write as _;
+
     use vak_llm::Role;
     use vak_llm::types::{ContentBlock, Message};
 
@@ -821,15 +821,16 @@ mod tests {
     }
 
     fn write_ledger(path: &Path, msgs: &[MessageRecord]) {
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let file = std::fs::File::create(path).unwrap();
-        let mut w = std::io::BufWriter::new(file);
+        let _ = std::fs::remove_dir_all(path);
+        let mut w = vak_storage::segments::SegmentSet::open(path)
+            .unwrap()
+            .writer(1)
+            .unwrap();
         for m in msgs {
             let entry = Entry::new(None, EntryPayload::Message(m.clone()));
-            serde_json::to_writer(&mut w, &entry).unwrap();
-            w.write_all(b"\n").unwrap();
+            w.append(&serde_json::to_vec(&entry).unwrap(), None)
+                .unwrap();
         }
-        w.flush().unwrap();
     }
 
     #[test]

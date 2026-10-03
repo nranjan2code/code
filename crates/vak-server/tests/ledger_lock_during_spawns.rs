@@ -18,8 +18,8 @@ use vak_tools::ToolContext;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn reopening_a_ledger_while_workers_spawn_never_finds_it_locked() {
     let dir = tempfile::tempdir().unwrap();
-    let ledger = dir.path().join("session.jsonl");
-    std::fs::write(&ledger, "").unwrap();
+    let ledger = dir.path().join("session");
+    std::fs::create_dir_all(&ledger).unwrap();
     std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));

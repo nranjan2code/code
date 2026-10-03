@@ -845,7 +845,7 @@ async fn side_chat_branches_off_and_restores_main_chain() {
     };
     let mut dir = std::fs::read_dir(vak_session::SessionPath::sessions_dir(&home, &cwd)).unwrap();
     let path = dir.next().unwrap().unwrap().path();
-    let raw = std::fs::read_to_string(path).unwrap();
+    let raw = vak_session::SessionLog::text(&path);
     assert!(raw.contains("quick aside?"), "question persisted");
     assert!(
         raw.contains("side answer"),
@@ -1425,10 +1425,9 @@ async fn checkpoints_list_and_restore_roundtrip() {
     } else {
         home.clone()
     };
-    let ledger =
-        vak_session::SessionPath::sessions_dir(&ledger_home, &cwd).join(format!("{id}.jsonl"));
+    let ledger = vak_session::SessionPath::new_session_file(&ledger_home, &cwd, &id);
     assert!(
-        ledger.is_file(),
+        ledger.exists(),
         "rewind must never delete the session ledger"
     );
 

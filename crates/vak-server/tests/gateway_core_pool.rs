@@ -167,17 +167,11 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
     let mut found_header_cwd: Option<String> = None;
     for entry in walkdir::WalkDir::new(vak_home.path()).into_iter().flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+        if vak_config::scope::ledger_session_id(path).is_none() {
             continue;
         }
-        let Ok(raw) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if let Some(first_line) = raw.lines().next()
-            && let Ok(v) = serde_json::from_str::<serde_json::Value>(first_line)
-            && let Some(cwd) = v.get("cwd").and_then(|c| c.as_str())
-        {
-            found_header_cwd = Some(cwd.to_string());
+        if let Ok(header) = vak_session::SessionLog::read_header(path) {
+            found_header_cwd = Some(header.cwd.display().to_string());
         }
     }
     assert_eq!(

@@ -238,7 +238,7 @@ async fn inbound_wait_roundtrip_reuses_binding() {
 
     let agent_home = vak_config::paths::agent_home_at(&home.join("home"), "vak");
     let ledger = SessionPath::new_session_file(&agent_home, &home, &sid);
-    let raw_ledger = std::fs::read_to_string(ledger).unwrap();
+    let raw_ledger = vak_session::SessionLog::text(&ledger);
     // Admission names the run and its cause (docs/design/73 §4): the header
     // records the channel endpoint and request, and the cost the turn spent
     // is stamped with the same run.

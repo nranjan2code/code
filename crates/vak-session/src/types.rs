@@ -1062,18 +1062,6 @@ pub struct Entry {
     #[serde(default)]
     pub parent_id: Option<String>,
     pub ts: DateTime<Utc>,
-    /// SHA-256 of the previous entry's serialized line, hex-encoded.
-    ///
-    /// `parent_id` links entries but binds nothing: an interior entry could be
-    /// rewritten and re-linked, and reconstruction would accept the result.
-    /// This makes any such edit detectable — changing an entry changes its
-    /// line digest, which no longer matches its successor's `prev_hash`.
-    ///
-    /// `None` on the first entry, and on every entry written before the chain
-    /// existed. Ledgers are a frozen, append-only contract, so an unchained
-    /// entry is reported as a warning and never a read failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prev_hash: Option<String>,
     /// The turn this entry belongs to: the entry id of the directive that
     /// opened it, which is also the turn id the intent side used for its
     /// strands, threads and commitments. Stamped by `SessionLog::append`, so
@@ -1091,7 +1079,6 @@ impl Entry {
             id: uuid::Uuid::now_v7().to_string(),
             parent_id,
             ts: Utc::now(),
-            prev_hash: None,
             at_turn: None,
             payload,
         }

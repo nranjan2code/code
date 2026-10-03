@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use vak_session::types::{Entry, EntryPayload, FrozenContract, SessionHeader};
+use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog};
 
 fn header() -> SessionHeader {
@@ -47,176 +47,76 @@ fn activity(label: &str) -> ActivityRecord {
     }
 }
 
-fn seeded(path: &std::path::Path) -> SessionLog {
-    let mut log = SessionLog::create(path.to_path_buf(), header()).unwrap();
-    for label in ["first", "second", "third"] {
+fn ledger(dir: &std::path::Path, labels: &[&str]) -> PathBuf {
+    let path = dir.join("s");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    for label in labels {
         log.append_activity(activity(label)).unwrap();
     }
-    log
+    path
 }
 
+fn open_segment(path: &std::path::Path) -> PathBuf {
+    path.join("seg-00000001.log")
+}
+
+/// The frame chain over the stored bytes is the ledger's integrity
+/// (docs/design/73 §6): an untouched segment verifies with no key.
 #[test]
 fn every_appended_entry_links_to_its_predecessor() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("s.jsonl");
-    let log = seeded(&path);
-    let entries = log.chain_to_root();
-
-    assert!(
-        entries[0].prev_hash.is_none(),
-        "the first entry has no predecessor"
-    );
-    for entry in &entries[1..] {
-        assert!(
-            entry.prev_hash.is_some(),
-            "every later entry must carry a chain link"
-        );
-    }
-    drop(log);
-
-    let reopened = SessionLog::open(path).unwrap();
-    assert!(
-        reopened.warnings().is_empty(),
-        "an untouched ledger must verify clean: {:?}",
-        reopened.warnings()
-    );
+    let path = ledger(dir.path(), &["a", "b", "c"]);
+    let report = vak_storage::records::verify_chain(&open_segment(&path)).unwrap();
+    assert_eq!(report.entries, 4, "header and three activities");
+    assert!(report.torn_tail.is_none());
+    let log = SessionLog::open_read_only(path).unwrap();
+    assert!(log.warnings().is_empty(), "{:?}", log.warnings());
 }
 
-/// The point of the chain: an interior edit that re-links `parent_id`
-/// correctly is still caught.
+/// An edited byte breaks the chain; the ledger still opens, and says so.
 #[test]
 fn an_interior_edit_is_detected_on_reopen() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("s.jsonl");
-    drop(seeded(&path));
-
-    let text = std::fs::read_to_string(&path).unwrap();
-    let mut lines: Vec<String> = text.lines().map(String::from).collect();
-    assert!(lines.len() >= 3);
-    lines[1] = lines[1].replace("first", "tampered");
-    std::fs::write(&path, lines.join("\n") + "\n").unwrap();
-
-    let reopened = SessionLog::open(path).unwrap();
+    let path = ledger(dir.path(), &["a", "b", "c"]);
+    let segment = open_segment(&path);
+    let mut bytes = std::fs::read(&segment).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 0xff;
+    std::fs::write(&segment, bytes).unwrap();
+    let log = SessionLog::open_read_only(path).unwrap();
     assert!(
-        reopened
-            .warnings()
+        log.warnings()
             .iter()
-            .any(|w| w.contains("broken hash chain")),
+            .any(|w| w.contains("failed verification")),
         "a rewritten entry must be reported: {:?}",
-        reopened.warnings()
+        log.warnings()
     );
 }
 
-/// Ledgers are a frozen, append-only contract. A file written before chaining
-/// existed must still open, with the gap reported rather than raised.
-#[test]
-fn pre_chain_ledgers_still_open_and_say_so() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("s.jsonl");
-    drop(seeded(&path));
-
-    let text = std::fs::read_to_string(&path).unwrap();
-    let stripped: Vec<String> = text
-        .lines()
-        .map(|line| {
-            let value: serde_json::Value = serde_json::from_str(line).unwrap();
-            let mut map = value.as_object().unwrap().clone();
-            map.remove("prev_hash");
-            serde_json::to_string(&map).unwrap()
-        })
-        .collect();
-    std::fs::write(&path, stripped.join("\n") + "\n").unwrap();
-
-    let reopened = SessionLog::open(path).unwrap();
-    assert_eq!(
-        reopened.len(),
-        stripped.len(),
-        "an unchained ledger must still be fully readable"
-    );
-    assert!(
-        reopened
-            .warnings()
-            .iter()
-            .any(|w| w.contains("before hash chaining")),
-        "the unverifiable gap must be reported: {:?}",
-        reopened.warnings()
-    );
-    assert!(
-        !reopened
-            .warnings()
-            .iter()
-            .any(|w| w.contains("broken hash chain")),
-        "absent links are not evidence of tampering"
-    );
-}
-
-/// Appending onto a legacy ledger must start chaining from that point rather
-/// than leaving the rest unverifiable forever.
-#[test]
-fn appending_to_a_legacy_ledger_starts_the_chain() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("s.jsonl");
-    drop(seeded(&path));
-    let text = std::fs::read_to_string(&path).unwrap();
-    let stripped: Vec<String> = text
-        .lines()
-        .map(|line| {
-            let value: serde_json::Value = serde_json::from_str(line).unwrap();
-            let mut map = value.as_object().unwrap().clone();
-            map.remove("prev_hash");
-            serde_json::to_string(&map).unwrap()
-        })
-        .collect();
-    std::fs::write(&path, stripped.join("\n") + "\n").unwrap();
-
-    let mut log = SessionLog::open(path.clone()).unwrap();
-    let appended = log.append_activity(activity("after")).unwrap();
-    assert!(
-        appended.prev_hash.is_some(),
-        "a new append links to the last line it actually saw"
-    );
-    drop(log);
-
-    let reopened = SessionLog::open(path).unwrap();
-    assert!(
-        !reopened
-            .warnings()
-            .iter()
-            .any(|w| w.contains("broken hash chain")),
-        "chaining onto a legacy tail is not a break: {:?}",
-        reopened.warnings()
-    );
-}
-
-/// A torn final line (crash mid-append) must stay recoverable.
+/// A crash mid-append leaves a torn frame: readers keep what came before,
+/// and the next writer cuts it off and appends cleanly after it.
 #[test]
 fn a_torn_tail_does_not_make_the_session_unreadable() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("s.jsonl");
-    drop(seeded(&path));
-
-    let mut text = std::fs::read_to_string(&path).unwrap();
-    text.push_str("{\"id\":\"partial\",\"ts\":\"2026");
-    std::fs::write(&path, text).unwrap();
-
-    let reopened = SessionLog::open(path).unwrap();
-    assert!(reopened.len() >= 3);
-    assert!(
-        reopened
-            .warnings()
-            .iter()
-            .any(|w| w.contains("unparseable")),
-        "the torn line must be reported: {:?}",
-        reopened.warnings()
+    let path = ledger(dir.path(), &["a", "b"]);
+    let segment = open_segment(&path);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&segment)
+        .unwrap();
+    std::io::Write::write_all(&mut file, &[9, 0, 0, 0, 1, 2]).unwrap();
+    drop(file);
+    assert_eq!(
+        SessionLog::open_read_only(path.clone())
+            .unwrap()
+            .chain_to_root()
+            .len(),
+        3
     );
-}
-
-#[test]
-fn an_absent_link_is_omitted_rather_than_serialized_as_null() {
-    let entry = Entry::new(None, EntryPayload::Header(header()));
-    let json = serde_json::to_string(&entry).unwrap();
-    assert!(
-        !json.contains("prev_hash"),
-        "an absent link must not be serialized as null: {json}"
-    );
+    let mut log = SessionLog::open(path.clone()).unwrap();
+    log.append_activity(activity("after")).unwrap();
+    drop(log);
+    let reopened = SessionLog::open_read_only(path).unwrap();
+    assert_eq!(reopened.chain_to_root().len(), 4);
+    assert!(reopened.warnings().is_empty(), "{:?}", reopened.warnings());
 }

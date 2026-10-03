@@ -173,10 +173,10 @@ fn ledger_text(home: &Path) -> String {
     fn walk(dir: &Path, out: &mut String) {
         for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
             let path = entry.path();
-            if path.is_dir() {
+            if vak_config::scope::ledger_session_id(&path).is_some() {
+                out.push_str(&vak_session::SessionLog::text(&path));
+            } else if path.is_dir() {
                 walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "jsonl") {
-                out.push_str(&std::fs::read_to_string(&path).unwrap_or_default());
             }
         }
     }

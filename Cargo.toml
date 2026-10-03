@@ -46,6 +46,7 @@ vak-llm = { path = "crates/vak-llm" }
 vak-ops = { path = "crates/vak-ops" }
 vak-server = { path = "crates/vak-server" }
 vak-session = { path = "crates/vak-session" }
+vak-storage = { path = "crates/vak-storage" }
 vak-context = { path = "crates/vak-context" }
 vak-store = { path = "crates/vak-store" }
 vak-tools = { path = "crates/vak-tools" }

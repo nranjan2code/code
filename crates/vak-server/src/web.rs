@@ -378,21 +378,8 @@ fn workspace_of_ledger_dir(dir: &Path) -> Option<String> {
         if vak_config::scope::ledger_session_id(&path).is_none() {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        // The header is the first line by construction (append-only), so
-        // this reads one line rather than parsing a whole transcript.
-        let Some(first) = text.lines().next() else {
-            continue;
-        };
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(first)
-            && let Some(cwd) = value
-                .get("cwd")
-                .or_else(|| value.pointer("/header/cwd"))
-                .and_then(|v| v.as_str())
-        {
-            return Some(cwd.to_string());
+        if let Ok(header) = vak_session::SessionLog::read_header(&path) {
+            return Some(header.cwd.display().to_string());
         }
     }
     None
@@ -700,7 +687,7 @@ mod tests {
     /// change it exists to catch.
     #[test]
     fn a_workspace_is_recovered_from_its_ledger_header() {
-        use vak_session::types::{Entry, EntryPayload, FrozenContract, SessionHeader};
+        use vak_session::types::{FrozenContract, SessionHeader};
 
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("some-project");
@@ -733,12 +720,7 @@ mod tests {
                 prompt_layers: Vec::new(),
             },
         };
-        let entry = Entry::new(None, EntryPayload::Header(header));
-        std::fs::write(
-            ledger_dir.join("s1.jsonl"),
-            format!("{}\n", serde_json::to_string(&entry).unwrap()),
-        )
-        .unwrap();
+        vak_session::SessionLog::create(ledger_dir.join("s1"), header).unwrap();
 
         assert_eq!(
             workspace_of_ledger_dir(&ledger_dir).as_deref(),

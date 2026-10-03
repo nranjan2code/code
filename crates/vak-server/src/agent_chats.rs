@@ -7,24 +7,10 @@ use axum::{
 };
 use serde::Deserialize;
 use std::io::BufRead;
-use vak_session::types::{
-    AgentIdentity, ConversationContext, ConversationOrigin, Entry, EntryPayload, SessionHeader,
-};
+use vak_session::types::{AgentIdentity, ConversationContext, ConversationOrigin, SessionHeader};
 
 pub(crate) fn header(path: &std::path::Path) -> Result<SessionHeader, String> {
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let line = std::io::BufReader::new(file)
-        .lines()
-        .next()
-        .ok_or("empty session ledger")?
-        .map_err(|e| e.to_string())?;
-    match serde_json::from_str::<Entry>(&line)
-        .map_err(|e| e.to_string())?
-        .payload
-    {
-        EntryPayload::Header(header) => Ok(header),
-        _ => Err("session ledger has no header".into()),
-    }
+    vak_session::SessionLog::read_header(path).map_err(|e| e.to_string())
 }
 
 fn error(status: StatusCode, message: impl ToString) -> Response {
@@ -408,7 +394,7 @@ pub(crate) async fn open(
         .get(&cache_key)
         .cloned();
     if let Some(cached) = cached
-        && cached.ledger_path.is_file()
+        && cached.ledger_path.exists()
     {
         if ensure_registered(&state, &core, &cached.session_id)
             .await

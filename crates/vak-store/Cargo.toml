@@ -18,6 +18,7 @@ walkdir = { workspace = true }
 sha2 = { workspace = true }
 
 vak-config = { workspace = true }
+vak-storage = { workspace = true }
 vak-session = { workspace = true }
 vak-llm = { workspace = true }
 vak-presentation = { workspace = true }

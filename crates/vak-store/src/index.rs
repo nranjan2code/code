@@ -2,7 +2,6 @@
 
 use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use walkdir::WalkDir;
@@ -61,7 +60,6 @@ impl Store {
                 .max_depth(2)
                 .follow_links(false)
                 .into_iter()
-                .filter_entry(|e| e.file_type().is_file())
             {
                 let entry = entry.map_err(|e| std::io::Error::other(e.to_string()))?;
                 let path = entry.path();
@@ -103,32 +101,65 @@ impl Store {
         self.import_file_chunk(conn, _sessions_home, jsonl_path, max_bytes, None)
     }
 
+    /// Imports a session ledger (a directory of record segments) segment by
+    /// segment, each with its own cursor, and adds up what they did.
     pub(crate) fn import_file_chunk(
         &self,
         conn: &rusqlite::Connection,
         _sessions_home: &Path,
-        jsonl_path: &Path,
+        ledger: &Path,
         max_bytes: Option<u64>,
         chunk_bytes: Option<u64>,
     ) -> Result<ImportStats, StoreError> {
-        let session_id = jsonl_path
-            .file_stem()
+        let mut total = ImportStats {
+            entries_indexed: 0,
+            fts_rows: 0,
+            skipped: 0,
+            bytes_read: 0,
+            committed_offset: 0,
+            observed_length: 0,
+            made_progress: false,
+        };
+        for segment in vak_session::SessionLog::segment_files(ledger) {
+            let stats = self.import_segment(conn, ledger, &segment, max_bytes, chunk_bytes)?;
+            total.entries_indexed += stats.entries_indexed;
+            total.fts_rows += stats.fts_rows;
+            total.skipped += stats.skipped;
+            total.bytes_read += stats.bytes_read;
+            total.committed_offset += stats.committed_offset;
+            total.observed_length += stats.observed_length;
+            total.made_progress |= stats.made_progress;
+        }
+        Ok(total)
+    }
+
+    fn import_segment(
+        &self,
+        conn: &rusqlite::Connection,
+        ledger: &Path,
+        segment: &Path,
+        max_bytes: Option<u64>,
+        chunk_bytes: Option<u64>,
+    ) -> Result<ImportStats, StoreError> {
+        let session_id = ledger
+            .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or_default()
             .to_string();
 
         // Derive project hash from the parent directory name.
         // Directory structure: <home>/sessions/<hash>/<session>.jsonl
-        let project_hash = jsonl_path
+        let project_hash = ledger
             .parent()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
             .unwrap_or_default()
             .to_string();
 
-        let path_key = jsonl_path.canonicalize()?.to_string_lossy().into_owned();
-        let mut file = std::fs::File::open(jsonl_path)?;
-        let file_len = file.metadata()?.len();
+        let path_key = segment.canonicalize()?.to_string_lossy().into_owned();
+        let frames = vak_storage::segments::frame_bytes(segment)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let file_len = frames.len() as u64;
         let transaction = conn.unchecked_transaction()?;
         let cursor: Option<(u64, String)> = transaction
             .query_row(
@@ -144,7 +175,7 @@ impl Store {
         }
         if let Some((previous, expected)) = cursor {
             let valid = if previous <= file_len {
-                let (found, read) = cursor_anchor(&mut file, previous)?;
+                let (found, read) = cursor_anchor(&frames, previous);
                 bytes_read += read;
                 found == expected
             } else {
@@ -190,21 +221,18 @@ impl Store {
             )
             .into());
         }
-        file.seek(SeekFrom::Start(offset))?;
-        // Snapshot the observed extent. Concurrent appends are consumed next time.
-        let mut reader = BufReader::new(file.take(file_len.saturating_sub(offset)));
         let mut entries_indexed = 0usize;
         let mut fts_rows = 0usize;
         let mut skipped = 0usize;
         let conn = &transaction;
 
-        let mut sequence: u64 = conn.query_row(
+        let sequence: u64 = conn.query_row(
             "SELECT COALESCE(MAX(sequence) + 1, 0) FROM entry_locators WHERE path = ?1",
             [&path_key],
             |row| row.get(0),
         )?;
         let mut insert_locator = conn.prepare(
-            "INSERT OR IGNORE INTO entry_locators(entry_id, session_id, path, sequence, offset, length, parent_id, digest)
+            "INSERT OR REPLACE INTO entry_locators(entry_id, session_id, path, sequence, offset, length, parent_id, digest)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         // Prepare check and insert statements once.
@@ -222,9 +250,10 @@ impl Store {
 
         let initial_offset = offset;
         let chunk_started = std::time::Instant::now();
-        let mut line = Vec::new();
-        loop {
-            // End only between records: the cursor always addresses a newline.
+        let located = vak_storage::records::located_entries(&frames, offset)
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        for (step, frame) in located.into_iter().enumerate() {
+            // End only between frames: the cursor always addresses one.
             if offset > initial_offset
                 && chunk_bytes.is_some_and(|target| {
                     offset.saturating_sub(initial_offset) >= target
@@ -233,45 +262,23 @@ impl Store {
             {
                 break;
             }
-            line.clear();
-            // Limit individual record buffering. A malformed unbounded line
-            // cannot exhaust memory in this rebuildable accelerator.
-            let read = (&mut reader)
-                .take(64 * 1024 * 1024 + 1)
-                .read_until(b'\n', &mut line)?;
-            bytes_read += read as u64;
-            if read == 0 {
-                break;
-            }
-            if read > 64 * 1024 * 1024 {
-                return Err(std::io::Error::other("ledger record exceeds index read limit").into());
-            }
-            if line.last() != Some(&b'\n') {
-                // A writer/crash can leave a partial final record. Keep the
-                // watermark before it, including when JSON happens to parse.
-                break;
-            }
-            let record_offset = offset;
-            offset += read as u64;
-            if line.iter().all(u8::is_ascii_whitespace) {
-                continue;
-            }
-            let entry: Entry = serde_json::from_slice(&line)?;
-            let canonical_line = std::str::from_utf8(&line)
-                .map_err(|error| std::io::Error::other(error.to_string()))?
-                .trim_end_matches(['\r', '\n']);
+            bytes_read += frame.len;
+            let record_offset = frame.offset;
+            offset = frame.offset + frame.len;
+            let entry: Entry = serde_json::from_slice(&frame.entry)?;
+            let canonical_line = std::str::from_utf8(&frame.entry)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
             let digest = vak_session::types::line_digest(canonical_line);
             insert_locator.execute(rusqlite::params![
                 entry.id,
                 session_id,
                 path_key,
-                sequence,
+                sequence + step as u64,
                 record_offset,
-                read as u64,
+                frame.len,
                 entry.parent_id,
                 digest
             ])?;
-            sequence += 1;
             crate::history::index_history_record(conn, &session_id, &entry)?;
 
             // Skip already indexed.
@@ -323,8 +330,7 @@ impl Store {
         drop(insert_fts);
         // Watermark and all derived rows commit together. If the process
         // dies first, replay is idempotent and cannot duplicate FTS entries.
-        let mut file = reader.into_inner().into_inner();
-        let (anchor, read) = cursor_anchor(&mut file, offset)?;
+        let (anchor, read) = cursor_anchor(&frames, offset);
         bytes_read += read;
         transaction.execute(
             "INSERT OR REPLACE INTO ledger_cursors(path, session_id, offset, anchor) VALUES (?1, ?2, ?3, ?4)",
@@ -358,18 +364,15 @@ impl Store {
 /// Constant-size validation of the first and last committed bytes. Ledgers
 /// are append-only; hash-chain verification remains the canonical reader's
 /// responsibility. This detects replacement/truncation and torn-cursor reuse.
-fn cursor_anchor(file: &mut std::fs::File, offset: u64) -> std::io::Result<(String, u64)> {
+fn cursor_anchor(frames: &[u8], offset: u64) -> (String, u64) {
     let mut digest = Sha256::new();
     let mut bytes_read = 0;
-    for (start, count) in [
-        (0, offset.min(4096)),
-        (offset.saturating_sub(4096), offset.min(4096)),
-    ] {
-        file.seek(SeekFrom::Start(start))?;
-        let mut bytes = vec![0; count as usize];
-        file.read_exact(&mut bytes)?;
-        bytes_read += count;
-        digest.update(bytes);
+    let end = usize::try_from(offset)
+        .unwrap_or(usize::MAX)
+        .min(frames.len());
+    for (start, stop) in [(0, end.min(4096)), (end.saturating_sub(4096), end)] {
+        digest.update(&frames[start..stop]);
+        bytes_read += (stop - start) as u64;
     }
-    Ok((format!("{:x}", digest.finalize()), bytes_read))
+    (format!("{:x}", digest.finalize()), bytes_read)
 }

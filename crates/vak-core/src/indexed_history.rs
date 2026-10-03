@@ -195,7 +195,9 @@ struct ScopedHistory {
 
 impl ScopedHistory {
     fn load(&self, location: vak_store::EntryLocator) -> Result<Entry, CoreError> {
-        if location.path != self.path {
+        // A locator names one segment file of this session's ledger; any
+        // other path is the wrong scope, whatever the index says.
+        if location.path.parent() != Some(self.path.as_path()) {
             return Err(SessionError::Corrupt {
                 line: 0,
                 message: "history locator has the wrong scope".into(),
@@ -203,7 +205,7 @@ impl ScopedHistory {
             .into());
         }
         let entry = SessionLog::read_record_at(
-            &self.path,
+            &location.path,
             location.offset,
             location.length,
             &location.entry_id,
@@ -361,6 +363,7 @@ mod tests {
     use vak_session::{FrozenContract, MessageRecord, SessionHeader};
 
     fn fixture() -> (tempfile::TempDir, Core, String, String) {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
@@ -593,7 +596,7 @@ mod tests {
         let store = vak_store::Store::open(&core.cache_home()).unwrap();
         let location = store.locate_entry(&session_id, &entry_id).unwrap().unwrap();
         assert!(location.length < 1024);
-        assert!(location.offset > 1_000_000);
+        assert!(location.offset > 0);
         assert!(
             store
                 .locate_entry("different-session", &entry_id)
@@ -640,7 +643,7 @@ mod tests {
         let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), &session_id);
         std::fs::OpenOptions::new()
             .write(true)
-            .open(path)
+            .open(path.join("seg-00000001.log"))
             .unwrap()
             .set_len(0)
             .unwrap();

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use vak_llm::Message;
@@ -33,34 +32,80 @@ pub struct TailSections {
 /// and a child being spawned holds duplicates of every open descriptor
 /// until it execs, so a ledger dropped and reopened while any thread was
 /// spawning a process failed with `Locked` although nothing held it.
-struct LedgerFile {
-    file: File,
-    locked: bool,
+/// A session ledger on disk: a directory of record segments
+/// (`vak_storage::segments`, docs/design/73 §6). A writer holds `LOCK`
+/// exclusively for the handle's lifetime, so two processes never interleave
+/// appends; a read-only handle holds no lock and no writer.
+struct LedgerDir {
+    segments: vak_storage::segments::SegmentSet,
+    writer: Option<(u64, vak_storage::records::RecordWriter)>,
+    lock: Option<File>,
 }
 
-impl LedgerFile {
-    fn lock(file: File, path: &Path) -> Result<Self, SessionError> {
+impl LedgerDir {
+    fn lock(dir: &Path) -> Result<File, SessionError> {
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join("LOCK"))?;
         file.try_lock()
-            .map_err(|_| SessionError::Locked(path.to_path_buf()))?;
-        Ok(Self { file, locked: true })
+            .map_err(|_| SessionError::Locked(dir.to_path_buf()))?;
+        Ok(file)
     }
 }
 
-impl Drop for LedgerFile {
+impl Drop for LedgerDir {
     fn drop(&mut self) {
-        if self.locked {
-            let _ = self.file.unlock();
+        if let Some(lock) = &self.lock {
+            let _ = lock.unlock();
         }
+    }
+}
+
+/// The segment numbers present in a ledger directory, ascending, and
+/// whether the newest is still open (has a `.log`).
+fn segment_numbers(dir: &Path) -> Vec<(u64, bool)> {
+    let mut found: std::collections::BTreeMap<u64, bool> = std::collections::BTreeMap::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(rest) = name.strip_prefix("seg-") else {
+            continue;
+        };
+        let (number, open) = if let Some(n) = rest.strip_suffix(".log") {
+            (n, true)
+        } else if let Some(n) = rest.strip_suffix(".sealed") {
+            (n, false)
+        } else {
+            continue;
+        };
+        if let Ok(number) = number.parse::<u64>() {
+            let slot = found.entry(number).or_insert(false);
+            *slot |= open;
+        }
+    }
+    found.into_iter().collect()
+}
+
+fn storage_error(error: vak_storage::StorageError) -> SessionError {
+    match error {
+        vak_storage::StorageError::Io(io) => SessionError::Io(io),
+        other => SessionError::Corrupt {
+            line: 0,
+            message: other.to_string(),
+        },
     }
 }
 
 pub struct SessionLog {
     path: PathBuf,
-    file: LedgerFile,
+    ledger: LedgerDir,
     entries: Vec<Entry>,
     by_id: HashMap<String, usize>,
     tail_id: Option<String>,
-    tail_hash: Option<String>,
     warnings: Vec<String>,
     /// The turn later appends belong to: the latest directive on the active
     /// chain, or the id reserved by `begin_turn` for the next one.
@@ -79,27 +124,25 @@ impl SessionLog {
         })
     }
     pub fn create(path: PathBuf, header: SessionHeader) -> Result<Self, SessionError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .truncate(false)
-            .open(&path)?;
+        std::fs::create_dir_all(&path)?;
         // Cross-process safety: an exclusive lock for the lifetime of the
         // handle keeps two processes from interleaving appends.
-        let file = LedgerFile::lock(file, &path)?;
-        if file.file.metadata()?.len() > 0 {
+        let lock = LedgerDir::lock(&path)?;
+        if !segment_numbers(&path).is_empty() {
             return Err(SessionError::Exists(path));
         }
+        let segments = vak_storage::segments::SegmentSet::open(&path).map_err(storage_error)?;
+        let writer = segments.writer(1).map_err(storage_error)?;
         let mut log = SessionLog {
             path,
-            file,
+            ledger: LedgerDir {
+                segments,
+                writer: Some((1, writer)),
+                lock: Some(lock),
+            },
             entries: Vec::new(),
             by_id: HashMap::new(),
             tail_id: None,
-            tail_hash: None,
             warnings: Vec::new(),
             current_turn: None,
             reserved_turn: None,
@@ -113,82 +156,63 @@ struct ParsedEntries {
     entries: Vec<Entry>,
     by_id: HashMap<String, usize>,
     tail_id: Option<String>,
-    tail_hash: Option<String>,
     warnings: Vec<String>,
 }
 
 impl SessionLog {
-    fn parse_entries(path: &Path, reader: BufReader<File>) -> Result<ParsedEntries, SessionError> {
+    /// Reads every segment of the ledger at `path`. A segment whose chain
+    /// fails to verify is read frame by frame anyway and reported: the
+    /// record is evidence, and refusing to open it would hide the only copy.
+    /// A torn final frame (crash mid-append) ends that segment's entries.
+    fn parse_entries(path: &Path) -> Result<ParsedEntries, SessionError> {
+        if !path.is_dir() {
+            return Err(SessionError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no session ledger at {}", path.display()),
+            )));
+        }
+        let segments = vak_storage::segments::SegmentSet::open(path).map_err(storage_error)?;
         let mut entries = Vec::new();
         let mut by_id = HashMap::new();
         let mut warnings = Vec::new();
-        let mut expected_prev: Option<String> = None;
-        let mut tail_hash: Option<String> = None;
-        let mut unchained = 0usize;
-        let mut broken = Vec::new();
-        for (i, line) in reader.lines().enumerate() {
-            let line = line.map_err(|e| SessionError::Corrupt {
-                line: i + 1,
-                message: e.to_string(),
-            })?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            // A torn final line (crash mid-append) or a damaged interior
-            // line must not make the whole session unresumable; skip it
-            // and surface a warning. The append-only ledger on disk is
-            // never rewritten.
-            let Ok(entry) = serde_json::from_str::<Entry>(&line) else {
-                warnings.push(format!(
-                    "skipped unparseable entry at line {} of {}",
-                    i + 1,
-                    path.display()
-                ));
-                expected_prev = None;
-                continue;
+        for (number, _) in segment_numbers(path) {
+            let raw = match segments.read(number, None) {
+                Ok(raw) => raw,
+                Err(error) => {
+                    warnings.push(format!(
+                        "ledger {} segment {number} failed verification ({error}); \
+                         its entries were read without it",
+                        path.display()
+                    ));
+                    let file = if segments.log_path(number).exists() {
+                        segments.log_path(number)
+                    } else {
+                        segments.sealed_path(number)
+                    };
+                    vak_storage::segments::frame_bytes(&file)
+                        .and_then(|bytes| vak_storage::records::located_entries(&bytes, 0))
+                        .map(|located| located.into_iter().map(|e| e.entry).collect())
+                        .unwrap_or_default()
+                }
             };
-            match (&entry.prev_hash, &expected_prev) {
-                // An entry that carries a link must match it. A mismatch means
-                // the ledger was edited after the fact, and that is reported
-                // rather than raised: the record is evidence, and refusing to
-                // open it would destroy the only copy of what happened.
-                (Some(found), Some(want)) if found != want => broken.push(i + 1),
-                // Absent where a predecessor exists: written before chaining.
-                // The very first entry legitimately has no link.
-                (None, Some(_)) => unchained += 1,
-                _ => {}
+            for (i, bytes) in raw.iter().enumerate() {
+                let Ok(entry) = serde_json::from_slice::<Entry>(bytes) else {
+                    warnings.push(format!(
+                        "skipped unparseable entry {} of segment {number} in {}",
+                        i + 1,
+                        path.display()
+                    ));
+                    continue;
+                };
+                by_id.insert(entry.id.clone(), entries.len());
+                entries.push(entry);
             }
-            let digest = crate::types::line_digest(&line);
-            expected_prev = Some(digest.clone());
-            tail_hash = Some(digest);
-            by_id.insert(entry.id.clone(), entries.len());
-            entries.push(entry);
-        }
-        if !broken.is_empty() {
-            warnings.push(format!(
-                "ledger {} has a broken hash chain at line(s) {}: \
-                 entries before that point were modified after they were written",
-                path.display(),
-                broken
-                    .iter()
-                    .map(usize::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if unchained > 0 {
-            warnings.push(format!(
-                "ledger {} has {unchained} entry/entries written before hash chaining; \
-                 those cannot be verified",
-                path.display()
-            ));
         }
         let tail_id = entries.last().map(|e| e.id.clone());
         Ok(ParsedEntries {
             entries,
             by_id,
             tail_id,
-            tail_hash,
             warnings,
         })
     }
@@ -209,29 +233,17 @@ impl SessionLog {
                 message: "invalid indexed record size".into(),
             });
         }
-        let mut file = File::open(path)?;
-        let file_len = file.metadata()?.len();
-        if offset.checked_add(length).is_none_or(|end| end > file_len) {
-            return Err(SessionError::Corrupt {
+        let bytes = vak_storage::segments::frame_bytes(path).map_err(storage_error)?;
+        let entry_bytes = vak_storage::records::entry_at(&bytes, offset, length).map_err(|_| {
+            SessionError::Corrupt {
                 line: 0,
                 message: "indexed record is outside the ledger".into(),
-            });
-        }
-        file.seek(SeekFrom::Start(offset))?;
-        let mut bytes = vec![0; length as usize];
-        file.read_exact(&mut bytes)?;
-        if bytes.last() != Some(&b'\n') {
-            return Err(SessionError::Corrupt {
-                line: 0,
-                message: "indexed record is incomplete".into(),
-            });
-        }
-        let line = std::str::from_utf8(&bytes)
-            .map_err(|error| SessionError::Corrupt {
-                line: 0,
-                message: error.to_string(),
-            })?
-            .trim_end_matches(['\r', '\n']);
+            }
+        })?;
+        let line = std::str::from_utf8(&entry_bytes).map_err(|error| SessionError::Corrupt {
+            line: 0,
+            message: error.to_string(),
+        })?;
         if crate::types::line_digest(line) != expected_digest {
             return Err(SessionError::Corrupt {
                 line: 0,
@@ -252,16 +264,47 @@ impl SessionLog {
     }
 
     pub fn open(path: PathBuf) -> Result<Self, SessionError> {
-        let file = LedgerFile::lock(OpenOptions::new().append(true).open(&path)?, &path)?;
-        let reader = BufReader::new(File::open(&path)?);
-        let parsed = Self::parse_entries(&path, reader)?;
+        let lock = LedgerDir::lock(&path)?;
+        let segments = vak_storage::segments::SegmentSet::open(&path).map_err(storage_error)?;
+        let numbers = segment_numbers(&path);
+        // Append to the newest segment while it is open; after a seal, the
+        // next one.
+        let active = match numbers.last() {
+            Some((number, true)) => *number,
+            Some((number, false)) => number + 1,
+            None => 1,
+        };
+        let log_path = segments.log_path(active);
+        let mut repaired = None;
+        if log_path.exists() {
+            let prev = segments.prev_head(active).map_err(storage_error)?;
+            let report =
+                vak_storage::records::verify_chain_from(&log_path, prev).map_err(storage_error)?;
+            if let Some(at) = report.torn_tail {
+                vak_storage::records::truncate_torn_tail_from(&log_path, prev)
+                    .map_err(storage_error)?;
+                repaired = Some(at);
+            }
+        }
+        let mut parsed = Self::parse_entries(&path)?;
+        if let Some(at) = repaired {
+            parsed.warnings.push(format!(
+                "ledger {} segment {active} ended in a torn frame at byte {at} \
+                 (a crash mid-append); it was cut off before this write",
+                path.display()
+            ));
+        }
+        let writer = segments.writer(active).map_err(storage_error)?;
         Ok(SessionLog {
             path,
-            file,
+            ledger: LedgerDir {
+                segments,
+                writer: Some((active, writer)),
+                lock: Some(lock),
+            },
             entries: parsed.entries,
             by_id: parsed.by_id,
             tail_id: parsed.tail_id,
-            tail_hash: parsed.tail_hash,
             warnings: parsed.warnings,
             current_turn: None,
             reserved_turn: None,
@@ -273,19 +316,18 @@ impl SessionLog {
     /// exclusive write lock. Allows web clients, exports, and inspectors to
     /// read and rehydrate sessions that are currently active in another process.
     pub fn open_read_only(path: PathBuf) -> Result<Self, SessionError> {
-        let file = LedgerFile {
-            file: File::open(&path)?,
-            locked: false,
-        };
-        let reader = BufReader::new(File::open(&path)?);
-        let parsed = Self::parse_entries(&path, reader)?;
+        let parsed = Self::parse_entries(&path)?;
+        let segments = vak_storage::segments::SegmentSet::open(&path).map_err(storage_error)?;
         Ok(SessionLog {
             path,
-            file,
+            ledger: LedgerDir {
+                segments,
+                writer: None,
+                lock: None,
+            },
             entries: parsed.entries,
             by_id: parsed.by_id,
             tail_id: parsed.tail_id,
-            tail_hash: parsed.tail_hash,
             warnings: parsed.warnings,
             current_turn: None,
             reserved_turn: None,
@@ -293,9 +335,124 @@ impl SessionLog {
         .with_current_turn())
     }
 
+    /// Seals the open segment (copy, verify, atomic swap, seal entry) and
+    /// starts the next, so a long session's history compacts without any
+    /// entry being rewritten (docs/design/73 §6, the invariant 2 amendment).
+    pub fn seal_segment(&mut self) -> Result<(), SessionError> {
+        let Some((number, writer)) = self.ledger.writer.take() else {
+            return Err(SessionError::Locked(self.path.clone()));
+        };
+        drop(writer);
+        self.ledger.segments.seal(number).map_err(storage_error)?;
+        let next = self
+            .ledger
+            .segments
+            .writer(number + 1)
+            .map_err(storage_error)?;
+        self.ledger.writer = Some((number + 1, next));
+        Ok(())
+    }
+
+    /// The header of the ledger at `path`, read from its first frame alone,
+    /// so listing many sessions never parses whole transcripts.
+    pub fn read_header(path: &Path) -> Result<SessionHeader, SessionError> {
+        let first = SessionLog::segment_files(path)
+            .into_iter()
+            .next()
+            .ok_or_else(|| SessionError::Corrupt {
+                line: 0,
+                message: "empty session ledger".into(),
+            })?;
+        let bytes = vak_storage::segments::frame_bytes(&first).map_err(storage_error)?;
+        let located = vak_storage::records::located_entries(&bytes, 0).map_err(storage_error)?;
+        let entry = located.first().ok_or_else(|| SessionError::Corrupt {
+            line: 0,
+            message: "empty session ledger".into(),
+        })?;
+        match serde_json::from_slice::<Entry>(&entry.entry) {
+            Ok(Entry {
+                payload: EntryPayload::Header(header),
+                ..
+            }) => Ok(header),
+            Ok(_) => Err(SessionError::Corrupt {
+                line: 1,
+                message: "session ledger has no header".into(),
+            }),
+            Err(error) => Err(SessionError::Corrupt {
+                line: 1,
+                message: error.to_string(),
+            }),
+        }
+    }
+
+    /// Visits the ledger's entries in order without verifying the chain or
+    /// building the in-memory model, stopping when `visit` returns `false`.
+    /// For listings that summarise many sessions; returns the number
+    /// visited. An entry that does not parse is counted and skipped.
+    pub fn scan(path: &Path, mut visit: impl FnMut(Option<&Entry>) -> bool) -> u64 {
+        let mut count = 0;
+        for segment in SessionLog::segment_files(path) {
+            let Ok(bytes) = vak_storage::segments::frame_bytes(&segment) else {
+                continue;
+            };
+            let Ok(located) = vak_storage::records::located_entries(&bytes, 0) else {
+                continue;
+            };
+            for frame in located {
+                count += 1;
+                let entry = serde_json::from_slice::<Entry>(&frame.entry).ok();
+                if !visit(entry.as_ref()) {
+                    return count;
+                }
+            }
+        }
+        count
+    }
+
+    /// The ledger's entries as JSON, one per line, in order: a plain-text
+    /// rendering for inspection and tests. Not a format anything parses back.
+    pub fn text(path: &Path) -> String {
+        let mut out = String::new();
+        for segment in SessionLog::segment_files(path) {
+            let Ok(bytes) = vak_storage::segments::frame_bytes(&segment) else {
+                continue;
+            };
+            for frame in vak_storage::records::located_entries(&bytes, 0).unwrap_or_default() {
+                out.push_str(&String::from_utf8_lossy(&frame.entry));
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// When the ledger last changed: its newest segment's modification time.
+    pub fn modified(path: &Path) -> Option<std::time::SystemTime> {
+        SessionLog::segment_files(path)
+            .iter()
+            .filter_map(|segment| std::fs::metadata(segment).ok()?.modified().ok())
+            .max()
+    }
+
+    /// The segment files of this ledger, oldest first: what an index reads.
+    pub fn segment_files(path: &Path) -> Vec<PathBuf> {
+        let Ok(segments) = vak_storage::segments::SegmentSet::open(path) else {
+            return Vec::new();
+        };
+        segment_numbers(path)
+            .into_iter()
+            .map(|(number, open)| {
+                if open {
+                    segments.log_path(number)
+                } else {
+                    segments.sealed_path(number)
+                }
+            })
+            .collect()
+    }
+
     /// Returns whether this SessionLog was opened read-only.
     pub fn is_read_only(&self) -> bool {
-        !self.file.locked
+        self.ledger.writer.is_none()
     }
 
     /// Non-fatal problems seen while opening the ledger.
@@ -304,7 +461,7 @@ impl SessionLog {
     }
 
     pub fn append(&mut self, entry: Entry) -> Result<Entry, SessionError> {
-        if !self.file.locked {
+        if self.ledger.writer.is_none() {
             return Err(SessionError::Locked(self.path.clone()));
         }
         if let Some(pid) = &entry.parent_id
@@ -316,7 +473,6 @@ impl SessionLog {
             });
         }
         let mut entry = entry;
-        entry.prev_hash = self.tail_hash.clone();
         if entry.is_directive() {
             if let Some(reserved) = self.reserved_turn.take() {
                 if self.by_id.contains_key(&reserved) {
@@ -336,15 +492,14 @@ impl SessionLog {
             line: 0,
             message: e.to_string(),
         })?;
-        writeln!(self.file.file, "{line}")?;
-        // `File::flush` is a no-op — `std::fs::File` has no userspace buffer,
-        // so its `Write::flush` returns Ok without a syscall. That is what
-        // this used to call, which meant the "durable, reconstructable"
-        // ledger had no write barrier at all and lost its tail on power loss.
-        // `sync_data` skips the metadata flush `sync_all` forces; the file
-        // length is data for an append-only log.
-        self.file.file.sync_data()?;
-        self.tail_hash = Some(crate::types::line_digest(&line));
+        let Some((_, writer)) = self.ledger.writer.as_mut() else {
+            return Err(SessionError::Locked(self.path.clone()));
+        };
+        // One frame per entry, synced before it counts: the frame chain over
+        // the stored bytes is the ledger's integrity (docs/design/73 §6).
+        writer
+            .append(line.as_bytes(), None)
+            .map_err(storage_error)?;
         self.by_id.insert(entry.id.clone(), self.entries.len());
         self.tail_id = Some(entry.id.clone());
         self.entries.push(entry.clone());
@@ -2416,8 +2571,8 @@ mod tests {
     #[test]
     fn the_lock_lasts_exactly_as_long_as_the_handle() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("session.jsonl");
-        std::fs::write(&path, "").unwrap();
+        let path = dir.path().join("session");
+        std::fs::create_dir_all(&path).unwrap();
 
         let log = SessionLog::open(path.clone()).unwrap();
         assert!(matches!(
@@ -2425,7 +2580,7 @@ mod tests {
             Err(SessionError::Locked(_))
         ));
 
-        let duplicate = log.file.file.try_clone().unwrap();
+        let duplicate = log.ledger.lock.as_ref().unwrap().try_clone().unwrap();
         drop(log);
         SessionLog::open(path).expect("the dropped handle's lock stayed with a duplicate");
         drop(duplicate);

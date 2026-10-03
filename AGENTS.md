@@ -1085,6 +1085,15 @@ in progress, and the rest of V4 follows it.
   whose contracts aren't clear from names (invariants especially).
 - No new dependencies without exact versions pinned in the workspace manifest
   and a one-line justification in the PR.
+- **Agent UI is Vakyartha-owned.** Do not adopt third-party agent UI SDKs,
+  runtimes, or protocol implementations (including A2UI, AG-UI, MCP Apps UI
+  bridges, or equivalents). Vakyartha owns its presentation schemas,
+  compiler, renderer, interaction state, actions, and event contract.
+  External systems are comparison references, not implementation dependencies.
+  Existing general-purpose libraries remain subject to the dependency rule
+  above. The gap-closing implementation order and acceptance criteria are in
+  `docs/plans/presentation-runtime-completion-plan.md`; a plan is not shipped
+  behaviour or authorization to start a data-architecture milestone.
 - Output presentation is schema-v2 and semantic: `vak-delivery` owns the typed
   `OutputTimeline`/`PresentationDocument` contract, exact Markdown fallback,
   capability projection, and deterministic degradation. Desktop/native clients

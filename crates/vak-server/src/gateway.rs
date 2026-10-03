@@ -4484,7 +4484,7 @@ mod tests {
             assert_eq!(contract.model, "model-b");
         }
         let old_path = core.scope().session_file(core.cwd(), &old_id);
-        assert!(old_path.is_file(), "old append-only ledger remains intact");
+        assert!(old_path.is_dir(), "old append-only ledger remains intact");
     }
 
     #[tokio::test]
@@ -4544,7 +4544,7 @@ mod tests {
             assert_eq!(agent.id, "researcher");
         }
         let old_path = core.scope().session_file(core.cwd(), &old_id);
-        assert!(old_path.is_file(), "old agent ledger remains intact");
+        assert!(old_path.is_dir(), "old agent ledger remains intact");
     }
 
     /// One persona, not two. The `identity` prompt block wins over the
@@ -4686,7 +4686,7 @@ mod tests {
             "prompt layer change preserves session without forced rotation"
         );
         let old_path = core.scope().session_file(core.cwd(), &old_id);
-        assert!(old_path.is_file(), "append-only ledger remains intact");
+        assert!(old_path.is_dir(), "append-only ledger remains intact");
     }
 
     #[tokio::test]
@@ -4725,7 +4725,7 @@ mod tests {
 
         let fresh = resolve_session(&state, &core, "telegram:42").await.unwrap();
         assert_eq!(fresh.id, "legacy-session");
-        assert!(legacy_path.is_file(), "legacy ledger remains append-only");
+        assert!(legacy_path.is_dir(), "legacy ledger remains append-only");
     }
 
     // ---- Allowlist store (docs/design/34-channel-onboarding.md) -----------
