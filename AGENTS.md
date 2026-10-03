@@ -234,7 +234,9 @@ M3a is done (2026-10-03): `Core` exposes its homes only as typed scopes.
 M3b is in progress: slice 1 is done (2026-10-03; 7.0.0-dev, the 7.0
 baseline, tenant tree and runtime root, wholesale purge, the registry by
 data class), and so is slice 2 (2026-10-03; session ledgers are segment
-directories with group commit, and large payloads are tenant objects). No session starts a later step unasked.
+directories with group commit, and large payloads are tenant objects).
+Slice 3 is in progress: side ledgers are record chains, D25 is fixed and
+`auth/` and feeds are in the tenant tree; the Document class remains. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -354,6 +356,10 @@ directories with group commit, and large payloads are tenant objects). No sessio
 - Put a large payload in a ledger as a tenant object (`SessionLog::put_object`,
   `Core::objects`), never inline; a ledger Core runs a turn on has its
   store attached.
+- Write a side ledger only through `vak_session::chain::RecordChain`;
+  never open a JSONL file to append to, and never compact one.
+- Put a record about a session in that session's Agent home
+  (`session_agent_scope` in vak-server), never the serving Core's.
 
 ### Pending: the visual refresh (V1, V2, V3 and V4.4 done; V4 in progress)
 

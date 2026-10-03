@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is in progress (slices 1 and 2 done). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is in progress (slices 1 and 2 done; slice 3 in progress). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -539,7 +539,17 @@ keep `MAX_STORED_CHECKPOINTS` until retention policy lands in M7a.
 - The capability binding and large tool results move to objects; sandbox
   streams are chunked to objects.
 
-**Slice 3 — side ledgers and Documents (review R9)**
+**Slice 3 — side ledgers and Documents (review R9)** — in progress. Done
+(2026-10-03): side ledgers are `vak_session::chain::RecordChain`s (costs,
+activity, budget alerts, routing and intent evidence, security events, the
+inbox, commitments, operations incidents and actions, the deliveries log
+and the outbox, whose settled jobs leave no file), with no compaction
+rewrites; telemetry rows append without their own sync. D25: every
+server-side record about a session lives in that session's Agent home
+(`session_agent_scope`; `agent_records_live_in_their_agent_scope`).
+`auth/` and feeds are under `tenants/<t>/`; `no_undeclared_paths_any_root`
+drives a real turn across the data, cache, logs and runtime roots. Left:
+the Document class and versioned Desired state.
 - FinOps, alerts, commitments, inbox, routing, misread, security and
   operations become record chains without compaction rewrites.
 - Memory, entities, skills, prompt layers, presentation packs and Office
