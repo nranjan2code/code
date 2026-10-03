@@ -452,7 +452,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       setDelegateError(error instanceof Error ? error.message : String(error));
     } finally { setDelegating(false); }
   };
-  const subjects = createMemo(() => approvalSubjects(props.item.argsJson));
+  const subjects = createMemo(() => approvalSubjects(props.item.argsJson, sessions().find((session) => session.session_id === props.sessionId)?.cwd));
   const summary = createMemo(() => {
     try {
       const parsed = JSON.parse(props.item.argsJson) as Record<string, unknown>;

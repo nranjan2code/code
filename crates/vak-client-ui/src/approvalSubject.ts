@@ -8,7 +8,18 @@ export interface ApprovalSubject {
 
 const TARGET_KEYS = ["url", "path", "file_path", "file", "dir"] as const;
 
-export function approvalSubjects(argsJson: string): ApprovalSubject[] {
+/** Where a command runs: the workspace when it names no folder, else that
+ *  folder inside it. Without the workspace's own path nothing is claimed
+ *  about the default, and a named folder is shown as given. */
+function runsIn(cwd: string | null, workspace: string | undefined): string | null {
+  const named = cwd && cwd !== "." ? cwd.replace(/^\.\//, "") : null;
+  if (!workspace) return named;
+  if (!named) return workspace;
+  if (named.startsWith("/")) return named;
+  return `${workspace.replace(/\/+$/, "")}/${named}`;
+}
+
+export function approvalSubjects(argsJson: string, workspace?: string): ApprovalSubject[] {
   let args: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(argsJson);
@@ -23,8 +34,8 @@ export function approvalSubjects(argsJson: string): ApprovalSubject[] {
   };
   const command = text("command");
   if (command) {
-    const cwd = text("cwd");
-    return cwd ? [{ key: "command", value: command }, { key: "in", value: cwd }] : [{ key: "command", value: command }];
+    const folder = runsIn(text("cwd"), workspace);
+    return folder ? [{ key: "command", value: command }, { key: "in", value: folder }] : [{ key: "command", value: command }];
   }
   for (const key of TARGET_KEYS) {
     const value = text(key);

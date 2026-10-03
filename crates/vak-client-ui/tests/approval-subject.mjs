@@ -21,4 +21,13 @@ assert.equal(approvalNetworkNote("bash", "FullAccess", "off"), null, "full acces
 assert.equal(approvalNetworkNote("bash", "WorkspaceWrite", "off"), null, "no sandbox, no claim");
 assert.equal(approvalNetworkNote("bash", undefined, undefined), null, "unknown state, no claim");
 assert.equal(approvalNetworkNote("read", "WorkspaceWrite", "seatbelt"), null, "only bash runs in the protected area");
+const W = "/Users/me/vak-home";
+assert.deepEqual(approvalSubjects(JSON.stringify({ command: "ls" }), W), [
+  { key: "command", value: "ls" },
+  { key: "in", value: W },
+], "no folder named: it runs in the workspace, and the card says where");
+assert.deepEqual(approvalSubjects(JSON.stringify({ command: "ls", cwd: "." }), W)[1], { key: "in", value: W });
+assert.deepEqual(approvalSubjects(JSON.stringify({ command: "ls", cwd: "./sub/dir" }), `${W}/`)[1], { key: "in", value: `${W}/sub/dir` });
+assert.deepEqual(approvalSubjects(JSON.stringify({ command: "ls", cwd: ".." }), W)[1], { key: "in", value: `${W}/..` }, "a climbing folder is shown as written, never resolved away");
+assert.equal(approvalSubjects(JSON.stringify({ command: "ls" })).length, 1, "the workspace unknown: no claim about the default");
 console.log("approval-subject: ok");
