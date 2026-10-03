@@ -374,8 +374,10 @@ impl AgentNetworkBroker {
         Ok(loaded)
     }
 
-    pub fn socket_path(sessions_home: &std::path::Path) -> std::path::PathBuf {
-        sessions_home.join("agent-network").join("broker.sock")
+    /// The broker's socket, in the runtime root: it means nothing once the
+    /// process that made it is gone (docs/design/73 §6).
+    pub fn socket_path() -> std::path::PathBuf {
+        vak_config::paths::runtime_dir().join("agent-network.sock")
     }
 
     #[cfg(unix)]

@@ -50,6 +50,7 @@ async fn catalog_package_installs_disabled_then_uses_existing_lifecycle() {
     )
     .unwrap();
 
+    vak_config::paths::isolate_home_for_tests();
     let core = vak_core::Core::new_with_trust(workspace, true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(
         temp.path().join("sessions"),

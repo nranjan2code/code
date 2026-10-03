@@ -3188,9 +3188,7 @@ fn secured_router_with_port_and_test_oauth_endpoint(
         if let Err(error) = broker.load_policies(&policy_file) {
             eprintln!("[agent-network] policy load failed: {error}");
         }
-        let socket = vak_core::agent_network::AgentNetworkBroker::socket_path(
-            &state.core.scope().into_root(),
-        );
+        let socket = vak_core::agent_network::AgentNetworkBroker::socket_path();
         tokio::spawn(async move {
             if let Err(error) = broker.serve_unix(&socket).await {
                 eprintln!("[agent-network] broker stopped: {error}");

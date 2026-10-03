@@ -335,6 +335,9 @@ pub enum CoreError {
     HistoryNotIndexed(String),
     #[error("provider auth missing: set {env} for provider '{provider}'")]
     MissingAuth { env: String, provider: String },
+    /// The data home predates the 7.0 baseline (invariant 29).
+    #[error("{0}")]
+    PreBaseline(String),
     #[error("config error: {0}")]
     Config(#[from] vak_config::ConfigError),
     #[error("session error: {0}")]
@@ -1277,6 +1280,14 @@ impl Core {
         } else {
             sessions_home
         };
+        // Invariant 29: a data home written before the 7.0 baseline is
+        // refused with the one message; a 7.0 home carries its tenant tree
+        // from its first use (docs/design/73 §6).
+        crate::baseline::check_data_home(&sessions_home).map_err(CoreError::PreBaseline)?;
+        let _ = std::fs::create_dir_all(vak_config::paths::tenant_home_at(
+            &sessions_home,
+            &vak_session::trace::local::tenant().to_string(),
+        ));
         // Warn about plugins whose skill descriptions reference retired
         // tool names. These plugins can cause model hallucinations
         // (e.g. `python_eval` → `unknown_capability` → fabricated output).

@@ -175,6 +175,7 @@ mod tests {
 
     fn core_with_channels(entries: serde_json::Value) -> (tempfile::TempDir, Core) {
         let dir = tempfile::tempdir().unwrap();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let path = health::allowlist_path(&core.shared_scope().into_root());

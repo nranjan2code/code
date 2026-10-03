@@ -39,6 +39,23 @@ pub fn logs_dir() -> PathBuf {
     resolve(get_var("VAK_HOME").as_deref()).logs
 }
 
+/// Ephemeral runtime state: sockets, locks and gates that mean nothing
+/// after the process that made them has gone (docs/design/73 §6). Never
+/// backed up; safe to remove whenever no Vak process is running.
+pub fn runtime_dir() -> PathBuf {
+    resolve(get_var("VAK_HOME").as_deref()).runtime
+}
+
+/// The directory of tenant trees under a data home (docs/design/73 §6). Its
+/// presence is what marks a data home as written at or after the 7.0 data
+/// baseline (AGENTS.md invariant 29).
+pub const TENANTS_DIR: &str = "tenants";
+
+/// One tenant's tree under the data home `data`.
+pub fn tenant_home_at(data: &std::path::Path, tenant: &str) -> PathBuf {
+    data.join(TENANTS_DIR).join(tenant)
+}
+
 /// The canonical **project workspace** a fresh install brings up its
 /// durable services against — `~/vak-home`, a plain directory a person
 /// can `cd` into, distinct from `data_home()` (which holds sessions,
@@ -220,6 +237,7 @@ struct Homes {
     data: PathBuf,
     cache: PathBuf,
     logs: PathBuf,
+    runtime: PathBuf,
     workspace: PathBuf,
 }
 
@@ -235,6 +253,7 @@ fn resolve(override_home: Option<&str>) -> Homes {
             Homes {
                 cache: data.join("cache"),
                 logs: data.join("logs"),
+                runtime: data.join("runtime"),
                 workspace: data.join("vak-home"),
                 data,
             }
@@ -256,6 +275,17 @@ fn resolve(override_home: Option<&str>) -> Homes {
             cache: xdg(&base, "XDG_CACHE_HOME", ".cache"),
             #[cfg(not(target_os = "macos"))]
             logs: xdg(&base, "XDG_STATE_HOME", ".local/state").join("logs"),
+            #[cfg(target_os = "macos")]
+            runtime: base
+                .join("Library")
+                .join("Caches")
+                .join(app_dir_name())
+                .join("runtime"),
+            #[cfg(not(target_os = "macos"))]
+            runtime: crate::get_var("XDG_RUNTIME_DIR")
+                .filter(|dir| std::path::Path::new(dir).is_absolute())
+                .map(|dir| PathBuf::from(dir).join(app_dir_name()))
+                .unwrap_or_else(|| xdg(&base, "XDG_CACHE_HOME", ".cache").join("runtime")),
         },
     }
 }

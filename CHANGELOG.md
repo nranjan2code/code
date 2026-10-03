@@ -1,3 +1,10 @@
+## Unreleased
+
+- Begin the 7.0 data baseline (data-architecture M3b). A data home written
+  by 6.x or earlier is refused with one message; run
+  `vak self uninstall --purge`, then install and run setup. No 6.x data
+  crosses the baseline, and 6.x fixes ship from `release/6`.
+
 ## 6.0.0 — 2026-10-03
 
 - Ship 6.0.0 as an independent major release. The separately planned data

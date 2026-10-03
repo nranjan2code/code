@@ -6970,7 +6970,7 @@ dependencies = [
 
 [[package]]
 name = "vak"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7012,7 +7012,7 @@ dependencies = [
 
 [[package]]
 name = "vak-agent"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7039,7 +7039,7 @@ dependencies = [
 
 [[package]]
 name = "vak-bus"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -7060,7 +7060,7 @@ dependencies = [
 
 [[package]]
 name = "vak-commit"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "chrono",
  "serde",
@@ -7076,7 +7076,7 @@ dependencies = [
 
 [[package]]
 name = "vak-config"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "keyring",
  "ring",
@@ -7089,7 +7089,7 @@ dependencies = [
 
 [[package]]
 name = "vak-context"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "chrono",
  "serde",
@@ -7104,7 +7104,7 @@ dependencies = [
 
 [[package]]
 name = "vak-core"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7146,7 +7146,7 @@ dependencies = [
 
 [[package]]
 name = "vak-delivery"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "pulldown-cmark",
  "serde",
@@ -7160,7 +7160,7 @@ dependencies = [
 
 [[package]]
 name = "vak-desktop"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "axum",
  "notify-rust",
@@ -7191,7 +7191,7 @@ dependencies = [
 
 [[package]]
 name = "vak-eval"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7213,7 +7213,7 @@ dependencies = [
 
 [[package]]
 name = "vak-flow"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "chrono",
@@ -7236,7 +7236,7 @@ dependencies = [
 
 [[package]]
 name = "vak-hooks"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "libc",
  "serde",
@@ -7250,7 +7250,7 @@ dependencies = [
 
 [[package]]
 name = "vak-intent"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "chrono",
  "serde",
@@ -7260,7 +7260,7 @@ dependencies = [
 
 [[package]]
 name = "vak-llm"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7283,7 +7283,7 @@ dependencies = [
 
 [[package]]
 name = "vak-mail-calendar"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-imap",
  "async-native-tls",
@@ -7314,7 +7314,7 @@ dependencies = [
 
 [[package]]
 name = "vak-mcp"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "futures",
@@ -7331,7 +7331,7 @@ dependencies = [
 
 [[package]]
 name = "vak-ooxml"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -7344,7 +7344,7 @@ dependencies = [
 
 [[package]]
 name = "vak-ops"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -7355,7 +7355,7 @@ dependencies = [
 
 [[package]]
 name = "vak-pdf"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -7367,7 +7367,7 @@ dependencies = [
 
 [[package]]
 name = "vak-permission"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "globset",
  "serde",
@@ -7377,7 +7377,7 @@ dependencies = [
 
 [[package]]
 name = "vak-plugin"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -7395,7 +7395,7 @@ dependencies = [
 
 [[package]]
 name = "vak-presentation"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "hex",
  "serde",
@@ -7406,7 +7406,7 @@ dependencies = [
 
 [[package]]
 name = "vak-sandbox"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "csv",
  "dom_query",
@@ -7427,7 +7427,7 @@ dependencies = [
 
 [[package]]
 name = "vak-server"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "axum",
@@ -7487,7 +7487,7 @@ dependencies = [
 
 [[package]]
 name = "vak-session"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "chrono",
  "regex",
@@ -7504,7 +7504,7 @@ dependencies = [
 
 [[package]]
 name = "vak-storage"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "ring",
  "rusqlite",
@@ -7515,7 +7515,7 @@ dependencies = [
 
 [[package]]
 name = "vak-store"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -7536,7 +7536,7 @@ dependencies = [
 
 [[package]]
 name = "vak-terminal"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "bytes",
  "chrono",
@@ -7553,7 +7553,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tools"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -7587,7 +7587,7 @@ dependencies = [
 
 [[package]]
 name = "vak-tray"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "notify-rust",
  "png 0.17.16",
@@ -7601,7 +7601,7 @@ dependencies = [
 
 [[package]]
 name = "vak-voice"
-version = "6.0.0"
+version = "7.0.0-dev"
 dependencies = [
  "async-trait",
  "serde",

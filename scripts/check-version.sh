@@ -58,7 +58,9 @@ done
 # the newest shipped build was 0.11.51 — a gate that certifies a mess is
 # worse than no gate.
 
-readme_badge="$(sed -n 's|.*/badge/version-\([0-9][0-9.]*\)-.*|\1|p' "$ROOT_DIR/README.md" | head -1)"
+# shields.io writes a literal dash as `--`, so a prerelease badge reads
+# `version-7.0.0--dev-<colour>`; unescape it before comparing.
+readme_badge="$(sed -n 's|.*/badge/version-\([0-9][0-9.]*\(--[0-9A-Za-z.]*\)*\)-[0-9A-Fa-f]\{6\}.*|\1|p' "$ROOT_DIR/README.md" | head -1 | sed 's/--/-/g')"
 if [[ "$readme_badge" == "$version" ]]; then
     printf '  ✓ %-40s %s\n' "README badge" "$readme_badge"
 else
