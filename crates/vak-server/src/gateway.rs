@@ -2404,7 +2404,13 @@ impl vak_agent::Approver for GatewayApprover {
         }
     }
 
-    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
+    async fn approve(
+        &self,
+        tool: &str,
+        args_json: &str,
+        reason: &str,
+        _call_id: Option<&str>,
+    ) -> bool {
         if !self.state.forward_mode() {
             return false;
         }

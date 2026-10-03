@@ -6911,6 +6911,7 @@ impl Core {
                         duration_ms: Some(duration_ms),
                         session_id: activity_session.clone(),
                         plugin,
+                        tool_use_id: None,
                         actor: activity_trace.actor,
                         trace: Some(activity_trace.child()),
                     });
@@ -7230,7 +7231,10 @@ impl Core {
         let activity_session = session.header().map(|h| h.session_id.clone());
         let hook_trace = run_trace.clone();
         cfg.hook_recorder = Some(Arc::new(
-            move |hook: &vak_hooks::HookDef, success: bool, duration_ms: u64| {
+            move |hook: &vak_hooks::HookDef,
+                  tool_use_id: Option<&str>,
+                  success: bool,
+                  duration_ms: u64| {
                 let plugin_name = plugin_hooks
                     .iter()
                     .find(|(_, candidate)| candidate.command == hook.command)
@@ -7243,6 +7247,7 @@ impl Core {
                     duration_ms: Some(duration_ms),
                     session_id: activity_session.clone(),
                     plugin: plugin_name,
+                    tool_use_id: tool_use_id.map(str::to_string),
                     actor: hook_trace.actor,
                     trace: Some(hook_trace.child()),
                 });
@@ -7267,7 +7272,11 @@ impl Core {
         let tool_activity_session = session.header().map(|h| h.session_id.clone());
         let tool_trace = run_trace.clone();
         cfg.tool_activity_recorder = Some(Arc::new(
-            move |name: &str, args: &serde_json::Value, success: bool, duration_ms: u64| {
+            move |tool_use_id: &str,
+                  name: &str,
+                  args: &serde_json::Value,
+                  success: bool,
+                  duration_ms: u64| {
                 let plugin = name
                     .strip_prefix("plugin.")
                     .and_then(|rest| rest.split('.').next())
@@ -7290,6 +7299,7 @@ impl Core {
                     duration_ms: Some(duration_ms),
                     session_id: tool_activity_session.clone(),
                     plugin,
+                    tool_use_id: Some(tool_use_id.to_string()),
                     actor: tool_trace.actor,
                     trace: Some(tool_trace.child()),
                 });
@@ -7306,6 +7316,9 @@ impl Core {
                 .header()
                 .map(|h| h.session_id.clone())
                 .unwrap_or_default();
+            let session_recorder = cfg.hook_recorder.clone().map(|recorder| {
+                move |hook: &vak_hooks::HookDef, ok: bool, ms: u64| recorder(hook, None, ok, ms)
+            });
             let outcome = vak_hooks::run_hooks_with_recorder(
                 hooks.clone(),
                 vak_hooks::HookEvent::SessionStart,
@@ -7314,7 +7327,9 @@ impl Core {
                 None,
                 None,
                 &cancel,
-                cfg.hook_recorder.as_deref(),
+                session_recorder
+                    .as_ref()
+                    .map(|recorder| recorder as vak_hooks::HookRecorder<'_>),
             )
             .await;
             if outcome.blocked {

@@ -422,8 +422,38 @@ Built (2026-10-03):
   `a_reopened_ledger_keeps_its_current_turn` (vak-session) and
   `one_turn_one_id_from_intent_to_side_ledgers` (vak-core).
 
-Not yet built: approvals, hooks and activities naming their call, episodes
-naming their turn and strand, file effects with digests, MCP attribution.
+Also built (2026-10-03):
+
+- Approvals name their call: `Approver::approve` takes the call id, and the
+  pending and resolved approval activities record it as `tool_use_id`
+  (`resolved_approval_activity_names_the_verified_decision_maker`).
+- Pre/post-tool hook runs and tool activity rows record their call's
+  `tool_use_id` (`finops::ActivityRow`). Session-start and stop hooks have
+  no call.
+- Episodes record their strand (`EpisodeStarted.strand_id`,
+  `Episode::strand_id`); their turn comes from the event's trace key
+  (`an_episode_names_its_strand`).
+- File effects: a tool declares `Tool::file_access` (read, write, edit and
+  `doc_read` do), and after a successful call the agent loop writes a
+  `CallEffect` entry with the path, a SHA-256 of the content and its size.
+  A path that resolves outside the workspace is recorded without a digest
+  (`file_effect_has_digest`, `a_path_outside_the_workspace_is_not_measured`).
+- MCP attribution: the client keeps the server's `serverInfo`, and every
+  answered `mcp` call writes a `CallEffect::Mcp` with server, reported name
+  and version, tool and schema digest (`mcp_result_names_its_server`).
+
+Not yet built:
+
+- Gateway-forwarded approvals go to the inbox, which has no call field.
+- `ActivityRecord.turn` is still a turn number; the server projection
+  groups the client timeline by it. `Entry::at_turn` already names every
+  activity's turn, so removing the number means moving that projection
+  onto `at_turn`.
+- Bash file changes (D4), `office_apply` drafts and Review promotion are not
+  yet file effects.
+- An end-to-end test that a real turn's read and write produce
+  `CallEffect` entries needs the tool worker binary in the test
+  environment.
 
 Nothing in G1 to G3 is sound until §2.4 holds. Each item is a new field or
 entry, added under invariant 29's additive rule, or folded into M3a/M3b

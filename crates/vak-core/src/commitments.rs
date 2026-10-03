@@ -262,6 +262,7 @@ pub fn begin_episodes(
             EventKind::EpisodeStarted {
                 episode_id: episode_id.clone(),
                 session_id: session_id.to_string(),
+                strand_id: Some(planned.strand_id.clone()),
             },
         )) {
             eprintln!("[commit] could not start an episode: {error}");
@@ -1028,6 +1029,7 @@ mod tests {
                 EventKind::EpisodeStarted {
                     episode_id: "orphan".into(),
                     session_id: "s1".into(),
+                    strand_id: None,
                 },
             ))
             .unwrap();

@@ -122,7 +122,7 @@ struct Watched;
 
 #[async_trait::async_trait]
 impl vak_agent::Approver for Watched {
-    async fn approve(&self, _: &str, _: &str, _: &str) -> bool {
+    async fn approve(&self, _: &str, _: &str, _: &str, _: Option<&str>) -> bool {
         true
     }
     fn answers_questions(&self) -> bool {

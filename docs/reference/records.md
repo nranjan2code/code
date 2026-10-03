@@ -41,6 +41,7 @@ Type `ActivityRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in:
 | `duration_ms` | `Option<u64>` | no |  |
 | `session_id` | `Option<String>` | no |  |
 | `plugin` | `Option<String>` | no |  |
+| `tool_use_id` | `Option<String>` | no | The tool call this row is about: the call itself, or the call a |
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 

@@ -640,7 +640,7 @@ async fn execute_node(
             let _ = events.send(format!("⏸ approval needed: {message}")).await;
             match &deps.approver {
                 Some(a) => {
-                    if a.approve("approval", "", &message).await {
+                    if a.approve("approval", "", &message, None).await {
                         Ok("approved".into())
                     } else {
                         Err("denied by user".into())
@@ -690,7 +690,11 @@ async fn authorize_flow_tool(
                 return Ok(());
             }
             match &deps.approver {
-                Some(approver) if approver.approve(tool, &args.to_string(), &reason).await => {
+                Some(approver)
+                    if approver
+                        .approve(tool, &args.to_string(), &reason, None)
+                        .await =>
+                {
                     Ok(())
                 }
                 Some(_) => Err(format!("denied by user: {reason}")),

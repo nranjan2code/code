@@ -726,6 +726,7 @@ async fn finops_projects_observed_tokens_and_activity_without_zeroing_unknown_co
             duration_ms: Some(19),
             session_id: Some("s-finops".into()),
             plugin: Some("demo".into()),
+            tool_use_id: None,
             trace: None,
             actor: None,
         })

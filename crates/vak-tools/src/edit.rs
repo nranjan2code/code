@@ -17,6 +17,12 @@ impl Tool for EditTool {
         "edit"
     }
 
+    fn file_access(&self, args: &Value) -> Option<(crate::FileAccess, String)> {
+        args.get("path")
+            .and_then(Value::as_str)
+            .map(|path| (crate::FileAccess::Write, path.to_string()))
+    }
+
     fn serves(&self) -> &'static [&'static str] {
         &["documents"]
     }

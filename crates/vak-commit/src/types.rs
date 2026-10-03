@@ -226,6 +226,9 @@ impl Suspension {
 pub struct Episode {
     pub episode_id: String,
     pub session_id: String,
+    /// The strand this episode works on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strand_id: Option<String>,
     pub started_at: chrono::DateTime<chrono::Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<chrono::DateTime<chrono::Utc>>,

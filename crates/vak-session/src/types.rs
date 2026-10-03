@@ -963,6 +963,75 @@ pub enum EntryPayload {
     /// the `ToolResult` block holds what the request carried, and `recall`
     /// and the closed-turn digests read this.
     EvidenceBody(EvidenceBodyRecord),
+    /// What one tool call touched outside the conversation: a file it read
+    /// or wrote, or the MCP server that answered it
+    /// (docs/design/85-turn-graph.md, G0). Audit-only, never model-visible.
+    CallEffect(CallEffectRecord),
+}
+
+/// One effect of one tool call, named by the call's id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CallEffectRecord {
+    pub tool_use_id: String,
+    pub effect: CallEffect,
+}
+
+/// An effect a tool call had, as the runtime observed it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CallEffect {
+    /// A workspace file the call read, with its content as read.
+    FileRead {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        digest: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+    },
+    /// A workspace file the call wrote, with its content after the write.
+    FileWrite {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        digest: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+    },
+    /// The MCP server and tool that answered the call.
+    Mcp(McpSource),
+}
+
+/// Which MCP server answered a call: the configured name, what the server
+/// reported about itself at `initialize`, the tool, and a digest of the tool
+/// schema the arguments were validated against.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct McpSource {
+    pub server: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_version: Option<String>,
+    pub tool: String,
+    pub schema_digest: String,
+}
+
+impl McpSource {
+    /// From the server's configured name, the `serverInfo` its `initialize`
+    /// result reported (if any), the tool, and the tool's input schema.
+    pub fn new(server: &str, server_info: &Value, tool: &str, schema: &Value) -> Self {
+        let field = |key: &str| {
+            server_info
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        };
+        McpSource {
+            server: server.to_string(),
+            server_name: field("name"),
+            server_version: field("version"),
+            tool: tool.to_string(),
+            schema_digest: payload_digest(schema),
+        }
+    }
 }
 
 /// Replays an addressed projection against the exact pre-request leaf.
@@ -1161,5 +1230,34 @@ mod typed_tests {
         let rewritten = record(Some("/skill:x"));
         let _ = rewritten.as_typed();
         assert!(rewritten.message.text_content().contains("BODY"));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod call_effect_tests {
+    use super::*;
+
+    #[test]
+    fn mcp_result_names_its_server() {
+        let schema = serde_json::json!({"type": "object", "properties": {"q": {"type": "string"}}});
+        let info = serde_json::json!({"name": "search-server", "version": "1.4.2"});
+        let source = McpSource::new("search", &info, "query", &schema);
+        assert_eq!(source.server, "search");
+        assert_eq!(source.server_name.as_deref(), Some("search-server"));
+        assert_eq!(source.server_version.as_deref(), Some("1.4.2"));
+        assert_eq!(source.tool, "query");
+        assert_eq!(source.schema_digest, payload_digest(&schema));
+        let silent = McpSource::new("search", &Value::Null, "query", &schema);
+        assert!(silent.server_name.is_none() && silent.server_version.is_none());
+        let record = CallEffectRecord {
+            tool_use_id: "call-1".into(),
+            effect: CallEffect::Mcp(source),
+        };
+        let line = serde_json::to_string(&record).unwrap();
+        assert_eq!(
+            serde_json::from_str::<CallEffectRecord>(&line).unwrap(),
+            record
+        );
     }
 }

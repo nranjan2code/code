@@ -84,7 +84,13 @@ struct AutoApproveBudget;
 
 #[async_trait::async_trait]
 impl Approver for AutoApproveBudget {
-    async fn approve(&self, tool: &str, _args_json: &str, _reason: &str) -> bool {
+    async fn approve(
+        &self,
+        tool: &str,
+        _args_json: &str,
+        _reason: &str,
+        _call_id: Option<&str>,
+    ) -> bool {
         tool == "finops-budget"
     }
 }
@@ -216,7 +222,13 @@ struct ApproveOnce {
 
 #[async_trait::async_trait]
 impl Approver for ApproveOnce {
-    async fn approve(&self, tool: &str, _args_json: &str, _reason: &str) -> bool {
+    async fn approve(
+        &self,
+        tool: &str,
+        _args_json: &str,
+        _reason: &str,
+        _call_id: Option<&str>,
+    ) -> bool {
         tool == "finops-budget" && self.remaining.fetch_sub(1, Ordering::SeqCst) > 0
     }
 }

@@ -179,6 +179,19 @@ pub struct ToolOutput {
     /// user sees it and the delegating agent can recall it. In-process only:
     /// a brokered worker's reply cannot fill it.
     pub delegated: Option<DelegatedCards>,
+    /// The MCP server that answered this call, when one did. In-process
+    /// only, like `delegated`; the calling loop records it as a
+    /// `CallEffect` (docs/design/85-turn-graph.md, G0).
+    pub mcp_source: Option<vak_session::types::McpSource>,
+}
+
+pub use vak_session::types::McpSource;
+
+/// Whether a call reads or writes the file it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileAccess {
+    Read,
+    Write,
 }
 
 /// The cards a delegated run validated and showed, and the session that ran
@@ -195,6 +208,7 @@ impl ToolOutput {
             content: content.into(),
             is_error: false,
             delegated: None,
+            mcp_source: None,
         }
     }
 
@@ -203,6 +217,7 @@ impl ToolOutput {
             content: content.into(),
             is_error: true,
             delegated: None,
+            mcp_source: None,
         }
     }
 
@@ -265,6 +280,14 @@ pub trait Tool: Send + Sync {
     /// one's result, and a card previewing that path is withheld. Unlike
     /// `presents_cards`, this has no bearing on permission.
     fn delivered_file(&self, _args: &Value) -> Option<String> {
+        None
+    }
+
+    /// The workspace file a call with `args` reads or writes, as the path
+    /// argument names it. The calling loop records the file's digest after a
+    /// successful call, so a later turn can tell it touched the same
+    /// content. The tool declares this; the loop keeps no table of names.
+    fn file_access(&self, _args: &Value) -> Option<(FileAccess, String)> {
         None
     }
 

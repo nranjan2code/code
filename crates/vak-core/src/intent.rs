@@ -381,11 +381,17 @@ impl DeferringApprover {
 
 #[async_trait::async_trait]
 impl vak_agent::Approver for DeferringApprover {
-    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
+    async fn approve(
+        &self,
+        tool: &str,
+        args_json: &str,
+        reason: &str,
+        call_id: Option<&str>,
+    ) -> bool {
         if let Some(inner) = &self.inner
             && inner.answerable()
         {
-            return inner.approve(tool, args_json, reason).await;
+            return inner.approve(tool, args_json, reason, call_id).await;
         }
         let question = format!("`{tool}` needs approval: {reason}");
         let body = format!("{question}\n\nArguments:\n{args_json}");

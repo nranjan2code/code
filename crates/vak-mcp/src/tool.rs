@@ -263,15 +263,17 @@ impl McpTool {
 
         let started = std::time::Instant::now();
         match self.manager.call_tool(server, tool, arguments).await {
-            Ok(text) => {
+            Ok((text, source)) => {
                 if let Some(record) = &self.invocation_recorder {
                     record(server, tool, true, started.elapsed().as_millis() as u64);
                 }
-                if text.is_empty() {
+                let mut output = if text.is_empty() {
                     ToolOutput::ok("(empty result)")
                 } else {
                     ToolOutput::ok(self.manager.redact(text))
-                }
+                };
+                output.mcp_source = Some(source);
+                output
             }
             Err(e) => {
                 if let Some(record) = &self.invocation_recorder {

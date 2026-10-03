@@ -294,7 +294,8 @@ impl McpManager {
         evicted
     }
 
-    /// Discover a server's current tool catalog immediately before dispatch.
+    /// Discover a server's current tool catalog immediately before dispatch,
+    /// and say which server and schema answered.
     /// MCP tool names are server-defined; validating them here keeps every
     /// caller behind the same protocol boundary and turns model-invented
     /// names into actionable errors before `tools/call` is sent.
@@ -303,7 +304,7 @@ impl McpManager {
         server: &str,
         tool: &str,
         arguments: Value,
-    ) -> Result<String, McpError> {
+    ) -> Result<(String, vak_tools::McpSource), McpError> {
         let tools = self.list_live(server).await?;
         let Some(info) = tools.iter().find(|candidate| candidate.name == tool) else {
             let available = tools
@@ -322,7 +323,10 @@ impl McpManager {
         crate::validate::validate_arguments(&arguments, &info.input_schema)
             .map_err(McpError::Protocol)?;
         let client = self.get(server).await?;
-        client.call_tool(tool, arguments).await
+        let source =
+            vak_tools::McpSource::new(server, client.server_info(), tool, &info.input_schema);
+        let text = client.call_tool(tool, arguments).await?;
+        Ok((text, source))
     }
 
     /// Connect if needed and list, recording what happened either way.

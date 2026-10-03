@@ -362,6 +362,15 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Receipt(receipt)))
     }
 
+    /// Appends one effect of a tool call (audit; never model-visible).
+    pub fn append_call_effect(
+        &mut self,
+        record: crate::types::CallEffectRecord,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::CallEffect(record)))
+    }
+
     /// Appends a goal-lifecycle entry (audit; never model-visible).
     pub fn append_goal(&mut self, goal: crate::types::GoalEntry) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();

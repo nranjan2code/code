@@ -484,7 +484,7 @@ async fn a_deferred_gate_reaches_the_inbox_and_suspends_the_commitment() {
     struct Nobody;
     #[async_trait::async_trait]
     impl Approver for Nobody {
-        async fn approve(&self, _: &str, _: &str, _: &str) -> bool {
+        async fn approve(&self, _: &str, _: &str, _: &str, _: Option<&str>) -> bool {
             panic!("an unanswerable approver must never be asked")
         }
         fn answerable(&self) -> bool {
@@ -501,7 +501,12 @@ async fn a_deferred_gate_reaches_the_inbox_and_suspends_the_commitment() {
     );
     assert!(!approver.answerable());
     let allowed = approver
-        .approve("bash", "{\"command\":\"rotate-keys\"}", "irreversible")
+        .approve(
+            "bash",
+            "{\"command\":\"rotate-keys\"}",
+            "irreversible",
+            None,
+        )
         .await;
     assert!(!allowed, "the turn fails closed");
 

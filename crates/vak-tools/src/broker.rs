@@ -337,6 +337,10 @@ impl Tool for BrokeredTool {
         self.inner.delivered_file(args)
     }
 
+    fn file_access(&self, args: &Value) -> Option<(crate::FileAccess, String)> {
+        self.inner.file_access(args)
+    }
+
     fn produces_artifact(&self, args: &Value) -> bool {
         self.inner.produces_artifact(args)
     }

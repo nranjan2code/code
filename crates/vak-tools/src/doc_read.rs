@@ -36,6 +36,12 @@ impl Tool for DocReadTool {
         "doc_read"
     }
 
+    fn file_access(&self, args: &Value) -> Option<(crate::FileAccess, String)> {
+        args.get("path")
+            .and_then(Value::as_str)
+            .map(|path| (crate::FileAccess::Read, path.to_string()))
+    }
+
     // A file the person sent is in front of the Agent as much as any other
     // workspace file, and `read` refuses Office files in favour of this
     // tool, so it is loaded wherever `read` is.

@@ -54,6 +54,7 @@ fn a_commitment_survives_a_process_restart() {
                 EventKind::EpisodeStarted {
                     episode_id: "e1".into(),
                     session_id: "s1".into(),
+                    strand_id: None,
                 },
             ))
             .unwrap();
@@ -319,6 +320,7 @@ fn learning_clears_the_stall_streak_but_stalling_accumulates() {
                 EventKind::EpisodeStarted {
                     episode_id: episode.into(),
                     session_id: format!("s-{episode}"),
+                    strand_id: None,
                 },
             ))
             .unwrap();
@@ -534,6 +536,7 @@ fn starting_an_episode_clears_the_previous_blocker() {
         EventKind::EpisodeStarted {
             episode_id: "e1".into(),
             session_id: "s1".into(),
+            strand_id: None,
         },
         EventKind::EpisodeEnded {
             episode_id: "e1".into(),
@@ -545,6 +548,7 @@ fn starting_an_episode_clears_the_previous_blocker() {
         EventKind::EpisodeStarted {
             episode_id: "e2".into(),
             session_id: "s1".into(),
+            strand_id: None,
         },
     ] {
         ledger.append(&Event::new(&id, event)).unwrap();
@@ -552,6 +556,32 @@ fn starting_an_episode_clears_the_previous_blocker() {
     let commitment = ledger.get(&id).unwrap().unwrap();
     assert_eq!(commitment.phase, Phase::Active);
     assert!(commitment.blocker.is_none());
+}
+
+/// An episode names the strand it works on (docs/design/85-turn-graph.md,
+/// G0); its turn comes from the event's trace key.
+#[test]
+fn an_episode_names_its_strand() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = CommitmentLedger::new(dir.path());
+    let id = ledger
+        .open_commitment(spec(Evidence::None, Vec::new()))
+        .unwrap();
+    ledger
+        .append(&Event::new(
+            &id,
+            EventKind::EpisodeStarted {
+                episode_id: "e1".into(),
+                session_id: "s1".into(),
+                strand_id: Some("turn-1.0".into()),
+            },
+        ))
+        .unwrap();
+    let commitment = ledger.get(&id).unwrap().unwrap();
+    assert_eq!(
+        commitment.episodes[0].strand_id.as_deref(),
+        Some("turn-1.0")
+    );
 }
 
 /// Concurrent writers serialize: every append lands, none is lost or torn.

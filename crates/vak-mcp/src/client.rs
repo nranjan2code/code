@@ -94,6 +94,9 @@ pub struct McpClient {
     /// report whether a stale catalog is the server's fault (no
     /// `listChanged`, so we must poll) or ours.
     server_capabilities: Value,
+    /// The `serverInfo` the server reported at `initialize` (its name and
+    /// version), recorded with every call it answers.
+    server_info: Value,
 }
 
 impl McpClient {
@@ -263,6 +266,7 @@ impl McpClient {
             next_id: AtomicU64::new(1),
             closed,
             server_capabilities: Value::Null,
+            server_info: Value::Null,
         };
 
         let initialized = client
@@ -277,6 +281,10 @@ impl McpClient {
             .await?;
         client.server_capabilities = initialized
             .get("capabilities")
+            .cloned()
+            .unwrap_or(Value::Null);
+        client.server_info = initialized
+            .get("serverInfo")
             .cloned()
             .unwrap_or(Value::Null);
         client
@@ -396,6 +404,11 @@ impl McpClient {
                     .unwrap_or_else(|| serde_json::json!({"type": "object"})),
             })
             .collect())
+    }
+
+    /// What the server reported about itself at `initialize`.
+    pub fn server_info(&self) -> &Value {
+        &self.server_info
     }
 
     pub async fn call_tool(&self, tool: &str, arguments: Value) -> Result<String, McpError> {

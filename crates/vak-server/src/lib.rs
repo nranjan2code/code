@@ -629,7 +629,13 @@ impl Approver for HttpApprover {
         self.answerable && self.shows_questions
     }
 
-    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
+    async fn approve(
+        &self,
+        tool: &str,
+        args_json: &str,
+        reason: &str,
+        call_id: Option<&str>,
+    ) -> bool {
         if !self.answerable {
             return false;
         }
@@ -673,7 +679,9 @@ impl Approver for HttpApprover {
                     ("tool".into(), tool.to_string()),
                     ("args_json".into(), args_json.to_string()),
                 ]
-                .into(),
+                .into_iter()
+                .chain(call_id.map(|call| ("tool_use_id".into(), call.to_string())))
+                .collect(),
             });
         if let Some(hub) = events::global() {
             hub.emit(events::SystemEvent::ApprovalRequested {
@@ -729,6 +737,7 @@ impl Approver for HttpApprover {
                     ("args_json".into(), args_json.to_string()),
                 ]
                 .into_iter()
+                .chain(call_id.map(|call| ("tool_use_id".into(), call.to_string())))
                 .chain(answered_by.into_iter().flat_map(|(actor_id, actor_name)| {
                     [
                         ("actor_id".into(), actor_id),
@@ -4820,7 +4829,8 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::ChildRun { .. } => {}
                         vak_session::EntryPayload::Presentation(_) => {}
                         vak_session::EntryPayload::TurnCard(_) => {}
-                        vak_session::EntryPayload::EvidenceBody(_) => {}
+                        vak_session::EntryPayload::EvidenceBody(_)
+                        | vak_session::EntryPayload::CallEffect(_) => {}
                         vak_session::EntryPayload::ContextSelection(_) => {}
                     }
                 }
@@ -22490,7 +22500,7 @@ mod configuration_control_tests {
         assert!(!Approver::answerable(&approver));
         // Returns immediately; without the guard this would block until the
         // 15-minute deadline, which the test would never reach.
-        assert!(!approver.approve("bash", "{}", "needs approval").await);
+        assert!(!approver.approve("bash", "{}", "needs approval", None).await);
     }
 
     #[tokio::test]
@@ -22505,7 +22515,11 @@ mod configuration_control_tests {
             answerable: true,
             shows_questions: false,
         };
-        let task = tokio::spawn(async move { approver.approve("write", "{}", "save draft").await });
+        let task = tokio::spawn(async move {
+            approver
+                .approve("write", "{}", "save draft", Some("call-7"))
+                .await
+        });
         let request = loop {
             if let Some(request) = pending.lock().unwrap().values().next().cloned() {
                 break request;
@@ -22517,6 +22531,13 @@ mod configuration_control_tests {
         assert!(task.await.unwrap());
         let activities = activity_buffer.lock().unwrap();
         assert_eq!(activities.len(), 2);
+        for activity in activities.iter() {
+            assert_eq!(
+                activity.data.get("tool_use_id").map(String::as_str),
+                Some("call-7"),
+                "an approval names the call it gates"
+            );
+        }
         assert!(!activities[0].data.contains_key("actor_id"));
         assert_eq!(
             activities[1].data.get("actor_id").map(String::as_str),

@@ -69,6 +69,10 @@ pub struct ActivityRow {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin: Option<String>,
+    /// The tool call this row is about: the call itself, or the call a
+    /// pre/post-tool hook ran for (docs/design/85-turn-graph.md, G0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<vak_session::trace::TraceKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -553,6 +557,7 @@ impl CoreSpendGate {
             duration_ms: (latency_ms > 0).then_some(latency_ms),
             session_id: Some(session_id.to_string()),
             plugin: None,
+            tool_use_id: None,
             actor,
             trace,
         });
@@ -1404,6 +1409,7 @@ mod tests {
                 duration_ms: Some(42),
                 session_id: Some("s1".into()),
                 plugin: Some("demo".into()),
+                tool_use_id: None,
                 trace: None,
                 actor: None,
             })

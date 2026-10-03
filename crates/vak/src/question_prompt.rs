@@ -93,8 +93,14 @@ fn render(question: &PendingQuestion) -> String {
 
 #[async_trait::async_trait]
 impl Approver for CliApprover {
-    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
-        self.gates.approve(tool, args_json, reason).await
+    async fn approve(
+        &self,
+        tool: &str,
+        args_json: &str,
+        reason: &str,
+        call_id: Option<&str>,
+    ) -> bool {
+        self.gates.approve(tool, args_json, reason, call_id).await
     }
 
     fn answerable(&self) -> bool {

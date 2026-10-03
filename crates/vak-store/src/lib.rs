@@ -448,7 +448,8 @@ impl Store {
             | EntryPayload::TurnCapabilitiesRef(_)
             | EntryPayload::ChildRun { .. }
             | EntryPayload::Presentation(_)
-            | EntryPayload::EvidenceBody(_) => return None,
+            | EntryPayload::EvidenceBody(_)
+            | EntryPayload::CallEffect(_) => return None,
         };
 
         match &entry.payload {
@@ -641,7 +642,8 @@ impl Store {
             | EntryPayload::TurnCapabilitiesRef(_)
             | EntryPayload::ChildRun { .. }
             | EntryPayload::Presentation(_)
-            | EntryPayload::EvidenceBody(_) => None,
+            | EntryPayload::EvidenceBody(_)
+            | EntryPayload::CallEffect(_) => None,
         }
     }
 

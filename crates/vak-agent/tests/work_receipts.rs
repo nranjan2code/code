@@ -327,6 +327,7 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::Presentation(_) => "presentation",
             EntryPayload::TurnCard(_) => "turn-card",
             EntryPayload::EvidenceBody(_) => "evidence-body",
+            EntryPayload::CallEffect(_) => "call-effect",
             EntryPayload::ContextSelection(_) => "context-selection",
         })
         .collect();

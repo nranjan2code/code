@@ -461,8 +461,13 @@ pub struct AgentConfig {
     pub discovered_tools: Arc<StdMutex<Vec<vak_llm::ToolDefinition>>>,
 }
 
-pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, bool, u64) + Send + Sync>;
-pub type ToolActivityRecorder = Arc<dyn Fn(&str, &serde_json::Value, bool, u64) + Send + Sync>;
+/// Records one hook run: the hook, the tool call it ran for (`None` for a
+/// stop hook), whether it succeeded, and how long it took.
+pub type HookRecorder = Arc<dyn Fn(&vak_hooks::HookDef, Option<&str>, bool, u64) + Send + Sync>;
+/// Records one tool call: its id, name, input, whether it succeeded, and
+/// how long it took.
+pub type ToolActivityRecorder =
+    Arc<dyn Fn(&str, &str, &serde_json::Value, bool, u64) + Send + Sync>;
 pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
 /// Given a final answer's text and the names of the tools admitted this turn,
@@ -695,7 +700,13 @@ pub type McpToolIndex = Arc<StdMutex<std::collections::HashMap<String, String>>>
 
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
-    async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool;
+    async fn approve(
+        &self,
+        tool: &str,
+        args_json: &str,
+        reason: &str,
+        call_id: Option<&str>,
+    ) -> bool;
 
     /// Whether a gate raised here reaches somebody who can answer it.
     ///
@@ -1175,7 +1186,13 @@ pub struct AutoApprove;
 
 #[async_trait::async_trait]
 impl Approver for AutoApprove {
-    async fn approve(&self, _tool: &str, _args_json: &str, _reason: &str) -> bool {
+    async fn approve(
+        &self,
+        _tool: &str,
+        _args_json: &str,
+        _reason: &str,
+        _call_id: Option<&str>,
+    ) -> bool {
         true
     }
 }
@@ -1184,7 +1201,13 @@ pub struct AutoDeny;
 
 #[async_trait::async_trait]
 impl Approver for AutoDeny {
-    async fn approve(&self, _tool: &str, _args_json: &str, _reason: &str) -> bool {
+    async fn approve(
+        &self,
+        _tool: &str,
+        _args_json: &str,
+        _reason: &str,
+        _call_id: Option<&str>,
+    ) -> bool {
         false
     }
 
@@ -1228,9 +1251,51 @@ const RESULT_PREVIEW_LIMIT: usize = 2000;
 struct CallYield {
     body: Option<String>,
     delegated: Option<vak_tools::DelegatedCards>,
+    /// Files the call read or wrote and the MCP server that answered it,
+    /// recorded as `CallEffect` entries (docs/design/85-turn-graph.md, G0).
+    effects: Vec<vak_session::types::CallEffect>,
 }
 
 type CallYields = Arc<StdMutex<HashMap<String, CallYield>>>;
+
+/// What a call did to the workspace file it names: the path as the call
+/// gave it, and the digest and size of the file's content now. A path that
+/// resolves outside the workspace, or cannot be read, is recorded without a
+/// digest rather than followed (invariant 10).
+async fn file_effect(
+    cwd: &std::path::Path,
+    access: vak_tools::FileAccess,
+    path: String,
+) -> vak_session::types::CallEffect {
+    let cwd = cwd.to_path_buf();
+    let target = cwd.join(&path);
+    let measured = tokio::task::spawn_blocking(move || {
+        let root = std::fs::canonicalize(&cwd).ok()?;
+        let resolved = std::fs::canonicalize(&target).ok()?;
+        if !resolved.starts_with(&root) {
+            return None;
+        }
+        let bytes = std::fs::read(&resolved).ok()?;
+        let digest = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(&bytes));
+        Some((digest, bytes.len() as u64))
+    })
+    .await
+    .ok()
+    .flatten();
+    let (digest, bytes) = measured.map_or((None, None), |(d, b)| (Some(d), Some(b)));
+    match access {
+        vak_tools::FileAccess::Read => vak_session::types::CallEffect::FileRead {
+            path,
+            digest,
+            bytes,
+        },
+        vak_tools::FileAccess::Write => vak_session::types::CallEffect::FileWrite {
+            path,
+            digest,
+            bytes,
+        },
+    }
+}
 
 /// The text a result block carries for `content`: the content itself, or a
 /// window of it when it is over-long, with the whole kept aside for the
@@ -2726,6 +2791,11 @@ impl Agent {
                         .header()
                         .map(|h| h.contract_cwd())
                         .unwrap_or_else(|| ".".into());
+                    let stop_recorder = self.config.hook_recorder.clone().map(|recorder| {
+                        move |hook: &vak_hooks::HookDef, ok: bool, ms: u64| {
+                            recorder(hook, None, ok, ms)
+                        }
+                    });
                     let stop = vak_hooks::run_hooks_with_recorder(
                         hooks.clone(),
                         vak_hooks::HookEvent::Stop,
@@ -2734,7 +2804,9 @@ impl Agent {
                         None,
                         Some(&response.text_content()),
                         &cancel,
-                        self.config.hook_recorder.as_deref(),
+                        stop_recorder
+                            .as_ref()
+                            .map(|recorder| recorder as vak_hooks::HookRecorder<'_>),
                     )
                     .await;
                     if stop.blocked {
@@ -3248,6 +3320,8 @@ impl Agent {
             };
             self.record_delegated_cards(&call_issue_order, &mut yields, &mut results)
                 .await;
+            self.record_call_effects(&call_issue_order, &mut yields)
+                .await;
             cards_emitted_this_run |= yields.values().any(|y| y.delegated.is_some());
             if let Some(rebuild) = self.config.presentation_rebuild.clone() {
                 let mut session = self.session.lock().await;
@@ -3463,6 +3537,31 @@ impl Agent {
             }
 
             turn += 1;
+        }
+    }
+
+    /// Records what each call in this batch touched (files, the MCP server
+    /// that answered) as `CallEffect` entries naming the call.
+    async fn record_call_effects(
+        &self,
+        call_issue_order: &[String],
+        yields: &mut HashMap<String, CallYield>,
+    ) {
+        let mut session = self.session.lock().await;
+        for id in call_issue_order {
+            let Some(yielded) = yields.get_mut(id) else {
+                continue;
+            };
+            for effect in std::mem::take(&mut yielded.effects) {
+                if let Err(error) =
+                    session.append_call_effect(vak_session::types::CallEffectRecord {
+                        tool_use_id: id.clone(),
+                        effect,
+                    })
+                {
+                    eprintln!("[agent] could not record a call effect: {error}");
+                }
+            }
         }
     }
 
@@ -5199,6 +5298,7 @@ impl Agent {
                                             "reason": reason,
                                         })),
                                         &reason,
+                                        None,
                                     )
                                     .await
                                 }
@@ -7093,6 +7193,13 @@ async fn execute_one(
         })
         .await;
 
+    let call_recorder = hook_recorder.cloned().map(|recorder| {
+        let call_id = call.id.clone();
+        move |hook: &vak_hooks::HookDef, ok: bool, ms: u64| recorder(hook, Some(&call_id), ok, ms)
+    });
+    let call_recorder = call_recorder
+        .as_ref()
+        .map(|recorder| recorder as vak_hooks::HookRecorder<'_>);
     if let Some(hooks) = hooks {
         let pre = vak_hooks::run_hooks_with_recorder(
             hooks.clone(),
@@ -7102,7 +7209,7 @@ async fn execute_one(
             Some((&call.name, &call.input)),
             None,
             cancel,
-            hook_recorder.map(|recorder| &**recorder),
+            call_recorder,
         )
         .await;
         if pre.blocked {
@@ -7180,6 +7287,7 @@ async fn execute_one(
                 trace: call_trace,
                 new_documents: Vec::new(),
             };
+            let file_access = tool.file_access(&call.input);
             let tool = tool.clone();
             // The context (and its event sender) moves into the task and is
             // dropped when it ends, so joining the forwarder below cannot
@@ -7187,6 +7295,23 @@ async fn execute_one(
             let res = tokio::spawn(async move { tool.execute(&call.input, &ctx).await }).await;
             let output = match res {
                 Ok(out) => {
+                    let mut effects = Vec::new();
+                    if !out.is_error {
+                        if let Some(source) = out.mcp_source.clone() {
+                            effects.push(vak_session::types::CallEffect::Mcp(source));
+                        }
+                        if let Some((access, path)) = file_access {
+                            effects.push(file_effect(cwd, access, path).await);
+                        }
+                    }
+                    if !effects.is_empty() {
+                        yields
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .entry(call.id.clone())
+                            .or_default()
+                            .effects = effects;
+                    }
                     if let Some(delegated) = out.delegated {
                         yields
                             .lock()
@@ -7222,7 +7347,7 @@ async fn execute_one(
             Some((&hook_name, &hook_input)),
             Some(post_reason),
             cancel,
-            hook_recorder.map(|recorder| &**recorder),
+            call_recorder,
         )
         .await;
         if post.blocked && matches!(output, ToolRunOutput::Ok(_)) {
@@ -7258,6 +7383,7 @@ async fn execute_one(
         .await;
     if let Some(recorder) = tool_activity_recorder {
         recorder(
+            &call.id,
             &call.name,
             &activity_input,
             matches!(output, ToolRunOutput::Ok(_)),
@@ -7649,8 +7775,13 @@ async fn authorize(
             }
             match &config.approver {
                 Some(a)
-                    if a.approve(&call.name, &args_preview(&call.input), &reason)
-                        .await =>
+                    if a.approve(
+                        &call.name,
+                        &args_preview(&call.input),
+                        &reason,
+                        Some(&call.id),
+                    )
+                    .await =>
                 {
                     if config
                         .revocation_check
@@ -8681,5 +8812,52 @@ mod contract_author_tests {
 fn nudge_write_failed(error: vak_session::SessionError) -> TurnOutcome {
     TurnOutcome::Failed {
         error: LlmError::Network(format!("session write failed: {error}")),
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod file_effect_tests {
+    use super::*;
+    use vak_session::types::CallEffect;
+
+    fn digest_of(effect: &CallEffect) -> Option<String> {
+        match effect {
+            CallEffect::FileRead { digest, .. } | CallEffect::FileWrite { digest, .. } => {
+                digest.clone()
+            }
+            CallEffect::Mcp(_) => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn file_effect_has_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "one").unwrap();
+        let wrote = file_effect(dir.path(), vak_tools::FileAccess::Write, "a.txt".into()).await;
+        let read = file_effect(dir.path(), vak_tools::FileAccess::Read, "a.txt".into()).await;
+        assert!(matches!(
+            wrote,
+            CallEffect::FileWrite { bytes: Some(3), .. }
+        ));
+        assert!(digest_of(&wrote).is_some());
+        assert_eq!(
+            digest_of(&wrote),
+            digest_of(&read),
+            "same content, same digest"
+        );
+        std::fs::write(dir.path().join("a.txt"), "two!").unwrap();
+        let edited = file_effect(dir.path(), vak_tools::FileAccess::Write, "a.txt".into()).await;
+        assert_ne!(digest_of(&edited), digest_of(&wrote));
+    }
+
+    #[tokio::test]
+    async fn a_path_outside_the_workspace_is_not_measured() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "x").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = outside.path().join("secret.txt").display().to_string();
+        let effect = file_effect(dir.path(), vak_tools::FileAccess::Read, path).await;
+        assert!(digest_of(&effect).is_none());
     }
 }

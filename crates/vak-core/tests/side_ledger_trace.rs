@@ -119,6 +119,7 @@ fn commitment_events_are_stamped_with_the_ledgers_run_key() {
             EventKind::EpisodeStarted {
                 episode_id: "e1".into(),
                 session_id: "s1".into(),
+                strand_id: None,
             },
         ))
         .unwrap();
@@ -135,6 +136,7 @@ fn commitment_events_are_stamped_with_the_ledgers_run_key() {
             EventKind::EpisodeStarted {
                 episode_id: "e2".into(),
                 session_id: "s1".into(),
+                strand_id: None,
             },
         ))
         .unwrap();

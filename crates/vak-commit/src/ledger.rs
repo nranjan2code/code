@@ -39,6 +39,10 @@ pub enum EventKind {
     EpisodeStarted {
         episode_id: String,
         session_id: String,
+        /// The strand this episode works on; the event's trace key names
+        /// its turn (docs/design/85-turn-graph.md, G0).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        strand_id: Option<String>,
     },
     EpisodeEnded {
         episode_id: String,
@@ -383,6 +387,7 @@ pub fn project(events: &[Event]) -> Option<Commitment> {
             EventKind::EpisodeStarted {
                 episode_id,
                 session_id,
+                strand_id,
             } => {
                 // A new episode is someone working it again: whatever
                 // blocked or suspended the last one is no longer the state.
@@ -392,6 +397,7 @@ pub fn project(events: &[Event]) -> Option<Commitment> {
                 commitment.episodes.push(Episode {
                     episode_id: episode_id.clone(),
                     session_id: session_id.clone(),
+                    strand_id: strand_id.clone(),
                     started_at: event.ts,
                     ended_at: None,
                     advancement: None,
