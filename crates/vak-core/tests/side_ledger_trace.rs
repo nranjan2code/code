@@ -94,8 +94,9 @@ fn misread_and_routing_rows_carry_the_run_key() {
         None,
     );
     evidence.record_receipts(std::slice::from_ref(&receipt), Some(&key));
-    let raw = std::fs::read_to_string(dir.path().join("routing-evidence.jsonl")).unwrap();
-    let row: routing::EvidenceRow = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+    let rows: Vec<routing::EvidenceRow> =
+        vak_session::chain::RecordChain::at(dir.path().join("routing-evidence")).read();
+    let row = rows.into_iter().next().unwrap();
     assert_eq!(row.trace.as_ref().map(|t| t.run), Some(key.run));
     assert_eq!(row.actor, Some(actor));
 }

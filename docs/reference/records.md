@@ -13,7 +13,7 @@ fields. A `ledger` is append-only JSONL; a `record` is one file per entity.
 
 ## action_receipt
 
-Type `ActionReceipt` in `crates/vak-server/src/operations.rs`. Class: ledger. Stored in: `operations/actions.jsonl`. Version: 1.
+Type `ActionReceipt` in `crates/vak-server/src/operations.rs`. Class: ledger. Stored in: `operations/actions`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -30,7 +30,7 @@ Type `ActionReceipt` in `crates/vak-server/src/operations.rs`. Class: ledger. St
 
 ## activity_row
 
-Type `ActivityRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `activity-log.jsonl`. Version: 1.
+Type `ActivityRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `activity-log`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -65,7 +65,7 @@ Type `AudienceGrant` in `crates/vak-server/src/coworking.rs`. Class: ledger. Sto
 
 ## budget_alert_row
 
-Type `BudgetAlertRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `budget-alerts.jsonl`. Version: 1.
+Type `BudgetAlertRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `budget-alerts`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -101,7 +101,7 @@ Type `CandidateRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored
 
 ## commitment_event
 
-Type `Event` in `crates/vak-commit/src/ledger.rs`. Class: ledger. Stored in: `commitments.jsonl`. Version: 1.
+Type `Event` in `crates/vak-commit/src/ledger.rs`. Class: ledger. Stored in: `commitments`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -114,7 +114,7 @@ Type `Event` in `crates/vak-commit/src/ledger.rs`. Class: ledger. Stored in: `co
 
 ## cost_row
 
-Type `CostRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `cost-log.jsonl`. Version: 1.
+Type `CostRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `cost-log`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -147,7 +147,7 @@ Type `EnvironmentRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stor
 
 ## evidence_row
 
-Type `EvidenceRow` in `crates/vak-core/src/routing.rs`. Class: ledger. Stored in: `routing-evidence.jsonl`. Version: 1.
+Type `EvidenceRow` in `crates/vak-core/src/routing.rs`. Class: ledger. Stored in: `routing-evidence`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -161,7 +161,7 @@ Type `EvidenceRow` in `crates/vak-core/src/routing.rs`. Class: ledger. Stored in
 
 ## inbox_entry
 
-Type `Entry` in `crates/vak-core/src/inbox.rs`. Class: ledger. Stored in: `inbox.jsonl`. Version: 1.
+Type `Entry` in `crates/vak-core/src/inbox.rs`. Class: ledger. Stored in: `inbox`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -180,7 +180,7 @@ Type `Entry` in `crates/vak-core/src/inbox.rs`. Class: ledger. Stored in: `inbox
 
 ## incident_record
 
-Type `IncidentRecord` in `crates/vak-server/src/operations.rs`. Class: ledger. Stored in: `operations/incidents.jsonl`. Version: 1.
+Type `IncidentRecord` in `crates/vak-server/src/operations.rs`. Class: ledger. Stored in: `operations/incidents`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -202,7 +202,7 @@ Type `IncidentRecord` in `crates/vak-server/src/operations.rs`. Class: ledger. S
 
 ## misread_row
 
-Type `MisreadRow` in `crates/vak-core/src/misread.rs`. Class: ledger. Stored in: `intent-evidence.jsonl`. Version: 1.
+Type `MisreadRow` in `crates/vak-core/src/misread.rs`. Class: ledger. Stored in: `intent-evidence`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -272,7 +272,7 @@ Type `PromotionRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored
 
 ## security_event
 
-Type `SecurityEvent` in `crates/vak-core/src/security_events.rs`. Class: ledger. Stored in: `security-events.jsonl`. Version: 1.
+Type `SecurityEvent` in `crates/vak-core/src/security_events.rs`. Class: ledger. Stored in: `security-events`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|

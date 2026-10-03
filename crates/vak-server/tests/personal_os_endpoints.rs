@@ -545,7 +545,7 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
 async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
     let srv = spawn_server("").await;
     std::fs::create_dir_all(srv.home.join("sessions/x")).unwrap();
-    std::fs::write(srv.home.join("cost-log.jsonl"), "{\"kind\":\"cost\"}\n").unwrap();
+    std::fs::write(srv.home.join("cost-log"), "{\"kind\":\"cost\"}\n").unwrap();
     std::fs::write(srv.home.join("sessions/x/a.jsonl"), "ledger-bytes").unwrap();
     let dest = tempfile::tempdir().unwrap();
 
@@ -569,7 +569,7 @@ async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
     );
 
     // Wipe the live data, then restore: skip-conflict report counts copies.
-    std::fs::remove_file(srv.home.join("cost-log.jsonl")).unwrap();
+    std::fs::remove_file(srv.home.join("cost-log")).unwrap();
     std::fs::remove_file(srv.home.join("sessions/x/a.jsonl")).unwrap();
     let res = srv
         .client
@@ -586,7 +586,7 @@ async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
     assert_eq!(body["copied"], 2);
     assert_eq!(body["skipped"], 0);
     assert_eq!(
-        std::fs::read_to_string(srv.home.join("cost-log.jsonl")).unwrap(),
+        std::fs::read_to_string(srv.home.join("cost-log")).unwrap(),
         "{\"kind\":\"cost\"}\n",
         "roundtrip must be byte-identical"
     );
@@ -604,7 +604,7 @@ async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
         .unwrap();
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["renamed"], 2);
-    assert!(srv.home.join("cost-log.import1.jsonl").is_file());
+    assert!(srv.home.join("cost-log.import1").is_file());
 
     // Self-backup is rejected on both directions, typed 400.
     for (uri, field) in [

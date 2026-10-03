@@ -8,8 +8,8 @@
 //! object.
 
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::PathBuf;
+use vak_session::chain::RecordChain;
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -91,13 +91,7 @@ struct IncidentEvent {
 }
 
 fn read_events(shared: &vak_config::scope::SharedScope) -> Vec<IncidentEvent> {
-    let Ok(raw) = std::fs::read_to_string(log_path(shared)) else {
-        return Vec::new();
-    };
-    raw.lines()
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
+    RecordChain::at(log_path(shared)).read()
 }
 
 fn folded(shared: &vak_config::scope::SharedScope) -> Vec<IncidentRecord> {
@@ -111,22 +105,7 @@ fn folded(shared: &vak_config::scope::SharedScope) -> Vec<IncidentRecord> {
 }
 
 fn append(shared: &vak_config::scope::SharedScope, event: &IncidentEvent) {
-    let path = log_path(shared);
-    let Some(parent) = path.parent() else { return };
-    if std::fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let Ok(mut line) = serde_json::to_vec(event) else {
-        return;
-    };
-    line.push(b'\n');
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = file.write_all(&line);
-    }
+    let _ = RecordChain::at(log_path(shared)).append(event);
 }
 
 /// Persist an operation receipt. Receipts are append-only so an operator can
@@ -136,35 +115,17 @@ pub fn record_action(
     shared: &vak_config::scope::SharedScope,
     receipt: &ActionReceipt,
 ) -> Result<(), String> {
-    let path = actions_path(shared);
-    let Some(parent) = path.parent() else {
-        return Err("operations path has no parent".to_string());
-    };
-    std::fs::create_dir_all(parent)
-        .map_err(|error| format!("create operations directory: {error}"))?;
-    let mut line =
-        serde_json::to_vec(receipt).map_err(|error| format!("encode receipt: {error}"))?;
-    line.push(b'\n');
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|error| format!("open action ledger: {error}"))?;
-    file.write_all(&line)
+    RecordChain::at(actions_path(shared))
+        .append(receipt)
         .map_err(|error| format!("append action receipt: {error}"))
 }
 
 /// Return the newest durable action receipts, newest first.
 pub fn recent_actions(shared: &vak_config::scope::SharedScope, limit: usize) -> Vec<ActionReceipt> {
-    let Ok(raw) = std::fs::read_to_string(actions_path(shared)) else {
-        return Vec::new();
-    };
-    raw.lines()
-        .rev()
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| serde_json::from_str::<ActionReceipt>(line).ok())
-        .take(limit)
-        .collect()
+    let mut receipts: Vec<ActionReceipt> = RecordChain::at(actions_path(shared)).read();
+    receipts.reverse();
+    receipts.truncate(limit);
+    receipts
 }
 
 fn new_record(candidate: IncidentCandidate, now: DateTime<Utc>) -> IncidentRecord {

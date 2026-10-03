@@ -613,9 +613,10 @@ pub async fn maintain_all(shared_data_home: &Path) -> Maintenance {
             .flatten()
             .map(|entry| entry.path())
             .filter(|path| {
-                vak_config::scope::AgentScope::new(path)
-                    .commitments()
-                    .is_file()
+                vak_session::chain::RecordChain::at(
+                    vak_config::scope::AgentScope::new(path).commitments(),
+                )
+                .exists()
             })
             .collect();
         agents.sort();

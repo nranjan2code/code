@@ -170,14 +170,15 @@ async fn inbound(
 }
 
 fn deliveries(home: &Path) -> PathBuf {
-    home.join("gateway/deliveries.jsonl")
+    home.join("gateway/deliveries")
 }
 
 async fn wait_for_delivery(home: &Path, needle: &str, secs: u64) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(secs);
     while std::time::Instant::now() < deadline {
-        if let Ok(raw) = std::fs::read_to_string(deliveries(home))
-            && raw.contains(needle)
+        if vak_session::chain::RecordChain::at(deliveries(home))
+            .text()
+            .contains(needle)
         {
             return true;
         }
@@ -309,7 +310,7 @@ async fn a_forwarded_question_is_answered_from_the_approver_chat() {
         wait_for_delivery(&gw.home, "Question from Totals", 15).await,
         "the question is announced on the approver surface"
     );
-    let raw = std::fs::read_to_string(deliveries(&gw.home)).unwrap();
+    let raw = vak_session::chain::RecordChain::at(deliveries(&gw.home)).text();
     assert!(
         raw.contains("Which fiscal year?") && raw.contains("2025 | 2026"),
         "{raw}"
@@ -401,8 +402,8 @@ async fn without_forward_mode_the_worker_is_told_nobody_is_available() {
         worker_ledgers(&gw.home)
     );
     assert!(
-        !std::fs::read_to_string(deliveries(&gw.home))
-            .unwrap_or_default()
+        !vak_session::chain::RecordChain::at(deliveries(&gw.home))
+            .text()
             .contains("Question from"),
         "nothing was forwarded"
     );

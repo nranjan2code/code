@@ -16,7 +16,6 @@
 //! zero. A reading nobody corrected is not thereby proven right.
 
 use std::collections::{BTreeSet, HashMap};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -103,7 +102,7 @@ vak_session::impl_traced!(MisreadRow, "misread_row");
 
 /// Append-only observations about intent readings.
 ///
-/// Sits beside `routing-evidence.jsonl` and `commitments.jsonl` for the same
+/// Sits beside the routing evidence and commitments chains for the same
 /// reason: it is evidence about the runtime's own behaviour, not conversation
 /// content, and it must outlive any session.
 pub struct MisreadLedger {
@@ -179,32 +178,17 @@ impl MisreadLedger {
             actor: trace.and_then(|t| t.actor),
             trace: trace.cloned(),
         };
-        let Ok(line) = serde_json::to_string(&row) else {
-            return;
-        };
-        if let Some(parent) = self.path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         // Best-effort: losing a telemetry row must never cost the user a turn.
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-        {
-            let _ = writeln!(file, "{line}");
-        }
+        let _ = vak_session::chain::RecordChain::at(&self.path).append_relaxed(&row);
     }
 
-    /// TTL-filtered rows. A corrupt line — torn, not UTF-8, or not a row —
-    /// is skipped rather than trusted, and never ends the read.
+    /// TTL-filtered rows. A row that does not decode is skipped rather than
+    /// trusted, and never ends the read.
     pub fn rows(&self) -> Vec<MisreadRow> {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(TTL_DAYS);
-        let Ok(bytes) = std::fs::read(&self.path) else {
-            return Vec::new();
-        };
-        bytes
-            .split(|byte| *byte == b'\n')
-            .filter_map(|line| serde_json::from_slice::<MisreadRow>(line).ok())
+        vak_session::chain::RecordChain::at(&self.path)
+            .read::<MisreadRow>()
+            .into_iter()
             .filter(|row| row.ts >= cutoff)
             .collect()
     }
@@ -504,14 +488,10 @@ mod tests {
             Outcome::Held,
             None,
         );
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(ledger.path())
-            .unwrap();
-        writeln!(file, "not json at all").unwrap();
-        file.write_all(b"{\"torn\": \xff\n").unwrap();
-        drop(file);
-        // A bad line never ends the read: the row after it still counts.
+        let chain = vak_session::chain::RecordChain::at(ledger.path());
+        chain.append(&"not a row").unwrap();
+        chain.append(&serde_json::json!({ "torn": true })).unwrap();
+        // A bad row never ends the read: the row after it still counts.
         record(
             &ledger,
             Act::Modify,

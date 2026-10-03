@@ -2021,17 +2021,15 @@ async fn finops_status(
     .into_response()
 }
 
-/// Most recent budget-alert rows, newest first, tolerant of corrupt or
-/// foreign lines exactly like [`vak_core::finops::last_alert`] is.
+/// Most recent budget-alert rows, newest first, tolerant of foreign rows
+/// exactly like [`vak_core::finops::last_alert`] is.
 fn recent_budget_alerts(home: &std::path::Path, limit: usize) -> Vec<serde_json::Value> {
-    let Ok(body) = std::fs::read_to_string(home.join("budget-alerts.jsonl")) else {
-        return Vec::new();
-    };
-    let mut rows: Vec<serde_json::Value> = body
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|row| row.get("kind").and_then(|k| k.as_str()) == Some("budget_alert"))
-        .collect();
+    let mut rows: Vec<serde_json::Value> =
+        vak_session::chain::RecordChain::at(home.join("budget-alerts"))
+            .read::<serde_json::Value>()
+            .into_iter()
+            .filter(|row| row.get("kind").and_then(|k| k.as_str()) == Some("budget_alert"))
+            .collect();
     rows.reverse();
     rows.truncate(limit);
     rows

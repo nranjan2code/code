@@ -289,18 +289,17 @@ async fn webhook_missing_token_fails_closed() {
         captured.lock().unwrap().is_empty(),
         "missing credential must fail closed: nothing posted"
     );
-    let outbox = gw.cwd.join("home/delivery/jobs");
-    let pending = std::fs::read_dir(&outbox)
-        .unwrap()
-        .filter_map(Result::ok)
-        .find_map(|entry| std::fs::read_to_string(entry.path()).ok())
-        .expect("failed delivery remains in the durable outbox");
+    let pending = vak_session::chain::RecordChain::at(gw.cwd.join("home/delivery/jobs")).text();
     assert!(pending.contains("\"state\":\"pending\""), "{pending}");
     assert!(
         pending.contains("secret output"),
         "exact output survives: {pending}"
     );
-    let inbox = std::fs::read_to_string(gw.cwd.join("home/inbox.jsonl")).unwrap();
+    let inbox = vak_session::chain::RecordChain::at(gw.cwd.join("home/inbox"))
+        .read::<serde_json::Value>()
+        .iter()
+        .map(|row| row.to_string())
+        .collect::<String>();
     assert!(
         inbox.contains("secret output"),
         "inbox is recorded before push"

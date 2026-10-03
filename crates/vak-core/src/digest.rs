@@ -5,7 +5,6 @@
 //! not a failure of the run.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -75,13 +74,7 @@ fn fold_costs(
     sessions: &mut BTreeSet<String>,
     report: &mut DigestReport,
 ) {
-    let Ok(f) = std::fs::File::open(cost_log_path(scope)) else {
-        return;
-    };
-    for line in BufReader::new(f).lines().map_while(Result::ok) {
-        let Ok(row) = serde_json::from_str::<CostRow>(&line) else {
-            continue;
-        };
+    for row in vak_session::chain::RecordChain::at(cost_log_path(scope)).read::<CostRow>() {
         if row.ts < since {
             continue;
         }

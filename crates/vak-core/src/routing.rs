@@ -11,7 +11,6 @@
 //! on that leg clears it. Reality outranks priors.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -56,16 +55,9 @@ impl EvidenceLedger {
     }
 
     pub fn append(&self, row: &EvidenceRow) -> std::io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let line = serde_json::to_string(row)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        writeln!(f, "{line}")
+        vak_session::chain::RecordChain::at(&self.path)
+            .append_relaxed(row)
+            .map_err(std::io::Error::other)
     }
 
     /// TTL-filtered snapshot for the ordering function. Corrupt lines are
@@ -75,13 +67,7 @@ impl EvidenceLedger {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(EVIDENCE_TTL_DAYS as i64);
         let mut by_key: HashMap<(String, String), ModelEvidence> = HashMap::new();
         let mut latencies: HashMap<(String, String), Vec<u64>> = HashMap::new();
-        let Ok(f) = std::fs::File::open(&self.path) else {
-            return EvidenceSnapshot::default();
-        };
-        for line in BufReader::new(f).lines().map_while(Result::ok) {
-            let Ok(row) = serde_json::from_str::<EvidenceRow>(&line) else {
-                continue;
-            };
+        for row in vak_session::chain::RecordChain::at(&self.path).read::<EvidenceRow>() {
             if row.ts < cutoff {
                 continue;
             }
@@ -490,10 +476,9 @@ mod tests {
                 actor: None,
             })
             .unwrap();
-        let mut file_path = dir.path().join("routing-evidence.jsonl");
-        let mut existing = std::fs::read_to_string(&file_path).unwrap();
-        existing.push_str("not json\n");
-        std::fs::write(&mut file_path, existing).unwrap();
+        vak_session::chain::RecordChain::at(dir.path().join("routing-evidence"))
+            .append(&"not a row")
+            .unwrap();
 
         let snap = ledger.snapshot();
         let e = snap.get("p", "m");

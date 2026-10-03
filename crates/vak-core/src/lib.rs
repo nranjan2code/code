@@ -456,6 +456,8 @@ fn vak_core_ledger(core: &Core) -> finops::FinOpsLedger {
 }
 
 struct CoreInner {
+    /// `capability_unreachable` details already audited by this process.
+    unreachable_reported: std::sync::Mutex<std::collections::HashSet<String>>,
     /// The tenant's object store, opened on first use (`Core::objects`).
     objects: std::sync::OnceLock<Arc<dyn vak_session::objects::Objects>>,
     history_indexing: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -1315,6 +1317,7 @@ impl Core {
             Vec::new()
         };
         Ok(Core::from_inner(Arc::new(CoreInner {
+            unreachable_reported: Default::default(),
             objects: std::sync::OnceLock::new(),
             history_indexing: std::sync::Mutex::new(std::collections::HashSet::new()),
             history_index_failures: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -7107,6 +7110,17 @@ impl Core {
         }
         let turn_standings = self.capability_standings();
         for detail in reach::audit_details(&turn_standings) {
+            // Level-triggered: an unreachable capability is audited when
+            // first seen, not again on every turn it stays unreachable.
+            let first_seen = self
+                .inner
+                .unreachable_reported
+                .lock()
+                .map(|mut seen| seen.insert(detail.clone()))
+                .unwrap_or(true);
+            if !first_seen {
+                continue;
+            }
             security_events::record(
                 &self.scope(),
                 security_events::EventKind::CapabilityUnreachable,

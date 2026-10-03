@@ -91,20 +91,19 @@ async fn trashed_session_absent_from_every_search() {
         "the zanzibar passport number is private",
     );
     let now = chrono::Utc::now().to_rfc3339();
-    let cost_rows: String = [&kept, &gone]
+    let cost_rows: Vec<serde_json::Value> = [&kept, &gone]
         .iter()
         .map(|sid| {
-            format!(
-                "{}\n",
-                serde_json::json!({
-                    "ts": now, "model": "m", "provider": "p",
-                    "input_tokens": 10, "output_tokens": 5, "usd": 0.01,
-                    "source": "estimated", "session_id": sid,
-                })
-            )
+            serde_json::json!({
+                "ts": now, "model": "m", "provider": "p",
+                "input_tokens": 10, "output_tokens": 5, "usd": 0.01,
+                "source": "estimated", "session_id": sid,
+            })
         })
         .collect();
-    std::fs::write(home.join("cost-log.jsonl"), cost_rows).unwrap();
+    vak_session::chain::RecordChain::at(home.join("cost-log"))
+        .append_all(&cost_rows)
+        .unwrap();
 
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();

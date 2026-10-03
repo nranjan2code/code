@@ -6,7 +6,6 @@
 
 mod support;
 
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -172,12 +171,11 @@ impl Server {
 }
 
 fn delivery_lines(home: &Path) -> Vec<(String, String)> {
-    let Ok(f) = std::fs::File::open(home.join("gateway").join("deliveries.jsonl")) else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
-    for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+    for v in vak_session::chain::RecordChain::at(home.join("gateway").join("deliveries"))
+        .read::<serde_json::Value>()
+    {
+        {
             out.push((
                 v["target"].as_str().unwrap_or_default().to_string(),
                 v["text"].as_str().unwrap_or_default().to_string(),
@@ -235,7 +233,7 @@ async fn watchdog_summary_lands_in_inbox_with_zero_transports() {
         "watchdog summary never landed in the inbox"
     );
     // The durable ledger itself exists on disk — not just an endpoint view.
-    assert!(srv.home.join("inbox.jsonl").is_file());
+    assert!(vak_session::chain::RecordChain::at(srv.home.join("inbox")).exists());
     // Zero transports configured: nothing was delivered anywhere else.
     assert!(
         !wait_until(2, || !delivery_lines(&srv.home).is_empty()).await,

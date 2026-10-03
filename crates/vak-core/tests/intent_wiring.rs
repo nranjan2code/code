@@ -364,7 +364,8 @@ async fn strands_are_recorded_and_become_open_threads() {
 async fn one_turn_one_id_from_intent_to_side_ledgers() {
     let (core, cwd) = core_with("[memory]\nreflection = false\n", vec![text("two files")]);
     let session = core.start_session().await.unwrap();
-    let (tx, _rx) = tokio::sync::mpsc::channel(64);
+    let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
     let (_, session) = core
         .run_turn_with(
             session,
@@ -418,16 +419,16 @@ async fn one_turn_one_id_from_intent_to_side_ledgers() {
 
     let evidence = walk(&cwd.join("home"))
         .into_iter()
-        .find(|path| path.ends_with("routing-evidence.jsonl"))
+        .find_map(|path| {
+            let dir = path.parent()?;
+            dir.ends_with("routing-evidence").then(|| dir.to_path_buf())
+        })
         .expect("a routing evidence ledger");
-    let row: serde_json::Value = serde_json::from_str(
-        std::fs::read_to_string(evidence)
-            .unwrap()
-            .lines()
-            .next()
-            .expect("an evidence row"),
-    )
-    .unwrap();
+    let row: serde_json::Value = vak_session::chain::RecordChain::at(evidence)
+        .read::<serde_json::Value>()
+        .into_iter()
+        .next()
+        .expect("an evidence row");
     let trace: vak_session::trace::TraceKey = serde_json::from_value(row["trace"].clone()).unwrap();
     assert_eq!(
         trace.turn.map(|turn| turn.to_string()),

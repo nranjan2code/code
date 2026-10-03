@@ -5,29 +5,14 @@
 //! surfaces auto-deny via the normal approver path.
 
 use std::collections::{BTreeMap, HashMap};
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use vak_session::chain::RecordChain;
 
 use serde::{Deserialize, Serialize};
 use vak_agent::{SpendCheck, SpendGate, SpendReservationId};
 use vak_llm::Usage;
-
-/// Above this size, `append` compacts the ledger before writing (see
-/// [`FinOpsLedger::compact_if_large`]) instead of letting it grow forever —
-/// every `authorize()` used to re-read the whole file from the start of
-/// time on every paid dispatch, so an unbounded file meant unbounded
-/// per-dispatch latency as well as unbounded disk use.
-const COST_LOG_COMPACT_THRESHOLD_BYTES: u64 = 5 * 1024 * 1024;
-/// How much history compaction keeps: comfortably more than the 14-day
-/// admin trend chart and the `total_usd_since` callers in this codebase
-/// use (7/30-day rollups), so compaction never changes a real answer.
-const COST_LOG_RETENTION_DAYS: i64 = 90;
-/// Same idea for the budget-alert log, which is read in full by
-/// `last_alert`/`recent_budget_alerts` and only ever needs recent history.
-const ALERTS_COMPACT_THRESHOLD_BYTES: u64 = 1024 * 1024;
-const ALERTS_RETENTION_ROWS: usize = 2000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostRow {
@@ -93,27 +78,13 @@ impl ActivityLedger {
     }
 
     pub fn append(&self, row: &ActivityRow) -> std::io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let line = serde_json::to_string(row)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        writeln!(file, "{line}")
+        RecordChain::at(&self.path)
+            .append_relaxed(row)
+            .map_err(std::io::Error::other)
     }
 
     pub fn all_rows(&self) -> Vec<ActivityRow> {
-        let Ok(file) = std::fs::File::open(&self.path) else {
-            return Vec::new();
-        };
-        BufReader::new(file)
-            .lines()
-            .map_while(Result::ok)
-            .filter_map(|line| serde_json::from_str(&line).ok())
-            .collect()
+        RecordChain::at(&self.path).read()
     }
 }
 
@@ -128,77 +99,27 @@ impl FinOpsLedger {
         }
     }
 
+    /// Appends one row. The ledger is never rewritten: rows past their
+    /// retention leave through the lifecycle reconciler (plan M7a), not a
+    /// compaction pass here.
     pub fn append(&self, row: &CostRow) -> std::io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        self.compact_if_large()?;
-        let line = serde_json::to_string(row)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        writeln!(f, "{line}")
-    }
-
-    /// Bound the ledger's on-disk size: cheap to skip on every call (one
-    /// `metadata()` stat), and only reads+rewrites the whole file the rare
-    /// time it actually crosses the threshold. Drops rows older than
-    /// [`COST_LOG_RETENTION_DAYS`]; never touches today's numbers.
-    fn compact_if_large(&self) -> std::io::Result<()> {
-        self.compact_if_larger_than(
-            COST_LOG_COMPACT_THRESHOLD_BYTES,
-            chrono::Duration::days(COST_LOG_RETENTION_DAYS),
-        )
-    }
-
-    /// Parameterized so tests can exercise compaction without writing
-    /// megabytes of fixture rows first.
-    fn compact_if_larger_than(
-        &self,
-        threshold_bytes: u64,
-        retention: chrono::Duration,
-    ) -> std::io::Result<()> {
-        let Ok(meta) = std::fs::metadata(&self.path) else {
-            return Ok(());
-        };
-        if meta.len() < threshold_bytes {
-            return Ok(());
-        }
-        let cutoff = chrono::Utc::now() - retention;
-        let kept = self
-            .all_rows()
-            .into_iter()
-            .filter(|r| r.ts >= cutoff)
-            .collect::<Vec<_>>();
-        let tmp = self.path.with_extension("jsonl.compact.tmp");
-        {
-            let mut f = std::fs::File::create(&tmp)?;
-            for row in &kept {
-                let line = serde_json::to_string(row)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                writeln!(f, "{line}")?;
-            }
-        }
-        std::fs::rename(&tmp, &self.path)
+        RecordChain::at(&self.path)
+            .append(row)
+            .map_err(std::io::Error::other)
     }
 
     /// USD total over rows at or after `since`. Unpriced rows contribute
     /// nothing but are never treated as evidence of zero spend elsewhere.
     pub fn total_usd_since(&self, since: chrono::DateTime<chrono::Utc>) -> f64 {
-        let Ok(f) = std::fs::File::open(&self.path) else {
-            return 0.0;
-        };
         let mut total = 0.0;
-        for line in BufReader::new(f).lines().map_while(Result::ok) {
-            if let Ok(row) = serde_json::from_str::<CostRow>(&line)
-                && row.ts >= since
+        RecordChain::at(&self.path).scan(|row: CostRow| {
+            if row.ts >= since
                 && let Some(usd) = row.usd
             {
                 total += usd;
             }
-        }
+            true
+        });
         total
     }
 
@@ -218,14 +139,7 @@ impl FinOpsLedger {
     /// provider/model breakdowns) rather than a single aggregate. Corrupt
     /// lines are skipped, same tolerance `total_usd_since` already has.
     pub fn all_rows(&self) -> Vec<CostRow> {
-        let Ok(f) = std::fs::File::open(&self.path) else {
-            return Vec::new();
-        };
-        BufReader::new(f)
-            .lines()
-            .map_while(Result::ok)
-            .filter_map(|line| serde_json::from_str::<CostRow>(&line).ok())
-            .collect()
+        RecordChain::at(&self.path).read()
     }
 
     /// One USD total per UTC calendar day, oldest first, for the trailing
@@ -826,7 +740,7 @@ pub fn alert_level(day_total_usd: f64, cap: f64) -> Option<AlertLevel> {
 }
 
 /// One audit-only budget-alert ledger row. Lives beside the cost log in
-/// `<home>/budget-alerts.jsonl`; never enters session logs, so projections
+/// the `<home>/budget-alerts` chain; never enters session logs, so projections
 /// are untouched. The `"kind"` tag mirrors session receipt entries so
 /// ledger consumers discriminate rows uniformly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -847,7 +761,7 @@ pub struct BudgetAlertRow {
 vak_session::impl_traced!(BudgetAlertRow, "budget_alert_row");
 
 fn alerts_path(home: &std::path::Path) -> PathBuf {
-    home.join("budget-alerts.jsonl")
+    home.join("budget-alerts")
 }
 
 /// Append an alert row for `level`, stamping it with the CURRENT day
@@ -857,8 +771,6 @@ pub fn record_alert(
     level: AlertLevel,
     session_id: &str,
 ) -> std::io::Result<BudgetAlertRow> {
-    std::fs::create_dir_all(home)?;
-    compact_alerts_if_large(home)?;
     let row = BudgetAlertRow {
         kind: "budget_alert".to_string(),
         ts: chrono::Utc::now(),
@@ -868,54 +780,22 @@ pub fn record_alert(
         trace: None,
         actor: None,
     };
-    let line = serde_json::to_string(&row)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(alerts_path(home))?;
-    writeln!(f, "{line}")?;
+    RecordChain::at(alerts_path(home))
+        .append(&row)
+        .map_err(std::io::Error::other)?;
     Ok(row)
 }
 
-/// Same bounded-growth treatment as [`FinOpsLedger::compact_if_large`]:
-/// alerts are only ever read for "most recent N", so unbounded history
-/// buys nothing but disk and scan time.
-fn compact_alerts_if_large(home: &std::path::Path) -> std::io::Result<()> {
-    let path = alerts_path(home);
-    let Ok(meta) = std::fs::metadata(&path) else {
-        return Ok(());
-    };
-    if meta.len() < ALERTS_COMPACT_THRESHOLD_BYTES {
-        return Ok(());
-    }
-    let Ok(f) = std::fs::File::open(&path) else {
-        return Ok(());
-    };
-    let mut lines: Vec<String> = BufReader::new(f).lines().map_while(Result::ok).collect();
-    if lines.len() <= ALERTS_RETENTION_ROWS {
-        return Ok(());
-    }
-    let drop = lines.len() - ALERTS_RETENTION_ROWS;
-    lines.drain(0..drop);
-    let tmp = path.with_extension("jsonl.compact.tmp");
-    std::fs::write(&tmp, lines.join("\n") + "\n")?;
-    std::fs::rename(&tmp, &path)
-}
-
 /// Most recent recorded alert at exactly `level`, for once-per-window
-/// firing decisions. Corrupt lines are skipped; a missing file is None.
+/// firing decisions. Rows that do not decode are skipped; none is None.
 pub fn last_alert(home: &std::path::Path, level: AlertLevel) -> Option<BudgetAlertRow> {
-    let f = std::fs::File::open(alerts_path(home)).ok()?;
     let mut found = None;
-    for line in BufReader::new(f).lines().map_while(Result::ok) {
-        if let Ok(row) = serde_json::from_str::<BudgetAlertRow>(&line)
-            && row.kind == "budget_alert"
-            && row.level == level
-        {
+    RecordChain::at(alerts_path(home)).scan(|row: BudgetAlertRow| {
+        if row.kind == "budget_alert" && row.level == level {
             found = Some(row);
         }
-    }
+        true
+    });
     found
 }
 
@@ -991,8 +871,8 @@ mod tests {
         );
         let ledger = FinOpsLedger::new(dir.path());
         assert_eq!(ledger.day_total_usd(chrono::Utc::now()), 0.0);
-        let text = std::fs::read_to_string(dir.path().join("cost-log.jsonl")).unwrap();
-        assert!(text.contains("\"usd\":null") || !text.contains("\"usd\""));
+        let rows: Vec<serde_json::Value> = RecordChain::at(dir.path().join("cost-log")).read();
+        assert!(rows.iter().all(|row| row["usd"].is_null()));
     }
 
     #[tokio::test]
@@ -1203,70 +1083,22 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_or_foreign_lines_are_ignored_by_readback() {
+    fn corrupt_or_foreign_rows_are_ignored_by_readback() {
         let dir = tempdir().unwrap();
-        std::fs::write(
-            alerts_path(dir.path()),
-            concat!(
-                "{not json\n",
-                "{\"kind\":\"receipt\",\"other\":1}\n",
-                "{\"kind\":\"budget_alert\",\"ts\":\"2026-08-24T00:00:00Z\",\"level\":\"eighty\",\"day_total_usd\":1.5,\"session_id\":\"seed\"}\n",
-            ),
-        )
-        .unwrap();
+        RecordChain::at(alerts_path(dir.path()))
+            .append_all(&[
+                serde_json::json!("not a row"),
+                serde_json::json!({"kind": "receipt", "other": 1}),
+                serde_json::json!({
+                    "kind": "budget_alert", "ts": "2026-08-24T00:00:00Z", "level": "eighty",
+                    "day_total_usd": 1.5, "session_id": "seed",
+                }),
+            ])
+            .unwrap();
         let found = last_alert(dir.path(), AlertLevel::Eighty).unwrap();
         assert_eq!(found.session_id, "seed");
         assert!((found.day_total_usd - 1.5).abs() < 1e-9);
         assert!(last_alert(dir.path(), AlertLevel::Full).is_none());
-    }
-
-    /// Audit fix: the ledger used to grow forever with no rotation, and
-    /// every `authorize()` re-read the whole file from disk on every paid
-    /// dispatch. Compaction should trim old rows once the file crosses
-    /// its size threshold, and must never drop anything within the
-    /// retention window.
-    #[test]
-    fn compaction_drops_only_rows_older_than_retention() {
-        let dir = tempdir().unwrap();
-        let ledger = FinOpsLedger::new(dir.path());
-        let now = chrono::Utc::now();
-        let old = now - chrono::Duration::days(400);
-        ledger.append(&row_on(old.date_naive(), Some(1.0))).unwrap();
-        ledger.append(&row_on(now.date_naive(), Some(2.0))).unwrap();
-
-        // Force compaction on the next append regardless of actual file
-        // size, with a short retention window so the seeded old row falls
-        // outside it.
-        ledger
-            .compact_if_larger_than(0, chrono::Duration::days(1))
-            .unwrap();
-
-        let rows = ledger.all_rows();
-        assert_eq!(
-            rows.len(),
-            1,
-            "the old row must be dropped, not the fresh one"
-        );
-        assert_eq!(rows[0].usd, Some(2.0));
-        // Aggregates must be unaffected by compaction for anything still
-        // within the retention window.
-        assert_eq!(ledger.day_total_usd(now), 2.0);
-    }
-
-    #[test]
-    fn compaction_is_a_noop_below_the_size_threshold() {
-        let dir = tempdir().unwrap();
-        let ledger = FinOpsLedger::new(dir.path());
-        let now = chrono::Utc::now();
-        let old = now - chrono::Duration::days(400);
-        ledger.append(&row_on(old.date_naive(), Some(1.0))).unwrap();
-
-        // A generous threshold the tiny fixture file can never cross:
-        // compaction must leave old-but-still-present rows alone.
-        ledger
-            .compact_if_larger_than(u64::MAX, chrono::Duration::days(1))
-            .unwrap();
-        assert_eq!(ledger.all_rows().len(), 1);
     }
 
     /// Audit fix: concurrent dispatches used to each read the same stale

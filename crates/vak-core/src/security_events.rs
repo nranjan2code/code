@@ -75,7 +75,7 @@ pub enum EventKind {
     CapabilityUnreachable,
 }
 
-/// Append a security event to `<home>/security-events.jsonl`.
+/// Append a security event to the `<home>/security-events` chain.
 /// Best-effort: never panics, returns the event on success.
 pub fn record(
     scope: &vak_config::scope::AgentScope,
@@ -101,30 +101,15 @@ fn append_event(
     scope: &vak_config::scope::AgentScope,
     event: &SecurityEvent,
 ) -> Result<(), std::io::Error> {
-    let path = security_events_path(scope);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut line = serde_json::to_vec(event).map_err(std::io::Error::other)?;
-    line.push(b'\n');
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .and_then(|mut f| std::io::Write::write_all(&mut f, &line))
+    vak_session::chain::RecordChain::at(security_events_path(scope))
+        .append(event)
+        .map_err(std::io::Error::other)
 }
 
 /// Read all security events (newest first), capped at `limit`.
 pub fn list(scope: &vak_config::scope::AgentScope, limit: usize) -> Vec<SecurityEvent> {
-    let path = security_events_path(scope);
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    let mut events: Vec<SecurityEvent> = raw
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
+    let mut events: Vec<SecurityEvent> =
+        vak_session::chain::RecordChain::at(security_events_path(scope)).read();
     events.reverse();
     events.truncate(limit);
     events

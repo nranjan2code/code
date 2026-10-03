@@ -170,14 +170,15 @@ async fn inbound(
 }
 
 fn deliveries(home: &Path) -> PathBuf {
-    home.join("gateway/deliveries.jsonl")
+    home.join("gateway/deliveries")
 }
 
 async fn wait_for_delivery(home: &Path, needle: &str, secs: u64) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(secs);
     while std::time::Instant::now() < deadline {
-        if let Ok(raw) = std::fs::read_to_string(deliveries(home))
-            && raw.contains(needle)
+        if vak_session::chain::RecordChain::at(deliveries(home))
+            .text()
+            .contains(needle)
         {
             return true;
         }
@@ -221,11 +222,8 @@ async fn forwarded_gate_resolves_from_approver_chat() {
             .await
             .unwrap();
         eprintln!("DBG status={status}");
-        if let Ok(raw) = std::fs::read_to_string(deliveries(&gw.home)) {
-            eprintln!("DBG deliveries={raw}");
-        } else {
-            eprintln!("DBG deliveries=<missing> home={:?}", gw.home);
-        }
+        let raw = vak_session::chain::RecordChain::at(deliveries(&gw.home)).text();
+        eprintln!("DBG deliveries={raw} home={:?}", gw.home);
     }
     assert!(announced, "gate must be announced on the approver surface");
 
@@ -382,7 +380,7 @@ async fn addressed_yes_resolves_only_that_gate_and_reports_it() {
         wait_for_delivery(&gw.home, "Approval requested", 15).await,
         "gate announced"
     );
-    let raw = std::fs::read_to_string(deliveries(&gw.home)).unwrap();
+    let raw = vak_session::chain::RecordChain::at(deliveries(&gw.home)).text();
     let announcement = raw
         .lines()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())

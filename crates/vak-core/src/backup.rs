@@ -331,12 +331,7 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, rel).unwrap();
         }
-        for rel in [
-            "cost-log.jsonl",
-            "routing-evidence.jsonl",
-            "tasks.json",
-            "desktop.json",
-        ] {
+        for rel in ["cost-log", "routing-evidence", "tasks.json", "desktop.json"] {
             std::fs::write(home.join(rel), rel).unwrap();
         }
     }
@@ -357,8 +352,8 @@ mod tests {
             "checkpoints/s1/000.json",
             "skill-proposals/deadbeef/p.md",
             "trusted/allow.toml",
-            "cost-log.jsonl",
-            "routing-evidence.jsonl",
+            "cost-log",
+            "routing-evidence",
             "tasks.json",
             "desktop.json",
         ]
@@ -375,7 +370,7 @@ mod tests {
         assert_eq!(report.renamed, 0);
         for rel in [
             "sessions/abc123/ledger.jsonl",
-            "cost-log.jsonl",
+            "cost-log",
             "desktop.json",
             "memory/user/USER.md",
         ] {
@@ -390,12 +385,12 @@ mod tests {
     #[test]
     fn import_skip_never_touches_existing_data() {
         let dest = tempdir().unwrap();
-        std::fs::write(dest.path().join("cost-log.jsonl"), "{\"seed\":true}\n").unwrap();
+        std::fs::write(dest.path().join("cost-log"), "{\"seed\":true}\n").unwrap();
         std::fs::create_dir_all(dest.path().join("sessions/x")).unwrap();
         std::fs::write(dest.path().join("sessions/x/keep.jsonl"), "keep").unwrap();
 
         let home = tempdir().unwrap();
-        std::fs::write(home.path().join("cost-log.jsonl"), "{\"new\":1}\n").unwrap();
+        std::fs::write(home.path().join("cost-log"), "{\"new\":1}\n").unwrap();
         let s = home.path().join("sessions/x");
         std::fs::create_dir_all(&s).unwrap();
         std::fs::write(s.join("keep.jsonl"), "REPLACEMENT-attempt").unwrap();
@@ -404,7 +399,7 @@ mod tests {
         assert_eq!(report.skipped, 2);
         assert_eq!(report.copied, 0);
         assert_eq!(
-            std::fs::read_to_string(home.path().join("cost-log.jsonl")).unwrap(),
+            std::fs::read_to_string(home.path().join("cost-log")).unwrap(),
             "{\"new\":1}\n",
             "existing file must win under Skip"
         );

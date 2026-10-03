@@ -7,7 +7,6 @@
 //! monotonically and reads stay bounded by [`MAX_SCAN`].
 
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -338,63 +337,34 @@ pub fn unread_count(scope: &vak_config::scope::AgentScope) -> usize {
 }
 
 fn append_line(path: &Path, line: &str) -> Result<(), InboxError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| InboxError::Io {
-            path: parent.to_path_buf(),
-            source: e,
-        })?;
-    }
-    let mut buf = String::with_capacity(line.len() + 1);
-    buf.push_str(line);
-    buf.push('\n');
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
+    let row: serde_json::Value =
+        serde_json::from_str(line).map_err(|e| InboxError::Serialize(e.to_string()))?;
+    vak_session::chain::RecordChain::at(path)
+        .append(&row)
         .map_err(|e| InboxError::Io {
             path: path.to_path_buf(),
-            source: e,
-        })?;
-    f.write_all(buf.as_bytes()).map_err(|e| InboxError::Io {
-        path: path.to_path_buf(),
-        source: e,
-    })
+            source: std::io::Error::other(e),
+        })
 }
 
-/// Last MAX_SCAN raw lines (oldest→newest within the window); corrupt
-/// lines are counted, not fatal. Missing file reads as empty. Entries and
+/// Last MAX_SCAN rows (oldest→newest within the window); rows that are
+/// neither an entry nor an ack are counted, not fatal. Missing reads as empty. Entries and
 /// ack tombstones come from the same window so read state stays
 /// consistent with what a surface can see.
 fn scan_window(path: &Path) -> Window {
-    let mut window: VecDeque<String> = VecDeque::with_capacity(64);
-    let mut torn_reads = 0usize;
-    if let Ok(f) = std::fs::File::open(path) {
-        for line in BufReader::new(f).lines() {
-            match line {
-                Ok(l) => {
-                    if window.len() == MAX_SCAN {
-                        window.pop_front();
-                    }
-                    window.push_back(l);
-                }
-                Err(_) => {
-                    // A torn read mid-line cannot continue by contract of
-                    // BufRead::lines; count it and stop.
-                    torn_reads += 1;
-                    break;
-                }
-            }
+    let mut window: VecDeque<serde_json::Value> = VecDeque::with_capacity(64);
+    vak_session::chain::RecordChain::at(path).scan(|row: serde_json::Value| {
+        if window.len() == MAX_SCAN {
+            window.pop_front();
         }
-    }
+        window.push_back(row);
+        true
+    });
     let mut out = Window::default();
-    out.corrupt += torn_reads;
-    for line in &window {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Ok(e) = serde_json::from_str::<Entry>(line) {
+    for row in window {
+        if let Ok(e) = serde_json::from_value::<Entry>(row.clone()) {
             out.entries.push(e);
-        } else if let Ok(a) = serde_json::from_str::<AckLine>(line) {
+        } else if let Ok(a) = serde_json::from_value::<AckLine>(row) {
             out.acked.push(a.ack_of);
         } else {
             out.corrupt += 1;
@@ -510,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_middle_line_is_skipped_and_counted() {
+    fn corrupt_middle_row_is_skipped_and_counted() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let first = record(
@@ -523,10 +493,9 @@ mod tests {
             None,
         )
         .unwrap();
-        let mut raw =
-            std::fs::read_to_string(inbox_path(&vak_config::scope::AgentScope::new(home))).unwrap();
-        raw.push_str("{\"id\": torn line no json\n");
-        std::fs::write(inbox_path(&vak_config::scope::AgentScope::new(home)), &raw).unwrap();
+        vak_session::chain::RecordChain::at(inbox_path(&vak_config::scope::AgentScope::new(home)))
+            .append(&serde_json::json!({ "id": "neither an entry nor an ack" }))
+            .unwrap();
         let last = record(
             &vak_config::scope::AgentScope::new(home),
             Kind::BudgetAlert,

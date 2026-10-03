@@ -793,10 +793,6 @@ impl ChannelAdapter for LogAdapter {
 
     async fn send(&self, core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
         let path = core.shared_scope().gateway_deliveries();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("create deliveries directory: {error}"))?;
-        }
         let mut line = serde_json::json!({
             "ts": chrono::Utc::now().to_rfc3339(),
             "target": packet.target,
@@ -810,15 +806,8 @@ impl ChannelAdapter for LogAdapter {
         if let Some(actor) = &packet.actor {
             line["actor"] = serde_json::json!(actor);
         }
-        let mut buffer = line.to_string();
-        buffer.push('\n');
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(|error| format!("open deliveries log: {error}"))?;
-        file.write_all(buffer.as_bytes())
+        vak_session::chain::RecordChain::at(path)
+            .append(&line)
             .map_err(|error| format!("append deliveries log: {error}"))
     }
 }

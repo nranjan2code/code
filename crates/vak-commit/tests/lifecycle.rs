@@ -465,20 +465,15 @@ fn a_ledger_without_an_opening_event_projects_nothing() {
 /// event written after it still counts. Stopping at the first bad line would
 /// silently roll every later commitment back to an older state.
 #[test]
-fn a_corrupt_line_hides_nothing_written_after_it() {
+fn a_row_that_is_not_an_event_hides_nothing_written_after_it() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = CommitmentLedger::new(dir.path());
     let id = ledger
         .open_commitment(spec(Evidence::None, Vec::new()))
         .unwrap();
-    {
-        use std::io::Write as _;
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(ledger.path())
-            .unwrap();
-        file.write_all(b"{\"torn\": \xff\xfe\n").unwrap();
-    }
+    vak_session::chain::RecordChain::at(ledger.path())
+        .append(&serde_json::json!({ "torn": true }))
+        .unwrap();
     ledger
         .append(&Event::new(
             &id,

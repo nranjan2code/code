@@ -2,11 +2,11 @@
 
 use crate::{DeliveryJob, DeliveryPacket};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, OpenOptions};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
+use vak_session::chain::RecordChain;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutboxRecord {
@@ -81,10 +81,8 @@ impl Outbox {
     }
 
     pub fn enqueue(&self, job: DeliveryJob) -> Result<OutboxRecord, OutboxError> {
-        fs::create_dir_all(&self.root).map_err(io_error)?;
-        let path = self.record_path(&job.job_id);
-        if path.exists() {
-            let existing = read_record(&path)?;
+        let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(existing) = self.latest().remove(&job.job_id) {
             if existing.job == job {
                 return Ok(existing);
             }
@@ -107,7 +105,7 @@ impl Outbox {
             trace,
             actor,
         };
-        create_record(&path, &record)?;
+        self.append(&record)?;
         Ok(record)
     }
 
@@ -119,36 +117,28 @@ impl Outbox {
         Ok(records)
     }
 
-    /// Read every persisted delivery record, newest updates first. The
-    /// operations console uses this for evidence and replay; the source of
-    /// truth remains the append-preserving JSON files.
+    /// Every job's current record, newest updates first. The operations
+    /// console uses this for evidence and replay; the source of truth is the
+    /// outbox chain, where each state change is a row.
     pub fn list(&self) -> Result<Vec<OutboxRecord>, OutboxError> {
         self.list_filtered(|_| true)
     }
 
     pub fn get(&self, job_id: &str) -> Result<OutboxRecord, OutboxError> {
-        read_record(&self.record_path(job_id))
+        self.latest()
+            .remove(job_id)
+            .ok_or_else(|| OutboxError::Io(format!("no outbox job {job_id}")))
     }
 
     fn list_filtered(
         &self,
         include: impl Fn(&OutboxRecord) -> bool,
     ) -> Result<Vec<OutboxRecord>, OutboxError> {
-        if !self.root.exists() {
-            return Ok(Vec::new());
-        }
-        let mut records = Vec::new();
-        for entry in fs::read_dir(&self.root).map_err(io_error)? {
-            let entry = entry.map_err(io_error)?;
-            let path = entry.path();
-            if path.extension().and_then(|value| value.to_str()) != Some("json") {
-                continue;
-            }
-            let record = read_record(&path)?;
-            if include(&record) {
-                records.push(record);
-            }
-        }
+        let mut records: Vec<OutboxRecord> = self
+            .latest()
+            .into_values()
+            .filter(|record| include(record))
+            .collect();
         records.sort_by_key(|record| (record.updated_at_ms, record.job.job_id.clone()));
         records.reverse();
         Ok(records)
@@ -202,90 +192,31 @@ impl Outbox {
         // same job) can't both read the pre-mutation record and have the
         // second overwrite the first's change. See the `lock` field doc.
         let _guard = self.lock.lock().unwrap_or_else(PoisonError::into_inner);
-        let path = self.record_path(job_id);
-        let mut record = read_record(&path)?;
+        let mut record = self.get(job_id)?;
         mutate(&mut record);
         record.updated_at_ms = epoch_millis();
-        append_record(&path, &record)?;
+        self.append(&record)?;
         Ok(record)
     }
 
-    fn record_path(&self, job_id: &str) -> PathBuf {
-        self.root.join(format!("{}.json", hex_name(job_id)))
+    /// The newest record of every job. A row that is not a record of the
+    /// supported schema is skipped, so it never hides a job's last state.
+    fn latest(&self) -> HashMap<String, OutboxRecord> {
+        let mut latest = HashMap::new();
+        RecordChain::at(&self.root).scan(|record: OutboxRecord| {
+            if record.schema_version == 1 {
+                latest.insert(record.job.job_id.clone(), record);
+            }
+            true
+        });
+        latest
     }
-}
 
-fn read_record(path: &Path) -> Result<OutboxRecord, OutboxError> {
-    let bytes = fs::read(path).map_err(io_error)?;
-    let record: OutboxRecord = match serde_json::from_slice(&bytes) {
-        Ok(record) => record,
-        Err(full_error) => bytes
-            .split(|byte| *byte == b'\n')
-            .rev()
-            .filter(|line| !line.is_empty())
-            .find_map(|line| serde_json::from_slice(line).ok())
-            .ok_or_else(|| OutboxError::InvalidRecord(full_error.to_string()))?,
-    };
-    if record.schema_version != 1 {
-        return Err(OutboxError::InvalidRecord(format!(
-            "unsupported schema version {}",
-            record.schema_version
-        )));
+    fn append(&self, record: &OutboxRecord) -> Result<(), OutboxError> {
+        RecordChain::at(&self.root)
+            .append(record)
+            .map_err(|error| OutboxError::Io(error.to_string()))
     }
-    Ok(record)
-}
-
-fn create_record(path: &Path, record: &OutboxRecord) -> Result<(), OutboxError> {
-    let bytes = record_line(record)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| OutboxError::Io("record path has no parent".into()))?;
-    fs::create_dir_all(parent).map_err(io_error)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(io_error)?;
-    file.write_all(&bytes).map_err(io_error)?;
-    file.sync_all().map_err(io_error)?;
-    sync_directory(parent)
-}
-
-fn append_record(path: &Path, record: &OutboxRecord) -> Result<(), OutboxError> {
-    let bytes = record_line(record)?;
-    let mut file = OpenOptions::new()
-        .append(true)
-        .open(path)
-        .map_err(io_error)?;
-    file.write_all(&bytes).map_err(io_error)?;
-    file.sync_all().map_err(io_error)
-}
-
-fn record_line(record: &OutboxRecord) -> Result<Vec<u8>, OutboxError> {
-    let mut bytes = serde_json::to_vec(record)
-        .map_err(|error| OutboxError::InvalidRecord(error.to_string()))?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
-#[cfg(unix)]
-fn sync_directory(path: &Path) -> Result<(), OutboxError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(io_error)
-}
-
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<(), OutboxError> {
-    Ok(())
-}
-
-fn hex_name(value: &str) -> String {
-    value
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
 }
 
 fn epoch_millis() -> u64 {
@@ -293,10 +224,6 @@ fn epoch_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or_default()
-}
-
-fn io_error(error: std::io::Error) -> OutboxError {
-    OutboxError::Io(error.to_string())
 }
 
 #[cfg(test)]
@@ -362,24 +289,18 @@ mod tests {
         let packet = crate::render(&job).expect("render");
         outbox.mark_delivered(&job.job_id, packet).expect("mark");
         assert!(outbox.pending().expect("pending").is_empty());
-        let record_path = std::fs::read_dir(&root)
-            .expect("records")
-            .next()
-            .expect("record entry")
-            .expect("record path")
-            .path();
-        let history = std::fs::read_to_string(&record_path).expect("history");
-        assert_eq!(history.lines().count(), 2);
+        let history = RecordChain::at(&root).text();
+        assert_eq!(history.lines().count(), 2, "each state change is a row");
         assert!(history.contains("exact **answer**"));
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(record_path)
-            .expect("open partial")
-            .write_all(b"{\"partial\":")
-            .expect("write partial");
+        RecordChain::at(&root)
+            .append(&serde_json::json!({ "partial": true }))
+            .expect("append a foreign row");
         assert!(
-            outbox.pending().expect("pending after partial").is_empty(),
-            "a torn final append must not hide the last valid state"
+            outbox
+                .pending()
+                .expect("pending after foreign row")
+                .is_empty(),
+            "a row that is not a record must not hide the last valid state"
         );
         let _ = std::fs::remove_dir_all(root);
     }

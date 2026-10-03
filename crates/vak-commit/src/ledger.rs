@@ -9,7 +9,6 @@
 //! claiming success is refused unless the evidence actually supports it. A
 //! ledger that can record a lie is not an audit trail.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -163,9 +162,9 @@ struct LedgerLock {
     _file: std::fs::File,
 }
 
-/// Append-only JSONL of commitment events, one file per home.
+/// Append-only record chain of commitment events, one per home.
 ///
-/// Sits beside `routing-evidence.jsonl` in the sessions home for the same
+/// Sits beside the routing evidence in the sessions home for the same
 /// reason: it is runtime evidence about the agent's own behaviour, not
 /// conversation content, and it must survive any individual session.
 pub struct CommitmentLedger {
@@ -244,38 +243,25 @@ impl CommitmentLedger {
     /// Append without the closure check. Used by the projector's own tests and
     /// by recovery tooling that is deliberately reconstructing history.
     fn append_unchecked(&self, event: &Event) -> Result<(), LedgerError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let line = match (&self.trace, &event.trace) {
+        let chain = vak_session::chain::RecordChain::at(&self.path);
+        let appended = match (&self.trace, &event.trace) {
             (Some(trace), None) => {
                 let mut stamped = event.clone();
                 stamped.actor = stamped.actor.or(trace.actor);
                 stamped.trace = Some(trace.clone());
-                serde_json::to_string(&stamped)?
+                chain.append(&stamped)
             }
-            _ => serde_json::to_string(event)?,
+            _ => chain.append(event),
         };
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)?;
-        writeln!(file, "{line}")?;
-        Ok(())
+        appended.map_err(|error| LedgerError::Io(std::io::Error::other(error)))
     }
 
-    /// Every event, oldest first. A corrupt line — torn, not UTF-8, or not
-    /// an event — is skipped rather than trusted, and never ends the read:
-    /// a malformed row must not become a state change, and must not hide
-    /// every row written after it either.
+    /// Every event, oldest first. A row that is not an event is skipped
+    /// rather than trusted, and never ends the read: a malformed row must
+    /// not become a state change, and must not hide every row written after
+    /// it either.
     pub fn events(&self) -> Vec<Event> {
-        let Ok(bytes) = std::fs::read(&self.path) else {
-            return Vec::new();
-        };
-        bytes
-            .split(|byte| *byte == b'\n')
-            .filter_map(|line| serde_json::from_slice::<Event>(line).ok())
-            .collect()
+        vak_session::chain::RecordChain::at(&self.path).read()
     }
 
     /// Events for one commitment.

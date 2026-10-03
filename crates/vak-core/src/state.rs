@@ -318,32 +318,12 @@ pub const REGISTRY: &[StateEntry] = &[
         Class::Document,
     ),
     agent_entry("agents/{agent}/skills", "vak-core", Class::Desired),
-    agent_entry(
-        "agents/{agent}/commitments.jsonl",
-        "vak-commit",
-        Class::Record,
-    ),
-    agent_entry(
-        "agents/{agent}/routing-evidence.jsonl",
-        "vak-core",
-        Class::Record,
-    ),
-    agent_entry(
-        "agents/{agent}/intent-evidence.jsonl",
-        "vak-core",
-        Class::Record,
-    ),
-    agent_entry(
-        "agents/{agent}/security-events.jsonl",
-        "vak-core",
-        Class::Record,
-    ),
-    agent_entry("agents/{agent}/cost-log.jsonl", "vak-core", Class::Record),
-    agent_entry(
-        "agents/{agent}/activity-log.jsonl",
-        "vak-core",
-        Class::Record,
-    ),
+    agent_entry("agents/{agent}/commitments", "vak-commit", Class::Record),
+    agent_entry("agents/{agent}/routing-evidence", "vak-core", Class::Record),
+    agent_entry("agents/{agent}/intent-evidence", "vak-core", Class::Record),
+    agent_entry("agents/{agent}/security-events", "vak-core", Class::Record),
+    agent_entry("agents/{agent}/cost-log", "vak-core", Class::Record),
+    agent_entry("agents/{agent}/activity-log", "vak-core", Class::Record),
     agent_entry(
         "agents/{agent}/presentations.json",
         "vak-store",
@@ -367,7 +347,7 @@ pub const REGISTRY: &[StateEntry] = &[
     // revision is all there is (docs/design/66 §0a).
     agent_entry("agents/{agent}/canvas", "vak-server", Class::Document),
     StateEntry {
-        path: "security-events.jsonl",
+        path: "security-events",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
@@ -375,7 +355,7 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
-        path: "cost-log.jsonl",
+        path: "budget-alerts",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
@@ -383,7 +363,15 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
-        path: "routing-evidence.jsonl",
+        path: "cost-log",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: None,
+        class: Class::Record,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
+        path: "routing-evidence",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
@@ -418,7 +406,7 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
-        path: "inbox.jsonl",
+        path: "inbox",
         root: Root::Data,
         owner: "vak-core",
         schema: None,

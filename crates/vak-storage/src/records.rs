@@ -289,6 +289,12 @@ impl RecordWriter {
         })
     }
 
+    /// Closes without syncing what is pending: the frames stay written and
+    /// reach disk when the system writes them back.
+    pub fn close_unsynced(mut self) {
+        self.dirty = false;
+    }
+
     /// Makes every frame appended so far durable; a no-op when nothing
     /// is pending.
     pub fn sync(&mut self) -> Result<()> {

@@ -7,7 +7,6 @@
 
 mod support;
 
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -180,12 +179,11 @@ async fn spawn_full(
 }
 
 fn delivery_lines(home: &Path) -> Vec<(String, String)> {
-    let Ok(f) = std::fs::File::open(home.join("gateway").join("deliveries.jsonl")) else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
-    for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+    for v in vak_session::chain::RecordChain::at(home.join("gateway").join("deliveries"))
+        .read::<serde_json::Value>()
+    {
+        {
             out.push((
                 v["target"].as_str().unwrap_or_default().to_string(),
                 v["text"].as_str().unwrap_or_default().to_string(),
@@ -412,7 +410,7 @@ async fn script_watchdog_matrix_silent_stdout_failure_and_delivery() {
         eprintln!(
             "[DBG-test] deliveries={:?} raw={:?} summary={:?}",
             delivery_lines(&srv.home),
-            std::fs::read(srv.home.join("gateway").join("deliveries.jsonl")),
+            vak_session::chain::RecordChain::at(srv.home.join("gateway").join("deliveries")).text(),
             task_field(srv, &ok_id, "last_summary").await
         );
         panic!("delivery never landed");
@@ -618,7 +616,7 @@ async fn budget_alert_fires_once_per_window_then_stops() {
         })
         .unwrap();
 
-    let alerts_path = srv.home.join("budget-alerts.jsonl");
+    let alerts_path = srv.home.join("budget-alerts");
 
     let tid = create_task(
         srv,
@@ -632,14 +630,15 @@ async fn budget_alert_fires_once_per_window_then_stops() {
     // First fire crosses the threshold: one audit row, one delivery.
     assert_eq!(run_now(srv, &tid).await, 202);
     assert!(
-        wait_until(15, || std::fs::read_to_string(&alerts_path)
-            .map(|c| c.lines().count())
-            .unwrap_or(0)
+        wait_until(15, || vak_session::chain::RecordChain::at(&alerts_path)
+            .text()
+            .lines()
+            .count()
             >= 1)
         .await,
         "no budget alert row recorded"
     );
-    let rows = std::fs::read_to_string(&alerts_path).unwrap();
+    let rows = vak_session::chain::RecordChain::at(&alerts_path).text();
     assert_eq!(rows.lines().count(), 1, "{rows}");
     assert!(rows.contains("\"level\":\"eighty\""), "{rows}");
     assert!(
@@ -652,7 +651,7 @@ async fn budget_alert_fires_once_per_window_then_stops() {
     // Second fire inside the same day window: no new row, no redelivery.
     assert_eq!(run_now(srv, &tid).await, 202);
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    let rows = std::fs::read_to_string(&alerts_path).unwrap();
+    let rows = vak_session::chain::RecordChain::at(&alerts_path).text();
     assert_eq!(rows.lines().count(), 1, "same-level alert must not refire");
     let deliveries = delivery_lines(&srv.home)
         .iter()

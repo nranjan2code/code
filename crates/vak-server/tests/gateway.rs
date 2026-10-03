@@ -249,7 +249,7 @@ async fn inbound_wait_roundtrip_reuses_binding() {
     assert_eq!(header["cause"]["request_id"], "gateway-req-1");
     let run = header["run"].as_str().unwrap().to_string();
     assert!(run.starts_with("run_"), "{run}");
-    let cost = std::fs::read_to_string(home.join("home/cost-log.jsonl")).unwrap();
+    let cost = vak_session::chain::RecordChain::at(home.join("home/cost-log")).text();
     let row: serde_json::Value = serde_json::from_str(cost.lines().last().unwrap()).unwrap();
     assert_eq!(row["trace"]["run"], run.as_str(), "one request, one run");
     assert!(
@@ -809,14 +809,12 @@ async fn cron_task_delivers_summary_to_log_surface() {
     assert_eq!(res.status(), 202);
 
     // The summary lands in the log surface's delivery journal.
-    let path = cwd.join("home/gateway/deliveries.jsonl");
+    let path = cwd.join("home/gateway/deliveries");
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     let mut found = false;
     while std::time::Instant::now() < deadline {
-        if let Ok(raw) = std::fs::read_to_string(&path)
-            && raw.contains("routine 'nightly' finished")
-            && raw.contains("task finished cleanly")
-        {
+        let raw = vak_session::chain::RecordChain::at(&path).text();
+        if raw.contains("routine 'nightly' finished") && raw.contains("task finished cleanly") {
             found = true;
             break;
         }

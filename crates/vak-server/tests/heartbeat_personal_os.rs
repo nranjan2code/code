@@ -8,7 +8,6 @@
 
 mod support;
 
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
@@ -153,12 +152,11 @@ fn heartbeat_entries(home: &Path) -> Vec<vak_core::inbox::Entry> {
 }
 
 fn delivery_lines(home: &Path) -> Vec<(String, String)> {
-    let Ok(f) = std::fs::File::open(home.join("gateway").join("deliveries.jsonl")) else {
-        return Vec::new();
-    };
     let mut out = Vec::new();
-    for line in std::io::BufReader::new(f).lines().map_while(Result::ok) {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+    for v in vak_session::chain::RecordChain::at(home.join("gateway").join("deliveries"))
+        .read::<serde_json::Value>()
+    {
+        {
             out.push((
                 v["target"].as_str().unwrap_or_default().to_string(),
                 v["text"].as_str().unwrap_or_default().to_string(),

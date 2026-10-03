@@ -151,31 +151,31 @@ impl AgentScope {
     }
 
     pub fn security_events(&self) -> PathBuf {
-        self.root.join("security-events.jsonl")
+        self.root.join("security-events")
     }
 
     pub fn cost_log(&self) -> PathBuf {
-        self.root.join("cost-log.jsonl")
+        self.root.join("cost-log")
     }
 
     pub fn activity_log(&self) -> PathBuf {
-        self.root.join("activity-log.jsonl")
+        self.root.join("activity-log")
     }
 
     pub fn routing_evidence(&self) -> PathBuf {
-        self.root.join("routing-evidence.jsonl")
+        self.root.join("routing-evidence")
     }
 
     pub fn intent_evidence(&self) -> PathBuf {
-        self.root.join("intent-evidence.jsonl")
+        self.root.join("intent-evidence")
     }
 
     pub fn commitments(&self) -> PathBuf {
-        self.root.join("commitments.jsonl")
+        self.root.join("commitments")
     }
 
     pub fn inbox(&self) -> PathBuf {
-        self.root.join("inbox.jsonl")
+        self.root.join("inbox")
     }
 
     pub fn inbox_dedupe_lock(&self) -> PathBuf {
@@ -303,7 +303,7 @@ impl SharedScope {
     }
 
     pub fn gateway_deliveries(&self) -> PathBuf {
-        self.gateway().join("deliveries.jsonl")
+        self.gateway().join("deliveries")
     }
 
     /// The durable delivery outbox.
@@ -312,11 +312,11 @@ impl SharedScope {
     }
 
     pub fn operations_incidents(&self) -> PathBuf {
-        self.operations().join("incidents.jsonl")
+        self.operations().join("incidents")
     }
 
     pub fn operations_actions(&self) -> PathBuf {
-        self.operations().join("actions.jsonl")
+        self.operations().join("actions")
     }
 
     pub fn tasks(&self) -> PathBuf {
@@ -344,7 +344,7 @@ impl SharedScope {
     }
 
     pub fn cost_log(&self) -> PathBuf {
-        self.root.join("cost-log.jsonl")
+        self.root.join("cost-log")
     }
 
     pub fn env_file(&self) -> PathBuf {
@@ -489,13 +489,13 @@ mod tests {
         );
         assert_eq!(s.skill("x"), home.join("skills/x"));
         assert_eq!(s.agents_dir(), home.join("agents"));
-        assert_eq!(s.security_events(), home.join("security-events.jsonl"));
-        assert_eq!(s.cost_log(), home.join("cost-log.jsonl"));
-        assert_eq!(s.activity_log(), home.join("activity-log.jsonl"));
-        assert_eq!(s.routing_evidence(), home.join("routing-evidence.jsonl"));
-        assert_eq!(s.intent_evidence(), home.join("intent-evidence.jsonl"));
-        assert_eq!(s.commitments(), home.join("commitments.jsonl"));
-        assert_eq!(s.inbox(), home.join("inbox.jsonl"));
+        assert_eq!(s.security_events(), home.join("security-events"));
+        assert_eq!(s.cost_log(), home.join("cost-log"));
+        assert_eq!(s.activity_log(), home.join("activity-log"));
+        assert_eq!(s.routing_evidence(), home.join("routing-evidence"));
+        assert_eq!(s.intent_evidence(), home.join("intent-evidence"));
+        assert_eq!(s.commitments(), home.join("commitments"));
+        assert_eq!(s.inbox(), home.join("inbox"));
         assert_eq!(s.inbox_dedupe_lock(), home.join("inbox.dedupe.lock"));
         assert_eq!(s.env_file(), home.join(".env"));
         assert_eq!(s.managed_flow_runs(), home.join("flow-runs/managed"));
@@ -526,23 +526,14 @@ mod tests {
         assert_eq!(s.deleted(), data.join("deleted.json"));
         assert_eq!(s.archive(), data.join("archive.json"));
         assert_eq!(s.operations(), data.join("operations"));
-        assert_eq!(s.cost_log(), data.join("cost-log.jsonl"));
+        assert_eq!(s.cost_log(), data.join("cost-log"));
         assert_eq!(s.trusted(), data.join("trusted"));
         assert_eq!(s.gateway_bindings(), data.join("gateway/bindings.json"));
         assert_eq!(s.gateway_bots(), data.join("gateway/bots.json"));
-        assert_eq!(
-            s.gateway_deliveries(),
-            data.join("gateway/deliveries.jsonl")
-        );
+        assert_eq!(s.gateway_deliveries(), data.join("gateway/deliveries"));
         assert_eq!(s.delivery_jobs(), data.join("delivery/jobs"));
-        assert_eq!(
-            s.operations_incidents(),
-            data.join("operations/incidents.jsonl")
-        );
-        assert_eq!(
-            s.operations_actions(),
-            data.join("operations/actions.jsonl")
-        );
+        assert_eq!(s.operations_incidents(), data.join("operations/incidents"));
+        assert_eq!(s.operations_actions(), data.join("operations/actions"));
         assert_eq!(s.sandbox_promotions(), data.join("sandbox/promotions"));
     }
 

@@ -80,7 +80,7 @@ fn commits(entry: &Entry) -> bool {
 
 /// The segment numbers present in a ledger directory, ascending, and
 /// whether the newest is still open (has a `.log`).
-fn segment_numbers(dir: &Path) -> Vec<(u64, bool)> {
+pub(crate) fn segment_numbers(dir: &Path) -> Vec<(u64, bool)> {
     let mut found: std::collections::BTreeMap<u64, bool> = std::collections::BTreeMap::new();
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = entry.file_name();

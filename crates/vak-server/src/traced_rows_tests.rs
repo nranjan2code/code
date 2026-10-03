@@ -87,7 +87,7 @@ fn records() -> Vec<Record> {
             "CostRow",
             "crates/vak-core/src/finops.rs",
             "ledger",
-            "cost-log.jsonl",
+            "cost-log",
             serde_json::json!({
                 "ts": ts, "model": "m", "input_tokens": 1, "output_tokens": 1,
                 "source": "estimated", "session_id": "s",
@@ -97,14 +97,14 @@ fn records() -> Vec<Record> {
             "ActivityRow",
             "crates/vak-core/src/finops.rs",
             "ledger",
-            "activity-log.jsonl",
+            "activity-log",
             serde_json::json!({"ts": ts, "kind": "tool", "name": "n", "success": true}),
         ),
         record::<vak_core::finops::BudgetAlertRow>(
             "BudgetAlertRow",
             "crates/vak-core/src/finops.rs",
             "ledger",
-            "budget-alerts.jsonl",
+            "budget-alerts",
             serde_json::json!({
                 "kind": "budget_alert", "ts": ts, "level": "eighty", "day_total_usd": 1.0,
                 "session_id": "s",
@@ -114,7 +114,7 @@ fn records() -> Vec<Record> {
             "EvidenceRow",
             "crates/vak-core/src/routing.rs",
             "ledger",
-            "routing-evidence.jsonl",
+            "routing-evidence",
             serde_json::json!({
                 "ts": ts, "provider": "p", "model": "m", "outcome": "success", "latency_ms": 1,
             }),
@@ -123,7 +123,7 @@ fn records() -> Vec<Record> {
             "MisreadRow",
             "crates/vak-core/src/misread.rs",
             "ledger",
-            "intent-evidence.jsonl",
+            "intent-evidence",
             serde_json::json!({
                 "ts": ts, "act": "a", "stakes": "s", "tier": "t", "resolver_version": 1,
                 "outcome": "o",
@@ -133,21 +133,21 @@ fn records() -> Vec<Record> {
             "SecurityEvent",
             "crates/vak-core/src/security_events.rs",
             "ledger",
-            "security-events.jsonl",
+            "security-events",
             serde_json::json!({"ts": ts, "kind": "rate_limit", "label": "l", "detail": "d"}),
         ),
         record::<vak_core::inbox::Entry>(
             "Entry",
             "crates/vak-core/src/inbox.rs",
             "ledger",
-            "inbox.jsonl",
+            "inbox",
             serde_json::json!({"id": "i", "ts": ts, "kind": "heartbeat", "title": "t", "body": "b"}),
         ),
         record::<vak_commit::Event>(
             "Event",
             "crates/vak-commit/src/ledger.rs",
             "ledger",
-            "commitments.jsonl",
+            "commitments",
             serde_json::json!({
                 "event_id": "e", "commitment_id": "c", "ts": ts, "kind": "episode-started",
                 "episode_id": "x", "session_id": "s",
@@ -157,7 +157,7 @@ fn records() -> Vec<Record> {
             "IncidentRecord",
             "crates/vak-server/src/operations.rs",
             "ledger",
-            "operations/incidents.jsonl",
+            "operations/incidents",
             serde_json::json!({
                 "id": "i", "fingerprint": "f", "severity": "s", "status": "open", "source": "x",
                 "title": "t", "detail": "d", "first_seen": ts, "last_seen": ts,
@@ -168,7 +168,7 @@ fn records() -> Vec<Record> {
             "ActionReceipt",
             "crates/vak-server/src/operations.rs",
             "ledger",
-            "operations/actions.jsonl",
+            "operations/actions",
             serde_json::json!({
                 "receipt_id": "r", "service": "s", "action": "a", "requested_at": ts,
                 "completed_at": ts, "succeeded": true, "persisted": true,
