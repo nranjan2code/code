@@ -286,7 +286,8 @@ impl WorkingSetPlan {
 }
 
 /// How a turn is linked to a node (docs/design/85-turn-graph.md §4.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum LinkKind {
     /// A strand of the turn opened this thread.
     OwnThread,
@@ -299,11 +300,16 @@ pub enum LinkKind {
     WroteFile,
     /// The turn served this commitment.
     ServesCommitment,
+    /// The turn's own node (`turn:<its id>`), which a recall reaches.
+    ThisTurn,
+    /// A `recall` call in the turn reopened this turn, or a card or result
+    /// of it: the model itself found the two related.
+    RecalledTurn,
 }
 
 /// One link from a turn to a node, keyed `thread:…`, `file:…` or
 /// `commitment:…`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct TurnLink {
     pub node: String,
     pub kind: LinkKind,
@@ -311,18 +317,29 @@ pub struct TurnLink {
 
 impl TurnLink {
     fn from_intent(record: &crate::types::IntentRecord) -> Vec<TurnLink> {
-        let mut links: Vec<TurnLink> = record
-            .strands
-            .iter()
-            .map(|strand| TurnLink {
+        let mut links = Vec::new();
+        for strand in &record.strands {
+            let continues = strand.lineage.continued_thread().is_some();
+            links.push(TurnLink {
                 node: format!("thread:{}", strand.thread_id),
-                kind: if strand.lineage.continued_thread().is_some() {
+                kind: if continues {
                     LinkKind::ContinuesThread
                 } else {
                     LinkKind::OwnThread
                 },
-            })
-            .collect();
+            });
+            links.extend(
+                strand
+                    .lineage
+                    .continued_threads()
+                    .into_iter()
+                    .filter(|thread| *thread != strand.thread_id)
+                    .map(|thread| TurnLink {
+                        node: format!("thread:{thread}"),
+                        kind: LinkKind::ContinuesThread,
+                    }),
+            );
+        }
         links.extend(
             record
                 .commitment_id
@@ -347,6 +364,66 @@ impl TurnLink {
             node: format!("file:{path}"),
             kind,
         })
+    }
+}
+
+/// Links each turn that called `recall` to the turn it reopened, whether by
+/// number, turn id, presentation id or evidence id, and gives the reopened
+/// turn its own `turn:` node so the two share it. The loop answers `recall`
+/// itself, so its name is the runtime's own primitive, not a tool table.
+fn link_recalls(turns: &mut [Turn]) {
+    let mut recalled: Vec<(usize, String)> = Vec::new();
+    for (position, turn) in turns.iter().enumerate() {
+        for step in &turn.steps {
+            for block in &step.assistant.content {
+                let ContentBlock::ToolUse { name, input, .. } = block else {
+                    continue;
+                };
+                if name != "recall" {
+                    continue;
+                }
+                let target = if let Some(n) = input.get("turn").and_then(Value::as_u64) {
+                    usize::try_from(n)
+                        .ok()
+                        .and_then(|n| n.checked_sub(1))
+                        .and_then(|i| turns.get(i))
+                } else if let Some(id) = input.get("turn_id").and_then(Value::as_str) {
+                    turns.iter().find(|t| t.id == id)
+                } else if let Some(id) = input.get("presentation").and_then(Value::as_str) {
+                    turns
+                        .iter()
+                        .find(|t| t.presentations.iter().any(|p| p == id))
+                } else if let Some(id) = input.get("id").and_then(Value::as_str) {
+                    turns
+                        .iter()
+                        .find(|t| t.evidence.iter().chain(&t.presentations).any(|e| e == id))
+                } else {
+                    None
+                };
+                if let Some(target) = target.filter(|target| target.id != turn.id) {
+                    recalled.push((position, target.id.clone()));
+                }
+            }
+        }
+    }
+    for (position, target) in recalled {
+        let node = format!("turn:{target}");
+        if let Some(target_turn) = turns.iter_mut().find(|t| t.id == target) {
+            add_links(
+                &mut target_turn.links,
+                vec![TurnLink {
+                    node: node.clone(),
+                    kind: LinkKind::ThisTurn,
+                }],
+            );
+        }
+        add_links(
+            &mut turns[position].links,
+            vec![TurnLink {
+                node,
+                kind: LinkKind::RecalledTurn,
+            }],
+        );
     }
 }
 
@@ -590,6 +667,7 @@ impl TurnIndex {
             }
         }
 
+        link_recalls(&mut turns);
         TurnIndex { turns, packets }
     }
 
@@ -2039,6 +2117,47 @@ mod tests {
                 .map(|id| Some((*id).clone()))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn a_recall_links_the_two_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        let first = log.append_message(user_text("sensex today")).unwrap();
+        log.append_message(assistant_text("up 1%")).unwrap();
+        let second = log
+            .append_message(user_text("compare with before"))
+            .unwrap();
+        log.append_message(MessageRecord {
+            message: M::assistant(vec![ContentBlock::ToolUse {
+                id: "call-r".into(),
+                name: "recall".into(),
+                input: serde_json::json!({"turn_id": first.id}),
+            }]),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(MessageRecord {
+            message: M {
+                role: Role::User,
+                content: vec![ContentBlock::tool_result("call-r", "up 1%")],
+            },
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(assistant_text("same as before"))
+            .unwrap();
+        let index = TurnIndex::from_log(&log);
+        let node = format!("turn:{}", first.id);
+        let by_id = |id: &str| index.turns.iter().find(|t| t.id == id).unwrap();
+        assert!(by_id(&first.id).links.contains(&TurnLink {
+            node: node.clone(),
+            kind: LinkKind::ThisTurn
+        }));
+        assert!(by_id(&second.id).links.contains(&TurnLink {
+            node,
+            kind: LinkKind::RecalledTurn
+        }));
     }
 
     #[test]

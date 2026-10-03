@@ -1059,6 +1059,7 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/sessions/{id}/transcript", get(transcript))
         .route("/sessions/{id}/transcript.md", get(transcript_markdown))
+        .route("/sessions/{id}/context", get(context_links))
         .route(
             "/sessions/{id}/coworking/invitations",
             get(list_coworking_invitations).post(create_coworking_invitation),
@@ -8093,6 +8094,77 @@ fn rejected_draft_entry_ids(
 /// `entries` runs parallel to `messages` and gives each one's ledger entry id,
 /// the stable identity the client pairs with the projection's
 /// `provenance.entry_id` instead of counting turns.
+/// How a session's turns are linked (docs/design/85-turn-graph.md): each
+/// turn's links, the effects its calls recorded, and every context plan with
+/// the nodes that put a linked turn in context. Audit data for a person or a
+/// test to see why a turn was in context; nothing here is model-visible.
+async fn context_links(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Some(handle) = state.get(&id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(s) = guard.as_ref() {
+            return Json(context_links_json(s)).into_response();
+        }
+    }
+    match open_historical_session(&state, &id) {
+        Some(s) => Json(context_links_json(&s)).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "unknown session" })),
+        )
+            .into_response(),
+    }
+}
+
+pub(crate) fn context_links_json(s: &SessionLog) -> serde_json::Value {
+    let index = vak_session::TurnIndex::from_log(s);
+    let turns: Vec<serde_json::Value> = index
+        .turns
+        .iter()
+        .enumerate()
+        .map(|(position, turn)| {
+            serde_json::json!({
+                "turn_id": turn.id,
+                "number": position + 1,
+                "closed": turn.closed,
+                "links": turn.links,
+            })
+        })
+        .collect();
+    let mut effects = Vec::new();
+    let mut plans = Vec::new();
+    for entry in s.chain_to_root() {
+        match &entry.payload {
+            vak_session::EntryPayload::CallEffect(record) => effects.push(serde_json::json!({
+                "entry_id": entry.id,
+                "turn_id": entry.at_turn,
+                "tool_use_id": record.tool_use_id,
+                "effect": record.effect,
+            })),
+            vak_session::EntryPayload::Activity(activity) => {
+                if let Some((plan, leaf)) =
+                    vak_session::WorkingSetPlan::from_activity_data(&activity.data)
+                {
+                    plans.push(serde_json::json!({
+                        "entry_id": entry.id,
+                        "turn_id": entry.at_turn,
+                        "leaf": leaf,
+                        "plan": plan,
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    serde_json::json!({ "turns": turns, "effects": effects, "plans": plans })
+}
+
 pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
     let transcript = s.derive_transcript();
     let rejected_drafts = rejected_draft_entry_ids(&transcript);
@@ -26725,5 +26797,94 @@ mod scheduler_state_tests {
             !home.join("agents").join("vak").join("agents").exists(),
             "no Agent home nested inside another's"
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod context_links_tests {
+    use super::*;
+    use vak_session::types::{
+        ActivityKind, ActivityRecord, ActivityStatus, CallEffect, CallEffectRecord, FrozenContract,
+        MessageRecord, SessionHeader,
+    };
+
+    fn log(dir: &std::path::Path) -> SessionLog {
+        let header = SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
+            agent: None,
+            session_id: "s1".into(),
+            created_at: chrono::Utc::now(),
+            cwd: dir.to_path_buf(),
+            parent_session_id: None,
+            contract_id: None,
+            work_item_id: None,
+            conversation: None,
+            contract: FrozenContract {
+                app_version: "test".into(),
+                provider: "scripted".into(),
+                model: "m".into(),
+                route_ladder: Vec::new(),
+                route_objective: String::new(),
+                route_annotations: Vec::new(),
+                system_prompt: String::new(),
+                permission_mode: "workspace-write".into(),
+                capabilities: Vec::new(),
+                prompt_layers: Vec::new(),
+            },
+        };
+        SessionLog::create(
+            vak_session::SessionPath::new_session_file(dir, dir, "s1"),
+            header,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn context_shows_links_effects_and_plans() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = log(dir.path());
+        let turn = s
+            .append_message(MessageRecord {
+                message: vak_llm::Message::user_text("edit the parser"),
+                meta: None,
+            })
+            .unwrap()
+            .id;
+        s.append_call_effect(CallEffectRecord {
+            tool_use_id: "call-1".into(),
+            effect: CallEffect::FileWrite {
+                path: "src/parser.rs".into(),
+                digest: Some("abc".into()),
+                bytes: Some(3),
+            },
+        })
+        .unwrap();
+        let mut plan = vak_session::WorkingSetPlan::default();
+        plan.links
+            .insert("t-old".into(), vec!["file:src/parser.rs".into()]);
+        s.append_activity(ActivityRecord {
+            activity_id: "plan-1".into(),
+            turn: None,
+            kind: ActivityKind::Diagnostic,
+            status: ActivityStatus::Succeeded,
+            label: vak_session::CONTEXT_PLAN_LABEL.into(),
+            detail: None,
+            data: plan.to_activity_data(Some("leaf")),
+        })
+        .unwrap();
+        let json = context_links_json(&s);
+        assert_eq!(json["turns"][0]["turn_id"], turn);
+        assert_eq!(json["turns"][0]["links"][0]["node"], "file:src/parser.rs");
+        assert_eq!(json["turns"][0]["links"][0]["kind"], "wrote-file");
+        assert_eq!(json["effects"][0]["tool_use_id"], "call-1");
+        assert_eq!(json["effects"][0]["turn_id"], turn);
+        assert_eq!(
+            json["plans"][0]["plan"]["links"]["t-old"][0],
+            "file:src/parser.rs"
+        );
+        assert_eq!(json["plans"][0]["turn_id"], turn);
     }
 }

@@ -1040,6 +1040,7 @@ mod tests {
             "t1.0",
             vak_intent::Lineage::Continues {
                 thread_id: "t0.0".into(),
+                merges: Vec::new(),
             },
         );
         let next = begin_episode(
@@ -1076,6 +1077,7 @@ mod tests {
             "t1.0",
             vak_intent::Lineage::Continues {
                 thread_id: "t0.0".into(),
+                merges: Vec::new(),
             },
         );
         let handle = begin_episode(
@@ -1184,6 +1186,7 @@ mod tests {
             "t1.0",
             vak_intent::Lineage::Continues {
                 thread_id: "t0.0".into(),
+                merges: Vec::new(),
             },
         );
         let plan = plan_episodes(dir.path(), &config(), &intent, now);

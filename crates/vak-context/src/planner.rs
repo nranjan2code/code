@@ -89,7 +89,9 @@ fn recency_value(age: usize) -> f64 {
 /// inferred. Pinned by `link_weights_are_pinned`.
 fn link_weight(kind: LinkKind) -> f64 {
     match kind {
-        LinkKind::OwnThread | LinkKind::WroteFile => 1.0,
+        LinkKind::OwnThread | LinkKind::WroteFile | LinkKind::ThisTurn | LinkKind::RecalledTurn => {
+            1.0
+        }
         LinkKind::ReadFile | LinkKind::ServesCommitment => 0.8,
         LinkKind::ContinuesThread => 0.7,
     }
@@ -99,18 +101,36 @@ fn link_weight(kind: LinkKind) -> f64 {
 /// node, so a node every turn touches cannot pull the whole history in.
 const MAX_TURNS_PER_NODE: usize = 8;
 
-/// Each closed turn's link value to the open turn, and the nodes it shares
-/// with it: the sum over shared nodes of both ends' link weights times the
-/// node's inverse-frequency discount, capped at 1.0. A node most turns
-/// touch (a manifest, a README) is discounted toward zero, the graph form of
-/// a common word.
+/// How many shared-node steps a walk takes from the open turn: a turn that
+/// shares a node with a turn that shares one with the open turn is reached
+/// at the second step.
+const MAX_LINK_STEPS: usize = 2;
+
+/// What one more step costs: a turn reached at step two is worth at most
+/// half of one reached directly.
+const STEP_DECAY: f64 = 0.5;
+
+/// One place a walk continues from: the links to follow, the value they
+/// carry, the path so far, and the turn they belong to (`None` for the open
+/// turn).
+type Frontier<'a> = (&'a [vak_session::TurnLink], f64, Vec<String>, Option<usize>);
+
+/// Each closed turn's link value to the open turn, and the nodes on the path
+/// that reached it. One step: the sum over the nodes a turn shares with the
+/// source of both ends' link weights times the node's inverse-frequency
+/// discount, capped at the source's own value. A node most turns touch (a
+/// manifest, a README) is discounted toward zero, the graph form of a common
+/// word. At most `MAX_TURNS_PER_NODE` turns, the most recent, are reached
+/// through one node, and only the best `MAX_TURNS_PER_NODE` turns of a step
+/// go on to the next, so the walk stays bounded however dense the history.
 fn link_values(
     closed: &[&vak_session::Turn],
     open: Option<&vak_session::Turn>,
 ) -> std::collections::HashMap<String, (f64, Vec<String>)> {
-    let mut values = std::collections::HashMap::new();
+    let mut reached: std::collections::HashMap<usize, (f64, Vec<String>)> =
+        std::collections::HashMap::new();
     let Some(open) = open else {
-        return values;
+        return std::collections::HashMap::new();
     };
     let mut holders: std::collections::HashMap<&str, std::collections::BTreeMap<usize, f64>> =
         std::collections::HashMap::new();
@@ -125,25 +145,56 @@ fn link_values(
         }
     }
     let total = closed.len() as f64;
-    for anchor in &open.links {
-        let Some(turns) = holders.get(anchor.node.as_str()) else {
-            continue;
-        };
-        let discount = (1.0 + total / turns.len() as f64).ln() / (1.0 + total).ln();
-        for (&position, &weight) in turns.iter().rev().take(MAX_TURNS_PER_NODE) {
-            let entry = values
-                .entry(closed[position].id.clone())
-                .or_insert((0.0, Vec::new()));
-            entry.0 += link_weight(anchor.kind) * weight * discount;
-            if !entry.1.contains(&anchor.node) {
-                entry.1.push(anchor.node.clone());
+    let mut frontier: Vec<Frontier> = vec![(open.links.as_slice(), 1.0, Vec::new(), None)];
+    for _ in 0..MAX_LINK_STEPS {
+        let mut step: std::collections::HashMap<usize, (f64, f64, Vec<String>)> =
+            std::collections::HashMap::new();
+        for (links, carried, path, source) in &frontier {
+            for anchor in *links {
+                let Some(turns) = holders.get(anchor.node.as_str()) else {
+                    continue;
+                };
+                let discount = (1.0 + total / turns.len() as f64).ln() / (1.0 + total).ln();
+                for (&position, &weight) in turns.iter().rev().take(MAX_TURNS_PER_NODE) {
+                    if Some(position) == *source || reached.contains_key(&position) {
+                        continue;
+                    }
+                    let entry = step
+                        .entry(position)
+                        .or_insert((0.0, *carried, path.clone()));
+                    entry.0 += carried * link_weight(anchor.kind) * weight * discount;
+                    entry.1 = entry.1.max(*carried);
+                    if !entry.2.contains(&anchor.node) {
+                        entry.2.push(anchor.node.clone());
+                    }
+                }
             }
         }
+        let mut next: Vec<(usize, f64, Vec<String>)> = step
+            .into_iter()
+            .map(|(position, (value, cap, path))| (position, value.min(cap), path))
+            .collect();
+        next.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        for (position, value, path) in &next {
+            reached.insert(*position, (*value, path.clone()));
+        }
+        frontier = next
+            .into_iter()
+            .take(MAX_TURNS_PER_NODE)
+            .map(|(position, value, path)| {
+                (
+                    closed[position].links.as_slice(),
+                    value * STEP_DECAY,
+                    path,
+                    Some(position),
+                )
+            })
+            .collect();
     }
-    for value in values.values_mut() {
-        value.0 = value.0.min(1.0);
-    }
-    values
+    reached
+        .into_iter()
+        .map(|(position, value)| (closed[position].id.clone(), value))
+        .collect()
 }
 
 /// Match the subject the person named. Generic intent labels such as
@@ -620,6 +671,7 @@ mod tests {
             lineage: if continues {
                 vak_intent::Lineage::Continues {
                     thread_id: thread.to_string(),
+                    merges: Vec::new(),
                 }
             } else {
                 vak_intent::Lineage::New
@@ -828,6 +880,59 @@ mod tests {
     }
 
     #[test]
+    fn a_second_step_reaches_through_a_shared_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let unrelated = LinkedTurn {
+            text: "weather in paris",
+            tokens_full: 100,
+            files: &[],
+            thread: None,
+        };
+        let (log, ids) = linked_fixture(
+            dir.path(),
+            &[
+                LinkedTurn {
+                    text: "rewrite the lexer",
+                    tokens_full: 100,
+                    files: &[("src/parser.rs", true)],
+                    thread: None,
+                },
+                LinkedTurn {
+                    text: "cover the lexer",
+                    tokens_full: 100,
+                    files: &[("src/parser.rs", false), ("tests/parser.rs", true)],
+                    thread: None,
+                },
+                LinkedTurn { ..unrelated },
+                LinkedTurn { ..unrelated },
+            ],
+            &LinkedTurn {
+                text: "the tests fail",
+                tokens_full: 0,
+                files: &[("tests/parser.rs", false)],
+                thread: None,
+            },
+        );
+        let index = TurnIndex::from_log(&log);
+        let closed: Vec<&vak_session::Turn> = index.turns.iter().filter(|t| t.closed).collect();
+        let values = link_values(&closed, index.turns.last());
+        let direct = values.get(&ids[1]).unwrap();
+        let second = values.get(&ids[0]).unwrap();
+        assert!(
+            second.0 > 0.0 && second.0 <= STEP_DECAY && second.0 < direct.0,
+            "{values:?}"
+        );
+        assert_eq!(
+            second.1,
+            vec![
+                "file:tests/parser.rs".to_string(),
+                "file:src/parser.rs".to_string()
+            ]
+        );
+        assert!(!values.contains_key(&ids[2]) && !values.contains_key(&ids[3]));
+    }
+
+    #[test]
     fn anaphora_follows_the_thread() {
         let dir = tempfile::tempdir().unwrap();
         let (log, ids) = linked_fixture(
@@ -868,7 +973,11 @@ mod tests {
         assert_eq!(link_weight(LinkKind::ReadFile), 0.8);
         assert_eq!(link_weight(LinkKind::ServesCommitment), 0.8);
         assert_eq!(link_weight(LinkKind::ContinuesThread), 0.7);
+        assert_eq!(link_weight(LinkKind::ThisTurn), 1.0);
+        assert_eq!(link_weight(LinkKind::RecalledTurn), 1.0);
         assert_eq!(MAX_TURNS_PER_NODE, 8);
+        assert_eq!(MAX_LINK_STEPS, 2);
+        assert_eq!(STEP_DECAY, 0.5);
     }
 
     #[test]

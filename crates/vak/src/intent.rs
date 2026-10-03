@@ -230,7 +230,7 @@ fn explain(
             };
             let lineage = match &strand.lineage {
                 vak_intent::Lineage::New => String::new(),
-                vak_intent::Lineage::Continues { thread_id } => {
+                vak_intent::Lineage::Continues { thread_id, .. } => {
                     format!(", continues {thread_id}")
                 }
                 vak_intent::Lineage::Corrects { thread_id } => {

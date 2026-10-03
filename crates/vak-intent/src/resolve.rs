@@ -62,10 +62,12 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// compound action "double-check", so a noun such as "latency-check" no
 /// longer becomes a verification command. 8 — the previous turn's act can
 /// resolve an explicit deictic follow-up, but never classifies a new directive
-/// on its own. The test
+/// on its own. 9 — a strand that names a second open thread with at least
+/// `MERGE_MIN_OVERLAP` shared words merges it (`Lineage::Continues::merges`);
+/// the lexicon is unchanged. The test
 /// `lexicon_digest_matches_resolver_version` pins the tables to this number
 /// so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 8;
+pub const RESOLVER_VERSION: u32 = 9;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -471,6 +473,11 @@ fn recompose(strands: &[Strand]) -> Engagement {
 /// that matches nothing starts a thread of its own; a wrong `New` costs a
 /// duplicate thread, a wrong `Continues` merges unrelated work, so the tie
 /// goes to `New`.
+/// Content words a clause must share with a second open thread before it is
+/// read as merging that thread into the one it continues. Stricter than the
+/// one word that makes a continuation: a wrong merge joins unrelated work.
+const MERGE_MIN_OVERLAP: usize = 2;
+
 fn lineage_for(
     reading: &Reading,
     deictic: bool,
@@ -480,9 +487,13 @@ fn lineage_for(
 ) -> Lineage {
     let keywords = crate::strand::keywords(text);
     let overlap = |thread: &ThreadFact| thread.keywords.intersection(&keywords).count();
-    let best = open_threads
+    let candidates: Vec<&ThreadFact> = open_threads
         .iter()
         .filter(|thread| reading.acts().contains(&thread.act) || deictic)
+        .collect();
+    let best = candidates
+        .iter()
+        .copied()
         .max_by_key(|thread| (overlap(thread), reading.acts().contains(&thread.act)))
         .filter(|thread| overlap(thread) > 0 || (deictic && reading.acts().contains(&thread.act)));
     match hint {
@@ -506,6 +517,11 @@ fn lineage_for(
     }
     best.map(|t| Lineage::Continues {
         thread_id: t.thread_id.clone(),
+        merges: candidates
+            .iter()
+            .filter(|other| other.thread_id != t.thread_id && overlap(other) >= MERGE_MIN_OVERLAP)
+            .map(|other| other.thread_id.clone())
+            .collect(),
     })
     .unwrap_or(Lineage::New)
 }
@@ -1367,7 +1383,7 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            8,
+            9,
             "1c3149e2a620e896ddf606f725316261de379ff56c5ca088cf93d55fb4d30d0f",
         );
         let digest = crate::signals::lexicon_digest();
@@ -1771,10 +1787,49 @@ mod tests {
         assert_eq!(
             intent.strands[0].lineage,
             Lineage::Continues {
-                thread_id: "s0.0".into()
+                thread_id: "s0.0".into(),
+                merges: Vec::new(),
             }
         );
         assert_eq!(intent.strands[0].thread_id, "s0.0");
+    }
+
+    /// A clause that names two open threads continues the closer one and
+    /// merges the other; one shared word is not enough to merge.
+    #[test]
+    fn strand_continues_two_threads() {
+        let thread = |id: &str, text: &str| ThreadFact {
+            thread_id: id.into(),
+            act: Act::Modify,
+            domains: BTreeSet::new(),
+            keywords: crate::strand::keywords(text),
+        };
+        let mut req = request("merge the parser refactor with the flaky integration tests cleanup");
+        req.history.turn_index = 4;
+        req.history.open_threads = vec![
+            thread("s0.0", "refactor the parser module"),
+            thread("s1.0", "cleanup of the flaky integration tests"),
+            thread("s2.0", "cleanup the downloads folder"),
+        ];
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+        let Lineage::Continues { thread_id, merges } = &intent.strands[0].lineage else {
+            panic!("{:?}", intent.strands[0].lineage);
+        };
+        let mut threads: Vec<&str> = merges.iter().map(String::as_str).collect();
+        threads.push(thread_id);
+        threads.sort_unstable();
+        assert_eq!(
+            threads,
+            vec!["s0.0", "s1.0"],
+            "{:?}",
+            intent.strands[0].lineage
+        );
     }
 
     /// Corrections and replacements are never inferred from text, and a

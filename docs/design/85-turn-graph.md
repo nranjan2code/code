@@ -1,8 +1,9 @@
 # 85 — The turn graph: linked context across turns, sessions and years
 
 Status: in progress. G0 is built apart from the items its §10 list leaves
-open, and G1's first cut is built (2026-10-03): turn links and the
-planner's `link` signal (§10). G2 and G3 are proposed. §2.4 is the audit, taken before G0 started. Phase G1 changes the
+open, and G1 is built (2026-10-03): turn links, recall links, merged
+threads and the planner's two-step `link` signal (§10). G2 and G3 are
+proposed. §2.4 is the audit, taken before G0 started. Phase G1 changes the
 in-session planner and adds no store. Phases G2 and G3 ride
 data-architecture M6 (the data catalog, `docs/design/73-data-architecture-and-lifecycle.md`
 §9) and start only when the maintainer says so. This document extends
@@ -513,8 +514,23 @@ Built (2026-10-03):
   `hub_artifact_does_not_link_everything`, `anaphora_follows_the_thread`,
   `link_weights_are_pinned`.
 
-Not yet built from the list below: `recalled` and evidence edges, walks
-deeper than one shared node, and many threads per strand (waits on D1).
+Also built (2026-10-03), finishing G1:
+
+- Recall and evidence links: a `recall` call that reopens a turn by number,
+  turn id, presentation id or evidence id links the two turns through the
+  reopened turn's `turn:` node (`LinkKind::RecalledTurn`/`ThisTurn`,
+  `a_recall_links_the_two_turns`).
+- A two-step walk: a turn that shares a node with a turn that shares one
+  with the open turn is reached at the second step, worth at most
+  `STEP_DECAY` (0.5) of the first; only the best `MAX_TURNS_PER_NODE` turns
+  of a step go on (`a_second_step_reaches_through_a_shared_turn`).
+- Many threads per strand (D1, decided: no compatibility is needed):
+  `Lineage::Continues` carries `merges`, the other open threads a clause
+  shares at least two content words with, and the turn links to each
+  (`strand_continues_two_threads`). `RESOLVER_VERSION` is 9.
+
+G1 is complete. Splits (`split_from`) and `retracts` stay with G2, where
+edges are stored rather than derived per request.
 
 - Edge extraction over `TurnIndex`, intent records and presentation records,
   in `vak-session` beside the turn index.
@@ -571,7 +587,9 @@ pass rate without raising token use.
 
 ## 11. Open decisions
 
-- **D1. Many threads per strand within the 6.x line.** Invariant 29 allows
+- **D1. Many threads per strand within the 6.x line.** Decided
+  2026-10-03: there are no users, so `Lineage::Continues` gained `merges`
+  directly (G1). Invariant 29 allows
   adding fields, not changing them. Either add a `continues: Vec<String>`
   field beside `Lineage` now, or wait for the data baseline and change the
   type there. Recommendation: wait for the baseline, and let G1 ship

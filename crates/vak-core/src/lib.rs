@@ -720,7 +720,7 @@ fn continued_saved_file(
         .strands
         .iter()
         .filter_map(|strand| match &strand.lineage {
-            vak_intent::Lineage::Continues { thread_id } => Some(thread_id.as_str()),
+            vak_intent::Lineage::Continues { thread_id, .. } => Some(thread_id.as_str()),
             _ => None,
         })
         .collect::<std::collections::HashSet<_>>();
@@ -871,6 +871,7 @@ mod continuation_receipt_tests {
         strand.strand_id = "s1.0".into();
         strand.lineage = Lineage::Continues {
             thread_id: "s0.0".into(),
+            merges: Vec::new(),
         };
         let mut continuation = vak_intent::Intent::general(1);
         continuation.strands.push(strand.clone());
@@ -880,6 +881,7 @@ mod continuation_receipt_tests {
         std::fs::write(&file, "value\n60\n").unwrap();
         continuation.strands[0].lineage = Lineage::Continues {
             thread_id: "other".into(),
+            merges: Vec::new(),
         };
         assert!(!continued_saved_file(&session, &continuation, dir.path()));
         continuation.strands[0] = strand;

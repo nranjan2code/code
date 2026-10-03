@@ -47,8 +47,14 @@ pub enum StrandRelation {
 pub enum Lineage {
     /// A thread of its own.
     New,
-    /// Carries on an open thread.
-    Continues { thread_id: String },
+    /// Carries on an open thread, and joins `merges` into it: other open
+    /// threads the clause shares at least `MERGE_MIN_OVERLAP` content words
+    /// with ("combine the parser work with the test cleanup").
+    Continues {
+        thread_id: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        merges: Vec<String>,
+    },
     /// Amends an open thread without discarding it. Only ever set from an
     /// explicit human command, never inferred (docs/design/47, control plane).
     Corrects { thread_id: String },
@@ -63,8 +69,20 @@ impl Lineage {
     pub fn continued_thread(&self) -> Option<&str> {
         match self {
             Lineage::New | Lineage::Replaces { .. } => None,
-            Lineage::Continues { thread_id } | Lineage::Corrects { thread_id } => Some(thread_id),
+            Lineage::Continues { thread_id, .. } | Lineage::Corrects { thread_id } => {
+                Some(thread_id)
+            }
         }
+    }
+
+    /// Every thread this strand carries on: the one it continues and the
+    /// ones it merges into it.
+    pub fn continued_threads(&self) -> Vec<&str> {
+        let mut threads: Vec<&str> = self.continued_thread().into_iter().collect();
+        if let Lineage::Continues { merges, .. } = self {
+            threads.extend(merges.iter().map(String::as_str));
+        }
+        threads
     }
 
     /// The thread this strand supersedes, if any.
