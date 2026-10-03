@@ -305,6 +305,9 @@ pub enum LinkKind {
     /// A `recall` call in the turn reopened this turn, or a card or result
     /// of it: the model itself found the two related.
     RecalledTurn,
+    /// The open turn's directive names this file. Only the planner makes
+    /// these, at plan time, before any call of the turn has run.
+    NamedFile,
 }
 
 /// One link from a turn to a node, keyed `thread:…`, `file:…` or

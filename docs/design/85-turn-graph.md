@@ -552,8 +552,17 @@ server (port 8931, a disposable `/tmp` workspace): turn 1 wrote
 What it showed is missing: a turn's plan is frozen before its first tool
 call (invariant 36), so the files the open turn reads cannot link it to
 anything for that plan; only threads and commitments are anchors at plan
-time. The anchor §6.3 lists for this, files the directive names, is not
-built. It is the next G1-sized step.
+time. The anchor §6.3 lists for this, files the directive names, was built
+next (below).
+
+Directive-named files (built 2026-10-03): the planner reads the file names
+a directive mentions (`named_files`: tokens shaped like a path or a name
+with an extension; not URLs, e-mail addresses or numbers) and anchors the
+walk at every recorded `file:` node whose path equals the name or ends with
+it as its last segment, as `LinkKind::NamedFile` (weight 0.8). This works
+at plan time, before the open turn has run a call
+(`a_named_file_links_at_plan_time`,
+`named_files_are_paths_not_urls_or_numbers`).
 
 - Edge extraction over `TurnIndex`, intent records and presentation records,
   in `vak-session` beside the turn index.

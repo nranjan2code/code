@@ -255,7 +255,8 @@ value(turn) = max(recency, relevance, anaphora, link)
                           turn of the thread the open turn continues, else the
                           preceding turn
               link      = shared threads, files and commitments with the open
-                          turn, weighted and hub-discounted
+                          turn, and files the directive names, weighted and
+                          hub-discounted
                           (docs/design/85-turn-graph.md §6.1)
 cost each rendered Full record and Card line with the current profile;
 never trust a stored estimate that omits tool arguments

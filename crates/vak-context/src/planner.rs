@@ -92,7 +92,7 @@ fn link_weight(kind: LinkKind) -> f64 {
         LinkKind::OwnThread | LinkKind::WroteFile | LinkKind::ThisTurn | LinkKind::RecalledTurn => {
             1.0
         }
-        LinkKind::ReadFile | LinkKind::ServesCommitment => 0.8,
+        LinkKind::ReadFile | LinkKind::ServesCommitment | LinkKind::NamedFile => 0.8,
         LinkKind::ContinuesThread => 0.7,
     }
 }
@@ -110,6 +110,40 @@ const MAX_LINK_STEPS: usize = 2;
 /// half of one reached directly.
 const STEP_DECAY: f64 = 0.5;
 
+/// The workspace files a directive names: tokens shaped like a path or a
+/// file name with an extension (`notes/plan.md`, `` `src/parser.rs` ``,
+/// `README.md`). URLs, e-mail addresses and numbers like `3.5` are not
+/// files. Matched against recorded file nodes by full path or last segment.
+fn named_files(directive: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for token in directive.split(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '`' | '"' | '\'' | ',' | '(' | ')' | '[' | ']' | '<' | '>'
+            )
+    }) {
+        let token = token
+            .trim_end_matches(['.', ':', ';', '!', '?'])
+            .trim_start_matches("./");
+        if token.contains("://") || token.contains('@') || token.is_empty() {
+            continue;
+        }
+        let Some((stem, extension)) = token.rsplit_once('.') else {
+            continue;
+        };
+        let file = stem.rsplit('/').next().unwrap_or(stem);
+        let is_name = !file.is_empty()
+            && (1..=8).contains(&extension.len())
+            && extension.chars().all(|c| c.is_ascii_alphanumeric())
+            && extension.chars().any(|c| c.is_ascii_alphabetic());
+        if is_name && !names.iter().any(|n| n == token) {
+            names.push(token.to_string());
+        }
+    }
+    names
+}
+
 /// One place a walk continues from: the links to follow, the value they
 /// carry, the path so far, and the turn they belong to (`None` for the open
 /// turn).
@@ -126,12 +160,10 @@ type Frontier<'a> = (&'a [vak_session::TurnLink], f64, Vec<String>, Option<usize
 fn link_values(
     closed: &[&vak_session::Turn],
     open: Option<&vak_session::Turn>,
+    directive: &str,
 ) -> std::collections::HashMap<String, (f64, Vec<String>)> {
     let mut reached: std::collections::HashMap<usize, (f64, Vec<String>)> =
         std::collections::HashMap::new();
-    let Some(open) = open else {
-        return std::collections::HashMap::new();
-    };
     let mut holders: std::collections::HashMap<&str, std::collections::BTreeMap<usize, f64>> =
         std::collections::HashMap::new();
     for (position, turn) in closed.iter().enumerate() {
@@ -144,8 +176,30 @@ fn link_values(
             *weight = weight.max(link_weight(link.kind));
         }
     }
+    // The open turn's own links, and the files its directive names: the
+    // only file anchors there are at plan time, because the plan is fixed
+    // before the turn's first call (invariant 36).
+    let mut anchors: Vec<vak_session::TurnLink> =
+        open.map(|turn| turn.links.clone()).unwrap_or_default();
+    for name in named_files(directive) {
+        for node in holders.keys() {
+            let Some(path) = node.strip_prefix("file:") else {
+                continue;
+            };
+            let named = path == name || path.ends_with(&format!("/{name}"));
+            if named && !anchors.iter().any(|anchor| anchor.node == *node) {
+                anchors.push(vak_session::TurnLink {
+                    node: (*node).to_string(),
+                    kind: LinkKind::NamedFile,
+                });
+            }
+        }
+    }
+    if anchors.is_empty() {
+        return std::collections::HashMap::new();
+    }
     let total = closed.len() as f64;
-    let mut frontier: Vec<Frontier> = vec![(open.links.as_slice(), 1.0, Vec::new(), None)];
+    let mut frontier: Vec<Frontier> = vec![(anchors.as_slice(), 1.0, Vec::new(), None)];
     for _ in 0..MAX_LINK_STEPS {
         let mut step: std::collections::HashMap<usize, (f64, f64, Vec<String>)> =
             std::collections::HashMap::new();
@@ -278,7 +332,7 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
     let linked = if minimal {
         std::collections::HashMap::new()
     } else {
-        link_values(&closed, open)
+        link_values(&closed, open, input.directive)
     };
     let mut ranked: Vec<(f64, f64, usize, &vak_session::Turn)> = closed
         .iter()
@@ -856,7 +910,7 @@ mod tests {
         );
         let index = TurnIndex::from_log(&log);
         let closed: Vec<&vak_session::Turn> = index.turns.iter().filter(|t| t.closed).collect();
-        let values = link_values(&closed, index.turns.last());
+        let values = link_values(&closed, index.turns.last(), "");
         let special = values.get(&ids[3]).unwrap().0;
         assert!(
             special > 0.75,
@@ -915,7 +969,7 @@ mod tests {
         );
         let index = TurnIndex::from_log(&log);
         let closed: Vec<&vak_session::Turn> = index.turns.iter().filter(|t| t.closed).collect();
-        let values = link_values(&closed, index.turns.last());
+        let values = link_values(&closed, index.turns.last(), "");
         let direct = values.get(&ids[1]).unwrap();
         let second = values.get(&ids[0]).unwrap();
         assert!(
@@ -930,6 +984,59 @@ mod tests {
             ]
         );
         assert!(!values.contains_key(&ids[2]) && !values.contains_key(&ids[3]));
+    }
+
+    #[test]
+    fn named_files_are_paths_not_urls_or_numbers() {
+        assert_eq!(
+            named_files(
+                "fix `src/parser.rs` and ./README.md, bump to 3.5, see https://x.io/a.html, mail a@b.com, then plan.md."
+            ),
+            vec!["src/parser.rs", "README.md", "plan.md"]
+        );
+        assert!(named_files("what is the capital of Australia?").is_empty());
+    }
+
+    #[test]
+    fn a_named_file_links_at_plan_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let unrelated = LinkedTurn {
+            text: "weather in paris",
+            tokens_full: 100,
+            files: &[],
+            thread: None,
+        };
+        let (log, ids) = linked_fixture(
+            dir.path(),
+            &[
+                LinkedTurn {
+                    text: "draft the bake sale",
+                    tokens_full: 300,
+                    files: &[("notes/plan.md", true)],
+                    thread: None,
+                },
+                LinkedTurn { ..unrelated },
+                LinkedTurn { ..unrelated },
+            ],
+            // The open turn has run no call yet: only its words can anchor.
+            &LinkedTurn {
+                text: "shorten plan.md to two lines",
+                tokens_full: 0,
+                files: &[],
+                thread: None,
+            },
+        );
+        let index = TurnIndex::from_log(&log);
+        let result = plan_for(&index, 2_000, "shorten plan.md to two lines");
+        assert!(is_full(&result, &ids[0]), "{result:?}");
+        assert!(
+            !is_full(&result, &ids[1]) && !is_full(&result, &ids[2]),
+            "{result:?}"
+        );
+        assert_eq!(
+            result.links.get(&ids[0]),
+            Some(&vec!["file:notes/plan.md".to_string()])
+        );
     }
 
     #[test]
@@ -975,6 +1082,7 @@ mod tests {
         assert_eq!(link_weight(LinkKind::ContinuesThread), 0.7);
         assert_eq!(link_weight(LinkKind::ThisTurn), 1.0);
         assert_eq!(link_weight(LinkKind::RecalledTurn), 1.0);
+        assert_eq!(link_weight(LinkKind::NamedFile), 0.8);
         assert_eq!(MAX_TURNS_PER_NODE, 8);
         assert_eq!(MAX_LINK_STEPS, 2);
         assert_eq!(STEP_DECAY, 0.5);
