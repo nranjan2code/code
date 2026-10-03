@@ -860,7 +860,6 @@ mod continuation_receipt_tests {
         session
             .append_activity(ActivityRecord {
                 activity_id: "run-1".into(),
-                turn: Some(0),
                 kind: ActivityKind::Run,
                 status: ActivityStatus::Partial,
                 label: "Run finished".into(),
@@ -888,7 +887,6 @@ mod continuation_receipt_tests {
         session
             .append_activity(ActivityRecord {
                 activity_id: "run-2".into(),
-                turn: Some(1),
                 kind: ActivityKind::Run,
                 status: ActivityStatus::Succeeded,
                 label: "Run finished".into(),
@@ -4993,7 +4991,6 @@ impl Core {
             let activity_id = format!("activity-{}", uuid_like());
             let _ = session.append_activity(vak_session::ActivityRecord {
                 activity_id,
-                turn: None,
                 kind: vak_session::ActivityKind::CapacityProbe,
                 status: vak_session::ActivityStatus::Succeeded,
                 label: format!("Capacity profile bound for {}/{}", leg.provider, leg.model),
@@ -7537,7 +7534,6 @@ impl Core {
             {
                 let _ = session.append_activity(vak_session::ActivityRecord {
                     activity_id: format!("workspace-delta-{}", uuid_like()),
-                    turn: None,
                     kind: vak_session::ActivityKind::Diagnostic,
                     status: vak_session::ActivityStatus::Succeeded,
                     label: "Workspace changes since the session began".into(),
@@ -7644,21 +7640,6 @@ impl Core {
                     format!("{presented_text}\n{text}")
                 }
             });
-            let turn = session
-                .chain_to_root()
-                .iter()
-                .filter(|entry| {
-                    matches!(
-                        &entry.payload,
-                        vak_session::types::EntryPayload::Message(record)
-                            if record.message.role == vak_llm::Role::User
-                                && record.control_kind().is_none()
-                                && record.message.content.iter().any(|block| {
-                                    matches!(block, vak_llm::ContentBlock::Text { .. })
-                                })
-                    )
-                })
-                .count();
             let mut outcome_spec = admitted_outcome.unwrap_or_else(|| {
                 vak_intent::OutcomeSpec::from_reading(
                     prompt_text,
@@ -7798,7 +7779,6 @@ impl Core {
                 .join(",");
             let _ = session.append_activity(vak_session::types::ActivityRecord {
                 activity_id: format!("outcome-evaluation-{}", uuid_like()),
-                turn: Some(turn),
                 kind: vak_session::types::ActivityKind::Diagnostic,
                 status: vak_session::types::ActivityStatus::Succeeded,
                 label: "Outcome evaluation".into(),

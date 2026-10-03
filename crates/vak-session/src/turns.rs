@@ -2192,7 +2192,6 @@ mod tests {
         log.append_message(user_text("hi")).unwrap();
         log.append_activity(ActivityRecord {
             activity_id: "a1".into(),
-            turn: None,
             kind: ActivityKind::Diagnostic,
             status: ActivityStatus::Succeeded,
             label: "note".into(),

@@ -852,3 +852,91 @@ async fn the_turn_context_the_model_reads_is_recorded_first() {
         .any(|block| matches!(block, ContentBlock::Text { text } if text.contains("Current time: 2026-09-30 10:00 UTC.")));
     assert!(sent, "the recorded text is what the model received");
 }
+
+/// A real turn's calls leave call effects naming the files they touched,
+/// with digests and the turn (docs/design/85-turn-graph.md, G0): a declared
+/// write and read, and a file bash created, found by its own scan.
+#[tokio::test]
+async fn a_turns_file_calls_record_their_effects() {
+    let h = harness(
+        vec![
+            ScriptedResponse::Message(tool_call_msg(
+                "call-write",
+                "write",
+                serde_json::json!({"path": "notes.txt", "content": "hello"}),
+            )),
+            ScriptedResponse::Message(tool_call_msg(
+                "call-read",
+                "read",
+                serde_json::json!({"path": "notes.txt"}),
+            )),
+            ScriptedResponse::Message(tool_call_msg(
+                "call-bash",
+                "bash",
+                serde_json::json!({"command": "printf made > made.txt"}),
+            )),
+            ScriptedResponse::Message(assistant_text("done")),
+        ],
+        vec![
+            Arc::new(WriteTool),
+            Arc::new(vak_tools::read::ReadTool),
+            Arc::new(BashTool),
+        ],
+    );
+    let mut agent = h.agent;
+    let outcome = agent
+        .run(
+            "make the notes",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let turn = session.latest_directive_entry_id().unwrap();
+    let effects: Vec<(String, vak_session::types::CallEffect, Option<String>)> = session
+        .chain_to_root()
+        .into_iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::CallEffect(record) => Some((
+                record.tool_use_id.clone(),
+                record.effect.clone(),
+                entry.at_turn.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    use vak_session::types::CallEffect;
+    let digest = |call: &str| {
+        effects.iter().find_map(|(id, effect, _)| match effect {
+            CallEffect::FileRead { digest, .. } | CallEffect::FileWrite { digest, .. }
+                if id == call =>
+            {
+                digest.clone()
+            }
+            _ => None,
+        })
+    };
+    assert!(effects.iter().any(|(id, effect, _)| id == "call-write"
+        && matches!(effect, CallEffect::FileWrite { path, .. } if path == "notes.txt")));
+    assert!(effects.iter().any(|(id, effect, _)| id == "call-read"
+        && matches!(effect, CallEffect::FileRead { path, .. } if path == "notes.txt")));
+    assert!(effects.iter().any(|(id, effect, _)| id == "call-bash"
+        && matches!(effect, CallEffect::FileWrite { path, .. } if path == "made.txt")));
+    assert!(digest("call-write").is_some());
+    assert_eq!(
+        digest("call-write"),
+        digest("call-read"),
+        "same content read back"
+    );
+    assert!(
+        effects
+            .iter()
+            .all(|(_, _, at)| at.as_deref() == Some(turn.as_str())),
+        "{effects:?}"
+    );
+}

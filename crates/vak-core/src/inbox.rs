@@ -71,6 +71,10 @@ pub struct Entry {
     pub result_id: Option<String>,
     #[serde(default)]
     pub dedupe_key: Option<String>,
+    /// The tool call this entry is about, when it is an approval forwarded
+    /// for one (docs/design/85-turn-graph.md, G0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<vak_session::trace::TraceKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -170,6 +174,50 @@ pub fn record_with_result_and_key(
     dedupe_key: Option<&str>,
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
+    insert(
+        home, kind, title, body, session_id, task_id, result_id, dedupe_key, None, trace,
+    )
+}
+
+/// Records an entry about one tool call: an approval forwarded to a chat
+/// for it, so the inbox names the call the way the session's own approval
+/// activity does.
+pub fn record_for_call(
+    home: &Path,
+    kind: Kind,
+    title: &str,
+    body: &str,
+    session_id: Option<&str>,
+    tool_use_id: Option<&str>,
+    trace: Option<&vak_session::trace::TraceKey>,
+) -> Result<Entry, InboxError> {
+    insert(
+        home,
+        kind,
+        title,
+        body,
+        session_id,
+        None,
+        None,
+        None,
+        tool_use_id,
+        trace,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert(
+    home: &Path,
+    kind: Kind,
+    title: &str,
+    body: &str,
+    session_id: Option<&str>,
+    task_id: Option<&str>,
+    result_id: Option<&str>,
+    dedupe_key: Option<&str>,
+    tool_use_id: Option<&str>,
+    trace: Option<&vak_session::trace::TraceKey>,
+) -> Result<Entry, InboxError> {
     let _dedupe_lock = if dedupe_key.is_some() {
         Some(acquire_dedupe_lock(home)?)
     } else {
@@ -194,6 +242,7 @@ pub fn record_with_result_and_key(
         task_id: task_id.map(str::to_string),
         result_id: result_id.map(str::to_string),
         dedupe_key: dedupe_key.map(str::to_string),
+        tool_use_id: tool_use_id.map(str::to_string),
         actor: trace.and_then(|t| t.actor),
         trace: trace.cloned(),
     };

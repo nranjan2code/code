@@ -199,7 +199,6 @@ fn activity_roundtrips_without_entering_model_context() {
     log.append_message(user_msg("keep me visible")).unwrap();
     log.append_activity(ActivityRecord {
         activity_id: "retry-1".into(),
-        turn: Some(1),
         kind: ActivityKind::Retry,
         status: ActivityStatus::Succeeded,
         label: "Recovered after retry".into(),

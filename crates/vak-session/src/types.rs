@@ -472,8 +472,6 @@ pub enum GoalStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivityRecord {
     pub activity_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub turn: Option<usize>,
     #[serde(rename = "activity_kind")]
     pub kind: ActivityKind,
     pub status: ActivityStatus,

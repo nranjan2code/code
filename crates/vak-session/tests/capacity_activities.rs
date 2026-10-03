@@ -74,7 +74,6 @@ fn capacity_activity(
     data.insert("profile".into(), serde_json::to_string(profile).unwrap());
     ActivityRecord {
         activity_id: id.into(),
-        turn: None,
         kind,
         status: ActivityStatus::Succeeded,
         label: "capacity".into(),

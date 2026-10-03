@@ -1312,7 +1312,7 @@ export function patchConfig(patch: ConfigPatch, agent?: string): Promise<void> {
 export function recordOutcomeReview(
   sessionId: string,
   verdict: "accepted" | "needs_work" | "rejected",
-  turn?: number,
+  turn?: string,
   note?: string,
 ): Promise<{ recorded: boolean }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/outcome-review`, {

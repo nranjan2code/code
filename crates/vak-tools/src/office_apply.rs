@@ -56,6 +56,21 @@ impl Tool for OfficeApplyTool {
         args.get("path").and_then(Value::as_str).map(str::to_string)
     }
 
+    /// The document a call edits from: its `source`, or `path` when the call
+    /// names a `base_digest` of the existing file. The draft it writes is in
+    /// scratch, not the workspace; the workspace file changes only through
+    /// Review, which records that write itself.
+    fn file_access(&self, args: &Value) -> Option<(crate::FileAccess, String)> {
+        let source = args.get("source").and_then(Value::as_str);
+        let edited = args
+            .get("base_digest")
+            .and_then(Value::as_str)
+            .and(args.get("path").and_then(Value::as_str));
+        source
+            .or(edited)
+            .map(|path| (crate::FileAccess::Read, path.to_string()))
+    }
+
     fn description(&self) -> &str {
         DESCRIPTION.as_str()
     }

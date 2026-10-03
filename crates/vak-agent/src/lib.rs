@@ -2185,7 +2185,6 @@ impl Agent {
                     logged_plan = Some(fingerprint);
                     let _ = session.append_activity(vak_session::ActivityRecord {
                         activity_id: format!("context-plan-{}", uuid::Uuid::now_v7()),
-                        turn: None,
                         kind: vak_session::ActivityKind::Diagnostic,
                         status: vak_session::ActivityStatus::Succeeded,
                         label: vak_session::CONTEXT_PLAN_LABEL.into(),
@@ -2458,7 +2457,6 @@ impl Agent {
                                 now.timestamp_nanos_opt()
                                     .unwrap_or_else(|| now.timestamp_micros() * 1_000)
                             ),
-                            turn: None,
                             kind: vak_session::ActivityKind::Diagnostic,
                             status: vak_session::ActivityStatus::Succeeded,
                             label: "prefix-changed".to_string(),
@@ -4727,7 +4725,6 @@ impl Agent {
             .await
             .append_activity(vak_session::ActivityRecord {
                 activity_id: format!("workers-cancelled-{}", uuid::Uuid::now_v7()),
-                turn: None,
                 kind: vak_session::ActivityKind::Worker,
                 status: vak_session::ActivityStatus::Cancelled,
                 label: "Background workers cancelled at the end of the turn".into(),
@@ -4757,7 +4754,6 @@ impl Agent {
             .await
             .append_activity(vak_session::ActivityRecord {
                 activity_id: format!("turn-context-{}", uuid::Uuid::now_v7()),
-                turn: None,
                 kind: vak_session::ActivityKind::Diagnostic,
                 status: vak_session::ActivityStatus::Succeeded,
                 label: "Time and stance given to the model this turn".into(),
@@ -4876,7 +4872,6 @@ impl Agent {
                 now.timestamp_nanos_opt()
                     .unwrap_or_else(|| now.timestamp_micros() * 1_000)
             ),
-            turn: None,
             kind,
             status,
             label,
@@ -7272,8 +7267,19 @@ async fn execute_one(
                 sandbox_sink = sandbox_sink.with_trace(key.clone());
             }
             let events_tx = events.clone();
+            // Files the call reported creating or changing in the workspace
+            // (bash's before/after scan, a write tool's report), recorded as
+            // its file effects below (docs/design/85-turn-graph.md, G0).
+            let reported = Arc::new(StdMutex::new(Vec::<String>::new()));
+            let reported_by_call = reported.clone();
             let forwarder = tokio::spawn(async move {
                 while let Some(sb_ev) = sandbox_rx.recv().await {
+                    if let vak_tools::SandboxEvent::ArtifactGenerated { path, .. } = &sb_ev {
+                        reported_by_call
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push(path.clone());
+                    }
                     let _ = events_tx.send(AgentEvent::Sandbox(sb_ev)).await;
                 }
             });
@@ -7288,6 +7294,9 @@ async fn execute_one(
                 new_documents: Vec::new(),
             };
             let file_access = tool.file_access(&call.input);
+            let declared = file_access
+                .as_ref()
+                .map(|(_, path)| path.trim_start_matches("./").to_string());
             let tool = tool.clone();
             // The context (and its event sender) moves into the task and is
             // dropped when it ends, so joining the forwarder below cannot
@@ -7330,6 +7339,30 @@ async fn execute_one(
                 Err(join_err) => ToolRunOutput::Err(format!("tool task failed: {join_err}")),
             };
             let _ = forwarder.await;
+            if matches!(output, ToolRunOutput::Ok(_)) {
+                let reported: Vec<String> = std::mem::take(
+                    &mut *reported
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner),
+                );
+                let mut effects = Vec::new();
+                for path in reported {
+                    let path = path.trim_start_matches("./").to_string();
+                    if std::path::Path::new(&path).starts_with(vak_config::scope::PROJECT_DIR) || declared.as_deref() == Some(path.as_str()) {
+                        continue;
+                    }
+                    effects.push(file_effect(cwd, vak_tools::FileAccess::Write, path).await);
+                }
+                if !effects.is_empty() {
+                    yields
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .entry(call.id.clone())
+                        .or_default()
+                        .effects
+                        .extend(effects);
+                }
+            }
             output
         }
     };

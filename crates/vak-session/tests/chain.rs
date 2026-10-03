@@ -39,7 +39,6 @@ fn header() -> SessionHeader {
 fn activity(label: &str) -> ActivityRecord {
     ActivityRecord {
         activity_id: format!("a-{label}"),
-        turn: Some(1),
         kind: ActivityKind::Diagnostic,
         status: ActivityStatus::Succeeded,
         label: label.into(),

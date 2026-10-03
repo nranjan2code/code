@@ -174,6 +174,7 @@ Type `Entry` in `crates/vak-core/src/inbox.rs`. Class: ledger. Stored in: `inbox
 | `task_id` | `Option<String>` | no |  |
 | `result_id` | `Option<String>` | no |  |
 | `dedupe_key` | `Option<String>` | no |  |
+| `tool_use_id` | `Option<String>` | no | The tool call this entry is about, when it is an approval forwarded |
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 

@@ -2393,6 +2393,7 @@ impl vak_agent::Approver for GatewayApprover {
             format!("Question from {} [{code}]", question.label),
             Some(&self.session_id),
             None,
+            None,
         )
         .await;
         if let Err(error) = delivered {
@@ -2409,7 +2410,7 @@ impl vak_agent::Approver for GatewayApprover {
         tool: &str,
         args_json: &str,
         reason: &str,
-        _call_id: Option<&str>,
+        call_id: Option<&str>,
     ) -> bool {
         if !self.state.forward_mode() {
             return false;
@@ -2448,6 +2449,7 @@ impl vak_agent::Approver for GatewayApprover {
             format!("Approval requested [{short}]"),
             Some(&self.session_id),
             None,
+            call_id,
         )
         .await
         {
@@ -2881,7 +2883,6 @@ async fn gateway_inbound(
         &handle,
         vak_session::ActivityRecord {
             activity_id: format!("admission-{request_id}"),
-            turn: None,
             kind: vak_session::ActivityKind::Run,
             status: vak_session::ActivityStatus::Running,
             label: "Gateway request accepted".into(),
@@ -3812,6 +3813,7 @@ pub(crate) async fn deliver_and_record_with_result(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn deliver_approval_and_record(
     core: &Core,
     target: &str,
@@ -3820,16 +3822,28 @@ async fn deliver_approval_and_record(
     title: String,
     session_id: Option<&str>,
     task_id: Option<&str>,
+    tool_use_id: Option<&str>,
 ) -> Result<(), String> {
-    let _ = vak_core::inbox::record(
-        &core.shared_scope().into_root(),
-        inbox_kind,
-        &title,
-        &approval.detail,
-        session_id,
-        task_id,
-        core.admitted_trace(),
-    );
+    let _ = match tool_use_id {
+        Some(call) => vak_core::inbox::record_for_call(
+            &core.shared_scope().into_root(),
+            inbox_kind,
+            &title,
+            &approval.detail,
+            session_id,
+            Some(call),
+            core.admitted_trace(),
+        ),
+        None => vak_core::inbox::record(
+            &core.shared_scope().into_root(),
+            inbox_kind,
+            &title,
+            &approval.detail,
+            session_id,
+            task_id,
+            core.admitted_trace(),
+        ),
+    };
     crate::delivery::deliver(
         core,
         target,

@@ -252,6 +252,7 @@ mod tests {
             task_id: None,
             result_id: None,
             dedupe_key: None,
+            tool_use_id: None,
             trace: None,
             actor: None,
         }

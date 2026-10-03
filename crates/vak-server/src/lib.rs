@@ -669,7 +669,6 @@ impl Approver for HttpApprover {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(vak_session::ActivityRecord {
                 activity_id: format!("approval-{id}"),
-                turn: None,
                 kind: vak_session::ActivityKind::Approval,
                 status: vak_session::ActivityStatus::Pending,
                 label: format!("Approval required for {tool}"),
@@ -719,7 +718,6 @@ impl Approver for HttpApprover {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(vak_session::ActivityRecord {
                 activity_id: format!("approval-{id}"),
-                turn: None,
                 kind: vak_session::ActivityKind::Approval,
                 status: if approved {
                     vak_session::ActivityStatus::Succeeded
@@ -4335,7 +4333,6 @@ pub(crate) fn register_handle(
                             AgentEvent::WorkerStarted { label } => {
                                 Some(vak_session::ActivityRecord {
                                     activity_id: format!("worker-{label}"),
-                                    turn: None,
                                     kind: vak_session::ActivityKind::Worker,
                                     status: vak_session::ActivityStatus::Running,
                                     label,
@@ -4349,7 +4346,6 @@ pub(crate) fn register_handle(
                                 elapsed_ms,
                             } => Some(vak_session::ActivityRecord {
                                 activity_id: format!("worker-{label}"),
-                                turn: None,
                                 kind: vak_session::ActivityKind::Worker,
                                 status: if is_error {
                                     vak_session::ActivityStatus::Failed
@@ -4367,7 +4363,6 @@ pub(crate) fn register_handle(
                                 ..
                             } => Some(vak_session::ActivityRecord {
                                 activity_id: format!("worker-question-{id}"),
-                                turn: None,
                                 kind: vak_session::ActivityKind::Worker,
                                 status: vak_session::ActivityStatus::Pending,
                                 label: format!("{label} is asking a question"),
@@ -4377,7 +4372,6 @@ pub(crate) fn register_handle(
                             AgentEvent::WorkerQuestionAnswered { id, label, source } => {
                                 Some(vak_session::ActivityRecord {
                                     activity_id: format!("worker-question-{id}"),
-                                    turn: None,
                                     kind: vak_session::ActivityKind::Worker,
                                     status: vak_session::ActivityStatus::Succeeded,
                                     label: format!("{label}'s question was answered"),
@@ -5368,7 +5362,6 @@ async fn http_settle(
             };
             let _ = session_log.append_activity(vak_session::ActivityRecord {
                 activity_id: format!("run-{run_id}-{}", chrono::Utc::now().timestamp_micros()),
-                turn: None,
                 kind: vak_session::ActivityKind::Run,
                 status: activity_status,
                 label: "Run finished".into(),
@@ -5653,7 +5646,6 @@ async fn run_prompt(
                 &handle,
                 vak_session::ActivityRecord {
                     activity_id: format!("admission-{request_id}"),
-                    turn: None,
                     kind: vak_session::ActivityKind::Run,
                     status: vak_session::ActivityStatus::Pending,
                     label: "Request queued".into(),
@@ -5723,7 +5715,6 @@ async fn run_prompt(
         if taken
             .append_activity(vak_session::ActivityRecord {
                 activity_id: format!("admission-{request_id}"),
-                turn: None,
                 kind: vak_session::ActivityKind::Run,
                 status: vak_session::ActivityStatus::Running,
                 label: "Request accepted".into(),
@@ -5984,7 +5975,6 @@ async fn send_steering(
         &handle,
         vak_session::ActivityRecord {
             activity_id: evaluation.request.request_id.clone(),
-            turn: None,
             kind: vak_session::ActivityKind::Diagnostic,
             status: if evaluation.decision == vak_intent::InterventionDecision::Queued {
                 vak_session::ActivityStatus::Pending
@@ -6254,7 +6244,6 @@ async fn cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> St
             &handle,
             vak_session::ActivityRecord {
                 activity_id: format!("cancel-discard-{}", uuid::Uuid::now_v7()),
-                turn: None,
                 kind: vak_session::ActivityKind::Diagnostic,
                 status: vak_session::ActivityStatus::Cancelled,
                 label: "Queued input discarded by stop".into(),
@@ -6515,7 +6504,6 @@ async fn plan_change(
         &handle,
         vak_session::ActivityRecord {
             activity_id: evaluation.request.request_id.clone(),
-            turn: None,
             kind: vak_session::ActivityKind::Diagnostic,
             status: if evaluation.decision == vak_intent::InterventionDecision::RequiresHuman {
                 vak_session::ActivityStatus::Denied
@@ -6574,7 +6562,6 @@ pub(crate) fn record_control_activity(handle: &SessionHandle, label: &str, contr
         handle,
         vak_session::ActivityRecord {
             activity_id: format!("control-{}", uuid::Uuid::now_v7()),
-            turn: None,
             kind: vak_session::ActivityKind::Diagnostic,
             status: vak_session::ActivityStatus::Succeeded,
             label: label.into(),
@@ -6778,8 +6765,9 @@ struct ApprovalBody {
 #[derive(serde::Deserialize)]
 struct OutcomeReviewBody {
     verdict: String,
+    /// The reviewed turn's id; the latest evaluated turn when absent.
     #[serde(default)]
-    turn: Option<usize>,
+    turn: Option<String>,
     #[serde(default)]
     note: Option<String>,
 }
@@ -6807,33 +6795,38 @@ async fn record_outcome_review(
     let Some(session) = guard.as_mut() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let reviewed_turn = body.turn.or_else(|| {
-        session
-            .chain_to_root()
-            .iter()
-            .filter_map(|entry| match &entry.payload {
-                vak_session::EntryPayload::Activity(activity)
-                    if activity.label == "Outcome evaluation" =>
-                {
-                    activity.turn
-                }
-                _ => None,
-            })
-            .next_back()
-    });
-    if body.turn.is_some() && reviewed_turn.is_none() {
-        return (StatusCode::NOT_FOUND, "outcome evaluation turn not found").into_response();
-    }
+    // The turns that have an outcome evaluation, newest last; a review is
+    // written into the turn it reviews (`Entry::at_turn`), never by number.
+    let evaluated: Vec<String> = session
+        .chain_to_root()
+        .iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Activity(activity)
+                if activity.label == "Outcome evaluation" =>
+            {
+                entry.at_turn.clone()
+            }
+            _ => None,
+        })
+        .collect();
+    let reviewed_turn = match body.turn {
+        Some(turn) if evaluated.contains(&turn) => Some(turn),
+        Some(_) => {
+            return (StatusCode::NOT_FOUND, "outcome evaluation turn not found").into_response();
+        }
+        None => evaluated.last().cloned(),
+    };
     let activity = vak_session::ActivityRecord {
         activity_id: format!("outcome-review-{}", uuid::Uuid::now_v7()),
-        turn: reviewed_turn,
         kind: vak_session::ActivityKind::Diagnostic,
         status: vak_session::ActivityStatus::Succeeded,
         label: "Outcome review".into(),
         detail: body.note,
         data: std::collections::BTreeMap::from([("verdict".into(), body.verdict)]),
     };
-    if let Err(error) = session.append_activity(activity) {
+    if let Err(error) =
+        session.append_in_turn(vak_session::EntryPayload::Activity(activity), reviewed_turn)
+    {
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
     }
     Json(serde_json::json!({ "recorded": true })).into_response()
@@ -7797,7 +7790,6 @@ async fn select_presentation_for_session(
     data.insert("presentation_id".into(), body.presentation_id);
     let activity = vak_session::ActivityRecord {
         activity_id: format!("presentation-select-{}", uuid::Uuid::now_v7()),
-        turn: None,
         kind: vak_session::ActivityKind::PresentationSelection,
         status: vak_session::ActivityStatus::Succeeded,
         label: "Presentation selected".into(),
@@ -7858,7 +7850,6 @@ async fn presentation_feedback(
     }
     let activity = vak_session::ActivityRecord {
         activity_id: uuid::Uuid::now_v7().to_string(),
-        turn: None,
         kind: vak_session::ActivityKind::PresentationFeedback,
         status: if feedback_denied {
             vak_session::ActivityStatus::Denied
@@ -8596,7 +8587,6 @@ async fn delegate_coworking_approval(
         &handle,
         vak_session::ActivityRecord {
             activity_id: format!("approval-delegation-{request_id}"),
-            turn: None,
             kind: vak_session::ActivityKind::Approval,
             status: vak_session::ActivityStatus::Succeeded,
             label: format!("Approval assigned to {}", grant.display_name),
@@ -10602,7 +10592,6 @@ async fn propose_session_presentation_revision(
             data.insert("chain_id".into(), chain_id.clone());
             let activity = vak_session::ActivityRecord {
                 activity_id: format!("presentation-proposal-{}", uuid::Uuid::now_v7()),
-                turn: None,
                 kind: vak_session::ActivityKind::PresentationProposal,
                 status: vak_session::ActivityStatus::Succeeded,
                 label: "Presentation proposal previewed".into(),
@@ -10626,7 +10615,6 @@ async fn propose_session_presentation_revision(
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(vak_session::ActivityRecord {
                     activity_id: format!("presentation-proposal-{}", uuid::Uuid::now_v7()),
-                    turn: None,
                     kind: vak_session::ActivityKind::PresentationProposal,
                     status: vak_session::ActivityStatus::Failed,
                     label: "Presentation proposal rejected".into(),
@@ -13450,7 +13438,6 @@ async fn comment_on_sandbox_candidate(
     data.insert("comment".into(), text.to_string());
     let comment = vak_session::ActivityRecord {
         activity_id: format!("comment-{request_id}"),
-        turn: None,
         kind: vak_session::ActivityKind::CandidateComment,
         status: vak_session::ActivityStatus::Succeeded,
         label: "Candidate comment".into(),
@@ -13509,7 +13496,6 @@ fn append_candidate_revision_activity(
                 _ => "finished",
             }
         ),
-        turn: None,
         kind: vak_session::ActivityKind::CandidateRevision,
         status,
         label: "Draft revision".into(),
@@ -14149,6 +14135,7 @@ async fn promote_sandbox_candidate(
         );
         receipt.integration.target_checks = checks;
     }
+    let promoted_from = (session_id.clone(), saved.execution_id.clone());
     let record = vak_sandbox::DurableRecord::Promotion(vak_sandbox::PromotionRecord {
         trace: Some(request_trace(&state, "promotion")),
         actor: Some(request_actor(&state)),
@@ -14168,7 +14155,65 @@ async fn promote_sandbox_candidate(
         )
             .into_response();
     }
+    record_promoted_files(&state, &promoted_from, &workspace, &body.files);
     (StatusCode::OK, Json(record)).into_response()
+}
+
+/// Records each file a Review promoted into the workspace as a write by the
+/// call that drafted it, in that call's turn (docs/design/85-turn-graph.md,
+/// G0). Written only while the session's ledger is idle in this process; a
+/// promotion during a running turn is still in the sandbox records.
+fn record_promoted_files(
+    state: &AppState,
+    (session_id, call_id): &(String, String),
+    workspace: &std::path::Path,
+    files: &[String],
+) {
+    use sha2::Digest as _;
+    let Some(handle) = state.get(session_id) else {
+        return;
+    };
+    let mut guard = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(session) = guard.as_mut() else {
+        eprintln!("[review] session {session_id} is running; promoted files not linked");
+        return;
+    };
+    // The drafting call's turn, from the ledger entry that holds the call.
+    let turn =
+        session.chain_to_root().iter().find_map(|entry| {
+            match &entry.payload {
+        vak_session::EntryPayload::Message(record)
+            if record.message.content.iter().any(|block| {
+                matches!(block, vak_llm::ContentBlock::ToolUse { id, .. } if id == call_id)
+            }) =>
+        {
+            entry.at_turn.clone()
+        }
+        _ => None,
+    }
+        });
+    for path in files {
+        let bytes = std::fs::read(workspace.join(path)).ok();
+        let effect = vak_session::types::CallEffect::FileWrite {
+            path: path.trim_start_matches("./").to_string(),
+            digest: bytes
+                .as_ref()
+                .map(|bytes| format!("{:x}", sha2::Sha256::digest(bytes))),
+            bytes: bytes.as_ref().map(|bytes| bytes.len() as u64),
+        };
+        let record = vak_session::types::CallEffectRecord {
+            tool_use_id: call_id.clone(),
+            effect,
+        };
+        if let Err(error) =
+            session.append_in_turn(vak_session::EntryPayload::CallEffect(record), turn.clone())
+        {
+            eprintln!("[review] could not record a promoted file: {error}");
+        }
+    }
 }
 
 async fn undo_sandbox_promotion(
@@ -14986,7 +15031,6 @@ fn stop_agent_runs(state: &AppState, agent_id: &str) -> usize {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .push(vak_session::ActivityRecord {
                     activity_id: format!("agent-paused-{}", uuid::Uuid::now_v7()),
-                    turn: None,
                     kind: vak_session::ActivityKind::Run,
                     status: vak_session::ActivityStatus::Cancelled,
                     label: "Run stopped: the Agent was paused".into(),
@@ -24825,7 +24869,6 @@ mod sandbox_promotion_tests {
         ledger
             .append_activity(vak_session::ActivityRecord {
                 activity_id: "comment-history-1".into(),
-                turn: None,
                 kind: vak_session::ActivityKind::CandidateComment,
                 status: vak_session::ActivityStatus::Succeeded,
                 label: "Candidate comment".into(),
@@ -24897,7 +24940,6 @@ mod sandbox_promotion_tests {
         let mut log = SessionLog::open(session_path.clone()).unwrap();
         log.append_activity(vak_session::ActivityRecord {
             activity_id: comment_id.into(),
-            turn: None,
             kind: vak_session::ActivityKind::CandidateComment,
             status: vak_session::ActivityStatus::Succeeded,
             label: "Candidate comment".into(),
@@ -26867,7 +26909,6 @@ mod context_links_tests {
             .insert("t-old".into(), vec!["file:src/parser.rs".into()]);
         s.append_activity(ActivityRecord {
             activity_id: "plan-1".into(),
-            turn: None,
             kind: ActivityKind::Diagnostic,
             status: ActivityStatus::Succeeded,
             label: vak_session::CONTEXT_PLAN_LABEL.into(),

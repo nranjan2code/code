@@ -142,3 +142,24 @@ fn commitment_events_are_stamped_with_the_ledgers_run_key() {
         .unwrap();
     assert!(plain.events().last().unwrap().trace.is_none());
 }
+
+/// A gate forwarded to a chat names the call it gates in the inbox
+/// (docs/design/85-turn-graph.md, G0).
+#[test]
+fn a_forwarded_approval_names_its_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let (key, _) = key();
+    let entry = inbox::record_for_call(
+        dir.path(),
+        inbox::Kind::ApprovalPending,
+        "Approval requested",
+        "Tool: write",
+        Some("s1"),
+        Some("call-9"),
+        Some(&key),
+    )
+    .unwrap();
+    assert_eq!(entry.tool_use_id.as_deref(), Some("call-9"));
+    let listed = inbox::list(dir.path(), 10);
+    assert_eq!(listed[0].tool_use_id.as_deref(), Some("call-9"));
+}

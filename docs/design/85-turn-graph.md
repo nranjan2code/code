@@ -1,7 +1,6 @@
 # 85 — The turn graph: linked context across turns, sessions and years
 
-Status: in progress. G0 is built apart from the items its §10 list leaves
-open, and G1 is built (2026-10-03): turn links, recall links, merged
+Status: in progress. G0 is built, and G1 is built (2026-10-03): turn links, recall links, merged
 threads and the planner's two-step `link` signal (§10). G2 and G3 are
 proposed. §2.4 is the audit, taken before G0 started. Phase G1 changes the
 in-session planner and adds no store. Phases G2 and G3 ride
@@ -442,18 +441,27 @@ Also built (2026-10-03):
   answered `mcp` call writes a `CallEffect::Mcp` with server, reported name
   and version, tool and schema digest (`mcp_result_names_its_server`).
 
-Not yet built:
+Finished (2026-10-03):
 
-- Gateway-forwarded approvals go to the inbox, which has no call field.
-- `ActivityRecord.turn` is still a turn number; the server projection
-  groups the client timeline by it. `Entry::at_turn` already names every
-  activity's turn, so removing the number means moving that projection
-  onto `at_turn`.
-- Bash file changes (D4), `office_apply` drafts and Review promotion are not
-  yet file effects.
-- An end-to-end test that a real turn's read and write produce
-  `CallEffect` entries needs the tool worker binary in the test
-  environment.
+- Gateway-forwarded approvals name their call in the inbox
+  (`inbox::Entry::tool_use_id`, `record_for_call`,
+  `a_forwarded_approval_names_its_call`).
+- `ActivityRecord.turn` is gone. The timeline projection keys outcome
+  evaluations, reviews, run results and admission outcomes by
+  `Entry::at_turn`, which also replaced its "the next turn is `n + 1`"
+  guess for admission outcomes. An outcome review takes the reviewed turn's
+  id (the client sends the id it was given) and is written into that turn
+  (`SessionLog::append_in_turn`).
+- More file effects: a file bash's before/after scan reports is recorded as
+  an observed write by that call (D4, decided); `office_apply` declares the
+  document it edits from (`source`, or `path` with a `base_digest`); a file
+  a Review promotes is recorded as a write by the call that drafted it, in
+  that call's turn, while the session's ledger is idle in this process.
+- End to end: `a_turns_file_calls_record_their_effects` runs a scripted
+  turn through the real write, read and bash tools and checks the three
+  effects, their digests and their turn.
+
+G0 is complete.
 
 Nothing in G1 to G3 is sound until §2.4 holds. Each item is a new field or
 entry, added under invariant 29's additive rule, or folded into M3a/M3b
@@ -647,7 +655,8 @@ pass rate without raising token use.
   whether a capsule is rewritten as a thread resumes or appended to.
   Recommendation: both, and append (a resumed thread gets a newer capsule
   keyed by its new last turn; the old one stays a valid cache).
-- **D4. Bash file effects.** `wrote`/`read` from bash needs the changed-file
+- **D4. Bash file effects.** Decided 2026-10-03: observed; they come from
+  the runtime's own before/after scan. `wrote`/`read` from bash needs the changed-file
   report invariant 35 already requires of Workbench. Confirm it is
   complete enough to be an `observed` edge, or mark bash edges `inferred`.
 

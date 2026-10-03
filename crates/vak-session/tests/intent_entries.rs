@@ -131,7 +131,6 @@ fn a_workspace_delta_reaches_the_tail_only_for_a_working_reading() {
     let mut log = open(dir.path());
     let delta = |id: &str| vak_session::ActivityRecord {
         activity_id: id.into(),
-        turn: None,
         kind: vak_session::ActivityKind::Diagnostic,
         status: vak_session::ActivityStatus::Succeeded,
         label: "Workspace changes since the session began".into(),

@@ -654,11 +654,11 @@ fn snapshot_inner(
     }
     let mut tool_results: HashMap<String, (String, bool)> = HashMap::new();
     let mut tool_inputs: HashMap<String, (String, serde_json::Value)> = HashMap::new();
-    let mut turn_outcomes: HashMap<usize, vak_intent::OutcomeSpec> = HashMap::new();
-    let mut turn_evaluations: HashMap<usize, String> = HashMap::new();
-    let mut turn_evidence_state: HashMap<usize, String> = HashMap::new();
-    let mut turn_human_review: HashMap<usize, String> = HashMap::new();
-    let mut turn_review_verdict: HashMap<usize, String> = HashMap::new();
+    let mut turn_outcomes: HashMap<String, vak_intent::OutcomeSpec> = HashMap::new();
+    let mut turn_evaluations: HashMap<String, String> = HashMap::new();
+    let mut turn_evidence_state: HashMap<String, String> = HashMap::new();
+    let mut turn_human_review: HashMap<String, String> = HashMap::new();
+    let mut turn_review_verdict: HashMap<String, String> = HashMap::new();
     // Declared domains per tool name, accumulated from every
     // `TurnCapabilitiesBound` entry in the chain (docs/design/68-context-
     // engine.md §9's `SignalContext.domains` note): delivery signals derive
@@ -666,7 +666,6 @@ fn snapshot_inner(
     let mut tool_domains: HashMap<String, Vec<String>> = HashMap::new();
     let mut selected_presentation: Option<(String, u64)> = None;
     let mut successful_runs = std::collections::HashSet::new();
-    let mut scan_turn = 0usize;
     let mut assistant_tool_context: HashMap<String, TurnTool> = HashMap::new();
     let mut pending_tool_context: Option<TurnTool> = None;
     // Tracks, per semantic_type, the id of the most recently pushed
@@ -707,7 +706,6 @@ fn snapshot_inner(
                         _ => false,
                     })
                 {
-                    scan_turn += 1;
                     pending_tool_context = None;
                     card_group_by_type.clear();
                     seen_cards.clear();
@@ -754,10 +752,11 @@ fn snapshot_inner(
             }
             EntryPayload::Intent(record) => {
                 if let Some(outcome) = &record.outcome {
-                    // Core records admission immediately before the user
-                    // message that starts the turn. Attach it to that next
-                    // turn rather than decorating the previous answer.
-                    turn_outcomes.insert(scan_turn + 1, outcome.clone());
+                    // The intent names its turn (`Entry::at_turn`), the one
+                    // whose directive follows it, so no position is guessed.
+                    if let Some(turn) = &entry.at_turn {
+                        turn_outcomes.insert(turn.clone(), outcome.clone());
+                    }
                 }
             }
             EntryPayload::TurnCapabilitiesBound(bound) => {
@@ -771,23 +770,25 @@ fn snapshot_inner(
                 if activity.kind == ActivityKind::Diagnostic
                     && activity.label == "Outcome evaluation" =>
             {
-                if let Some(turn) = activity.turn {
+                if let Some(turn) = entry.at_turn.clone() {
                     if let Some(status) = activity.data.get("status") {
-                        turn_evaluations.insert(turn, status.clone());
+                        turn_evaluations.insert(turn.clone(), status.clone());
                     }
                     if let Some(evidence_state) = activity.data.get("evidence_state") {
-                        turn_evidence_state.insert(turn, evidence_state.clone());
+                        turn_evidence_state.insert(turn.clone(), evidence_state.clone());
                     }
                     if let Some(review) = activity.data.get("human_review") {
-                        turn_human_review.insert(turn, review.clone());
+                        turn_human_review.insert(turn.clone(), review.clone());
                     }
                     if let Some(evaluation) = activity.data.get("evaluation") {
                         let evaluation_status = match activity.data.get("status") {
                             Some(value) => value.as_str(),
                             None => "unknown",
                         };
-                        turn_evaluations
-                            .insert(turn, format!("{}|{}", evaluation_status, evaluation));
+                        turn_evaluations.insert(
+                            turn.clone(),
+                            format!("{}|{}", evaluation_status, evaluation),
+                        );
                     }
                     if let Some(receipts) = activity.data.get("evidence_receipts") {
                         let evaluation_status = activity
@@ -803,7 +804,7 @@ fn snapshot_inner(
                             .get("completion")
                             .map_or("unknown", |value| value.as_str());
                         turn_evaluations.insert(
-                            turn,
+                            turn.clone(),
                             format!(
                                 "{}|{}|{}|{}",
                                 evaluation_status, evaluation, receipts, completion
@@ -829,7 +830,7 @@ fn snapshot_inner(
                 if activity.kind == ActivityKind::Diagnostic
                     && activity.label == "Outcome review" =>
             {
-                if let Some(turn) = activity.turn
+                if let Some(turn) = entry.at_turn.clone()
                     && let Some(verdict) = activity.data.get("verdict")
                 {
                     turn_review_verdict.insert(turn, verdict.clone());
@@ -839,7 +840,7 @@ fn snapshot_inner(
                 if activity.kind == ActivityKind::Run
                     && activity.status == ActivityStatus::Succeeded =>
             {
-                if let Some(turn) = activity.turn {
+                if let Some(turn) = entry.at_turn.clone() {
                     successful_runs.insert(turn);
                 }
             }
@@ -850,6 +851,8 @@ fn snapshot_inner(
     let mut timeline = OutputTimeline::empty(session_id);
     timeline.goal = session.goal_state();
     let mut turn = 0usize;
+    let mut current_turn = String::new();
+    let mut turn_numbers: HashMap<String, usize> = HashMap::new();
     // An answer the runtime sent back for a redo (a `retries_answer` nudge
     // followed it) is an internal draft, not something to show: the user sees
     // the redone answer, never both. `last_assistant_entry` is the answer the
@@ -880,6 +883,8 @@ fn snapshot_inner(
                     })
                 {
                     turn += 1;
+                    current_turn = entry.id.clone();
+                    turn_numbers.insert(entry.id.clone(), turn);
                 }
                 let turn_id = format!("turn-{turn}");
                 for (index, block) in record.message.content.iter().enumerate() {
@@ -925,7 +930,7 @@ fn snapshot_inner(
                             };
                             let signals = signals_from_context(&ctx);
                             let plan = planner.plan(&signals, "desktop", &[], &candidates);
-                            let mut projected_outcome = turn_outcomes.get(&turn).cloned();
+                            let mut projected_outcome = turn_outcomes.get(&current_turn).cloned();
                             let mut rejected_outcome_requirements = Vec::new();
                             if let Some(outcome) = projected_outcome.as_mut() {
                                 rejected_outcome_requirements =
@@ -967,7 +972,7 @@ fn snapshot_inner(
                             });
                             let output_status = status_for_completion(
                                 turn_evaluations
-                                    .get(&turn)
+                                    .get(&current_turn)
                                     .and_then(|value| value.split('|').nth(3)),
                             );
                             timeline.items.push(OutputItem {
@@ -1077,7 +1082,7 @@ fn snapshot_inner(
                                                 rejected_outcome_requirements.join("; "),
                                             );
                                         }
-                                        if let Some(status) = turn_evaluations.get(&turn) {
+                                        if let Some(status) = turn_evaluations.get(&current_turn) {
                                             let mut parts = status.splitn(2, '|');
                                             let outcome_status =
                                                 parts.next().map_or("unknown", |value| value);
@@ -1107,19 +1112,19 @@ fn snapshot_inner(
                                                 }
                                             }
                                         }
-                                        if let Some(evidence_state) = turn_evidence_state.get(&turn) {
+                                        if let Some(evidence_state) = turn_evidence_state.get(&current_turn) {
                                             document.metadata.insert(
                                                 "outcome_evidence_state".into(),
                                                 evidence_state.clone(),
                                             );
                                         }
-                                        if let Some(review) = turn_human_review.get(&turn) {
+                                        if let Some(review) = turn_human_review.get(&current_turn) {
                                             document.metadata.insert(
                                                 "outcome_human_review".into(),
                                                 review.clone(),
                                             );
                                         }
-                                        if let Some(verdict) = turn_review_verdict.get(&turn) {
+                                        if let Some(verdict) = turn_review_verdict.get(&current_turn) {
                                             document.metadata.insert(
                                                 "outcome_review_verdict".into(),
                                                 verdict.clone(),
@@ -1153,9 +1158,9 @@ fn snapshot_inner(
                                     format!("{}-text-{index}", entry.id),
                                     output_status,
                                     projected_outcome.as_ref(),
-                                    turn_evaluations.get(&turn).map(String::as_str),
-                                    turn_evidence_state.get(&turn),
-                                    turn_human_review.get(&turn),
+                                    turn_evaluations.get(&current_turn).map(String::as_str),
+                                    turn_evidence_state.get(&current_turn),
+                                    turn_human_review.get(&current_turn),
                                 )),
                                 provenance: Some(OutputProvenance {
                                     session_id: Some(session_id.into()),
@@ -1248,7 +1253,7 @@ fn snapshot_inner(
                         ContentBlock::ToolUse { id, name, input } => {
                             let result = tool_results.get(id);
                             let failed = result.is_some_and(|(_, failed)| *failed);
-                            let recovered = failed && successful_runs.contains(&turn);
+                            let recovered = failed && successful_runs.contains(&current_turn);
                             let detail = result.map(|(content, _)| content.clone());
                             timeline.items.push(OutputItem {
                                 id: id.clone(),
@@ -1495,11 +1500,18 @@ fn snapshot_inner(
                 }
             }
             EntryPayload::Activity(activity) if is_user_facing_activity(activity) => {
+                let number = entry
+                    .at_turn
+                    .as_ref()
+                    .and_then(|id| turn_numbers.get(id))
+                    .copied()
+                    .unwrap_or(turn);
                 timeline.items.push(activity_item(
                     session_id,
                     &entry.id,
                     &entry.ts.to_rfc3339(),
-                    &format!("turn-{}", activity.turn.unwrap_or(turn)),
+                    &format!("turn-{number}"),
+                    entry.at_turn.as_deref(),
                     activity,
                 ));
             }
@@ -1733,6 +1745,7 @@ fn activity_item(
     entry_id: &str,
     timestamp: &str,
     turn_id: &str,
+    ledger_turn: Option<&str>,
     activity: &vak_session::ActivityRecord,
 ) -> OutputItem {
     let status = match activity.status {
@@ -1926,7 +1939,7 @@ fn activity_item(
                     ("session_id".into(), session_id.into()),
                     ("verdict".into(), verdict.into()),
                 ]);
-                if let Some(turn) = activity.turn {
+                if let Some(turn) = ledger_turn {
                     data.insert("turn".into(), turn.to_string());
                 }
                 data
@@ -2532,7 +2545,6 @@ mod tests {
         .expect("create session");
         let activity = |id: &str, kind: ActivityKind, label: &str| ActivityRecord {
             activity_id: id.into(),
-            turn: None,
             kind,
             status: ActivityStatus::Succeeded,
             label: label.into(),
@@ -3055,9 +3067,9 @@ mod tests {
             "activity-1",
             "2026-01-01T00:00:00Z",
             "turn-1",
+            Some("turn-entry-1"),
             &ActivityRecord {
                 activity_id: "evaluation-1".into(),
-                turn: Some(1),
                 kind: ActivityKind::Diagnostic,
                 status: ActivityStatus::Succeeded,
                 label: "Outcome evaluation".into(),
@@ -3241,7 +3253,6 @@ mod tests {
         for status in [ActivityStatus::Pending, ActivityStatus::Succeeded] {
             log.append_activity(ActivityRecord {
                 activity_id: "approval-1".into(),
-                turn: Some(1),
                 kind: ActivityKind::Approval,
                 status,
                 label: "Approval".into(),
@@ -3256,7 +3267,6 @@ mod tests {
         }
         log.append_activity(ActivityRecord {
             activity_id: "evaluation-1".into(),
-            turn: Some(1),
             kind: ActivityKind::Diagnostic,
             status: ActivityStatus::Succeeded,
             label: "Outcome evaluation".into(),
@@ -3271,7 +3281,6 @@ mod tests {
         .expect("append outcome evaluation");
         log.append_activity(ActivityRecord {
             activity_id: "review-1".into(),
-            turn: Some(1),
             kind: ActivityKind::Diagnostic,
             status: ActivityStatus::Succeeded,
             label: "Outcome review".into(),
@@ -3281,7 +3290,6 @@ mod tests {
         .expect("append outcome review");
         log.append_activity(ActivityRecord {
             activity_id: "review-2".into(),
-            turn: Some(1),
             kind: ActivityKind::Diagnostic,
             status: ActivityStatus::Succeeded,
             label: "Outcome review".into(),
@@ -3408,7 +3416,6 @@ mod tests {
         .expect("append outcome");
         log.append_activity(ActivityRecord {
             activity_id: "run-2".into(),
-            turn: Some(1),
             kind: ActivityKind::Run,
             status: ActivityStatus::Succeeded,
             label: "Run finished".into(),

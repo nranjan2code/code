@@ -425,6 +425,20 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::Activity(activity)))
     }
 
+    /// Appends an entry about an earlier turn (an outcome review, a file a
+    /// Review promoted), named as that turn's rather than the current one's.
+    /// `None` stamps it like any other entry.
+    pub fn append_in_turn(
+        &mut self,
+        payload: EntryPayload,
+        turn: Option<String>,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        let mut entry = Entry::new(parent, payload);
+        entry.at_turn = turn;
+        self.append(entry)
+    }
+
     /// Appends a validated presentation (docs/design/68-context-engine.md
     /// §10). Hash-linked like every entry; never rewritten.
     pub fn append_presentation(
@@ -681,7 +695,6 @@ impl SessionLog {
         data.insert("finalized".into(), finalized.to_string());
         self.append_activity(crate::types::ActivityRecord {
             activity_id: activity_id.into(),
-            turn: None,
             kind: crate::types::ActivityKind::VoiceTranscript,
             status: if finalized {
                 crate::types::ActivityStatus::Succeeded
@@ -713,7 +726,6 @@ impl SessionLog {
         data.insert("fallback_used".into(), fallback_used.to_string());
         self.append_activity(crate::types::ActivityRecord {
             activity_id: activity_id.into(),
-            turn: None,
             kind: crate::types::ActivityKind::PresentationSelection,
             status: crate::types::ActivityStatus::Succeeded,
             label: "Presentation selected".into(),
@@ -738,7 +750,6 @@ impl SessionLog {
         }
         self.append_activity(crate::types::ActivityRecord {
             activity_id: activity_id.into(),
-            turn: None,
             kind: crate::types::ActivityKind::PresentationFeedback,
             status: crate::types::ActivityStatus::Succeeded,
             label: "Presentation feedback".into(),
@@ -761,7 +772,6 @@ impl SessionLog {
         data.insert("interrupted".into(), interrupted.to_string());
         self.append_activity(crate::types::ActivityRecord {
             activity_id: activity_id.into(),
-            turn: None,
             kind: crate::types::ActivityKind::VoicePlayback,
             status: if interrupted {
                 crate::types::ActivityStatus::Partial

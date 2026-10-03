@@ -914,7 +914,7 @@ function OutcomeReviewActions(props: { item: OutputItem; sessionId: string }) {
     setError(null);
     try {
       const turn = props.item.actions.find((action) => action.data.verdict === verdict)?.data.turn;
-      await api.recordOutcomeReview(props.sessionId, verdict, turn ? Number(turn) : undefined);
+      await api.recordOutcomeReview(props.sessionId, verdict, turn || undefined);
       window.location.reload();
     } catch (cause) {
       setError(`Could not record review: ${cause instanceof Error ? cause.message : String(cause)}`);
