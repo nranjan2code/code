@@ -8976,15 +8976,7 @@ pub(crate) fn read_historical_header(
     workspace: Option<&std::path::Path>,
 ) -> Option<vak_session::types::SessionHeader> {
     fn read(path: &std::path::Path) -> Option<vak_session::types::SessionHeader> {
-        use std::io::BufRead;
-        let file = std::fs::File::open(path).ok()?;
-        for line in std::io::BufReader::new(file).lines().take(4) {
-            let entry: vak_session::types::Entry = serde_json::from_str(&line.ok()?).ok()?;
-            if let vak_session::types::EntryPayload::Header(header) = entry.payload {
-                return Some(header);
-            }
-        }
-        None
+        vak_session::SessionLog::read_header(path).ok()
     }
 
     if let Some(workspace) = workspace {

@@ -539,7 +539,7 @@ async fn compaction_during_long_research_session() {
     // plus exactly one compaction entry; projection carries the summary.
     let session_file =
         SessionPath::new_session_file(&dir.path().join(".vak-home"), dir.path(), "general-flow");
-    let raw = std::fs::read_to_string(&session_file).unwrap();
+    let raw = vak_session::SessionLog::text(&session_file);
     let compaction_lines = raw
         .lines()
         .filter(|l| l.contains("\"kind\":\"compaction\""))

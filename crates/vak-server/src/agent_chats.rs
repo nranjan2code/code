@@ -6,7 +6,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
-use std::io::BufRead;
 use vak_session::types::{AgentIdentity, ConversationContext, ConversationOrigin, SessionHeader};
 
 pub(crate) fn header(path: &std::path::Path) -> Result<SessionHeader, String> {
@@ -253,26 +252,13 @@ fn agent_session_cache() -> &'static std::sync::Mutex<
     AGENT_SESSION_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-/// Whether a ledger has any entry beyond its header — decided from file
-/// size against the header line's own byte length, never by reading and
-/// counting every line (that read the WHOLE file just to answer a yes/no
-/// question, for every candidate, on every open).
+/// Whether a ledger has any entry beyond its header; stops at the second.
 fn has_entries_beyond_header(path: &std::path::Path) -> bool {
-    let Ok(file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut reader = std::io::BufReader::new(file);
-    let mut first_line = String::new();
-    let Ok(read) = reader.read_line(&mut first_line) else {
-        return false;
-    };
-    if read == 0 {
-        return false;
-    }
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
-    metadata.len() > read as u64
+    let mut seen = 0;
+    vak_session::SessionLog::scan(path, |_| {
+        seen += 1;
+        seen < 2
+    }) >= 2
 }
 
 /// The directory scan that used to run inline on the async handler
