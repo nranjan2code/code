@@ -1362,8 +1362,15 @@ async fn checkpoints_list_and_restore_roundtrip() {
     // Capture a checkpoint directly (the primitive the loop uses at turn
     // start), then mutate the workspace "like an agent would".
     std::fs::write(cwd.join("notes.txt"), "original").unwrap();
-    let (cp, _) = vak_core::checkpoints::capture(&cwd, &home, &id, 1, "turn 1").unwrap();
-    vak_core::checkpoints::store(&home, &cp).unwrap();
+    let (cp, _) = vak_core::checkpoints::capture(
+        &cwd,
+        &vak_config::scope::AgentScope::new(&home),
+        &id,
+        1,
+        "turn 1",
+    )
+    .unwrap();
+    vak_core::checkpoints::store(&vak_config::scope::AgentScope::new(&home), &cp).unwrap();
     std::fs::write(cwd.join("notes.txt"), "mutated by agent").unwrap();
     std::fs::write(cwd.join("stray.txt"), "extra").unwrap();
 

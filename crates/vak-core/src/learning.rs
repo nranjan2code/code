@@ -514,7 +514,7 @@ fn accepted_skill_bodies(home: &Path, cwd: &Path) -> Vec<(String, String)> {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                roots.push(vak_config::scope::AgentScope::new(p).skills());
+                roots.push(vak_config::scope::AgentScope::new(&p).skills());
             }
         }
     }

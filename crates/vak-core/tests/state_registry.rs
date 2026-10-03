@@ -127,7 +127,7 @@ async fn agent_home_subpaths_are_declared() {
     )
     .expect("entity");
     vak_core::security_events::record(
-        &vak_config::scope::AgentScope::new(agent_home),
+        &vak_config::scope::AgentScope::new(&agent_home),
         vak_core::security_events::EventKind::ConfigChange,
         "registry_probe",
         "state-registry test",

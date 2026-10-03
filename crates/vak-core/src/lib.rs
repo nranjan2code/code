@@ -7359,12 +7359,12 @@ impl Core {
             } else {
                 if let Ok((cp, _stats)) = checkpoints::capture(
                     &self.inner.cwd,
-                    self.scope().root(),
+                    &self.scope(),
                     &h.session_id,
                     seq,
                     &format!("turn: {turn_id}"),
                 ) {
-                    let _ = checkpoints::store(self.scope().root(), &cp);
+                    let _ = checkpoints::store(&self.scope(), &cp);
                 }
             }
         }
@@ -7521,11 +7521,11 @@ impl Core {
                 engagement.posture.context,
                 vak_intent::ContextProfile::Working | vak_intent::ContextProfile::Full
             ) && let Some(header) = session.header()
-                && let Ok(list) = checkpoints::list(self.scope().root(), &header.session_id)
+                && let Ok(list) = checkpoints::list(&self.scope(), &header.session_id)
                 && let Some(first) = list.iter().map(|cp| cp.seq).min()
                 && let Ok(delta) = checkpoints::delta_summary(
                     &self.inner.cwd,
-                    self.scope().root(),
+                    &self.scope(),
                     &header.session_id,
                     first,
                     8_192,
@@ -7959,7 +7959,7 @@ impl Core {
     }
 
     fn next_checkpoint_seq(&self, session_id: &str) -> u32 {
-        checkpoints::next_seq(self.scope().root(), session_id)
+        checkpoints::next_seq(&self.scope(), session_id)
     }
 
     /// User-invoked compaction (`/compact`): summarize older turns into a
@@ -9904,7 +9904,7 @@ impl vak_agent::WorkspaceDelta for CheckpointDelta {
     fn summary(&self) -> Result<String, String> {
         checkpoints::delta_summary(
             &self.cwd.clone(),
-            &self.home.clone(),
+            &vak_config::scope::AgentScope::new(self.home.clone()),
             self.sid.as_str(),
             self.seq,
             8192,

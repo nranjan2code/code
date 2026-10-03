@@ -79,7 +79,7 @@ async fn checkpoint_label_has_no_prompt() {
     .await
     .unwrap();
 
-    let manifests = vak_core::checkpoints::list(&core.sessions_home(), &sid).unwrap();
+    let manifests = vak_core::checkpoints::list(&core.scope(), &sid).unwrap();
     assert!(!manifests.is_empty(), "the first turn always checkpoints");
     for m in manifests {
         assert!(

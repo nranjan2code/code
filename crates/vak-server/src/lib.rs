@@ -9882,9 +9882,12 @@ async fn list_checkpoints(
     let core = scoped_core!(&state, Some(&id), q.agent.as_deref());
     // A session with no snapshots yet has no directory; that's an empty
     // list, not an error.
-    let list = match vak_core::checkpoints::list(&core.sessions_home(), &id) {
+    let list = match vak_core::checkpoints::list(&core.scope(), &id) {
         Ok(list) if !list.is_empty() => list,
-        _ => match vak_core::checkpoints::list(&core.shared_data_home(), &id) {
+        _ => match vak_core::checkpoints::list(
+            &vak_config::scope::AgentScope::new(core.shared_data_home()),
+            &id,
+        ) {
             Ok(list) => list,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => {
@@ -9941,10 +9944,13 @@ async fn restore_checkpoint(
         .unwrap_or_else(|| core.cwd().clone());
     // The blob store the manifest's hashes resolve against lives under
     // whichever home the manifest itself was found in.
-    let (cp, checkpoints_home) = match vak_core::checkpoints::load(&core.sessions_home(), &id, seq)
-    {
+    let (cp, checkpoints_home) = match vak_core::checkpoints::load(&core.scope(), &id, seq) {
         Ok(cp) => (cp, core.sessions_home()),
-        Err(_) => match vak_core::checkpoints::load(&core.shared_data_home(), &id, seq) {
+        Err(_) => match vak_core::checkpoints::load(
+            &vak_config::scope::AgentScope::new(core.shared_data_home()),
+            &id,
+            seq,
+        ) {
             Ok(cp) => (cp, core.shared_data_home()),
             Err(_) => {
                 return (
@@ -9956,7 +9962,11 @@ async fn restore_checkpoint(
         },
     };
     match tokio::task::spawn_blocking(move || {
-        vak_core::checkpoints::restore(&cwd, &checkpoints_home, &cp)
+        vak_core::checkpoints::restore(
+            &cwd,
+            &vak_config::scope::AgentScope::new(&checkpoints_home),
+            &cp,
+        )
     })
     .await
     {

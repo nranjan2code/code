@@ -429,7 +429,7 @@ pub(crate) async fn list_security_events(
 ) -> Json<serde_json::Value> {
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let home = state.core.scope().into_root();
-    let events = vak_core::security_events::list(&vak_config::scope::AgentScope::new(home), limit);
+    let events = vak_core::security_events::list(&vak_config::scope::AgentScope::new(&home), limit);
     let filtered: Vec<SecurityEventEntry> = events
         .into_iter()
         .filter(|e| {
@@ -514,7 +514,7 @@ pub(crate) async fn import_session_store(
 
     if let Some(agents) = candidate
         .is_none()
-        .then(|| std::fs::read_dir(vak_config::scope::SharedScope::new(shared).agents_dir()).ok())
+        .then(|| std::fs::read_dir(vak_config::scope::SharedScope::new(&shared).agents_dir()).ok())
         .flatten()
     {
         for agent in agents.flatten() {
@@ -1075,7 +1075,7 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
         }
     };
     scan_sessions_root(state.core.scope().sessions_root());
-    if let Ok(agents) = std::fs::read_dir(vak_config::scope::SharedScope::new(shared).agents_dir())
+    if let Ok(agents) = std::fs::read_dir(vak_config::scope::SharedScope::new(&shared).agents_dir())
     {
         for agent in agents.flatten() {
             scan_sessions_root(vak_config::scope::AgentScope::new(agent.path()).sessions_root());

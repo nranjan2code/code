@@ -304,7 +304,7 @@ pub fn discover_with_diagnostics(
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                roots.push((vak_config::scope::AgentScope::new(p).skills(), None));
+                roots.push((vak_config::scope::AgentScope::new(&p).skills(), None));
             }
         }
     }
@@ -365,7 +365,7 @@ pub fn discover_all_with_plugins(
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                roots.push((vak_config::scope::AgentScope::new(p).skills(), None));
+                roots.push((vak_config::scope::AgentScope::new(&p).skills(), None));
             }
         }
     }

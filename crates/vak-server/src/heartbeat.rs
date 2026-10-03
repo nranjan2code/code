@@ -328,7 +328,7 @@ async fn record_reply(state: &AppState, cfg: &vak_config::HeartbeatResolved, tex
     let body = stripped.join("\n");
     let home = state.core.shared_scope().into_root();
     let _ = vak_core::inbox::record(
-        &vak_config::scope::AgentScope::new(home),
+        &vak_config::scope::AgentScope::new(&home),
         vak_core::inbox::Kind::Heartbeat,
         &title,
         &body,

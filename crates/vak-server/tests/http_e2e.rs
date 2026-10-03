@@ -1032,7 +1032,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert!(paused_vault.load(&paused_account_id).is_err());
 
     let account_events = vak_core::security_events::list(
-        &vak_config::scope::AgentScope::new(account_audit_home),
+        &vak_config::scope::AgentScope::new(&account_audit_home),
         200,
     )
     .into_iter()

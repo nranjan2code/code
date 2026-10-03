@@ -242,26 +242,26 @@ impl IgnoreRules {
 // home.
 // ---------------------------------------------------------------------------
 
-fn checkpoint_root(sessions_home: &Path) -> PathBuf {
-    vak_config::scope::AgentScope::new(sessions_home).checkpoints()
+fn checkpoint_root(scope: &vak_config::scope::AgentScope) -> PathBuf {
+    scope.checkpoints()
 }
 
 /// "blobs" is a reserved session id: a real session id is `uuid_like()`
 /// generated, so the collision this would take is not worth guarding
 /// further, matching how `.git`/`.vak`/etc. are already reserved names
 /// elsewhere in this file.
-fn manifest_dir(sessions_home: &Path, session_id: &str) -> PathBuf {
-    checkpoint_root(sessions_home).join(session_id)
+fn manifest_dir(scope: &vak_config::scope::AgentScope, session_id: &str) -> PathBuf {
+    checkpoint_root(scope).join(session_id)
 }
 
-fn blobs_dir(sessions_home: &Path) -> PathBuf {
-    checkpoint_root(sessions_home).join("blobs")
+fn blobs_dir(scope: &vak_config::scope::AgentScope) -> PathBuf {
+    checkpoint_root(scope).join("blobs")
 }
 
-fn blob_path(sessions_home: &Path, hash: &str) -> PathBuf {
+fn blob_path(scope: &vak_config::scope::AgentScope, hash: &str) -> PathBuf {
     let split = BLOB_PREFIX_LEN.min(hash.len());
     let (prefix, rest) = hash.split_at(split);
-    blobs_dir(sessions_home).join(prefix).join(rest)
+    blobs_dir(scope).join(prefix).join(rest)
 }
 
 fn hash_bytes(content: &[u8]) -> String {
@@ -280,8 +280,12 @@ fn mtime_nanos(meta: &std::fs::Metadata) -> Option<u64> {
 /// hash is the content, so a lost race between two writers rewrites the
 /// same bytes, and the atomic rename means a reader never observes a
 /// partial blob.
-fn write_blob(sessions_home: &Path, hash: &str, content: &[u8]) -> std::io::Result<()> {
-    let path = blob_path(sessions_home, hash);
+fn write_blob(
+    scope: &vak_config::scope::AgentScope,
+    hash: &str,
+    content: &[u8],
+) -> std::io::Result<()> {
+    let path = blob_path(scope, hash);
     if path.is_file() {
         return Ok(());
     }
@@ -301,16 +305,16 @@ fn write_blob(sessions_home: &Path, hash: &str, content: &[u8]) -> std::io::Resu
     Ok(())
 }
 
-fn read_blob(sessions_home: &Path, hash: &str) -> std::io::Result<Vec<u8>> {
-    std::fs::read(blob_path(sessions_home, hash))
+fn read_blob(scope: &vak_config::scope::AgentScope, hash: &str) -> std::io::Result<Vec<u8>> {
+    std::fs::read(blob_path(scope, hash))
 }
 
 /// Every stored sequence number for `session_id`, ascending. Reads only
 /// the manifest directory's file names -- never opens or parses a
 /// manifest -- so this is cheap even with the full `MAX_STORED_CHECKPOINTS`
 /// present.
-fn list_seqs(sessions_home: &Path, session_id: &str) -> std::io::Result<Vec<u32>> {
-    let dir = manifest_dir(sessions_home, session_id);
+fn list_seqs(scope: &vak_config::scope::AgentScope, session_id: &str) -> std::io::Result<Vec<u32>> {
+    let dir = manifest_dir(scope, session_id);
     let entries = match std::fs::read_dir(&dir) {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -332,8 +336,8 @@ fn list_seqs(sessions_home: &Path, session_id: &str) -> std::io::Result<Vec<u32>
 
 /// The next checkpoint sequence number for `session_id`. Unlike `list`,
 /// this never opens a manifest file -- it is safe to call on every turn.
-pub fn next_seq(sessions_home: &Path, session_id: &str) -> u32 {
-    list_seqs(sessions_home, session_id)
+pub fn next_seq(scope: &vak_config::scope::AgentScope, session_id: &str) -> u32 {
+    list_seqs(scope, session_id)
         .ok()
         .and_then(|seqs| seqs.last().map(|s| s + 1))
         .unwrap_or(0)
@@ -341,9 +345,9 @@ pub fn next_seq(sessions_home: &Path, session_id: &str) -> u32 {
 
 /// The most recently stored manifest for `session_id`, if any. This is the
 /// baseline [`capture`] diffs against for its incremental fast path.
-fn latest_manifest(sessions_home: &Path, session_id: &str) -> Option<Manifest> {
-    let seq = *list_seqs(sessions_home, session_id).ok()?.last()?;
-    load(sessions_home, session_id, seq).ok()
+fn latest_manifest(scope: &vak_config::scope::AgentScope, session_id: &str) -> Option<Manifest> {
+    let seq = *list_seqs(scope, session_id).ok()?.last()?;
+    load(scope, session_id, seq).ok()
 }
 
 /// Captures every regular file under `cwd` (bounded), sorted by path.
@@ -354,7 +358,7 @@ fn latest_manifest(sessions_home: &Path, session_id: &str) -> Option<Manifest> {
 /// store.
 pub fn capture(
     cwd: &Path,
-    sessions_home: &Path,
+    scope: &vak_config::scope::AgentScope,
     session_id: &str,
     seq: u32,
     label: &str,
@@ -363,7 +367,7 @@ pub fn capture(
     let mut ignores = IgnoreRules::default();
     ignores.load_dir(cwd, Path::new("."));
 
-    let previous = latest_manifest(sessions_home, session_id);
+    let previous = latest_manifest(scope, session_id);
     let prev_index: HashMap<&str, &ManifestEntry> = previous
         .as_ref()
         .map(|m| m.files.iter().map(|e| (e.rel_path.as_str(), e)).collect())
@@ -443,7 +447,7 @@ pub fn capture(
         match std::fs::read(entry.path()) {
             Ok(content) => {
                 let hash = hash_bytes(&content);
-                if write_blob(sessions_home, &hash, &content).is_err() {
+                if write_blob(scope, &hash, &content).is_err() {
                     continue;
                 }
                 files.push(ManifestEntry {
@@ -479,15 +483,15 @@ pub fn capture(
 /// prune actually removed something -- garbage-collects blobs no
 /// remaining manifest anywhere under `sessions_home` references. Returns
 /// the new manifest file's path.
-pub fn store(sessions_home: &Path, m: &Manifest) -> std::io::Result<PathBuf> {
-    let dir = manifest_dir(sessions_home, &m.session_id);
+pub fn store(scope: &vak_config::scope::AgentScope, m: &Manifest) -> std::io::Result<PathBuf> {
+    let dir = manifest_dir(scope, &m.session_id);
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{:04}.json", m.seq));
     let tmp = dir.join(format!(".{:04}.tmp", m.seq));
     std::fs::write(&tmp, serde_json::to_vec(m).map_err(std::io::Error::other)?)?;
     std::fs::rename(&tmp, &path)?;
 
-    let seqs = list_seqs(sessions_home, &m.session_id)?;
+    let seqs = list_seqs(scope, &m.session_id)?;
     if seqs.len() > MAX_STORED_CHECKPOINTS {
         let mut pruned_any = false;
         for oldest in &seqs[..seqs.len() - MAX_STORED_CHECKPOINTS] {
@@ -496,7 +500,7 @@ pub fn store(sessions_home: &Path, m: &Manifest) -> std::io::Result<PathBuf> {
             }
         }
         if pruned_any {
-            let _ = gc_blobs(sessions_home);
+            let _ = gc_blobs(scope);
         }
     }
     Ok(path)
@@ -507,8 +511,8 @@ pub fn store(sessions_home: &Path, m: &Manifest) -> std::io::Result<PathBuf> {
 /// [`GC_GRACE`]. Best-effort: a read or remove failure is skipped rather
 /// than aborting the sweep, since a failed GC pass must never block the
 /// checkpoint that triggered it.
-fn gc_blobs(sessions_home: &Path) -> std::io::Result<()> {
-    let root = checkpoint_root(sessions_home);
+fn gc_blobs(scope: &vak_config::scope::AgentScope) -> std::io::Result<()> {
+    let root = checkpoint_root(scope);
     let Ok(sessions) = std::fs::read_dir(&root) else {
         return Ok(());
     };
@@ -534,7 +538,7 @@ fn gc_blobs(sessions_home: &Path) -> std::io::Result<()> {
         }
     }
 
-    let Ok(prefixes) = std::fs::read_dir(blobs_dir(sessions_home)) else {
+    let Ok(prefixes) = std::fs::read_dir(blobs_dir(scope)) else {
         return Ok(());
     };
     for prefix_entry in prefixes.flatten() {
@@ -572,8 +576,11 @@ fn gc_blobs(sessions_home: &Path) -> std::io::Result<()> {
 /// Every manifest stored for `session_id`, oldest first. A file that
 /// fails to deserialize (an old-format checkpoint, or anything else that
 /// does not match [`Manifest`]) is simply skipped, never partially read.
-pub fn list(sessions_home: &Path, session_id: &str) -> std::io::Result<Vec<Manifest>> {
-    let dir = manifest_dir(sessions_home, session_id);
+pub fn list(
+    scope: &vak_config::scope::AgentScope,
+    session_id: &str,
+) -> std::io::Result<Vec<Manifest>> {
+    let dir = manifest_dir(scope, session_id);
     let mut out = Vec::new();
     for entry in std::fs::read_dir(&dir)?.flatten() {
         let p = entry.path();
@@ -591,8 +598,12 @@ pub fn list(sessions_home: &Path, session_id: &str) -> std::io::Result<Vec<Manif
     Ok(out)
 }
 
-pub fn load(sessions_home: &Path, session_id: &str, seq: u32) -> std::io::Result<Manifest> {
-    let path = manifest_dir(sessions_home, session_id).join(format!("{seq:04}.json"));
+pub fn load(
+    scope: &vak_config::scope::AgentScope,
+    session_id: &str,
+    seq: u32,
+) -> std::io::Result<Manifest> {
+    let path = manifest_dir(scope, session_id).join(format!("{seq:04}.json"));
     let bytes = std::fs::read(path)?;
     serde_json::from_slice(&bytes).map_err(std::io::Error::other)
 }
@@ -606,12 +617,12 @@ pub fn load(sessions_home: &Path, session_id: &str, seq: u32) -> std::io::Result
 /// pays for a read.
 pub fn delta_summary(
     cwd: &Path,
-    sessions_home: &Path,
+    scope: &vak_config::scope::AgentScope,
     session_id: &str,
     seq: u32,
     max_bytes: usize,
 ) -> std::io::Result<String> {
-    let m = load(sessions_home, session_id, seq)?;
+    let m = load(scope, session_id, seq)?;
 
     let baseline: HashMap<&str, &ManifestEntry> =
         m.files.iter().map(|f| (f.rel_path.as_str(), f)).collect();
@@ -727,12 +738,16 @@ pub fn delta_summary(
 /// capture time (i.e. created after the checkpoint, tracked scope).
 /// Anything the capture could not vouch for -- oversized, unreadable,
 /// secret, gitignored, or beyond-budget -- is left untouched.
-pub fn restore(cwd: &Path, sessions_home: &Path, m: &Manifest) -> std::io::Result<(usize, usize)> {
+pub fn restore(
+    cwd: &Path,
+    scope: &vak_config::scope::AgentScope,
+    m: &Manifest,
+) -> std::io::Result<(usize, usize)> {
     let mut restored = 0usize;
     let mut deleted = 0usize;
 
     for f in &m.files {
-        let content = read_blob(sessions_home, &f.hash)?;
+        let content = read_blob(scope, &f.hash)?;
         let target = cwd.join(&f.rel_path);
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
@@ -809,7 +824,14 @@ mod tests {
         write(dir.path(), "target/debug/blob.o", "binary junk");
         write(dir.path(), ".git/config", "gitconfig");
 
-        let (cp, stats) = capture(dir.path(), &home, "s1", 0, "initial").unwrap();
+        let (cp, stats) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "s1",
+            0,
+            "initial",
+        )
+        .unwrap();
         let paths: Vec<&str> = cp.files.iter().map(|f| f.rel_path.as_str()).collect();
         assert!(paths.contains(&"src/main.rs"));
         assert!(paths.contains(&"README.md"));
@@ -830,14 +852,21 @@ mod tests {
         let binary: &[u8] = &[0u8, 1, 2, b'b', b'i', b'n', 0xff];
         std::fs::write(dir.path().join("data.bin"), binary).unwrap();
 
-        let (cp, _) = capture(dir.path(), &home, "sess", 3, "third").unwrap();
-        store(&home, &cp).unwrap();
+        let (cp, _) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "sess",
+            3,
+            "third",
+        )
+        .unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), &cp).unwrap();
 
-        let list = list(&home, "sess").unwrap();
+        let list = list(&vak_config::scope::AgentScope::new(&home), "sess").unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].seq, 3);
 
-        let loaded = load(&home, "sess", 3).unwrap();
+        let loaded = load(&vak_config::scope::AgentScope::new(&home), "sess", 3).unwrap();
         let hash = loaded
             .files
             .iter()
@@ -846,7 +875,7 @@ mod tests {
             .hash
             .clone();
         assert_eq!(
-            read_blob(&home, &hash).unwrap(),
+            read_blob(&vak_config::scope::AgentScope::new(&home), &hash).unwrap(),
             binary.to_vec(),
             "binary content must round-trip through the blob store"
         );
@@ -864,16 +893,28 @@ mod tests {
         // State at checkpoint time.
         write(dir.path(), "keep.txt", "original");
         write(dir.path(), "src/lib.rs", "old code");
-        let (cp, _) = capture(dir.path(), &home, "s", 0, "before").unwrap();
-        store(&home, &cp).unwrap();
+        let (cp, _) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "s",
+            0,
+            "before",
+        )
+        .unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), &cp).unwrap();
 
         // Mutate after the checkpoint: edit one file, delete another, add a third.
         write(dir.path(), "src/lib.rs", "rewritten!");
         std::fs::remove_file(dir.path().join("keep.txt")).unwrap();
         write(dir.path(), "created-later.txt", "new junk");
 
-        let restored_cp = load(&home, "s", 0).unwrap();
-        let (restored, deleted) = restore(dir.path(), &home, &restored_cp).unwrap();
+        let restored_cp = load(&vak_config::scope::AgentScope::new(&home), "s", 0).unwrap();
+        let (restored, deleted) = restore(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            &restored_cp,
+        )
+        .unwrap();
 
         assert!(restored >= 2);
         assert_eq!(
@@ -903,18 +944,61 @@ mod tests {
         let home = home_dir.path().to_path_buf();
         write(dir.path(), "a.txt", "a");
 
-        let (cp0, _) = capture(dir.path(), &home, "sess-a", 0, "a0").unwrap();
-        store(&home, &cp0).unwrap();
-        let (cp1, _) = capture(dir.path(), &home, "sess-a", 1, "a1").unwrap();
-        store(&home, &cp1).unwrap();
-        let (cp_other, _) = capture(dir.path(), &home, "sess-b", 0, "b0").unwrap();
-        store(&home, &cp_other).unwrap();
+        let (cp0, _) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "sess-a",
+            0,
+            "a0",
+        )
+        .unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), &cp0).unwrap();
+        let (cp1, _) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "sess-a",
+            1,
+            "a1",
+        )
+        .unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), &cp1).unwrap();
+        let (cp_other, _) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "sess-b",
+            0,
+            "b0",
+        )
+        .unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), &cp_other).unwrap();
 
-        assert_eq!(list(&home, "sess-a").unwrap().len(), 2);
-        assert_eq!(list(&home, "sess-b").unwrap().len(), 1);
-        assert_eq!(next_seq(&home, "sess-a"), 2);
-        assert_eq!(next_seq(&home, "sess-b"), 1);
-        assert_eq!(next_seq(&home, "sess-never-seen"), 0);
+        assert_eq!(
+            list(&vak_config::scope::AgentScope::new(&home), "sess-a")
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            list(&vak_config::scope::AgentScope::new(&home), "sess-b")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            next_seq(&vak_config::scope::AgentScope::new(&home), "sess-a"),
+            2
+        );
+        assert_eq!(
+            next_seq(&vak_config::scope::AgentScope::new(&home), "sess-b"),
+            1
+        );
+        assert_eq!(
+            next_seq(
+                &vak_config::scope::AgentScope::new(&home),
+                "sess-never-seen"
+            ),
+            0
+        );
     }
 
     #[test]
@@ -933,7 +1017,14 @@ mod tests {
         // Secret files are never captured either.
         write(dir.path(), ".env", "SECRET=1");
 
-        let (cp, _) = capture(dir.path(), &home, "s", 0, "before").unwrap();
+        let (cp, _) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "s",
+            0,
+            "before",
+        )
+        .unwrap();
         assert!(
             !cp.files.iter().any(|f| f.rel_path == "asset.bin"),
             "oversized content must not be stored"
@@ -941,7 +1032,8 @@ mod tests {
         assert!(cp.observed.contains(&"asset.bin".to_string()));
         assert!(cp.observed.contains(&".env".to_string()));
 
-        let (restored, deleted) = restore(dir.path(), &home, &cp).unwrap();
+        let (restored, deleted) =
+            restore(dir.path(), &vak_config::scope::AgentScope::new(&home), &cp).unwrap();
         assert!(restored >= 1);
         assert_eq!(
             deleted, 0,
@@ -964,10 +1056,17 @@ mod tests {
         let home_dir = tempfile::tempdir().unwrap();
         let home = home_dir.path().to_path_buf();
         write(dir.path(), "base.txt", "base");
-        let (cp, _) = capture(dir.path(), &home, "s", 0, "c").unwrap();
+        let (cp, _) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "s",
+            0,
+            "c",
+        )
+        .unwrap();
 
         write(dir.path(), "created-later.txt", "junk");
-        restore(dir.path(), &home, &cp).unwrap();
+        restore(dir.path(), &vak_config::scope::AgentScope::new(&home), &cp).unwrap();
 
         assert!(!dir.path().join("created-later.txt").exists());
         assert!(dir.path().join("base.txt").exists());
@@ -989,7 +1088,14 @@ mod tests {
         write(dir.path(), ".env", "K=V");
         write(dir.path(), "server.pem", "pem");
 
-        let (cp, _) = capture(dir.path(), &home, "s", 0, "c").unwrap();
+        let (cp, _) = capture(
+            dir.path(),
+            &vak_config::scope::AgentScope::new(&home),
+            "s",
+            0,
+            "c",
+        )
+        .unwrap();
         let paths: Vec<&str> = cp.files.iter().map(|f| f.rel_path.as_str()).collect();
         assert!(paths.contains(&"src/main.rs"));
         assert!(paths.contains(&"keep.local"), "negation must un-ignore");
@@ -1012,10 +1118,17 @@ mod tests {
             // A distinct, growing file per seq so every checkpoint owns
             // blobs nothing else references, making pruning's GC observable.
             write(dir.path(), "f.txt", &format!("v{seq}"));
-            let (cp, _) = capture(dir.path(), &home, "s", seq, "turn").unwrap();
-            store(&home, &cp).unwrap();
+            let (cp, _) = capture(
+                dir.path(),
+                &vak_config::scope::AgentScope::new(&home),
+                "s",
+                seq,
+                "turn",
+            )
+            .unwrap();
+            store(&vak_config::scope::AgentScope::new(&home), &cp).unwrap();
         }
-        let list = list(&home, "s").unwrap();
+        let list = list(&vak_config::scope::AgentScope::new(&home), "s").unwrap();
         assert_eq!(list.len(), 20, "old checkpoints must be pruned");
         assert_eq!(list[0].seq, 5, "oldest pruned first");
 
@@ -1028,7 +1141,10 @@ mod tests {
                 referenced.insert(f.hash.clone());
             }
         }
-        for prefix in std::fs::read_dir(blobs_dir(&home)).unwrap().flatten() {
+        for prefix in std::fs::read_dir(blobs_dir(&vak_config::scope::AgentScope::new(&home)))
+            .unwrap()
+            .flatten()
+        {
             for blob in std::fs::read_dir(prefix.path()).unwrap().flatten() {
                 remaining += 1;
                 let hash = format!(
@@ -1063,9 +1179,16 @@ mod tests {
         }
 
         let t0 = std::time::Instant::now();
-        let (cp0, stats0) = capture(&cwd, &home, "perf", 0, "first").unwrap();
+        let (cp0, stats0) = capture(
+            &cwd,
+            &vak_config::scope::AgentScope::new(&home),
+            "perf",
+            0,
+            "first",
+        )
+        .unwrap();
         let first_elapsed = t0.elapsed();
-        store(&home, &cp0).unwrap();
+        store(&vak_config::scope::AgentScope::new(&home), &cp0).unwrap();
         assert_eq!(cp0.files.len(), TOTAL);
         assert_eq!(stats0.files_read, TOTAL, "first capture reads everything");
         assert_eq!(stats0.files_reused, 0);
@@ -1078,7 +1201,14 @@ mod tests {
         }
 
         let t1 = std::time::Instant::now();
-        let (cp1, stats1) = capture(&cwd, &home, "perf", 1, "second").unwrap();
+        let (cp1, stats1) = capture(
+            &cwd,
+            &vak_config::scope::AgentScope::new(&home),
+            "perf",
+            1,
+            "second",
+        )
+        .unwrap();
         let second_elapsed = t1.elapsed();
 
         assert_eq!(cp1.files.len(), TOTAL);

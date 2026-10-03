@@ -215,7 +215,7 @@ async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
                     }
                 },
             };
-            match vak_core::checkpoints::list(&core.sessions_home(), &sid) {
+            match vak_core::checkpoints::list(&core.scope(), &sid) {
                 Ok(list) if list.is_empty() => {
                     println!("no checkpoints for {sid}");
                     0
@@ -239,21 +239,17 @@ async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
             }
         }
         CheckpointAction::Restore { session, seq } => {
-            match vak_core::checkpoints::load(&core.sessions_home(), &session, seq) {
-                Ok(cp) => {
-                    match vak_core::checkpoints::restore(core.cwd(), &core.sessions_home(), &cp) {
-                        Ok((restored, deleted)) => {
-                            println!(
-                                "restored {restored} files, removed {deleted} (checkpoint {seq})"
-                            );
-                            0
-                        }
-                        Err(e) => {
-                            eprintln!("error: restore failed: {e}");
-                            1
-                        }
+            match vak_core::checkpoints::load(&core.scope(), &session, seq) {
+                Ok(cp) => match vak_core::checkpoints::restore(core.cwd(), &core.scope(), &cp) {
+                    Ok((restored, deleted)) => {
+                        println!("restored {restored} files, removed {deleted} (checkpoint {seq})");
+                        0
                     }
-                }
+                    Err(e) => {
+                        eprintln!("error: restore failed: {e}");
+                        1
+                    }
+                },
                 Err(e) => {
                     eprintln!("error: checkpoint not found: {e}");
                     2

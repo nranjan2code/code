@@ -660,8 +660,15 @@ async fn checkpoints_resolve_the_owning_agent_once_the_session_is_closed() {
     std::fs::create_dir_all(&newsy_cwd).unwrap();
     let newsy_home = vak_config::paths::agent_home_at(&core.shared_data_home(), "newsy");
     let sid = "closed-newsy-session";
-    let (cp, _) = vak_core::checkpoints::capture(&newsy_cwd, &newsy_home, sid, 1, "seed").unwrap();
-    vak_core::checkpoints::store(&newsy_home, &cp).unwrap();
+    let (cp, _) = vak_core::checkpoints::capture(
+        &newsy_cwd,
+        &vak_config::scope::AgentScope::new(&newsy_home),
+        sid,
+        1,
+        "seed",
+    )
+    .unwrap();
+    vak_core::checkpoints::store(&vak_config::scope::AgentScope::new(&newsy_home), &cp).unwrap();
 
     let (status, newsy_checkpoints) = call(
         &app,
