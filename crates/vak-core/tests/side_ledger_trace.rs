@@ -40,7 +40,7 @@ fn inbox_entries_carry_the_run_key_when_one_is_in_scope() {
     let dir = tempfile::tempdir().unwrap();
     let (key, actor) = key();
     let traced = inbox::record(
-        dir.path(),
+        &vak_config::scope::AgentScope::new(dir.path()),
         inbox::Kind::Heartbeat,
         "t",
         "b",
@@ -52,7 +52,7 @@ fn inbox_entries_carry_the_run_key_when_one_is_in_scope() {
     assert_eq!(traced.trace.as_ref().map(|t| t.run), Some(key.run));
     assert_eq!(traced.actor, Some(actor));
     let bare = inbox::record(
-        dir.path(),
+        &vak_config::scope::AgentScope::new(dir.path()),
         inbox::Kind::Heartbeat,
         "t2",
         "b",
@@ -150,7 +150,7 @@ fn a_forwarded_approval_names_its_call() {
     let dir = tempfile::tempdir().unwrap();
     let (key, _) = key();
     let entry = inbox::record_for_call(
-        dir.path(),
+        &vak_config::scope::AgentScope::new(dir.path()),
         inbox::Kind::ApprovalPending,
         "Approval requested",
         "Tool: write",
@@ -160,6 +160,6 @@ fn a_forwarded_approval_names_its_call() {
     )
     .unwrap();
     assert_eq!(entry.tool_use_id.as_deref(), Some("call-9"));
-    let listed = inbox::list(dir.path(), 10);
+    let listed = inbox::list(&vak_config::scope::AgentScope::new(dir.path()), 10);
     assert_eq!(listed[0].tool_use_id.as_deref(), Some("call-9"));
 }

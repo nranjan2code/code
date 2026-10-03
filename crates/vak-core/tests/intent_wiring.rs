@@ -519,7 +519,7 @@ async fn a_deferred_gate_reaches_the_inbox_and_suspends_the_commitment() {
         "{:?}",
         commitment.suspension
     );
-    let inbox = vak_core::inbox::unread(&shared_home);
+    let inbox = vak_core::inbox::unread(&vak_config::scope::AgentScope::new(shared_home));
     assert_eq!(inbox.len(), 1);
     assert_eq!(inbox[0].kind, vak_core::inbox::Kind::ApprovalPending);
     assert!(inbox[0].body.contains("rotate-keys"));

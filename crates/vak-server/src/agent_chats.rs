@@ -446,7 +446,7 @@ pub(crate) async fn open(
         let cwd = core.cwd().clone();
         let agent_id = identity.id.clone();
         let conversation = conversation.clone();
-        let trashed = vak_core::trash::trashed(&core.shared_scope().into_root());
+        let trashed = vak_core::trash::trashed(&core.shared_scope());
         move || scan_candidates(dir, cwd, agent_id, conversation, trashed)
     })
     .await

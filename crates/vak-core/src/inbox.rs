@@ -120,8 +120,8 @@ fn fnv1a(data: &[u8]) -> String {
     format!("{h:016x}")
 }
 
-pub fn inbox_path(home: &Path) -> PathBuf {
-    vak_config::scope::AgentScope::new(home).inbox()
+pub fn inbox_path(scope: &vak_config::scope::AgentScope) -> PathBuf {
+    scope.inbox()
 }
 
 /// Append one notification and return it. One formatted buffer + ONE
@@ -129,7 +129,7 @@ pub fn inbox_path(home: &Path) -> PathBuf {
 /// emits several syscalls that concurrent deliverers could interleave
 /// mid-line (same discipline as gateway.rs deliver_log).
 pub fn record(
-    home: &Path,
+    scope: &vak_config::scope::AgentScope,
     kind: Kind,
     title: &str,
     body: &str,
@@ -138,14 +138,14 @@ pub fn record(
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
     record_with_result_and_key(
-        home, kind, title, body, session_id, task_id, None, None, trace,
+        scope, kind, title, body, session_id, task_id, None, None, trace,
     )
 }
 
 /// Append a notification linked to one immutable presentation result.
 #[allow(clippy::too_many_arguments)]
 pub fn record_with_result(
-    home: &Path,
+    scope: &vak_config::scope::AgentScope,
     kind: Kind,
     title: &str,
     body: &str,
@@ -155,7 +155,7 @@ pub fn record_with_result(
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
     record_with_result_and_key(
-        home, kind, title, body, session_id, task_id, result_id, None, trace,
+        scope, kind, title, body, session_id, task_id, result_id, None, trace,
     )
 }
 
@@ -164,7 +164,7 @@ pub fn record_with_result(
 /// retries cannot create duplicate unread entries.
 #[allow(clippy::too_many_arguments)]
 pub fn record_with_result_and_key(
-    home: &Path,
+    scope: &vak_config::scope::AgentScope,
     kind: Kind,
     title: &str,
     body: &str,
@@ -175,7 +175,7 @@ pub fn record_with_result_and_key(
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
     insert(
-        home, kind, title, body, session_id, task_id, result_id, dedupe_key, None, trace,
+        scope, kind, title, body, session_id, task_id, result_id, dedupe_key, None, trace,
     )
 }
 
@@ -183,7 +183,7 @@ pub fn record_with_result_and_key(
 /// for it, so the inbox names the call the way the session's own approval
 /// activity does.
 pub fn record_for_call(
-    home: &Path,
+    scope: &vak_config::scope::AgentScope,
     kind: Kind,
     title: &str,
     body: &str,
@@ -192,7 +192,7 @@ pub fn record_for_call(
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
     insert(
-        home,
+        scope,
         kind,
         title,
         body,
@@ -207,7 +207,7 @@ pub fn record_for_call(
 
 #[allow(clippy::too_many_arguments)]
 fn insert(
-    home: &Path,
+    scope: &vak_config::scope::AgentScope,
     kind: Kind,
     title: &str,
     body: &str,
@@ -219,18 +219,18 @@ fn insert(
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
     let _dedupe_lock = if dedupe_key.is_some() {
-        Some(acquire_dedupe_lock(home)?)
+        Some(acquire_dedupe_lock(scope)?)
     } else {
         None
     };
     if let Some(key) = dedupe_key
-        && let Some(existing) = list(home, MAX_SCAN)
+        && let Some(existing) = list(scope, MAX_SCAN)
             .into_iter()
             .find(|entry| entry.dedupe_key.as_deref() == Some(key))
     {
         return Ok(existing);
     }
-    let path = inbox_path(home);
+    let path = inbox_path(scope);
     let ts = Utc::now();
     let entry = Entry {
         id: entry_id(ts, kind, title),
@@ -261,10 +261,10 @@ impl Drop for DedupeLock {
     }
 }
 
-fn acquire_dedupe_lock(home: &Path) -> Result<DedupeLock, InboxError> {
-    let path = vak_config::scope::AgentScope::new(home).inbox_dedupe_lock();
-    std::fs::create_dir_all(home).map_err(|source| InboxError::Io {
-        path: home.to_path_buf(),
+fn acquire_dedupe_lock(scope: &vak_config::scope::AgentScope) -> Result<DedupeLock, InboxError> {
+    let path = scope.inbox_dedupe_lock();
+    std::fs::create_dir_all(scope.root()).map_err(|source| InboxError::Io {
+        path: scope.root().to_path_buf(),
         source,
     })?;
     for _ in 0..200 {
@@ -288,8 +288,8 @@ fn acquire_dedupe_lock(home: &Path) -> Result<DedupeLock, InboxError> {
 
 /// Mark `id` read by appending a tombstone. Idempotent via
 /// read-before-write; returns false when already acked.
-pub fn ack(home: &Path, id: &str) -> Result<bool, InboxError> {
-    let path = inbox_path(home);
+pub fn ack(scope: &vak_config::scope::AgentScope, id: &str) -> Result<bool, InboxError> {
+    let path = inbox_path(scope);
     if scan_window(&path).acked.iter().any(|a| a == id) {
         return Ok(false);
     }
@@ -302,13 +302,13 @@ pub fn ack(home: &Path, id: &str) -> Result<bool, InboxError> {
     Ok(true)
 }
 
-pub fn unread(home: &Path) -> Vec<Entry> {
-    unread_scanned(home).entries
+pub fn unread(scope: &vak_config::scope::AgentScope) -> Vec<Entry> {
+    unread_scanned(scope).entries
 }
 
 /// Same as [`unread`] but reports how many corrupt lines were skipped.
-pub fn unread_scanned(home: &Path) -> Scan {
-    let window = scan_window(&inbox_path(home));
+pub fn unread_scanned(scope: &vak_config::scope::AgentScope) -> Scan {
+    let window = scan_window(&inbox_path(scope));
     let mut entries = window.entries;
     entries.retain(|e| !window.acked.contains(&e.id));
     entries.reverse();
@@ -319,12 +319,12 @@ pub fn unread_scanned(home: &Path) -> Scan {
 }
 
 /// All entries (acked included), newest first, capped at `limit`.
-pub fn list(home: &Path, limit: usize) -> Vec<Entry> {
-    list_scanned(home, limit).entries
+pub fn list(scope: &vak_config::scope::AgentScope, limit: usize) -> Vec<Entry> {
+    list_scanned(scope, limit).entries
 }
 
-pub fn list_scanned(home: &Path, limit: usize) -> Scan {
-    let mut window = scan_window(&inbox_path(home));
+pub fn list_scanned(scope: &vak_config::scope::AgentScope, limit: usize) -> Scan {
+    let mut window = scan_window(&inbox_path(scope));
     window.entries.reverse();
     window.entries.truncate(limit);
     Scan {
@@ -333,8 +333,8 @@ pub fn list_scanned(home: &Path, limit: usize) -> Scan {
     }
 }
 
-pub fn unread_count(home: &Path) -> usize {
-    unread(home).len()
+pub fn unread_count(scope: &vak_config::scope::AgentScope) -> usize {
+    unread(scope).len()
 }
 
 fn append_line(path: &Path, line: &str) -> Result<(), InboxError> {
@@ -414,11 +414,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
 
-        assert!(unread(home).is_empty());
-        assert_eq!(unread_count(home), 0);
+        assert!(unread(&vak_config::scope::AgentScope::new(home)).is_empty());
+        assert_eq!(unread_count(&vak_config::scope::AgentScope::new(home)), 0);
 
         let a = record(
-            home,
+            &vak_config::scope::AgentScope::new(home),
             Kind::TaskSummary,
             "first",
             "body a",
@@ -428,7 +428,7 @@ mod tests {
         )
         .unwrap();
         let b = record(
-            home,
+            &vak_config::scope::AgentScope::new(home),
             Kind::BudgetAlert,
             "second",
             "body b",
@@ -442,30 +442,48 @@ mod tests {
         assert_eq!(b.task_id.as_deref(), Some("task-9"));
         assert_ne!(a.id, b.id);
 
-        let items = unread(home);
+        let items = unread(&vak_config::scope::AgentScope::new(home));
         assert_eq!(items.len(), 2);
         assert_eq!(items[0], b);
         assert_eq!(items[1], a);
-        assert_eq!(unread_count(home), 2);
-        assert!(list(home, 10).contains(&a));
+        assert_eq!(unread_count(&vak_config::scope::AgentScope::new(home)), 2);
+        assert!(list(&vak_config::scope::AgentScope::new(home), 10).contains(&a));
     }
 
     #[test]
     fn ack_is_idempotent_and_shrinks_unread_once() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        let e = record(home, Kind::Digest, "daily", "", None, None, None).unwrap();
-        let other = record(home, Kind::Heartbeat, "beat", "", None, None, None).unwrap();
+        let e = record(
+            &vak_config::scope::AgentScope::new(home),
+            Kind::Digest,
+            "daily",
+            "",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let other = record(
+            &vak_config::scope::AgentScope::new(home),
+            Kind::Heartbeat,
+            "beat",
+            "",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
-        assert!(ack(home, &e.id).unwrap());
-        assert!(!ack(home, &e.id).unwrap());
+        assert!(ack(&vak_config::scope::AgentScope::new(home), &e.id).unwrap());
+        assert!(!ack(&vak_config::scope::AgentScope::new(home), &e.id).unwrap());
 
-        let left = unread(home);
+        let left = unread(&vak_config::scope::AgentScope::new(home));
         assert_eq!(left, vec![other]);
-        assert_eq!(unread_count(home), 1);
+        assert_eq!(unread_count(&vak_config::scope::AgentScope::new(home)), 1);
 
-        assert!(!ack(home, &e.id).unwrap());
-        assert_eq!(unread_count(home), 1);
+        assert!(!ack(&vak_config::scope::AgentScope::new(home), &e.id).unwrap());
+        assert_eq!(unread_count(&vak_config::scope::AgentScope::new(home)), 1);
     }
 
     #[test]
@@ -473,7 +491,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let e = record(
-            home,
+            &vak_config::scope::AgentScope::new(home),
             Kind::ApprovalPending,
             "gate",
             "wants write",
@@ -482,10 +500,10 @@ mod tests {
             None,
         )
         .unwrap();
-        ack(home, &e.id).unwrap();
+        ack(&vak_config::scope::AgentScope::new(home), &e.id).unwrap();
 
-        assert!(unread(home).is_empty());
-        let all = list(home, 10);
+        assert!(unread(&vak_config::scope::AgentScope::new(home)).is_empty());
+        let all = list(&vak_config::scope::AgentScope::new(home), 10);
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].id, e.id);
         assert_eq!(all[0].kind, Kind::ApprovalPending);
@@ -495,20 +513,42 @@ mod tests {
     fn corrupt_middle_line_is_skipped_and_counted() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        let first = record(home, Kind::Digest, "one", "", None, None, None).unwrap();
-        let mut raw = std::fs::read_to_string(inbox_path(home)).unwrap();
+        let first = record(
+            &vak_config::scope::AgentScope::new(home),
+            Kind::Digest,
+            "one",
+            "",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let mut raw =
+            std::fs::read_to_string(inbox_path(&vak_config::scope::AgentScope::new(home))).unwrap();
         raw.push_str("{\"id\": torn line no json\n");
-        std::fs::write(inbox_path(home), &raw).unwrap();
-        let last = record(home, Kind::BudgetAlert, "two", "", None, None, None).unwrap();
+        std::fs::write(inbox_path(&vak_config::scope::AgentScope::new(home)), &raw).unwrap();
+        let last = record(
+            &vak_config::scope::AgentScope::new(home),
+            Kind::BudgetAlert,
+            "two",
+            "",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
-        let scan = unread_scanned(home);
+        let scan = unread_scanned(&vak_config::scope::AgentScope::new(home));
         assert_eq!(scan.corrupt, 1);
         assert_eq!(scan.entries, vec![last.clone(), first.clone()]);
-        let listed = list_scanned(home, 10);
+        let listed = list_scanned(&vak_config::scope::AgentScope::new(home), 10);
         assert_eq!(listed.corrupt, 1);
         // Ack still works with garbage in the middle.
-        assert!(ack(home, &first.id).unwrap());
-        assert_eq!(unread_scanned(home).entries, vec![last]);
+        assert!(ack(&vak_config::scope::AgentScope::new(home), &first.id).unwrap());
+        assert_eq!(
+            unread_scanned(&vak_config::scope::AgentScope::new(home)).entries,
+            vec![last]
+        );
     }
 
     #[test]
@@ -522,7 +562,7 @@ mod tests {
             (0..25)
                 .map(|i| {
                     record(
-                        home.as_path(),
+                        &vak_config::scope::AgentScope::new(home.as_path()),
                         Kind::TaskSummary,
                         &format!("{tag}-{i}"),
                         "x",
@@ -540,7 +580,7 @@ mod tests {
         let ids_a = h1.join().unwrap();
         let ids_b = h2.join().unwrap();
 
-        let on_disk = unread_scanned(home);
+        let on_disk = unread_scanned(&vak_config::scope::AgentScope::new(home));
         assert_eq!(
             on_disk.corrupt, 0,
             "no torn lines under O_APPEND single writes"
@@ -601,7 +641,7 @@ mod tests {
     fn result_delivery_deduplicates_by_source_key() {
         let dir = tempfile::tempdir().unwrap();
         let first = record_with_result_and_key(
-            dir.path(),
+            &vak_config::scope::AgentScope::new(dir.path()),
             Kind::TaskSummary,
             "finished",
             "answer",
@@ -613,7 +653,7 @@ mod tests {
         )
         .unwrap();
         let second = record_with_result_and_key(
-            dir.path(),
+            &vak_config::scope::AgentScope::new(dir.path()),
             Kind::TaskSummary,
             "finished",
             "answer changed",
@@ -625,6 +665,9 @@ mod tests {
         )
         .unwrap();
         assert_eq!(first.id, second.id);
-        assert_eq!(list(dir.path(), 10).len(), 1);
+        assert_eq!(
+            list(&vak_config::scope::AgentScope::new(dir.path()), 10).len(),
+            1
+        );
     }
 }

@@ -113,7 +113,7 @@ fn canvas_path(state: &AppState, session: &str) -> Option<std::path::PathBuf> {
         return None;
     }
     let shared = state.core.shared_scope();
-    if vak_core::trash::is_trashed(shared.root(), session) {
+    if vak_core::trash::is_trashed(&vak_config::scope::SharedScope::new(shared.root()), session) {
         return None;
     }
     let header = crate::read_historical_header(state, session, None)?;

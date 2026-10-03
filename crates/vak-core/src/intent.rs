@@ -404,7 +404,7 @@ impl vak_agent::Approver for DeferringApprover {
         ) {
             Ok(question_id) => {
                 let _ = crate::inbox::record(
-                    &self.shared_home,
+                    &vak_config::scope::AgentScope::new(&self.shared_home),
                     crate::inbox::Kind::ApprovalPending,
                     &format!("Decision needed for {}", self.commitment_id),
                     &format!(
@@ -418,7 +418,7 @@ impl vak_agent::Approver for DeferringApprover {
             }
             Err(error) => {
                 let _ = crate::inbox::record(
-                    &self.shared_home,
+                    &vak_config::scope::AgentScope::new(&self.shared_home),
                     crate::inbox::Kind::ApprovalDenied,
                     &format!("Gate denied for {}", self.commitment_id),
                     &format!("{body}\n\ncould not suspend the commitment: {error}"),

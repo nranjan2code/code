@@ -37,7 +37,7 @@ fn run_export(cwd: PathBuf, session_id: String, html: bool, out: Option<PathBuf>
             return 2;
         }
     };
-    if vak_core::trash::is_trashed(&core.shared_data_home(), &session_id) {
+    if vak_core::trash::is_trashed(&core.shared_scope(), &session_id) {
         eprintln!("error: session '{session_id}' is in the trash");
         return 1;
     }
@@ -278,7 +278,7 @@ fn latest_session_id(core: &Core) -> Option<String> {
             }
         }
     }
-    let trashed = vak_core::trash::trashed(&shared);
+    let trashed = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&shared));
     let mut rows: Vec<_> = Vec::new();
     for dir in session_dirs {
         if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -1808,7 +1808,7 @@ fn run_sessions_list(cwd: PathBuf) {
             }
         }
     }
-    let trashed = vak_core::trash::trashed(&shared);
+    let trashed = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&shared));
     let mut rows: Vec<(std::time::SystemTime, u64, String)> = Vec::new();
     for dir in &session_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {

@@ -201,7 +201,10 @@ async fn wait_until(secs: u64, mut pred: impl FnMut() -> bool) -> bool {
 /// Synchronous ledger read for poll loops (async endpoints cannot be
 /// awaited inside a plain closure).
 fn ledger_entries(home: &Path) -> Vec<vak_core::inbox::Entry> {
-    vak_core::inbox::list(home, vak_core::inbox::MAX_SCAN)
+    vak_core::inbox::list(
+        &vak_config::scope::AgentScope::new(home),
+        vak_core::inbox::MAX_SCAN,
+    )
 }
 
 // ---- P6 exit criterion ------------------------------------------------------
@@ -251,7 +254,7 @@ async fn ack_entry(srv: &Server, id: &str) -> (reqwest::StatusCode, serde_json::
 async fn ack_is_idempotent_over_http_and_404s_unknown_ids() {
     let srv = spawn_server("").await;
     let a = vak_core::inbox::record(
-        &srv.home,
+        &vak_config::scope::AgentScope::new(&srv.home),
         vak_core::inbox::Kind::Digest,
         "daily",
         "",
@@ -261,7 +264,7 @@ async fn ack_is_idempotent_over_http_and_404s_unknown_ids() {
     )
     .unwrap();
     let b = vak_core::inbox::record(
-        &srv.home,
+        &vak_config::scope::AgentScope::new(&srv.home),
         vak_core::inbox::Kind::TaskSummary,
         "run",
         "body",
@@ -297,7 +300,7 @@ async fn unread_count_matches_entries_and_limit_bounds_only_the_list() {
     let srv = spawn_server("").await;
     for i in 0..3 {
         vak_core::inbox::record(
-            &srv.home,
+            &vak_config::scope::AgentScope::new(&srv.home),
             vak_core::inbox::Kind::Heartbeat,
             &format!("beat-{i}"),
             "",

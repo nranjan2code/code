@@ -211,7 +211,7 @@ pub fn digest(home: &Path, shared_home: &Path, days: u32) -> DigestReport {
 
     let mut sessions = BTreeSet::new();
     fold_costs(shared_home, since, &mut sessions, &mut report);
-    let trashed = crate::trash::trashed(shared_home);
+    let trashed = crate::trash::trashed(&vak_config::scope::SharedScope::new(shared_home));
     report.distinct_sessions = sessions
         .into_iter()
         .filter(|id| !trashed.contains(id))

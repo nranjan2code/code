@@ -3215,7 +3215,7 @@ impl Core {
     /// A trashed session is hidden everywhere, so nothing reopens it: a
     /// resume, a channel binding or an Agent conversation starts afresh.
     fn refuse_trashed(&self, session_id: &str) -> Result<(), CoreError> {
-        if trash::is_trashed(self.shared_scope().root(), session_id) {
+        if trash::is_trashed(&self.shared_scope(), session_id) {
             return Err(CoreError::Session(vak_session::SessionError::Io(
                 std::io::Error::new(
                     std::io::ErrorKind::NotFound,

@@ -145,7 +145,7 @@ fn agent_home(home: &Path) -> PathBuf {
 }
 
 fn heartbeat_entries(home: &Path) -> Vec<vak_core::inbox::Entry> {
-    vak_core::inbox::list_scanned(home, 100)
+    vak_core::inbox::list_scanned(&vak_config::scope::AgentScope::new(home), 100)
         .entries
         .into_iter()
         .filter(|e| e.kind == vak_core::inbox::Kind::Heartbeat)

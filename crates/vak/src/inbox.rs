@@ -86,7 +86,7 @@ fn run_with_home(home: &Path, action: crate::cli::InboxAction) -> i32 {
 }
 
 fn ledger(home: &Path) -> Vec<Entry> {
-    inbox::list(home, inbox::MAX_SCAN)
+    inbox::list(&vak_config::scope::AgentScope::new(home), inbox::MAX_SCAN)
 }
 
 fn all_rows(home: &Path, limit: usize) -> Vec<String> {
@@ -98,7 +98,7 @@ fn all_rows(home: &Path, limit: usize) -> Vec<String> {
 }
 
 fn unread_rows(home: &Path, limit: usize) -> Vec<String> {
-    inbox::unread(home)
+    inbox::unread(&vak_config::scope::AgentScope::new(home))
         .into_iter()
         .take(limit)
         .map(|e| format_row(&e))
@@ -108,13 +108,16 @@ fn unread_rows(home: &Path, limit: usize) -> Vec<String> {
 fn footer(home: &Path) -> String {
     format!(
         "{} unread of {} total",
-        inbox::unread_count(home),
+        inbox::unread_count(&vak_config::scope::AgentScope::new(home)),
         ledger(home).len()
     )
 }
 
 fn count_line(home: &Path) -> String {
-    format!("{} unread", inbox::unread_count(home))
+    format!(
+        "{} unread",
+        inbox::unread_count(&vak_config::scope::AgentScope::new(home))
+    )
 }
 
 fn format_row(e: &Entry) -> String {
@@ -232,7 +235,7 @@ fn load_entry(home: &Path, given: &str) -> Result<Entry, MatchError> {
 /// Ack by prefix against the full ledger (acked entries stay resolvable).
 fn ack_prefix(home: &Path, given: &str) -> Result<bool, String> {
     let id = load_entry(home, given).map_err(|e| e.to_string())?.id;
-    inbox::ack(home, &id).map_err(|e| e.to_string())
+    inbox::ack(&vak_config::scope::AgentScope::new(home), &id).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -335,15 +338,41 @@ mod tests {
     fn unread_all_footer_and_count_math_on_seeded_store() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        let a = inbox::record(home, Kind::Digest, "alpha one", "b", None, None, None).unwrap();
-        let b = inbox::record(home, Kind::BudgetAlert, "beta two", "b", None, None, None).unwrap();
-        let _c =
-            inbox::record(home, Kind::Heartbeat, "gamma three", "b", None, None, None).unwrap();
+        let a = inbox::record(
+            &vak_config::scope::AgentScope::new(home),
+            Kind::Digest,
+            "alpha one",
+            "b",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let b = inbox::record(
+            &vak_config::scope::AgentScope::new(home),
+            Kind::BudgetAlert,
+            "beta two",
+            "b",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let _c = inbox::record(
+            &vak_config::scope::AgentScope::new(home),
+            Kind::Heartbeat,
+            "gamma three",
+            "b",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(count_line(home), "3 unread");
         assert_eq!(footer(home), "3 unread of 3 total");
 
-        assert!(inbox::ack(home, &b.id).unwrap());
+        assert!(inbox::ack(&vak_config::scope::AgentScope::new(home), &b.id).unwrap());
         let unread = unread_rows(home, 50);
         assert_eq!(unread.len(), 2, "acked entry leaves the unread view");
         assert!(all_rows(home, 50).len() == 3, "--all keeps acked rows");
@@ -354,9 +383,9 @@ mod tests {
         assert_eq!(unread_rows(home, 1).len(), 1);
 
         // b was already acked above; idempotent acks report false.
-        assert!(inbox::ack(home, &a.id).unwrap());
-        assert!(!inbox::ack(home, &b.id).unwrap());
-        assert!(inbox::ack(home, &_c.id).unwrap());
+        assert!(inbox::ack(&vak_config::scope::AgentScope::new(home), &a.id).unwrap());
+        assert!(!inbox::ack(&vak_config::scope::AgentScope::new(home), &b.id).unwrap());
+        assert!(inbox::ack(&vak_config::scope::AgentScope::new(home), &_c.id).unwrap());
         assert_eq!(footer(home), "0 unread of 3 total");
         assert_eq!(count_line(home), "0 unread");
     }
@@ -366,7 +395,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let e = inbox::record(
-            home,
+            &vak_config::scope::AgentScope::new(home),
             Kind::ApprovalPending,
             "gate",
             "body",

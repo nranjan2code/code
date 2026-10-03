@@ -2725,7 +2725,7 @@ async fn append_memory(
                 MemoryScope::Profile => "profile",
             };
             vak_core::security_events::record(
-                &vak_config::scope::AgentScope::new(home),
+                &vak_config::scope::AgentScope::new(&home),
                 vak_core::security_events::EventKind::ConfigChange,
                 "memory_append",
                 &format!("scope={scope_str} note_id={}", note.id),
@@ -2977,8 +2977,7 @@ async fn search_sessions(
     let cwd = core.cwd().clone();
     let query = q.q.clone();
     let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
-    let excluded =
-        vak_core::trash::search_exclusions(&core.shared_data_home(), q.exclude.as_deref());
+    let excluded = vak_core::trash::search_exclusions(&core.shared_scope(), q.exclude.as_deref());
     let all = q.all;
     let mut extras = Vec::new();
     let mut workspace_notes = vak_core::memory::list_notes(&home, &cwd);
@@ -3876,7 +3875,7 @@ pub(crate) async fn require_bearer(
                 && !auth_exempt_path(req.uri().path())))
     {
         vak_core::security_events::record(
-            &vak_config::scope::AgentScope::new(home),
+            &vak_config::scope::AgentScope::new(&home),
             vak_core::security_events::EventKind::AuthFailure,
             "cross_origin_rejected",
             &format!(
@@ -3993,7 +3992,7 @@ pub(crate) async fn require_bearer(
             Ok(None) => unauthorized_response(&home, &req, provided.as_deref()),
             Err(error) => {
                 vak_core::security_events::record(
-                    &vak_config::scope::AgentScope::new(home),
+                    &vak_config::scope::AgentScope::new(&home),
                     vak_core::security_events::EventKind::AuthFailure,
                     "coworking_grant_store_unavailable",
                     &format!("path={} error={error}", req.uri().path()),
@@ -4535,7 +4534,7 @@ async fn ensure_session_handle(
     // calls it on every task switch, and mid-run the handle's session is
     // temporarily owned by the agent — so this must be a no-op, not a
     // second open.
-    if vak_core::trash::is_trashed(&state.core.shared_data_home(), session_id) {
+    if vak_core::trash::is_trashed(&state.core.shared_scope(), session_id) {
         return Err(vak_core::CoreError::Session(vak_session::SessionError::Io(
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -4653,7 +4652,7 @@ async fn list_sessions(
     let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), active.cwd());
     let active_cwd = active.cwd().to_string_lossy().into_owned();
     let archive_map = read_archive(&state.core);
-    let trashed = vak_core::trash::trashed(&state.core.shared_data_home());
+    let trashed = vak_core::trash::trashed(&state.core.shared_scope());
     let mut sessions = Vec::new();
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)
         .map(|read| read.flatten().collect())
@@ -8967,7 +8966,7 @@ fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog
 /// export/inspection without mutating run bookkeeping. A trashed session is
 /// not opened: it is hidden everywhere (`vak_core::trash`).
 fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::SessionLog> {
-    if vak_core::trash::is_trashed(&state.core.shared_data_home(), id) {
+    if vak_core::trash::is_trashed(&state.core.shared_scope(), id) {
         return None;
     }
     find_session_on_disk(&state.core, id)
@@ -9742,15 +9741,15 @@ async fn inbox_list(
     axum::extract::Query(q): axum::extract::Query<InboxQuery>,
 ) -> Json<serde_json::Value> {
     let home = state.core.shared_data_home();
-    let unread_count = vak_core::inbox::unread_count(&home);
+    let unread_count = vak_core::inbox::unread_count(&vak_config::scope::AgentScope::new(&home));
     let limit = q
         .limit
         .unwrap_or(DEFAULT_INBOX_LIMIT)
         .clamp(1, vak_core::inbox::MAX_SCAN);
     let entries = if q.unread {
-        vak_core::inbox::unread(&home)
+        vak_core::inbox::unread(&vak_config::scope::AgentScope::new(&home))
     } else {
-        vak_core::inbox::list(&home, limit)
+        vak_core::inbox::list(&vak_config::scope::AgentScope::new(&home), limit)
     }
     .into_iter()
     .take(limit)
@@ -9776,7 +9775,7 @@ async fn inbox_list(
 
 async fn inbox_unread_count(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "count": vak_core::inbox::unread_count(&state.core.shared_data_home())
+        "count": vak_core::inbox::unread_count(&vak_config::scope::AgentScope::new(state.core.shared_data_home()))
     }))
 }
 
@@ -9788,9 +9787,12 @@ async fn inbox_ack(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let home = state.core.shared_data_home();
-    if !vak_core::inbox::list(&home, vak_core::inbox::MAX_SCAN)
-        .iter()
-        .any(|e| e.id == id)
+    if !vak_core::inbox::list(
+        &vak_config::scope::AgentScope::new(&home),
+        vak_core::inbox::MAX_SCAN,
+    )
+    .iter()
+    .any(|e| e.id == id)
     {
         return (
             StatusCode::NOT_FOUND,
@@ -9798,7 +9800,7 @@ async fn inbox_ack(
         )
             .into_response();
     }
-    match vak_core::inbox::ack(&home, &id) {
+    match vak_core::inbox::ack(&vak_config::scope::AgentScope::new(&home), &id) {
         Ok(acked) => Json(serde_json::json!({ "acked": acked })).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -10073,11 +10075,9 @@ async fn delete_session(
         )
             .into_response();
     }
-    if let Err(error) = vak_core::trash::set(
-        &state.core.shared_data_home(),
-        std::slice::from_ref(&id),
-        true,
-    ) {
+    if let Err(error) =
+        vak_core::trash::set(&state.core.shared_scope(), std::slice::from_ref(&id), true)
+    {
         return trash_write_failed(&error);
     }
     state.forget_session(&id);
@@ -10102,14 +10102,20 @@ async fn restore_session(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     let home = state.core.shared_data_home();
-    if !find_session_in_cwd(&state.core, &id) || !vak_core::trash::is_trashed(&home, &id) {
+    if !find_session_in_cwd(&state.core, &id)
+        || !vak_core::trash::is_trashed(&vak_config::scope::SharedScope::new(&home), &id)
+    {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "no such session in the trash" })),
         )
             .into_response();
     }
-    if let Err(error) = vak_core::trash::set(&home, std::slice::from_ref(&id), false) {
+    if let Err(error) = vak_core::trash::set(
+        &vak_config::scope::SharedScope::new(&home),
+        std::slice::from_ref(&id),
+        false,
+    ) {
         return trash_write_failed(&error);
     }
     Json(serde_json::json!({ "restored": id })).into_response()
@@ -10139,12 +10145,14 @@ async fn delete_all_archived(State(state): State<AppState>) -> axum::response::R
             .into_response();
     }
     let home = state.core.shared_data_home();
-    let already = vak_core::trash::trashed(&home);
+    let already = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&home));
     let newly: Vec<String> = local_archived
         .into_iter()
         .filter(|id| !already.contains(id))
         .collect();
-    if let Err(error) = vak_core::trash::set(&home, &newly, true) {
+    if let Err(error) =
+        vak_core::trash::set(&vak_config::scope::SharedScope::new(&home), &newly, true)
+    {
         return trash_write_failed(&error);
     }
     for id in &newly {
@@ -19844,7 +19852,7 @@ fn refuse_task(state: &AppState, task: &TaskDef, reason: String) -> NotFired {
     let slot = task.last_run_at.unwrap_or(task.created_at).to_rfc3339();
     let key = format!("routine-failed|{}|{slot}", task.id);
     let _ = vak_core::inbox::record_with_result_and_key(
-        &state.core.shared_data_home(),
+        &vak_config::scope::AgentScope::new(state.core.shared_data_home()),
         vak_core::inbox::Kind::RoutineFailed,
         &format!("routine '{}' could not run", task.name),
         &reason,
@@ -20360,7 +20368,7 @@ async fn fire_task_with_force(
                     } else {
                         let dedupe_key = Some(format!("inbox|{child_session}"));
                         let _ = vak_core::inbox::record_with_result_and_key(
-                            &st.core.shared_data_home(),
+                            &vak_config::scope::AgentScope::new(st.core.shared_data_home()),
                             vak_core::inbox::Kind::TaskSummary,
                             &format!("routine '{task_name}' finished"),
                             &format!(
@@ -20531,7 +20539,7 @@ async fn fire_script_task(
                 }
                 None => {
                     let _ = vak_core::inbox::record(
-                        &state.core.shared_data_home(),
+                        &vak_config::scope::AgentScope::new(state.core.shared_data_home()),
                         vak_core::inbox::Kind::TaskSummary,
                         &title,
                         &outcome.text,
@@ -20791,7 +20799,7 @@ pub fn start_scheduler(state: &AppState) {
                 // it lands in the attention layer rather than only in a log.
                 for id in report.expired.iter().chain(report.escalated.iter()) {
                     let _ = vak_core::inbox::record(
-                        &st.core.shared_data_home(),
+                        &vak_config::scope::AgentScope::new(st.core.shared_data_home()),
                         vak_core::inbox::Kind::TaskSummary,
                         "Commitment closed without you",
                         &format!("{id} reached the end of its window or escalation policy."),

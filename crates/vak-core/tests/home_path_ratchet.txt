@@ -5,6 +5,6 @@
 # removes uses lowers the number here in the same change; nothing raises it.
 # M3a deletes this file and its test when every count reaches zero.
 sessions_home = 108
-shared_data_home = 50
+shared_data_home = 44
 vak_literal = 33
 hash_cwd = 5

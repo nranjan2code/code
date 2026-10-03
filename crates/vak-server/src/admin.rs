@@ -91,7 +91,7 @@ pub(crate) async fn list_sessions_admin(
     // `workspace_project_hash` on `/admin/api/config`).
     let archive_map = crate::read_archive(&state.core);
     let shared = state.core.shared_scope().into_root();
-    let trashed = vak_core::trash::trashed(&shared);
+    let trashed = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&shared));
     let agent_map = map_session_agents(&shared);
 
     match store.list_sessions() {
@@ -275,7 +275,7 @@ pub(crate) async fn session_transcript_admin(
     let Some(store) = &state.store else {
         return Json(serde_json::json!({ "error": "store not available" }));
     };
-    if vak_core::trash::is_trashed(&state.core.shared_scope().into_root(), &session_id) {
+    if vak_core::trash::is_trashed(&state.core.shared_scope(), &session_id) {
         return Json(serde_json::json!({ "error": "session is in the trash" }));
     }
     // Fetch offset+limit so we can report whether more pages exist.
@@ -365,7 +365,7 @@ pub(crate) async fn search_admin(
         role: q.role,
         kind: q.kind,
         excluded_sessions: vak_core::trash::search_exclusions(
-            &state.core.shared_scope().into_root(),
+            &state.core.shared_scope(),
             q.exclude_session.as_deref(),
         )
         .into_iter()

@@ -240,7 +240,10 @@ impl vak_tools::Tool for SessionSearchTool {
                 // Filter after a larger ranked window so an unrelated Agent's
                 // hits cannot consume the caller's small result limit.
                 limit.clamp(DEFAULT_LIMIT, 50).saturating_mul(2).min(50),
-                &crate::trash::search_exclusions(&trash_home, Some(&exclude)),
+                &crate::trash::search_exclusions(
+                    &vak_config::scope::SharedScope::new(trash_home),
+                    Some(&exclude),
+                ),
                 &extras,
             )?;
             if agent_id.is_some() || audience_id.is_some() {

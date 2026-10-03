@@ -2654,7 +2654,7 @@ async fn gateway_inbound(
                 if !verdict {
                     let short = question_code(&resolved.id);
                     let _ = vak_core::inbox::record(
-                        &state.core.shared_scope().into_root(),
+                        &vak_config::scope::AgentScope::new(state.core.shared_scope().into_root()),
                         vak_core::inbox::Kind::ApprovalDenied,
                         &format!("approval denied [{short}]"),
                         &format!(
@@ -3770,7 +3770,7 @@ pub(crate) async fn deliver_and_record_with_result(
 ) -> Result<&'static str, String> {
     let dedupe_key = result_id.map(|result| format!("{target}|{result}|{}", inbox_kind as u8));
     let _ = vak_core::inbox::record_with_result_and_key(
-        &core.shared_scope().into_root(),
+        &vak_config::scope::AgentScope::new(core.shared_scope().into_root()),
         inbox_kind,
         &title,
         text,
@@ -3826,7 +3826,7 @@ async fn deliver_approval_and_record(
 ) -> Result<(), String> {
     let _ = match tool_use_id {
         Some(call) => vak_core::inbox::record_for_call(
-            &core.shared_scope().into_root(),
+            &vak_config::scope::AgentScope::new(core.shared_scope().into_root()),
             inbox_kind,
             &title,
             &approval.detail,
@@ -3835,7 +3835,7 @@ async fn deliver_approval_and_record(
             core.admitted_trace(),
         ),
         None => vak_core::inbox::record(
-            &core.shared_scope().into_root(),
+            &vak_config::scope::AgentScope::new(core.shared_scope().into_root()),
             inbox_kind,
             &title,
             &approval.detail,

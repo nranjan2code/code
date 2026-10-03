@@ -458,7 +458,7 @@ mod tests {
                 .is_err()
         );
         crate::trash::set(
-            core.shared_scope().root(),
+            &core.shared_scope(),
             std::slice::from_ref(&session_id),
             true,
         )
@@ -606,14 +606,14 @@ mod tests {
     fn indexed_reads_honor_trash_and_do_not_fall_back_on_missing_index() {
         let (_dir, core, session_id, entry_id) = fixture();
         crate::trash::set(
-            core.shared_scope().root(),
+            &core.shared_scope(),
             std::slice::from_ref(&session_id),
             true,
         )
         .unwrap();
         assert!(core.read_session_entry(&session_id, &entry_id).is_err());
         crate::trash::set(
-            core.shared_scope().root(),
+            &core.shared_scope(),
             std::slice::from_ref(&session_id),
             false,
         )
