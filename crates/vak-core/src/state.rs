@@ -34,32 +34,87 @@ pub enum Root {
     /// A fourth root, and one that escaped this registry until a real
     /// install showed logs from a previous version surviving a purge.
     Logs,
+    /// `vak_config::paths::runtime_dir()` — sockets and locks that mean
+    /// nothing once their process is gone (docs/design/73 §6).
+    Runtime,
 }
 
 impl Root {
     /// Every root, so a pass over "all of Vak's state" (a purge) cannot
     /// leave one out by listing them by hand.
-    pub const ALL: [Root; 4] = [Root::Data, Root::Cache, Root::Shared, Root::Logs];
+    pub const ALL: [Root; 5] = [
+        Root::Data,
+        Root::Cache,
+        Root::Shared,
+        Root::Logs,
+        Root::Runtime,
+    ];
+
+    /// Whether Vak owns the whole root, so a purge removes it wholesale,
+    /// whatever older layouts left in it. The Shared layer is a place a
+    /// person keeps files too, so only its declared entries are Vak's.
+    pub fn is_owned(self) -> bool {
+        !matches!(self, Root::Shared)
+    }
 }
 
-/// What kind of thing this is, which is what decides how it may be treated.
+/// The data class of a path (docs/design/73 §5). Every path belongs to
+/// exactly one, and the class decides how it is updated and backed up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    /// Append-only. New information is a new entry, never a changed one
-    /// (AGENTS.md invariants 1 and 2).
-    Ledger,
-    /// Structured settings.
-    Config,
-    /// Credentials. Never copied into a backup without an explicit request,
-    /// never logged, never returned by an API.
-    Secret,
-    /// Derived from something else and safe to lose.
-    Derived,
-    /// Named content the runtime or a person edits in place: memory notes,
-    /// entities, skill proposals, presentation packs, Office rooms. It is
-    /// rewritten at runtime, so it is not a ledger, and an update never
-    /// writes it (doc 73 §5 makes every save a version at M3b).
+pub enum Class {
+    /// Source of truth, append-only (session ledgers, cost, audit).
+    Record,
+    /// Content-addressed, immutable bytes.
+    Object,
+    /// Named content edited in place (memory, entities, skills, proposals).
     Document,
+    /// A pointer with a generation (heads, cursors, leases).
+    Ref,
+    /// Operator intent (config, Agents, bots, allowlist, trust, auth).
+    Desired,
+    /// Credentials: never in an ordinary backup.
+    Secret,
+    /// A working tree a person edits too.
+    Workspace,
+    /// A piece's own storage (doc 81).
+    Application,
+    /// Rebuilt from records and objects; safe to lose.
+    Derived,
+    /// Locks, sockets, scratch: meaningless after their process.
+    Ephemeral,
+    /// Logs, spans, metrics.
+    Telemetry,
+}
+
+impl Class {
+    /// What an update may do to a path of this class.
+    pub fn on_update(self) -> OnUpdate {
+        match self {
+            Class::Record
+            | Class::Object
+            | Class::Document
+            | Class::Ref
+            | Class::Secret
+            | Class::Telemetry => OnUpdate::Untouched,
+            Class::Desired | Class::Application => OnUpdate::AdditiveOnly,
+            Class::Workspace | Class::Derived | Class::Ephemeral => OnUpdate::Rebuilt,
+        }
+    }
+
+    /// Whether an ordinary backup copies a path of this class. Secrets only
+    /// on an explicit request; a workspace through its checkpoints; derived,
+    /// ephemeral and telemetry data never.
+    pub fn in_backup(self) -> bool {
+        matches!(
+            self,
+            Class::Record
+                | Class::Object
+                | Class::Document
+                | Class::Ref
+                | Class::Desired
+                | Class::Application
+        )
+    }
 }
 
 /// What an update may do to this entry.
@@ -96,12 +151,8 @@ pub struct StateEntry {
     pub owner: &'static str,
     /// Schema version where the file carries one.
     pub schema: Option<u32>,
-    pub kind: Kind,
-    pub on_update: OnUpdate,
+    pub class: Class,
     pub on_purge: OnPurge,
-    /// Whether an ordinary backup copies it. Secrets are excluded unless
-    /// the operator asks, which is why this is not implied by `kind`.
-    pub in_backup: bool,
 }
 
 /// The path segment that stands for any one Agent id
@@ -110,6 +161,16 @@ pub struct StateEntry {
 pub const AGENT_SEGMENT: &str = "{agent}";
 
 impl StateEntry {
+    /// What an update may do to this entry: its class's rule.
+    pub fn on_update(&self) -> OnUpdate {
+        self.class.on_update()
+    }
+
+    /// Whether an ordinary backup copies this entry: its class's rule.
+    pub fn in_backup(&self) -> bool {
+        self.class.in_backup()
+    }
+
     /// True when `relative` is this entry or lives inside it. An
     /// [`AGENT_SEGMENT`] in the entry matches exactly one path component.
     pub fn matches(&self, relative: &Path) -> bool {
@@ -184,19 +245,14 @@ fn child_dirs(dir: &Path) -> Vec<std::ffi::OsString> {
 /// per-Agent store fails the enforcement test until someone states what it
 /// is, instead of passing because `agents/` was declared whole
 /// (data-architecture plan, "Now"; doc 73 D26).
-const fn agent_entry(path: &'static str, owner: &'static str, kind: Kind) -> StateEntry {
+const fn agent_entry(path: &'static str, owner: &'static str, class: Class) -> StateEntry {
     StateEntry {
         path,
         root: Root::Data,
         owner,
         schema: None,
-        kind,
-        on_update: match kind {
-            Kind::Config => OnUpdate::AdditiveOnly,
-            _ => OnUpdate::Untouched,
-        },
+        class,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     }
 }
 
@@ -212,10 +268,8 @@ pub const REGISTRY: &[StateEntry] = &[
         owner: "vak-server",
         schema: Some(1),
         // Public-key credentials and one-way recovery-code digests.
-        kind: Kind::Config,
-        on_update: OnUpdate::Untouched,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     // ---- ledgers: append-only, never rewritten by an update ----
     StateEntry {
@@ -223,97 +277,93 @@ pub const REGISTRY: &[StateEntry] = &[
         root: Root::Data,
         owner: "vak-session",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     // ---- every Agent home, one entry per subpath ----
     // Some server-side stores here are written under the server Core's own
     // Agent whichever Agent owns the session (doc 73 D25); M3b moves them.
-    agent_entry("agents/{agent}/sessions", "vak-session", Kind::Ledger),
-    agent_entry("agents/{agent}/checkpoints", "vak-core", Kind::Ledger),
-    agent_entry("agents/{agent}/memory", "vak-core", Kind::Document),
-    agent_entry("agents/{agent}/entities", "vak-core", Kind::Document),
-    agent_entry("agents/{agent}/skill-proposals", "vak-core", Kind::Document),
-    agent_entry("agents/{agent}/skills", "vak-core", Kind::Config),
+    agent_entry("agents/{agent}/sessions", "vak-session", Class::Record),
+    agent_entry("agents/{agent}/checkpoints", "vak-core", Class::Record),
+    agent_entry("agents/{agent}/memory", "vak-core", Class::Document),
+    agent_entry("agents/{agent}/entities", "vak-core", Class::Document),
+    agent_entry(
+        "agents/{agent}/skill-proposals",
+        "vak-core",
+        Class::Document,
+    ),
+    agent_entry("agents/{agent}/skills", "vak-core", Class::Desired),
     agent_entry(
         "agents/{agent}/commitments.jsonl",
         "vak-commit",
-        Kind::Ledger,
+        Class::Record,
     ),
     agent_entry(
         "agents/{agent}/routing-evidence.jsonl",
         "vak-core",
-        Kind::Ledger,
+        Class::Record,
     ),
     agent_entry(
         "agents/{agent}/intent-evidence.jsonl",
         "vak-core",
-        Kind::Ledger,
+        Class::Record,
     ),
     agent_entry(
         "agents/{agent}/security-events.jsonl",
         "vak-core",
-        Kind::Ledger,
+        Class::Record,
     ),
-    agent_entry("agents/{agent}/cost-log.jsonl", "vak-core", Kind::Ledger),
+    agent_entry("agents/{agent}/cost-log.jsonl", "vak-core", Class::Record),
     agent_entry(
         "agents/{agent}/activity-log.jsonl",
         "vak-core",
-        Kind::Ledger,
+        Class::Record,
     ),
     agent_entry(
         "agents/{agent}/presentations.json",
         "vak-store",
-        Kind::Document,
+        Class::Document,
     ),
-    agent_entry("agents/{agent}/flow-runs", "vak-flow", Kind::Ledger),
-    agent_entry("agents/{agent}/agent-network", "vak-core", Kind::Config),
+    agent_entry("agents/{agent}/flow-runs", "vak-flow", Class::Record),
+    agent_entry("agents/{agent}/agent-network", "vak-core", Class::Desired),
     agent_entry(
         "agents/{agent}/mail-calendar",
         "vak-mail-calendar",
-        Kind::Ledger,
+        Class::Record,
     ),
-    agent_entry("agents/{agent}/sandbox", "vak-server", Kind::Ledger),
+    agent_entry("agents/{agent}/sandbox", "vak-server", Class::Record),
     agent_entry(
         "agents/{agent}/office-workspaces",
         "vak-server",
-        Kind::Document,
+        Class::Document,
     ),
-    agent_entry("agents/{agent}/coworking", "vak-server", Kind::Ledger),
+    agent_entry("agents/{agent}/coworking", "vak-server", Class::Record),
     // One Canvas per conversation, rewritten as its tabs change; the newest
     // revision is all there is (docs/design/66 §0a).
-    agent_entry("agents/{agent}/canvas", "vak-server", Kind::Document),
+    agent_entry("agents/{agent}/canvas", "vak-server", Class::Document),
     StateEntry {
         path: "security-events.jsonl",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "cost-log.jsonl",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "routing-evidence.jsonl",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "deleted.json",
@@ -321,10 +371,8 @@ pub const REGISTRY: &[StateEntry] = &[
         owner: "vak-core (trash)",
         schema: None,
         // The trash: session ids hidden everywhere until restored.
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "social-x-usage.json",
@@ -332,10 +380,8 @@ pub const REGISTRY: &[StateEntry] = &[
         owner: "vak-server",
         schema: None,
         // The X preview's monthly request ceiling and the count spent so far.
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "archive.json",
@@ -343,70 +389,56 @@ pub const REGISTRY: &[StateEntry] = &[
         owner: "vak-server",
         schema: None,
         // Session ids hidden from the everyday list, still searchable.
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "inbox.jsonl",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "operations",
         root: Root::Data,
         owner: "vak-server",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "checkpoints",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "memory",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Document,
-        on_update: OnUpdate::Untouched,
+        class: Class::Document,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "skill-proposals",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Document,
-        on_update: OnUpdate::Untouched,
+        class: Class::Document,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "learning",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     // ---- config: additive-only across an update ----
     StateEntry {
@@ -414,60 +446,48 @@ pub const REGISTRY: &[StateEntry] = &[
         root: Root::Data,
         owner: "vak-server",
         schema: Some(1),
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "agent-network",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "tasks.json",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "desktop.json",
         root: Root::Data,
         owner: "vak-desktop",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "tray.json",
         root: Root::Data,
         owner: "vak-tray",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Derived,
         on_purge: OnPurge::Remove,
-        in_backup: false,
     },
     StateEntry {
         path: "trusted",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::Untouched,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "feeds",
@@ -476,70 +496,56 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         // The feed store (DuckDB) and the feeds' security log, both at
         // paths the server hands the Python pipeline.
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "feeds.toml",
         root: Root::Data,
         owner: "vak-server",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "output.toml",
         root: Root::Data,
         owner: "vak-delivery",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "flows",
         root: Root::Data,
         owner: "vak-flow",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "flow-runs",
         root: Root::Data,
         owner: "vak-flow",
         schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "jobs",
         root: Root::Data,
         owner: "vak-delivery",
         schema: Some(1),
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
+        class: Class::Record,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: "skills",
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     // ---- secrets ----
     // The encrypted-file credential backend (docs/design/44-shared-config.md,
@@ -555,22 +561,18 @@ pub const REGISTRY: &[StateEntry] = &[
         root: Root::Data,
         owner: "vak-config",
         schema: None,
-        kind: Kind::Secret,
+        class: Class::Secret,
         // A rotated key is the operator's write, never an update's.
-        on_update: OnUpdate::Untouched,
         on_purge: OnPurge::Remove,
         // Only with `--include-secrets`, and then with a warning beside it.
-        in_backup: false,
     },
     StateEntry {
         path: ".credential_key",
         root: Root::Data,
         owner: "vak-config",
         schema: None,
-        kind: Kind::Secret,
-        on_update: OnUpdate::Untouched,
+        class: Class::Secret,
         on_purge: OnPurge::Remove,
-        in_backup: false,
     },
     // The advisory cross-process lock guarding the two entries above
     // (see `EncryptedFileStore::with_lock` in vak-config). Contains no
@@ -582,53 +584,53 @@ pub const REGISTRY: &[StateEntry] = &[
         root: Root::Data,
         owner: "vak-config",
         schema: None,
-        kind: Kind::Derived,
-        on_update: OnUpdate::Untouched,
+        class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
-        in_backup: false,
     },
     // ---- the Shared layer ----
+    StateEntry {
+        path: ".env",
+        root: Root::Shared,
+        owner: "vak-config",
+        schema: None,
+        // The Shared secret scope's file name, when the credential store
+        // falls back to a file.
+        class: Class::Secret,
+        on_purge: OnPurge::Remove,
+    },
     StateEntry {
         path: vak_config::scope::PROJECT_CONFIG,
         root: Root::Shared,
         owner: "vak-config",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: vak_config::scope::PROJECT_SKILLS,
         root: Root::Shared,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Config,
+        class: Class::Desired,
         // Seeds advance only where the file still matches what we shipped;
         // an edited one is the operator's file permanently (doc 46 VII.4).
-        on_update: OnUpdate::AdditiveOnly,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: vak_config::scope::SEED_MANIFEST,
         root: Root::Shared,
         owner: "vak-core",
         schema: Some(1),
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     StateEntry {
         path: vak_config::scope::PROJECT_PLUGINS,
         root: Root::Shared,
         owner: "vak-plugin",
         schema: Some(1),
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Desired,
         on_purge: OnPurge::Remove,
-        in_backup: true,
     },
     // ---- derived: rebuilt, never carried ----
     StateEntry {
@@ -636,61 +638,58 @@ pub const REGISTRY: &[StateEntry] = &[
         root: Root::Data,
         owner: "vak-server",
         schema: None,
-        kind: Kind::Derived,
-        on_update: OnUpdate::Rebuilt,
+        class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
-        in_backup: false,
     },
     StateEntry {
         path: "broker.sock",
         root: Root::Data,
         owner: "vak-tools",
         schema: None,
-        kind: Kind::Derived,
-        on_update: OnUpdate::Rebuilt,
+        class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
-        in_backup: false,
     },
     StateEntry {
         path: "release",
         root: Root::Data,
         owner: "vak",
         schema: Some(2),
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Derived,
         on_purge: OnPurge::Remove,
-        in_backup: false,
     },
     StateEntry {
         path: "vak-home",
         root: Root::Data,
         owner: "vak-config",
         schema: None,
-        kind: Kind::Config,
-        on_update: OnUpdate::AdditiveOnly,
+        class: Class::Workspace,
         on_purge: OnPurge::Remove,
-        in_backup: false,
+    },
+    StateEntry {
+        path: "",
+        root: Root::Runtime,
+        owner: "vak-core",
+        schema: None,
+        class: Class::Ephemeral,
+        // Sockets and locks: recreated by the process that needs them.
+        on_purge: OnPurge::Remove,
     },
     StateEntry {
         path: "",
         root: Root::Logs,
         owner: "vak-ops",
         schema: None,
-        kind: Kind::Ledger,
+        class: Class::Telemetry,
         // Upgrades append to a log; they never rewrite one.
-        on_update: OnUpdate::Untouched,
         on_purge: OnPurge::Remove,
-        in_backup: false,
     },
     StateEntry {
         path: "",
         root: Root::Cache,
         owner: "vak-store",
         schema: None,
-        kind: Kind::Derived,
-        on_update: OnUpdate::Rebuilt,
+        class: Class::Derived,
         on_purge: OnPurge::Remove,
-        in_backup: false,
     },
 ];
 
@@ -704,7 +703,7 @@ pub fn entries_for(root: Root) -> impl Iterator<Item = &'static StateEntry> {
 /// the Agent homes that exist.
 pub fn backup_targets(root: Root, base: &Path) -> Vec<PathBuf> {
     entries_for(root)
-        .filter(|e| e.in_backup)
+        .filter(|e| e.in_backup())
         .flat_map(|e| e.expand(base))
         .collect()
 }
@@ -755,6 +754,7 @@ pub fn root_path(root: Root) -> PathBuf {
         Root::Cache => vak_config::paths::cache_home(),
         Root::Shared => vak_config::paths::default_workspace(),
         Root::Logs => vak_config::paths::logs_dir(),
+        Root::Runtime => vak_config::paths::runtime_dir(),
     }
 }
 
@@ -896,9 +896,9 @@ mod tests {
 
     #[test]
     fn secrets_are_never_in_an_ordinary_backup() {
-        for entry in REGISTRY.iter().filter(|e| e.kind == Kind::Secret) {
+        for entry in REGISTRY.iter().filter(|e| e.class == Class::Secret) {
             assert!(
-                !entry.in_backup,
+                !entry.in_backup(),
                 "{} is a secret and must not ride along in a routine backup",
                 entry.path
             );
@@ -909,9 +909,9 @@ mod tests {
     fn a_ledger_is_never_rewritten_by_an_update() {
         // Append-only is what makes "no migration" sustainable rather than
         // merely stated (doc 46 VII.3 rule 5).
-        for entry in REGISTRY.iter().filter(|e| e.kind == Kind::Ledger) {
+        for entry in REGISTRY.iter().filter(|e| e.class == Class::Record) {
             assert_eq!(
-                entry.on_update,
+                entry.on_update(),
                 OnUpdate::Untouched,
                 "{} is a ledger, so an update must not write it",
                 entry.path
@@ -926,6 +926,7 @@ mod tests {
             entries: vec![EntrySnapshot {
                 entry: entry.into(),
                 root: "data".into(),
+                class: "Record".into(),
                 on_update: on_update.into(),
                 files,
             }],
@@ -1048,6 +1049,9 @@ pub struct StateSnapshot {
 pub struct EntrySnapshot {
     pub entry: String,
     pub root: String,
+    /// The entry's data class when the snapshot was taken; the gate judges
+    /// a change by the class's contract.
+    pub class: String,
     pub on_update: String,
     pub files: Vec<FileSnapshot>,
 }
@@ -1102,6 +1106,7 @@ fn root_label(root: Root) -> &'static str {
         Root::Cache => "cache",
         Root::Shared => "shared",
         Root::Logs => "logs",
+        Root::Runtime => "runtime",
     }
 }
 
@@ -1132,7 +1137,7 @@ pub fn snapshot(version: &str) -> StateSnapshot {
             // Only for entries whose contract needs it: a ledger is
             // compared byte-for-byte, so carrying its parsed body would
             // bloat the snapshot for nothing.
-            let json = (entry.on_update == OnUpdate::AdditiveOnly && relative.ends_with(".json"))
+            let json = (entry.on_update() == OnUpdate::AdditiveOnly && relative.ends_with(".json"))
                 .then(|| {
                     std::fs::read_to_string(&file)
                         .ok()
@@ -1150,7 +1155,8 @@ pub fn snapshot(version: &str) -> StateSnapshot {
         entries.push(EntrySnapshot {
             entry: entry.path.to_string(),
             root: root_label(entry.root).to_string(),
-            on_update: format!("{:?}", entry.on_update),
+            class: format!("{:?}", entry.class),
+            on_update: format!("{:?}", entry.on_update()),
             files,
         });
     }

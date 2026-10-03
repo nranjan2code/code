@@ -14,10 +14,31 @@ use crate::{APP_VERSION, Core, install};
 /// only under the canonical homes, and `default_workspace()`
 /// (`~/vak-home`) is the sole workspace root — so there is never a
 /// second home to fall out of step.
+/// The data home is on the 7.0 baseline: it passes the invariant-29 check
+/// and has its tenant tree (docs/design/73 §6). A pre-baseline home fails
+/// with the one refusal message, which names the fix.
 fn layout_check() -> HealthCheck {
+    let data = vak_config::paths::data_home();
+    let tenant =
+        vak_config::paths::tenant_home_at(&data, &vak_session::trace::local::tenant().to_string());
+    let detail = crate::baseline::check_data_home(&data).and_then(|()| {
+        if tenant.is_dir() {
+            Ok(format!(
+                "{} (tenant {}, runtime {})",
+                data.display(),
+                tenant.display(),
+                vak_config::paths::runtime_dir().display()
+            ))
+        } else {
+            Err(format!(
+                "{} has no tenant tree yet; it is created on first use (start vak once)",
+                data.display()
+            ))
+        }
+    });
     HealthCheck {
         label: "install layout".to_string(),
-        detail: Ok(vak_config::paths::data_home().display().to_string()),
+        detail,
     }
 }
 

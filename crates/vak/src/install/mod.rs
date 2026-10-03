@@ -1143,6 +1143,78 @@ fn remove_dangling_cli_symlink(prefix: &Path) {
     }
 }
 
+/// Gives the owner write permission on every directory under `dir`, so a
+/// frozen Review candidate (write-protected on purpose) can be removed.
+/// Symlinks are not followed.
+fn make_writable(dir: &std::path::Path) {
+    let Ok(meta) = std::fs::symlink_metadata(dir) else {
+        return;
+    };
+    if !meta.is_dir() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = meta.permissions();
+        permissions.set_mode(permissions.mode() | 0o700);
+        let _ = std::fs::set_permissions(dir, permissions);
+    }
+    #[cfg(not(unix))]
+    {
+        let mut permissions = meta.permissions();
+        permissions.set_readonly(false);
+        let _ = std::fs::set_permissions(dir, permissions);
+    }
+    for child in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        make_writable(&child.path());
+    }
+}
+
+/// Removes the Vak-owned root `root` wholesale, except the path down to
+/// `keep` when `keep` lies inside it (the Shared layer under a `VAK_HOME`
+/// override). A symlinked root is refused rather than followed.
+fn remove_wholesale(root: &std::path::Path, keep: &std::path::Path) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(root).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(std::io::Error::other(
+            "is a symlink; remove it by hand if you meant to",
+        ));
+    }
+    if !keep.starts_with(root) {
+        make_writable(root);
+        return match std::fs::remove_dir_all(root) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        };
+    }
+    if keep == root {
+        return Ok(());
+    }
+    let mut refused = Vec::new();
+    for child in std::fs::read_dir(root)? {
+        let path = child?.path();
+        if path.is_symlink() {
+            // Following it could delete a directory Vak does not own.
+            refused.push(path.display().to_string());
+        } else if keep.starts_with(&path) {
+            remove_wholesale(&path, keep)?;
+        } else if path.is_dir() {
+            make_writable(&path);
+            std::fs::remove_dir_all(&path)?;
+        } else {
+            std::fs::remove_file(&path)?;
+        }
+    }
+    if refused.is_empty() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "refused {}: a symlink; remove it by hand if you meant to",
+            refused.join(", ")
+        )))
+    }
+}
+
 /// Everything the state registry says a purge removes.
 ///
 /// Derived from `vak_core::state`, not from a list kept here, and framed
@@ -1153,9 +1225,20 @@ fn remove_dangling_cli_symlink(prefix: &Path) {
 fn purge_state(yes: bool) -> i32 {
     use vak_core::state::{OnPurge, Root};
 
+    let shared_root = vak_core::state::root_path(Root::Shared);
     let mut targets: Vec<(PathBuf, String)> = Vec::new();
+    // Roots Vak owns go wholesale, whatever older layouts left in them; the
+    // Shared layer keeps everything but its declared entries.
+    let mut owned: Vec<PathBuf> = Vec::new();
     for root in Root::ALL {
         let base = vak_core::state::root_path(root);
+        if root.is_owned() {
+            if base.exists() && !owned.iter().any(|kept| base.starts_with(kept)) {
+                owned.retain(|kept| !kept.starts_with(&base));
+                owned.push(base);
+            }
+            continue;
+        }
         for entry in vak_core::state::entries_for(root) {
             if entry.on_purge != OnPurge::Remove {
                 continue;
@@ -1169,7 +1252,7 @@ fn purge_state(yes: bool) -> i32 {
         }
     }
 
-    if targets.is_empty() {
+    if targets.is_empty() && owned.is_empty() {
         println!("nothing to purge — no declared state is present");
         return 0;
     }
@@ -1178,6 +1261,9 @@ fn purge_state(yes: bool) -> i32 {
     // people answer without reading.
     println!();
     println!("--purge will permanently delete:");
+    for path in &owned {
+        println!("  {} (all of it)", path.display());
+    }
     for (path, _) in &targets {
         println!("  {}", path.display());
     }
@@ -1191,6 +1277,15 @@ fn purge_state(yes: bool) -> i32 {
     }
 
     let mut failed = false;
+    for path in &owned {
+        match remove_wholesale(path, &shared_root) {
+            Ok(()) => println!("  removed {}", path.display()),
+            Err(e) => {
+                eprintln!("  warning: {}: {e}", path.display());
+                failed = true;
+            }
+        }
+    }
     for (path, declared) in &targets {
         // A symlinked root would make `remove_dir_all` follow the link and
         // delete somebody else's directory. Refuse rather than guess.
@@ -1312,5 +1407,60 @@ mod tests {
         let path = std::env::join_paths([empty.path()]).unwrap();
         assert_eq!(cli_on_path(Some(&path), &cli), CliOnPath::Absent);
         assert_eq!(cli_on_path(None, &cli), CliOnPath::Absent);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod purge_tests {
+    use super::remove_wholesale;
+
+    #[test]
+    fn purge_removes_owned_roots_wholesale() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let shared = data.join("vak-home");
+        for path in [
+            "sessions/a/s.jsonl",
+            "agents/x/old.json",
+            "stray-6x-layout/z",
+            "logs/vak.jsonl",
+        ] {
+            let file = data.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, "x").unwrap();
+        }
+        std::fs::create_dir_all(shared.join(".vak")).unwrap();
+        std::fs::write(shared.join("notes.txt"), "mine").unwrap();
+        let frozen = data.join("agents/vak/sandbox/candidates/c1");
+        std::fs::create_dir_all(&frozen).unwrap();
+        std::fs::write(frozen.join("draft.docx"), "x").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&frozen, std::fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        remove_wholesale(&data, &shared).unwrap();
+        let left: Vec<String> = std::fs::read_dir(&data)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            left,
+            vec!["vak-home".to_string()],
+            "only the Shared layer survives"
+        );
+        assert_eq!(
+            std::fs::read_to_string(shared.join("notes.txt")).unwrap(),
+            "mine"
+        );
+
+        let elsewhere = dir.path().join("cache");
+        std::fs::create_dir_all(elsewhere.join("fts")).unwrap();
+        remove_wholesale(&elsewhere, &shared).unwrap();
+        assert!(
+            !elsewhere.exists(),
+            "a root that holds no Shared layer goes entirely"
+        );
     }
 }
