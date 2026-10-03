@@ -3986,8 +3986,10 @@ pub(crate) async fn require_bearer(
             .insert(AuthenticatedPrincipal::Operator);
         next.run(req).await
     } else if let Some(participant_token) = participant_token {
+        // The middleware knows no session, so it cannot name the session's
+        // Agent; the grant store is the configured home's (D25, M3b).
         match coworking::verify(
-            &coworking::store_path(&home),
+            &coworking::store_path(&vak_config::scope::AgentScope::new(&home), "vak"),
             participant_token,
             chrono::Utc::now(),
         ) {
@@ -8558,7 +8560,7 @@ async fn delegate_coworking_approval(
     let Some(audience_id) = conversation_audience(&state, &conversation_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let path = coworking::store_path(&state.core.sessions_home());
+    let path = coworking::store_path(&state.core.scope(), crate::session_agent(&state));
     let Ok(grants) = coworking::list(&path, &conversation_id, chrono::Utc::now()) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
@@ -8737,7 +8739,7 @@ async fn coworking_updates(
             ))
         }
     };
-    let grant_path = coworking::store_path(&state.core.sessions_home());
+    let grant_path = coworking::store_path(&state.core.scope(), crate::session_agent(&state));
     let stream = futures::stream::unfold(
         (
             handle.events_tx.subscribe(),
@@ -8798,7 +8800,7 @@ async fn list_coworking_invitations(
         return StatusCode::NOT_FOUND.into_response();
     }
     match coworking::list(
-        &coworking::store_path(&state.core.sessions_home()),
+        &coworking::store_path(&state.core.scope(), crate::session_agent(&state)),
         &conversation_id,
         chrono::Utc::now(),
     ) {
@@ -8856,7 +8858,7 @@ async fn create_coworking_invitation(
         actor: Some(request_actor(&state)),
     };
     match coworking::invite(
-        &coworking::store_path(&state.core.sessions_home()),
+        &coworking::store_path(&state.core.scope(), crate::session_agent(&state)),
         grant.clone(),
     ) {
         Ok(()) => (
@@ -8890,7 +8892,7 @@ async fn revoke_coworking_invitation(
     if let Err(status) = operator_only(&principal) {
         return status.into_response();
     }
-    let path = coworking::store_path(&state.core.sessions_home());
+    let path = coworking::store_path(&state.core.scope(), crate::session_agent(&state));
     let invitations = match coworking::list(&path, &conversation_id, chrono::Utc::now()) {
         Ok(invitations) => invitations,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -12072,37 +12074,33 @@ async fn write_file(State(state): State<AppState>, Json(body): Json<WriteBody>) 
     }
 }
 
-fn sandbox_records_path(state: &AppState) -> std::path::PathBuf {
+/// The Agent whose home the server-side stores of a session resolve under:
+/// the server Core's own today, whichever Agent owns the session (D25). M3b
+/// resolves the session's Agent here and in the scope accessors.
+pub(crate) fn session_agent(state: &AppState) -> &str {
     state
         .core
-        .sessions_home()
-        .join("sandbox")
-        .join("records.jsonl")
+        .agent_identity()
+        .map_or("vak", |agent| agent.id.as_str())
+}
+
+fn sandbox_records_path(state: &AppState) -> std::path::PathBuf {
+    state.core.scope().sandbox_records(session_agent(state))
 }
 
 fn sandbox_candidates_root(state: &AppState) -> std::path::PathBuf {
-    state
-        .core
-        .sessions_home()
-        .join("sandbox")
-        .join("candidates")
+    state.core.scope().sandbox_candidates(session_agent(state))
 }
 
 fn sandbox_promotions_root(state: &AppState) -> std::path::PathBuf {
-    state
-        .core
-        .shared_data_home()
-        .join("sandbox")
-        .join("promotions")
+    state.core.shared_scope().sandbox_promotions()
 }
 
 fn session_sandbox_events_path(state: &AppState, session_id: &str) -> std::path::PathBuf {
     state
         .core
-        .sessions_home()
-        .join("sandbox")
-        .join("executions")
-        .join(format!("{session_id}.jsonl"))
+        .scope()
+        .sandbox_executions(session_agent(state), session_id)
 }
 
 fn sandbox_session_workspace(state: &AppState, session_id: &str) -> Option<std::path::PathBuf> {
@@ -25840,9 +25838,13 @@ mod sandbox_promotion_tests {
             trace: None,
             actor: None,
         };
-        coworking::invite(&coworking::store_path(dir.path()), grant).unwrap();
         coworking::invite(
-            &coworking::store_path(dir.path()),
+            &coworking::store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak"),
+            grant,
+        )
+        .unwrap();
+        coworking::invite(
+            &coworking::store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak"),
             coworking::AudienceGrant {
                 grant_id: "grant-wrong-audience".into(),
                 principal_id: "person-wrong-audience".into(),
@@ -25932,7 +25934,12 @@ mod sandbox_promotion_tests {
                 .status(),
             StatusCode::FORBIDDEN
         );
-        coworking::revoke(&coworking::store_path(dir.path()), "grant-http", "operator").unwrap();
+        coworking::revoke(
+            &coworking::store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak"),
+            "grant-http",
+            "operator",
+        )
+        .unwrap();
         assert_eq!(
             app.oneshot(request(
                 axum::http::Method::GET,
@@ -25970,7 +25977,11 @@ mod sandbox_promotion_tests {
         );
         let token = "participant-message-token";
         coworking::invite(
-            &coworking::store_path(&core.sessions_home()),
+            &coworking::store_path(
+                &core.scope(),
+                core.agent_identity()
+                    .map_or("vak", |agent| agent.id.as_str()),
+            ),
             coworking::AudienceGrant {
                 grant_id: "grant-message".into(),
                 principal_id: "person-message".into(),
@@ -26076,7 +26087,11 @@ mod sandbox_promotion_tests {
         );
         let token = "participant-approval-token";
         coworking::invite(
-            &coworking::store_path(&core.sessions_home()),
+            &coworking::store_path(
+                &core.scope(),
+                core.agent_identity()
+                    .map_or("vak", |agent| agent.id.as_str()),
+            ),
             coworking::AudienceGrant {
                 grant_id: "grant-approval".into(),
                 principal_id: "person-approval".into(),
@@ -26093,7 +26108,11 @@ mod sandbox_promotion_tests {
         )
         .unwrap();
         coworking::invite(
-            &coworking::store_path(&core.sessions_home()),
+            &coworking::store_path(
+                &core.scope(),
+                core.agent_identity()
+                    .map_or("vak", |agent| agent.id.as_str()),
+            ),
             coworking::AudienceGrant {
                 grant_id: "grant-other".into(),
                 principal_id: "person-other".into(),
@@ -26277,7 +26296,11 @@ mod sandbox_promotion_tests {
         );
 
         let token = "participant-comment-token";
-        let grants = coworking::store_path(&core.sessions_home());
+        let grants = coworking::store_path(
+            &core.scope(),
+            core.agent_identity()
+                .map_or("vak", |agent| agent.id.as_str()),
+        );
         coworking::invite(
             &grants,
             coworking::AudienceGrant {

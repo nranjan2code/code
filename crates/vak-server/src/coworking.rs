@@ -83,8 +83,10 @@ pub enum Error {
     Invalid(String),
 }
 
-pub fn store_path(sessions_home: &Path) -> PathBuf {
-    vak_config::scope::AgentScope::new(sessions_home).coworking_grants("")
+/// The coworking grant store of `session_agent`'s home (D25, as
+/// [`vak_config::scope::AgentScope::coworking_grants`]).
+pub fn store_path(scope: &vak_config::scope::AgentScope, session_agent: &str) -> PathBuf {
+    scope.coworking_grants(session_agent)
 }
 
 pub fn generate_token() -> String {
@@ -283,7 +285,7 @@ mod tests {
     #[test]
     fn verifies_scope_without_storing_raw_token() {
         let dir = tempfile::tempdir().unwrap();
-        let path = store_path(dir.path());
+        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak");
         let token = generate_token();
         invite(&path, grant(&token, "2026-09-22T00:00:00Z")).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
@@ -304,7 +306,7 @@ mod tests {
     #[test]
     fn expiry_and_revocation_fail_closed() {
         let dir = tempfile::tempdir().unwrap();
-        let path = store_path(dir.path());
+        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak");
         invite(&path, grant("expired", "2026-09-20T00:00:00Z")).unwrap();
         let now = chrono::DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
             .unwrap()
@@ -321,7 +323,7 @@ mod tests {
     #[test]
     fn listing_omits_tokens_and_reports_lifecycle() {
         let dir = tempfile::tempdir().unwrap();
-        let path = store_path(dir.path());
+        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()), "vak");
         invite(&path, grant("secret-token", "2026-09-22T00:00:00Z")).unwrap();
         let duplicate = invite(&path, grant("replacement", "2026-09-23T00:00:00Z"));
         assert!(duplicate.is_err());
