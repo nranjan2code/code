@@ -463,6 +463,31 @@ Finished (2026-10-03):
 
 G0 is complete.
 
+Live check of the finished G0, 2026-10-03, same setup as the G1 checks:
+turn 1 created `logs/status.txt` with bash (three commands, each writing
+it), turn 2 asked "What is 17 times 23?", and turn 3 asked what
+`status.txt` contains. Read through the app:
+
+- each of turn 1's bash commands recorded a `file_write` of
+  `logs/status.txt` under its own call, with the same digest;
+- turn 3's plan put turn 1 at `Full` through `file:logs/status.txt`, a
+  node only bash's scan had recorded, and the model answered "ready".
+  Turn 3 read the file with `cat`, which records nothing: bash reads are
+  not observable by a before/after scan;
+- the timeline still groups turns, and `POST …/outcome-review` with turn
+  3's id was accepted, a made-up id answered 404, and one with no id took
+  the latest evaluated turn; the verdict showed on turn 3's items only.
+
+Not exercised live: gateway-forwarded approvals (a dev run has no
+gateway) and Review promotion (needs an Office draft); unit tests cover
+both.
+
+Finding: turn 3's plan also put turn 2 (the arithmetic question) at `Full`,
+through a thread link: the resolver read turn 3 as continuing turn 2's
+thread. Lineage that only cost a duplicate thread before G1 now costs
+context. Tightening it (for example, not linking on a deictic word alone
+when the reading's act is a plain question) is the next fix.
+
 Nothing in G1 to G3 is sound until §2.4 holds. Each item is a new field or
 entry, added under invariant 29's additive rule, or folded into M3a/M3b
 where the typed ids land anyway (§11, D5).
