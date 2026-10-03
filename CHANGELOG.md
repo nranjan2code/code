@@ -10,6 +10,9 @@
   file reads attached to their named conversation.
 - Improve conversation history selection and context planning, including
   explicit recovery of relevant prior evidence and provider context limits.
+- Give the social add-ons their own Social accounts page in Settings, as grouped
+  platform cards, and an oversight tab in the admin console. YouTube keys and
+  LinkedIn Client IDs can be saved once under Shared and overridden per agent.
 - Complete the `/` and `@` composer menus with chaining, and show the text
   people entered in search results and other human-facing views.
 - Tighten Bash and sandbox execution boundaries, enforce parent worker

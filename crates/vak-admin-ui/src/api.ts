@@ -673,6 +673,12 @@ export const api = {
   skills: (agent?: string): Promise<{ skills: SkillItem[] }> =>
     fetch(withAgent("/skills", agent)).then((r) => handle(r)),
 
+  socialConnectors: (agent?: string): Promise<{ connectors: { id: string; platform: string; summary: string; readiness: "blocked" | "owner_preview" | "identity_link"; reason: string; official_api: string }[] }> =>
+    fetch(withAgent("/social/connectors", agent)).then((r) => handle(r)),
+  socialCredential: (path: "youtube/key" | "linkedin/client-id" | "linkedin/account", agent?: string, scope?: "user"): Promise<{ configured?: boolean; inherited?: boolean; connected?: boolean; display_name?: string; expired?: boolean }> => {
+    const url = withAgent(`/social/${path}`, agent);
+    return fetch(scope ? `${url}${url.includes("?") ? "&" : "?"}scope=user` : url).then((r) => handle(r));
+  },
   plugins: (scope?: "workspace" | "user", agent?: string): Promise<{ plugins: PluginItem[] }> =>
     fetch(withAgent(`/plugins${scope ? `?scope=${scope}` : ""}`, agent)).then((r) => handle(r)),
   pluginAudit: (agent?: string): Promise<{ audit: unknown[] }> =>

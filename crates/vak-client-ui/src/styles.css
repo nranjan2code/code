@@ -2700,11 +2700,6 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .capability-discover-filters button.active { border-color: var(--accent); color: var(--accent-bright); background: var(--surface-active); }
 .capability-overview-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); }
 .capability-overview-row strong { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text-soft); font-size: var(--fs-control); }
-.social-linkedin-setup { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); margin-top: var(--space-4); padding: var(--space-4); border: 1px solid var(--canvas-border); border-radius: 12px; background: var(--canvas-bg); }
-.social-linkedin-setup h3 { margin: 0; color: var(--text-soft); font-size: var(--fs-control); }
-.social-linkedin-setup .settings-hint { margin: 0; max-width: 760px; line-height: 1.5; }
-.social-linkedin-setup label { display: flex; flex-direction: column; gap: var(--space-1); width: min(100%, 520px); color: var(--muted); font-size: var(--fs-caption); }
-.social-linkedin-setup input { width: 100%; box-sizing: border-box; }
 .hook-editor { display: flex; flex-direction: column; gap: 10px; }
 .hook-row { display: grid; grid-template-columns: 1fr 1fr 110px; gap: 10px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .hook-row-head { grid-column: 1 / -1; justify-content: flex-end; }
@@ -6558,3 +6553,25 @@ code.ic[data-previewable="true"]:hover {
 .ui-preview-source-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-2); }
 .ui-preview-path { font-size: var(--fs-caption); color: var(--faint); font-family: var(--mono); }
 .ui-preview-code { margin: 0; max-height: 280px; overflow: auto; padding: var(--space-2); border-radius: var(--radius-sm); font-family: var(--mono); font-size: max(12px, calc(12px * var(--code-scale, 1))); line-height: 1.55; color: var(--text-soft); background: var(--surface); }
+
+.social-group { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-5); }
+.social-group-head { display: flex; flex-direction: column; gap: 2px; }
+.social-group-head h2 { margin: 0; font-size: var(--fs-control); color: var(--text-soft); }
+.social-group-head small { color: var(--muted); }
+.social-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: var(--space-3); }
+.social-card { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--canvas-border); border-radius: 14px; background: var(--canvas-bg); box-shadow: var(--canvas-shadow); }
+.social-card.is-blocked { opacity: .8; }
+.social-card-head { display: flex; align-items: flex-start; gap: var(--space-3); }
+.social-card-head > div { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.social-card-head small { color: var(--muted); }
+.social-icon { display: inline-grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 10px; background: color-mix(in srgb, var(--text-soft) 10%, transparent); color: var(--text-soft); }
+.social-icon svg { width: 22px; height: 22px; }
+.social-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+.social-steps > li { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--canvas-border); width: 100%; box-sizing: border-box; }
+.social-steps label { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; color: var(--muted); font-size: var(--fs-caption); }
+.social-steps input { width: 100%; box-sizing: border-box; }
+.social-steps .settings-hint { margin: 0; line-height: 1.5; }
+.social-step-title { display: flex; align-items: center; gap: var(--space-2); }
+.social-step-num { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--canvas-border); font-size: var(--fs-caption); }
+.social-badge { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--text-soft) 10%, transparent); color: var(--muted); font-size: var(--fs-caption); }
+.social-card-foot { margin-top: auto; font-size: var(--fs-caption); }

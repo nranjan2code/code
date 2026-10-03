@@ -64,6 +64,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string; group: Nav
   { id: "voice", label: "Voice and sound", icon: "mic", hint: "voice speak aloud microphone sound cues chime", group: "Everyday" },
   { id: "notifications", label: "Notifications", icon: "bell", hint: "alerts quiet hours", group: "Everyday" },
   { id: "connections", label: "Capabilities", icon: "grid", hint: "discover skills plugins marketplace connections tools chat bots telegram discord slack mcp hooks", group: "Everyday" },
+  { id: "social", label: "Social accounts", icon: "spark", hint: "social youtube linkedin reddit x twitter api key client id accounts", group: "Everyday" },
   { id: "privacy", label: "Privacy and safety", icon: "shield", hint: "permissions access approvals memory remembers archived trash history", group: "Everyday" },
   { id: "models", label: "Models and routing", icon: "layers", hint: "route ladder fallbacks", group: "Advanced" },
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "Advanced" },
@@ -74,7 +75,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string; group: Nav
 
 /** Pages that read or write one agent's configuration, so the Shared
  * defaults switch applies to them. */
-const SCOPED_PAGES = new Set<Page>(["agent", "connections", "mail-calendar", "privacy", "prompts"]);
+const SCOPED_PAGES = new Set<Page>(["agent", "connections", "mail-calendar", "social", "privacy", "prompts"]);
 
 const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
   { id: "identity", label: "Identity", help: "Who the agent is. This agent's version replaces the shared one." },
@@ -113,6 +114,18 @@ function TechnicalRow(props: { children: JSX.Element }) {
 
 function CapabilityIcon(props: { name: string }) {
   return <span class="capability-icon" style={{ "--capability-hue": `oklch(62% 0.14 ${capabilityHue(props.name)})` }}>{capabilityInitial(props.name)}</span>;
+}
+
+function SocialIcon(props: { platform: string }) {
+  const glyph = () => {
+    switch (props.platform) {
+      case "social-youtube": return <><rect x="3" y="6" width="18" height="12" rx="4" /><path d="M10 9.5v5l4.5-2.5z" fill="currentColor" stroke="none" /></>;
+      case "social-linkedin": return <><rect x="3.5" y="3.5" width="17" height="17" rx="3" /><path d="M8 11v5M8 8v.01M12 16v-5M12 13a2.5 2.5 0 0 1 5 0v3" /></>;
+      case "social-reddit": return <><circle cx="12" cy="13" r="6.5" /><circle cx="9.5" cy="12.5" r=".8" fill="currentColor" /><circle cx="14.5" cy="12.5" r=".8" fill="currentColor" /><path d="M9.5 15.5c1.4 1 3.6 1 5 0M12 6.5l1.2-3 3 .8" /></>;
+      default: return <path d="M5 5l14 14M19 5L5 19" />;
+    }
+  };
+  return <span class="social-icon" data-platform={props.platform} aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{glyph()}</svg></span>;
 }
 
 function fmt(value: number): string {
@@ -652,6 +665,9 @@ export default function Settings() {
   const [marketplaceErrors, setMarketplaceErrors] = createSignal<string[]>([]);
   const [socialConnectors, setSocialConnectors] = createSignal<api.SocialConnector[]>([]);
   const [youtubeKeyConfigured, setYoutubeKeyConfigured] = createSignal(false);
+  const [youtubeInherited, setYoutubeInherited] = createSignal(false);
+  const [linkedinInherited, setLinkedinInherited] = createSignal(false);
+  const credScope = () => (scope() === "user" ? "user" as const : undefined);
   const [youtubeKeyInput, setYoutubeKeyInput] = createSignal("");
   const [youtubeQuery, setYoutubeQuery] = createSignal("");
   const [youtubeResults, setYoutubeResults] = createSignal<api.YoutubePreviewItem[]>([]);
@@ -747,12 +763,14 @@ export default function Settings() {
     try {
       const [socialResult, youtubeKey, linkedinClientId, linkedinConnection] = await Promise.all([
         api.listSocialConnectors(activeAgentId()),
-        api.youtubeKeyStatus(activeAgentId()),
-        api.linkedinClientIdStatus(activeAgentId()),
+        api.youtubeKeyStatus(activeAgentId(), credScope()),
+        api.linkedinClientIdStatus(activeAgentId(), credScope()),
         api.linkedinAccountStatus(activeAgentId()),
       ]);
       setSocialConnectors(socialResult.connectors ?? []);
       setYoutubeKeyConfigured(youtubeKey.configured);
+      setYoutubeInherited(youtubeKey.inherited);
+      setLinkedinInherited(linkedinClientId.inherited);
       setLinkedinClientIdConfigured(linkedinClientId.configured);
       setLinkedinAccount(linkedinConnection);
       if (scope() === "user") {
@@ -860,10 +878,10 @@ export default function Settings() {
     if (!clientId || linkedinBusy()) return;
     setLinkedinBusy(true);
     try {
-      await api.saveLinkedinClientId(clientId, activeAgentId());
+      await api.saveLinkedinClientId(clientId, activeAgentId(), credScope());
       setLinkedinClientIdInput("");
       setLinkedinClientIdConfigured(true);
-      setNotice({ kind: "info", text: "LinkedIn Client ID saved for this Agent." });
+      setNotice({ kind: "info", text: "LinkedIn Client ID saved" + (scope() === "user" ? " for every agent" : " for this agent") + "." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not save LinkedIn Client ID: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
@@ -915,9 +933,9 @@ export default function Settings() {
   }
 
   const refreshLinkedinOnFocus = () => {
-    if (page() === "connections") {
+    if (page() === "social") {
       void Promise.all([
-        api.linkedinClientIdStatus(activeAgentId()).then((result) => setLinkedinClientIdConfigured(result.configured)),
+        api.linkedinClientIdStatus(activeAgentId(), credScope()).then((result) => { setLinkedinClientIdConfigured(result.configured); setLinkedinInherited(result.inherited); }),
         api.linkedinAccountStatus(activeAgentId()).then(setLinkedinAccount),
       ]).catch((error) => setNotice({ kind: "error", text: `Could not refresh LinkedIn connection: ${error instanceof Error ? error.message : String(error)}` }));
     }
@@ -1136,10 +1154,10 @@ export default function Settings() {
     onCleanup(() => clearInterval(t));
   });
   createEffect(() => {
-    if (page() !== "connections") return;
+    if (page() !== "connections" && page() !== "social") return;
     scope();
     activeAgentId();
-    void refreshMcp();
+    if (page() === "connections") void refreshMcp();
     void refreshCapabilities();
   });
 
@@ -1696,7 +1714,7 @@ export default function Settings() {
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id || (item.id === "privacy" && page() === "archived") }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
           </For>
           <Show when={agentEntries().length > 0}>
-            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <><button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button><Show when={scope() === "workspace" && activeAgentId() === agent.id}><div class="settings-agent-subnav" aria-label={`${agent.name} settings`}><button type="button" classList={{ active: page() === "agent" }} onClick={() => selectPage("agent")}>Overview</button><button type="button" classList={{ active: page() === "connections" }} onClick={() => { setCapabilityView("mine"); selectPage("connections"); }}>Capabilities</button><button type="button" classList={{ active: page() === "mail-calendar" }} onClick={() => selectPage("mail-calendar")}>Email and calendar</button><button type="button" classList={{ active: page() === "privacy" }} onClick={() => selectPage("privacy")}>Privacy and safety</button><Show when={technicalDetails()}><button type="button" classList={{ active: page() === "prompts" }} onClick={() => selectPage("prompts")}>Prompts</button></Show></div></Show></>}</For></nav></div>
+            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <><button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button><Show when={scope() === "workspace" && activeAgentId() === agent.id}><div class="settings-agent-subnav" aria-label={`${agent.name} settings`}><button type="button" classList={{ active: page() === "agent" }} onClick={() => selectPage("agent")}>Overview</button><button type="button" classList={{ active: page() === "connections" }} onClick={() => { setCapabilityView("mine"); selectPage("connections"); }}>Capabilities</button><button type="button" classList={{ active: page() === "mail-calendar" }} onClick={() => selectPage("mail-calendar")}>Email and calendar</button><button type="button" classList={{ active: page() === "social" }} onClick={() => selectPage("social")}>Social accounts</button><button type="button" classList={{ active: page() === "privacy" }} onClick={() => selectPage("privacy")}>Privacy and safety</button><Show when={technicalDetails()}><button type="button" classList={{ active: page() === "prompts" }} onClick={() => selectPage("prompts")}>Prompts</button></Show></div></Show></>}</For></nav></div>
           </Show>
           <For each={pageGroups().filter(([group]) => group === "Advanced")}>
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
@@ -2288,6 +2306,66 @@ export default function Settings() {
               </Group>
             </Show>
 
+            <Show when={page() === "social"}>
+              <header><h1>Social accounts</h1><p>{scope() === "user" ? "Set up social platforms once for every agent. An agent can still use its own credential instead." : `Connect the social platforms ${agentName()} may use. A credential saved under Shared applies here unless this agent has its own.`}</p></header>
+              <For each={[{ title: "Available now", note: "Owner-only previews. Nothing here is sent to the agent.", ids: ["social-youtube", "social-linkedin"] }, { title: "Blocked by platform rules", note: "These accept no credentials yet, because nothing could use one safely.", ids: ["social-reddit", "social-x"] }]}>{(groupDef) => <section class="social-group">
+                <div class="social-group-head"><h2>{groupDef.title}</h2><small>{groupDef.note}</small></div>
+                <div class="social-grid"><For each={socialConnectors().filter((connector) => groupDef.ids.includes(connector.id))}>{(connector) => {
+                  const plugin = () => [...plugins(), ...inheritedPlugins()].find((item) => item.name === connector.id);
+                  const isYoutube = connector.id === "social-youtube";
+                  const isLinkedin = connector.id === "social-linkedin";
+                  const credentialSet = () => isYoutube ? youtubeKeyConfigured() : isLinkedin ? linkedinClientIdConfigured() : false;
+                  const inherited = () => isYoutube ? youtubeInherited() : isLinkedin ? linkedinInherited() : false;
+                  const status = () => connector.readiness === "blocked" && !isYoutube && !isLinkedin ? { text: "Blocked", cls: "muted" }
+                    : !plugin() ? { text: "Not installed", cls: "muted" }
+                    : !plugin()!.enabled ? { text: "Disabled", cls: "muted" }
+                    : isLinkedin && linkedinAccount().connected ? { text: "Connected", cls: "ready" }
+                    : credentialSet() || inherited() ? { text: "Ready", cls: "ready" }
+                    : { text: "Needs credential", cls: "warn" };
+                  return <article class="social-card" classList={{ "is-blocked": !isYoutube && !isLinkedin }}>
+                    <div class="social-card-head"><SocialIcon platform={connector.id} /><div><strong>{connector.platform}</strong><small>{connector.summary}</small></div><span class="capability-state" classList={{ ready: status().cls === "ready", muted: status().cls === "muted" }}>{status().text}</span></div>
+                    <Show when={!isYoutube && !isLinkedin}><p class="settings-hint">{connector.reason}</p></Show>
+                    <ol class="social-steps">
+                      <li><div class="social-step-title"><span class="social-step-num">1</span><strong>Add-on</strong></div>
+                        <div class="settings-actions"><Show when={plugin()} fallback={<button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id)}>Install</button>}><span class="settings-hint">{plugin()!.enabled ? "Enabled" : "Installed, disabled"}</span><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void toggleSocialGuidance(plugin()!)}>{plugin()!.enabled ? "Disable" : "Enable"}</button><button type="button" class="settings-button subtle" disabled={pluginBusy()} onClick={() => void installSocialPresentationPack(connector.id)}>Add layouts</button></Show></div></li>
+                      <Show when={isYoutube && plugin()?.enabled}><li><div class="social-step-title"><span class="social-step-num">2</span><strong>API key</strong><Show when={inherited()}><span class="social-badge">Using the Shared key</span></Show></div>
+                        <p class="settings-hint">A Google Cloud YouTube Data API key, separate from your Google account. Each search uses your project's quota.</p>
+                        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer noopener">Create or manage a key</a>
+                        <Show when={!youtubeKeyConfigured()}>
+                          <label>API key<input type="password" autocomplete="new-password" value={youtubeKeyInput()} onInput={(event) => setYoutubeKeyInput(event.currentTarget.value)} placeholder={inherited() ? "Enter a key to override the Shared one" : "Paste key; it will not be shown again"} /></label>
+                          <div class="settings-actions"><button type="button" class="settings-button" disabled={youtubeBusy() || !youtubeKeyInput().trim()} onClick={async () => { setYoutubeBusy(true); try { await api.saveYoutubeKey(youtubeKeyInput(), activeAgentId(), credScope()); setYoutubeKeyInput(""); setYoutubeKeyConfigured(true); setYoutubeInherited(false); setNotice({ kind: "info", text: scope() === "user" ? "YouTube API key saved for every agent." : "YouTube API key saved for this agent." }); } catch (error) { setNotice({ kind: "error", text: `Could not save YouTube API key: ${(error as Error).message}` }); } finally { setYoutubeBusy(false); } }}>Save key</button></div>
+                        </Show>
+                        <Show when={youtubeKeyConfigured()}><div class="settings-actions"><span class="capability-state ready">{scope() === "user" ? "Shared key saved" : `Key saved for ${agentName()}`}</span><button type="button" class="settings-button danger" disabled={youtubeBusy()} onClick={async () => { try { await api.removeYoutubeKey(activeAgentId(), credScope()); setYoutubeKeyConfigured(false); setYoutubeResults([]); await refreshCapabilities(); setNotice({ kind: "info", text: "YouTube API key removed." }); } catch (error) { setNotice({ kind: "error", text: `Could not remove YouTube API key: ${(error as Error).message}` }); } }}>Remove key</button></div></Show>
+                      </li>
+                      <Show when={scope() !== "user" && (youtubeKeyConfigured() || inherited())}><li><div class="social-step-title"><span class="social-step-num">3</span><strong>Try a search</strong></div>
+                        <div class="settings-actions"><input aria-label="YouTube search query" value={youtubeQuery()} onInput={(event) => setYoutubeQuery(event.currentTarget.value)} maxlength={200} placeholder="Search public YouTube videos" /><button type="button" class="settings-button" disabled={youtubeBusy() || !youtubeQuery().trim()} onClick={async () => { setYoutubeBusy(true); try { const result = await api.searchYoutubePreview(youtubeQuery(), 5, activeAgentId()); setYoutubeResults(result.items); } catch (error) { setNotice({ kind: "error", text: `YouTube search failed: ${(error as Error).message}` }); } finally { setYoutubeBusy(false); } }}>{youtubeBusy() ? "Searching…" : "Search"}</button></div>
+                        <div class="capability-list"><For each={youtubeResults()}>{(item) => <article class="capability-item"><a href={item.url} target="_blank" rel="noreferrer noopener">{item.title}</a><small>{item.channel_title} · {item.published_at}</small><p>{item.description}</p></article>}</For></div>
+                      </li></Show></Show>
+                      <Show when={isLinkedin && plugin()?.enabled}><li><div class="social-step-title"><span class="social-step-num">2</span><strong>App Client ID</strong><Show when={inherited()}><span class="social-badge">Using the Shared Client ID</span></Show></div>
+                        <p class="settings-hint">From a LinkedIn app with “Sign In with LinkedIn using OpenID Connect” and native PKCE enabled. Never enter a password or client secret here.</p>
+                        <a href="https://www.linkedin.com/developers/apps" target="_blank" rel="noreferrer noopener">Open LinkedIn Developer Portal</a>
+                        <label>Client ID<input aria-label="LinkedIn app Client ID" autocomplete="off" value={linkedinClientIdInput()} onInput={(event) => setLinkedinClientIdInput(event.currentTarget.value)} maxlength={256} placeholder={linkedinClientIdConfigured() ? "Enter a new Client ID to replace the saved one" : inherited() ? "Enter an ID to override the Shared one" : "Paste your app's Client ID"} /></label>
+                        <div class="settings-actions">
+                          <button type="button" class="settings-button" disabled={linkedinBusy() || !linkedinClientIdInput().trim()} onClick={() => void saveLinkedinClientId()}>{linkedinClientIdConfigured() ? "Update Client ID" : "Save Client ID"}</button>
+                          <Show when={linkedinClientIdConfigured()}><button type="button" class="settings-button subtle" disabled={linkedinBusy()} onClick={async () => { setLinkedinBusy(true); try { await api.removeLinkedinClientId(activeAgentId(), credScope()); await refreshCapabilities(); setNotice({ kind: "info", text: "LinkedIn Client ID removed. Disconnect the profile separately to remove its saved sign-in." }); } catch (error) { setNotice({ kind: "error", text: `Could not remove Client ID: ${error instanceof Error ? error.message : String(error)}` }); } finally { setLinkedinBusy(false); } }}>Remove</button></Show>
+                        </div>
+                      </li>
+                      <Show when={scope() !== "user"}><li><div class="social-step-title"><span class="social-step-num">3</span><strong>Your profile</strong></div>
+                        <p class="settings-hint">Only your profile name, through OpenID Connect (<code>openid profile</code>). It does not verify identity, search posts, or grant content access, and it stays on this agent.</p>
+                        <p class="capability-state" classList={{ ready: linkedinAccount().connected && !linkedinAccount().expired, muted: !linkedinAccount().connected || linkedinAccount().expired }}>{linkedinAccount().connected ? linkedinAccount().expired ? `Connected as ${linkedinAccount().display_name ?? "LinkedIn member"}; sign-in expired` : `Connected as ${linkedinAccount().display_name ?? "LinkedIn member"}` : "Not connected"}</p>
+                        <Show when={linkedinAccount().connected}><p class="settings-hint">Requested: {(linkedinAccount().scopes_requested ?? []).join(", ") || "not reported"}. Expires {linkedinAccount().expires_at ? new Date(linkedinAccount().expires_at!).toLocaleString() : "at an unknown time"}.</p></Show>
+                        <div class="settings-actions">
+                          <button type="button" class="settings-button" disabled={linkedinBusy() || !(linkedinClientIdConfigured() || linkedinInherited())} title={!(linkedinClientIdConfigured() || linkedinInherited()) ? "Save a Client ID first" : "Open LinkedIn sign-in"} onClick={() => void connectLinkedinAccount()}>{linkedinBusy() ? "Opening…" : linkedinAccount().connected ? "Reconnect" : "Connect LinkedIn"}</button>
+                          <Show when={linkedinAccount().connected}><button type="button" class="settings-button danger" disabled={linkedinBusy()} onClick={() => void disconnectLinkedinAccount()}>Disconnect</button></Show>
+                        </div>
+                      </li></Show></Show>
+                    </ol>
+                    <div class="social-card-foot"><a href={connector.official_api} target="_blank" rel="noreferrer noopener">Official API information</a></div>
+                  </article>;
+                }}</For></div>
+              </section>}</For>
+            </Show>
+
             <Show when={page() === "connections"}>
               <header><h1>Capabilities</h1><p>{scope() === "user" ? "Find and manage what every agent can use." : `Find and manage what ${agentName()} can use, including shared capabilities.`}</p></header>
               <nav class="capability-tabs" aria-label="Capability views">
@@ -2297,55 +2375,6 @@ export default function Settings() {
               </nav>
               <Show when={capabilityView() === "discover"}>
                 <div class="capability-discover-intro"><strong>Explore what is available</strong><span>Skills already on this device and packages from your registered catalogs appear here. Catalog listings are not installed automatically.</span></div>
-                <Group title="Social platform add-ons">
-                  <p class="settings-hint">Each platform is managed separately. YouTube supports an owner-only API preview; Reddit and X remain blocked. LinkedIn supports a local, owner-visible identity connection only. TikTok is not included.</p>
-                  <div class="capability-list"><For each={socialConnectors()}>{(connector) => {
-                    const plugin = [...plugins(), ...inheritedPlugins()].find((item) => item.name === connector.id);
-                    return <div class="capability-item capability-overview-row"><CapabilityIcon name={connector.platform} /><div><strong>{connector.platform}</strong><small>{connector.summary}</small><small>{connector.reason}</small><a href={connector.official_api} target="_blank" rel="noreferrer noopener">Official API information</a></div><span class="capability-state muted">{connector.readiness === "owner_preview" ? "Owner preview" : connector.readiness === "identity_link" ? "Identity link" : "API unavailable"}</span><Show when={plugin} fallback={<button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialGuidance(connector.id)}>Install guidance</button>}><span class="capability-state" classList={{ ready: plugin!.enabled, muted: !plugin!.enabled }}>{plugin!.enabled ? "Guidance enabled" : "Guidance disabled"}</span><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void toggleSocialGuidance(plugin!)}>{plugin!.enabled ? "Disable" : "Enable"} guidance</button><button type="button" class="settings-button" disabled={pluginBusy()} onClick={() => void installSocialPresentationPack(connector.id)}>Add presentation layouts</button></Show></div>;
-                  }}</For></div>
-                  <Show when={linkedinPlugin()}>
-                    <div class="social-linkedin-setup">
-                      <h3>LinkedIn profile connection</h3>
-                      <p class="settings-hint">Connect only your LinkedIn profile name through OpenID Connect. This does not verify your real-world identity, search LinkedIn posts, or grant member or organization content access. Vakyartha requests <code>openid</code> and <code>profile</code>; profile details stay in Settings and are not sent to the agent.</p>
-                      <p class="settings-hint">This flow requires a LinkedIn app with the “Sign In with LinkedIn using OpenID Connect” product and native PKCE enabled by LinkedIn. Account linking works only when Vakyartha is reached directly on this machine. Never enter a LinkedIn password or client secret here.</p>
-                      <a href="https://www.linkedin.com/developers/apps" target="_blank" rel="noreferrer noopener">Open LinkedIn Developer Portal</a>
-                      <label>LinkedIn app Client ID<input aria-label="LinkedIn app Client ID" autocomplete="off" value={linkedinClientIdInput()} onInput={(event) => setLinkedinClientIdInput(event.currentTarget.value)} maxlength={256} placeholder={linkedinClientIdConfigured() ? "Enter a new Client ID to replace the saved one" : "Paste your app's Client ID"} /></label>
-                      <div class="settings-actions">
-                        <button type="button" class="settings-button" disabled={linkedinBusy() || !linkedinClientIdInput().trim()} onClick={() => void saveLinkedinClientId()}>{linkedinClientIdConfigured() ? "Update Client ID" : "Save Client ID"}</button>
-                        <Show when={linkedinClientIdConfigured()}><button type="button" class="settings-button subtle" disabled={linkedinBusy()} onClick={async () => { setLinkedinBusy(true); try { await api.removeLinkedinClientId(activeAgentId()); setLinkedinClientIdConfigured(false); setNotice({ kind: "info", text: "LinkedIn app Client ID removed. Disconnect the profile separately if you also want to remove its saved credential." }); } catch (error) { setNotice({ kind: "error", text: `Could not remove Client ID: ${error instanceof Error ? error.message : String(error)}` }); } finally { setLinkedinBusy(false); } }}>Remove Client ID</button></Show>
-                      </div>
-                      <Show when={linkedinClientIdConfigured()}>
-                        <p class="capability-state" classList={{ ready: linkedinAccount().connected && !linkedinAccount().expired, muted: !linkedinAccount().connected || linkedinAccount().expired }}>
-                          {linkedinAccount().connected ? linkedinAccount().expired ? `Connected as ${linkedinAccount().display_name ?? "LinkedIn member"}; token expired` : `Connected as ${linkedinAccount().display_name ?? "LinkedIn member"}` : "No LinkedIn profile connected"}
-                        </p>
-                        <Show when={linkedinAccount().connected}>
-                          <p class="settings-hint">Requested permissions: {(linkedinAccount().scopes_requested ?? []).join(", ") || "not reported"}. {linkedinAccount().scopes_returned?.length ? `Provider-reported permissions: ${(linkedinAccount().scopes_returned ?? []).join(", ")}.` : "LinkedIn did not return a scope list."} Token expires {linkedinAccount().expires_at ? new Date(linkedinAccount().expires_at!).toLocaleString() : "at an unknown time"}. Reconnect after expiry.</p>
-                        </Show>
-                        <div class="settings-actions">
-                          <button type="button" class="settings-button" disabled={linkedinBusy() || !linkedinPlugin()?.enabled} title={!linkedinPlugin()?.enabled ? "Enable the LinkedIn add-on first" : "Open LinkedIn sign-in"} onClick={() => void connectLinkedinAccount()}>{linkedinBusy() ? "Opening…" : linkedinAccount().connected ? "Reconnect LinkedIn" : "Connect LinkedIn"}</button>
-                          <Show when={linkedinAccount().connected}><button type="button" class="settings-button danger" disabled={linkedinBusy()} onClick={() => void disconnectLinkedinAccount()}>Disconnect profile</button></Show>
-                        </div>
-                        <Show when={!linkedinPlugin()?.enabled}><p class="settings-hint">Enable the LinkedIn add-on above before connecting. Disabling it preserves an existing profile connection but keeps connector actions unavailable.</p></Show>
-                      </Show>
-                    </div>
-                  </Show>
-                  <Show when={socialConnectors().some((connector) => connector.id === "social-youtube" && connector.readiness === "owner_preview") && [...plugins(), ...inheritedPlugins()].some((plugin) => plugin.name === "social-youtube" && plugin.enabled)}>
-                    <div class="social-youtube-preview">
-                      <h3>YouTube owner-only search preview</h3>
-                      <p class="settings-hint">A Google Cloud YouTube Data API key is separate from a Google or YouTube account and YouTube Premium. Each search consumes your project's search quota. Non-authorized data is subject to YouTube's refresh or deletion rules. Results appear here only, are not saved by Vakyartha, and are not sent to the agent.</p>
-                      <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer noopener">Create or manage a Google Cloud API key</a>
-                      <Show when={!youtubeKeyConfigured()}>
-                        <label>Google Cloud YouTube Data API key<input type="password" autocomplete="new-password" value={youtubeKeyInput()} onInput={(event) => setYoutubeKeyInput(event.currentTarget.value)} placeholder="Paste key here; it will not be shown again" /></label>
-                        <button type="button" class="settings-button" disabled={youtubeBusy() || !youtubeKeyInput().trim()} onClick={async () => { setYoutubeBusy(true); try { await api.saveYoutubeKey(youtubeKeyInput(), activeAgentId()); setYoutubeKeyInput(""); setYoutubeKeyConfigured(true); setNotice({ kind: "info", text: "YouTube API key saved securely for this Agent." }); } catch (error) { setNotice({ kind: "error", text: `Could not save YouTube API key: ${(error as Error).message}` }); } finally { setYoutubeBusy(false); } }}>Save key</button>
-                      </Show>
-                      <Show when={youtubeKeyConfigured()}>
-                        <p class="capability-state ready">API key saved for {agentName()}</p>
-                        <div class="settings-actions"><input aria-label="YouTube search query" value={youtubeQuery()} onInput={(event) => setYoutubeQuery(event.currentTarget.value)} maxlength={200} placeholder="Search public YouTube videos" /><button type="button" class="settings-button" disabled={youtubeBusy() || !youtubeQuery().trim()} onClick={async () => { setYoutubeBusy(true); try { const result = await api.searchYoutubePreview(youtubeQuery(), 5, activeAgentId()); setYoutubeResults(result.items); } catch (error) { setNotice({ kind: "error", text: `YouTube search failed: ${(error as Error).message}` }); } finally { setYoutubeBusy(false); } }}>{youtubeBusy() ? "Searching…" : "Search"}</button><button type="button" class="settings-button danger" disabled={youtubeBusy()} onClick={async () => { try { await api.removeYoutubeKey(activeAgentId()); setYoutubeKeyConfigured(false); setYoutubeResults([]); setNotice({ kind: "info", text: "YouTube API key removed." }); } catch (error) { setNotice({ kind: "error", text: `Could not remove YouTube API key: ${(error as Error).message}` }); } }}>Disconnect key</button></div>
-                        <div class="capability-list"><For each={youtubeResults()}>{(item) => <article class="capability-item"><a href={item.url} target="_blank" rel="noreferrer noopener">{item.title}</a><small>{item.channel_title} · {item.published_at}</small><p>{item.description}</p></article>}</For></div>
-                      </Show>
-                    </div>
-                  </Show>
-                </Group>
                 <div class="capability-discover-search"><Icon name="search" /><input aria-label="Search capabilities" placeholder="Search skills and catalog packages" value={discoveryQuery()} onInput={(event) => setDiscoveryQuery(event.currentTarget.value)} /></div>
                 <div class="capability-discover-filters" role="group" aria-label="Capability type">
                   <For each={(["all", "skills", "plugins"] as const)}>{(kind) => <button type="button" classList={{ active: discoveryKind() === kind }} onClick={() => setDiscoveryKind(kind)}>{kind === "all" ? "All" : kind === "skills" ? "Skills" : "Packages"}</button>}</For>

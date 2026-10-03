@@ -32,6 +32,12 @@ they are not a bypass around the native adapter gate. LinkedIn's local
 disconnect deletes its saved credential but does not revoke the grant at
 LinkedIn; generic refresh and scope lifecycle are not shipped.
 
+**Management surfaces (2026-10-03):** Settings has a Social accounts page
+(Shared defaults and per agent) and the admin console a read-only Social tab
+under Integrations. The YouTube key and LinkedIn Client ID resolve Agent, then
+Shared (`vak-server/src/social.rs`); the LinkedIn profile sign-in stays per
+Agent. Reddit and X accept no credential until their gates are lifted.
+
 ## Goal
 
 Let a person explicitly connect a platform and use narrowly-scoped official

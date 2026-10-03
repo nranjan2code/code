@@ -154,6 +154,10 @@ function canShare(): boolean {
   );
 }
 
+/** How long a shared worker may take to open the stream before this tab
+ *  holds its own. */
+const SHARED_OPEN_MS = 4000;
+
 function sharedTransport(): Transport {
   let port: MessagePort | null = null;
   let latest: Interest = NO_INTEREST;
@@ -173,10 +177,33 @@ function sharedTransport(): Transport {
       fallback = directTransport();
       fallback.setInterest(latest);
     };
+    // A worker that starts but cannot hold the stream (an engine that
+    // refuses network from a shared worker, say) reports "reconnecting"
+    // for ever, and the whole app then shows a connection trouble that no
+    // retry can clear. One that never opens within this window hands the
+    // tab its own stream, the same way a worker that cannot start does.
+    let opened = false;
+    const giveUp = window.setTimeout(function check() {
+      if (opened || port !== current || fallback) return;
+      if (latest.sessions.length === 0 && !latest.host && !latest.config) {
+        window.setTimeout(check, SHARED_OPEN_MS);
+        return;
+      }
+      current.postMessage({ type: "bye" } satisfies TabMessage);
+      port = null;
+      fallback = directTransport();
+      fallback.setInterest(latest);
+    }, SHARED_OPEN_MS);
     current.onmessage = (message: MessageEvent<WorkerMessage>) => {
       if (port !== current) return;
       if (message.data.type === "frame") dispatch(message.data.frame);
-      else setStatus(message.data.status);
+      else {
+        if (message.data.status === "open") {
+          opened = true;
+          window.clearTimeout(giveUp);
+        }
+        setStatus(message.data.status);
+      }
     };
     current.start();
     // Hold this tab's lock for its whole life; the worker waits on the same

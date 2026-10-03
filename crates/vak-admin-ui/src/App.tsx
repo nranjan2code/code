@@ -472,6 +472,7 @@ function Transcript(props: { sessionId: string }) {
 const EXTENSION_TABS = [
   { hash: "#/integrations", label: "Connected apps" },
   { hash: "#/integrations/plugins", label: "Plugins" },
+  { hash: "#/integrations/social", label: "Social" },
   { hash: "#/integrations/skills", label: "Skills" },
   { hash: "#/integrations/hooks", label: "Automations" },
   { hash: "#/integrations/tasks", label: "Scheduled tasks" },
@@ -990,6 +991,64 @@ When several rules match the same call, the strictest one wins — blocked beats
         </details>
       </section>
     </>
+  );
+}
+
+/// Read-only oversight of the social add-ons: whether each is installed and
+/// enabled, and whether its credential is set. Credentials are entered in the
+/// app (Settings → agent → Social accounts), the one place that writes them.
+function SocialView(props: { ctx: ExtensionsCtx }) {
+  const [state] = createResource(
+    () => selectedAgentId(),
+    async () => {
+      const agent = selectedAgentIdOrUndefined();
+      const [list, youtube, clientId, account] = await Promise.all([
+        api.socialConnectors(agent),
+        api.socialCredential("youtube/key", agent).catch(() => ({ configured: undefined })),
+        api.socialCredential("linkedin/client-id", agent).catch(() => ({ configured: undefined })),
+        api.socialCredential("linkedin/account", agent).catch(() => ({ connected: undefined })),
+      ]);
+      return { connectors: list.connectors, youtube, clientId, account };
+    },
+  );
+  const credential = (id: string): string => {
+    const s = state();
+    if (!s) return "Unknown";
+    if (id === "social-youtube") return s.youtube.configured === undefined ? "Unknown" : s.youtube.configured ? "Own API key" : s.youtube.inherited ? "Shared API key" : "No API key";
+    if (id === "social-linkedin") {
+      if (s.clientId.configured === undefined) return "Unknown";
+      if (!s.clientId.configured && !s.clientId.inherited) return "No Client ID";
+      return s.account.connected ? `Connected${s.account.display_name ? ` as ${s.account.display_name}` : ""}${s.account.expired ? " (expired)" : ""}` : "Client ID set; not connected";
+    }
+    return "Not accepted yet";
+  };
+  const readiness = (r: string) => (r === "owner_preview" ? "Owner preview" : r === "identity_link" ? "Identity link" : "Blocked");
+  return (
+    <section class="panel">
+      <p class="muted">
+        Each platform is a separate add-on. Credentials are entered in the app under Settings: Shared defaults apply to every agent, and an agent can override them under its own Social accounts. They are never shown here.
+      </p>
+      <Show when={state.error}><p class="error">Social status is unavailable: {String(state.error)}</p></Show>
+      <table class="table">
+        <thead><tr><th>Platform</th><th>Add-on</th><th>Access</th><th>Credential</th><th>Why</th></tr></thead>
+        <tbody>
+          <For each={state()?.connectors ?? []}>
+            {(c) => {
+              const plugin = () => props.ctx.plugins().find((p) => p.name === c.id);
+              return (
+                <tr>
+                  <td><a href={c.official_api} target="_blank" rel="noreferrer noopener">{c.platform}</a></td>
+                  <td>{plugin() ? (plugin()!.enabled ? "Enabled" : "Installed, disabled") : "Not installed"}</td>
+                  <td>{readiness(c.readiness)}</td>
+                  <td>{credential(c.id)}</td>
+                  <td>{c.reason}</td>
+                </tr>
+              );
+            }}
+          </For>
+        </tbody>
+      </table>
+    </section>
   );
 }
 
@@ -2036,6 +2095,7 @@ function ExtensionsSection() {
       <Switch>
         <Match when={extensionsTab() === "#/integrations"}><McpServersView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/plugins"}><PluginsView ctx={ctx} /></Match>
+        <Match when={extensionsTab() === "#/integrations/social"}><SocialView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/skills"}><SkillsView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/hooks"}><HooksView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/tasks"}><TasksView ctx={ctx} /></Match>

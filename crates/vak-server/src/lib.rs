@@ -10828,6 +10828,7 @@ fn youtube_owner_preview_adapter()
 #[derive(serde::Deserialize)]
 struct SocialAgentQuery {
     agent: Option<String>,
+    scope: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -10856,11 +10857,15 @@ async fn youtube_key_status(
         return status.into_response();
     }
     let core = scoped_core!(&state, None, query.agent.as_deref());
-    let scope = core.scope();
     let Some(adapter) = youtube_owner_preview_adapter() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    Json(serde_json::json!({ "configured": vak_config::read_env_file_var(&scope.env_file(), adapter.credential_binding).is_some() })).into_response()
+    Json(social::credential_state(
+        &core,
+        adapter.credential_binding,
+        query.scope.as_deref(),
+    ))
+    .into_response()
 }
 
 async fn save_youtube_key(
@@ -10874,7 +10879,6 @@ async fn save_youtube_key(
         return status.into_response();
     }
     let core = scoped_core!(&state, None, query.agent.as_deref());
-    let scope = core.scope();
     let Some(adapter) = youtube_owner_preview_adapter() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
@@ -10886,7 +10890,7 @@ async fn save_youtube_key(
         )
             .into_response();
     }
-    match vak_config::upsert_env_file(&scope.env_file(), adapter.credential_binding, key) {
+    match vak_config::upsert_env_file(&social::credential_file(&core, query.scope.as_deref()), adapter.credential_binding, key) {
         Ok(()) => Json(serde_json::json!({ "configured": true })).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Could not store the key in secure credential storage." }))).into_response(),
     }
@@ -10902,11 +10906,10 @@ async fn remove_youtube_key(
         return status.into_response();
     }
     let core = scoped_core!(&state, None, query.agent.as_deref());
-    let scope = core.scope();
     let Some(adapter) = youtube_owner_preview_adapter() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    match vak_config::remove_env_file_key(&scope.env_file(), adapter.credential_binding) {
+    match vak_config::remove_env_file_key(&social::credential_file(&core, query.scope.as_deref()), adapter.credential_binding) {
         Ok(()) => Json(serde_json::json!({ "configured": false })).into_response(),
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({ "error": "Could not remove the key from secure credential storage." }))).into_response(),
     }
@@ -10952,7 +10955,6 @@ async fn youtube_search_preview(
         return status.into_response();
     }
     let core = scoped_core!(&state, None, query.agent.as_deref());
-    let scope = core.scope();
     if !social_plugin_enabled(&core, "social-youtube") {
         return (
             StatusCode::FORBIDDEN,
@@ -10975,8 +10977,7 @@ async fn youtube_search_preview(
     {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "Search text must be 1–200 characters and result count must be 1–10." }))).into_response();
     }
-    let Some(key) = vak_config::read_env_file_var(&scope.env_file(), adapter.credential_binding)
-    else {
+    let Some(key) = social::resolve_credential(&core, adapter.credential_binding) else {
         return (
             StatusCode::PRECONDITION_FAILED,
             Json(serde_json::json!({ "error": "Add a YouTube Data API key first." })),

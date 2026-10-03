@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use vak_core::Core;
 
 async fn spawn() -> (SocketAddr, String) {
+    vak_config::paths::isolate_home_for_tests();
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(dir.path()).unwrap();
     let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
@@ -327,4 +328,74 @@ async fn linkedin_identity_link_uses_native_pkce_and_requires_an_enabled_local_a
         .await
         .unwrap();
     assert_eq!(removed.status(), reqwest::StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_social_key_is_inherited_and_an_agent_key_overrides_it() {
+    let (addr, token) = spawn().await;
+    let client = reqwest::Client::new();
+    let url = |query: &str| format!("http://{addr}/social/youtube/key?{query}");
+    let status = |query: String| {
+        let client = client.clone();
+        let token = token.clone();
+        async move {
+            client
+                .get(query)
+                .bearer_auth(token)
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap()
+        }
+    };
+
+    let put = client
+        .put(url("agent=vak&scope=user"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "key": "shared-key" }))
+        .send()
+        .await
+        .unwrap();
+    assert!(put.status().is_success());
+
+    let shared = status(url("agent=vak&scope=user")).await;
+    assert_eq!(shared["configured"], true);
+    let agent = status(url("agent=vak")).await;
+    assert_eq!(
+        (agent["configured"].as_bool(), agent["inherited"].as_bool()),
+        (Some(false), Some(true))
+    );
+
+    client
+        .put(url("agent=vak"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "key": "own-key" }))
+        .send()
+        .await
+        .unwrap();
+    let agent = status(url("agent=vak")).await;
+    assert_eq!(
+        (agent["configured"].as_bool(), agent["inherited"].as_bool()),
+        (Some(true), Some(false))
+    );
+
+    client
+        .delete(url("agent=vak"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    client
+        .delete(url("agent=vak&scope=user"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let agent = status(url("agent=vak")).await;
+    assert_eq!(
+        (agent["configured"].as_bool(), agent["inherited"].as_bool()),
+        (Some(false), Some(false))
+    );
 }

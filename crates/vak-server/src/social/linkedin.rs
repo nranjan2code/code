@@ -149,6 +149,7 @@ impl PendingAuthorizations {
 #[derive(Deserialize)]
 pub(crate) struct AgentQuery {
     agent: Option<String>,
+    scope: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -168,9 +169,11 @@ pub(crate) async fn client_id_status(
         Ok(core) => core,
         Err(response) => return response,
     };
-    Json(serde_json::json!({
-        "configured": vak_config::read_env_file_var(&core.scope().env_file(), CLIENT_ID_KEY).is_some()
-    }))
+    Json(super::credential_state(
+        &core,
+        CLIENT_ID_KEY,
+        query.scope.as_deref(),
+    ))
     .into_response()
 }
 
@@ -198,7 +201,7 @@ pub(crate) async fn save_client_id(
         )
             .into_response();
     }
-    match vak_config::upsert_env_file(&core.scope().env_file(), CLIENT_ID_KEY, client_id) {
+    match vak_config::upsert_env_file(&super::credential_file(&core, query.scope.as_deref()), CLIENT_ID_KEY, client_id) {
         Ok(()) => Json(serde_json::json!({ "configured": true })).into_response(),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -223,7 +226,10 @@ pub(crate) async fn remove_client_id(
     state
         .linkedin_oauth
         .cancel_agent(query.agent.as_deref().unwrap_or("vak"));
-    match vak_config::remove_env_file_key(&core.scope().env_file(), CLIENT_ID_KEY) {
+    match vak_config::remove_env_file_key(
+        &super::credential_file(&core, query.scope.as_deref()),
+        CLIENT_ID_KEY,
+    ) {
         Ok(()) => Json(serde_json::json!({ "configured": false })).into_response(),
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -335,9 +341,7 @@ pub(crate) async fn begin(
         )
             .into_response();
     }
-    let Some(client_id) = vak_config::read_env_file_var(&core.scope().env_file(), CLIENT_ID_KEY)
-        .filter(|client_id| !client_id.trim().is_empty())
-    else {
+    let Some(client_id) = super::resolve_credential(&core, CLIENT_ID_KEY) else {
         return (
             StatusCode::PRECONDITION_FAILED,
             Json(serde_json::json!({"error":"Save your LinkedIn app Client ID first."})),

@@ -612,14 +612,20 @@ export function installSocialPresentations(id: string, agent?: string): Promise<
 }
 
 export interface YoutubePreviewItem { kind: "video" | "channel"; id: string; url: string; title: string; description: string; channel_title: string; published_at: string }
-export async function youtubeKeyStatus(agent?: string): Promise<{ configured: boolean }> {
-  return req(withAgent("/social/youtube/key", agent));
+export type SocialCredentialScope = "user" | undefined;
+export interface SocialCredentialState { configured: boolean; inherited: boolean }
+function withCredentialScope(url: string, agent?: string, scope?: SocialCredentialScope): string {
+  const out = withAgent(url, agent);
+  return scope ? `${out}${out.includes("?") ? "&" : "?"}scope=${scope}` : out;
 }
-export async function saveYoutubeKey(key: string, agent?: string): Promise<{ configured: boolean }> {
-  return req(withAgent("/social/youtube/key", agent), { method: "PUT", body: JSON.stringify({ key }) });
+export async function youtubeKeyStatus(agent?: string, scope?: SocialCredentialScope): Promise<SocialCredentialState> {
+  return req(withCredentialScope("/social/youtube/key", agent, scope));
 }
-export async function removeYoutubeKey(agent?: string): Promise<{ configured: boolean }> {
-  return req(withAgent("/social/youtube/key", agent), { method: "DELETE" });
+export async function saveYoutubeKey(key: string, agent?: string, scope?: SocialCredentialScope): Promise<{ configured: boolean }> {
+  return req(withCredentialScope("/social/youtube/key", agent, scope), { method: "PUT", body: JSON.stringify({ key }) });
+}
+export async function removeYoutubeKey(agent?: string, scope?: SocialCredentialScope): Promise<{ configured: boolean }> {
+  return req(withCredentialScope("/social/youtube/key", agent, scope), { method: "DELETE" });
 }
 export async function searchYoutubePreview(query: string, maxResults = 5, agent?: string): Promise<{ items: YoutubePreviewItem[]; notice: string }> {
   return req(withAgent("/social/youtube/search", agent), { method: "POST", body: JSON.stringify({ query, max_results: maxResults }) });
@@ -633,14 +639,14 @@ export interface LinkedinConnection {
   scopes_returned?: string[] | null;
   expired?: boolean;
 }
-export async function linkedinClientIdStatus(agent?: string): Promise<{ configured: boolean }> {
-  return req(withAgent("/social/linkedin/client-id", agent));
+export async function linkedinClientIdStatus(agent?: string, scope?: SocialCredentialScope): Promise<SocialCredentialState> {
+  return req(withCredentialScope("/social/linkedin/client-id", agent, scope));
 }
-export async function saveLinkedinClientId(clientId: string, agent?: string): Promise<{ configured: boolean }> {
-  return req(withAgent("/social/linkedin/client-id", agent), { method: "PUT", body: JSON.stringify({ client_id: clientId }) });
+export async function saveLinkedinClientId(clientId: string, agent?: string, scope?: SocialCredentialScope): Promise<{ configured: boolean }> {
+  return req(withCredentialScope("/social/linkedin/client-id", agent, scope), { method: "PUT", body: JSON.stringify({ client_id: clientId }) });
 }
-export async function removeLinkedinClientId(agent?: string): Promise<{ configured: boolean }> {
-  return req(withAgent("/social/linkedin/client-id", agent), { method: "DELETE" });
+export async function removeLinkedinClientId(agent?: string, scope?: SocialCredentialScope): Promise<{ configured: boolean }> {
+  return req(withCredentialScope("/social/linkedin/client-id", agent, scope), { method: "DELETE" });
 }
 export async function linkedinAccountStatus(agent?: string): Promise<LinkedinConnection> {
   return req(withAgent("/social/linkedin/account", agent));

@@ -733,6 +733,7 @@ export type SettingsPageId =
   | "notifications"
   | "connections"
   | "mail-calendar"
+  | "social"
   | "privacy"
   | "agent"
   | "models"
