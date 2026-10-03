@@ -13,7 +13,7 @@ pub fn run_entities(cwd: PathBuf, action: Option<crate::cli::EntitiesAction>) ->
             return 2;
         }
     };
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     let workspace = core.cwd().clone();
 
     match action.unwrap_or(crate::cli::EntitiesAction::List { global: false }) {

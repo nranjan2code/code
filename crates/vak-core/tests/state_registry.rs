@@ -91,7 +91,7 @@ async fn agent_home_subpaths_are_declared() {
     let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).expect("core");
     let data = home.join("state-registry-agent-home");
     core.set_sessions_home(data.clone());
-    let agent_home = core.sessions_home();
+    let agent_home = core.scope().into_root();
     assert!(
         agent_home.starts_with(data.join("agents")),
         "a Core writes under its Agent's home: {}",

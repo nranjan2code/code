@@ -15,7 +15,7 @@ pub fn run_memory(cwd: PathBuf, action: Option<crate::cli::MemoryAction>) -> i32
             return 2;
         }
     };
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     let workspace = core.cwd().clone();
     match action.unwrap_or(crate::cli::MemoryAction::List { profile: false }) {
         crate::cli::MemoryAction::Clean { older_than_secs } => {

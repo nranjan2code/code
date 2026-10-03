@@ -220,7 +220,7 @@ async fn a_turn_stamps_its_run_on_what_it_writes() {
     .await
     .unwrap();
 
-    let cost = vak_core::finops::FinOpsLedger::new(&core.shared_data_home()).all_rows();
+    let cost = vak_core::finops::FinOpsLedger::new(&core.shared_scope().into_root()).all_rows();
     let row = cost.last().expect("the turn wrote a cost row");
     let trace = row.trace.as_ref().expect("the cost row carries the run");
     assert_eq!(
@@ -231,7 +231,8 @@ async fn a_turn_stamps_its_run_on_what_it_writes() {
     );
     assert_eq!(row.actor, Some(local::local_owner()));
 
-    let activity = vak_core::finops::ActivityLedger::new(&core.shared_data_home()).all_rows();
+    let activity =
+        vak_core::finops::ActivityLedger::new(&core.shared_scope().into_root()).all_rows();
     let provider = activity
         .iter()
         .find(|row| row.kind == "provider")

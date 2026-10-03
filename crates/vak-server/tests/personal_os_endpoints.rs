@@ -96,7 +96,7 @@ async fn spawn_server(config_toml: &str) -> Server {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     let app = vak_server::router(core);
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();

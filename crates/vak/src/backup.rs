@@ -16,7 +16,7 @@ pub fn run_backup(cwd: PathBuf, action: crate::cli::BackupAction) -> i32 {
             return 2;
         }
     };
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     match action {
         crate::cli::BackupAction::Export {
             dir,

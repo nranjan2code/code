@@ -4429,7 +4429,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_sessions_home(dir.path().join("home"));
-        let path = bindings_path(&core.shared_data_home());
+        let path = bindings_path(&core.shared_scope().into_root());
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, r#"{"telegram:42":"old-session"}"#).unwrap();
         let gateway = GatewayState::load(&core, true);
@@ -4481,8 +4481,7 @@ mod tests {
             assert_eq!(contract.provider, "provider-b");
             assert_eq!(contract.model, "model-b");
         }
-        let old_path =
-            vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
+        let old_path = core.scope().session_file(core.cwd(), &old_id);
         assert!(old_path.is_file(), "old append-only ledger remains intact");
     }
 
@@ -4542,8 +4541,7 @@ mod tests {
                 .unwrap();
             assert_eq!(agent.id, "researcher");
         }
-        let old_path =
-            vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
+        let old_path = core.scope().session_file(core.cwd(), &old_id);
         assert!(old_path.is_file(), "old agent ledger remains intact");
     }
 
@@ -4685,8 +4683,7 @@ mod tests {
             fresh.id, old_id,
             "prompt layer change preserves session without forced rotation"
         );
-        let old_path =
-            vak_session::SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &old_id);
+        let old_path = core.scope().session_file(core.cwd(), &old_id);
         assert!(old_path.is_file(), "append-only ledger remains intact");
     }
 
@@ -4704,7 +4701,7 @@ mod tests {
         legacy_header.contract.app_version = "0.11.35".into();
         legacy_header.contract.capabilities.clear();
         let legacy_path = vak_session::SessionPath::new_session_file(
-            &core.sessions_home(),
+            &core.scope().into_root(),
             core.cwd(),
             &legacy_header.session_id,
         );
@@ -4752,7 +4749,7 @@ mod tests {
         assert_eq!(entries[0].key, "telegram:1");
         assert_eq!(entries[0].status, AllowlistStatus::Allowed);
         assert_eq!(entries[0].added_by, "config_import");
-        assert!(allowlist_path(&core.shared_data_home()).is_file());
+        assert!(allowlist_path(&core.shared_scope().into_root()).is_file());
 
         // Once the file exists, it is authoritative: a config change is not
         // re-imported on the next load.
@@ -5032,7 +5029,8 @@ mod tests {
         assert_eq!(approved.route.as_ref().unwrap().provider, "anthropic");
 
         // Persisted to disk atomically.
-        let raw = std::fs::read_to_string(allowlist_path(&core.shared_data_home())).unwrap();
+        let raw =
+            std::fs::read_to_string(allowlist_path(&core.shared_scope().into_root())).unwrap();
         assert!(raw.contains("telegram:7"));
 
         // Revoke removes an allowed entry.

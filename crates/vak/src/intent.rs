@@ -77,7 +77,7 @@ fn show_policy(core: &Core) -> i32 {
     println!("  autonomy             {}", config.intent.autonomy);
     // Did we read it right? The misread ledger's per-cell accuracy, so the
     // loop closes on a person rather than on nothing.
-    let ledger = vak_core::misread::MisreadLedger::new(&core.sessions_home());
+    let ledger = vak_core::misread::MisreadLedger::new(&core.scope().into_root());
     let cells = ledger.accuracy();
     let observed: u64 = cells
         .iter()
@@ -377,7 +377,7 @@ pub(crate) fn run_commit(cwd: std::path::PathBuf, action: CommitAction) -> i32 {
 }
 
 fn dispatch_commit(core: &Core, action: CommitAction) -> i32 {
-    let ledger = CommitmentLedger::new(&core.sessions_home());
+    let ledger = CommitmentLedger::new(&core.scope().into_root());
     match action {
         CommitAction::List { all, json } => list(&ledger, all, json),
         CommitAction::Show { id, json } => show(&ledger, &id, json),
@@ -656,7 +656,7 @@ pub(crate) fn run_grant(
             return 2;
         }
     };
-    let ledger = CommitmentLedger::new(&core.sessions_home());
+    let ledger = CommitmentLedger::new(&core.scope().into_root());
     let Some(commitment) = resolve_id(&ledger, &id) else {
         eprintln!("error: no commitment matching '{id}'");
         return 2;
@@ -743,7 +743,7 @@ pub(crate) fn run_revoke(cwd: std::path::PathBuf, id: String) -> i32 {
             return 2;
         }
     };
-    let ledger = CommitmentLedger::new(&core.sessions_home());
+    let ledger = CommitmentLedger::new(&core.scope().into_root());
     let Some(commitment) = resolve_id(&ledger, &id) else {
         eprintln!("error: no commitment matching '{id}'");
         return 2;

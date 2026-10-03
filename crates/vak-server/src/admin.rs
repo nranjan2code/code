@@ -1830,7 +1830,7 @@ mod tests {
         crate::router_with_state(state.clone()).layer(axum::middleware::from_fn_with_state(
             crate::AuthPolicy {
                 token: (*state.auth_token).clone(),
-                home: state.core.sessions_home(),
+                home: state.core.scope().into_root(),
                 trusted_hosts: Vec::new(),
                 public_url: None,
                 browser_sessions: state.browser_sessions.clone(),
@@ -2066,7 +2066,7 @@ mod tests {
             crate::router_with_state(state.clone()).layer(axum::middleware::from_fn_with_state(
                 crate::AuthPolicy {
                     token: (*state.auth_token).clone(),
-                    home: state.core.sessions_home(),
+                    home: state.core.scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: state.browser_sessions.clone(),
@@ -2121,7 +2121,7 @@ mod tests {
             crate::router_with_state(state.clone()).layer(axum::middleware::from_fn_with_state(
                 crate::AuthPolicy {
                     token: (*state.auth_token).clone(),
-                    home: state.core.sessions_home(),
+                    home: state.core.scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: state.browser_sessions.clone(),

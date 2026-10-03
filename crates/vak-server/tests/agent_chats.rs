@@ -91,7 +91,7 @@ async fn explicit_new_agent_conversation_gets_a_distinct_durable_identity() {
     assert_eq!(status, StatusCode::OK);
     assert_ne!(created["session_id"], existing["session_id"]);
     let created_id = created["session_id"].as_str().unwrap();
-    let ledger = SessionPath::new_session_file(&core.sessions_home(), &cwd, created_id);
+    let ledger = SessionPath::new_session_file(&core.scope().into_root(), &cwd, created_id);
     let first = std::fs::read_to_string(ledger).unwrap();
     let first: Entry = serde_json::from_str(first.lines().next().unwrap()).unwrap();
     let EntryPayload::Header(header) = first.payload else {
@@ -209,7 +209,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     // Core is repointed at the same sessions/data-home root the test's Vak
     // Core already uses (`set_sessions_home` above), just under its own
     // agent-scoped subdirectory — every agent's data lives under one root.
-    let newsy_home = vak_config::paths::agent_home_at(&core.shared_data_home(), "newsy");
+    let newsy_home = vak_config::paths::agent_home_at(&core.shared_scope().into_root(), "newsy");
     let newsy_cwd = vak_config::paths::agent_workspace(&cwd, "newsy");
     assert_ne!(
         newsy_cwd, cwd,
@@ -222,7 +222,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     let resolved_newsy_cwd = std::path::PathBuf::from(a["cwd"].as_str().unwrap());
     let ledger = SessionPath::new_session_file(&newsy_home, &resolved_newsy_cwd, &sid);
     assert!(
-        !SessionPath::new_session_file(&core.sessions_home(), &cwd, &sid).exists(),
+        !SessionPath::new_session_file(&core.scope().into_root(), &cwd, &sid).exists(),
         "Newsy session must not be in Vak workspace"
     );
     let first = std::fs::read_to_string(ledger)
@@ -368,7 +368,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     let other_dir = temp.path().join("other-workspace");
     std::fs::create_dir_all(&other_dir).unwrap();
     let other_core = vak_core::Core::new_with_trust(other_dir, true).unwrap();
-    other_core.set_sessions_home(core.shared_data_home());
+    other_core.set_sessions_home(core.shared_scope().into_root());
     other_core.set_provider_instance(capture);
     let other_app = vak_server::router(other_core);
     call(
@@ -384,7 +384,7 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
     // Concurrent process simulation: a second server instance sharing the same workspace
     // and sessions home (e.g. gateway service when desktop application holds the writer lock).
     let concurrent_core = vak_core::Core::new_with_trust(cwd.clone(), true).unwrap();
-    concurrent_core.set_sessions_home(core.shared_data_home());
+    concurrent_core.set_sessions_home(core.shared_scope().into_root());
     concurrent_core.set_provider_instance(Arc::new(Capture::default()));
     let concurrent_app = vak_server::router(concurrent_core);
 
@@ -658,7 +658,7 @@ async fn checkpoints_resolve_the_owning_agent_once_the_session_is_closed() {
     // session that closed (or a server restart) before this request.
     let newsy_cwd = vak_config::paths::agent_workspace(core.cwd(), "newsy");
     std::fs::create_dir_all(&newsy_cwd).unwrap();
-    let newsy_home = vak_config::paths::agent_home_at(&core.shared_data_home(), "newsy");
+    let newsy_home = vak_config::paths::agent_home_at(&core.shared_scope().into_root(), "newsy");
     let sid = "closed-newsy-session";
     let (cp, _) = vak_core::checkpoints::capture(
         &newsy_cwd,

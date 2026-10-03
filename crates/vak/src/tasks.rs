@@ -16,7 +16,7 @@ pub fn run_tasks(cwd: PathBuf, action: crate::cli::TasksAction) -> i32 {
             return 2;
         }
     };
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     let mut store = match TaskStore::load(&home) {
         Ok(s) => s,
         Err(e) => {

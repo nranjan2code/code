@@ -160,6 +160,11 @@ impl AgentScope {
         self.root.join(".env")
     }
 
+    /// The presentation-pack library (`presentations.json`).
+    pub fn presentations(&self) -> PathBuf {
+        self.root.join("presentations.json")
+    }
+
     pub fn flow_runs(&self) -> PathBuf {
         self.root.join("flow-runs")
     }

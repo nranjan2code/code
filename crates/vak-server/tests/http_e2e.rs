@@ -423,7 +423,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     let sessions_home = dir.path().join("home");
     core.set_sessions_home(sessions_home.clone());
-    let account_audit_home = core.sessions_home();
+    let account_audit_home = core.scope().into_root();
     let agent_workspace = core.cwd().to_path_buf();
     let mut paused_agent = vak_server::agents::find_template("writer")
         .unwrap()

@@ -20,7 +20,7 @@ pub(crate) fn run_inbox(cwd: PathBuf, action: Option<crate::cli::InboxAction>) -
         }
     };
     run_with_home(
-        &core.sessions_home(),
+        &core.scope().into_root(),
         action.unwrap_or(crate::cli::InboxAction::List {
             all: false,
             limit: DEFAULT_LIMIT,

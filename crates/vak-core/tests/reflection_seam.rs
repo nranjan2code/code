@@ -106,7 +106,7 @@ async fn reflection_disabled_skips_without_dispatch() {
         }
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0, "no provider dispatch");
-    assert!(vak_core::memory::list_notes(&core.sessions_home(), core.cwd()).is_empty());
+    assert!(vak_core::memory::list_notes(&core.scope().into_root(), core.cwd()).is_empty());
 }
 
 #[tokio::test]
@@ -158,7 +158,7 @@ async fn read_only_reflection_skips_without_writing_memory() {
         }
     );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert!(vak_core::memory::list_notes(&core.sessions_home(), core.cwd()).is_empty());
+    assert!(vak_core::memory::list_notes(&core.scope().into_root(), core.cwd()).is_empty());
 }
 
 #[tokio::test]
@@ -273,7 +273,7 @@ async fn concurrent_turns_reflect_once_and_never_duplicate() {
         }
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1, "no second dispatch ever");
-    let notes = vak_core::memory::list_notes(&core.sessions_home(), core.cwd());
+    let notes = vak_core::memory::list_notes(&core.scope().into_root(), core.cwd());
     assert_eq!(notes.len(), 1, "one note total — no duplicates");
 }
 
@@ -300,5 +300,5 @@ async fn provider_error_yields_skipped_not_panic() {
             reason: "reflect-call-failed"
         }
     );
-    assert!(vak_core::memory::list_notes(&core.sessions_home(), core.cwd()).is_empty());
+    assert!(vak_core::memory::list_notes(&core.scope().into_root(), core.cwd()).is_empty());
 }

@@ -314,7 +314,7 @@ impl AppState {
                     )
                 }),
         );
-        let owner_auth = auth_identity::OwnerAuth::new(core.shared_data_home());
+        let owner_auth = auth_identity::OwnerAuth::new(core.shared_scope().into_root());
         AppState {
             core,
             started_at: Instant::now(),
@@ -1364,7 +1364,7 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
     refresh_control_plane(&state);
     let mut cfg = vak_ops::OpsConfig::detect();
     cfg.port = state.ops_port;
-    let root = state.core.sessions_home().join("flow-runs");
+    let root = state.core.scope().flow_runs();
     let mut flows = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&root) {
         for entry in entries.flatten().filter(|e| e.path().is_dir()) {
@@ -1927,10 +1927,10 @@ async fn finops_status(
     } else {
         state.active_core()
     };
-    let shared_home = core.shared_data_home();
+    let shared_home = core.shared_scope().into_root();
     let mut homes = vec![shared_home.clone()];
-    if core.sessions_home() != shared_home {
-        homes.push(core.sessions_home());
+    if core.scope().into_root() != shared_home {
+        homes.push(core.scope().into_root());
     }
     let mut rows: Vec<vak_core::finops::CostRow> = Vec::new();
     let mut activity: Vec<vak_core::finops::ActivityRow> = Vec::new();
@@ -1994,8 +1994,8 @@ async fn finops_status(
     by_run.truncate(FINOPS_RUN_ROWS);
     let price_overrides = core.effective_finops().price_overrides;
     let mut alerts = recent_budget_alerts(&shared_home, 10);
-    if alerts.is_empty() && q.agent.is_some() && core.sessions_home() != shared_home {
-        alerts = recent_budget_alerts(&core.sessions_home(), 10);
+    if alerts.is_empty() && q.agent.is_some() && core.scope().into_root() != shared_home {
+        alerts = recent_budget_alerts(&core.scope().into_root(), 10);
     }
     Json(serde_json::json!({
         "day_usd": day_usd,
@@ -2440,8 +2440,8 @@ async fn list_memory(
     // `state.core`'s plain, un-scoped home is kept as a fallback merge so
     // notes written before Agents carried their own sessions_home (or by an
     // older build) are not silently hidden.
-    let mut homes = vec![core.sessions_home(), state.core.sessions_home()];
-    let shared = state.core.shared_data_home();
+    let mut homes = vec![core.scope().into_root(), state.core.scope().into_root()];
+    let shared = state.core.shared_scope().into_root();
     if !homes.contains(&shared) {
         homes.push(shared);
     }
@@ -2472,8 +2472,8 @@ async fn cleanup_memory(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let mut homes = vec![core.sessions_home(), state.core.sessions_home()];
-    let shared = state.core.shared_data_home();
+    let mut homes = vec![core.scope().into_root(), state.core.scope().into_root()];
+    let shared = state.core.shared_scope().into_root();
     if !homes.contains(&shared) {
         homes.push(shared);
     }
@@ -2540,7 +2540,7 @@ async fn list_entities_route(
     axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
+    let home = state.core.scope().into_root();
     let is_global = query.scope.as_deref() == Some("global");
     let cwd_buf = state.core.cwd();
     let cwd = if is_global {
@@ -2566,7 +2566,7 @@ async fn get_entity_route(
     axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
+    let home = state.core.scope().into_root();
     let is_global = query.scope.as_deref() == Some("global");
     let cwd_buf = state.core.cwd();
     let cwd = if is_global {
@@ -2610,7 +2610,7 @@ async fn upsert_entity_route(
     Json(body): Json<UpsertEntityBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
+    let home = state.core.scope().into_root();
     let is_global = body.scope.as_deref() == Some("global");
     let cwd_buf = state.core.cwd();
     let cwd = if is_global {
@@ -2665,7 +2665,7 @@ async fn delete_entity_route(
     axum::extract::Query(query): axum::extract::Query<ListEntitiesQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
+    let home = state.core.scope().into_root();
     let is_global = query.scope.as_deref() == Some("global");
     let cwd_buf = state.core.cwd();
     let cwd = if is_global {
@@ -2715,7 +2715,7 @@ async fn append_memory(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, body.session_id.as_deref(), body.agent.as_deref());
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     let scope = body.scope.unwrap_or(MemoryScope::Workspace);
     let kind = body.kind.unwrap_or_else(|| "fact".to_string());
     let tag = body.tag.unwrap_or_default();
@@ -2752,7 +2752,7 @@ async fn append_memory(
 }
 
 fn memory_store_path(core: &vak_core::Core, scope: MemoryScope) -> PathBuf {
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     match scope {
         MemoryScope::Workspace => home
             .join("memory")
@@ -2882,7 +2882,7 @@ async fn amend_memory_note(
 
 fn proposals_payload(core: &Core) -> Vec<serde_json::Value> {
     let mut proposals = vak_core::learning::list_proposals(&core.scope(), core.cwd());
-    if proposals.is_empty() && core.shared_data_home() != core.sessions_home() {
+    if proposals.is_empty() && core.shared_scope().into_root() != core.scope().into_root() {
         proposals = vak_core::learning::list_proposals(&core.shared_scope().as_agent(), core.cwd());
     }
     proposals
@@ -2915,7 +2915,7 @@ async fn promote_proposal(
     let core = scoped_core!(&state, None, q.agent.as_deref());
     let res = vak_core::learning::promote(&core.scope(), core.cwd(), &id);
     let res = match res {
-        Err(_) if state.core.shared_data_home() != core.sessions_home() => {
+        Err(_) if state.core.shared_scope().into_root() != core.scope().into_root() => {
             vak_core::learning::promote(&state.core.shared_scope().as_agent(), core.cwd(), &id)
         }
         other => other,
@@ -2943,7 +2943,7 @@ async fn reject_proposal(
     let core = scoped_core!(&state, None, q.agent.as_deref());
     let res = vak_core::learning::reject(&core.scope(), core.cwd(), &id);
     let res = match res {
-        Err(_) if state.core.shared_data_home() != core.sessions_home() => {
+        Err(_) if state.core.shared_scope().into_root() != core.scope().into_root() => {
             vak_core::learning::reject(&state.core.shared_scope().as_agent(), core.cwd(), &id)
         }
         other => other,
@@ -2983,7 +2983,7 @@ async fn search_sessions(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     let cwd = core.cwd().clone();
     let query = q.q.clone();
     let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
@@ -3158,7 +3158,7 @@ fn secured_router_with_port_and_test_oauth_endpoint(
     let token = (*state.auth_token).clone();
     let rl_settings = state.core.config().gateway.rate_limit.clone();
     let rl_config = rate_limit::RateLimitConfig::from_settings(rl_settings);
-    let limiter = rate_limit::RateLimiter::new(rl_config, state.core.sessions_home());
+    let limiter = rate_limit::RateLimiter::new(rl_config, state.core.scope().into_root());
     let app = router_with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             limiter,
@@ -3171,7 +3171,7 @@ fn secured_router_with_port_and_test_oauth_endpoint(
         .layer(axum::middleware::from_fn_with_state(
             AuthPolicy {
                 token: token.clone(),
-                home: state.core.sessions_home(),
+                home: state.core.scope().into_root(),
                 trusted_hosts: state.core.config().server.trusted_hosts.clone(),
                 public_url: state.core.config().server.public_url.clone(),
                 browser_sessions: state.browser_sessions.clone(),
@@ -3185,13 +3185,15 @@ fn secured_router_with_port_and_test_oauth_endpoint(
         let broker = state.core.agent_network_broker();
         let policy_file = state
             .core
-            .sessions_home()
+            .scope()
+            .into_root()
             .join("agent-network/policies.json");
         if let Err(error) = broker.load_policies(&policy_file) {
             eprintln!("[agent-network] policy load failed: {error}");
         }
-        let socket =
-            vak_core::agent_network::AgentNetworkBroker::socket_path(&state.core.sessions_home());
+        let socket = vak_core::agent_network::AgentNetworkBroker::socket_path(
+            &state.core.scope().into_root(),
+        );
         tokio::spawn(async move {
             if let Err(error) = broker.serve_unix(&socket).await {
                 eprintln!("[agent-network] broker stopped: {error}");
@@ -3218,7 +3220,7 @@ fn secured_router_with_port_and_test_oauth_endpoint(
     // Background index sync: keeps the admin console populated from the
     // very first boot. Idempotent; never blocks request handling.
     if let Some(store) = state.store.clone() {
-        let home = state.core.sessions_home();
+        let home = state.core.scope().into_root();
         tokio::spawn(async move {
             match store.rebuild(&home) {
                 Ok(s) if s.files_scanned > 0 => eprintln!(
@@ -3287,7 +3289,7 @@ pub async fn init_server_bus(core: &Core) {
 /// Builds the bus `config` describes, with its secrets from the secrets
 /// chain, and makes it the live one.
 async fn install_server_bus(core: &Core, config: &vak_config::BusResolved) {
-    let sessions_home = core.sessions_home();
+    let sessions_home = core.scope().into_root();
     let workspace_id = {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
@@ -3409,9 +3411,7 @@ pub async fn serve_with(
 }
 
 fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
-    let store = vak_store::presentation::PresentationStore::new(
-        core.sessions_home().join("presentations.json"),
-    );
+    let store = vak_store::presentation::PresentationStore::new(core.scope().presentations());
     let mut library = store.load().map_err(|error| error.to_string())?;
     let before = library.definitions().count();
     let mut changed = false;
@@ -4221,9 +4221,8 @@ fn live_presentation_snapshot(
     session: &SessionLog,
 ) -> vak_delivery::OutputTimeline {
     let planner = delivery::merged_presentation_planner(core);
-    let adaptive_store = vak_store::presentation::PresentationStore::new(
-        core.sessions_home().join("presentations.json"),
-    );
+    let adaptive_store =
+        vak_store::presentation::PresentationStore::new(core.scope().presentations());
     let mut timeline = match adaptive_store.load() {
         Ok(library) => {
             let effective = effective_presentation_library(&library, &core.cwd().to_string_lossy());
@@ -4233,7 +4232,11 @@ fn live_presentation_snapshot(
         }
         Err(_) => crate::projection::snapshot_with_planner(session_id, session, &planner),
     };
-    crate::projection::append_sandbox_artifacts(&mut timeline, &core.sessions_home(), session_id);
+    crate::projection::append_sandbox_artifacts(
+        &mut timeline,
+        &core.scope().into_root(),
+        session_id,
+    );
     timeline
 }
 
@@ -4267,7 +4270,7 @@ pub(crate) fn register_handle(
     } else {
         core
     };
-    let durable_home = core.sessions_home();
+    let durable_home = core.scope().into_root();
     let latest_intent = session.chain_to_root().iter().rev().find_map(|entry| {
         if let vak_session::EntryPayload::Intent(record) = &entry.payload {
             Some((**record).clone())
@@ -4445,7 +4448,11 @@ async fn create_session(State(state): State<AppState>) -> axum::response::Respon
     );
 
     state.hub.emit_session_created(&id, "");
-    index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
+    index_session_later(
+        state.store.clone(),
+        state.core.scope().into_root(),
+        id.clone(),
+    );
 
     Json(serde_json::json!({ "session_id": id })).into_response()
 }
@@ -4661,7 +4668,7 @@ async fn list_sessions(
     // Sessions are stored per workspace, so this follows the workspace the
     // client has open rather than the one the process started in.
     let active = state.active_core();
-    let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), active.cwd());
+    let dir = state.core.scope().sessions_dir(active.cwd());
     let active_cwd = active.cwd().to_string_lossy().into_owned();
     let archive_map = read_archive(&state.core);
     let trashed = vak_core::trash::trashed(&state.core.shared_scope());
@@ -4673,7 +4680,7 @@ async fn list_sessions(
     // `/var` vs `/private/var` on macOS). Recover sessions by their durable
     // header cwd when the hashed directory no longer matches, while still
     // filtering strictly to the active workspace.
-    if let Ok(projects) = std::fs::read_dir(state.core.sessions_home().join("sessions")) {
+    if let Ok(projects) = std::fs::read_dir(state.core.scope().sessions_root()) {
         for project in projects.flatten() {
             if let Ok(files) = std::fs::read_dir(project.path()) {
                 for file in files.flatten() {
@@ -4687,7 +4694,7 @@ async fn list_sessions(
             }
         }
     }
-    let shared_home = state.core.shared_data_home();
+    let shared_home = state.core.shared_scope().into_root();
     if let Ok(agents) = std::fs::read_dir(shared_home.join("agents")) {
         for agent in agents.flatten() {
             if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
@@ -5435,7 +5442,7 @@ fn spawn_http_turn_chain(
 ) {
     let hub = state.hub.clone();
     let admin_store = state.store.clone();
-    let sessions_home = state.core.sessions_home();
+    let sessions_home = state.core.scope().into_root();
     let chain_handle = handle;
     tokio::spawn(async move {
         let approver_handle = chain_handle.clone();
@@ -7376,7 +7383,7 @@ async fn session_work_command(
 
 /// Flow names discovered under `<sessions_home>/flow-runs` (docs/design/42-managed-work-contracts.mdG).
 async fn flows_list(State(state): State<AppState>) -> Json<Vec<String>> {
-    let root = state.core.sessions_home().join("flow-runs");
+    let root = state.core.scope().flow_runs();
     let mut out = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&root) {
         for e in entries.flatten() {
@@ -7394,7 +7401,7 @@ async fn flow_runs_list(
     State(state): State<AppState>,
     Path(name): Path<String>,
 ) -> Result<Json<Vec<String>>, StatusCode> {
-    let dir = state.core.sessions_home().join("flow-runs").join(&name);
+    let dir = state.core.scope().flow_runs().join(&name);
     let mut out = Vec::new();
     match std::fs::read_dir(&dir) {
         Ok(entries) => {
@@ -7424,7 +7431,8 @@ async fn flow_run_graph(
     };
     let path = state
         .core
-        .sessions_home()
+        .scope()
+        .into_root()
         .join("flow-runs")
         .join(&name)
         .join(&run_file);
@@ -7541,7 +7549,7 @@ async fn presentation_snapshot(
             };
             crate::projection::append_sandbox_artifacts(
                 &mut timeline,
-                &handle.core.sessions_home(),
+                &handle.core.scope().into_root(),
                 &id,
             );
             return Json(timeline).into_response();
@@ -7572,7 +7580,7 @@ async fn presentation_snapshot(
             };
             crate::projection::append_sandbox_artifacts(
                 &mut timeline,
-                &state.core.sessions_home(),
+                &state.core.scope().into_root(),
                 &id,
             );
             Json(timeline).into_response()
@@ -8933,7 +8941,7 @@ fn markdown_response(md: String) -> axum::response::Response {
 
 /// Find a session log on disk across current sessions_home and all agent directories.
 fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog> {
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     let path = home
         .join("sessions")
         .join(vak_core::memory::hash_cwd(core.cwd()))
@@ -8949,7 +8957,7 @@ fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog
             }
         }
     }
-    let shared = core.shared_data_home();
+    let shared = core.shared_scope().into_root();
     if let Ok(entries) = std::fs::read_dir(shared.join("sessions")) {
         for entry in entries.flatten() {
             let candidate = entry.path().join(format!("{id}.jsonl"));
@@ -9005,13 +9013,12 @@ pub(crate) fn read_historical_header(
     }
 
     if let Some(workspace) = workspace {
-        let path =
-            vak_session::SessionPath::new_session_file(&state.core.sessions_home(), workspace, id);
+        let path = state.core.scope().session_file(workspace, id);
         if let Some(header) = read(&path) {
             return Some(header);
         }
     }
-    if let Ok(entries) = std::fs::read_dir(state.core.sessions_home().join("sessions")) {
+    if let Ok(entries) = std::fs::read_dir(state.core.scope().sessions_root()) {
         for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
             let path = project.path().join(format!("{id}.jsonl"));
             if let Some(header) = read(&path) {
@@ -9019,7 +9026,7 @@ pub(crate) fn read_historical_header(
             }
         }
     }
-    let shared = state.core.shared_data_home();
+    let shared = state.core.shared_scope().into_root();
     if let Ok(entries) = std::fs::read_dir(shared.join("sessions")) {
         for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
             let path = project.path().join(format!("{id}.jsonl"));
@@ -9049,7 +9056,8 @@ pub(crate) fn read_historical_header(
 /// session does not stay wedged as "run in progress" forever.
 fn reopen_ledger(core: &vak_core::Core, id: &str) -> Option<vak_session::SessionLog> {
     let path = core
-        .sessions_home()
+        .scope()
+        .into_root()
         .join("sessions")
         .join(vak_core::memory::hash_cwd(core.cwd()))
         .join(format!("{id}.jsonl"));
@@ -9284,7 +9292,11 @@ async fn onboarding_first_task(State(state): State<AppState>) -> axum::response:
         .unwrap_or_default();
     register_handle(&state, id.clone(), session, workspace, capped.clone());
     state.hub.emit_session_created(&id, "");
-    index_session_later(state.store.clone(), state.core.sessions_home(), id.clone());
+    index_session_later(
+        state.store.clone(),
+        state.core.scope().into_root(),
+        id.clone(),
+    );
 
     Json(serde_json::json!({
         "session_id": id,
@@ -9341,7 +9353,7 @@ async fn backup_export(
     Json(body): Json<BackupExportBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
+    let home = state.core.scope().into_root();
     let dest = std::path::PathBuf::from(body.dest_dir.trim());
     if dest.as_os_str().is_empty() || same_path(&dest, &home) {
         return (
@@ -9383,7 +9395,7 @@ async fn backup_import(
     Json(body): Json<BackupImportBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.sessions_home();
+    let home = state.core.scope().into_root();
     let src = std::path::PathBuf::from(body.src_dir.trim());
     if src.as_os_str().is_empty() || same_path(&src, &home) {
         return (
@@ -9632,7 +9644,7 @@ async fn list_commitments(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
+    let ledger = vak_commit::CommitmentLedger::new(&core.scope().into_root());
     let commitments = if q.all { ledger.all() } else { ledger.open() };
     let ranked = vak_commit::rank(&commitments, &vak_commit::SchedulerContext::default());
     Json(serde_json::json!({
@@ -9651,7 +9663,7 @@ async fn get_commitment(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
+    let ledger = vak_commit::CommitmentLedger::new(&core.scope().into_root());
     match ledger.get(&id) {
         Ok(Some(commitment)) => Json(serde_json::json!({
             "commitment": commitment,
@@ -9686,7 +9698,7 @@ async fn close_commitment(
     Json(body): Json<CloseCommitmentBody>,
 ) -> axum::response::Response {
     let core = scoped_core!(&state, None, body.agent.as_deref());
-    let ledger = vak_commit::CommitmentLedger::new(&core.sessions_home());
+    let ledger = vak_commit::CommitmentLedger::new(&core.scope().into_root());
     let Ok(Some(commitment)) = ledger.get(&id) else {
         return (
             StatusCode::NOT_FOUND,
@@ -9752,7 +9764,7 @@ async fn inbox_list(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<InboxQuery>,
 ) -> Json<serde_json::Value> {
-    let home = state.core.shared_data_home();
+    let home = state.core.shared_scope().into_root();
     let unread_count = vak_core::inbox::unread_count(&vak_config::scope::AgentScope::new(&home));
     let limit = q
         .limit
@@ -9787,7 +9799,7 @@ async fn inbox_list(
 
 async fn inbox_unread_count(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "count": vak_core::inbox::unread_count(&vak_config::scope::AgentScope::new(state.core.shared_data_home()))
+        "count": vak_core::inbox::unread_count(&state.core.shared_scope().as_agent())
     }))
 }
 
@@ -9798,7 +9810,7 @@ async fn inbox_ack(
     Path(id): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.shared_data_home();
+    let home = state.core.shared_scope().into_root();
     if !vak_core::inbox::list(
         &vak_config::scope::AgentScope::new(&home),
         vak_core::inbox::MAX_SCAN,
@@ -9896,10 +9908,7 @@ async fn list_checkpoints(
     // list, not an error.
     let list = match vak_core::checkpoints::list(&core.scope(), &id) {
         Ok(list) if !list.is_empty() => list,
-        _ => match vak_core::checkpoints::list(
-            &vak_config::scope::AgentScope::new(core.shared_data_home()),
-            &id,
-        ) {
+        _ => match vak_core::checkpoints::list(&core.shared_scope().as_agent(), &id) {
             Ok(list) => list,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => {
@@ -9957,13 +9966,9 @@ async fn restore_checkpoint(
     // The blob store the manifest's hashes resolve against lives under
     // whichever home the manifest itself was found in.
     let (cp, checkpoints_home) = match vak_core::checkpoints::load(&core.scope(), &id, seq) {
-        Ok(cp) => (cp, core.sessions_home()),
-        Err(_) => match vak_core::checkpoints::load(
-            &vak_config::scope::AgentScope::new(core.shared_data_home()),
-            &id,
-            seq,
-        ) {
-            Ok(cp) => (cp, core.shared_data_home()),
+        Ok(cp) => (cp, core.scope().into_root()),
+        Err(_) => match vak_core::checkpoints::load(&core.shared_scope().as_agent(), &id, seq) {
+            Ok(cp) => (cp, core.shared_scope().into_root()),
             Err(_) => {
                 return (
                     StatusCode::NOT_FOUND,
@@ -10004,7 +10009,7 @@ async fn restore_checkpoint(
 // ---- archive (sidebar visibility; ledgers stay untouched) --------------------
 
 fn archive_path(core: &Core) -> PathBuf {
-    core.shared_data_home().join("archive.json")
+    core.shared_scope().archive()
 }
 
 fn read_archive(core: &Core) -> HashMap<String, bool> {
@@ -10025,12 +10030,14 @@ fn write_archive(core: &Core, map: &HashMap<String, bool>) {
 }
 
 fn find_session_in_cwd(core: &Core, id: &str) -> bool {
-    let direct = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd())
+    let direct = core
+        .scope()
+        .sessions_dir(core.cwd())
         .join(format!("{id}.jsonl"));
     if direct.is_file() {
         return true;
     }
-    let shared = core.shared_data_home();
+    let shared = core.shared_scope().into_root();
     if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
         for agent in agents.flatten() {
             let candidate = vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd())
@@ -10123,7 +10130,7 @@ async fn restore_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> axum::response::Response {
-    let home = state.core.shared_data_home();
+    let home = state.core.shared_scope().into_root();
     if !find_session_in_cwd(&state.core, &id)
         || !vak_core::trash::is_trashed(&vak_config::scope::SharedScope::new(&home), &id)
     {
@@ -10166,7 +10173,7 @@ async fn delete_all_archived(State(state): State<AppState>) -> axum::response::R
         )
             .into_response();
     }
-    let home = state.core.shared_data_home();
+    let home = state.core.shared_scope().into_root();
     let already = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&home));
     let newly: Vec<String> = local_archived
         .into_iter()
@@ -10377,9 +10384,7 @@ fn requested_plugin_scopes(scope: Option<InstallScope>) -> Vec<InstallScope> {
 // plugin store itself; out of scope for this per-Agent isolation pass
 // (not one of the audited endpoints) and left untouched deliberately.
 fn presentation_store(state: &AppState) -> vak_store::presentation::PresentationStore {
-    vak_store::presentation::PresentationStore::new(
-        state.core.sessions_home().join("presentations.json"),
-    )
+    vak_store::presentation::PresentationStore::new(state.core.scope().presentations())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -13109,7 +13114,8 @@ async fn narrow_sandbox_candidate_office(
     let id = uuid::Uuid::now_v7().to_string();
     let staging = state
         .core
-        .sessions_home()
+        .scope()
+        .into_root()
         .join("sandbox")
         .join("staging")
         .join(&id);
@@ -13643,7 +13649,8 @@ async fn dispatch_candidate_revision(
     let revision_id = uuid::Uuid::now_v7().to_string();
     let task_root = state
         .core
-        .sessions_home()
+        .scope()
+        .into_root()
         .join("sandbox")
         .join("revisions")
         .join(&revision_id)
@@ -13692,7 +13699,7 @@ async fn dispatch_candidate_revision(
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
         }
     };
-    child_core.set_sessions_home(state.core.shared_data_home());
+    child_core.set_sessions_home(state.core.shared_scope().into_root());
     child_core.set_tool_worker_exe(parent.core.tool_worker_exe());
     child_core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
     child_core.set_route(
@@ -16041,7 +16048,7 @@ async fn get_config(
         "paths": {
             "project_config": project_path,
             "global_config": vak_config::global_path(),
-            "sessions_home": core.sessions_home(),
+            "sessions_home": core.scope().into_root(),
             "cwd": core.cwd(),
         },
         "warnings": cfg.warnings,
@@ -16204,7 +16211,8 @@ async fn agent_network_capability(
     if let Err(error) = broker.save_policies(
         &state
             .core
-            .sessions_home()
+            .scope()
+            .into_root()
             .join("agent-network/policies.json"),
     ) {
         let _ = broker.revoke(&capability);
@@ -18746,7 +18754,7 @@ async fn spawn_isolated_run(
     // The shared root: the child resolves its own Agent's home beneath it,
     // as every Core does. Seeding it with this Core's (already Agent-scoped)
     // home nested one Agent's home inside another's.
-    child_core.set_sessions_home(state.core.shared_data_home());
+    child_core.set_sessions_home(state.core.shared_scope().into_root());
     if let Some(pin) = model_pin.map(str::trim).filter(|p| !p.is_empty()) {
         let (pin_provider, pin_model) = split_model_pin(pin, &child_core.effective_provider());
         child_core.set_route(pin_provider, pin_model);
@@ -19133,11 +19141,11 @@ fn last_assistant_text(handle: &SessionHandle) -> Option<String> {
 }
 
 fn tasks_file(core: &Core) -> PathBuf {
-    let shared = vak_core::tasks::tasks_file(&core.shared_data_home());
-    if shared.exists() || core.sessions_home() == core.shared_data_home() {
+    let shared = vak_core::tasks::tasks_file(&core.shared_scope().into_root());
+    if shared.exists() || core.scope().into_root() == core.shared_scope().into_root() {
         shared
     } else {
-        let session = vak_core::tasks::tasks_file(&core.sessions_home());
+        let session = vak_core::tasks::tasks_file(&core.scope().into_root());
         if session.exists() { session } else { shared }
     }
 }
@@ -19166,12 +19174,13 @@ fn load_tasks(state: &AppState) {
         .tasks
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut tasks_vec = match vak_core::tasks::TaskStore::load(&state.core.shared_data_home()) {
-        Ok(store) => store.all(),
-        Err(_) => Vec::new(),
-    };
-    if state.core.sessions_home() != state.core.shared_data_home()
-        && let Ok(store) = vak_core::tasks::TaskStore::load(&state.core.sessions_home())
+    let mut tasks_vec =
+        match vak_core::tasks::TaskStore::load(&state.core.shared_scope().into_root()) {
+            Ok(store) => store.all(),
+            Err(_) => Vec::new(),
+        };
+    if state.core.scope().into_root() != state.core.shared_scope().into_root()
+        && let Ok(store) = vak_core::tasks::TaskStore::load(&state.core.scope().into_root())
     {
         for t in store.all() {
             if !tasks_vec.iter().any(|existing| existing.id == t.id) {
@@ -19870,7 +19879,7 @@ fn refuse_task(state: &AppState, task: &TaskDef, reason: String) -> NotFired {
     let slot = task.last_run_at.unwrap_or(task.created_at).to_rfc3339();
     let key = format!("routine-failed|{}|{slot}", task.id);
     let _ = vak_core::inbox::record_with_result_and_key(
-        &vak_config::scope::AgentScope::new(state.core.shared_data_home()),
+        &state.core.shared_scope().as_agent(),
         vak_core::inbox::Kind::RoutineFailed,
         &format!("routine '{}' could not run", task.name),
         &reason,
@@ -20386,7 +20395,7 @@ async fn fire_task_with_force(
                     } else {
                         let dedupe_key = Some(format!("inbox|{child_session}"));
                         let _ = vak_core::inbox::record_with_result_and_key(
-                            &vak_config::scope::AgentScope::new(st.core.shared_data_home()),
+                            &st.core.shared_scope().as_agent(),
                             vak_core::inbox::Kind::TaskSummary,
                             &format!("routine '{task_name}' finished"),
                             &format!(
@@ -20557,7 +20566,7 @@ async fn fire_script_task(
                 }
                 None => {
                     let _ = vak_core::inbox::record(
-                        &vak_config::scope::AgentScope::new(state.core.shared_data_home()),
+                        &state.core.shared_scope().as_agent(),
                         vak_core::inbox::Kind::TaskSummary,
                         &title,
                         &outcome.text,
@@ -20808,7 +20817,8 @@ pub fn start_scheduler(state: &AppState) {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
-                let report = vak_core::commitments::maintain_all(&st.core.shared_data_home()).await;
+                let report =
+                    vak_core::commitments::maintain_all(&st.core.shared_scope().into_root()).await;
                 if report.is_empty() {
                     continue;
                 }
@@ -20817,7 +20827,7 @@ pub fn start_scheduler(state: &AppState) {
                 // it lands in the attention layer rather than only in a log.
                 for id in report.expired.iter().chain(report.escalated.iter()) {
                     let _ = vak_core::inbox::record(
-                        &vak_config::scope::AgentScope::new(st.core.shared_data_home()),
+                        &st.core.shared_scope().as_agent(),
                         vak_core::inbox::Kind::TaskSummary,
                         "Commitment closed without you",
                         &format!("{id} reached the end of its window or escalation policy."),
@@ -20854,16 +20864,16 @@ pub async fn check_budget_alert(state: &AppState, session_id: &str) {
     };
     // Read through the EFFECTIVE sessions home (an embedded server may
     // have relocated it); Core::spend_day_usd pins the constructed path.
-    let mut day_total = vak_core::finops::FinOpsLedger::new(&state.core.shared_data_home())
+    let mut day_total = vak_core::finops::FinOpsLedger::new(&state.core.shared_scope().into_root())
         .day_total_usd(Utc::now());
-    if state.core.sessions_home() != state.core.shared_data_home() {
-        day_total += vak_core::finops::FinOpsLedger::new(&state.core.sessions_home())
+    if state.core.scope().into_root() != state.core.shared_scope().into_root() {
+        day_total += vak_core::finops::FinOpsLedger::new(&state.core.scope().into_root())
             .day_total_usd(Utc::now());
     }
     let Some(level) = vak_core::finops::alert_level(day_total, cap) else {
         return;
     };
-    let home = state.core.shared_data_home();
+    let home = state.core.shared_scope().into_root();
     if let Some(last) = vak_core::finops::last_alert(&home, level)
         && last.ts.with_timezone(&Utc).date_naive() == Utc::now().date_naive()
     {
@@ -21347,7 +21357,7 @@ fn verify_launch_tree(
 }
 
 fn sandbox_previews_root(state: &AppState) -> std::path::PathBuf {
-    state.core.sessions_home().join("sandbox").join("previews")
+    state.core.scope().sandbox_dir().join("previews")
 }
 
 async fn wait_for_port(port: u16, timeout: std::time::Duration) -> bool {
@@ -23171,7 +23181,8 @@ mod sandbox_promotion_tests {
         cwd: &std::path::Path,
     ) -> vak_session::SessionLog {
         let path = core
-            .sessions_home()
+            .scope()
+            .into_root()
             .join("sessions")
             .join(vak_core::memory::hash_cwd(cwd))
             .join(format!("{session_id}.jsonl"));
@@ -23369,7 +23380,7 @@ mod sandbox_promotion_tests {
     async fn export_candidate(state: &AppState) -> vak_sandbox::CandidateRecord {
         pin_test_tool_worker(&state.core);
         append_session_sandbox_event(
-            &state.core.sessions_home(),
+            &state.core.scope().into_root(),
             "session-1",
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-1".into(),
@@ -23520,7 +23531,7 @@ mod sandbox_promotion_tests {
         );
 
         append_session_sandbox_event(
-            &state.core.sessions_home(),
+            &state.core.scope().into_root(),
             "session-1",
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-2".into(),
@@ -23789,7 +23800,7 @@ mod sandbox_promotion_tests {
         );
         seed_office_calls(&state.core, "session-1", &[("exec-1", args)]);
         append_session_sandbox_event(
-            &state.core.sessions_home(),
+            &state.core.scope().into_root(),
             "session-1",
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-1".into(),
@@ -23947,7 +23958,7 @@ mod sandbox_promotion_tests {
             &[("exec-structured", args)],
         );
         append_session_sandbox_event(
-            &state.core.sessions_home(),
+            &state.core.scope().into_root(),
             "session-structured",
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-structured".into(),
@@ -24149,7 +24160,7 @@ mod sandbox_promotion_tests {
         assert!(!output.is_error, "{}", output.content);
         seed_office_calls(&state.core, "session-1", &[("exec-1", args)]);
         append_session_sandbox_event(
-            &state.core.sessions_home(),
+            &state.core.scope().into_root(),
             "session-1",
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-1".into(),
@@ -24501,7 +24512,7 @@ mod sandbox_promotion_tests {
             .await
             .unwrap();
         append_session_sandbox_event(
-            &state.core.sessions_home(),
+            &state.core.scope().into_root(),
             "session-1",
             &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: "exec-1".into(),
@@ -24958,7 +24969,8 @@ mod sandbox_promotion_tests {
             .unwrap();
         let candidate = export_candidate(&state).await;
         let session_path = core
-            .sessions_home()
+            .scope()
+            .into_root()
             .join("sessions")
             .join(vak_core::memory::hash_cwd(core.cwd()))
             .join("session-1.jsonl");
@@ -25285,7 +25297,8 @@ mod sandbox_promotion_tests {
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
         let path = core
-            .sessions_home()
+            .scope()
+            .into_root()
             .join("sessions")
             .join(vak_core::memory::hash_cwd(core.cwd()))
             .join("session-1.jsonl");
@@ -25963,7 +25976,8 @@ mod sandbox_promotion_tests {
         seed_bound_result(&core, "session-message", "exec-message");
         let state = AppState::new(core.clone());
         let path = core
-            .sessions_home()
+            .scope()
+            .into_root()
             .join("sessions")
             .join(vak_core::memory::hash_cwd(core.cwd()))
             .join("session-message.jsonl");
@@ -26006,7 +26020,7 @@ mod sandbox_promotion_tests {
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {
                     token: "operator-secret".into(),
-                    home: core.sessions_home(),
+                    home: core.scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: web::BrowserSessions::default(),
@@ -26058,7 +26072,8 @@ mod sandbox_promotion_tests {
         seed_bound_result(&core, "session-approval", "exec-approval");
         let state = AppState::new(core.clone());
         let path = core
-            .sessions_home()
+            .scope()
+            .into_root()
             .join("sessions")
             .join(vak_core::memory::hash_cwd(core.cwd()))
             .join("session-approval.jsonl");
@@ -26145,7 +26160,7 @@ mod sandbox_promotion_tests {
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {
                     token: "operator-secret".into(),
-                    home: core.sessions_home(),
+                    home: core.scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: web::BrowserSessions::default(),
@@ -26282,7 +26297,8 @@ mod sandbox_promotion_tests {
             .unwrap();
         let candidate = export_candidate(&state).await;
         let session_path = core
-            .sessions_home()
+            .scope()
+            .into_root()
             .join("sessions")
             .join(vak_core::memory::hash_cwd(core.cwd()))
             .join("session-1.jsonl");
@@ -26332,7 +26348,7 @@ mod sandbox_promotion_tests {
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {
                     token: "operator-secret".into(),
-                    home: core.sessions_home(),
+                    home: core.scope().into_root(),
                     trusted_hosts: Vec::new(),
                     public_url: None,
                     browser_sessions: web::BrowserSessions::default(),

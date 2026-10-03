@@ -41,7 +41,7 @@ fn run_export(cwd: PathBuf, session_id: String, html: bool, out: Option<PathBuf>
         eprintln!("error: session '{session_id}' is in the trash");
         return 1;
     }
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     let path = vak_session::SessionPath::new_session_file(&home, core.cwd(), &session_id);
     let log = match vak_session::SessionLog::open_read_only(path) {
         Ok(l) => l,
@@ -261,11 +261,11 @@ async fn run_checkpoints(cwd: PathBuf, action: CheckpointAction) -> i32 {
 
 fn latest_session_id(core: &Core) -> Option<String> {
     let mut session_dirs = Vec::new();
-    let direct = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
+    let direct = core.scope().sessions_dir(core.cwd());
     if direct.exists() {
         session_dirs.push(direct);
     }
-    let shared = core.shared_data_home();
+    let shared = core.shared_scope().into_root();
     if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
         for agent in agents.flatten() {
             let s = vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd());
@@ -786,7 +786,7 @@ async fn run_flow(cwd: PathBuf, action: FlowAction) -> i32 {
                     }
                 };
                 let path = vak_session::SessionPath::new_session_file(
-                    &core.sessions_home(),
+                    &core.scope().into_root(),
                     core.cwd(),
                     &from,
                 );
@@ -975,7 +975,7 @@ async fn run_flow_exec(
         }
     };
 
-    let runs_dir = core.sessions_home().join("flow-runs").join(&name);
+    let runs_dir = core.scope().flow_runs().join(&name);
     let state_path = if resume {
         let mut latest: Option<PathBuf> = None;
         if let Ok(entries) = std::fs::read_dir(&runs_dir) {
@@ -1058,7 +1058,7 @@ async fn run_flow_exec(
         approver,
         sandbox: core.agent_sandbox(),
         cwd: core.cwd().clone(),
-        sessions_home: core.sessions_home().clone(),
+        sessions_home: core.scope().into_root().clone(),
         parent_session_id,
         state_path: state_path.clone(),
         agent_identity: core.agent_identity().cloned(),
@@ -1731,7 +1731,7 @@ fn run_config_dump(cwd: PathBuf) {
                 core.effective_approval_mode().as_str()
             );
             println!("sandbox          = {}", core.effective_sandbox_name());
-            println!("sessions_home    = {}", core.sessions_home().display());
+            println!("sessions_home    = {}", core.scope().into_root().display());
             println!(
                 "anthropic_base   = {}",
                 core.config()
@@ -1791,11 +1791,11 @@ fn run_sessions_list(cwd: PathBuf) {
         return;
     };
     let mut session_dirs = Vec::new();
-    let direct = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
+    let direct = core.scope().sessions_dir(core.cwd());
     if direct.exists() {
         session_dirs.push(direct.clone());
     }
-    let shared = core.shared_data_home();
+    let shared = core.shared_scope().into_root();
     if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
         for agent in agents.flatten() {
             let s = vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd());
@@ -1955,9 +1955,9 @@ async fn run_plan(
         approver,
         sandbox: core.agent_sandbox(),
         cwd: core.cwd().clone(),
-        sessions_home: core.sessions_home().clone(),
+        sessions_home: core.scope().into_root().clone(),
         parent_session_id,
-        state_path: core.sessions_home().join("flow-runs/plan"),
+        state_path: core.scope().into_root().join("flow-runs/plan"),
         agent_identity: core.agent_identity().cloned(),
         conversation_context: core.conversation_context().cloned(),
         work: None,
