@@ -2299,8 +2299,8 @@ import type { OnboardingState } from "./types";
 
 /// The derived setup projection. Shared with the web wizard and the CLI:
 /// one definition of "ready", never a per-surface guess.
-export function onboarding(): Promise<OnboardingState> {
-  return req<OnboardingState>("/onboarding");
+export function onboarding(agent?: string): Promise<OnboardingState> {
+  return req<OnboardingState>(`/onboarding${agent ? `?agent=${encodeURIComponent(agent)}` : ""}`);
 }
 
 // ---- intent kernel (docs/design/47-commitment-kernel.md) ---------------------

@@ -9015,8 +9015,16 @@ fn health_report_json(report: vak_core::health::HealthReport) -> serde_json::Val
 /// install manifest is probed by the CLI (which owns install layout) and
 /// is therefore reported here as not-probed; services are probed from the
 /// same service manager the ops endpoints already use.
-async fn onboarding_state(State(state): State<AppState>) -> axum::response::Response {
+async fn onboarding_state(
+    State(state): State<AppState>,
+    Query(query): Query<AgentScopeQuery>,
+) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let core = if query.agent.is_some() {
+        scoped_core!(&state, None, query.agent.as_deref())
+    } else {
+        state.core.clone()
+    };
     // The service manager probe shells out, so it belongs on a blocking
     // worker rather than inside an async handler (invariant 26).
     let services = tokio::task::spawn_blocking(|| {
@@ -9034,12 +9042,12 @@ async fn onboarding_state(State(state): State<AppState>) -> axum::response::Resp
     .await
     .unwrap_or(None);
 
-    let awaiting_activation = service_control::activation_drift(&state.core)
+    let awaiting_activation = service_control::activation_drift(&core)
         .await
         .map(|drift| drift.awaiting_activation)
         .unwrap_or_default();
     let projection = vak_core::onboarding::derive(
-        &state.core,
+        &core,
         &vak_core::onboarding::ProbedFacts {
             services,
             install: None,

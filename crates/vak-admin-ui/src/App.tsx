@@ -6238,6 +6238,20 @@ export function Settings() {
     message: string;
   } | null>(null);
 
+  const modelErrorMessage = () => {
+    const error = modelError().toLowerCase();
+    if (/invalid_api_key|incorrect api key|authentication failed|unauthorized|\b401\b/.test(error)) {
+      return `The saved ${providerLabel(selectedProvider())} key was rejected. Replace it with a valid API key, then refresh the model list.`;
+    }
+    if (/insufficient_quota|billing|quota/.test(error)) {
+      return `${providerLabel(selectedProvider())} accepted the key, but the account has no available API quota. Check billing or usage limits, then refresh the model list.`;
+    }
+    if (/provider auth missing|no api key|credential/.test(error)) {
+      return `No usable ${providerLabel(selectedProvider())} key was found for this scope. Save a key below, then refresh the model list.`;
+    }
+    return `Could not load models from ${providerLabel(selectedProvider())}. Check the provider connection and account access, then refresh the list.`;
+  };
+
   const testProviderConnection = async () => {
     const prov = selectedProvider();
     const mod = selectedModel();
@@ -6266,7 +6280,11 @@ export function Settings() {
         latency_ms: latency,
         model_count: 0,
         has_active_model: false,
-        message: `Connection failed: ${err}`,
+        message: /invalid_api_key|incorrect api key|authentication failed|unauthorized|\b401\b/i.test(String(err))
+          ? `The saved ${providerLabel(prov)} key was rejected. Replace it with a valid API key and try again.`
+          : /insufficient_quota|billing|quota/i.test(String(err))
+            ? `${providerLabel(prov)} accepted the key, but the account has no available API quota. Check billing or usage limits and try again.`
+            : `Could not connect to ${providerLabel(prov)}. Check the provider connection and account access, then try again.`,
       });
     } finally {
       setProbing(false);
@@ -6694,9 +6712,7 @@ export function Settings() {
 
                 <Show when={modelError() && discoveredModels().length === 0}>
                   <p class="dim">
-                    Couldn’t list models for {providerLabel(selectedProvider())} — usually because
-                    its key isn’t stored yet. Add the key below, or type a model name in by hand.
-                    ({modelError()})
+                    {modelErrorMessage()}
                   </p>
                 </Show>
 

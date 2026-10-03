@@ -29,6 +29,7 @@ import {
   setAgentPickerOpen,
   setAgentPickerTab,
   backend,
+  activeAgentId,
   coworkingPresence,
   technicalDetails,
 } from "../store";
@@ -68,7 +69,7 @@ export default function WorkspaceHeader() {
   const workspaceCwd = createMemo(() => session()?.cwd || backend().cwd);
   // Setup state is read from the server on every open (store.ts): the header
   // names only what needs attention, so a ready conversation shows no status.
-  const [setup] = createResource(setupEpoch, () => api.onboarding());
+  const [setup] = createResource(() => `${setupEpoch()}:${activeAgentId()}`, () => api.onboarding(activeAgentId()));
   const [traffic, trafficActions] = createResource(() => api.providerTraffic());
   const needsService = () => { const state = setup(); return !!state && !state.core_ready && state.provider?.state === "incomplete"; };
   const taskStatus = createMemo(() => {

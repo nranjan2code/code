@@ -1,7 +1,7 @@
 import { createResource, Show } from "solid-js";
 import { host } from "../host";
 import * as api from "../api";
-import { openConnect, setupEpoch } from "../store";
+import { activeAgentId, openConnect, setupEpoch } from "../store";
 import Icon from "./Icon";
 
 /// Presentation order, matching `OnboardingState::steps` server-side.
@@ -53,7 +53,7 @@ const IN_APP: ReadonlySet<string> = new Set(["provider", "route"]);
 export default function SetupBanner(props: { inGreeting?: boolean }) {
   // Derived on every read, like every other consumer of this projection:
   // a key removed elsewhere has to make setup incomplete again here too.
-  const [state, { refetch }] = createResource(setupEpoch, () => api.onboarding());
+  const [state, { refetch }] = createResource(() => `${setupEpoch()}:${activeAgentId()}`, () => api.onboarding(activeAgentId()));
 
   // The projection serializes one field per step; "which is owed" is
   // derived here rather than shipped, so there is no second list to keep
