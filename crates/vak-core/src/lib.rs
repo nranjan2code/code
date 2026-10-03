@@ -7734,22 +7734,34 @@ impl Core {
             );
             // A named saved-file request needs an observed tool result. A
             // model's sentence saying it wrote the file is not a deliverable.
-            if status == vak_intent::OutcomeStatus::Produced
-                && let Some(target) = outcome_spec.saved_file_target()
-                && !written_paths.iter().any(|path| {
+            let deliverable_observed = outcome_spec.saved_file_target().is_none_or(|target| {
+                written_paths.iter().any(|path| {
                     std::path::Path::new(path).file_name()
                         == std::path::Path::new(&target).file_name()
-                })
-                && !successful_effect_inputs
+                }) || successful_effect_inputs
                     .iter()
                     .any(|input| input.contains(&target))
-            {
+            });
+            if status == vak_intent::OutcomeStatus::Produced && !deliverable_observed {
                 status = vak_intent::OutcomeStatus::Unknown;
             }
-            let requirement_evaluations = vak_intent::evaluate_requirements_with_state(
+            let evidence_card = session
+                .presentations_for_latest_turn()
+                .iter()
+                .any(|record| {
+                    matches!(
+                        record.semantic_type.as_str(),
+                        "research.synthesis" | "evidence"
+                    )
+                });
+            let requirement_evaluations = vak_intent::evaluate_requirements(
                 &outcome_spec,
-                response_text.as_deref(),
-                evidence_state,
+                &vak_intent::TurnFacts {
+                    response: response_text.as_deref(),
+                    evidence_state,
+                    evidence_card,
+                    deliverable_observed,
+                },
             );
             let completion =
                 vak_intent::evaluate_completion(status, &requirement_evaluations, &outcome_spec);

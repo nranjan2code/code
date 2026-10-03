@@ -32,8 +32,8 @@ use vak_intent::goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate};
 use vak_intent::limits::{DomainSet, Limits};
 use vak_intent::outcome::{
     CompletionVerdict, EvidenceState, OutcomeSpec, OutcomeStatus, RequirementEvaluation,
-    RequirementStatus, evaluate_completion, evaluate_requirements, evidence_state_from_age,
-    human_review_state,
+    RequirementStatus, TurnFacts, evaluate_completion, evaluate_requirements,
+    evidence_state_from_age, human_review_state,
 };
 use vak_intent::reading::{Confidences, Intent, Reading, Tier};
 use vak_intent::resolve::{
@@ -2888,7 +2888,7 @@ fn outcome_completion_verdict_matrix() {
 }
 
 #[test]
-fn outcome_evaluation_refusal_is_not_met() {
+fn outcome_evaluation_unobserved_deliverable_is_not_met() {
     let reading = Reading {
         act: Act::Author,
         evidence: Evidence::None,
@@ -2898,7 +2898,11 @@ fn outcome_evaluation_refusal_is_not_met() {
     spec.merge_declared_requirement("report", "deliverable", "create report.md", "must", None)
         .unwrap();
 
-    let evaluations = evaluate_requirements(&spec, Some("I cannot do that."));
+    let unobserved = TurnFacts {
+        deliverable_observed: false,
+        ..TurnFacts::reply(Some("I cannot do that."))
+    };
+    let evaluations = evaluate_requirements(&spec, &unobserved);
     assert_eq!(evaluations[1].status, RequirementStatus::Unknown);
     assert_eq!(
         evaluate_completion(OutcomeStatus::Produced, &evaluations, &spec),

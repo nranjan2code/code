@@ -678,34 +678,6 @@ pub fn evaluate_response_with_failures(
     }
 }
 
-/// Evaluate only facts the runtime can establish from the response itself.
-/// Semantic support, freshness and claim relevance remain unknown without
-/// linked evidence records.
-pub fn evaluate_requirements(
-    spec: &OutcomeSpec,
-    response: Option<&str>,
-) -> Vec<RequirementEvaluation> {
-    evaluate_requirements_with_evidence(spec, response, false)
-}
-
-/// A successful retrieval receipt proves execution, not truth, relevance, or
-/// freshness; those remain `Unknown` until linked evidence is checked.
-pub fn evaluate_requirements_with_evidence(
-    spec: &OutcomeSpec,
-    response: Option<&str>,
-    successful_evidence_receipt: bool,
-) -> Vec<RequirementEvaluation> {
-    evaluate_requirements_with_state(
-        spec,
-        response,
-        if successful_evidence_receipt {
-            EvidenceState::Fresh
-        } else {
-            EvidenceState::None
-        },
-    )
-}
-
 /// Structural oracle for tabular data (markdown tables or vak-table/vak-dataframe blocks).
 #[allow(clippy::collapsible_if)]
 pub fn verify_tabular_data(text: &str) -> Option<Result<String, String>> {
@@ -899,67 +871,63 @@ pub fn verify_claim_citations(text: &str) -> Option<Result<String, String>> {
     }
 }
 
-/// Evaluate requirements using a concrete evidence receipt and its
-/// requirement freshness window. Retrieval success alone is insufficient.
-pub fn evaluate_requirements_with_receipt(
-    spec: &OutcomeSpec,
-    response: Option<&str>,
-    now: chrono::DateTime<chrono::Utc>,
-    receipt: Option<&EvidenceReceipt>,
-) -> Vec<RequirementEvaluation> {
-    let state = receipt
-        .map(|value| {
-            let max_age = chrono::Duration::seconds(spec.evidence_max_age_secs.unwrap_or(86_400));
-            evidence_state_from_receipt(now, value, max_age)
-        })
-        .unwrap_or(EvidenceState::None);
-    evaluate_requirements_with_state(spec, response, state)
+/// What the runtime observed about one turn, each a typed fact and none read
+/// out of the reply's words (invariant 33: the runtime evaluates, the model
+/// never does).
+#[derive(Debug, Clone, Copy)]
+pub struct TurnFacts<'a> {
+    /// The reply, which the integrity checks parse for tables and citations
+    /// it carries, and which counts as content when present.
+    pub response: Option<&'a str>,
+    /// From the turn's successful tool receipts and their age.
+    pub evidence_state: EvidenceState,
+    /// A typed evidence card (a research synthesis or an evidence card) was
+    /// recorded in the ledger this turn.
+    pub evidence_card: bool,
+    /// The turn's named deliverable was observed in a tool result. True when
+    /// the request names none.
+    pub deliverable_observed: bool,
 }
 
+impl<'a> TurnFacts<'a> {
+    /// A turn that observed nothing beyond its reply.
+    pub fn reply(response: Option<&'a str>) -> Self {
+        Self {
+            response,
+            evidence_state: EvidenceState::None,
+            evidence_card: false,
+            deliverable_observed: true,
+        }
+    }
+}
+
+/// Evaluate the requirements from what the runtime observed, as typed
+/// facts. Nothing here reads the reply for words: whether the reply refuses,
+/// or cites, is not something its text can establish.
+///
 /// An `Evidence` requirement is never `Met` here, by design: this function
-/// can see that a source reference exists and whether a retrieval receipt is
-/// fresh, but not whether the source *supports the claim*. That is a
+/// can see that a typed evidence card or a retrieval receipt exists and
+/// whether the receipt is fresh, but not whether the source *supports the
+/// claim*. That is a
 /// judgement, and the runtime does not make it structurally — so a turn
 /// held to `cited` or stronger evidence closes at best `Unknown` from this
 /// evaluator, with review recommended, until a linked criterion (a
 /// `Shell`/`FileContains` check, an external receipt, a human attestation)
 /// establishes it through the commitment ledger.
-pub fn evaluate_requirements_with_state(
+pub fn evaluate_requirements(
     spec: &OutcomeSpec,
-    response: Option<&str>,
-    evidence_state: EvidenceState,
+    facts: &TurnFacts<'_>,
 ) -> Vec<RequirementEvaluation> {
+    let response = facts.response;
+    let evidence_state = facts.evidence_state;
     let has_response = response.is_some_and(|text| !text.trim().is_empty());
-    let is_refusal = response.is_some_and(|text| {
-        let normalized = text.trim().to_ascii_lowercase();
-        [
-            "i cannot",
-            "i can't",
-            "i can’t",
-            "unable to",
-            "cannot do",
-            "can't do",
-            "can’t do",
-        ]
-        .iter()
-        .any(|prefix| normalized.starts_with(prefix))
-    });
-    let has_structured_evidence = response.is_some_and(|text| {
-        text.contains("\"semantic_type\":\"research.synthesis\"")
-            || text.contains("\"semantic_type\": \"research.synthesis\"")
-            || text.contains("\"semantic_type\":\"evidence\"")
-            || text.contains("\"semantic_type\": \"evidence\"")
-    });
-    let has_reference = response.is_some_and(|text| {
-        text.contains("http://") || text.contains("https://") || text.contains("[^")
-    }) || has_structured_evidence;
     spec.requirements
         .iter()
         .map(|requirement| {
             let (status, reason) = match requirement.kind {
-                RequirementKind::Deliverable if is_refusal => (
+                RequirementKind::Deliverable if !facts.deliverable_observed => (
                     RequirementStatus::Unknown,
-                    "response is a refusal; the requested deliverable was not established".into(),
+                    "the named deliverable was not observed in any tool result".into(),
                 ),
                 RequirementKind::Deliverable if has_response => (
                     RequirementStatus::Met,
@@ -977,22 +945,18 @@ pub fn evaluate_requirements_with_state(
                     RequirementStatus::Unknown,
                     "evidence receipt exists but is stale for this request".into(),
                 ),
-                RequirementKind::Evidence if !has_reference => (
+                RequirementKind::Evidence if !facts.evidence_card => (
                     RequirementStatus::Unmet,
-                    "no source reference was found in the response".into(),
+                    "no retrieval receipt or evidence card was recorded for this turn".into(),
                 ),
                 RequirementKind::Evidence => (
                     RequirementStatus::Unknown,
-                    "a source reference exists, but support and freshness were not established"
+                    "an evidence card exists, but support and freshness were not established"
                         .into(),
                 ),
                 RequirementKind::Constraint => (
                     RequirementStatus::Unknown,
                     "constraint applicability requires a linked result".into(),
-                ),
-                RequirementKind::Integrity if is_refusal => (
-                    RequirementStatus::Unknown,
-                    "response is a refusal; domain integrity check bypassed".into(),
                 ),
                 RequirementKind::Integrity if has_response => {
                     let text = response.unwrap_or_default();
@@ -1338,7 +1302,7 @@ mod tests {
     }
 
     #[test]
-    fn refusal_cannot_satisfy_a_deliverable_requirement() {
+    fn a_deliverable_is_met_by_observation_never_by_wording() {
         let mut spec = OutcomeSpec::from_reading("create a report", &Reading::general(), 1);
         assert!(
             spec.merge_declared_requirement(
@@ -1350,11 +1314,21 @@ mod tests {
             )
             .is_ok()
         );
-        let evaluations = evaluate_requirements(&spec, Some("I cannot do that."));
+        let unobserved = TurnFacts {
+            deliverable_observed: false,
+            ..TurnFacts::reply(Some("Done: report.md is saved."))
+        };
+        let evaluations = evaluate_requirements(&spec, &unobserved);
         assert_eq!(evaluations[1].status, RequirementStatus::Unknown);
         assert_eq!(
             evaluate_completion(OutcomeStatus::Produced, &evaluations, &spec),
             CompletionVerdict::Unknown
+        );
+        let observed = evaluate_requirements(&spec, &TurnFacts::reply(Some("I cannot do that.")));
+        assert_eq!(
+            observed[1].status,
+            RequirementStatus::Met,
+            "the reply's words are not read for a refusal"
         );
     }
 
@@ -1365,7 +1339,11 @@ mod tests {
             ..Reading::general()
         };
         let spec = OutcomeSpec::from_reading("research", &reading, 1);
-        let evaluations = evaluate_requirements(&spec, Some("claim https://example.com"));
+        let facts = TurnFacts {
+            evidence_card: true,
+            ..TurnFacts::reply(Some("claim"))
+        };
+        let evaluations = evaluate_requirements(&spec, &facts);
         assert_eq!(evaluations[0].status, RequirementStatus::Met);
         assert_eq!(evaluations[1].status, RequirementStatus::Unknown);
     }
@@ -1377,8 +1355,11 @@ mod tests {
             ..Reading::general()
         };
         let spec = OutcomeSpec::from_reading("research", &reading, 1);
-        let evaluations =
-            evaluate_requirements_with_evidence(&spec, Some("claim https://example.com"), true);
+        let facts = TurnFacts {
+            evidence_state: EvidenceState::Fresh,
+            ..TurnFacts::reply(Some("claim"))
+        };
+        let evaluations = evaluate_requirements(&spec, &facts);
         assert_eq!(evaluations[1].status, RequirementStatus::Unknown);
         assert!(evaluations[1].reason.contains("receipt"));
     }
@@ -1390,9 +1371,24 @@ mod tests {
             ..Reading::general()
         };
         let spec = OutcomeSpec::from_reading("research", &reading, 1);
-        let missing = evaluate_requirements(&spec, Some("plain answer"));
+        let missing = evaluate_requirements(&spec, &TurnFacts::reply(Some("plain answer")));
         assert_eq!(missing[1].status, RequirementStatus::Unmet);
-        let unlinked = evaluate_requirements(&spec, Some("answer https://example.com"));
+        let by_url = evaluate_requirements(
+            &spec,
+            &TurnFacts::reply(Some("answer https://example.com and [^1]")),
+        );
+        assert_eq!(
+            by_url[1].status,
+            RequirementStatus::Unmet,
+            "a URL the reply states is not a recorded source"
+        );
+        let unlinked = evaluate_requirements(
+            &spec,
+            &TurnFacts {
+                evidence_card: true,
+                ..TurnFacts::reply(Some("answer"))
+            },
+        );
         assert_eq!(unlinked[1].status, RequirementStatus::Unknown);
         assert!(unlinked[1].reason.contains("support and freshness"));
     }
@@ -1404,10 +1400,12 @@ mod tests {
             ..Reading::general()
         };
         let spec = OutcomeSpec::from_reading("current events", &reading, 1);
-        let evaluations = evaluate_requirements_with_state(
+        let evaluations = evaluate_requirements(
             &spec,
-            Some("answer https://example.com"),
-            EvidenceState::Stale,
+            &TurnFacts {
+                evidence_state: EvidenceState::Stale,
+                ..TurnFacts::reply(Some("answer"))
+            },
         );
         assert_eq!(evaluations[1].status, RequirementStatus::Unknown);
         assert!(evaluations[1].reason.contains("stale"));
@@ -1500,7 +1498,11 @@ mod tests {
             ..Reading::general()
         };
         let spec = OutcomeSpec::from_reading("research", &reading, 1);
-        let evaluations = evaluate_requirements(&spec, Some("answer https://example.com"));
+        let facts = TurnFacts {
+            evidence_card: true,
+            ..TurnFacts::reply(Some("answer"))
+        };
+        let evaluations = evaluate_requirements(&spec, &facts);
         assert_eq!(
             evaluate_completion(OutcomeStatus::Produced, &evaluations, &spec),
             CompletionVerdict::Unknown
@@ -1722,16 +1724,14 @@ mod tests {
         )
         .unwrap();
 
-        let good_eval =
-            evaluate_requirements_with_state(&spec, Some(valid_table), EvidenceState::None);
+        let good_eval = evaluate_requirements(&spec, &TurnFacts::reply(Some(valid_table)));
         let integ_eval = good_eval
             .iter()
             .find(|e| e.requirement_id == "integ-1")
             .unwrap();
         assert_eq!(integ_eval.status, RequirementStatus::Met);
 
-        let bad_eval =
-            evaluate_requirements_with_state(&spec, Some(ragged_table), EvidenceState::None);
+        let bad_eval = evaluate_requirements(&spec, &TurnFacts::reply(Some(ragged_table)));
         let bad_integ = bad_eval
             .iter()
             .find(|e| e.requirement_id == "integ-1")

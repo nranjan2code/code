@@ -506,7 +506,10 @@ async fn run_case_with_tools(
                 loop_error.is_some(),
                 matches!(outcome, TurnOutcome::Aborted { .. }),
             );
-            let evaluations = vak_intent::evaluate_requirements(&spec, response.as_deref());
+            let evaluations = vak_intent::evaluate_requirements(
+                &spec,
+                &vak_intent::TurnFacts::reply(response.as_deref()),
+            );
             let verdict = vak_intent::evaluate_completion(status, &evaluations, &spec);
             if verify_out.is_error && matches!(verdict, vak_intent::CompletionVerdict::Complete) {
                 "partial".into()

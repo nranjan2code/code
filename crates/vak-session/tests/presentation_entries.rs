@@ -313,3 +313,34 @@ fn non_card_evidence_since_collects_prior_non_card_tool_results_only() {
     let evidence = log.non_card_evidence_since(&user.id, is_card_tool);
     assert_eq!(evidence, vec!["search-1".to_string()]);
 }
+
+#[test]
+fn only_the_latest_turns_presentations_count_for_it() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("latest.jsonl");
+    let mut log = SessionLog::create(path, header()).unwrap();
+    let first = log
+        .append_message(MessageRecord {
+            message: Message::user_text("first"),
+            meta: None,
+        })
+        .unwrap();
+    log.append_presentation(record_for(&first.id, "call-1", "old"))
+        .unwrap();
+    assert_eq!(log.presentations_for_latest_turn().len(), 1);
+    let second = log
+        .append_message(MessageRecord {
+            message: Message::user_text("second"),
+            meta: None,
+        })
+        .unwrap();
+    assert!(
+        log.presentations_for_latest_turn().is_empty(),
+        "an earlier turn's card is not this turn's"
+    );
+    log.append_presentation(record_for(&second.id, "call-2", "new"))
+        .unwrap();
+    let latest = log.presentations_for_latest_turn();
+    assert_eq!(latest.len(), 1);
+    assert_eq!(latest[0].turn_id, second.id);
+}

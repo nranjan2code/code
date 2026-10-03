@@ -89,9 +89,8 @@ pub use outcome::{
     Command, CompletionVerdict, ControlSource, EvidenceReceipt, EvidenceState,
     InterventionDecision, InterventionEvaluation, InterventionKind, InterventionRequest,
     OutcomeRequirement, OutcomeSpec, OutcomeStatus, RequirementEvaluation, RequirementImportance,
-    RequirementKind, RequirementOrigin, RequirementStatus, ToolFailureLedger, evaluate_completion,
-    evaluate_intervention, evaluate_requirements, evaluate_requirements_with_evidence,
-    evaluate_requirements_with_receipt, evaluate_requirements_with_state, evaluate_response,
+    RequirementKind, RequirementOrigin, RequirementStatus, ToolFailureLedger, TurnFacts,
+    evaluate_completion, evaluate_intervention, evaluate_requirements, evaluate_response,
     evaluate_response_with_failures, evidence_state_from_age, evidence_state_from_receipt,
     human_review_state, parse_command,
 };

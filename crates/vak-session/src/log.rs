@@ -542,6 +542,30 @@ impl SessionLog {
             .collect()
     }
 
+    /// The presentations recorded on the active, latest user turn only, so a
+    /// card from an earlier turn cannot stand for this turn's evidence.
+    pub fn presentations_for_latest_turn(&self) -> Vec<&PresentationRecord> {
+        let mut found = Vec::new();
+        for entry in self.chain_to_root() {
+            match &entry.payload {
+                EntryPayload::Message(record)
+                    if record.message.role == vak_llm::Role::User
+                        && record.control_kind().is_none()
+                        && record
+                            .message
+                            .content
+                            .iter()
+                            .any(|block| matches!(block, vak_llm::ContentBlock::Text { .. })) =>
+                {
+                    found.clear();
+                }
+                EntryPayload::Presentation(record) => found.push(record),
+                _ => {}
+            }
+        }
+        found
+    }
+
     /// Whether a presentation with this exact canonical payload already
     /// exists for this turn — the duplicate rule that drops a repeated
     /// fence from the model-visible projection (docs/design/68-context-engine.md
