@@ -17,6 +17,7 @@ import * as api from "../api";
 import "../focusTrap";
 import { assistantParts, cleanAssistantText, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
 import Skeleton from "./Skeleton";
+import { approvalSubjects } from "../approvalSubject";
 export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
@@ -366,9 +367,6 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   );
 };
 
-/** Arg keys that name the subject of a webfetch-style tool call. */
-const APPROVAL_PRIMARY_KEYS = ["url", "path", "file_path", "command", "file", "dir"] as const;
-
 /** A worker waiting on one question. The answer is information for the worker,
  *  never permission: a gated action it then takes still asks separately. */
 const QuestionCard = (props: { item: Extract<Item, { kind: "question" }>; sessionId?: string | null }) => {
@@ -454,23 +452,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       setDelegateError(error instanceof Error ? error.message : String(error));
     } finally { setDelegating(false); }
   };
-  // Webfetch-style tools name their target under different keys; whatever
-  // the tool calls its subject (url/path/command…) is what the user needs
-  // to see before deciding, so it gets the prominent slot.
-  const primary = createMemo<{ key: string; value: string } | null>(() => {
-    try {
-      const parsed = JSON.parse(props.item.argsJson) as Record<string, unknown>;
-      for (const key of APPROVAL_PRIMARY_KEYS.filter((candidate) => candidate !== "command")) {
-        const value = parsed[key];
-        if (typeof value === "string" && value.trim()) {
-          return { key, value: value.trim() };
-        }
-      }
-    } catch {
-      /* malformed args fall through to the generic summary below */
-    }
-    return null;
-  });
+  const subjects = createMemo(() => approvalSubjects(props.item.argsJson));
   const summary = createMemo(() => {
     try {
       const parsed = JSON.parse(props.item.argsJson) as Record<string, unknown>;
@@ -490,14 +472,14 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
     <Show when={!props.item.resolved}>
     <div class="approval" data-approval={props.item.id} role={props.item.resolved ? "status" : "alert"} aria-live={props.item.resolved ? "polite" : "assertive"} aria-label={`${props.item.resolved ? "Approval resolved" : "Approval requested"} for ${props.item.tool}`}>
     <div class="ap-head">Vakyartha wants to use {props.item.tool}</div>
-    <Show when={primary()}>
-      {(p) => (
-        <code class="ap-primary" title={p().value}>
-          <span class="ap-primary-key">{p().key}</span>
-          {p().value}
+    <For each={subjects()}>
+      {(subject) => (
+        <code class="ap-primary">
+          <span class="ap-primary-key">{subject.key}</span>
+          {subject.value}
         </code>
       )}
-    </Show>
+    </For>
     <div class="ap-reason">This needs your approval before it can continue.</div>
     <div class="ap-summary">{summary()}</div>
     <details class="ap-details">

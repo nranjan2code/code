@@ -20,6 +20,9 @@ const adaptive = (turn: string, root: { primitive: string; props: Record<string,
 } as unknown as OutputItem);
 const toolError = (turn: string): OutputItem => ({ id: `${turn}-tool`, turn_id: turn, timestamp: at, role: "tool", kind: "error", status: "failed", content: { type: "error", message: "denied outside the workspace" }, actions: [], fallback_text: "denied outside the workspace" } as unknown as OutputItem);
 
+const approval = (turn: string, command: string): OutputItem => ({ id: `${turn}-approval`, turn_id: turn, timestamp: at, role: "assistant", kind: "approval", status: "pending", content: { type: "approval", request_id: "req-1", tool: "bash", args_json: JSON.stringify({ command }), reason: null }, actions: [], fallback_text: "" } as unknown as OutputItem);
+const longCommand = `curl -s https://example.com | head -3 # ${"padding ".repeat(60)}&& echo tail-end-marker`;
+
 const linkOnly = "The file /etc/hosts is outside the workspace, and curl returned no output.";
 const afterFailure = "I could not read that file, so this table is incomplete.";
 const timeline = { schema_version: 2, session_id: sid, diagnostics: [], items: [
@@ -30,6 +33,8 @@ const timeline = { schema_version: 2, session_id: sid, diagnostics: [], items: [
   toolError("t2"),
   adaptive("t2", { primitive: "metric", props: { label: "files", value: "3" } }, "adaptive_library"),
   message("t2", "assistant", afterFailure),
+  message("t3", "user", "fetch the page"),
+  approval("t3", longCommand),
 ] } as unknown as OutputTimeline;
 
 store.setActiveId(sid);
@@ -45,5 +50,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   return [
     assert(text.includes(linkOnly), "a link-only card never hides the answer that reports a failure"),
     assert(text.includes(afterFailure), "a turn with an unrecovered tool failure keeps the answer's prose"),
+    assert(document.querySelector(".semantic-approval .ap-primary")?.textContent?.includes("tail-end-marker"), "an approval shows the whole command without opening details"),
+    assert(!document.querySelector(".semantic-approval details[open]"), "the command is visible while the details stay closed"),
   ];
 };

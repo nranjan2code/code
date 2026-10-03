@@ -36,6 +36,7 @@ import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPrev
 import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
 import { relAgo } from "../time";
 import Skeleton from "./Skeleton";
+import { approvalSubjects } from "../approvalSubject";
 import * as api from "../api";
 import { host } from "../host";
 import { isDocumentPath, parseOfficeCitation } from "../officeFiles";
@@ -887,6 +888,7 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
       aria-label={`${pending() ? "Approval requested" : "Approval resolved"} for ${content.tool}`}
     >
       <div class="ap-head">Vakyartha wants to use {content.tool}</div>
+      <For each={approvalSubjects(content.args_json)}>{(subject) => <code class="ap-primary"><span class="ap-primary-key">{subject.key}</span>{subject.value}</code>}</For>
       <div class="ap-reason">This needs your approval before it can continue.</div>
       <details class="ap-details"><summary>View request details</summary><pre class="ap-args">{argsPretty()}</pre></details>
       <Show when={pending()} fallback={<div class="ap-done">{props.item.status}</div>}>
