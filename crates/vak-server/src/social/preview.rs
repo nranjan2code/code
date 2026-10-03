@@ -214,7 +214,7 @@ pub(crate) async fn x_token_remove(
     credential_remove(s, p, q, X_TOKEN).await
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 struct Usage {
     month: String,
     limit: u32,

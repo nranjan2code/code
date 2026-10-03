@@ -2332,7 +2332,7 @@ export default function Settings() {
               <header><h1>Social accounts</h1><p>{scope() === "user" ? "Set up social platforms once for every agent. An agent can still use its own credential instead." : `Connect the social platforms ${agentName()} may use. A credential saved under Shared applies here unless this agent has its own.`}</p></header>
               <For each={[{ title: "Platforms", note: "Owner-only previews. Results stay on this screen and are never sent to the agent or saved.", ids: ["social-youtube", "social-reddit", "social-x", "social-linkedin"] }]}>{(groupDef) => <section class="social-group">
                 <div class="social-group-head"><h2>{groupDef.title}</h2><small>{groupDef.note}</small></div>
-                <div class="social-grid"><For each={socialConnectors().filter((connector) => groupDef.ids.includes(connector.id))}>{(connector) => {
+                <div class="social-grid"><For each={groupDef.ids.map((id) => socialConnectors().find((connector) => connector.id === id)).filter((connector): connector is api.SocialConnector => !!connector)}>{(connector) => {
                   const plugin = () => [...plugins(), ...inheritedPlugins()].find((item) => item.name === connector.id);
                   const isYoutube = connector.id === "social-youtube";
                   const isLinkedin = connector.id === "social-linkedin";

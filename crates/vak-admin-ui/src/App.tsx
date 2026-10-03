@@ -999,16 +999,17 @@ When several rules match the same call, the strictest one wins — blocked beats
 /// app (Settings → agent → Social accounts), the one place that writes them.
 function SocialView(props: { ctx: ExtensionsCtx }) {
   const [state] = createResource(
-    () => selectedAgentId(),
-    async () => {
+    () => [selectedAgentId(), props.ctx.scope()] as const,
+    async ([, scopeKind]) => {
       const agent = selectedAgentIdOrUndefined();
+      const shared = scopeKind === "user" ? ("user" as const) : undefined;
       const [list, youtube, clientId, account, reddit, x, xUsage] = await Promise.all([
         api.socialConnectors(agent),
-        api.socialCredential("youtube/key", agent).catch(() => ({ configured: undefined })),
-        api.socialCredential("linkedin/client-id", agent).catch(() => ({ configured: undefined })),
+        api.socialCredential("youtube/key", agent, shared).catch(() => ({ configured: undefined })),
+        api.socialCredential("linkedin/client-id", agent, shared).catch(() => ({ configured: undefined })),
         api.socialCredential("linkedin/account", agent).catch(() => ({ connected: undefined })),
-        api.socialCredential("reddit/client-id", agent).catch(() => ({ configured: undefined })),
-        api.socialCredential("x/token", agent).catch(() => ({ configured: undefined })),
+        api.socialCredential("reddit/client-id", agent, shared).catch(() => ({ configured: undefined })),
+        api.socialCredential("x/token", agent, shared).catch(() => ({ configured: undefined })),
         api.socialXUsage(agent).catch(() => undefined),
       ]);
       return { connectors: list.connectors, youtube, clientId, account, reddit, x, xUsage };
