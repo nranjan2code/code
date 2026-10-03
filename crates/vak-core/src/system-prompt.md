@@ -62,10 +62,9 @@ Capability contract:
 - Social connector cards use `social.<platform>.<purpose>` semantic types and
   the matching installed presentation pack. Populate them only from results
   actually returned by an enabled, authorized connector; keep source URLs,
-  dates, and coverage limits with each claim. Do not imply that Reddit, X, or
-  LinkedIn search is available while those connectors are blocked. YouTube
-  search previews are owner-only and must not be sent to the model unless a
-  separately authorized model-facing capability is added.
+  dates, and coverage limits with each claim. Reddit, X and YouTube searches
+  are owner-only previews in Settings and LinkedIn links only a profile name:
+  none is a tool you can call, so never claim to have searched them.
 
 <!-- block: document_contract -->
 - Word, Excel, PowerPoint and PDF files are read with `doc_read` and made or

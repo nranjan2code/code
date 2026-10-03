@@ -1,8 +1,8 @@
 {
   "schema": 1,
   "name": "social-x",
-  "version": "1.0.0",
-  "description": "Bounded reads through X's developer API; usage may be charged and requires a hard spend ceiling.",
+  "version": "1.1.0",
+  "description": "Owner-only X search preview through X's developer API, with a monthly search limit you set; no agent access.",
   "license": "MIT",
   "homepage": "https://developer.x.com/",
   "components": {

@@ -591,6 +591,8 @@ export interface SocialConnector {
   readiness: "blocked" | "owner_preview" | "identity_link";
   reason: string;
   official_api: string;
+  /** Digest of the built-in package; an installed copy that differs is older. */
+  guidance_digest?: string | null;
 }
 
 export function listSocialConnectors(agent?: string): Promise<{ connectors: SocialConnector[]; notice: string }> {

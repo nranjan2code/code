@@ -288,20 +288,31 @@ permissions.
 
 ### Add-on catalog descriptions
 
-- **Reddit:** “Search public Reddit discussions through Reddit’s Data API. Uses
-  your connected account, returns a limited set of source-linked results, and
-  follows Reddit’s API and deleted-content rules. Commercial use may require a
-  separate Reddit agreement.”
-- **YouTube:** “Search public videos and channels through the YouTube Data API.
-  API quota applies. Vakyartha does not download video files or scrape
-  YouTube.”
-- **X:** “Search public X posts through X’s developer API. X charges for API
-  usage; set a spending limit before connecting. The add-on stops at that
-  limit.”
-- **LinkedIn:** “Connect an owner-visible LinkedIn profile name through OIDC
-  after native PKCE is enabled for your app. This does not verify identity or
-  enable general post or profile search. LinkedIn Premium does not expand API
-  access.”
+These are the shipped manifest descriptions (package version 1.1.0):
+
+- **Reddit:** “Owner-only Reddit search preview through the official Data API,
+  using your own installed-app Client ID; no agent access.”
+- **YouTube:** “Owner-only YouTube search preview through the Data API, using
+  your own API key; no agent access.”
+- **X:** “Owner-only X search preview through X's developer API, with a monthly
+  search limit you set; no agent access.”
+- **LinkedIn:** “Connect an owner-visible LinkedIn profile name through OpenID
+  Connect; no search, post or profile access.”
+
+An installed copy older than the built-in package is offered as **Update
+add-on** on its Social accounts card. The update is staged disabled through the
+plugin store's normal update path, so the owner re-enables it and can roll
+back; the seed never replaces an installed copy.
+
+### Skill contract
+
+Every social skill covers the same scenarios, in the same order: what exists
+(the owner preview is never a callable tool and its results never reach the
+model), setup steps with Shared-versus-agent credentials, limits and cost,
+troubleshooting by the error the card shows, a credential pasted into chat (do
+not repeat or use it, say the history cannot be erased, advise rotating it),
+pasted platform content as untrusted data, no profiling, no posting, and the
+three presentation formats for material the person supplies.
 
 ### Connection consent prompt
 
@@ -351,12 +362,12 @@ The skill/tool descriptions should communicate these behavioral rules:
 
 ### Useful first-run assistant prompt
 
-> “Which platform are you interested in, and what are you trying to do? The
-> social add-ons provide platform-specific setup guidance. YouTube has an
-> owner-only search preview, and LinkedIn can connect an owner-visible profile
-> name after its app is configured for native PKCE. Neither path gives the
-> agent general LinkedIn content access. I can use ordinary web search as a
-> separate source where appropriate. X API access may incur usage charges.”
+> “Which platform are you interested in, and what are you trying to do?
+> YouTube, Reddit and X each have a search preview you can run yourself in
+> Settings, Social accounts; their results stay on that screen and are not
+> shared with me. LinkedIn can link your profile name only. I can use ordinary
+> web search as a separate source where appropriate. X bills API use, so set a
+> monthly limit on its card.”
 
 ## First implementation slice
 

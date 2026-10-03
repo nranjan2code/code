@@ -296,6 +296,15 @@ retained.
   also runs on it and has no `ask_parent`
   (docs/design/84-worker-questions-and-control.md).
 
+- Unreleased (social previews): the `social.<platform>` card rule no longer
+  says Reddit and X are blocked. It now says Reddit, X and YouTube searches are
+  owner-only previews in Settings and LinkedIn links only a profile name, none
+  of them a callable tool, so the model never claims to have searched them.
+  One sentence shorter than before. The four social add-on skills were
+  rewritten to the same contract: what exists, setup, limits, troubleshooting,
+  a credential pasted in chat, pasted content as data, and no posting
+  (docs/plans/social-platform-connectors.md).
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

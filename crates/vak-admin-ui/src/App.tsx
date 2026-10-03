@@ -1003,7 +1003,7 @@ function SocialView(props: { ctx: ExtensionsCtx }) {
     async ([, scopeKind]) => {
       const agent = selectedAgentIdOrUndefined();
       const shared = scopeKind === "user" ? ("user" as const) : undefined;
-      const [list, youtube, clientId, account, reddit, x, xUsage] = await Promise.all([
+      const [list, youtube, clientId, account, reddit, x, xUsage, sharedPlugins] = await Promise.all([
         api.socialConnectors(agent),
         api.socialCredential("youtube/key", agent, shared).catch(() => ({ configured: undefined })),
         api.socialCredential("linkedin/client-id", agent, shared).catch(() => ({ configured: undefined })),
@@ -1011,23 +1011,24 @@ function SocialView(props: { ctx: ExtensionsCtx }) {
         api.socialCredential("reddit/client-id", agent, shared).catch(() => ({ configured: undefined })),
         api.socialCredential("x/token", agent, shared).catch(() => ({ configured: undefined })),
         api.socialXUsage(agent).catch(() => undefined),
+        shared ? Promise.resolve({ plugins: [] }) : api.plugins("user", agent).catch(() => ({ plugins: [] })),
       ]);
-      return { connectors: list.connectors, youtube, clientId, account, reddit, x, xUsage };
+      return { connectors: list.connectors, youtube, clientId, account, reddit, x, xUsage, sharedPlugins: sharedPlugins.plugins, shared: !!shared };
     },
   );
   const credential = (id: string): string => {
     const s = state();
     if (!s) return "Unknown";
-    if (id === "social-youtube") return s.youtube.configured === undefined ? "Unknown" : s.youtube.configured ? "Own API key" : s.youtube.inherited ? "Shared API key" : "No API key";
+    const label = (state: { configured?: boolean; inherited?: boolean }, noun: string) =>
+      state.configured === undefined ? "Unknown" : state.configured ? (s.shared ? `${noun} saved` : `Own ${noun}`) : state.inherited ? `Shared ${noun}` : `No ${noun}`;
+    if (id === "social-youtube") return label(s.youtube, "API key");
     if (id === "social-linkedin") {
       if (s.clientId.configured === undefined) return "Unknown";
       if (!s.clientId.configured && !s.clientId.inherited) return "No Client ID";
+      if (s.shared) return label(s.clientId, "Client ID");
       return s.account.connected ? `Connected${s.account.display_name ? ` as ${s.account.display_name}` : ""}${s.account.expired ? " (expired)" : ""}` : "Client ID set; not connected";
     }
-    const simple = id === "social-reddit" ? s.reddit : s.x;
-    if (simple.configured === undefined) return "Unknown";
-    const noun = id === "social-reddit" ? "Client ID" : "token";
-    const base = simple.configured ? `Own ${noun}` : simple.inherited ? `Shared ${noun}` : `No ${noun}`;
+    const base = id === "social-reddit" ? label(s.reddit, "Client ID") : label(s.x, "token");
     return id === "social-x" && s.xUsage ? `${base} · ${s.xUsage.used}/${s.xUsage.limit} searches in ${s.xUsage.month}` : base;
   };
   const readiness = (r: string) => (r === "owner_preview" ? "Owner preview" : r === "identity_link" ? "Identity link" : "Blocked");
@@ -1042,11 +1043,12 @@ function SocialView(props: { ctx: ExtensionsCtx }) {
         <tbody>
           <For each={state()?.connectors ?? []}>
             {(c) => {
-              const plugin = () => props.ctx.plugins().find((p) => p.name === c.id);
+              const own = () => props.ctx.plugins().find((p) => p.name === c.id);
+              const inheritedPlugin = () => state()?.sharedPlugins.find((p) => p.name === c.id);
               return (
                 <tr>
                   <td><a href={c.official_api} target="_blank" rel="noreferrer noopener">{c.platform}</a></td>
-                  <td>{plugin() ? (plugin()!.enabled ? "Enabled" : "Installed, disabled") : "Not installed"}</td>
+                  <td>{own() ? (own()!.enabled ? "Enabled" : "Installed, disabled") : inheritedPlugin() ? (inheritedPlugin()!.enabled ? "Enabled (Shared)" : "Disabled (Shared)") : "Not installed"}</td>
                   <td>{readiness(c.readiness)}</td>
                   <td>{credential(c.id)}</td>
                   <td>{c.reason}</td>
