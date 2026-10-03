@@ -2514,6 +2514,7 @@ mod tests {
 
     #[test]
     fn routine_lease_serializes_independent_server_vault_handles() {
+        vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-lease-{}", Uuid::now_v7());
         let first_vault = AccountVault::for_agent(&agent_id).unwrap();
         let second_vault = AccountVault::for_agent(&agent_id).unwrap();
@@ -2541,6 +2542,7 @@ mod tests {
 
     #[test]
     fn account_refresh_lease_serializes_independent_server_vault_handles() {
+        vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-refresh-lease-{}", Uuid::now_v7());
         let first_vault = AccountVault::for_agent(&agent_id).unwrap();
         let second_vault = AccountVault::for_agent(&agent_id).unwrap();
@@ -2569,6 +2571,7 @@ mod tests {
 
     #[test]
     fn routine_lease_admits_only_one_concurrent_trigger() {
+        vak_config::paths::isolate_home_for_tests();
         use std::sync::{Arc, Barrier, mpsc};
 
         const CONTENDERS: usize = 16;
