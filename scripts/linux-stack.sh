@@ -78,10 +78,11 @@ status)
         printf '           from a snapshot taken when `up` ran. Re-create it:\n'
         printf '             scripts/linux-stack.sh up\n'
     fi
-    if docker exec "$NAME" test -f /root/vak-home/.env 2>/dev/null; then
-        TOKEN="$(docker exec "$NAME" sh -c 'grep "^VAK_GATEWAY_TOKEN=" /root/vak-home/.env | cut -d= -f2-' 2>/dev/null || true)"
-        [[ -n "$TOKEN" ]] && printf '\n  http://127.0.0.1:%s/admin?token=%s#/overview\n' "$PORT" "$TOKEN"
-    fi
+    # The gateway token lives in the container's credential store, never a
+    # file; the CLI is how a signed-in link is read out of it.
+    LINK="$(docker exec "$NAME" /opt/vak/bin/vak open admin --print --port 8901 2>/dev/null || true)"
+    TOKEN="$(printf '%s' "$LINK" | sed -n 's/.*[?&]token=\([^&#]*\).*/\1/p')"
+    [[ -n "$TOKEN" ]] && printf '\n  http://127.0.0.1:%s/admin?token=%s#/overview\n' "$PORT" "$TOKEN"
     exit 0
     ;;
 logs)   exec docker logs -f "$NAME" ;;
@@ -134,7 +135,6 @@ PREFIX=/opt/vak
 # (~/.local/share/vak for data, ~/vak-home for the Shared layer). Setting
 # it would nest the Shared layer inside the data home, which is the
 # self-contained-root behaviour, not a normal install.
-SHARED=/root/vak-home
 
 echo "--- install ---"
 "$VAK" self install --prefix "$PREFIX" --force
@@ -150,7 +150,9 @@ echo "--- activation (pins the bearer token; systemd is absent here) ---"
 # --prefix matters: without it services-sync resolves the platform
 # default, finds no manifest there, and bails before pinning anything.
 "$V" self services-sync --prefix "$PREFIX" 2>&1 | sed "s/^/    /" || true
-TOKEN=$(grep "^VAK_GATEWAY_TOKEN=" "$SHARED/.env" | cut -d= -f2-)
+LINK=$("$V" open admin --print --port 8901)
+TOKEN=${LINK#*token=}
+TOKEN=${TOKEN%%[&#]*}
 test -n "$TOKEN" || { echo "FAIL: no gateway token was pinned"; exit 1; }
 echo "  token pinned"
 

@@ -562,6 +562,26 @@ mod tests {
             .unwrap();
     }
 
+    /// Exit test of M3b slice 5 (review R12): a secret scope is named by
+    /// its owner's id, never by a path, so every spelling of one folder
+    /// reaches the same secrets and the key reveals no path.
+    #[test]
+    fn secret_scopes_keyed_by_id() {
+        crate::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let canonical = dir.path().canonicalize().unwrap();
+        let space = crate::spaces::bind(dir.path()).unwrap();
+        set(&dir.path().join(".env"), "SCOPE_TEST_KEY", "one").unwrap();
+        assert_eq!(
+            get(&canonical.join(".env"), "SCOPE_TEST_KEY").as_deref(),
+            Some("one")
+        );
+        let key = scope_key_for(&dir.path().join(".env"));
+        assert_eq!(key, format!("space-{space}"));
+        assert!(!key.contains('/'), "a scope key names an id, never a path");
+        remove(&dir.path().join(".env"), "SCOPE_TEST_KEY").unwrap();
+    }
+
     #[test]
     fn scope_key_for_is_stable_and_direction_specific() {
         crate::paths::isolate_home_for_tests();

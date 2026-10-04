@@ -16,7 +16,8 @@ pub fn run_backup(cwd: PathBuf, action: crate::cli::BackupAction) -> i32 {
             return 2;
         }
     };
-    let home = core.scope().into_root();
+    // The registry is relative to the data home, which a backup covers whole.
+    let home = core.shared_scope().into_root();
     match action {
         crate::cli::BackupAction::Export {
             dir,
@@ -41,7 +42,7 @@ fn parse_conflict(word: &str) -> Option<Conflict> {
 }
 
 fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
-    if same_dir(dir, home) {
+    if backup::within_home(dir, home) {
         eprintln!(
             "error: refusing to export into the live vak home ({}) — pick a directory outside it",
             home.display()
@@ -67,6 +68,11 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
                 dir.display()
             );
             println!("manifest: {}", dir.join("manifest.json").display());
+            if !manifest.content_keys_included {
+                println!(
+                    "note: conversation history and Agent memory are encrypted under this machine's keys, which this backup does not carry; it restores them only on this machine"
+                );
+            }
             if include_secrets && !manifest.secrets_copied {
                 println!(
                     "note: nothing secret was copied (either none stored, or this host uses the OS keychain, which this command cannot back up)"
@@ -82,7 +88,7 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
 }
 
 fn import(home: &Path, dir: &Path, conflict: Conflict) -> i32 {
-    if same_dir(dir, home) {
+    if backup::within_home(dir, home) {
         eprintln!(
             "error: refusing to import from the live vak home ({}) — pick a backup directory outside it",
             home.display()
@@ -107,31 +113,26 @@ fn import(home: &Path, dir: &Path, conflict: Conflict) -> i32 {
     }
 }
 
-/// Same-directory refusal must survive symlinks and trailing separators,
-/// so compare canonical forms when both sides resolve.
-fn same_dir(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(ca), Ok(cb)) => ca == cb,
-        _ => a == b,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
 
     #[test]
-    fn same_dir_detects_alias_forms() {
+    fn a_backup_never_lands_in_the_home_it_copies() {
         let dir = tempfile::tempdir().unwrap();
-        let inner = dir.path().join("home");
-        std::fs::create_dir_all(&inner).unwrap();
-        assert!(same_dir(&inner, &inner));
-        assert!(same_dir(
-            &inner.join("."),
-            &std::fs::canonicalize(&inner).unwrap()
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        assert!(backup::within_home(&home, &home));
+        assert!(backup::within_home(
+            &home.join("."),
+            &std::fs::canonicalize(&home).unwrap()
         ));
-        assert!(!same_dir(&inner, &dir.path().join("other")));
+        assert!(
+            backup::within_home(&home.join("agents/vak/not-yet"), &home),
+            "a fresh folder inside the home is refused too"
+        );
+        assert!(!backup::within_home(&dir.path().join("other"), &home));
     }
 
     #[test]

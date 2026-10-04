@@ -440,13 +440,15 @@ on the old terms in user-facing strings, like vak-eval's banned-token gate.
 | Prompts | The narrowest layer that sets this wins. | This agent's version replaces the shared one. |
 | Settings navigation | EXPERIENCE · THIS AGENT · ARCHIVED | Everyday · Agents · Advanced |
 
-**Still to settle: the data vocabulary.** The data architecture (docs 73
-and 74, plan revision 3, L11) adds model terms that will reach everyday
-screens: Space, run, trigger, effect, trash, delete permanently, "Why is
-this gone?". Each gets an entry here before the first screen that needs it
-(M3b's Spaces, M4's runs and triggers, M7a's trash). "Space" needs the most
-care: the picker already says "Folder" for a working directory, but a Space
-can be bound to folders on several machines, or to none on a hosted server.
+**The data vocabulary.** The data architecture (docs 73 and 74, plan
+revision 3, L11) adds model terms that reach everyday screens. Each gets an
+entry here before the first screen that needs it.
+
+| Model term | Everyday word | Settled |
+|---|---|---|
+| Space | **Project**: the thing a conversation's files and history belong to. "Folder" stays the word for its location on one machine, so a project can have a folder here, on another machine, or none ("No folder on this machine"). | 2026-10-05, by the maintainer, for M3b's Configure › Projects |
+| Run, trigger, effect | to settle before M4's screens | |
+| Trash, delete permanently, "Why is this gone?" | to settle before M7a's screens | |
 
 ## 8. Everyday by default, technical on request
 

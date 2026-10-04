@@ -179,7 +179,7 @@ The desktop's routines daemon graduates into the platform scheduler:
   (extracted from the restored ledger), not a status word — desktop task
   rows and deliveries both show the actual answer.
 - Transports:
-  - `log:<chat>` — append-only journal at `<home>/gateway/deliveries.jsonl`.
+  - `log:<chat>` — append-only journal, the `gateway/deliveries` record chain.
     No network, works headless, doubles as the test double.
   - `webhook:<name>` — POST `{target, text, ts, job_id, delivery}` JSON to a URL configured
     under `[gateway.outbound.webhooks.<name>]`; optional `token_env` names

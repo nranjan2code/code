@@ -1080,11 +1080,18 @@ export function SessionsList() {
 
   const localSpace = createMemo(() => sessions()?.workspace_space_id ?? "");
   const isLocal = (s: SessionListItem) => !localSpace() || s.space_id === localSpace();
+  // Sessions are grouped by project (a space, docs/design/75 §7), named
+  // from Configure › Projects rather than shown as an id.
+  const [projectsRes] = createResource(async () => (await api.projects()).projects);
+  const [projectFilter, setProjectFilter] = createSignal("all");
+  const projectName = (spaceId: string) =>
+    projectsRes()?.find((project) => project.id === spaceId)?.name ?? "Unknown project";
 
   const filtered = createMemo(() => {
     const list = sessions()?.sessions ?? [];
     const query = q().trim().toLowerCase();
-    const withArchived = showArchived() ? list : list.filter((s) => !s.archived);
+    const inProject = projectFilter() === "all" ? list : list.filter((s) => s.space_id === projectFilter());
+    const withArchived = showArchived() ? inProject : inProject.filter((s) => !s.archived);
     if (!query) return withArchived;
     return withArchived.filter(
       (s) =>
@@ -1241,12 +1248,12 @@ export function SessionsList() {
         <div class="sessions-kpi-card">
           <span class="kpi-label">Total Sessions</span>
           <span class="kpi-value font-mono">{totalCount()}</span>
-          <span class="kpi-sub dim">Append-only JSONL source</span>
+          <span class="kpi-sub dim">Every conversation, kept in full</span>
         </div>
         <div class="sessions-kpi-card">
-          <span class="kpi-label">Active Workspace</span>
+          <span class="kpi-label">This project</span>
           <span class="kpi-value font-mono">{(sessions()?.sessions ?? []).filter(isLocal).length}</span>
-          <span class="kpi-sub dim">{localSpace() ? "This workspace" : "All workspaces"}</span>
+          <span class="kpi-sub dim">{localSpace() ? projectName(localSpace()) : "All projects"}</span>
         </div>
         <div class="sessions-kpi-card">
           <span class="kpi-label">Archived</span>
@@ -1287,6 +1294,18 @@ export function SessionsList() {
             <option value="vak">✦ Vakyartha (Assistant)</option>
             <For each={agentsRes() ?? []}>
               {(ag) => ag.id !== "vak" ? <option value={ag.id}>✦ {ag.name}</option> : null}
+            </For>
+          </select>
+          <select
+            value={projectFilter()}
+            onChange={(e) => setProjectFilter(e.currentTarget.value)}
+            aria-label="Filter by project"
+            class="select-agent-filter"
+            style={{ "min-height": "32px", padding: "4px 8px", background: "var(--surface)", border: "1px solid var(--border)", "border-radius": "var(--radius-sm)", color: "var(--text)", font: "inherit" }}
+          >
+            <option value="all">All projects</option>
+            <For each={projectsRes() ?? []}>
+              {(project) => <option value={project.id}>{project.name ?? "Unnamed project"}</option>}
             </For>
           </select>
         </div>
@@ -1330,7 +1349,7 @@ export function SessionsList() {
                   <th>Entries</th>
                   <th>First Activity</th>
                   <th>Last Activity</th>
-                  <th>Scope</th>
+                  <th>Project</th>
                   <th class="actions-col">Actions</th>
                 </tr>
               </thead>
@@ -1369,7 +1388,7 @@ export function SessionsList() {
                             "chip-tone-muted": !isLocal(s),
                           }}
                         >
-                          {isLocal(s) ? "local" : "external"}
+                          {projectName(s.space_id)}
                         </span>
                       </td>
                       <td class="actions-col" onClick={(e) => e.stopPropagation()}>

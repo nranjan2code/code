@@ -22,9 +22,9 @@ the conversation that made it:
 
 | What exists | Where | Scope today |
 |---|---|---|
-| Run outputs | `WorkbenchPanel.tsx`, `sessionWorkbenchMap`; `ArtifactGenerated` events in `<Agent home>/sandbox/executions/<session>.jsonl`, from `write`, `edit`, `office_apply` and files a command created or changed | the open conversation |
+| Run outputs | `WorkbenchPanel.tsx`, `sessionWorkbenchMap`; `ArtifactGenerated` events in the `<Agent home>/sandbox/executions/<session>` record chain, from `write`, `edit`, `office_apply` and files a command created or changed | the open conversation |
 | The viewer | `ArtifactCanvas.tsx`, `canvasStack.ts`; identity in `canvasSubject.ts` | per conversation, eight tabs |
-| Drafts, versions, comments, revisions, promotions, undo | `vak-sandbox` `DurableRecord` in `sandbox/records.jsonl` under the server's own Core home (`sandbox_records_path`), which is the built-in Agent's, so one file holds every Agent's records; comments are `CandidateComment` activities in the session ledger | read per session (`/sessions/{id}/sandbox/records`) |
+| Drafts, versions, comments, revisions, promotions, undo | `vak-sandbox` `DurableRecord` in the `sandbox/records` record chain under the server's own Core home (`sandbox_records_path`), which is the built-in Agent's, so one file holds every Agent's records; comments are `CandidateComment` activities in the session ledger | read per session (`/sessions/{id}/sandbox/records`) |
 | Version numbers | `DraftVersions` (`vak-server/src/projection.rs`), `draftVersions.ts`, `candidateVersions.ts` | per execution: versions of one result are alternatives, and accepting one settles the round |
 | Name, description, draft/accepted/in-folder state | `ArtifactRef` (`vak-delivery`), projected by the server from the durable records | one card |
 | "This draft is the result, for Review" | `Tool::delivered_file` | `office_apply` only |
@@ -306,7 +306,7 @@ Volume control is the design. The rules:
    workspaces the viewer is admitted to (invariant 37), resolved through
    the same admission and trust checks as conversations. Records are
    filtered by the Agent named in their session's header, never by which
-   file they were read from, because one `records.jsonl` holds every
+   file they were read from, because one `sandbox/records` chain holds every
    Agent's records (§0). The Library never builds on the unfiltered
    `GET /sandbox/records`. In L1 the viewer is the owner; a coworking
    participant (doc 69) has no Library.
@@ -558,9 +558,8 @@ invitation token never reaches it (doc 69).
 
 ### 9.2 What M3b discards
 
-M3b removes every Vak-owned data root and refuses state from before the
-data baseline (plan §1, L3)
-(invariant 29). Derived keys, glimpses, the declarations table, artifact
+M3b removed every Vak-owned data root and refuses state from before the
+data baseline (plan §1, L3; invariant 29); it is done as of 2026-10-05. Derived keys, glimpses, the declarations table, artifact
 attachments in L1/L2 ledgers and any link a person saved to a Library entry
 do not survive it, and nothing maps them forward. L1 and L2 are worth
 building before M3b for what they teach (§9.3), all of which carries

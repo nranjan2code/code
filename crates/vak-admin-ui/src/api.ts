@@ -313,11 +313,14 @@ export const api = {
       body: JSON.stringify({ workspace }),
     }).then((r) => handle(r)),
 
-  patchWorkspaceName: (path: string, name: string): Promise<{ path: string; name: string }> =>
-    fetch("/admin/api/workspaces/name", {
+  projects: (): Promise<{ projects: Project[] }> =>
+    fetch("/admin/api/projects").then((r) => handle(r)),
+
+  patchProject: (id: string, patch: { name?: string; hidden?: boolean }): Promise<{ id: string }> =>
+    fetch(`/admin/api/projects/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path, name }),
+      body: JSON.stringify(patch),
     }).then((r) => handle(r)),
 
   patchGatewayBinding: (target: string, route: { provider?: string; model?: string }): Promise<void> =>
@@ -1065,4 +1068,15 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ verdict, note, agent }),
     }).then((r) => handle<void>(r)),
+};
+
+/** One project (a space) as Configure › Projects lists it. */
+export type Project = {
+  id: string;
+  name: string | null;
+  folder: string | null;
+  folder_here: boolean;
+  trusted: boolean;
+  hidden: boolean;
+  last_opened: number | null;
 };

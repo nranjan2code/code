@@ -259,7 +259,7 @@
   <div class="wrap masthead-inner">
     <p class="eyebrow">Write Paths &amp; Growth · v3.5.1</p>
     <h1>What vak writes, why, and how it holds up as history grows</h1>
-    <p class="lede">Historical measurement from the v3.5.1 workspace, retained for comparison with the data architecture plan. It traces the session ledger, checkpoints, evidence ledgers and search index as they existed then. Figures marked <i>measured</i> came from a development data home; they are not current capacity estimates. Recheck the current storage code and remeasure before sizing a deployment.</p>
+    <p class="lede">Historical measurement from the v3.5.1 workspace, retained for comparison with the data architecture plan. It traces the session ledger, checkpoints, evidence ledgers and search index as they existed then. Figures marked <i>measured</i> came from a development data home; they are not current capacity estimates. Recheck the current storage code and remeasure before sizing a deployment. Since the 7.0 data baseline, ledgers are record segments with group commit, large payloads are encrypted tenant objects, and a turn's cost is held by tests (<code>bytes_per_turn_budget</code>, <code>fsyncs_per_turn_budget</code>: about 6&nbsp;KB and 6 syncs per turn); the layout is in docs/design/46 and 73. A growth remeasure on a 7.0 home with real use is still open.</p>
     <div class="meta-row">
       <span class="tag"><span class="swatch sw-ledger"></span>Append-only ledger</span>
       <span class="tag"><span class="swatch sw-rewrite"></span>Atomic rewrite (tmp + rename)</span>

@@ -41,8 +41,9 @@ spill file. A caller with no ledger (a flow node, a scheduled script) passes
 on `vak_tools::bounded`, the same window without the recall hint.
 
 `bash` works in the workspace (or a `cwd` inside it), where the file tools
-work; temp files and caches go to `.vak/scratch/<agent_id>/` (AGENTS.md
-invariant 35).
+work; temp files, caches and drafts go to the space's execution root in
+the runtime directory, `<runtime>/executions/<space>/<agent_id>/`, never the
+project (`vak_config::scope::execution_dir`, AGENTS.md invariant 35).
 
 ## Unsafe policy
 

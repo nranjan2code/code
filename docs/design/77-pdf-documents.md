@@ -61,7 +61,7 @@ A shared draft of a PDF holds each revision's steps. PDF anchors are positions, 
 ## Surfaces
 
 - **`doc_read`** (`crates/vak-tools/src/doc_read.rs`): the Office header contract, then the text view (with `section` as `page:3`, `3-5` or a bookmark title), `summary` or `outline`; `table` is refused, since a PDF has no grid.
-- **`office_apply`** (`crates/vak-tools/src/office_apply.rs`, `crates/vak-tools/src/office_pdf.rs`): a PDF draft in the call's `.vak/scratch/` directory, never the workspace file; the source is checked against `base_digest`.
+- **`office_apply`** (`crates/vak-tools/src/office_apply.rs`, `crates/vak-tools/src/office_pdf.rs`): a PDF draft in the call's execution directory in the runtime root (named `.vak/scratch/…`), never the workspace file; the source is checked against `base_digest`.
 - **Text tools**: `read`, `edit` and `write` refuse a PDF and name `doc_read` and `office_apply`.
 - **Review**: the candidate's review, narrowing and projection endpoints and anchored comments take PDFs (`crates/vak-server/src/lib.rs`), and the lineage keeps a PDF's calls as steps.
 - **Shared drafts**: `crates/vak-server/src/office_workspace.rs`; the client's text view edits a PDF line with `replace_paragraph_text`.

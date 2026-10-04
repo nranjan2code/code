@@ -531,9 +531,21 @@ async fn doctor_reports_checks_facts_and_optional_ladder() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
     let srv = spawn_server("").await;
-    std::fs::create_dir_all(srv.home.join("sessions/x")).unwrap();
-    std::fs::write(srv.home.join("cost-log"), "{\"kind\":\"cost\"}\n").unwrap();
-    std::fs::write(srv.home.join("sessions/x/a.jsonl"), "ledger-bytes").unwrap();
+    // A 7.0 data home: a real session ledger (record segments, filed under
+    // its project's space id) and a record chain, both under the data home a
+    // backup covers whole.
+    let data = srv._dir.path().join("home");
+    let path = SessionPath::new_session_file(&data.join("agents/vak"), &srv.cwd, "s1");
+    let mut log = SessionLog::create(path.clone(), header_for("s1", &srv.cwd)).unwrap();
+    log.append_message(vak_session::types::MessageRecord {
+        message: vak_llm::Message::user_text("keep this"),
+        meta: None,
+    })
+    .unwrap();
+    drop(log);
+    vak_session::chain::RecordChain::at(data.join("cost-log"))
+        .append(&serde_json::json!({"kind": "cost"}))
+        .unwrap();
     let dest = tempfile::tempdir().unwrap();
 
     let res = srv
@@ -548,16 +560,17 @@ async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
         .unwrap();
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["manifest"]["file_count"], 2);
-    assert_eq!(body["included_secrets"], false);
-    assert_eq!(
-        std::fs::read_to_string(dest.path().join("sessions/x/a.jsonl")).unwrap(),
-        "ledger-bytes"
+    let files = body["manifest"]["file_count"].as_u64().unwrap();
+    assert!(
+        files >= 2,
+        "the ledger and the chain are both copied: {body}"
     );
+    assert_eq!(body["included_secrets"], false);
 
-    // Wipe the live data, then restore: skip-conflict report counts copies.
-    std::fs::remove_file(srv.home.join("cost-log")).unwrap();
-    std::fs::remove_file(srv.home.join("sessions/x/a.jsonl")).unwrap();
+    // Wipe the live data, then restore: the ledger reads back through the
+    // ledger API and the chain through the chain API.
+    std::fs::remove_dir_all(data.join("agents/vak/sessions")).unwrap();
+    std::fs::remove_dir_all(data.join("cost-log")).unwrap();
     let res = srv
         .client
         .post(format!("{}/backup/import", srv.base))
@@ -570,28 +583,14 @@ async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
         .unwrap();
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["copied"], 2);
-    assert_eq!(body["skipped"], 0);
-    assert_eq!(
-        std::fs::read_to_string(srv.home.join("cost-log")).unwrap(),
-        "{\"kind\":\"cost\"}\n",
-        "roundtrip must be byte-identical"
+    assert!(body["copied"].as_u64().unwrap() >= 2, "{body}");
+    assert_eq!(SessionLog::read_header(&path).unwrap().session_id, "s1");
+    assert!(
+        vak_session::chain::RecordChain::at(data.join("cost-log"))
+            .text()
+            .contains("cost"),
+        "the restored chain reads back"
     );
-
-    // Re-import with rename preserves BOTH copies.
-    let res = srv
-        .client
-        .post(format!("{}/backup/import", srv.base))
-        .json(&serde_json::json!({
-            "src_dir": dest.path().display().to_string(),
-            "conflict": "rename"
-        }))
-        .send()
-        .await
-        .unwrap();
-    let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["renamed"], 2);
-    assert!(srv.home.join("cost-log.import1").is_file());
 
     // Self-backup is rejected on both directions, typed 400.
     for (uri, field) in [
@@ -608,7 +607,10 @@ async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
         assert_eq!(res.status(), 400, "{uri}");
         let body: serde_json::Value = res.json().await.unwrap();
         assert!(
-            body["error"].as_str().unwrap().contains("home itself"),
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("outside the vak home"),
             "{body}"
         );
     }

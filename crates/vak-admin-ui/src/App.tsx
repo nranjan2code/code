@@ -1,4 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
+import Projects from "./Projects";
 import { api, AuthRequired } from "./api";
 import { headlessAuth } from "./headlessAuth";
 import { pendingRecoveryCodes, setPendingRecoveryCodes } from "./ownerRecovery";
@@ -3359,33 +3360,6 @@ Nothing has run here yet, so this path isn’t checked until the first message a
   );
 }
 
-function WorkspaceNames(props: { ctx: GatewayCtx }) {
-  const [editing, setEditing] = createSignal<string | null>(null);
-  const [draft, setDraft] = createSignal("");
-  const [saving, setSaving] = createSignal(false);
-  const entries = () => props.ctx.status()?.workspace_catalog ?? [];
-  const begin = (entry: { path: string; name: string }) => { setEditing(entry.path); setDraft(entry.name); };
-  const save = async () => {
-    const path = editing();
-    const name = draft().trim();
-    if (!path || !name || saving()) return;
-    setSaving(true);
-    try {
-      await api.patchWorkspaceName(path, name);
-      await props.ctx.refresh();
-      pushToast("info", `Workspace renamed to “${name}”`);
-      setEditing(null);
-    } catch (error) { pushToast("alert", `Could not rename workspace: ${error}`); }
-    finally { setSaving(false); }
-  };
-  return <section class="workspace-names">
-    <div class="panel-title-row"><div><h3>Workspace names</h3><p class="dim">Names are shared across the account. The canonical path remains the security identity.</p></div></div>
-    <Show when={entries().length > 0} fallback={<p class="dim">No workspaces have been discovered yet.</p>}>
-      <For each={entries()}>{(entry) => <div class="workspace-name-row"><div><strong>{entry.name}</strong><span class="mono dim">{entry.path}</span></div><Show when={editing() !== entry.path} fallback={<div class="workspace-name-edit"><input value={draft()} onInput={(e) => setDraft(e.currentTarget.value)} /><button class="small" disabled={!draft().trim() || saving()} onClick={() => void save()}>{saving() ? "Saving…" : "Save"}</button><button class="ghost small" onClick={() => setEditing(null)}>Cancel</button></div>}><button class="ghost small" onClick={() => begin(entry)}>Rename</button></Show></div>}</For>
-    </Show>
-  </section>;
-}
-
 function GatewayBindingEditor(props: {
   binding: GatewayBinding;
   providers: ProviderSummary[];
@@ -5165,8 +5139,6 @@ function GatewayHealthView(props: { ctx: GatewayCtx }) {
           </button>
         </div>
       </section>
-
-      <section class="panel" style="margin-top:14px"><WorkspaceNames ctx={props.ctx} /></section>
 
       <section class="panel" style="margin-top:14px">
         <div class="panel-title-row">
@@ -7512,6 +7484,7 @@ const NAV: NavItem[] = [
     children: GATEWAY_TABS,
     activeChild: gatewayTab,
   },
+  { group: "Configure", hash: "#/projects", label: "Projects", icon: ICONS.projects, scope: "global" },
   { group: "Configure", hash: "#/security", label: "Security status", icon: ICONS.security, scope: "global" },
   { group: "Configure", hash: "#/prompts", label: "Prompts", icon: ICONS.prompts, scope: "layered" },
   {
@@ -8362,6 +8335,7 @@ export default function App() {
               <Match when={currentRoute() === "#/search"}><SearchView /></Match>
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>
               <Match when={currentRoute() === "#/finops"}><FinOpsView /></Match>
+              <Match when={currentRoute() === "#/projects"}><Projects /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
               <Match when={currentRoute() === "#/prompts"}><PromptsPage /></Match>
               <Match when={currentRoute() === "#/settings"}><Settings /></Match>

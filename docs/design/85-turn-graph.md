@@ -116,7 +116,7 @@ belongs to by id, never by position in the file. Audited at `0ab1e4ffb`:
 | Plugin invocation | an Activity row's `plugin` (no separate log since 2026-10-04) | yes | yes | `activity-log` |
 | Child run | child session `child-{uuid}-{seq}` | — | yes, `Cause::Delegation { tool_use_id }` | **empty** when the call has no sandbox sink |
 | Commitment, episode | yes | **no**: an episode names only its session | no | |
-| File effect | none; path only | no | yes, `execution_id` = call id | `ArtifactGenerated` in `sandbox/executions/{session}.jsonl`, written under the server Core's Agent home (D25); no content digest; reads are not recorded; typed `ArtifactId` unused |
+| File effect | none; path only | no | yes, `execution_id` = call id | `ArtifactGenerated` in the `sandbox/executions/{session}` record chain, in the session's Agent home (D25 fixed in M3b slice 3); no content digest; reads are not recorded; typed `ArtifactId` unused |
 | MCP call | the `mcp` call's `tool_use_id` | by position | — | which server, server version and tool schema answered is **not recorded** |
 | Per-turn run (`RunId`, `TraceKey`) | yes, minted each run | **`TraceKey.turn` is never set** | spans per call | carried to side ledgers (commitments, misread, FinOps, hooks, outbox) but **not written to the session ledger**; the only join back is `request_id`, when the surface supplied one |
 | Delivery / outbox | `job_id` | via trace, when present | no | typed `DeliveryId` unused |

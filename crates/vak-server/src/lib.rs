@@ -7926,12 +7926,7 @@ mod active_transcript_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(sessions_home.clone()));
         let state = AppState::new(core.clone());
         let id = "active-transcript";
-        let path = vak_config::scope::session_ledger(
-            &sessions_home
-                .join("sessions")
-                .join(vak_config::spaces::key(core.cwd())),
-            id,
-        );
+        let path = core.scope().session_file(core.cwd(), id);
         let mut log = vak_session::SessionLog::create(
             path,
             vak_session::types::SessionHeader {
@@ -8908,14 +8903,6 @@ fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog
         }
     }
     let shared = core.shared_scope().into_root();
-    if let Ok(entries) = std::fs::read_dir(shared.join("sessions")) {
-        for entry in entries.flatten() {
-            let candidate = vak_config::scope::session_ledger(&entry.path(), id);
-            if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
-                return Some(s);
-            }
-        }
-    }
     if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
         for agent in agents.flatten() {
             if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
@@ -8969,14 +8956,6 @@ pub(crate) fn read_historical_header(
         }
     }
     let shared = state.core.shared_scope().into_root();
-    if let Ok(entries) = std::fs::read_dir(shared.join("sessions")) {
-        for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
-            let path = vak_config::scope::session_ledger(&project.path(), id);
-            if let Some(header) = read(&path) {
-                return Some(header);
-            }
-        }
-    }
     if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
         for agent in agents.flatten().filter(|entry| entry.path().is_dir()) {
             if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
@@ -9278,25 +9257,18 @@ struct BackupImportBody {
 
 /// Equality under canonicalization when both sides resolve; raw compare as
 /// a fallback for paths that do not exist yet.
-fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(ca), Ok(cb)) => ca == cb,
-        _ => a == b,
-    }
-}
-
 async fn backup_export(
     State(state): State<AppState>,
     Json(body): Json<BackupExportBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.scope().into_root();
+    let home = state.core.shared_scope().into_root();
     let dest = std::path::PathBuf::from(body.dest_dir.trim());
-    if dest.as_os_str().is_empty() || same_path(&dest, &home) {
+    if dest.as_os_str().is_empty() || vak_core::backup::within_home(&dest, &home) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "backup destination must differ from the vak home itself"
+                "error": "a backup destination must be outside the vak home itself"
             })),
         )
             .into_response();
@@ -9332,13 +9304,13 @@ async fn backup_import(
     Json(body): Json<BackupImportBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let home = state.core.scope().into_root();
+    let home = state.core.shared_scope().into_root();
     let src = std::path::PathBuf::from(body.src_dir.trim());
-    if src.as_os_str().is_empty() || same_path(&src, &home) {
+    if src.as_os_str().is_empty() || vak_core::backup::within_home(&src, &home) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "backup source must differ from the vak home itself"
+                "error": "a backup source must be outside the vak home itself"
             })),
         )
             .into_response();

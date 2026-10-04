@@ -166,8 +166,8 @@ pub(crate) fn home() -> PathBuf {
 }
 
 /// Register the service with the platform manager and start it. On macOS
-/// this requires the plist produced by
-/// `scripts/install_gateway_service.sh`; on Linux it enables the unit.
+/// this requires the plist `vak self services-sync` writes; on Linux it
+/// enables the unit.
 pub fn install(service: Service, #[allow(unused_variables)] cfg: &OpsConfig) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

@@ -912,38 +912,60 @@ pub(crate) async fn patch_gateway_workspace(
     .into_response()
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct WorkspaceNamePatch {
-    pub path: String,
-    pub name: String,
+/// Configure › Projects (doc 74 A13): every space this machine knows, with
+/// its folder here, its name and trust. "Project" is the everyday word for
+/// a space (doc 75 §7).
+async fn list_projects() -> Json<serde_json::Value> {
+    let projects: Vec<serde_json::Value> = vak_config::spaces::all()
+        .into_iter()
+        .map(|space| {
+            let name = space.name.clone().or_else(|| {
+                space
+                    .folder
+                    .as_deref()
+                    .and_then(std::path::Path::file_name)
+                    .map(|name| name.to_string_lossy().into_owned())
+            });
+            serde_json::json!({
+                "id": space.id,
+                "name": name,
+                "folder": space.folder,
+                "folder_here": space.folder.as_deref().is_some_and(std::path::Path::is_dir),
+                "trusted": space.folder.as_deref().is_some_and(vak_core::trust::is_trusted),
+                "hidden": space.forgotten,
+                "last_opened": space.last_opened,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "projects": projects }))
 }
 
-async fn patch_workspace_name(
-    State(_): State<AppState>,
-    Json(body): Json<WorkspaceNamePatch>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let path = std::path::PathBuf::from(body.path.trim());
-    if !path.is_absolute() || !path.is_dir() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "workspace must be an existing absolute directory".into(),
-        ));
+#[derive(Debug, Deserialize)]
+pub(crate) struct ProjectPatch {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub hidden: Option<bool>,
+}
+
+async fn patch_project(
+    Path(id): Path<String>,
+    Json(body): Json<ProjectPatch>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if let Some(name) = body.name.as_deref() {
+        let name = name.trim();
+        if name.is_empty() || name.len() > 80 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "a project name is 1–80 characters".into(),
+            ));
+        }
+        vak_config::spaces::rename(&id, name).map_err(|e| (StatusCode::NOT_FOUND, e))?;
     }
-    let name = body.name.trim();
-    if name.is_empty() || name.len() > 80 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "workspace name must be 1–80 characters".into(),
-        ));
+    if let Some(hidden) = body.hidden {
+        vak_config::spaces::set_forgotten(&id, hidden).map_err(|e| (StatusCode::NOT_FOUND, e))?;
     }
-    let key = path.to_string_lossy().to_string();
-    vak_config::spaces::set_name(&path, name).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("could not name the workspace: {e}"),
-        )
-    })?;
-    Ok(Json(serde_json::json!({ "path": key, "name": name })))
+    Ok(Json(serde_json::json!({ "id": id })))
 }
 
 /// The workspaces the console offers: the default, the gateway's own, the
@@ -1688,7 +1710,8 @@ pub(crate) fn routes() -> axum::Router<AppState> {
             "/admin/api/gateway/workspace",
             axum::routing::patch(patch_gateway_workspace),
         )
-        .route("/admin/api/workspaces/name", patch(patch_workspace_name))
+        .route("/admin/api/projects", get(list_projects))
+        .route("/admin/api/projects/{id}", patch(patch_project))
         .route(
             "/admin/api/gateway/bindings/{key}",
             patch(patch_gateway_binding).delete(delete_gateway_binding_admin),

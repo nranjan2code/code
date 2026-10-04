@@ -268,7 +268,7 @@ echo "  parses"
 
 echo "--- purge leaves nothing ---"
 "$PREFIX/bin/vak" self uninstall --yes --purge --prefix "$PREFIX" >/dev/null
-for leftover in "$VAK_HOME/sessions" "$VAK_HOME/vak-home/.vak/config.toml"; do
+for leftover in "$VAK_HOME/tenants" "$VAK_HOME/agents" "$VAK_HOME/runtime" "$VAK_HOME/vak-home/.vak/config.toml"; do
     if [ -e "$leftover" ]; then
         echo "FAIL: $leftover survived a purge"
         exit 1

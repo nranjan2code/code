@@ -45,8 +45,9 @@ sessions and pending challenges. Session expiry is enforced server-side.
 
 ## Storage and request rules
 
-The owner record lives under the canonical data home and is registered in
-`vak_core::state::REGISTRY` for backup and purge. It contains a stable owner
+The owner record lives in the tenant tree, `tenants/<tenant>/auth/owner.json`
+under the data home, and is registered in `vak_core::state::REGISTRY` for
+backup and purge (Desired class). It contains a stable owner
 id, serialized public-key credentials, and hashes of recovery codes. Writes
 are atomic, mode 0600 on Unix, and protected by an OS file lock. Concurrent
 processes serving the same data home serialize enrollment and recovery writes.

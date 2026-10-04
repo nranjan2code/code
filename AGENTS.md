@@ -718,9 +718,9 @@ in progress, and the rest of V4 follows it.
     detail views stop at the raw session ledger, provider work receipts, durable
     outbox records, incident evidence, or manager state. Incident fingerprints
     reconcile open, resolved, and reopened records in
-    `<sessions_home>/operations/incidents.jsonl`; service and delivery actions
+    the `operations/incidents` record chain; service and delivery actions
     append before/after verification receipts to
-    `<sessions_home>/operations/actions.jsonl`. Blocking service probes such
+    the `operations/actions` chain. Blocking service probes such
     as `reqwest::blocking` must run on a blocking worker, never inside an async
     request handler. Desktop and tray Operations Center links use the same
     bound listener port and bearer/cookie authentication as the admin console.

@@ -1,9 +1,22 @@
 ## Unreleased
 
-- Begin the 7.0 data baseline (data-architecture M3b). A data home written
-  by 6.x or earlier is refused with one message; run
+- The 7.0 data baseline (data-architecture M3b). A data home written by
+  6.x or earlier is refused with one message; run
   `vak self uninstall --purge`, then install and run setup. No 6.x data
-  crosses the baseline, and 6.x fixes ship from `release/6`.
+  crosses the baseline, and there is no 6.x maintenance line.
+- Conversations are kept as segmented, hash-chained records written with
+  group commit (about 6 KB and 6 syncs per turn); large payloads and
+  Agent memory, entities, skill proposals, Office rooms and presentations
+  are encrypted objects and versioned Documents in the tenant store.
+- Every project gets a lasting id, so its history, secrets, trust, schedules
+  and channel settings follow the project rather than a folder path. A new
+  Configure › Projects screen in the admin console names, hides and shows
+  projects, and the session view groups conversations by project.
+- Nothing Vakyartha needs at runtime is written into your project folder:
+  temp files, caches, drafts, Agent workspaces and run environments live
+  in the data home and runtime directory.
+- Backups say plainly when encrypted history and memory can be restored
+  only on this machine.
 
 ## 6.0.0 — 2026-10-03
 

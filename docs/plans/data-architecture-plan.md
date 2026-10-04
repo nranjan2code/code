@@ -667,8 +667,29 @@ Each item is keyed by space id in this slice:
 - `/workspaces`, the desktop trust gate
 - `[server] workspace_roots`
 
-**Slice 6 — docs, site, scripts, services**
+**Slice 6 — docs, site, scripts, services** — in progress (2026-10-05).
 - Every item in blast-radius M3b slice 6. Then release 7.0.0.
+
+Done so far: the everyday word for a Space is **Project** (doc 75 §7,
+decided by the maintainer); Configure › Projects lists, names, hides and
+shows projects by id (`/admin/api/projects`), replacing the workspace-names
+section and its endpoint; session forensics groups by project. The exit
+test `secret_scopes_keyed_by_id` exists. `scripts/install_gateway_service.sh`,
+a second service installer reading a plaintext `.env`, is deleted
+(`vak self services-sync` is the one way); `linux-stack.sh` reads the
+gateway token through `vak open admin --print`; `linux-check.sh` checks the
+7.0 roots after a purge. Backups now cover the data home (they had been
+exporting one Agent's home, against a registry relative to the data home,
+and so copied nothing), refuse a destination inside it
+(`backup::within_home`), and record whether the tenant keys travel
+(`content_keys_included`). The registry's top-level `sessions` entry and
+the server's scans of it, a 6.x location, are gone. Docs 02, 04, 22, 28,
+29, 33, 39, 46 (the layout table, now pointing at the registry), 72, 77,
+78, 82 and 85 and AGENTS.md describe the 7.0 layout; CHANGELOG has the 7.0
+entry; the site needed no change. `docs/architecture/write-paths-and-growth.html`
+stays a dated v3.5.1 measurement with a 7.0 note: a growth remeasure needs
+a 7.0 home with real use. Left: the live dev run, then the release (7.0.0,
+or a relabel the maintainer is weighing).
 
 **Screens**
 - Admin: Spaces (A13), with the word settled in doc 75 (L11).

@@ -42,6 +42,14 @@ pub struct BackupManifest {
     /// use (docs/design/44-shared-config.md, "Secrets Chain").
     #[serde(default)]
     pub secrets_copied: bool,
+    /// Whether the tenant keys that decrypt the backed-up object store
+    /// (ledger payloads, Agent memory and other Documents) travel with this
+    /// backup. They live in the credential store, so they do only when
+    /// secrets were included from a host using the encrypted-file backend;
+    /// otherwise the store restores only on a machine that holds them (this
+    /// one). Interim until erasure and restore epochs (plan M7a, M9).
+    #[serde(default)]
+    pub content_keys_included: bool,
 }
 
 impl Default for BackupManifest {
@@ -52,6 +60,7 @@ impl Default for BackupManifest {
             file_count: 0,
             total_bytes: 0,
             secrets_copied: false,
+            content_keys_included: false,
         }
     }
 }
@@ -112,6 +121,32 @@ fn list_files(root: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Whether `dir` is the data home `home` or inside it: a backup there would
+/// copy into its own source, and a restore from there would read what it
+/// writes. A `dir` that does not exist yet is judged by its nearest existing
+/// ancestor, so a fresh destination cannot slip past the check.
+pub fn within_home(dir: &Path, home: &Path) -> bool {
+    let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    let mut existing = dir;
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        let Some(parent) = existing.parent() else {
+            break;
+        };
+        if let Some(name) = existing.file_name() {
+            rest.push(name.to_os_string());
+        }
+        existing = parent;
+    }
+    let mut resolved = existing
+        .canonicalize()
+        .unwrap_or_else(|_| existing.to_path_buf());
+    for name in rest.into_iter().rev() {
+        resolved.push(name);
+    }
+    resolved.starts_with(&home)
+}
+
 /// Export `home` into `dest_dir`, returning the written manifest. Missing
 /// source entries are simply absent from the backup — an empty home yields
 /// a valid, empty backup. The manifest itself is not counted in its own
@@ -169,6 +204,7 @@ pub fn export_to(
         // Manager/Secret Service backend — its secrets live outside this
         // directory and this backup simply doesn't cover them.
         manifest.secrets_copied = copied_any;
+        manifest.content_keys_included = copied_any;
         if copied_any {
             std::fs::write(
                 dest_dir.join(WARNING_FILE),
@@ -283,7 +319,7 @@ mod tests {
 
     fn seed_home(home: &Path) {
         for rel in [
-            "sessions/abc123/ledger.jsonl",
+            "agents/vak/sessions/spc_test/s1/seg-00000001.log",
             "tenants/t1/store/refs.db",
             "checkpoints/s1/000.json",
             "tenants/t1/keys/revoked",
@@ -309,7 +345,7 @@ mod tests {
         assert_eq!(manifest.version, 1);
         assert_eq!(manifest.file_count, 9);
         let expected_bytes: u64 = [
-            "sessions/abc123/ledger.jsonl",
+            "agents/vak/sessions/spc_test/s1/seg-00000001.log",
             "tenants/t1/store/refs.db",
             "checkpoints/s1/000.json",
             "tenants/t1/keys/revoked",
@@ -331,7 +367,7 @@ mod tests {
         assert_eq!(report.skipped, 0);
         assert_eq!(report.renamed, 0);
         for rel in [
-            "sessions/abc123/ledger.jsonl",
+            "agents/vak/sessions/spc_test/s1/seg-00000001.log",
             "cost-log",
             "desktop.json",
             "tenants/t1/store/refs.db",
@@ -348,14 +384,14 @@ mod tests {
     fn import_skip_never_touches_existing_data() {
         let dest = tempdir().unwrap();
         std::fs::write(dest.path().join("cost-log"), "{\"seed\":true}\n").unwrap();
-        std::fs::create_dir_all(dest.path().join("sessions/x")).unwrap();
-        std::fs::write(dest.path().join("sessions/x/keep.jsonl"), "keep").unwrap();
+        std::fs::create_dir_all(dest.path().join("agents/vak/sessions/x")).unwrap();
+        std::fs::write(dest.path().join("agents/vak/sessions/x/keep.log"), "keep").unwrap();
 
         let home = tempdir().unwrap();
         std::fs::write(home.path().join("cost-log"), "{\"new\":1}\n").unwrap();
-        let s = home.path().join("sessions/x");
+        let s = home.path().join("agents/vak/sessions/x");
         std::fs::create_dir_all(&s).unwrap();
-        std::fs::write(s.join("keep.jsonl"), "REPLACEMENT-attempt").unwrap();
+        std::fs::write(s.join("keep.log"), "REPLACEMENT-attempt").unwrap();
 
         let report = import_from(dest.path(), home.path(), Conflict::Skip).unwrap();
         assert_eq!(report.skipped, 2);
@@ -366,7 +402,7 @@ mod tests {
             "existing file must win under Skip"
         );
         assert_eq!(
-            std::fs::read_to_string(home.path().join("sessions/x/keep.jsonl")).unwrap(),
+            std::fs::read_to_string(home.path().join("agents/vak/sessions/x/keep.log")).unwrap(),
             "REPLACEMENT-attempt",
             "Skip leaves the pre-existing home copy standing"
         );

@@ -328,8 +328,9 @@ and workspace-scope enforcement as desktop and gateway clients.
 
 The Operations Center's mutation contract is deliberately auditable. Service
 actions and delivery replays return a receipt id plus before/after verification
-and append the receipt to `operations/actions.jsonl`. Current probe candidates
-are folded into `operations/incidents.jsonl`, where repeated observations are
+and append the receipt to the `operations/actions` record chain. Current probe
+candidates are folded into the `operations/incidents` chain, where repeated
+observations are
 grouped by fingerprint, disappearance records resolution, and reappearance
 reopens the same incident. The Admin UI displays both ledgers and links them
 back to the affected run, binding, or outbox record.

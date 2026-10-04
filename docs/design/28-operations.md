@@ -184,7 +184,7 @@ and the durable delivery outbox. Incidents are derived only from those
 sources: failed checks, blocked approvals, service drift, or pending/dead
 delivery jobs. An unreadable outbox is itself a critical incident rather than
 an empty queue. The incident projection is reconciled into the append-only
-`<sessions_home>/operations/incidents.jsonl` ledger: repeated observations
+`operations/incidents` record chain: repeated observations
 are grouped by fingerprint, disappearance records a resolution, and a later
 reappearance reopens the same causal record. `GET /ops/incidents` exposes the
 folded history for audit consumers.
@@ -199,7 +199,7 @@ starts a competing supervisor.
 Every mutating operations endpoint returns an operation receipt with a
 stable id, before/after manager or outbox state, and an explicit
 `verified`/`pending`/`failed` verification result. Receipts are also appended
-to `<sessions_home>/operations/actions.jsonl` and surfaced in the center;
+to the `operations/actions` record chain and surfaced in the center;
 they remain useful when a manager accepts a request but takes time to reach
 the target state.
 

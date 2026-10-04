@@ -247,6 +247,47 @@ pub fn set_name(path: &Path, name: &str) -> Result<String, String> {
     change(path, |space| space.name = Some(name))
 }
 
+/// Change the space `id` under the registry lock. A space not in the
+/// registry is an error; nothing is created.
+fn change_id(id: &str, apply: impl FnOnce(&mut Space)) -> Result<(), String> {
+    let registry_file = registry_path();
+    let dir = registry_file
+        .parent()
+        .ok_or("space registry has no directory")?;
+    std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("spaces.lock"))
+        .map_err(|error| error.to_string())?;
+    lock.lock().map_err(|error| error.to_string())?;
+    let mut registry = load(&registry_file)?;
+    let space = registry
+        .spaces
+        .get_mut(id)
+        .ok_or_else(|| format!("no project {id}"))?;
+    apply(space);
+    let text = toml::to_string(&registry).map_err(|error| error.to_string())?;
+    let temp = dir.join(format!("spaces.toml.{}", std::process::id()));
+    let mut file = std::fs::File::create(&temp).map_err(|error| error.to_string())?;
+    file.write_all(text.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|error| error.to_string())?;
+    std::fs::rename(&temp, &registry_file).map_err(|error| error.to_string())
+}
+
+/// Name the space `id`.
+pub fn rename(id: &str, name: &str) -> Result<(), String> {
+    let name = name.to_string();
+    change_id(id, |space| space.name = Some(name))
+}
+
+/// Hide the space `id` from the lists surfaces offer, or show it again.
+pub fn set_forgotten(id: &str, forgotten: bool) -> Result<(), String> {
+    change_id(id, |space| space.forgotten = forgotten)
+}
+
 /// Every space in the registry, the most recently opened first.
 pub fn all() -> Vec<SpaceRecord> {
     let Ok(registry) = load(&registry_path()) else {

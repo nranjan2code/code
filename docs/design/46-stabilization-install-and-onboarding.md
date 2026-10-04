@@ -644,25 +644,29 @@ pub struct StateEntry {
 }
 ```
 
-Declared from what actually exists today (verified on disk, 2026-09-02):
+The 7.0 layout, summarised; the authority is `vak_core::state::REGISTRY`,
+whose entries carry the data class (doc 73 §5) that decides update, backup
+and purge behaviour:
 
-| Location | Contents | Kind | On update | On purge |
-|---|---|---|---|---|
-| `data_home()/sessions/` | append-only session JSONL | Ledger | untouched | remove |
-| `data_home()/gateway/` | `allowlist.json`, `bindings.json`, `bots.json`, `default-workspace` | Config | additive-only | remove |
-| `data_home()/operations/` | `incidents.jsonl`, `actions.jsonl` | Ledger | untouched | remove |
-| `data_home()/agent-network/` | inter-agent state | Config | additive-only | remove |
-| `data_home()/security-events.jsonl` | audit log | Ledger | untouched | remove |
-| `data_home()/memory/`, `checkpoints/`, `skill-proposals/`, `trusted/` | user state | Ledger/Config | untouched | remove |
-| `data_home()/cost-log.jsonl`, `routing-evidence.jsonl`, `tasks.json`, `desktop.json` | ledgers + task config | Ledger/Config | additive-only | remove |
-| `data_home()/agents/<agent>/…` | each Agent's sessions, checkpoints, memory, entities, skill proposals, skills, evidence ledgers, presentation packs, flow runs, sandbox records, Office rooms and coworking grants, one entry per subpath | Ledger/Document/Config | untouched (config: additive-only) | remove |
-| `data_home()/locks/` | runtime locks | Derived | rebuilt | remove |
-| `cache_home()` | FTS index, WAL sidecars | Cache | rebuilt | remove |
-| `~/vak-home/.vak/config.toml` | **Shared config layer** | Config | additive-only | remove |
-| `~/vak-home/.env` | **canonical secrets** | Secret | untouched | remove |
-| `~/vak-home/.vak/skills/`, `plugins/` | seeded + installed capabilities | Config | seed-delta only | remove |
-| `<prefix>/…/install.json` | install manifest | Config | rewritten by design | remove |
-| `<workspace>/.vak/`, `<workspace>/.env` | project layer in other repos | Config/Secret | untouched | **preserve** |
+| Location | Contents | Class | On purge |
+|---|---|---|---|
+| `data_home()/tenants/<tenant>/store/` | objects (large ledger payloads, Document versions) and the refs naming each Document's head | Object | remove |
+| `data_home()/tenants/<tenant>/keys/`, `auth/` | key revocations; owner passkeys and recovery digests | Desired | remove |
+| `data_home()/tenants/<tenant>/spaces.toml` | each space's id, name and this machine's folder bindings | Desired | remove |
+| `data_home()/tenants/<tenant>/workspaces/`, `environments/` | non-built-in Agents' workspaces; run environments | Workspace | remove |
+| `data_home()/tenants/<tenant>/feeds/`, `feeds.toml` | feed state and configuration | Record/Desired | remove |
+| `data_home()/agents/<agent>/…` | each Agent's session ledgers (record segments, by space id), checkpoints, activity, evidence and sandbox records, execution streams, coworking grants, one entry per subpath | Record | remove |
+| `data_home()/gateway/` | `allowlist.json`, `bindings.json`, `bots.json`, `default-workspace` (a space id), the deliveries chain | Desired/Record | remove |
+| `data_home()/operations/`, `security-events/`, `cost-log/`, `inbox/` | record chains | Record | remove |
+| `data_home()/tasks.json`, `trusted/` | scheduled tasks (by space); trust markers (by space id) | Desired | remove |
+| `runtime_dir()` | locks, sockets, execution temp files, caches and drafts | Ephemeral | remove |
+| `cache_home()` | FTS index, WAL sidecars | Derived | remove |
+| `~/vak-home/.vak/config.toml`, `skills/`, `plugins/` | Shared config layer and installed capabilities | Desired | remove |
+| `<prefix>/…/install.json` | install manifest | Desired | remove |
+| `<workspace>/.vak/` | the project layer: intent only, no runtime state | Desired | **preserve** |
+
+Secrets are never a file in these trees: they live in the credential store
+(invariants 8 and 27).
 
 Two enforcement tests, both cheap and both load-bearing:
 

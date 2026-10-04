@@ -278,14 +278,6 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     // ---- ledgers: append-only, never rewritten by an update ----
-    StateEntry {
-        path: "sessions",
-        root: Root::Data,
-        owner: "vak-session",
-        schema: None,
-        class: Class::Record,
-        on_purge: OnPurge::Remove,
-    },
     // ---- the tenant tree (docs/design/73 §6) ----
     StateEntry {
         path: "tenants/{tenant}/store",
@@ -823,10 +815,10 @@ mod tests {
 
     #[test]
     fn a_directory_entry_covers_what_is_inside_it() {
-        let sessions = REGISTRY.iter().find(|e| e.path == "sessions").unwrap();
-        assert!(sessions.matches(Path::new("sessions")));
-        assert!(sessions.matches(Path::new("sessions/abc/def.jsonl")));
-        assert!(!sessions.matches(Path::new("sessions-other")));
+        let costs = REGISTRY.iter().find(|e| e.path == "cost-log").unwrap();
+        assert!(costs.matches(Path::new("cost-log")));
+        assert!(costs.matches(Path::new("cost-log/seg-00000001.log")));
+        assert!(!costs.matches(Path::new("cost-log-other")));
     }
 
     #[test]
@@ -891,7 +883,7 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            find("sessions").expand(home.path()),
+            find("cost-log").expand(home.path()),
             Vec::<PathBuf>::new(),
             "an absent plain entry expands to nothing"
         );
@@ -1060,7 +1052,7 @@ mod tests {
 
     #[test]
     fn an_undeclared_path_is_reported_as_undeclared() {
-        assert!(is_declared(Root::Data, Path::new("sessions/x.jsonl")));
+        assert!(is_declared(Root::Data, Path::new("agents/vak/sessions/x")));
         assert!(!is_declared(
             Root::Data,
             Path::new("something-nobody-declared.json")

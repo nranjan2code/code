@@ -356,11 +356,11 @@ directly.
 one tool writes is the file the next one reads (AGENTS.md invariant 35). What a
 command leaves behind as runtime state stays out of the project tree:
 
-- Temp files (`TMPDIR`) go to `<workspace>/.vak/scratch/<agent_id>/<execution-id>/tmp`;
+- Temp files (`TMPDIR`) go to `<runtime>/executions/<space>/<agent_id>/<execution-id>/tmp`;
   tool caches and bytecode (`XDG_CACHE_HOME`, `PYTHONPYCACHEPREFIX`, pip and
-  npm caches) to `<workspace>/.vak/scratch/<agent_id>/cache`.
-- The `.vak/` directory is gitignored by default, so runtime state never
-  pollutes the user's git status.
+  npm caches) to `<runtime>/executions/<space>/<agent_id>/cache`
+  (`vak_config::scope::execution_dir`), outside the project, so runtime state
+  never appears in the user's git status.
 - Files a command creates or changes in the workspace are the work itself and
   are reported to the Workbench as artifacts.
 

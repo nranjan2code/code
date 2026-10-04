@@ -1767,13 +1767,13 @@ a.tab-btn {
 .scope-agent-search { min-height: 30px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; }
 .scope-agent-search::placeholder { color: var(--faint); }
 .sidebar-scope .scope-control > span:last-child { display: block; margin: 6px 0 0; font-size: 12px; line-height: 1.35; }
-.workspace-names { display: grid; gap: 10px; }
-.workspace-name-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-soft); }
-.workspace-name-row > div:first-child { display: grid; gap: 3px; min-width: 0; }
-.workspace-name-row .mono { overflow-wrap: anywhere; }
-.workspace-name-edit { display: flex; gap: 6px; align-items: center; }
-.workspace-name-edit input { min-width: 180px; }
-@media (max-width: 680px) { .workspace-name-row, .workspace-name-edit { align-items: stretch; flex-direction: column; } .workspace-name-edit input { min-width: 0; } }
+.project-list { display: grid; gap: 10px; }
+.project-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-soft); }
+.project-row > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.project-row .dim { overflow-wrap: anywhere; }
+.project-edit { display: flex; gap: 6px; align-items: center; }
+.project-edit input { min-width: 180px; }
+@media (max-width: 680px) { .project-row, .project-edit { align-items: stretch; flex-direction: column; } .project-edit input { min-width: 0; } }
 .integration-catalog { display: grid; gap: 9px; margin-top: 12px; }
 .integration-row { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface-raised); }
 .integration-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
