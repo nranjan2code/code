@@ -576,9 +576,15 @@ carries the tenant store whole.
 Step 1 done (2026-10-04): execution temp files and caches live in
 `<runtime>/executions/<space>/<agent>/` (`vak_config::scope::execution_dir`),
 and write sandboxes grant exactly the workspace and that space's execution
-root (`sandbox_writes_only_execution_dir_and_space`). Step 2, decided by
-the maintainer on 2026-10-04: drafts and frozen candidates move there too,
-with a scoped exception to invariant 10. Its design:
+root (`sandbox_writes_only_execution_dir_and_space`). Step 2 done
+(2026-10-04, decided by the maintainer the same day): drafts and frozen
+candidates live there too, still named `.vak/scratch/<agent>/<execution>/…`
+(`draft_location`, `vak_tools::drafts`), with a scoped exception to
+invariant 10 (`drafts_live_outside_the_project`,
+`another_agents_drafts_are_unreachable`); the Review flow has not yet been
+checked live in a browser. Left in slice 4: the Agent workspace move to
+`workspaces/<spc>/<agt>/`, worktree environments, the remaining `.vak`
+literals and the client's `.vak/scratch` directory check. Step 2's design:
 - A draft is addressed relative to its execution root
   (`<execution>/<workspace path>` under `execution_dir(space, agent)`),
   never as a `.vak/scratch/…` workspace path; `office_apply::draft_dir`,
