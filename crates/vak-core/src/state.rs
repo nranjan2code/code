@@ -307,6 +307,16 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
+        path: "tenants/{tenant}/environments",
+        root: Root::Data,
+        owner: "vak-config (paths::environment_dir)",
+        schema: None,
+        // One run's worktree, task copy or staging tree, by run id; candidates
+        // are frozen out of it, so it is never the record of the work.
+        class: Class::Workspace,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
         path: "tenants/{tenant}/workspaces",
         root: Root::Data,
         owner: "vak-config (paths::agent_workspace)",

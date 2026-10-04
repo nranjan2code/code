@@ -13108,13 +13108,7 @@ async fn narrow_sandbox_candidate_office(
         Err(reason) => return refuse(StatusCode::CONFLICT, reason),
     };
     let id = uuid::Uuid::now_v7().to_string();
-    let staging = state
-        .core
-        .scope()
-        .into_root()
-        .join("sandbox")
-        .join("staging")
-        .join(&id);
+    let staging = vak_config::paths::environment_dir(&id);
     let prepared = (|| -> Result<std::path::PathBuf, String> {
         for file in &saved.candidate.files {
             if file.operation != vak_sandbox::CandidateOperation::Upsert || file.path == body.path {
@@ -13643,14 +13637,7 @@ async fn dispatch_candidate_revision(
         return (StatusCode::CONFLICT, "Revision request already starting").into_response();
     }
     let revision_id = uuid::Uuid::now_v7().to_string();
-    let task_root = state
-        .core
-        .scope()
-        .into_root()
-        .join("sandbox")
-        .join("revisions")
-        .join(&revision_id)
-        .join("work");
+    let task_root = vak_config::paths::environment_dir(&revision_id).join("work");
     let setup = (|| -> Result<(), String> {
         std::fs::create_dir_all(task_root.parent().ok_or("revision root unavailable")?)
             .map_err(|error| error.to_string())?;

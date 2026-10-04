@@ -231,12 +231,6 @@ impl AgentScope {
         self.root.join("sandbox")
     }
 
-    /// Where a revision copy is staged before it is frozen as a candidate.
-    /// D25, as [`AgentScope::sandbox_records`].
-    pub fn sandbox_staging(&self, id: &str) -> PathBuf {
-        self.sandbox_dir().join("staging").join(id)
-    }
-
     /// Display names the admin console keeps for workspaces.
     pub fn workspace_names(&self) -> PathBuf {
         self.root.join("workspace-names.json")
@@ -459,10 +453,6 @@ impl WorkspaceScope {
         self.root.join(SEED_MANIFEST)
     }
 
-    pub fn worktrees(&self) -> PathBuf {
-        self.project_dir().join("worktrees")
-    }
-
     pub fn env_file(&self) -> PathBuf {
         self.root.join(".env")
     }
@@ -520,7 +510,6 @@ mod tests {
             home.join("sandbox/executions/s1.jsonl")
         );
         assert_eq!(s.coworking_grants(), home.join("coworking/grants.jsonl"));
-        assert_eq!(s.sandbox_staging("x"), home.join("sandbox/staging/x"));
         assert_eq!(s.workspace_names(), home.join("workspace-names.json"));
         assert_eq!(s.output_prefs(), home.join("output.toml"));
         assert_eq!(s.office_workspaces("s1"), home.join("office-workspaces/s1"));
@@ -560,7 +549,6 @@ mod tests {
         assert_eq!(s.flows(), ws.join(".vak/flows"));
         assert_eq!(s.prompts(), ws.join(".vak/prompts"));
         assert_eq!(s.agents_file(), ws.join(".vak/agents.json"));
-        assert_eq!(s.worktrees(), ws.join(".vak/worktrees"));
         assert_eq!(s.output_prefs(), ws.join(".vak/output.toml"));
         assert_eq!(s.feeds_config(), ws.join(".vak/feeds.toml"));
         assert_eq!(

@@ -914,7 +914,6 @@ async fn bestofn_fans_out_keep_and_discard() {
     let runs = body["runs"].as_array().unwrap().clone();
     assert_eq!(runs.len(), 2);
 
-    let wt_root = cwd.join(".vak/worktrees");
     let wait_child = |cid: String| {
         let client = client.clone();
         let base = base.clone();
@@ -941,7 +940,7 @@ async fn bestofn_fans_out_keep_and_discard() {
     }
 
     // Both worktrees exist on disk.
-    assert_eq!(std::fs::read_dir(&wt_root).unwrap().count(), 2);
+    assert_eq!(worktree_count(&cwd), 2);
 
     // Discard one: worktree + branch gone.
     let disc = client
@@ -950,7 +949,7 @@ async fn bestofn_fans_out_keep_and_discard() {
         .await
         .unwrap();
     assert_eq!(disc.status(), 200);
-    assert_eq!(std::fs::read_dir(&wt_root).unwrap().count(), 1);
+    assert_eq!(worktree_count(&cwd), 1);
 
     // Keep the other: endpoint merges (up-to-date is fine for text-only
     // candidates) and always cleans up the worktree + branch.
@@ -966,11 +965,7 @@ async fn bestofn_fans_out_keep_and_discard() {
         keep.text().await.unwrap_or_default()
     );
 
-    assert_eq!(
-        std::fs::read_dir(&wt_root).unwrap().count(),
-        0,
-        "worktrees all cleaned"
-    );
+    assert_eq!(worktree_count(&cwd), 0, "worktrees all cleaned");
     let branches = {
         let o = std::process::Command::new("git")
             .args(["branch", "--list", "vak/*"])
@@ -1143,8 +1138,7 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
     }
     let ct = wait_transcript(&client, &base, &child_id).await;
     assert_eq!(ct["count"].as_u64(), Some(2));
-    let wt_root = cwd.join(".vak/worktrees");
-    assert_eq!(std::fs::read_dir(&wt_root).unwrap().count(), 1);
+    assert_eq!(worktree_count(&cwd), 1);
 
     // Second run replaces the worktree (latest-only retention).
     client
@@ -1170,11 +1164,7 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
-    assert_eq!(
-        std::fs::read_dir(&wt_root).unwrap().count(),
-        1,
-        "old worktree replaced"
-    );
+    assert_eq!(worktree_count(&cwd), 1, "old worktree replaced");
 
     // Delete cleans up the remaining worktree.
     let del = client
@@ -1183,7 +1173,7 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
         .await
         .unwrap();
     assert_eq!(del.status(), 200);
-    assert_eq!(std::fs::read_dir(&wt_root).unwrap().count(), 0);
+    assert_eq!(worktree_count(&cwd), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2423,4 +2413,19 @@ async fn one_stream_multiplexes_sessions_and_resumes_each_from_its_cursor() {
             .as_deref()
             .is_some_and(|id| id.contains(&format!("{a}:{finished_seq}")))
     );
+}
+
+/// The repository's own worktrees besides its checkout; environments of
+/// every test share one directory, so it is counted through git.
+fn worktree_count(repo: &std::path::Path) -> usize {
+    let out = std::process::Command::new("git")
+        .current_dir(repo)
+        .args(["worktree", "list", "--porcelain"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| line.starts_with("worktree "))
+        .count()
+        - 1
 }

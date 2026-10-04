@@ -48,7 +48,8 @@ vak checkpoints restore <session> <seq>
 ## Worktree isolation
 
 `exec --worktree` / `plan --worktree` create
-`.vak/worktrees/<run-id>` on branch `vak/<run-id>` off HEAD and run
+`tenants/<tenant>/environments/<run-id>` in the data home
+(`vak_config::paths::environment_dir`) on branch `vak/<run-id>` off HEAD and run
 there. The main checkout is never touched; on success the worktree is kept
 for inspection (path printed), on failure it is removed. Non-repos fail fast
 with a typed error. Cleanup: `git worktree remove --force` + branch delete.

@@ -42,14 +42,13 @@ pub struct Worktree {
     pub branch: String,
 }
 
-/// Creates `.vak/worktrees/<run_id>` on branch `vak/<run_id>`.
+/// Creates the run's environment (`vak_config::paths::environment_dir`) as a
+/// worktree on branch `vak/<run_id>`.
 pub fn create(repo: &Path, run_id: &str) -> Result<Worktree, WorktreeError> {
     if !is_git_repo(repo) {
         return Err(WorktreeError::NotARepo);
     }
-    let path = vak_config::scope::WorkspaceScope::new(repo)
-        .worktrees()
-        .join(run_id);
+    let path = vak_config::paths::environment_dir(run_id);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

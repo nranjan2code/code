@@ -635,7 +635,7 @@ async fn create_revision(
         return StatusCode::CONFLICT.into_response();
     };
     let id = uuid::Uuid::now_v7().to_string();
-    let staging_root = crate::session_agent_scope(state, &session_id).sandbox_staging(&id);
+    let staging_root = vak_config::paths::environment_dir(&id);
     if vak_sandbox::prepare_revision_copy(&parent.candidate, &staging_root).is_err() {
         return StatusCode::CONFLICT.into_response();
     }

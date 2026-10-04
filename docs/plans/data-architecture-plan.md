@@ -586,9 +586,14 @@ checked live in a browser. Step 3 done (2026-10-04): a non-built-in
 Agent's workspace is `tenants/<tenant>/workspaces/<space>/<agent>/`
 (`vak_config::paths::agent_workspace`, Workspace class), and a
 `space-root` file beside it names the project whose layer defines the
-Agent (`agent_workspace_is_not_an_environment`). Left in slice 4: worktree
-environments, the remaining `.vak` literals and the client's
-`.vak/scratch` directory check. Step 2's design:
+Agent (`agent_workspace_is_not_an_environment`). Step 4 done
+(2026-10-04): every run's environment (a Best-of-N or `--worktree` git
+worktree, a revision's task copy, a staging tree) is
+`tenants/<tenant>/environments/<run>/` (`vak_config::paths::environment_dir`),
+never in a project or an Agent home. No `.vak` literal is left outside
+`vak_config::scope` and tests, and the client's `.vak/scratch` checks stay:
+step 2 kept that name for drafts, so they recognise drafts correctly. Left
+in slice 4: the live browser check of Review. Step 2's design:
 - A draft is addressed relative to its execution root
   (`<execution>/<workspace path>` under `execution_dir(space, agent)`),
   never as a `.vak/scratch/…` workspace path; `office_apply::draft_dir`,

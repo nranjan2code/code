@@ -113,6 +113,13 @@ pub fn local_tenant_home() -> PathBuf {
     tenant_home_at(&data_home(), LOCAL_TENANT)
 }
 
+/// One run's environment: a git worktree, a task copy or a staging tree,
+/// by its run id (`tenants/<tenant>/environments/<run>/`, docs/design/73
+/// §6). Never inside a project and never in an Agent home.
+pub fn environment_dir(run_id: &str) -> PathBuf {
+    local_tenant_home().join("environments").join(run_id)
+}
+
 /// The file in a space's workspaces directory naming the space's root, so an
 /// Agent workspace can find the project layer that defines its Agent.
 const SPACE_ROOT_FILE: &str = "space-root";
