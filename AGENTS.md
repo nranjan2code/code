@@ -235,8 +235,10 @@ M3b is in progress: slice 1 is done (2026-10-03; 7.0.0-dev, the 7.0
 baseline, tenant tree and runtime root, wholesale purge, the registry by
 data class), and so is slice 2 (2026-10-03; session ledgers are segment
 directories with group commit, and large payloads are tenant objects).
-Slice 3 is in progress: side ledgers are record chains, D25 is fixed and
-`auth/` and feeds are in the tenant tree; the Document class remains. No session starts a later step unasked.
+Slice 3 is done (2026-10-04): side ledgers are record chains, D25 is
+fixed, `auth/` and feeds are in the tenant tree, and Agent-authored state
+(memory, entities, skill proposals, Office rooms, presentations) is
+Documents in the tenant store. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -360,6 +362,9 @@ Slice 3 is in progress: side ledgers are record chains, D25 is fixed and
   never open a JSONL file to append to, and never compact one.
 - Put a record about a session in that session's Agent home
   (`session_agent_scope` in vak-server), never the serving Core's.
+- Keep Agent-authored state as Documents (`vak_session::documents`), never
+  as a file written beside the data; a test that touches one isolates its
+  home first.
 
 ### Pending: the visual refresh (V1, V2, V3 and V4.4 done; V4 in progress)
 

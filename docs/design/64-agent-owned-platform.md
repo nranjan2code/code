@@ -205,14 +205,20 @@ Two roots hold an Agent's things, and they are different directories:
 <data home>/
 ├── agents/
 │   └── <agent_id>/                    # vak_config::paths::agent_home; vak included
-│       ├── sessions/<cwd-hash>/<session-id>.jsonl
-│       ├── memory/<cwd-hash>/MEMORY.md
-│       ├── memory/user/USER.md
-│       └── skill-proposals/
-├── gateway/                           # allowlist.json, bots.json, bindings
-├── operations/                        # incidents.jsonl, actions.jsonl
-├── cost-log.jsonl                     # the FinOps ledger
-├── inbox.jsonl
+│       ├── sessions/<cwd-hash>/<session-id>/   # a ledger: record segments
+│       ├── sandbox/                   # records, candidates, executions (D25)
+│       └── coworking/                 # grants
+├── tenants/<tenant>/
+│   ├── store/                         # objects and refs: ledger payloads and
+│   │                                  # Documents (memory, entities, skill
+│   │                                  # proposals, Office rooms, presentations)
+│   ├── keys/                          # revocations; the KEKs are in the credential store
+│   ├── auth/                          # the owner's passkeys and recovery digests
+│   └── feeds/, feeds.toml
+├── gateway/                           # allowlist.json, bots.json, bindings, deliveries
+├── operations/                        # incidents, actions (record chains)
+├── cost-log/                          # the FinOps ledger (a record chain)
+├── inbox/                             # a record chain
 ├── tasks.json                         # scheduled work: vak_core::tasks::TaskDef
 ├── archive.json                       # archived sessions (hidden from the sidebar)
 └── deleted.json                       # the trash (vak_core::trash)
@@ -237,7 +243,7 @@ Two roots hold an Agent's things, and they are different directories:
 
 3. **Global Shared Infrastructure (`Core::shared_data_home()`)**:
    - Cross-agent services use the top of the data home through `shared_data_home()`.
-   - This encompasses channel routing and transport credentials (`gateway/allowlist.json`, `gateway/bots.json`), operational receipts (`operations/`), the FinOps ledger (`cost-log.jsonl`), the inbox, scheduled tasks (`tasks.json`), the archive and the trash. The full-text search index is in the cache home.
+   - This encompasses channel routing and transport credentials (`gateway/allowlist.json`, `gateway/bots.json`), operational receipts (`operations/`), the FinOps ledger (`cost-log/`), the inbox, scheduled tasks (`tasks.json`), the archive and the trash. The full-text search index is in the cache home.
 
 4. **Client Presentation and Workbench Isolation (`vak-client-ui`)**:
    - The desktop and web UI maintains `sessionWorkbenchMap: Record<string, WorkbenchExecution[]>`, keying execution events by session ID rather than a single flat global array.

@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is in progress (slices 1 and 2 done; slice 3 in progress). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is in progress (slices 1, 2 and 3 done). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -539,8 +539,7 @@ keep `MAX_STORED_CHECKPOINTS` until retention policy lands in M7a.
 - The capability binding and large tool results move to objects; sandbox
   streams are chunked to objects.
 
-**Slice 3 — side ledgers and Documents (review R9)** — in progress. Done
-(2026-10-03): side ledgers are `vak_session::chain::RecordChain`s (costs,
+**Slice 3 — side ledgers and Documents (review R9)** — done 2026-10-04. side ledgers are `vak_session::chain::RecordChain`s (costs,
 activity, budget alerts, routing and intent evidence, security events, the
 inbox, commitments, operations incidents and actions, the deliveries log
 and the outbox, whose settled jobs leave no file), with no compaction
@@ -548,8 +547,22 @@ rewrites; telemetry rows append without their own sync. D25: every
 server-side record about a session lives in that session's Agent home
 (`session_agent_scope`; `agent_records_live_in_their_agent_scope`).
 `auth/` and feeds are under `tenants/<t>/`; `no_undeclared_paths_any_root`
-drives a real turn across the data, cache, logs and runtime roots. Left:
-the Document class and versioned Desired state.
+drives a real turn across the data, cache, logs and runtime roots. The
+tenant store is a `vak-storage` `LocalStore` (objects and refs) at
+`tenants/<t>/store`, opened once per process; `vak_session::documents`
+names a Document by the path its file had, grants it to its Agent's scope
+and writes by CAS. Memory (one Document per note), entities (one per
+entity), skill proposals, Shared Office rooms and the presentation library
+are Documents; the memory cleanup command and backup's memory-file merge
+went with the files. Decisions (maintainer, 2026-10-04): Agent-authored
+state moves to Documents; prompt layers (files a person writes in the
+Shared and project `.vak/`) and accepted skills (`SKILL.md`, which skill
+discovery reads) stay files. Deviations: Desired state (config layers,
+bots, allowlist, tasks) is not versioned through Documents here, because a
+second record beside the authoritative file is two contracts (invariant
+30); it moves with the admin history of M7b. Merging Documents into an
+existing home on backup import waits for M9's restore epochs; a backup
+carries the tenant store whole.
 - FinOps, alerts, commitments, inbox, routing, misread, security and
   operations become record chains without compaction rewrites.
 - Memory, entities, skills, prompt layers, presentation packs and Office

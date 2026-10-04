@@ -1,7 +1,7 @@
 /// Attention inbox suite (docs/design/29-personal-os.md P6, docs/design/31-network-resilience.md).
 ///
 /// The store-and-forward attention layer: every gateway::deliver push records
-/// an append-only entry at <home>/inbox.jsonl, so unattended signals survive
+/// an append-only entry in the inbox ledger, so unattended signals survive
 /// even with zero chat transports configured.
 ///
 /// Read state is tracked via ack tombstones (Invariant 2: nothing is ever
@@ -711,7 +711,7 @@ export function Inbox() {
             <strong>Store-and-Forward Floor</strong>
             <p>
               Every <code>gateway::deliver</code> invocation automatically appends to{" "}
-              <code>&lt;home&gt;/inbox.jsonl</code>. If Telegram, Discord, or Slack channels are down,
+              the inbox ledger. If Telegram, Discord, or Slack channels are down,
               or zero transports are configured, unattended signals land durably here without loss.
             </p>
           </div>

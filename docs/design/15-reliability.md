@@ -174,7 +174,7 @@ Phase R (vakrouter adoption) upgrades the ordering machinery:
 
 - **Attribution is real**: every attempt records the `(provider, model)`
   leg that actually served or failed; evidence rows land keyed correctly
-  in `routing-evidence.jsonl` with true p50 latency.
+  in the `routing-evidence` chain with true p50 latency.
 - **Demand-scored objectives** (`order_ladder_v2`): request difficulty
   picks utility/balanced/quality-critical ordering; `[route].objective`
   overrides; `[route].quality_hints` replaces hardcoded model-name bands
@@ -214,7 +214,7 @@ Phase R (vakrouter adoption) upgrades the ordering machinery:
   peers until one success clears them; governance failures are not
   evidence.
 
-Evidence rows land in `routing-evidence.jsonl`; unknown settlements shrink
+Evidence rows land in the `routing-evidence` chain; unknown settlements shrink
 confidence without punishing direction. FinOps attribution follows the
 serving leg per dispatch (`CostRow.provider`).
 
@@ -264,7 +264,7 @@ turn in that session read the frozen values unconditionally, which caused:
    operator selection, never the session header's initial snapshot.
 2. Calls `Core::plan_route_ladder(turn_primary_leg, Some(engagement.posture.demand))`
    after intent resolution to assemble a fresh ladder using:
-   - Current evidence ledger (`routing-evidence.jsonl`, 30-day TTL)
+   - Current evidence ledger (the `routing-evidence` chain, 30-day TTL)
    - Session belief state (domain-weighted doubt, clears on success)
    - Warm discovery: the last successful model catalogue per credential,
      kept fresh in the background (see [How discovery stays
