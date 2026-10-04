@@ -196,7 +196,7 @@ impl Tool for OfficeApplyTool {
             }
             (source, Some(digest)) => {
                 let source = source.unwrap_or(path);
-                match confined_existing(&ctx.cwd, source) {
+                match crate::drafts::existing(ctx, source) {
                     Ok(source) => OfficeOrigin::File {
                         path: source,
                         base_digest: digest.to_string(),
@@ -240,13 +240,9 @@ impl Tool for OfficeApplyTool {
             .as_ref()
             .map(|sink| sink.execution_id().to_string())
             .unwrap_or_else(|| format!("office-{}", now.timestamp_nanos_opt().unwrap_or(0)));
-        let draft_root = root.join(draft_dir(agent, &execution));
+        let draft_root = crate::drafts::dir(ctx, &execution);
         let draft = draft_root.join(&relative);
-        let draft_relative = draft
-            .strip_prefix(&root)
-            .unwrap_or(&draft)
-            .display()
-            .to_string();
+        let draft_relative = crate::drafts::name(ctx, &execution, &relative);
         let started = std::time::Instant::now();
         if let Some(sink) = &ctx.sandbox_sink {
             let preview = serde_json::json!({
@@ -395,11 +391,11 @@ pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
 /// The Agent a draft is filed under when the session names none.
 const DEFAULT_AGENT: &str = "vak";
 
-/// Where one execution's drafts live, relative to the workspace root:
-/// `.vak/scratch/<agent>/<execution>/`, the draft of a file keeping the
-/// file's workspace path beneath it. The execution is the `office_apply`
-/// call's id and the agent is the session's Agent id, so the ledger alone
-/// locates every draft a session delivered.
+/// The name of one execution's drafts: `.vak/scratch/<agent>/<execution>/`,
+/// the draft of a file keeping the file's workspace path beneath it. The
+/// execution is the `office_apply` call's id and the agent is the session's
+/// Agent id, so the ledger alone names every draft a session delivered; the
+/// files live in the runtime root (`vak_config::scope::draft_location`).
 pub fn draft_dir(agent_id: Option<&str>, execution: &str) -> PathBuf {
     Path::new(vak_config::scope::PROJECT_DIR)
         .join("scratch")
@@ -806,23 +802,6 @@ fn canonical_root(cwd: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot resolve workspace root: {error}"))
 }
 
-/// An existing file inside the workspace (invariant 10).
-fn confined_existing(cwd: &Path, path: &str) -> Result<PathBuf, String> {
-    let root = canonical_root(cwd)?;
-    let candidate = if Path::new(path).is_absolute() {
-        PathBuf::from(path)
-    } else {
-        cwd.join(path)
-    };
-    let canonical = candidate
-        .canonicalize()
-        .map_err(|error| format!("cannot open {path}: {error}"))?;
-    if !canonical.starts_with(&root) {
-        return Err(format!("access denied: {path} is outside the workspace"));
-    }
-    Ok(canonical)
-}
-
 /// The workspace file a draft is for: its directory must exist inside the
 /// workspace, and it must not be a symlink.
 fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
@@ -873,6 +852,15 @@ mod tests {
         sha256_hex(&std::fs::read(path).unwrap())[..16].to_string()
     }
 
+    /// Where the draft named `name` is on disk.
+    fn on_disk(workspace: &Path, name: &str) -> PathBuf {
+        vak_config::scope::draft_location(
+            &vak_config::scope::executions_root(workspace),
+            Path::new(name),
+        )
+        .unwrap_or_else(|| workspace.join(name))
+    }
+
     fn draft_path(output: &ToolOutput) -> String {
         output
             .content
@@ -885,6 +873,7 @@ mod tests {
 
     #[test]
     fn the_op_schema_accepts_exactly_what_the_engine_reads_and_names_the_fault() {
+        vak_config::paths::isolate_home_for_tests();
         let schema = OfficeApplyTool.schema();
         let call = |ops: Value| serde_json::json!({"path": "a.docx", "base_digest": "0123456789abcdef", "ops": ops});
         let valid = serde_json::json!([
@@ -954,6 +943,7 @@ mod tests {
 
     #[test]
     fn model_guidance_includes_searchable_pdf_image_authoring() {
+        vak_config::paths::isolate_home_for_tests();
         // What the model reads: the description and the op schemas together.
         let surface = format!(
             "{} {}",
@@ -974,6 +964,7 @@ mod tests {
 
     #[tokio::test]
     async fn every_advertised_creation_example_produces_a_readable_draft() {
+        vak_config::paths::isolate_home_for_tests();
         let schema = OfficeApplyTool.schema();
         for example in schema["examples"].as_array().unwrap() {
             crate::validate_input(&schema, example).unwrap();
@@ -983,7 +974,7 @@ mod tests {
             let read = crate::doc_read::DocReadTool
                 .execute(
                     &serde_json::json!({"path":draft_path(&result)}),
-                    &ToolContext::new(dir.path().to_path_buf()),
+                    &ToolContext::new(dir.path().to_path_buf()).with_agent_id("mira"),
                 )
                 .await;
             assert!(!read.is_error, "{}", read.content);
@@ -994,6 +985,7 @@ mod tests {
 
     #[test]
     fn chart_schema_requires_one_complete_format_specific_variant() {
+        vak_config::paths::isolate_home_for_tests();
         let schema = OfficeApplyTool.schema();
         for chart in [
             serde_json::json!({"op":"add_chart","title":"Missing fields"}),
@@ -1009,6 +1001,7 @@ mod tests {
 
     #[tokio::test]
     async fn text_tools_refuse_an_office_file_and_name_the_office_tools() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("q3.docx");
         let original = vak_ooxml::fixtures::docx();
@@ -1086,6 +1079,7 @@ mod tests {
 
     #[tokio::test]
     async fn editing_a_signed_file_records_that_its_signature_was_removed() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("memo.docx");
         std::fs::write(&file, vak_ooxml::fixtures::signed_labelled_docx()).unwrap();
@@ -1110,6 +1104,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_edit_is_a_draft_and_the_workspace_file_is_untouched() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("budget.xlsx");
         std::fs::write(&file, vak_ooxml::fixtures::xlsx()).unwrap();
@@ -1145,7 +1140,7 @@ mod tests {
                 .content
                 .contains("Excel calculates them when the file is opened")
         );
-        let draft = dir.path().join(".vak/scratch/mira/exec-7/budget.xlsx");
+        let draft = on_disk(dir.path(), ".vak/scratch/mira/exec-7/budget.xlsx");
         let document = vak_ooxml::read::read(
             std::io::Cursor::new(std::fs::read(&draft).unwrap()),
             vak_ooxml::Limits::default(),
@@ -1159,7 +1154,7 @@ mod tests {
         }
         assert!(seen.iter().any(|event| matches!(event,
             SandboxEvent::ExecutionStarted { tool, scratch_dir, .. }
-                if tool == "office_apply" && scratch_dir.ends_with(".vak/scratch/mira/exec-7"))));
+                if tool == "office_apply" && scratch_dir.ends_with("mira/exec-7"))));
         assert!(seen.iter().any(|event| matches!(event,
             SandboxEvent::ExecutionFinished { exit_code: 0, artifacts, .. }
                 if artifacts == &vec![".vak/scratch/mira/exec-7/budget.xlsx".to_string()])));
@@ -1183,6 +1178,7 @@ mod tests {
 
     #[tokio::test]
     async fn drafts_chain_and_a_template_creates_a_new_file() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let template = dir.path().join("brand.pptx");
         std::fs::write(&template, vak_ooxml::fixtures::pptx_template()).unwrap();
@@ -1213,7 +1209,7 @@ mod tests {
             serde_json::json!({
                 "path": "q3.pptx",
                 "source": draft,
-                "base_digest": digest_of(&dir.path().join(&draft)),
+                "base_digest": digest_of(&on_disk(dir.path(), &draft)),
                 "ops": [{"op": "set_notes", "anchor": "slide:256", "text": "x"}]
             }),
         )
@@ -1232,13 +1228,13 @@ mod tests {
             serde_json::json!({
                 "path": "q3.pptx",
                 "source": draft,
-                "base_digest": digest_of(&dir.path().join(&draft)),
+                "base_digest": digest_of(&on_disk(dir.path(), &draft)),
                 "ops": [{"op": "set_title", "title": "Q3 review"}]
             }),
         )
         .await;
         assert!(!third.is_error, "{}", third.content);
-        let latest = dir.path().join(draft_path(&third));
+        let latest = on_disk(dir.path(), &draft_path(&third));
         let document = vak_ooxml::read::read(
             std::io::Cursor::new(std::fs::read(latest).unwrap()),
             vak_ooxml::Limits::default(),
@@ -1253,11 +1249,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_new_document_is_written_clean_and_an_existing_one_tracked() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let brand = dir.path().join("brand.docx");
         std::fs::write(&brand, vak_ooxml::fixtures::docx()).unwrap();
         let body = |output: &ToolOutput| {
-            let bytes = std::fs::read(dir.path().join(draft_path(output))).unwrap();
+            let bytes = std::fs::read(on_disk(dir.path(), &draft_path(output))).unwrap();
             let mut package =
                 vak_ooxml::Package::open(std::io::Cursor::new(bytes), vak_ooxml::Limits::default())
                     .unwrap();
@@ -1304,6 +1301,7 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_escapes_bad_ops_and_failed_edits_without_writing() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("memo.docx");
         std::fs::write(&file, vak_ooxml::fixtures::docx()).unwrap();
@@ -1345,6 +1343,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_new_file_is_created_from_scratch_as_a_draft() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let created = run(
             dir.path(),
@@ -1380,8 +1379,8 @@ mod tests {
             !dir.path().join("memo.docx").exists(),
             "only a draft is written"
         );
-        let draft = dir.path().join(draft_path(&created));
-        assert!(draft.starts_with(dir.path().join(".vak/scratch/mira")));
+        let draft = on_disk(dir.path(), &draft_path(&created));
+        assert!(draft.starts_with(vak_config::scope::executions_root(dir.path()).join("mira")));
         let document = vak_ooxml::read::read(
             std::io::Cursor::new(std::fs::read(&draft).unwrap()),
             vak_ooxml::Limits::default(),
@@ -1415,6 +1414,7 @@ mod tests {
 
     #[tokio::test]
     async fn creating_is_refused_where_it_would_hide_a_mistake() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("brand.docx"), vak_ooxml::fixtures::docx()).unwrap();
         let add = serde_json::json!([{"op": "add_paragraph", "text": "x"}]);

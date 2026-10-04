@@ -343,6 +343,7 @@ mod tests {
             agent_id: None,
             trace: None,
             new_documents: Vec::new(),
+            executions: None,
         };
 
         let out = tool
@@ -384,6 +385,7 @@ mod tests {
             agent_id: None,
             trace: None,
             new_documents: Vec::new(),
+            executions: None,
         };
         let out = tool
             .execute(&serde_json::json!({"query": "anything at all"}), &ctx)
@@ -467,6 +469,7 @@ mod tests {
             agent_id: None,
             trace: None,
             new_documents: Vec::new(),
+            executions: None,
         };
         let out = tool
             .execute(
@@ -521,6 +524,7 @@ mod tests {
             agent_id: None,
             trace: None,
             new_documents: Vec::new(),
+            executions: None,
         };
         let out = tool
             .execute(

@@ -63,6 +63,11 @@ retained.
 
 ## Diff notes
 
+- 7.0.0-dev (data-architecture M3b slice 4): the sandbox line names
+  `$TMPDIR` for scratch files instead of `.vak/scratch/`, which is now only
+  the name a draft is known by; its files live in the runtime root, outside
+  the project. The preview surface note no longer names `.vak/scratch/`.
+
 - 3.0.63: expanded the presentation vocabulary from the original 52 seeded
   definitions to 70 universal definitions and documented startup
   reconciliation. Prompt examples now explain domain-neutral composition.

@@ -318,7 +318,7 @@ pub struct RuntimeSections {
     /// How Office and PDF files are made and changed. Empty unless
     /// `office_apply` is admitted.
     pub document_contract: String,
-    /// Sandbox-specific contract (bash, .vak/scratch/, live preview).
+    /// Sandbox-specific contract (bash, `$TMPDIR`, live preview).
     /// Only populated when `bash` is in the admitted tools; empty otherwise
     /// so channel bots that lack execution get a cleaner, shorter prompt.
     pub sandbox_contract: String,

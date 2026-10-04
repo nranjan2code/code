@@ -307,7 +307,7 @@ pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system-prompt.md");
 /// The file tools of a task copy. `doc_read` and `office_apply` are how an
 /// Office file is read and changed at all (`read`, `write` and `edit` refuse
 /// a package); both run in the worker, confined to the copy, and
-/// `office_apply` writes only a draft under the copy's `.vak/scratch/`.
+/// `office_apply` writes only a draft, in the copy's execution root.
 const TASK_COPY_TOOLS: &[&str] = &[
     "read",
     "glob",
@@ -1105,9 +1105,8 @@ than briefly, since it cannot ask you a follow-up question."
                 .to_string(),
         };
         let preview = if self.previews_files() {
-            " Files you write in the workspace or `.vak/scratch/` appear in the \
-user's preview automatically, so do not start an HTTP server just to preview \
-a static file."
+            " Files you write in the workspace appear in the user's preview \
+automatically, so do not start an HTTP server just to preview a static file."
         } else {
             ""
         };

@@ -458,6 +458,7 @@ async fn run_case_with_tools(
         agent_id: None,
         trace: None,
         new_documents: Vec::new(),
+        executions: None,
     };
     let verify_out = BashTool
         .execute(&serde_json::json!({"command": case.verify}), &verify_ctx)

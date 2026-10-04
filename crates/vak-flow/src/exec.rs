@@ -23,6 +23,7 @@ async fn verify_accept(
             agent_id: None,
             trace: None,
             new_documents: Vec::new(),
+            executions: None,
         };
         let args = serde_json::json!({"command": command});
         authorize_flow_tool("bash", &args, deps).await?;
@@ -499,6 +500,7 @@ async fn execute_node(
                 agent_id: None,
                 trace: None,
                 new_documents: Vec::new(),
+                executions: None,
             };
             let tool = deps
                 .tools

@@ -327,7 +327,7 @@ pub(crate) fn append_sandbox_artifacts(
                     "1970-01-01T00:00:00+00:00".into(),
                 )
             });
-        // Only an execution that ran inside `.vak/scratch/` holds a draft to
+        // Only an execution with drafts in the execution root holds a draft to
         // review; one that worked in the workspace already put its files
         // where they belong, and candidate export refuses it.
         let scratch = reviewable_roots
@@ -505,23 +505,22 @@ fn version_number(index: usize) -> u32 {
     u32::try_from(index).map_or(u32::MAX, |index| index.saturating_add(1))
 }
 
-/// `path` (absolute, or relative to the workspace) relative to the scratch
-/// directory it was written in, which is how a saved version names it.
+/// `path` (absolute, or a draft name `.vak/scratch/<agent>/<execution>/…`)
+/// relative to the execution directory it was written in, which is how a
+/// saved version names it. The directory is in the runtime root and ends in
+/// the same `<agent>/<execution>` as the draft's name.
 fn draft_relative_path<'a>(path: &'a str, scratch: &str) -> Option<&'a std::path::Path> {
     let artifact = std::path::Path::new(path);
     let scratch = std::path::Path::new(scratch);
     if artifact.is_absolute() {
         return artifact.strip_prefix(scratch).ok();
     }
-    let workspace = scratch
-        .ancestors()
-        .find(|p| {
-            p.file_name()
-                .is_some_and(|n| n == vak_config::scope::PROJECT_DIR)
-        })
-        .and_then(std::path::Path::parent)?;
+    let execution = scratch.file_name()?;
+    let agent = scratch.parent()?.file_name()?;
     artifact
-        .strip_prefix(scratch.strip_prefix(workspace).ok()?)
+        .strip_prefix(vak_config::scope::SCRATCH_DIR)
+        .ok()?
+        .strip_prefix(std::path::Path::new(agent).join(execution))
         .ok()
 }
 
@@ -2739,11 +2738,13 @@ mod tests {
         let home = tempfile::tempdir().expect("temporary home");
         let events = home.path().join("sandbox/executions");
         std::fs::create_dir_all(&events).expect("execution directory");
-        let scratch = home.path().join(".vak/scratch/call-1");
+        // An execution directory in the runtime root ends in
+        // `<agent>/<execution>`, as the draft's name does.
+        let scratch = home.path().join("runtime/executions/space/vak/call-1");
         std::fs::create_dir_all(&scratch).expect("scratch directory");
         let event = vak_tools::SandboxEvent::ArtifactGenerated {
             execution_id: "call-1".into(),
-            path: ".vak/scratch/call-1/report.html".into(),
+            path: ".vak/scratch/vak/call-1/report.html".into(),
             mime_type: "text/html".into(),
             size_bytes: 42,
         };

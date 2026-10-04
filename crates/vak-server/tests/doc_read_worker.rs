@@ -8,6 +8,16 @@ use std::path::PathBuf;
 use serde_json::json;
 use vak_tools::ToolContext;
 
+/// Where the draft named `name` is on disk: the space's execution root
+/// (plan M3b slice 4).
+fn on_disk(workspace: &std::path::Path, name: &str) -> PathBuf {
+    vak_config::scope::draft_location(
+        &vak_config::scope::executions_root(workspace),
+        std::path::Path::new(name),
+    )
+    .unwrap_or_else(|| workspace.join(name))
+}
+
 fn doc_read(
     tools: Vec<std::sync::Arc<dyn vak_tools::Tool>>,
 ) -> std::sync::Arc<dyn vak_tools::Tool> {
@@ -73,6 +83,7 @@ async fn core_never_runs_doc_read_in_its_own_process() {
 
 #[tokio::test]
 async fn office_apply_edits_through_the_worker_as_the_calling_agent() {
+    vak_config::paths::isolate_home_for_tests();
     use sha2::Digest as _;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("memo.docx");
@@ -115,7 +126,7 @@ async fn office_apply_edits_through_the_worker_as_the_calling_agent() {
         .and_then(|rest| rest.split(". ").next())
         .unwrap();
     assert!(draft.starts_with(".vak/scratch/mira/"), "{draft}");
-    let bytes = std::fs::read(dir.path().join(draft)).unwrap();
+    let bytes = std::fs::read(on_disk(dir.path(), draft)).unwrap();
     let document =
         vak_ooxml::read::read(std::io::Cursor::new(bytes), vak_ooxml::Limits::default()).unwrap();
     assert!(
@@ -227,7 +238,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
             .split(". ")
             .next()
             .unwrap();
-        let draft_path = workspace.join(draft);
+        let draft_path = on_disk(&workspace, draft);
         let original_bytes = std::fs::read(&draft_path).unwrap();
         assert!(
             original_bytes.len() > 500,
@@ -434,6 +445,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
 /// (docs/design/72, R7). The list travels with the call, never from the model.
 #[tokio::test]
 async fn the_worker_writes_a_new_document_clean_when_the_runtime_says_so() {
+    vak_config::paths::isolate_home_for_tests();
     use sha2::Digest as _;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("memo.docx");
@@ -471,7 +483,7 @@ async fn the_worker_writes_a_new_document_clean_when_the_runtime_says_so() {
                 .unwrap()
                 .to_string();
             let mut package = vak_ooxml::Package::open(
-                std::io::Cursor::new(std::fs::read(dir.join(draft)).unwrap()),
+                std::io::Cursor::new(std::fs::read(on_disk(&dir, &draft)).unwrap()),
                 vak_ooxml::Limits::default(),
             )
             .unwrap();

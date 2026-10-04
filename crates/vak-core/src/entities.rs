@@ -474,6 +474,7 @@ mod tests {
             agent_id: None,
             trace: None,
             new_documents: Vec::new(),
+            executions: None,
         };
 
         // Record entity via tool

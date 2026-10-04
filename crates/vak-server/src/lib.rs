@@ -11651,6 +11651,18 @@ fn read_refusal(status: StatusCode) -> axum::response::Response {
 
 /// Resolve `input` (absolute or cwd-relative) inside the workspace root.
 /// Symlinks are resolved for the existing portion; escapes are rejected.
+/// A path an execution names: inside the space's execution root, where an
+/// execution's drafts live (plan M3b slice 4), or else inside the
+/// workspace, where a command works.
+fn execution_path(workspace: &std::path::Path, input: &str) -> Option<std::path::PathBuf> {
+    let executions = vak_config::scope::executions_root(workspace);
+    if let Some(draft) = vak_config::scope::draft_location(&executions, std::path::Path::new(input))
+    {
+        return confined_path(&executions, &draft.to_string_lossy());
+    }
+    confined_path(&executions, input).or_else(|| confined_path(workspace, input))
+}
+
 fn confined_path(cwd: &std::path::Path, input: &str) -> Option<std::path::PathBuf> {
     let base = cwd.canonicalize().ok()?;
     let raw = std::path::PathBuf::from(input);
@@ -12134,8 +12146,8 @@ fn execution_artifact_path(
         return Err(StatusCode::NOT_FOUND);
     }
     let scratch = scratch.ok_or(StatusCode::NOT_FOUND)?;
-    let scratch = confined_path(&workspace, &scratch).ok_or(StatusCode::FORBIDDEN)?;
-    let path = confined_path(&workspace, artifact_path).ok_or(StatusCode::FORBIDDEN)?;
+    let scratch = execution_path(&workspace, &scratch).ok_or(StatusCode::FORBIDDEN)?;
+    let path = execution_path(&workspace, artifact_path).ok_or(StatusCode::FORBIDDEN)?;
     if !path.starts_with(&scratch) || !path.is_file() {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -12374,7 +12386,7 @@ fn sandbox_execution_scratch(
                 execution_id: observed,
                 scratch_dir,
                 ..
-            } if observed == execution_id => confined_path(&workspace, &scratch_dir),
+            } if observed == execution_id => execution_path(&workspace, &scratch_dir),
             _ => None,
         }
     })
@@ -12503,7 +12515,7 @@ async fn export_sandbox_candidate(
     let Some(workspace) = sandbox_session_workspace(&state, &session_id) else {
         return (StatusCode::NOT_FOUND, "unknown session").into_response();
     };
-    let Some(source) = confined_path(&workspace, &body.source) else {
+    let Some(source) = execution_path(&workspace, &body.source) else {
         return (StatusCode::FORBIDDEN, "candidate source outside workspace").into_response();
     };
     let Some(execution_scratch) =
@@ -12523,12 +12535,10 @@ async fn export_sandbox_candidate(
             .into_response();
     }
     // A command works in the workspace itself, so its files are already where
-    // they belong; only an execution that ran inside `.vak/scratch/` has a
-    // draft to promote. Freezing the workspace as its own candidate would
-    // promote it onto itself.
-    let scratch_root =
-        std::fs::canonicalize(vak_config::scope::WorkspaceScope::new(&workspace).scratch_root())
-            .ok();
+    // they belong; only an execution whose drafts are in the space's
+    // execution root has a draft to promote. Freezing the workspace as its
+    // own candidate would promote it onto itself.
+    let scratch_root = std::fs::canonicalize(vak_config::scope::executions_root(&workspace)).ok();
     let in_scratch = std::fs::canonicalize(&execution_scratch)
         .ok()
         .zip(scratch_root)
@@ -12748,7 +12758,9 @@ fn revision_office_drafts(
             continue;
         }
         let draft = vak_tools::office_apply::draft_dir(agent.as_deref(), &call_id).join(&relative);
-        if root.join(&draft).is_file() {
+        let on_disk =
+            vak_config::scope::draft_location(&vak_config::scope::executions_root(&root), &draft);
+        if on_disk.is_some_and(|path| path.is_file()) {
             drafts.push(vak_sandbox::RevisionDraft {
                 path,
                 draft: draft.to_string_lossy().replace('\\', "/"),
@@ -20480,6 +20492,7 @@ async fn execute_script(
         agent_id: core.agent_identity().map(|a| a.id.clone()),
         trace,
         new_documents: Vec::new(),
+        executions: None,
     };
     let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
     let out = bash.execute(&args, &ctx).await;
@@ -23079,6 +23092,16 @@ mod configuration_control_tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod sandbox_promotion_tests {
+    /// Where the execution directory a test names `.vak/scratch/<rest>` is:
+    /// in the space's execution root, outside the project (plan M3b slice 4).
+    fn exec_dir(workspace: &std::path::Path, name: &str) -> std::path::PathBuf {
+        vak_config::scope::draft_location(
+            &vak_config::scope::executions_root(workspace),
+            std::path::Path::new(name),
+        )
+        .unwrap_or_else(|| workspace.join(name))
+    }
+
     use super::*;
     use std::collections::VecDeque;
     use vak_llm::stream;
@@ -23290,7 +23313,7 @@ mod sandbox_promotion_tests {
         std::fs::create_dir_all(&agent).unwrap();
         std::fs::write(agent.join("counter.html"), "<p>made by the agent</p>").unwrap();
         std::fs::write(dir.path().join("other.html"), "<p>server workspace</p>").unwrap();
-        let scratch = dir.path().join(".vak/scratch/vak/call-1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/vak/call-1");
         std::fs::create_dir_all(&scratch).unwrap();
         std::fs::write(scratch.join("stray.html"), "<p>scratch</p>").unwrap();
         seed_session_at(&core, "agent-session", &agent);
@@ -23347,7 +23370,7 @@ mod sandbox_promotion_tests {
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         let log = seed_bound_result(&core, "session-1", "exec-1");
-        let scratch = dir.path().join(".vak/scratch/vak/exec-1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/vak/exec-1");
         std::fs::create_dir_all(&scratch).unwrap();
         std::fs::write(scratch.join("draft.xlsx"), b"draft").unwrap();
         std::fs::write(scratch.join("unreported.xlsx"), b"other").unwrap();
@@ -23427,7 +23450,9 @@ mod sandbox_promotion_tests {
                 tool: "bash".into(),
                 code_preview: "create result".into(),
                 language: "bash".into(),
-                scratch_dir: ".vak/scratch/e1".into(),
+                scratch_dir: exec_dir(state.core.cwd(), ".vak/scratch/e1")
+                    .display()
+                    .to_string(),
             }),
         );
         let response = export_sandbox_candidate(
@@ -23435,7 +23460,9 @@ mod sandbox_promotion_tests {
             Path("session-1".into()),
             Json(SandboxCandidateBody {
                 execution_id: "exec-1".into(),
-                source: ".vak/scratch/e1".into(),
+                source: exec_dir(state.core.cwd(), ".vak/scratch/e1")
+                    .display()
+                    .to_string(),
                 destination: ".".into(),
             }),
         )
@@ -23553,7 +23580,7 @@ mod sandbox_promotion_tests {
         let second = serde_json::json!({
             "path": "budget.xlsx",
             "source": first_draft,
-            "base_digest": sha256_prefix(&tokio::fs::read(dir.path().join(first_draft)).await.unwrap()),
+            "base_digest": sha256_prefix(&tokio::fs::read(exec_dir(dir.path(), first_draft)).await.unwrap()),
             "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B3": 70}}]
         });
         let output = run("exec-2", second.clone()).await;
@@ -23579,7 +23606,9 @@ mod sandbox_promotion_tests {
                 tool: "office_apply".into(),
                 code_preview: "{}".into(),
                 language: "json".into(),
-                scratch_dir: ".vak/scratch/vak/exec-2".into(),
+                scratch_dir: exec_dir(state.core.cwd(), ".vak/scratch/vak/exec-2")
+                    .display()
+                    .to_string(),
             }),
         );
         let response = export_sandbox_candidate(
@@ -23587,7 +23616,9 @@ mod sandbox_promotion_tests {
             Path("session-1".into()),
             Json(SandboxCandidateBody {
                 execution_id: "exec-2".into(),
-                source: ".vak/scratch/vak/exec-2".into(),
+                source: exec_dir(state.core.cwd(), ".vak/scratch/vak/exec-2")
+                    .display()
+                    .to_string(),
                 destination: ".".into(),
             }),
         )
@@ -23849,7 +23880,9 @@ mod sandbox_promotion_tests {
                 tool: "office_apply".into(),
                 code_preview: "{}".into(),
                 language: "json".into(),
-                scratch_dir: ".vak/scratch/vak/exec-1".into(),
+                scratch_dir: exec_dir(state.core.cwd(), ".vak/scratch/vak/exec-1")
+                    .display()
+                    .to_string(),
             }),
         );
         let response = export_sandbox_candidate(
@@ -23857,7 +23890,9 @@ mod sandbox_promotion_tests {
             Path("session-1".into()),
             Json(SandboxCandidateBody {
                 execution_id: "exec-1".into(),
-                source: ".vak/scratch/vak/exec-1".into(),
+                source: exec_dir(state.core.cwd(), ".vak/scratch/vak/exec-1")
+                    .display()
+                    .to_string(),
                 destination: ".".into(),
             }),
         )
@@ -24211,7 +24246,9 @@ mod sandbox_promotion_tests {
                 tool: "office_apply".into(),
                 code_preview: "{}".into(),
                 language: "json".into(),
-                scratch_dir: ".vak/scratch/vak/exec-1".into(),
+                scratch_dir: exec_dir(state.core.cwd(), ".vak/scratch/vak/exec-1")
+                    .display()
+                    .to_string(),
             }),
         );
         let response = export_sandbox_candidate(
@@ -24219,7 +24256,9 @@ mod sandbox_promotion_tests {
             Path("session-1".into()),
             Json(SandboxCandidateBody {
                 execution_id: "exec-1".into(),
-                source: ".vak/scratch/vak/exec-1".into(),
+                source: exec_dir(state.core.cwd(), ".vak/scratch/vak/exec-1")
+                    .display()
+                    .to_string(),
                 destination: ".".into(),
             }),
         )
@@ -24531,7 +24570,7 @@ mod sandbox_promotion_tests {
         });
         seed_office_calls(&state.core, "session-1", &[("exec-1", args)]);
         // A draft that no office_apply call produced: a command wrote it.
-        let scratch = dir.path().join(".vak/scratch/vak/exec-1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/vak/exec-1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         let other = vak_ooxml::edit::apply(
             &vak_ooxml::fixtures::xlsx(),
@@ -24564,7 +24603,9 @@ mod sandbox_promotion_tests {
                 tool: "office_apply".into(),
                 code_preview: "{}".into(),
                 language: "json".into(),
-                scratch_dir: ".vak/scratch/vak/exec-1".into(),
+                scratch_dir: exec_dir(state.core.cwd(), ".vak/scratch/vak/exec-1")
+                    .display()
+                    .to_string(),
             }),
         );
         let response = export_sandbox_candidate(
@@ -24572,7 +24613,9 @@ mod sandbox_promotion_tests {
             Path("session-1".into()),
             Json(SandboxCandidateBody {
                 execution_id: "exec-1".into(),
-                source: ".vak/scratch/vak/exec-1".into(),
+                source: exec_dir(state.core.cwd(), ".vak/scratch/vak/exec-1")
+                    .display()
+                    .to_string(),
                 destination: ".".into(),
             }),
         )
@@ -24625,7 +24668,7 @@ mod sandbox_promotion_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(scratch.join("result.json"), r#"{"ready":true}"#)
             .await
@@ -24697,7 +24740,7 @@ mod sandbox_promotion_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(
             scratch.join("blank.html"),
@@ -24727,7 +24770,7 @@ mod sandbox_promotion_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(scratch.join("result.txt"), "candidate")
             .await
@@ -24755,7 +24798,7 @@ mod sandbox_promotion_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(scratch.join("invitation.html"), "<h1>Saved</h1>")
             .await
@@ -24818,7 +24861,7 @@ mod sandbox_promotion_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core);
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(scratch.join("result.txt"), "reviewed")
             .await
@@ -25009,7 +25052,7 @@ mod sandbox_promotion_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(scratch.join("result.txt"), "saved candidate")
             .await
@@ -25121,7 +25164,7 @@ mod sandbox_promotion_tests {
         }));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(scratch.join("result.txt"), "version one")
             .await
@@ -25252,7 +25295,7 @@ mod sandbox_promotion_tests {
         tokio::fs::write(dir.path().join("letter.docx"), &version_one)
             .await
             .unwrap();
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(scratch.join("letter.docx"), &version_one)
             .await
@@ -26343,7 +26386,7 @@ mod sandbox_promotion_tests {
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
         seed_bound_result(&core, "session-1", "exec-1");
         let state = AppState::new(core.clone());
-        let scratch = dir.path().join(".vak/scratch/e1");
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
         tokio::fs::create_dir_all(&scratch).await.unwrap();
         tokio::fs::write(scratch.join("result.txt"), "saved candidate")
             .await

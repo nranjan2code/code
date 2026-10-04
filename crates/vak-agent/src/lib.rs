@@ -4532,6 +4532,7 @@ impl Agent {
             agent_id: None,
             trace: None,
             new_documents: Vec::new(),
+            executions: None,
         };
         let input = serde_json::json!({ "command": cmd });
         let out = match tokio::time::timeout(
@@ -7292,6 +7293,7 @@ async fn execute_one(
                 agent_id: agent_id.map(|s| s.to_string()),
                 trace: call_trace,
                 new_documents: Vec::new(),
+                executions: None,
             };
             let file_access = tool.file_access(&call.input);
             let declared = file_access

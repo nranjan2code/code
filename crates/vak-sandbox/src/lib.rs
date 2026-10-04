@@ -1105,10 +1105,13 @@ pub fn adopt_revision_drafts(task_root: &Path, drafts: &[RevisionDraft]) -> Resu
         if Path::new(&draft.path).starts_with(vak_config::scope::PROJECT_DIR) {
             return Err(Error::PathEscape(draft.path.clone()));
         }
-        if !Path::new(&draft.draft).starts_with(vak_config::scope::SCRATCH_DIR) {
+        // A draft is named under `.vak/scratch/` and lives in the task
+        // copy's execution root, outside the copy (plan M3b slice 4).
+        let Ok(rest) = Path::new(&draft.draft).strip_prefix(vak_config::scope::SCRATCH_DIR) else {
             return Err(Error::PathEscape(draft.draft.clone()));
-        }
-        let source = confined(task_root, &draft.draft)?;
+        };
+        let executions = vak_config::scope::executions_root(task_root);
+        let source = confined(&executions, &rest.to_string_lossy())?;
         let bytes = fs::read(&source).map_err(|_| Error::Missing(draft.draft.clone()))?;
         let target = confined(task_root, &draft.path)?;
         if let Some(parent) = target.parent() {
@@ -2011,11 +2014,16 @@ mod tests {
         .unwrap();
         let task = store.path().join("task");
         prepare_revision_copy(&first, &task).unwrap();
-        let drafts = task.join(".vak/scratch/vak/call-2");
+        vak_config::paths::isolate_home_for_tests();
+        let drafts = vak_config::scope::draft_location(
+            &vak_config::scope::executions_root(&task),
+            Path::new(".vak/scratch/vak/call-2"),
+        )
+        .unwrap();
         fs::create_dir_all(&drafts).unwrap();
         fs::write(drafts.join("letter.docx"), "version two").unwrap();
 
-        // Left in scratch, the draft is not a change: this is the failure.
+        // Left as a draft, it is not a change: this is the failure.
         assert!(matches!(
             freeze_revision_candidate("unchanged", &task, &first, &store.path().join("x")),
             Err(Error::InvalidPlan(reason)) if reason == "revision did not change candidate files"

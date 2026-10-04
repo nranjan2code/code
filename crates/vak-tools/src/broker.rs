@@ -15,7 +15,7 @@ use crate::{Tool, ToolContext, ToolOutput};
 pub const WORKER_SUBCOMMAND: &str = "__tool_worker";
 pub const PERSISTENT_WORKER_SUBCOMMAND: &str = "__persistent_tool_worker";
 pub(crate) const WORKER_ENV: &str = "VAK_INTERNAL_TOOL_WORKER";
-const PROTOCOL_VERSION: u8 = 3;
+const PROTOCOL_VERSION: u8 = 4;
 const MAX_PROTOCOL_BYTES: u64 = 2 * 1024 * 1024;
 /// Mail attachment previews cross the worker protocol as base64 JSON, so keep
 /// raw file bytes below the protocol ceiling with ample encoding overhead.
@@ -49,6 +49,9 @@ enum WorkerTask {
         /// See [`ToolContext::new_documents`].
         #[serde(default)]
         new_documents: Vec<String>,
+        /// See [`ToolContext::executions`].
+        #[serde(default)]
+        executions: Option<PathBuf>,
     },
     VerifyTargets {
         root: PathBuf,
@@ -410,6 +413,7 @@ async fn execute(
             agent_id: ctx.agent_id.clone(),
             trace: ctx.trace.clone(),
             new_documents: new_documents.to_vec(),
+            executions: Some(ctx.executions_root()),
         },
     };
     let payload = match serde_json::to_vec(&request) {
@@ -555,7 +559,9 @@ pub async fn worker_main() -> i32 {
         Ok(request) if request.version == PROTOCOL_VERSION => request,
         _ => return 125,
     };
-    let (tool_name, args, execution_id, agent_id, trace, new_documents) = match request.task {
+    let (tool_name, args, execution_id, agent_id, trace, new_documents, executions) = match request
+        .task
+    {
         WorkerTask::Tool {
             tool,
             args,
@@ -563,7 +569,16 @@ pub async fn worker_main() -> i32 {
             agent_id,
             trace,
             new_documents,
-        } => (tool, args, execution_id, agent_id, trace, new_documents),
+            executions,
+        } => (
+            tool,
+            args,
+            execution_id,
+            agent_id,
+            trace,
+            new_documents,
+            executions,
+        ),
         WorkerTask::OfficeReview {
             before,
             after,
@@ -719,6 +734,9 @@ pub async fn worker_main() -> i32 {
             let mut ctx = ToolContext::new(cwd)
                 .with_sandbox_sink(sink)
                 .with_new_documents(new_documents);
+            if let Some(executions) = executions {
+                ctx = ctx.with_executions(executions);
+            }
             if let Some(agent_id) = agent_id {
                 ctx = ctx.with_agent_id(agent_id);
             }
@@ -1580,11 +1598,12 @@ mod tests {
                 agent_id: None,
                 trace: Some(trace.clone()),
                 new_documents: Vec::new(),
+                executions: None,
             },
         };
         let wire = serde_json::to_vec(&request).unwrap();
         let back: WorkerRequest = serde_json::from_slice(&wire).unwrap();
-        assert_eq!(back.version, 3);
+        assert_eq!(back.version, 4);
         match back.task {
             WorkerTask::Tool { trace: got, .. } => assert_eq!(got, Some(trace)),
             _ => unreachable!(),

@@ -19,6 +19,9 @@ pub struct ToolContext {
     /// their Word edits are written clean (docs/design/72, R7). Set by the
     /// runtime, never by the model; empty outside a revision's copy.
     pub new_documents: Vec<String>,
+    /// The space's execution root, resolved by the host so a worker with a
+    /// scrubbed environment finds the same one; `None` resolves it here.
+    pub executions: Option<PathBuf>,
 }
 
 impl ToolContext {
@@ -31,6 +34,7 @@ impl ToolContext {
             agent_id: None,
             trace: None,
             new_documents: Vec::new(),
+            executions: None,
         }
     }
 
@@ -47,6 +51,24 @@ impl ToolContext {
     pub fn with_trace(mut self, trace: vak_session::trace::TraceKey) -> Self {
         self.trace = Some(trace);
         self
+    }
+
+    pub fn with_executions(mut self, root: PathBuf) -> Self {
+        self.executions = Some(root);
+        self
+    }
+
+    /// The space's execution root: where executions keep temp files,
+    /// caches and drafts (`vak_config::scope::executions_root`).
+    pub fn executions_root(&self) -> PathBuf {
+        self.executions
+            .clone()
+            .unwrap_or_else(|| vak_config::scope::executions_root(&self.cwd))
+    }
+
+    /// The Agent this call runs for, `vak` when the session names none.
+    pub fn agent(&self) -> &str {
+        self.agent_id.as_deref().unwrap_or("vak")
     }
 
     pub fn with_new_documents(mut self, paths: Vec<String>) -> Self {

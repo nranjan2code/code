@@ -73,8 +73,7 @@ impl Tool for BashTool {
         // invisible to `read`, and a small model looped rewriting it. Runtime
         // state (temp files, tool caches) goes to the runtime root, outside
         // the project tree (invariant 35).
-        let agent_id = ctx.agent_id.as_deref().unwrap_or("vak");
-        let execution_root = vak_config::scope::execution_dir(&ctx.cwd, agent_id);
+        let execution_root = ctx.executions_root().join(ctx.agent());
         let temp_dir = ctx
             .sandbox_sink
             .as_ref()

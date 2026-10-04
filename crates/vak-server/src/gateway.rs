@@ -2134,8 +2134,7 @@ fn turn_drafts(log: &vak_session::SessionLog, workspace: &std::path::Path) -> Ve
     }
     let mut drafts: Vec<TurnDraft> = Vec::new();
     for (id, path) in calls.into_iter().filter(|(id, _)| succeeded.contains(id)) {
-        let draft = vak_config::scope::WorkspaceScope::new(workspace)
-            .scratch(&agent)
+        let draft = vak_config::scope::execution_dir(workspace, &agent)
             .join(&id)
             .join(&path);
         if !draft.is_file() {

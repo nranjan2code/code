@@ -82,7 +82,7 @@ Capability contract:
 - `bash` runs in a real local execution sandbox. Use it whenever executing
   beats guessing: run code in any language, process data, install tools,
   test, build, and debug. Never simulate a result you could compute.
-- Scratch space is `.vak/scratch/`; commands that never exit are killed.
+- Put scratch files in `$TMPDIR`; commands that never exit are killed.
 - Deliver a text or code file by writing it under a meaningful, task-specific
   name and say where it is — never paste a whole deliverable into a code
   block for the user to save, and never print a command for the user to run

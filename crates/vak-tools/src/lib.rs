@@ -11,6 +11,7 @@ pub mod broker;
 pub mod context;
 pub mod contract;
 pub mod doc_read;
+pub mod drafts;
 pub mod edit;
 pub mod find_tools;
 pub mod glob;

@@ -29,6 +29,8 @@ pub const PROJECT_CONFIG_STEM: &str = ".vak/config";
 pub const PROJECT_SKILLS: &str = ".vak/skills";
 pub const PROJECT_PLUGINS: &str = ".vak/plugins";
 pub const SEED_MANIFEST: &str = ".vak/.seed-manifest.json";
+/// The prefix of a draft's name; the draft itself lives in the runtime
+/// root (`draft_location`), never under this path in the project.
 pub const SCRATCH_DIR: &str = ".vak/scratch";
 
 /// Fixed-hash identity of a workspace directory (FNV-1a over its path, so a
@@ -64,6 +66,17 @@ pub fn executions_root(cwd: &Path) -> PathBuf {
 /// One Agent's executions in the space at `cwd`.
 pub fn execution_dir(cwd: &Path, agent_id: &str) -> PathBuf {
     executions_root(cwd).join(agent_id)
+}
+
+/// Where the draft named `name` lives. A draft is named
+/// `.vak/scratch/<agent>/<execution>/<path>`: that name is what the model is
+/// told and the ledger records, and the file is under `executions` (a
+/// space's [`executions_root`]) at `<agent>/<execution>/<path>`, outside the
+/// project tree (plan M3b slice 4). `None` when `name` is not a draft name.
+pub fn draft_location(executions: &Path, name: &Path) -> Option<PathBuf> {
+    name.strip_prefix(SCRATCH_DIR)
+        .ok()
+        .map(|rest| executions.join(rest))
 }
 
 pub fn workspace_key(cwd: &Path) -> String {
@@ -438,22 +451,12 @@ impl WorkspaceScope {
         self.project_dir().join("feeds.toml")
     }
 
-    /// `<workspace>/.vak/scratch/<agent_id>`, an Agent's quarantined
-    /// execution scratch.
-    pub fn scratch_root(&self) -> PathBuf {
-        self.root.join(SCRATCH_DIR)
-    }
-
     pub fn launch_file(&self) -> PathBuf {
         self.project_dir().join("launch.toml")
     }
 
     pub fn seed_manifest(&self) -> PathBuf {
         self.root.join(SEED_MANIFEST)
-    }
-
-    pub fn scratch(&self, agent_id: &str) -> PathBuf {
-        self.scratch_root().join(agent_id)
     }
 
     pub fn worktrees(&self) -> PathBuf {
@@ -560,7 +563,17 @@ mod tests {
         assert_eq!(s.worktrees(), ws.join(".vak/worktrees"));
         assert_eq!(s.output_prefs(), ws.join(".vak/output.toml"));
         assert_eq!(s.feeds_config(), ws.join(".vak/feeds.toml"));
-        assert_eq!(s.scratch("mira"), ws.join(".vak/scratch/mira"));
+        assert_eq!(
+            draft_location(
+                Path::new("/run/x"),
+                Path::new(".vak/scratch/mira/e1/a.docx")
+            ),
+            Some(PathBuf::from("/run/x/mira/e1/a.docx"))
+        );
+        assert_eq!(
+            draft_location(Path::new("/run/x"), Path::new("a.docx")),
+            None
+        );
         assert_eq!(
             s.permissions_local(),
             ws.join(".vak/permissions.local.toml")

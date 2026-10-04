@@ -103,29 +103,35 @@ impl Tool for DocReadTool {
         }
 
         let p = Path::new(path_str);
-        let resolved = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            ctx.cwd.join(p)
-        };
-
-        // Strict workspace boundary confinement (Invariant 10)
-        let canonical_target = match resolved.canonicalize() {
-            Ok(c) => c,
-            Err(e) => {
+        // Strict workspace boundary confinement (invariant 10), with this
+        // Agent's own drafts as its one scoped exception.
+        let canonical_target = match crate::drafts::existing(ctx, path_str) {
+            Ok(path) => path,
+            Err(error) => {
                 let hint = attached_copy(&ctx.cwd, path_str)
                     .map(|saved| format!(". The file attached as '{path_str}' is at path \"{saved}\": call doc_read again with that exact path"))
                     .unwrap_or_default();
-                return ToolOutput::error(format!("cannot open file '{}': {e}{hint}", p.display()));
+                return ToolOutput::error(format!(
+                    "cannot open file '{}': {error}{hint}",
+                    p.display()
+                ));
             }
         };
-        let canonical_cwd = match ctx.cwd.canonicalize() {
-            Ok(c) => c,
-            Err(e) => return ToolOutput::error(format!("cannot resolve workspace root: {e}")),
-        };
-        if !canonical_target.starts_with(&canonical_cwd) {
-            return ToolOutput::error("access denied: path escapes canonical workspace root");
-        }
+        // Cited as the workspace path, or by its draft name for a draft.
+        let cite_path = ctx
+            .cwd
+            .canonicalize()
+            .ok()
+            .and_then(|cwd| {
+                canonical_target
+                    .strip_prefix(cwd)
+                    .ok()
+                    .map(Path::to_path_buf)
+            })
+            .map_or_else(
+                || path_str.to_string(),
+                |rel| rel.to_string_lossy().into_owned(),
+            );
 
         let offset = args
             .get("offset")
@@ -153,11 +159,7 @@ impl Tool for DocReadTool {
         if vak_ooxml::is_openxml_path(&canonical_target.to_string_lossy()) {
             let target = canonical_target.clone();
             let request = Request {
-                cite_path: canonical_target
-                    .strip_prefix(&canonical_cwd)
-                    .unwrap_or(&canonical_target)
-                    .to_string_lossy()
-                    .into_owned(),
+                cite_path: cite_path.clone(),
                 view: view.to_string(),
                 section: section.map(str::to_string),
                 offset,
@@ -170,11 +172,7 @@ impl Tool for DocReadTool {
             };
         }
         let request = Request {
-            cite_path: canonical_target
-                .strip_prefix(&canonical_cwd)
-                .unwrap_or(&canonical_target)
-                .to_string_lossy()
-                .into_owned(),
+            cite_path,
             view: view.to_string(),
             section: section.map(str::to_string),
             offset,

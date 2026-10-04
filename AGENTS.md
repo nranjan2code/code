@@ -488,7 +488,12 @@ in progress, and the rest of V4 follows it.
     workspace-write modes, automatic read/glob/grep access must resolve inside
     the canonical session workspace; traversal and symlink escapes fail
     closed. Any exception requires an explicit scoped rule or FullAccess.
-    Never weaken this with string-prefix checks or check only one file tool.
+    The one built-in exception: a call may reach its own Agent's drafts,
+    named `.vak/scratch/<agent>/<execution>/…` and stored in the space's
+    execution root in the runtime directory (`vak_tools::drafts`),
+    canonicalised; another Agent's drafts and any symlink or `..` escape
+    stay refused. Never weaken this with string-prefix checks or check only
+    one file tool.
 11. **Permission changes revoke old capability.** A runtime mode change must
     cancel in-flight main and side runs and reject pending approvals before the
     new mode is reported. Never let an agent continue with a stale FullAccess
@@ -872,7 +877,8 @@ in progress, and the rest of V4 follows it.
     and loopback-pinned when on, because every other effect the client can
     reach is permission-gated and a shell is not.
 35. **Workspace execution works in the workspace, keeps its runtime state in
-    `.vak/scratch/<agent_id>/`, and is observable in Workbench.** `bash` runs
+    the space's execution root outside the project, and is observable in
+    Workbench.** `bash` runs
     in the canonical workspace (or a `cwd` inside it) — the same view
     `read`/`write`/`edit` address, so what one tool writes the next can read.
     A per-execution empty scratch cwd was shipped and removed: a file the
@@ -885,11 +891,12 @@ in progress, and the rest of V4 follows it.
     caches and bytecode (`XDG_CACHE_HOME`, `PYTHONPYCACHEPREFIX`, the pip
     and npm caches) to `<runtime>/executions/<space>/<agent_id>/cache`
     (`vak_config::scope::execution_dir`); a write sandbox grants exactly the
-    workspace and that space's execution root. Drafts and candidates still
-    live in `.vak/scratch/<agent_id>/` until M3b slice 4 moves them. Files a command creates or changes in
+    workspace and that space's execution root. Drafts live there too: a
+    draft is still named `.vak/scratch/<agent_id>/<execution>/<path>`, and
+    `vak_config::scope::draft_location` says where it is. Files a command creates or changes in
     the workspace are the work itself and are reported as Workbench
-    artifacts; a candidate is exported only from an execution that ran inside
-    `.vak/scratch/`. All executions stream live stdout, stderr, package
+    artifacts; a candidate is exported only from an execution whose
+    drafts are in the execution root. All executions stream live stdout, stderr, package
     detection events, and status directly to the Workbench panel for full
     operator observability. Egress and permissions follow the broker security
     model, failing closed when unapproved; read-only mode still denies every
@@ -960,8 +967,8 @@ in progress, and the rest of V4 follows it.
     (`vak_config::paths::agent_home`), encompassing private append-only
     session ledgers under `sessions/<cwd-hash>/` and private memory under
     `memory/`, and its own workspace (`vak_config::paths::agent_workspace`),
-    with quarantined execution scratch partitioned under
-    `<workspace>/.vak/scratch/<agent_id>/`. Cross-agent infrastructure (the
+    with quarantined execution state partitioned under
+    `<runtime>/executions/<space>/<agent_id>/`. Cross-agent infrastructure (the
     gateway allowlist, bots, operations incidents, actions receipts, FinOps
     ledger, scheduled tasks, the archive and the trash) remains shared at the
     top of the data home via `Core::shared_scope()`. Agent identity is resolved
@@ -1038,7 +1045,7 @@ in progress, and the rest of V4 follows it.
     read of the exact file (`base_digest`), splices only the elements it
     changes, and is confirmed by re-reading the written package, or nothing
     is written. `office_apply` never writes the workspace file: its result is
-    a draft in its execution's `.vak/scratch/` directory, and the one Review
+    a draft in its execution's directory in the execution root, and the one Review
     path (candidate, worker verification, semantic diff, atomic promotion
     with undo) is how a change reaches the workspace. The agent loop refuses
     a shell command that names a draft the turn delivered for review, and no

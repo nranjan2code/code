@@ -284,6 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn office_apply_creates_and_edits_a_pdf_as_a_draft() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let created = call(
             dir.path(),
@@ -305,7 +306,11 @@ mod tests {
             !dir.path().join("plan.pdf").exists(),
             "the workspace is unchanged until review"
         );
-        let draft = dir.path().join(draft_of(&created.content));
+        let draft = vak_config::scope::draft_location(
+            &vak_config::scope::executions_root(dir.path()),
+            std::path::Path::new(&draft_of(&created.content)),
+        )
+        .expect("a draft name");
         let document =
             vak_pdf::read(&std::fs::read(&draft).unwrap(), vak_pdf::Limits::default()).unwrap();
         assert!(
@@ -349,6 +354,7 @@ mod tests {
 
     #[tokio::test]
     async fn office_apply_refuses_a_pdf_call_with_a_reason() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("report.pdf"), vak_pdf::fixtures::report()).unwrap();
         let stale = call(
@@ -375,6 +381,7 @@ mod tests {
 
     #[test]
     fn the_worker_reviews_narrows_and_projects_a_pdf_draft() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("report.pdf");
         std::fs::write(&source, vak_pdf::fixtures::report()).unwrap();
