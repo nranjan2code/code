@@ -572,7 +572,29 @@ carries the tenant store whole.
 - `auth/` becomes tenant Desired (public keys and recovery-code digests,
   always backed up).
 
-**Slice 4 — runtime out of the project tree (L4, L10)**
+**Slice 4 — runtime out of the project tree (L4, L10)** — in progress.
+Step 1 done (2026-10-04): execution temp files and caches live in
+`<runtime>/executions/<space>/<agent>/` (`vak_config::scope::execution_dir`),
+and write sandboxes grant exactly the workspace and that space's execution
+root (`sandbox_writes_only_execution_dir_and_space`). Step 2, decided by
+the maintainer on 2026-10-04: drafts and frozen candidates move there too,
+with a scoped exception to invariant 10. Its design:
+- A draft is addressed relative to its execution root
+  (`<execution>/<workspace path>` under `execution_dir(space, agent)`),
+  never as a `.vak/scratch/…` workspace path; `office_apply::draft_dir`,
+  `delivered_file` and the ledger record that form.
+- File tools may read exactly the current session's own execution root
+  beside the workspace (canonicalised, no symlink or traversal escape);
+  another Agent's or another space's executions stay unreachable. Tests:
+  `drafts_live_outside_the_project`, `another_agents_drafts_are_unreachable`.
+- Consumers resolve the root instead of joining `.vak/scratch`: candidate
+  export and its scratch validation, task-copy revision drafts
+  (`adopt_revision_drafts`), the agent loop's draft-copy refusal, preview
+  scopes, projection artifacts, Review.
+- The client and admin UIs stop recognising `.vak/scratch` paths and show
+  drafts by their execution-relative path; both bundles are rebuilt.
+- Invariants 10, 35 and 39 are reworded in the same change, and the Review
+  flow is checked live in a browser.
 - Executions and environments live under the tenant.
 - Agent workspaces move to `workspaces/<spc>/<agt>/` as Workspace class,
   bound to (Space, Agent), never an Environment.
