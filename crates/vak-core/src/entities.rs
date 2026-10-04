@@ -217,7 +217,12 @@ impl vak_tools::Tool for EntityRecordTool {
                     .collect::<Vec<_>>()
                     .join("-");
                 if deduped.is_empty() {
-                    format!("ent-{}", vak_config::scope::workspace_key(Path::new(name)))
+                    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+                    for byte in name.bytes() {
+                        hash ^= u64::from(byte);
+                        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+                    }
+                    format!("ent-{hash:016x}")
                 } else {
                     deduped
                 }

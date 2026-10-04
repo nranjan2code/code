@@ -149,7 +149,7 @@ impl Store {
 
         // Derive project hash from the parent directory name.
         // Directory structure: <home>/sessions/<hash>/<session>.jsonl
-        let project_hash = ledger
+        let space_id = ledger
             .parent()
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
@@ -239,12 +239,12 @@ impl Store {
         let mut check_stmt = conn.prepare("SELECT 1 FROM entries WHERE entry_id = ?1 LIMIT 1")?;
         let mut insert_entry = conn.prepare(
             "INSERT OR IGNORE INTO entries
-             (entry_id, session_id, project_hash, parent_id, ts, kind, role,
+             (entry_id, session_id, space_id, parent_id, ts, kind, role,
               provider, model, tool_name, content_text, is_error)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )?;
         let mut insert_fts = conn.prepare(
-            "INSERT INTO entries_fts(entry_id, session_id, project_hash, ts, kind, role, content)
+            "INSERT INTO entries_fts(entry_id, session_id, space_id, ts, kind, role, content)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         )?;
 
@@ -290,13 +290,13 @@ impl Store {
                 continue;
             }
 
-            if let Some(meta) = self.extract_meta_with_hash(&session_id, &project_hash, &entry) {
+            if let Some(meta) = self.extract_meta_with_hash(&session_id, &space_id, &entry) {
                 let has_text = !meta.content_text.trim().is_empty();
 
                 insert_entry.execute(rusqlite::params![
                     meta.entry_id,
                     meta.session_id,
-                    meta.project_hash,
+                    meta.space_id,
                     meta.parent_id,
                     meta.ts,
                     meta.kind.as_str(),
@@ -312,7 +312,7 @@ impl Store {
                     insert_fts.execute(rusqlite::params![
                         meta.entry_id,
                         meta.session_id,
-                        meta.project_hash,
+                        meta.space_id,
                         meta.ts,
                         meta.kind.as_str(),
                         meta.role.as_deref().unwrap_or(""),
@@ -348,15 +348,15 @@ impl Store {
         })
     }
 
-    /// Like `extract_meta` but attaches project_hash.
+    /// Like `extract_meta` but attaches space_id.
     fn extract_meta_with_hash(
         &self,
         session_id: &str,
-        project_hash: &str,
+        space_id: &str,
         entry: &Entry,
     ) -> Option<crate::IndexedEntry> {
         let mut meta = self.extract_meta(session_id, entry)?;
-        meta.project_hash = project_hash.to_string();
+        meta.space_id = space_id.to_string();
         Some(meta)
     }
 }

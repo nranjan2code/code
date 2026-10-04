@@ -355,6 +355,9 @@ pub enum CoreError {
     Rule(#[from] vak_permission::RuleError),
     #[error("blocked by hook: {0}")]
     HookBlocked(String),
+    /// The workspace could not be bound to a space (`vak_config::spaces`).
+    #[error("cannot open the workspace as a space: {0}")]
+    Space(String),
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
     #[error("internal: permission engine missing")]
@@ -1298,6 +1301,12 @@ impl Core {
             &sessions_home,
             vak_config::paths::LOCAL_TENANT,
         ));
+        // Opening a workspace is what binds its folder to a space; every
+        // space-keyed path below resolves through that binding.
+        vak_config::spaces::bind(&cwd).map_err(CoreError::Space)?;
+        if trust_project_config {
+            crate::trust::trust_for_process(&cwd).map_err(CoreError::Space)?;
+        }
         // Warn about plugins whose skill descriptions reference retired
         // tool names. These plugins can cause model hallucinations
         // (e.g. `python_eval` → `unknown_capability` → fabricated output).

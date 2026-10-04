@@ -43,20 +43,45 @@ pub trait CredentialStore: Send + Sync {
     fn list(&self, scope: &str) -> Vec<(String, String)>;
 }
 
-/// Derives a stable scope identifier from the directory a caller used to
-/// name a project/shared/agent secret layer (the parent of what used to be
-/// a literal `<dir>/.env` path). Two different literal paths whose parent
-/// directory canonicalizes the same land in the same scope, matching the
-/// old file-based behavior where they'd have been the same `.env` file.
+/// [`scope_key_for`] for a write: storing a secret for a folder is an act
+/// about it as a workspace, so the folder is bound to its space first and the
+/// secret is never filed under an `unbound-` key it would leave behind.
+fn bound_scope_key_for(hint_path: &Path) -> io::Result<String> {
+    let dir = hint_path.parent().unwrap_or(hint_path);
+    let key = scope_key_for(hint_path);
+    if key.starts_with("space-") {
+        crate::spaces::bind(dir).map_err(io::Error::other)?;
+        return Ok(scope_key_for(hint_path));
+    }
+    Ok(key)
+}
+
+/// The secret scope named by the directory a caller used for a secret layer
+/// (the parent of what was once a literal `<dir>/.env`), keyed by owner
+/// rather than by path (review R12): an Agent home is `agent-<id>`, the data
+/// home is `tenant`, and any other directory is the space it is bound to,
+/// `space-<spc_…>`.
 fn scope_key_for(hint_path: &Path) -> String {
     let dir = hint_path.parent().unwrap_or(hint_path);
-    let canon = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in canon.to_string_lossy().bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+    let forms = |path: &Path| {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        [path.to_path_buf(), canonical]
+    };
+    for data in forms(&crate::paths::data_home()) {
+        for dir in forms(dir) {
+            if dir == data {
+                return "tenant".to_string();
+            }
+            if let Ok(rest) = dir.strip_prefix(data.join("agents"))
+                && let Some(agent) = rest
+                    .to_str()
+                    .filter(|agent| !agent.is_empty() && !agent.contains('/'))
+            {
+                return format!("agent-{agent}");
+            }
+        }
     }
-    format!("s{hash:016x}")
+    format!("space-{}", crate::spaces::key(dir))
 }
 
 fn store() -> &'static dyn CredentialStore {
@@ -135,14 +160,14 @@ pub fn get(scope_hint: &Path, var: &str) -> Option<String> {
 }
 
 pub fn set(scope_hint: &Path, var: &str, value: &str) -> io::Result<()> {
-    let scope = scope_key_for(scope_hint);
+    let scope = bound_scope_key_for(scope_hint)?;
     store().set(&scope, var, value)?;
     index_mark_present(&scope, var);
     Ok(())
 }
 
 pub fn remove(scope_hint: &Path, var: &str) -> io::Result<()> {
-    let scope = scope_key_for(scope_hint);
+    let scope = bound_scope_key_for(scope_hint)?;
     store().remove(&scope, var)?;
     index_mark_absent(&scope, var);
     Ok(())
@@ -539,10 +564,18 @@ mod tests {
 
     #[test]
     fn scope_key_for_is_stable_and_direction_specific() {
+        crate::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a.env");
         let b = dir.path().join("b.env");
         // Same parent directory -> same scope, matching old same-file behavior.
         assert_eq!(scope_key_for(&a), scope_key_for(&b));
+        assert!(scope_key_for(&a).starts_with("space-unbound-"));
+        let space = crate::spaces::bind(dir.path()).unwrap();
+        assert_eq!(scope_key_for(&a), format!("space-{space}"));
+        let agent = crate::paths::agent_home("mira").join(".env");
+        assert_eq!(scope_key_for(&agent), "agent-mira");
+        let tenant = crate::paths::data_home().join(".env");
+        assert_eq!(scope_key_for(&tenant), "tenant");
     }
 }

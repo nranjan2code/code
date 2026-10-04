@@ -129,9 +129,9 @@ pub(crate) fn resolve_agent_core(
 
 /// Resolve a `Core` pinned exactly the way `/agents/{id}/open` pins one:
 /// runtime permission-mode cap, sandbox backend override, provider instance
-/// override, and shared sessions_home carried forward from `active`, plus
-/// the one-time trust backstop for a workspace that predates `agents::save`
-/// recording trust.
+/// override, and shared sessions_home carried forward from `active`. An
+/// Agent workspace belongs to its space, so it is trusted exactly when its
+/// space is (`vak_core::trust`).
 ///
 /// Takes the target `workspace` directly rather than re-deriving it from
 /// `active.cwd()` (finding 6): `resolve_agent_core` still has to compute a
@@ -148,19 +148,6 @@ pub(crate) fn pinned_core_for_workspace(
     identity: &AgentIdentity,
     workspace: &std::path::Path,
 ) -> Result<vak_core::Core, vak_core::CoreError> {
-    // Backstop for an Agent whose workspace predates `agents::save` carrying
-    // trust forward (or was created by some other path this fix missed):
-    // without a trust marker here, `CorePool::resolve_at` below treats it as
-    // untrusted and silently strips its own `permission_mode`, `hooks`,
-    // `mcp.servers`, and other privileged config forever — the same gap
-    // `agents::save` closes at creation time, applied retroactively the
-    // first time this Agent is opened from a trusted context.
-    if identity.id != "vak"
-        && active.project_config_trusted()
-        && !vak_core::trust::is_trusted(workspace)
-    {
-        let _ = vak_core::trust::mark_trusted(workspace);
-    }
     let core = if workspace == active.cwd().as_path() {
         active.clone()
     } else {

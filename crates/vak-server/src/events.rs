@@ -24,7 +24,7 @@ pub enum SystemEvent {
     // ---- session lifecycle ----
     SessionCreated {
         session_id: String,
-        project_hash: String,
+        space_id: String,
     },
     SessionEntryAppended {
         session_id: String,
@@ -214,10 +214,10 @@ pub fn global() -> Option<EventHub> {
 // ---------------------------------------------------------------------------
 
 impl EventHub {
-    pub fn emit_session_created(&self, session_id: &str, project_hash: &str) {
+    pub fn emit_session_created(&self, session_id: &str, space_id: &str) {
         self.emit(SystemEvent::SessionCreated {
             session_id: session_id.to_string(),
-            project_hash: project_hash.to_string(),
+            space_id: space_id.to_string(),
         });
     }
 
@@ -280,7 +280,7 @@ mod tests {
         let mut rx = hub.subscribe();
         hub.emit(SystemEvent::SessionCreated {
             session_id: "s1".into(),
-            project_hash: "abc".into(),
+            space_id: "abc".into(),
         });
         let event = rx.try_recv().unwrap();
         match event {

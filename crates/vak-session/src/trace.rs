@@ -205,10 +205,12 @@ pub mod local {
         assert_eq!(tenant().to_string(), vak_config::paths::LOCAL_TENANT);
     }
 
-    /// The workspace's Space, bound by its path until a Space has an id of
-    /// its own.
+    /// The workspace's Space: the id its folder is bound to in the space
+    /// registry (`vak_config::spaces`); a folder never opened as a workspace
+    /// has a Space derived from its `unbound-` key.
     pub fn space(cwd: &Path) -> SpaceId {
-        SpaceId::derived(&cwd.to_string_lossy())
+        let key = vak_config::spaces::key(cwd);
+        SpaceId::parse(&key).unwrap_or_else(|_| SpaceId::derived(&key))
     }
 
     pub fn agent(agent_id: &str) -> AgentId {

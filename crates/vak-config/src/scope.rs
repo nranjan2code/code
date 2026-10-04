@@ -57,10 +57,9 @@ pub fn ledger_session_id(path: &Path) -> Option<String> {
 /// runtime root, never the project tree (plan M3b slice 4, L4). Sandboxes
 /// grant exactly this beside the workspace.
 pub fn executions_root(cwd: &Path) -> PathBuf {
-    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     crate::paths::runtime_dir()
         .join("executions")
-        .join(workspace_key(&cwd))
+        .join(crate::spaces::key(cwd))
 }
 
 /// One Agent's executions in the space at `cwd`.
@@ -77,15 +76,6 @@ pub fn draft_location(executions: &Path, name: &Path) -> Option<PathBuf> {
     name.strip_prefix(SCRATCH_DIR)
         .ok()
         .map(|rest| executions.join(rest))
-}
-
-pub fn workspace_key(cwd: &Path) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in cwd.to_string_lossy().as_bytes() {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{h:016x}")
 }
 
 /// An Agent's private home.
@@ -115,7 +105,7 @@ impl AgentScope {
     }
 
     pub fn sessions_dir(&self, cwd: &Path) -> PathBuf {
-        self.sessions_root().join(workspace_key(cwd))
+        self.sessions_root().join(crate::spaces::key(cwd))
     }
 
     pub fn session_file(&self, cwd: &Path, session_id: &str) -> PathBuf {
@@ -131,7 +121,7 @@ impl AgentScope {
     }
 
     pub fn memory_dir(&self, cwd: &Path) -> PathBuf {
-        self.memory_root().join(workspace_key(cwd))
+        self.memory_root().join(crate::spaces::key(cwd))
     }
 
     pub fn memory_notes(&self, cwd: &Path) -> PathBuf {
@@ -145,7 +135,7 @@ impl AgentScope {
     /// `None` is the Agent-wide (global) entity store.
     pub fn entities_file(&self, cwd: Option<&Path>) -> PathBuf {
         let sub = match cwd {
-            Some(dir) => workspace_key(dir),
+            Some(dir) => crate::spaces::key(dir),
             None => "global".to_string(),
         };
         self.root.join("entities").join(sub).join("ENTITIES.jsonl")
@@ -156,7 +146,7 @@ impl AgentScope {
     }
 
     pub fn skill_proposals(&self, cwd: &Path) -> PathBuf {
-        self.skill_proposals_root().join(workspace_key(cwd))
+        self.skill_proposals_root().join(crate::spaces::key(cwd))
     }
 
     pub fn skills(&self) -> PathBuf {
@@ -466,7 +456,8 @@ mod tests {
     fn agent_scope_matches_the_raw_paths() {
         let home = PathBuf::from("/data/agents/mira");
         let cwd = Path::new("/work/proj");
-        let key = workspace_key(cwd);
+        crate::paths::isolate_home_for_tests();
+        let key = crate::spaces::key(cwd);
         let s = AgentScope::new(&home);
         assert_eq!(s.sessions_dir(cwd), home.join("sessions").join(&key));
         assert_eq!(
@@ -570,11 +561,5 @@ mod tests {
             WorkspaceScope::relative().config_file(),
             PathBuf::from(".vak/config.toml")
         );
-    }
-
-    #[test]
-    fn workspace_key_is_the_frozen_fnv1a() {
-        assert_eq!(workspace_key(Path::new("")), "cbf29ce484222325");
-        assert_eq!(workspace_key(Path::new("/work/proj")).len(), 16);
     }
 }

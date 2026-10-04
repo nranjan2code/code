@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(
             store_path(home, &ws, false),
             home.join("memory")
-                .join(vak_config::scope::workspace_key(&ws))
+                .join(vak_config::spaces::key(&ws))
                 .join("MEMORY.md")
         );
     }

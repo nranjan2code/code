@@ -301,7 +301,7 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     let agent = vak_server::agents::find_template("writer")
         .unwrap()
         .to_agent_definition(&agent_id, None);
-    vak_server::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+    vak_server::agents::save(core.cwd(), std::slice::from_ref(&agent)).unwrap();
 
     let account_id = uuid::Uuid::now_v7().to_string();
     let refresh_calls = Arc::new(AtomicUsize::new(0));

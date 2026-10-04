@@ -12,7 +12,7 @@ pub struct SearchResult {
 pub struct SearchHit {
     pub entry_id: String,
     pub session_id: String,
-    pub project_hash: String,
+    pub space_id: String,
     pub ts: String,
     pub kind: String,
     pub role: Option<String>,
@@ -26,7 +26,7 @@ pub struct SearchHit {
 #[derive(Debug, Clone, Default)]
 pub struct SearchFilter {
     pub session_id: Option<String>,
-    pub project_hash: Option<String>,
+    pub space_id: Option<String>,
     pub kind: Option<String>,
     pub role: Option<String>,
     pub since: Option<String>,
@@ -75,8 +75,8 @@ impl Store {
             conditions.push("entries_fts.session_id = ?".to_string());
             params.push(Box::new(sid.clone()));
         }
-        if let Some(ref hash) = filter.project_hash {
-            conditions.push("entries_fts.project_hash = ?".to_string());
+        if let Some(ref hash) = filter.space_id {
+            conditions.push("entries_fts.space_id = ?".to_string());
             params.push(Box::new(hash.clone()));
         }
         if let Some(ref kind) = filter.kind {
@@ -105,7 +105,7 @@ impl Store {
         let where_clause = conditions.join(" AND ");
         let sql = format!(
             "SELECT entries_fts.entry_id, entries_fts.session_id,
-                    entries_fts.project_hash, entries_fts.ts,
+                    entries_fts.space_id, entries_fts.ts,
                     entries_fts.kind, entries_fts.role,
                     e.provider, e.model, e.tool_name,
                     bm25(entries_fts) AS score,
@@ -125,7 +125,7 @@ impl Store {
             Ok(SearchHit {
                 entry_id: row.get(0)?,
                 session_id: row.get(1)?,
-                project_hash: row.get(2)?,
+                space_id: row.get(2)?,
                 ts: row.get(3)?,
                 kind: row.get(4)?,
                 role: row.get(5)?,
@@ -173,8 +173,8 @@ impl Store {
             conditions.push("session_id = ?".to_string());
             params.push(Box::new(sid.clone()));
         }
-        if let Some(ref hash) = filter.project_hash {
-            conditions.push("project_hash = ?".to_string());
+        if let Some(ref hash) = filter.space_id {
+            conditions.push("space_id = ?".to_string());
             params.push(Box::new(hash.clone()));
         }
         if let Some(ref kind) = filter.kind {
@@ -214,7 +214,7 @@ impl Store {
 
         let order_dir = if ascending { "ASC" } else { "DESC" };
         let sql = format!(
-            "SELECT entry_id, session_id, project_hash, parent_id, ts,
+            "SELECT entry_id, session_id, space_id, parent_id, ts,
                     kind, role, provider, model, tool_name,
                     content_text, is_error
              FROM entries
@@ -229,7 +229,7 @@ impl Store {
             Ok(IndexedEntry {
                 entry_id: row.get(0)?,
                 session_id: row.get(1)?,
-                project_hash: row.get(2)?,
+                space_id: row.get(2)?,
                 parent_id: row.get(3)?,
                 ts: row.get(4)?,
                 kind: crate::EntryKind::parse_str(&kind_str).unwrap_or(crate::EntryKind::Message),
@@ -253,7 +253,7 @@ impl Store {
     pub fn list_sessions(&self) -> Result<Vec<SessionInfo>, StoreError> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT session_id, project_hash,
+            "SELECT session_id, space_id,
                     COUNT(*) as count,
                     MIN(ts) as first_ts,
                     MAX(ts) as last_ts
@@ -265,7 +265,7 @@ impl Store {
         let rows = stmt.query_map([], |row| {
             Ok(SessionInfo {
                 session_id: row.get(0)?,
-                project_hash: row.get(1)?,
+                space_id: row.get(1)?,
                 entry_count: row.get(2)?,
                 first_ts: row.get(3)?,
                 last_ts: row.get(4)?,
@@ -279,7 +279,7 @@ impl Store {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionInfo {
     pub session_id: String,
-    pub project_hash: String,
+    pub space_id: String,
     pub entry_count: usize,
     pub first_ts: String,
     pub last_ts: String,

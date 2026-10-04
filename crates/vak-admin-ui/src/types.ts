@@ -1,6 +1,6 @@
 export interface SessionListItem {
   session_id: string;
-  project_hash: string;
+  space_id: string;
   entry_count: number;
   first_ts: string;
   last_ts: string;
@@ -114,7 +114,7 @@ export interface TranscriptEntry {
 export interface SearchHit {
   entry_id: string;
   session_id: string;
-  project_hash: string;
+  space_id: string;
   ts: string;
   kind: string;
   role: string | null;
@@ -224,14 +224,14 @@ export interface ConfigInfo {
   capability_inheritance?: { mcp: boolean; hooks: boolean; skills: boolean; commands: boolean; plugins: boolean };
   /** Resolved permission rule lists, exactly as the engine evaluates them. */
   permissions?: PermissionRules;
-  /** `project_hash` of the workspace this server process is bound to.
+  /** `space_id` of the workspace this server process is bound to.
    * `/admin/api/sessions` lists sessions across every project the store
    * indexes, but attach/run/steer/cancel/diff/receipts/archive/delete/
    * markdown-export only ever reach a ledger file under this one
-   * workspace's directory — a session whose own `project_hash` differs
+   * workspace's directory — a session whose own `space_id` differs
    * from this can only be read (transcript, checkpoints), never mutated,
    * from this console instance. */
-  workspace_project_hash?: string;
+  workspace_space_id?: string;
   memory?: {
     search_enabled: boolean;
     write_enabled: boolean;
@@ -410,7 +410,7 @@ export interface AllowlistEntry {
 
 export type SystemEvent =
   | { type: "Agent"; data: { summary: string; detail?: string } }
-  | { type: "SessionCreated"; data: { session_id: string; project_hash: string } }
+  | { type: "SessionCreated"; data: { session_id: string; space_id: string } }
   | { type: "SessionEntryAppended"; data: { session_id: string; entry_id: string; kind: string } }
   | { type: "ConfigChanged"; data: { label: string; detail: string } }
   | { type: "GatewayInbound"; data: { surface: string; who: string; preview: string } }

@@ -3746,16 +3746,16 @@ mod tests {
             .unwrap()
             .to_agent_definition("mail-owner", None);
 
-        crate::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+        crate::agents::save(core.cwd(), std::slice::from_ref(&agent)).unwrap();
         assert!(valid_agent(&state, "mail-owner"));
 
         agent.lifecycle = crate::agents::AgentLifecycle::Paused;
-        crate::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+        crate::agents::save(core.cwd(), std::slice::from_ref(&agent)).unwrap();
         assert!(!valid_agent(&state, "mail-owner"));
         assert!(registered_agent(&state, "mail-owner"));
 
         agent.lifecycle = crate::agents::AgentLifecycle::Archived;
-        crate::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+        crate::agents::save(core.cwd(), std::slice::from_ref(&agent)).unwrap();
         assert!(!valid_agent(&state, "mail-owner"));
         assert!(registered_agent(&state, "mail-owner"));
     }
@@ -3862,7 +3862,7 @@ mod tests {
         let agent = crate::agents::find_template("writer")
             .unwrap()
             .to_agent_definition(agent_id, None);
-        crate::agents::save(state.core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+        crate::agents::save(state.core.cwd(), std::slice::from_ref(&agent)).unwrap();
 
         let account_id = Uuid::now_v7().to_string();
         let credential_ref = AccountVault::credential_ref(&account_id).unwrap();
@@ -4107,7 +4107,7 @@ mod tests {
         let mut agent = crate::agents::find_template("writer")
             .unwrap()
             .to_agent_definition("mail-lock-owner", None);
-        crate::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+        crate::agents::save(core.cwd(), std::slice::from_ref(&agent)).unwrap();
 
         let provider_lock = state.mail_calendar_provider_lock("mail-lock-owner", Provider::Google);
         let blocker = provider_lock.lock_owned().await;
@@ -4120,7 +4120,7 @@ mod tests {
         tokio::task::yield_now().await;
 
         agent.lifecycle = crate::agents::AgentLifecycle::Paused;
-        crate::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+        crate::agents::save(core.cwd(), std::slice::from_ref(&agent)).unwrap();
         drop(blocker);
         assert!(
             !tokio::time::timeout(std::time::Duration::from_secs(1), waiting)

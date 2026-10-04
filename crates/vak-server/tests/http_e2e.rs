@@ -428,7 +428,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     let mut paused_agent = vak_server::agents::find_template("writer")
         .unwrap()
         .to_agent_definition("mail-paused", None);
-    vak_server::agents::save(&agent_workspace, std::slice::from_ref(&paused_agent), true).unwrap();
+    vak_server::agents::save(&agent_workspace, std::slice::from_ref(&paused_agent)).unwrap();
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -968,7 +968,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     interrupted.revoked_at = None;
     paused_ledger.append_pending(interrupted).unwrap();
     paused_agent.lifecycle = vak_server::agents::AgentLifecycle::Paused;
-    vak_server::agents::save(&agent_workspace, std::slice::from_ref(&paused_agent), true).unwrap();
+    vak_server::agents::save(&agent_workspace, std::slice::from_ref(&paused_agent)).unwrap();
 
     let paused_accounts = reqwest::Client::new()
         .get(format!(
@@ -1359,7 +1359,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
     let agent = vak_server::agents::find_template("writer")
         .unwrap()
         .to_agent_definition(&agent_id, None);
-    vak_server::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+    vak_server::agents::save(core.cwd(), std::slice::from_ref(&agent)).unwrap();
     let account_id = uuid::Uuid::now_v7().to_string();
     let vault = vak_mail_calendar::vault::AccountVault::for_agent(&agent_id).unwrap();
     let credential_ref =

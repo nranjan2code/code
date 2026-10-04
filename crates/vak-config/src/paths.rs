@@ -120,15 +120,10 @@ pub fn environment_dir(run_id: &str) -> PathBuf {
     local_tenant_home().join("environments").join(run_id)
 }
 
-/// The file in a space's workspaces directory naming the space's root, so an
-/// Agent workspace can find the project layer that defines its Agent.
-const SPACE_ROOT_FILE: &str = "space-root";
-
 fn space_workspaces(base: &std::path::Path) -> PathBuf {
-    let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
     local_tenant_home()
         .join("workspaces")
-        .join(crate::scope::workspace_key(&base))
+        .join(crate::spaces::key(base))
 }
 
 /// Per-Agent workspace (the directory file and shell tools operate in),
@@ -146,18 +141,12 @@ pub fn agent_workspace(base: &std::path::Path, agent_id: &str) -> PathBuf {
     }
 }
 
-/// Create `agent_id`'s workspace in the space at `base` and record the space
-/// root beside it, returning the workspace.
+/// Create `agent_id`'s workspace in the space at `base`, binding `base` to
+/// its space first (`spaces::bind`), and return it.
 pub fn ensure_agent_workspace(base: &std::path::Path, agent_id: &str) -> std::io::Result<PathBuf> {
+    crate::spaces::bind(base).map_err(std::io::Error::other)?;
     let workspace = agent_workspace(base, agent_id);
     std::fs::create_dir_all(&workspace)?;
-    if agent_id != "vak" {
-        let root = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
-        let marker = space_workspaces(base).join(SPACE_ROOT_FILE);
-        if std::fs::read_to_string(&marker).ok().as_deref() != Some(&*root.to_string_lossy()) {
-            std::fs::write(&marker, root.to_string_lossy().as_bytes())?;
-        }
-    }
     Ok(workspace)
 }
 
@@ -165,18 +154,8 @@ pub fn ensure_agent_workspace(base: &std::path::Path, agent_id: &str) -> std::io
 /// for any other directory.
 pub fn agent_workspace_space(cwd: &std::path::Path) -> Option<PathBuf> {
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    let workspaces = local_tenant_home().join("workspaces");
-    let workspaces = workspaces.canonicalize().unwrap_or(workspaces);
-    let rest = cwd.strip_prefix(&workspaces).ok()?;
-    let mut parts = rest.components();
-    let space = parts.next()?;
-    parts.next()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    std::fs::read_to_string(workspaces.join(space).join(SPACE_ROOT_FILE))
-        .ok()
-        .map(PathBuf::from)
+    let space = crate::spaces::agent_workspace_owner(&cwd)?;
+    crate::spaces::bindings(&space).into_iter().next()
 }
 
 /// Resolve the gateway workspace from an explicit data home. This variant
@@ -573,6 +552,7 @@ mod tests {
 
     #[test]
     fn agent_workspace_isolates_user_created_agents_from_each_other() {
+        isolate_home_for_tests();
         let base = PathBuf::from("/Users/example/vak-home");
         // The built-in agent keeps the process's own base workspace, so
         // existing single-agent installs see no path change.
@@ -590,6 +570,7 @@ mod tests {
 
     #[test]
     fn agent_workspace_isolates_the_same_agent_id_across_different_base_workspaces() {
+        isolate_home_for_tests();
         let base_a = PathBuf::from("/Users/example/project-a");
         let base_b = PathBuf::from("/Users/example/project-b");
         assert_ne!(

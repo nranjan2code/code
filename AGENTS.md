@@ -967,7 +967,7 @@ in progress, and the rest of V4 follows it.
     revision. Each top-level agent (the built-in `vak` and user-defined custom
     agents) owns private state under `<data home>/agents/<agent_id>/`
     (`vak_config::paths::agent_home`), encompassing private append-only
-    session ledgers under `sessions/<cwd-hash>/` and private memory under
+    session ledgers under `sessions/<space id>/` (`vak_config::spaces`) and private memory under
     `memory/`, and its own workspace (`vak_config::paths::agent_workspace`),
     with quarantined execution state partitioned under
     `<runtime>/executions/<space>/<agent_id>/`. Cross-agent infrastructure (the
@@ -1890,7 +1890,7 @@ that cost a session time to rediscover.
 
 ## Parallel agents
 
-Only touch files you changed in this session. Sessions are per-cwd-hashed;
+Only touch files you changed in this session. Sessions are partitioned by space id;
 never edit another session's files under the data home.
 
 Two homes, easily confused, and `crates/vak-config/src/paths.rs` is the only

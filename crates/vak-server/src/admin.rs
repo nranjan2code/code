@@ -26,14 +26,14 @@ pub(crate) async fn admin_traffic_status() -> Json<vak_llm::TrafficSnapshot> {
 #[derive(Debug, Deserialize)]
 pub(crate) struct SessionListQuery {
     pub limit: Option<usize>,
-    pub project: Option<String>,
+    pub space: Option<String>,
     pub agent: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SessionListItem {
     pub session_id: String,
-    pub project_hash: String,
+    pub space_id: String,
     pub entry_count: usize,
     pub first_ts: String,
     pub last_ts: String,
@@ -84,7 +84,7 @@ pub(crate) async fn list_sessions_admin(
     // per-workspace directory, so they apply across every project this
     // store indexes — unlike archive/delete *mutation*, which only reaches
     // a ledger file under this process's own workspace (see
-    // `workspace_project_hash` on `/admin/api/config`).
+    // `workspace_space_id` on `/admin/api/config`).
     let archive_map = crate::read_archive(&state.core);
     let shared = state.core.shared_scope().into_root();
     let trashed = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&shared));
@@ -97,7 +97,7 @@ pub(crate) async fn list_sessions_admin(
                     .get(&s.session_id)
                     .map(String::as_str)
                     .unwrap_or("vak");
-                q.project.as_ref().is_none_or(|p| &s.project_hash == p)
+                q.space.as_ref().is_none_or(|p| &s.space_id == p)
                     && q.agent.as_ref().is_none_or(|a| a == "all" || s_agent == a)
                     && !trashed.contains(&s.session_id)
             });
@@ -114,7 +114,7 @@ pub(crate) async fn list_sessions_admin(
                     SessionListItem {
                         archived: archive_map.get(&s.session_id).copied().unwrap_or(false),
                         session_id: s.session_id,
-                        project_hash: s.project_hash,
+                        space_id: s.space_id,
                         entry_count: s.entry_count,
                         first_ts: s.first_ts,
                         last_ts: s.last_ts,
@@ -342,7 +342,7 @@ pub(crate) async fn session_transcript_admin(
 pub(crate) struct SearchQuery {
     pub q: String,
     pub limit: Option<usize>,
-    pub project: Option<String>,
+    pub space: Option<String>,
     pub role: Option<String>,
     pub kind: Option<String>,
     pub exclude_session: Option<String>,
@@ -357,7 +357,7 @@ pub(crate) async fn search_admin(
     };
     let limit = q.limit.unwrap_or(20).clamp(1, 100);
     let filter = vak_store::query::SearchFilter {
-        project_hash: q.project,
+        space_id: q.space,
         role: q.role,
         kind: q.kind,
         excluded_sessions: vak_core::trash::search_exclusions(
@@ -632,9 +632,9 @@ pub(crate) async fn get_config_admin(
         // store indexes, but archive/delete/run/steer on a session only
         // reach a ledger file under *this* process's own workspace
         // (`sessions_home/sessions/<hash(cwd)>/`). This is that same hash,
-        // matching `project_hash` on each session row — the console uses it
+        // matching `space_id` on each session row — the console uses it
         // to tell which rows those actions can actually reach.
-        "workspace_project_hash": vak_config::scope::workspace_key(core.cwd()),
+        "workspace_space_id": vak_config::spaces::key(core.cwd()),
         // The resolved rule lists the permission engine actually evaluates
         // (vak_permission::Rule syntax: `Tool`, `Tool(glob)`, with a
         // `+`/`?`/`-` prefix for allow/ask/deny). The admin console shows

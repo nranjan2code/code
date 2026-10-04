@@ -4,7 +4,7 @@
 //! power (permission mode, allow rules, hooks, MCP servers, base-URL
 //! redirection), so they stay demoted until the operator says otherwise
 //! (`docs/design/05-config.md`). The decision is per canonical directory
-//! and remembered under `<data_home>/trusted/`.
+//! and remembered under `<data_home>/trusted/` by space id.
 //!
 //! This lived in the CLI binary, where the server and the onboarding
 //! projection could not reach it — so "is this workspace trusted?" had
@@ -12,67 +12,46 @@
 
 use std::path::{Path, PathBuf};
 
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
+fn trusted_dir() -> PathBuf {
+    vak_config::scope::SharedScope::new(vak_config::paths::data_home()).trusted()
 }
 
-/// Where the trust decision for `cwd` is recorded.
-///
-/// The path is canonicalized first. Without that, one directory has as many
-/// trust records as it has spellings — `/tmp/x` and `/private/tmp/x` are the
-/// same directory on macOS, a relative path and its absolute form are the
-/// same directory everywhere, and a decision recorded through one is
-/// invisible through the other. Callers do not agree on a spelling
-/// (`CorePool` canonicalizes its keys; the CLI passes the cwd as given), and
-/// "is this workspace trusted?" having two answers is the exact failure this
-/// module exists to end.
-///
-/// A path that cannot be canonicalized (it does not exist yet) falls back to
-/// its literal form rather than failing: recording a decision about a
-/// directory that is about to be created is legitimate.
+/// Where the trust decision for `cwd` is recorded: a marker named by the
+/// space its folder is bound to (`vak_config::spaces`), so every spelling of
+/// one directory (`/tmp/x` and `/private/tmp/x`, relative and absolute) has
+/// one answer, and a decision is about the space, not a string.
 pub fn marker_path(cwd: &Path) -> PathBuf {
-    marker_for(&cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf()))
+    trusted_dir().join(vak_config::spaces::key(cwd))
 }
 
-fn marker_for(path: &Path) -> PathBuf {
-    vak_config::scope::SharedScope::new(vak_config::paths::data_home())
-        .trusted()
-        .join(format!("{:016x}", fnv1a(path.to_string_lossy().as_bytes())))
-}
-
-/// True when this workspace has a recorded trust decision.
-///
-/// Checks the literal spelling too, so a marker written before paths were
-/// canonicalized still counts. Decisions an operator has already made must
-/// not be silently forgotten by a change to how they are addressed.
+/// True when this workspace has a recorded trust decision. Asking never
+/// binds a folder that has not been opened.
 pub fn is_trusted(cwd: &Path) -> bool {
-    marker_path(cwd).is_file() || marker_for(cwd).is_file()
+    vak_config::spaces::bound_space(cwd).is_some_and(|space| {
+        trusted_dir().join(&space).is_file()
+            || process_trust()
+                .lock()
+                .is_ok_and(|trust| trust.contains(&space))
+    })
 }
 
-/// Record a trust decision for `cwd`, the same way the CLI's own interactive
-/// "trust this workspace?" prompt does — a file at [`marker_path`], so every
-/// later [`is_trusted`] call (including `CorePool`'s) sees it immediately.
-///
-/// A user-created Agent's workspace (`vak_config::paths::agent_workspace`)
-/// is never visited or prompted about directly, so without this it can never
-/// pass `is_trusted` and its own `permission_mode`, `hooks`, `mcp.servers`,
-/// and other privileged config are silently stripped forever (see
-/// `vak_config`'s `PRIVILEGED_KEYS_NOTICE`) — an Agent whose settings a user
-/// configures through a trusted admin session but that silently never apply.
-/// Callers must only invoke this when the *creating* context is itself
-/// already trusted; it is not a substitute for that decision, only a way to
-/// carry it forward onto a directory the decision already covers in spirit.
-pub fn mark_trusted(cwd: &Path) -> std::io::Result<()> {
-    let marker = marker_path(cwd);
-    if let Some(parent) = marker.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&marker, cwd.to_string_lossy().as_bytes())
+fn process_trust() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static TRUST: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    TRUST.get_or_init(Default::default)
+}
+
+/// Trust `cwd`'s space for the life of this process without recording it,
+/// as a `Core` opened trusted does (`serve --trust`). The space's Agent
+/// workspaces belong to it (`vak_config::spaces`), so they are trusted with
+/// it, and nothing outlives the process.
+pub fn trust_for_process(cwd: &Path) -> Result<(), String> {
+    let space = vak_config::spaces::bind(cwd)?;
+    process_trust()
+        .lock()
+        .map_err(|_| "trust lock poisoned".to_string())?
+        .insert(space);
+    Ok(())
 }
 
 /// True when the workspace asks for nothing privileged, so opening it
@@ -126,11 +105,12 @@ pub fn requested_privileges(cwd: &Path) -> Vec<&'static str> {
     found
 }
 
-/// Record the decision. Best-effort: an unwritable data home means the
-/// workspace is simply asked about again next time, never silently
-/// trusted.
+/// Record the decision, the one writer of a trust marker. Best-effort: an
+/// unwritable data home means the workspace is simply asked about again
+/// next time, never silently trusted.
 pub fn record(cwd: &Path) -> std::io::Result<()> {
-    let marker = marker_path(cwd);
+    let space = vak_config::spaces::bind(cwd).map_err(std::io::Error::other)?;
+    let marker = trusted_dir().join(space);
     if let Some(parent) = marker.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -160,21 +140,6 @@ mod tests {
         // And a relative spelling of the same place.
         let relative = dir.path().join("./");
         assert!(is_trusted(&relative));
-    }
-
-    /// A marker written before paths were canonicalized still counts —
-    /// decisions an operator already made must not be forgotten by a change
-    /// to how they are addressed.
-    #[test]
-    fn a_legacy_uncanonicalized_marker_is_still_honoured() {
-        vak_config::paths::isolate_home_for_tests();
-        let dir = tempfile::tempdir().unwrap();
-        // `/var/...` on macOS canonicalizes to `/private/var/...`, so this
-        // literal-form marker is at a different hash than the current one.
-        let legacy = marker_for(dir.path());
-        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-        std::fs::write(&legacy, dir.path().to_string_lossy().as_bytes()).unwrap();
-        assert!(is_trusted(dir.path()));
     }
 
     #[test]

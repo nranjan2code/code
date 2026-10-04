@@ -81,6 +81,9 @@ async fn trashed_session_absent_from_every_search() {
     let cwd = dir.path().join("work");
     std::fs::create_dir_all(&cwd).unwrap();
     let cwd = cwd.canonicalize().unwrap();
+    // The workspace is opened (bound to its space) before its sessions exist.
+    vak_config::paths::isolate_home_for_tests();
+    vak_config::spaces::bind(&cwd).unwrap();
     let kept = uuid::Uuid::now_v7().to_string();
     let gone = uuid::Uuid::now_v7().to_string();
     write_session(&home, &cwd, &kept, "the zanzibar itinerary is in the notes");

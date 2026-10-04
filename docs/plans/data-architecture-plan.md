@@ -620,7 +620,21 @@ held nothing else but its `.vak/config.toml`. Step 2's design:
   and the space root.
 - `App.tsx:903` loses its `.vak/scratch` check.
 
-**Slice 5 — space identity (review R12)**
+**Slice 5 — space identity (review R12)** — in progress.
+Decided by the maintainer on 2026-10-04: a space id is a `spc_` UUIDv7 in
+the tenant registry (`tenants/<tenant>/spaces.toml`, Desired) with this
+machine's folder bindings, nothing is written into the project, and every
+path-keyed store re-keys, so `workspace_key(path)` is deleted. Step 1 done
+(2026-10-04): `vak_config::spaces`, where only `bind` writes (opening a
+`Core`, recording trust, saving a secret, creating an Agent workspace) and
+resolving a key never does; session ledgers, memory, entities, skill
+proposals, executions and Agent workspaces key by space id, and an Agent
+workspace resolves to its space's; credential scopes are `space-<id>`,
+`agent-<id>` or `tenant`; trust markers are named by space id, with one
+writer (`trust::record`) and process-only trust for a `Core` opened
+trusted (`serve --trust`), so `mark_trusted` is gone; the admin's
+`project_hash` is `space_id`. Left: the items below that store a folder
+path.
 Each item is keyed by space id in this slice:
 - credential scopes (`scope_key_for`), trust markers
 - CorePool identity, allowlist workspace fields, the

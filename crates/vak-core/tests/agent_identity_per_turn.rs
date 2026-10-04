@@ -193,7 +193,7 @@ async fn a_paused_agent_refuses_its_next_turn_and_resumes_when_active() {
     )
     .unwrap();
     vak_config::paths::isolate_home_for_tests();
-    vak_core::trust::mark_trusted(&base).unwrap();
+    vak_core::trust::record(&base).unwrap();
     write_lifecycle(&base, "active");
     let workspace = vak_config::paths::ensure_agent_workspace(&base, "auditor").unwrap();
     std::fs::create_dir_all(workspace.join(".vak")).unwrap();

@@ -533,7 +533,7 @@ export interface SearchHit {
   score: number;
   snippet: string;
   /** Set only in global mode: hash of the project the hit came from. */
-  project_hash?: string;
+  space_id?: string;
 }
 
 export function searchSessions(

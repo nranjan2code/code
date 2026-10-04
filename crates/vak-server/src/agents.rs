@@ -132,7 +132,7 @@ pub fn set_lifecycle(
             continue;
         };
         profile.lifecycle = lifecycle;
-        save(&root, &profiles, core.project_config_trusted())?;
+        save(&root, &profiles)?;
         return Ok(root);
     }
     Err(format!(
@@ -206,18 +206,10 @@ fn check(profiles: &[AgentDefinition], stored: &[AgentDefinition]) -> Result<(),
     Ok(())
 }
 
-/// `trusted` is the *creating* context's own trust decision (the workspace
-/// this admin/client session is already running against), carried forward
-/// onto each profile's isolated workspace so its own privileged config
-/// (`permission_mode`, `hooks`, `mcp.servers`, ...) actually applies —
-/// otherwise every user-created Agent's own settings are silently stripped
-/// forever, since nothing else ever visits or prompts about that nested
-/// directory (see `vak_core::trust::mark_trusted`).
-pub fn save(
-    cwd: &Path,
-    profiles: &[AgentDefinition],
-    trusted: bool,
-) -> Result<Vec<AgentDefinition>, String> {
+/// Write the Agent definitions of the workspace `cwd` and create each
+/// Agent's workspace in its space. An Agent workspace is trusted exactly
+/// when its space is (`vak_core::trust`), so nothing is carried forward.
+pub fn save(cwd: &Path, profiles: &[AgentDefinition]) -> Result<Vec<AgentDefinition>, String> {
     let dir = vak_config::scope::WorkspaceScope::new(cwd).project_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let lock = std::fs::OpenOptions::new()
@@ -280,11 +272,7 @@ pub fn save(
     for profile in &next {
         let agent_dir = vak_config::paths::agent_home(&profile.id);
         let _ = std::fs::create_dir_all(&agent_dir);
-        if let Ok(workspace_dir) = vak_config::paths::ensure_agent_workspace(cwd, &profile.id)
-            && trusted
-        {
-            let _ = vak_core::trust::mark_trusted(&workspace_dir);
-        }
+        let _ = vak_config::paths::ensure_agent_workspace(cwd, &profile.id);
     }
     Ok(next)
 }
@@ -311,7 +299,7 @@ mod tests {
             animation: "subtle".into(),
             voice: "default".into(),
         }];
-        save(dir.path(), &profiles, true).expect("save profiles");
+        save(dir.path(), &profiles).expect("save profiles");
         assert_eq!(load(dir.path()).expect("load profiles")[0].name, "Pip");
     }
 
@@ -343,7 +331,7 @@ mod tests {
             animation: "off".into(),
             voice: "default".into(),
         };
-        assert!(save(dir.path(), &[profile], true).is_err());
+        assert!(save(dir.path(), &[profile]).is_err());
     }
 
     #[test]
@@ -362,7 +350,7 @@ mod tests {
             animation: "off".into(),
             voice: "unknown".into(),
         };
-        assert!(save(dir.path(), &[profile], true).is_err());
+        assert!(save(dir.path(), &[profile]).is_err());
     }
 
     #[test]
@@ -382,7 +370,7 @@ mod tests {
             animation: "off".into(),
             voice: "default".into(),
         };
-        save(dir.path(), &[agent.clone()], true).expect("save paused agent");
+        save(dir.path(), &[agent.clone()]).expect("save paused agent");
         agent = load(dir.path()).expect("load paused agent").remove(0);
         assert_eq!(agent.lifecycle, AgentLifecycle::Paused);
         assert!(!agent.is_admissible());
@@ -408,12 +396,11 @@ mod tests {
         let mut untouched = profile.clone();
         untouched.id = "atlas".into();
         untouched.name = "Atlas".into();
-        let saved =
-            save(dir.path(), &[profile.clone(), untouched.clone()], true).expect("first save");
+        let saved = save(dir.path(), &[profile.clone(), untouched.clone()]).expect("first save");
         assert_eq!(saved[0].revision, 1);
         let mut edited = profile;
         edited.personality = "Warm and direct".into();
-        let saved = save(dir.path(), &[edited, untouched], true).expect("edited save");
+        let saved = save(dir.path(), &[edited, untouched]).expect("edited save");
         assert_eq!(saved[0].revision, 2);
         assert_eq!(saved[1].revision, 1);
     }
@@ -436,7 +423,7 @@ mod tests {
         };
         let mut duplicate = profile.clone();
         duplicate.name = "Two".into();
-        assert!(save(dir.path(), &[profile, duplicate], true).is_err());
+        assert!(save(dir.path(), &[profile, duplicate]).is_err());
     }
 
     #[test]
@@ -449,7 +436,7 @@ mod tests {
             .iter()
             .map(|t| t.to_agent_definition(&t.template_id, None))
             .collect();
-        let saved = save(dir.path(), &agents, true).expect("save all builtin templates");
+        let saved = save(dir.path(), &agents).expect("save all builtin templates");
         assert_eq!(saved.len(), 4);
         let loaded = load(dir.path()).expect("load all builtin templates");
         assert_eq!(loaded.len(), 4);
@@ -494,8 +481,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("agent workspace");
         let retired = layer_with_retired_character(dir.path());
         let created = agent("analyst", "Data Analyst", "tavi");
-        let saved = save(dir.path(), &[retired, created], true)
-            .expect("an untouched agent never blocks another");
+        let saved =
+            save(dir.path(), &[retired, created]).expect("an untouched agent never blocks another");
         assert_eq!(saved.len(), 2);
         let loaded = load(dir.path()).expect("load agents");
         assert_eq!(loaded[0].character, "leaf", "carried through as stored");
@@ -511,12 +498,12 @@ mod tests {
         let mut paused = retired.clone();
         paused.lifecycle = AgentLifecycle::Paused;
         paused.personality = "Careful".into();
-        save(dir.path(), &[paused.clone()], true)
+        save(dir.path(), &[paused.clone()])
             .expect("an edit that keeps the stored character is accepted");
 
         let mut renamed = paused.clone();
         renamed.character = "wave".into();
-        let error = save(dir.path(), &[renamed], true)
+        let error = save(dir.path(), &[renamed])
             .expect_err("a changed character must be one this version offers");
         assert!(
             error.contains("Research Analyst") && error.contains("wave"),
@@ -525,7 +512,7 @@ mod tests {
 
         let mut fixed = paused;
         fixed.character = "moss".into();
-        save(dir.path(), &[fixed], true).expect("a current character is accepted");
+        save(dir.path(), &[fixed]).expect("a current character is accepted");
         assert_eq!(load(dir.path()).expect("load agents")[0].character, "moss");
     }
 
@@ -534,7 +521,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("agent workspace");
         let mut created = agent("analyst", "Data Analyst", "tavi");
         created.instructions = "x".repeat(8001);
-        let error = save(dir.path(), &[created], true).expect_err("oversized instructions");
+        let error = save(dir.path(), &[created]).expect_err("oversized instructions");
         assert!(error.contains("Data Analyst"), "{error}");
         assert!(load(dir.path()).expect("load agents").is_empty());
     }

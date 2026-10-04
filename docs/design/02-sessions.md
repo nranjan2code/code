@@ -50,20 +50,22 @@ boundary, and a reader can recover the valid prefix if a process stops during
 the final write. JSONL is also inspectable with ordinary tools and allows
 future entry kinds to be added without replacing an entire session document.
 
-The path is derived by `SessionPath` from the agent's sessions home, a stable
-hash of the workspace path supplied by the caller, and the session id. Callers
-resolve the workspace through the canonical path APIs before choosing the
-session location:
+The location is derived from the Agent's sessions home, the id of the space
+the workspace is bound to, and the session id
+(`vak_config::scope::AgentScope::session_file`):
 
 ```text
-<agent sessions home>/sessions/<cwd-hash>/<session-id>.jsonl
+<agent sessions home>/sessions/<space id>/<session-id>/   # record segments
 ```
 
-The cwd hash is fixed FNV-1a, rather than Rust's `DefaultHasher`, so a compiler
-upgrade does not move existing sessions. The agent identity and session
-ownership come from the owning agent's home and header; the cwd hash only
-partitions sessions by workspace. Path resolution and the agent-home layout
-are owned by `vak_config::paths` and `Core`, not duplicated by callers.
+A space id is a `spc_` UUIDv7 minted when a folder is first opened as a
+workspace and kept, with this machine's path bindings, in the tenant's space
+registry (`vak_config::spaces`, data-architecture plan M3b slice 5). It is
+never a hash of the path. The Agent identity and session ownership come from
+the owning Agent's home and the header; the space id only partitions sessions
+by workspace. Path resolution and the Agent-home layout are owned by
+`vak_config::paths`, `vak_config::scope` and `Core`, not duplicated by
+callers.
 
 ### Parent pointers plus a hash chain
 

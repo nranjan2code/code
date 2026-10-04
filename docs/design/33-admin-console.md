@@ -104,7 +104,7 @@ inspect or change that agent's effective configuration.
 ### Store (FTS5 index)
 
 - One SQLite DB at `cache_home()/store.db`, WAL mode, schema-versioned.
-- `entries` table: entry_id, session_id, project_hash, parent_id, ts,
+- `entries` table: entry_id, session_id, space_id, parent_id, ts,
   kind (header/message/compaction/receipt/goal), role, provider, model,
   tool_name, content_text, is_error.
 - `entries_fts`: FTS5 with `porter unicode61`; BM25 ranking + `snippet()`.

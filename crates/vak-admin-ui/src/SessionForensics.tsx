@@ -1078,8 +1078,8 @@ export function SessionsList() {
   const [busyCandidate, setBusyCandidate] = createSignal("");
   const [bulkBusy, setBulkBusy] = createSignal(false);
 
-  const localHash = createMemo(() => sessions()?.workspace_project_hash ?? "");
-  const isLocal = (s: SessionListItem) => !localHash() || s.project_hash === localHash();
+  const localSpace = createMemo(() => sessions()?.workspace_space_id ?? "");
+  const isLocal = (s: SessionListItem) => !localSpace() || s.space_id === localSpace();
 
   const filtered = createMemo(() => {
     const list = sessions()?.sessions ?? [];
@@ -1246,7 +1246,7 @@ export function SessionsList() {
         <div class="sessions-kpi-card">
           <span class="kpi-label">Active Workspace</span>
           <span class="kpi-value font-mono">{(sessions()?.sessions ?? []).filter(isLocal).length}</span>
-          <span class="kpi-sub dim">Hash {localHash() ? localHash().slice(0, 8) : "all"}</span>
+          <span class="kpi-sub dim">{localSpace() ? "This workspace" : "All workspaces"}</span>
         </div>
         <div class="sessions-kpi-card">
           <span class="kpi-label">Archived</span>

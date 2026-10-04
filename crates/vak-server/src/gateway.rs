@@ -779,14 +779,6 @@ impl GatewayState {
                 },
             )?;
         }
-        if identity.id != "vak"
-            && effective_catalog
-                .as_ref()
-                .is_some_and(Core::project_config_trusted)
-            && !vak_core::trust::is_trusted(&workspace)
-        {
-            let _ = vak_core::trust::mark_trusted(&workspace);
-        }
 
         let resolved = self.core_pool.resolve_at_with_policy(
             &workspace,

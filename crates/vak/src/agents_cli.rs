@@ -107,7 +107,7 @@ pub fn run_agents(cwd: PathBuf, action: Option<AgentsAction>) -> i32 {
             let new_agent = tmpl.to_agent_definition(&id, name.as_deref());
             existing.push(new_agent.clone());
 
-            match agents::save(root, &existing, vak_core::trust::is_trusted(root)) {
+            match agents::save(root, &existing) {
                 Ok(_) => {
                     println!(
                         "Created agent '{}' ({}) in {} scope.",

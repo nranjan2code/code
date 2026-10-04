@@ -307,6 +307,23 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
+        path: "tenants/{tenant}/spaces.toml",
+        root: Root::Data,
+        owner: "vak-config (spaces)",
+        schema: None,
+        // Each space's id and the folders this machine binds to it.
+        class: Class::Desired,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
+        path: "tenants/{tenant}/spaces.lock",
+        root: Root::Data,
+        owner: "vak-config (spaces)",
+        schema: None,
+        class: Class::Ephemeral,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
         path: "tenants/{tenant}/environments",
         root: Root::Data,
         owner: "vak-config (paths::environment_dir)",
@@ -321,8 +338,7 @@ pub const REGISTRY: &[StateEntry] = &[
         root: Root::Data,
         owner: "vak-config (paths::agent_workspace)",
         schema: None,
-        // Each non-built-in Agent's own working tree, bound to (space, Agent),
-        // and one `space-root` file per space naming the project it serves.
+        // Each non-built-in Agent's own working tree, bound to (space, Agent).
         class: Class::Workspace,
         on_purge: OnPurge::Remove,
     },

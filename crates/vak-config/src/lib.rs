@@ -6,6 +6,7 @@ pub mod file_update;
 pub mod finops;
 pub mod paths;
 pub mod scope;
+pub mod spaces;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_scope;
 

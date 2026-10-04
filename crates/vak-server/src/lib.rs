@@ -2992,7 +2992,7 @@ async fn search_sessions(
     }
     match tokio::task::spawn_blocking(move || {
         // Both hit shapes are Serialize; the workspace path keeps its flat
-        // SessionHit wire shape, cross-project adds the project_hash wrapper.
+        // SessionHit wire shape, cross-project adds the space_id wrapper.
         let searched = if all {
             vak_session::search_all_extended(&home, &query, limit, &excluded, &extras)
                 .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
@@ -7928,7 +7928,7 @@ mod active_transcript_tests {
         let path = vak_config::scope::session_ledger(
             &sessions_home
                 .join("sessions")
-                .join(vak_config::scope::workspace_key(core.cwd())),
+                .join(vak_config::spaces::key(core.cwd())),
             id,
         );
         let mut log = vak_session::SessionLog::create(
@@ -17254,11 +17254,7 @@ async fn instantiate_agent_template(
             .into_response();
     }
     existing.push(new_agent.clone());
-    match agents::save(
-        &root,
-        &existing,
-        state.active_core().project_config_trusted(),
-    ) {
+    match agents::save(&root, &existing) {
         Ok(_) => (
             StatusCode::CREATED,
             Json(serde_json::json!({ "created": true, "agent": new_agent })),
@@ -17447,7 +17443,7 @@ async fn put_agents(
                 .into_response();
         }
     };
-    match agents::save(&root, &agents, state.active_core().project_config_trusted()) {
+    match agents::save(&root, &agents) {
         Ok(saved_agents) => {
             Json(serde_json::json!({ "saved": true, "agents": saved_agents })).into_response()
         }
@@ -25048,7 +25044,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_config::scope::workspace_key(core.cwd()))
+            .join(vak_config::spaces::key(core.cwd()))
             .join("session-1");
         let comment_id = "comment-from-asha";
         let mut log = SessionLog::open(session_path.clone()).unwrap();
@@ -25378,7 +25374,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_config::scope::workspace_key(core.cwd()))
+            .join(vak_config::spaces::key(core.cwd()))
             .join("session-1");
         let session = SessionLog::open(path).unwrap();
         register_handle(
@@ -26071,7 +26067,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_config::scope::workspace_key(core.cwd()))
+            .join(vak_config::spaces::key(core.cwd()))
             .join("session-message");
         let session = SessionLog::open(path).unwrap();
         let handle = register_handle(
@@ -26164,7 +26160,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_config::scope::workspace_key(core.cwd()))
+            .join(vak_config::spaces::key(core.cwd()))
             .join("session-approval");
         let session = SessionLog::open(path).unwrap();
         let handle = register_handle(
@@ -26382,7 +26378,7 @@ mod sandbox_promotion_tests {
             .scope()
             .into_root()
             .join("sessions")
-            .join(vak_config::scope::workspace_key(core.cwd()))
+            .join(vak_config::spaces::key(core.cwd()))
             .join("session-1");
         let session = SessionLog::open(session_path).unwrap();
         register_handle(
@@ -26821,7 +26817,7 @@ mod scheduler_state_tests {
             .find(|template| template.template_id == "writer")
             .unwrap()
             .to_agent_definition(&agent_id, None);
-        agents::save(&ws, std::slice::from_ref(&agent), true).unwrap();
+        agents::save(&ws, std::slice::from_ref(&agent)).unwrap();
 
         let account_id = uuid::Uuid::now_v7().to_string();
         let vault = AccountVault::for_agent(&agent_id).unwrap();
@@ -26953,7 +26949,7 @@ mod scheduler_state_tests {
             .find(|template| template.template_id == "writer")
             .unwrap()
             .to_agent_definition("writer", None);
-        agents::save(&ws, &[writer], true).unwrap();
+        agents::save(&ws, &[writer]).unwrap();
         let vak = vak_session::types::AgentIdentity {
             id: "vak".into(),
             revision: 1,

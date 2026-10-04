@@ -11,7 +11,7 @@ const LIMITS = [8, 25, 50];
 /**
  * Recall search over session ledgers (docs/design/29-personal-os.md P1/P4).
  * Global mode crosses every project under the sessions home; hits then carry
- * the `project_hash` of the ledger they were found in.
+ * the `space_id` of the ledger they were found in.
  */
 export default function SearchModal() {
   const [query, setQuery] = createSignal("");
@@ -99,7 +99,7 @@ export default function SearchModal() {
                       {hit.session_id.slice(0, 8)} · {new Date(hit.ts).toLocaleString()} · score {hit.score.toFixed(2)}
                     </span>
                   </span>
-                  <Show when={hit.project_hash} keyed>
+                  <Show when={hit.space_id} keyed>
                     {(hash) => (
                       <span class="badge search-hit-project" title={`Project ${hash}`}>
                         {hash.slice(0, 8)}

@@ -46,7 +46,7 @@ pub struct SessionHit {
 /// directory (`<home>/sessions/<hash>/`) it was found in (personal-os P1).
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ProjectHit {
-    pub project_hash: String,
+    pub space_id: String,
     #[serde(flatten)]
     pub hit: SessionHit,
 }
@@ -54,7 +54,7 @@ pub struct ProjectHit {
 #[derive(Debug, Clone)]
 struct RankedHit {
     hit: SessionHit,
-    project_hash: Option<String>,
+    space_id: Option<String>,
 }
 
 /// A curated document fed into recall alongside raw transcripts — today,
@@ -122,7 +122,7 @@ pub fn search_extended(
                 score: base + MEMORY_BONUS,
                 snippet: snippet_for(&doc.text, &terms),
             },
-            project_hash: None,
+            space_id: None,
         });
     }
 
@@ -201,7 +201,7 @@ pub fn search_all_extended(
                     score: base + MEMORY_BONUS,
                     snippet: snippet_for(&doc.text, &terms),
                 },
-                project_hash: None,
+                space_id: None,
             })
         })
         .collect();
@@ -231,7 +231,7 @@ pub fn search_all_extended(
         let Ok(read) = std::fs::read_dir(&dir) else {
             continue;
         };
-        let Some(project_hash) = dir.file_name().and_then(|n| n.to_str()).map(String::from) else {
+        let Some(space_id) = dir.file_name().and_then(|n| n.to_str()).map(String::from) else {
             continue;
         };
         let mut files: Vec<PathBuf> = read.flatten().map(|e| e.path()).collect();
@@ -248,7 +248,7 @@ pub fn search_all_extended(
                 &session_id,
                 &terms,
                 &phrase,
-                Some(project_hash.as_str()),
+                Some(space_id.as_str()),
                 &mut ranked,
             )?;
         }
@@ -258,7 +258,7 @@ pub fn search_all_extended(
     Ok(ranked
         .into_iter()
         .map(|r| ProjectHit {
-            project_hash: r.project_hash.unwrap_or_default(),
+            space_id: r.space_id.unwrap_or_default(),
             hit: r.hit,
         })
         .collect())
@@ -280,7 +280,7 @@ fn finalize(ranked: &mut Vec<RankedHit>, limit: usize) {
             .then(b.hit.ts.cmp(&a.hit.ts))
             .then(a.hit.session_id.cmp(&b.hit.session_id))
             .then(a.hit.entry_id.cmp(&b.hit.entry_id))
-            .then(a.project_hash.cmp(&b.project_hash))
+            .then(a.space_id.cmp(&b.space_id))
     });
     ranked.truncate(limit);
 }
@@ -290,7 +290,7 @@ fn collect_ranked(
     session_id: &str,
     terms: &[String],
     phrase: &str,
-    project_hash: Option<&str>,
+    space_id: Option<&str>,
     ranked: &mut Vec<RankedHit>,
 ) -> Result<(), SearchError> {
     let messages = index::ledger(path)?;
@@ -309,7 +309,7 @@ fn collect_ranked(
                 score: base,
                 snippet: snippet_for(&m.text, terms),
             },
-            project_hash: project_hash.map(String::from),
+            space_id: space_id.map(String::from),
         });
     }
     Ok(())
@@ -964,7 +964,7 @@ mod tests {
             sessions,
             HashSet::from(["aa-keeper", "bb-keeper", "cc-keeper"])
         );
-        let hashes: HashSet<&str> = first.iter().map(|h| h.project_hash.as_str()).collect();
+        let hashes: HashSet<&str> = first.iter().map(|h| h.space_id.as_str()).collect();
         assert_eq!(
             hashes,
             HashSet::from([ha.as_str(), hb.as_str(), hc.as_str()])
@@ -975,7 +975,7 @@ mod tests {
                 "bb-keeper" => &hb,
                 _ => &hc,
             };
-            assert_eq!(h.project_hash, *source);
+            assert_eq!(h.space_id, *source);
         }
     }
 }

@@ -302,7 +302,7 @@ async fn search_all_spans_projects_and_flags_the_scope() {
     assert_eq!(body["all"], true);
     let hits = body["hits"].as_array().unwrap();
     assert_eq!(hits.len(), 2, "{body}");
-    assert!(hits.iter().all(|h| h["project_hash"].is_string()));
+    assert!(hits.iter().all(|h| h["space_id"].is_string()));
 }
 
 // ---- Markdown transcript export ----------------------------------------------

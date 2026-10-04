@@ -206,13 +206,15 @@ Two roots hold an Agent's things, and they are different directories:
 <data home>/
 ├── agents/
 │   └── <agent_id>/                    # vak_config::paths::agent_home; vak included
-│       ├── sessions/<cwd-hash>/<session-id>/   # a ledger: record segments
+│       ├── sessions/<space id>/<session-id>/   # a ledger: record segments
 │       ├── sandbox/                   # records, candidates, executions (D25)
 │       └── coworking/                 # grants
 ├── tenants/<tenant>/
 │   ├── store/                         # objects and refs: ledger payloads and
 │   │                                  # Documents (memory, entities, skill
 │   │                                  # proposals, Office rooms, presentations)
+│   ├── spaces.toml                    # space ids and this machine's folder bindings
+│   ├── environments/<run>/            # worktrees, task copies, staging trees
 │   ├── workspaces/<space>/<agent_id>/ # a non-built-in Agent's workspace
 │   ├── keys/                          # revocations; the KEKs are in the credential store
 │   ├── auth/                          # the owner's passkeys and recovery digests

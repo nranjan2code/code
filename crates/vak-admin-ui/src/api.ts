@@ -173,7 +173,7 @@ export const api = {
 
   /** `total` counts every session matching the filter, not just the page
    * `limit` returned — the list itself is capped, the count isn't. */
-  sessions: (limit = 100, agent?: string): Promise<{ sessions: SessionListItem[]; total: number; workspace_project_hash?: string }> => {
+  sessions: (limit = 100, agent?: string): Promise<{ sessions: SessionListItem[]; total: number; workspace_space_id?: string }> => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (agent && agent !== "all") q.set("agent", agent);
     return fetch(`/admin/api/sessions?${q}`).then((r) => handle(r));
@@ -464,7 +464,7 @@ export const api = {
 
   /** Archive/unarchive is sidebar visibility only — the ledger itself is
    * never touched. Reaches a ledger file under this process's own
-   * workspace only; see `ConfigInfo.workspace_project_hash`. */
+   * workspace only; see `ConfigInfo.workspace_space_id`. */
   archiveSession: (sessionId: string, archived: boolean): Promise<{ archived: boolean }> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/archive`, {
       method: "POST",

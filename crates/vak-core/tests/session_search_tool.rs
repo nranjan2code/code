@@ -123,6 +123,9 @@ async fn session_search_tool_is_available_and_logged() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let cwd = dir.path().to_path_buf();
+    // The workspace is opened (bound to its space) before its sessions exist.
+    vak_config::paths::isolate_home_for_tests();
+    vak_config::spaces::bind(&cwd).unwrap();
 
     // A past session with retrievable knowledge.
     let past_path = SessionPath::new_session_file(&home, &cwd, "11111111-past");

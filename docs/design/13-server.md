@@ -53,7 +53,7 @@ consumers.
 | POST | `/memory` `{text,kind?,tag?,scope?,session_id?}` | append to either tier (201; 400 on validation error) — desktop/gateway/CLI all write through this same API |
 | PATCH | `/memory/:note_id` `{text,scope?}` | amend a note body, provenance header preserved |
 | DELETE | `/memory/:note_id?scope=` | forget one block (byte-safe rewrite); 404 unknown id |
-| GET | `/search?q=&limit=&all=true` | recall over the current project's ledgers; `all=true` spans every project hash (`project_hash` annotated) |
+| GET | `/search?q=&limit=&all=true` | recall over the current project's ledgers; `all=true` spans every project hash (`space_id` annotated) |
 | GET | `/sessions/:id/receipts` | dispatch forensics: per-attempt walk receipts |
 | GET | `/doctor?session=` | `HealthReport` JSON (checks/facts/frozen-ladder) |
 | GET | `/digest?days=N` | usage rollup from the cost ledger + memory/skill deltas (1–90) |

@@ -89,7 +89,7 @@ impl EntryKind {
 pub struct IndexedEntry {
     pub entry_id: String,
     pub session_id: String,
-    pub project_hash: String,
+    pub space_id: String,
     pub parent_id: Option<String>,
     pub ts: String,
     pub kind: EntryKind,
@@ -361,7 +361,7 @@ impl Store {
             CREATE TABLE IF NOT EXISTS entries (
                 entry_id      TEXT PRIMARY KEY,
                 session_id    TEXT NOT NULL,
-                project_hash  TEXT NOT NULL,
+                space_id  TEXT NOT NULL,
                 parent_id     TEXT,
                 ts            TEXT NOT NULL,
                 kind          TEXT NOT NULL,
@@ -376,7 +376,7 @@ impl Store {
             CREATE INDEX IF NOT EXISTS idx_entries_session
                 ON entries(session_id);
             CREATE INDEX IF NOT EXISTS idx_entries_project
-                ON entries(project_hash);
+                ON entries(space_id);
             CREATE INDEX IF NOT EXISTS idx_entries_kind
                 ON entries(kind);
             CREATE INDEX IF NOT EXISTS idx_entries_ts
@@ -387,7 +387,7 @@ impl Store {
             CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
                 entry_id UNINDEXED,
                 session_id UNINDEXED,
-                project_hash UNINDEXED,
+                space_id UNINDEXED,
                 ts UNINDEXED,
                 kind UNINDEXED,
                 role UNINDEXED,
@@ -466,7 +466,7 @@ impl Store {
                 Some(IndexedEntry {
                     entry_id: entry.id.clone(),
                     session_id: session_id.to_string(),
-                    project_hash: String::new(),
+                    space_id: String::new(),
                     parent_id: entry.parent_id.clone(),
                     ts: entry.ts.to_rfc3339(),
                     kind,
@@ -481,7 +481,7 @@ impl Store {
             EntryPayload::Header(header) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -495,7 +495,7 @@ impl Store {
             EntryPayload::Compaction(c) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -509,7 +509,7 @@ impl Store {
             EntryPayload::Receipt(r) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -523,7 +523,7 @@ impl Store {
             EntryPayload::Goal(g) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -537,7 +537,7 @@ impl Store {
             EntryPayload::GoalUpdate(update) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -551,7 +551,7 @@ impl Store {
             EntryPayload::Activity(activity) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -572,7 +572,7 @@ impl Store {
             EntryPayload::Work(work) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -590,7 +590,7 @@ impl Store {
             EntryPayload::TurnCard(record) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -617,7 +617,7 @@ impl Store {
             EntryPayload::Intent(record) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
-                project_hash: String::new(),
+                space_id: String::new(),
                 parent_id: entry.parent_id.clone(),
                 ts: entry.ts.to_rfc3339(),
                 kind,
@@ -650,13 +650,13 @@ impl Store {
     fn insert_meta(conn: &Connection, meta: &IndexedEntry) -> Result<(), StoreError> {
         let inserted = conn.execute(
             "INSERT OR IGNORE INTO entries
-             (entry_id, session_id, project_hash, parent_id, ts, kind, role,
+             (entry_id, session_id, space_id, parent_id, ts, kind, role,
               provider, model, tool_name, content_text, is_error)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 meta.entry_id,
                 meta.session_id,
-                meta.project_hash,
+                meta.space_id,
                 meta.parent_id,
                 meta.ts,
                 meta.kind.as_str(),
@@ -675,12 +675,12 @@ impl Store {
         // FTS row — only if there is searchable content.
         if !meta.content_text.trim().is_empty() {
             conn.execute(
-                "INSERT INTO entries_fts(entry_id, session_id, project_hash, ts, kind, role, content)
+                "INSERT INTO entries_fts(entry_id, session_id, space_id, ts, kind, role, content)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 rusqlite::params![
                     meta.entry_id,
                     meta.session_id,
-                    meta.project_hash,
+                    meta.space_id,
                     meta.ts,
                     meta.kind.as_str(),
                     meta.role.as_deref().unwrap_or(""),
