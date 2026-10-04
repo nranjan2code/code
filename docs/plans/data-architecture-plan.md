@@ -34,7 +34,7 @@ Locked 2026-10-01 with the maintainer (review 2, §4):
 
 | # | Decision | Consequence |
 |---|---|---|
-| L6 | **One release train through M3b.** When M3b's first slice merges, main becomes the 7.0 line and cuts no 6.x release. Fixes a 6.x host needs go on a `release/6` branch until 7.0.0 ships. | M3b lands in slices on main (§4). A dev purge between slices is allowed (L5). 7.0.0 is released after the last slice. |
+| L6 | **One release train through M3b.** When M3b's first slice merges, main becomes the 7.0 line and cuts no 6.x release. With no users there is no 6.x maintenance line: `release/6` was deleted on 2026-10-04. | M3b lands in slices on main (§4). A dev purge between slices is allowed (L5). 7.0.0 is released after the last slice. |
 | L7 | **`TaskDef` grows into one Trigger model** in M4, with cursors, effect records and fencing beside it. | Docs 76, 80 and 81 use it instead of building their own; doc 81 §20.5 is settled; invariant 38 is restated at M4. |
 | L8 | **The critical path is reordered** (§4): M1 ∥ M2, M3a straight after M1, M8 ∥ M7 after M6, M7 split into M7a and M7b, intake as M6.5. | Doc 73 §14 and the blast-radius inventory follow this order. |
 | L9 | **Principals in M1.** `prn_` ids, with `actor` and `on_behalf_of` on the trace key. | Attribution, person-scope erasure, data roles and sharing share one id. How a person proves who they are stays with doc 78 and the collaboration plan's stage C4. |
@@ -491,7 +491,7 @@ M3b's touchpoints to type.
 ### M3b — The data baseline, 7.0 (XL, in six slices)
 
 **Release train (L6).** When slice 1 merges, main is the 7.0 line and cuts
-no 6.x release; 6.x fixes go on `release/6`. Each slice ships its own tests
+no 6.x release, and there is no 6.x maintenance line. Each slice ships its own tests
 and may purge dev data homes. 7.0.0 is released after slice 6.
 
 **Slice 1 — baseline, purge and runtime root** — done 2026-10-03. Version 7.0.0-dev;
@@ -501,7 +501,8 @@ and may purge dev data homes. 7.0.0 is released after slice 6.
 runtime root; purge removes owned roots wholesale
 (`purge_removes_owned_roots_wholesale`); the registry is classes × roots
 (doc 73 §5) with snapshots carrying the class; doctor checks the baseline.
-`release/6` is cut at the last 6.x commit. Not done in this slice: listing
+(`release/6`, cut at the last 6.x commit, was deleted on 2026-10-04: no
+users, so no 6.x line.) Not done in this slice: listing
 Vak runtime leftovers in known spaces (review R7), which slice 4 makes moot
 by moving runtime state out of the project tree.
 - Version 7.0.0-dev; invariant 29 becomes "7.0.0 is the supported
@@ -633,8 +634,16 @@ workspace resolves to its space's; credential scopes are `space-<id>`,
 `agent-<id>` or `tenant`; trust markers are named by space id, with one
 writer (`trust::record`) and process-only trust for a `Core` opened
 trusted (`serve --trust`), so `mark_trusted` is gone; the admin's
-`project_hash` is `space_id`. Left: the items below that store a folder
-path.
+`project_hash` is `space_id`. Step 2a done (2026-10-04): a scheduled task
+names its space (`TaskDef.space`), the scheduler and every task list
+compare space ids, a server runs only its own space's tasks in the folder
+it opened, and the task APIs project the folder as `workspace`. Test
+binaries isolate their home automatically, so no test reaches the real
+data home or keychain. Left: the allowlist workspace fields, the gateway
+default workspace and `/workspaces` with its names. Kept as paths, by
+decision: `CorePool` keys (a `Core` is rooted at a folder, and one space's
+Agent workspaces are separate folders) and `[server] workspace_roots` (a
+browsing boundary, not a space).
 Each item is keyed by space id in this slice:
 - credential scopes (`scope_key_for`), trust markers
 - CorePool identity, allowlist workspace fields, the
@@ -974,7 +983,7 @@ Each run asserts:
 | Risk | Mitigation |
 |---|---|
 | M3 size (626 production home-identifier uses, 529 test references at `438cfcd5`) | M3a (refactor, oracle = the existing suite), then M3b in six slices behind the finished API; the ratchet stops growth until M3a starts. |
-| Releases during M3b | One train (L6): main is the 7.0 line from slice 1; 6.x fixes on `release/6`. |
+| Releases during M3b | One train (L6): main is the 7.0 line from slice 1; no 6.x line. |
 | M4 grows with every proposal | Each primitive ships with one consumer (schedule, manual, the outbox); the other trigger and effect kinds arrive with their proposals on the same record shape. |
 | Principal ids before identity proofing | Records carry ids from M1; how a person proves who they are stays with doc 78 and collaboration C4, and nothing grants authority from an id alone. |
 | A reconciler bug destroys data | Staged quarantine before commit. It ships observe-only first, then commits one action class at a time. Every destructive transition is recorded. Holds are checked at commit time, not only at plan time. |

@@ -90,7 +90,7 @@ function workspaceOptions(data: OperationsSnapshot): string[] {
   for (const binding of data.gateway.bindings) if (binding.workspace) values.add(binding.workspace);
   for (const entry of data.pool.entries) values.add(entry.workspace);
   for (const run of data.runs) values.add(run.workspace);
-  for (const task of data.tasks) if (task.cwd) values.add(task.cwd);
+  for (const task of data.tasks) if (task.workspace) values.add(task.workspace);
   return [...values].filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
@@ -123,7 +123,7 @@ export function scopeOperations(data: OperationsSnapshot, scopeFilter: string, w
   const pool = data.pool.entries.filter((entry) => inWorkspace(entry.workspace));
   const runs = data.runs.filter((run) => inWorkspace(run.workspace) && matchesAgent(run.agent_id));
   const pendingApprovals = runs.reduce((total, run) => total + run.pending_approvals.length, 0);
-  const tasks = data.tasks.filter((task) => inWorkspace(task.cwd) && matchesAgent(task.agent_id));
+  const tasks = data.tasks.filter((task) => inWorkspace(task.workspace) && matchesAgent(task.agent_id));
   const records = data.outbox.records.filter((record) => inWindow(record.updated_at_ms));
   const security = data.security.filter((event) => inWindow(event.ts));
   const incidents = data.incidents.filter((incident) =>
@@ -278,7 +278,7 @@ function WorkView(props: { data: OperationsSnapshot }) {
     <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Unattended work</span><h2>Scheduled tasks</h2><p class="dim">Loaded from the workspace task store, including next-fire and in-flight state.</p></div><button type="button" class="ghost small" onClick={() => navigate(operationHref("#/operations/automations"))}>Open automations</button></div>
       <Show when={props.data.tasks.length > 0} fallback={<div class="empty">No scheduled tasks are configured.</div>}>
         <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Name</th><th>Kind</th><th>State</th><th>Next fire</th><th>Last run</th></tr></thead><tbody><For each={props.data.tasks}>{(task) => <tr>
-          <td><strong>{task.name}</strong><p class="mono dim">{task.cwd || "workspace"}</p></td>
+          <td><strong>{task.name}</strong><p class="mono dim">{task.workspace || "another machine"}</p></td>
           <td>{task.script ? "script" : "prompt"}<Show when={task.model_pin}><p class="mono dim">{task.model_pin}</p></Show></td>
           <td><StatusMark value={task.running ? "running" : task.enabled ? "enabled" : "disabled"} /></td>
           <td>{task.next_fire ? time(task.next_fire) : task.schedule || (task.interval_secs ? `every ${duration(task.interval_secs)}` : "on demand")}</td>
@@ -295,7 +295,7 @@ function AutomationsView(props: { data: OperationsSnapshot }) {
       <Show when={props.data.tasks.length > 0} fallback={<div class="empty">No automations are configured for this scope. Add a scheduled task to make unattended work visible here.</div>}>
         <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Task</th><th>Workspace</th><th>Cadence</th><th>State</th><th>Model pin</th><th>Last run</th><th /></tr></thead><tbody><For each={props.data.tasks}>{(task) => <tr>
           <td><strong>{task.name}</strong><p class="mono dim">{task.id.slice(0, 12)}</p></td>
-          <td class="mono">{task.cwd || "workspace"}</td>
+          <td class="mono">{task.workspace || "another machine"}</td>
           <td>{task.next_fire ? `next ${time(task.next_fire)}` : task.schedule || (task.interval_secs ? `every ${duration(task.interval_secs)}` : "on demand")}</td>
           <td><StatusMark value={task.running ? "running" : task.enabled ? "enabled" : "disabled"} /></td>
           <td class="mono">{task.model_pin || "inherits"}</td>

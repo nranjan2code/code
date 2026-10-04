@@ -232,7 +232,7 @@ schedulers, gate denials and commitment upkeep.
 ## M3b — the data baseline, in six slices
 
 The release train is plan L6: main is the baseline's line from slice 1;
-fixes for 6.x go on `release/6`.
+there is no 6.x line.
 
 ### Slice 1 — baseline, purge, runtime root, registry
 

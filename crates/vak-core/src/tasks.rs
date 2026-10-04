@@ -220,7 +220,9 @@ pub struct TaskDef {
     #[serde(default = "default_interval")]
     pub interval_secs: u64,
     pub enabled: bool,
-    pub cwd: PathBuf,
+    /// The space the task runs in (`vak_config::spaces`), never a folder
+    /// path: [`TaskDef::workspace`] finds its folder on this machine.
+    pub space: String,
     pub created_at: DateTime<Utc>,
     pub last_run_at: Option<DateTime<Utc>>,
     pub last_session_id: Option<String>,
@@ -296,6 +298,12 @@ pub enum TaskError {
 }
 
 impl TaskDef {
+    /// The folder this machine binds the task's space to; `None` when the
+    /// space has no folder here, which a run reports as its refusal.
+    pub fn workspace(&self) -> Option<PathBuf> {
+        vak_config::spaces::bindings(&self.space).into_iter().next()
+    }
+
     /// Structural validation: prompt XOR script required, cron parsed when
     /// scheduled. Pure; never touches the store.
     pub fn validate(&self) -> Result<(), TaskError> {
@@ -479,8 +487,13 @@ impl TaskStore {
         list
     }
 
-    pub fn for_cwd(&self, cwd: &Path) -> Vec<TaskDef> {
-        self.all().into_iter().filter(|t| t.cwd == cwd).collect()
+    /// The tasks of the space the folder `cwd` is bound to.
+    pub fn for_workspace(&self, cwd: &Path) -> Vec<TaskDef> {
+        let space = vak_config::spaces::key(cwd);
+        self.all()
+            .into_iter()
+            .filter(|t| t.space == space)
+            .collect()
     }
 }
 
@@ -743,7 +756,7 @@ mod tests {
             prompt: "tidy the repo".into(),
             interval_secs: 3600,
             enabled: true,
-            cwd: PathBuf::from("/tmp/ws"),
+            space: "spc_test".into(),
             created_at: Utc::now(),
             last_run_at: None,
             last_session_id: None,
@@ -920,7 +933,7 @@ mod tests {
             "prompt": "summarize yesterday",
             "interval_secs": 86400,
             "enabled": true,
-            "cwd": "/Users/me/proj",
+            "space": "spc_test",
             "created_at": "2026-07-01T09:00:00Z",
             "last_run_at": "2026-08-01T09:00:00Z",
             "last_session_id": "abc",
@@ -1025,19 +1038,20 @@ mod tests {
     }
 
     #[test]
-    fn for_cwd_filters_and_sorts_by_created_at() {
-        let ws_a = PathBuf::from("/ws/a");
-        let ws_b = PathBuf::from("/ws/b");
+    fn for_workspace_filters_by_space_and_sorts_by_created_at() {
+        vak_config::paths::isolate_home_for_tests();
+        let ws_a = tempfile::tempdir().unwrap();
+        let ws_b = tempfile::tempdir().unwrap();
         let mut early = base_task();
         early.id = "early".into();
-        early.cwd = ws_a.clone();
+        early.space = vak_config::spaces::bind(ws_a.path()).unwrap();
         early.created_at = Utc::now() - chrono::Duration::hours(2);
         let mut late = early.clone();
         late.id = "late".into();
         late.created_at = Utc::now();
         let mut other = base_task();
         other.id = "other".into();
-        other.cwd = ws_b;
+        other.space = vak_config::spaces::bind(ws_b.path()).unwrap();
 
         let mut map = HashMap::new();
         for t in [early, late, other] {
@@ -1047,7 +1061,7 @@ mod tests {
             path: PathBuf::from("unused"),
             tasks: map,
         };
-        let mine = store.for_cwd(&ws_a);
+        let mine = store.for_workspace(ws_a.path());
         assert_eq!(mine.len(), 2);
         assert_eq!(mine[0].id, "early", "oldest first");
         assert_eq!(mine[1].id, "late");

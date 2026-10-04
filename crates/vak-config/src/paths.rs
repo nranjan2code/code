@@ -277,6 +277,15 @@ struct Homes {
 }
 
 fn resolve(override_home: Option<&str>) -> Homes {
+    if override_home.filter(|s| !s.is_empty()).is_none() && running_from_test_binary() {
+        let isolated = isolate_home_for_tests();
+        return platform_homes(Some(&isolated.to_string_lossy()));
+    }
+    platform_homes(override_home)
+}
+
+/// The homes for an override, or the platform's own when there is none.
+fn platform_homes(override_home: Option<&str>) -> Homes {
     let base = base_home();
     match override_home.filter(|s| !s.is_empty()) {
         // An explicit override is a self-contained sandbox: everything
@@ -367,7 +376,10 @@ pub fn set_home_override(path: &std::path::Path) {
 
 /// Point this process at a private, empty home, and return it.
 ///
-/// **Every test that builds a `Core` must call this.** Without it,
+/// A cargo test binary does this on its first path resolution unless it
+/// pinned a home ([`set_home_override`]), so no test can reach the
+/// operator's real homes by forgetting it; calling it first is still the
+/// way to name the home a test works in. Without isolation,
 /// `load_with_trust` reads the operator's real Shared layer
 /// (`~/vak-home/.vak/config.toml` and the real Shared secret scope), so a
 /// personal setting silently changes what the test exercises — a real MCP server
@@ -391,7 +403,23 @@ static ISOLATED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 /// Whether this process pinned a private test home. Its secrets then stay
 /// in that home's encrypted file, never the OS keychain.
 pub fn home_is_isolated_for_tests() -> bool {
-    ISOLATED.get().is_some()
+    ISOLATED.get().is_some() || running_from_test_binary()
+}
+
+/// True in a cargo test binary, which cargo always runs from a `deps`
+/// directory of its target dir; an installed or dev `vak` never runs from
+/// one. Such a process can never reach the operator's real homes: without
+/// a home it pinned, path resolution isolates it ([`isolate_home_for_tests`]),
+/// and its secrets stay in an encrypted file, never the OS keychain.
+fn running_from_test_binary() -> bool {
+    static TEST_BINARY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TEST_BINARY.get_or_init(|| {
+        std::env::current_exe().ok().is_some_and(|exe| {
+            exe.parent()
+                .and_then(std::path::Path::file_name)
+                .is_some_and(|dir| dir == "deps")
+        })
+    })
 }
 
 pub fn isolate_home_for_tests() -> PathBuf {
@@ -442,7 +470,7 @@ mod tests {
 
     #[test]
     fn default_workspace_is_a_plain_dir_under_the_account_home_not_data_home() {
-        let canonical = resolve(None);
+        let canonical = platform_homes(None);
         assert_eq!(canonical.workspace, base_home().join("vak-home"));
         assert_ne!(
             canonical.workspace, canonical.data,
@@ -456,7 +484,7 @@ mod tests {
 
     #[test]
     fn canonical_homes_follow_platform_convention() {
-        let h = resolve(None);
+        let h = platform_homes(None);
         let base = base_home();
         #[cfg(target_os = "macos")]
         {
@@ -480,7 +508,7 @@ mod tests {
 
     #[test]
     fn empty_override_is_not_an_override() {
-        let h = resolve(Some(""));
+        let h = platform_homes(Some(""));
         assert!(
             !h.data.to_string_lossy().contains("/cache"),
             "empty string must fall through to the platform layout"

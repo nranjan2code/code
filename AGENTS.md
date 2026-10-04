@@ -286,7 +286,8 @@ project tree. No session starts a later step unasked.
    - Erasure (M7a) never starts before the catalog (M6), because it needs
      lineage.
    - From M3b's first slice, main is the baseline's line and cuts no 6.x
-     release; 6.x fixes go on `release/6` (L6).
+     release. There is no 6.x maintenance line: with no users,
+     `release/6` was deleted on 2026-10-04 (L6).
 4. Each milestone ships whole: code, tests, docs, its AGENTS.md changes and
    its screens. The replaced path goes in the same change (invariant 30).
    There is no compatibility code, because there are no users.
@@ -1120,9 +1121,7 @@ in progress, and the rest of V4 follows it.
   compiler, renderer, interaction state, actions, and event contract.
   External systems are comparison references, not implementation dependencies.
   Existing general-purpose libraries remain subject to the dependency rule
-  above. The gap-closing implementation order and acceptance criteria are in
-  `docs/plans/presentation-runtime-completion-plan.md`; a plan is not shipped
-  behaviour or authorization to start a data-architecture milestone.
+  above.
 - Output presentation is schema-v2 and semantic: `vak-delivery` owns the typed
   `OutputTimeline`/`PresentationDocument` contract, exact Markdown fallback,
   capability projection, and deterministic degradation. Desktop/native clients
@@ -1827,13 +1826,19 @@ additionally fail on a committed-bundle diff, which a local build cannot
 see. `.gitignore` has to keep negating each of them out of the blanket
 `dist/` rule, or a whole bundle silently stops being committed.
 
-**A test that builds a `Core` must isolate its home first.** Call
-`vak_config::paths::isolate_home_for_tests()` (or pin a specific one with
-`set_home_override`) before `Core::new`/`Core::new_with_trust`. Without it,
-`load_with_trust` reads the operator's real Shared layer —
-`~/vak-home/.vak/config.toml` and the real Shared secret scope — so the suite
-exercises whatever that machine happens to have configured. Twenty-one test
-files did exactly that: a real MCP server was advertised inside tests, and a
+**A test never reaches the operator's real homes.** A cargo test binary
+(always run from a `deps` directory) isolates its home on its first path
+resolution unless it pinned one with `set_home_override`, and keeps its
+secrets in an encrypted file, never the OS keychain
+(`vak_config::paths::isolate_home_for_tests`, `home_is_isolated_for_tests`).
+Calling `isolate_home_for_tests()` first still names the home a test works
+in. A test that seeds space-keyed state (ledgers, tasks) for a folder binds
+the folder first (`vak_config::spaces::bind`), as opening it would. Before
+this was automatic, a test that forgot to isolate read the operator's real
+Shared layer (`~/vak-home/.vak/config.toml` and the real Shared secret
+scope), so the suite exercised whatever that machine had configured, and a
+test that opened a temp folder bound it in the real space registry.
+Twenty-one test files did the first: a real MCP server was advertised inside tests, and a
 personal provider key could make an "unconfigured" case pass on one machine
 and fail in CI. Neither
 `std::env::set_var` nor `unsafe` is needed for this; the override map sits

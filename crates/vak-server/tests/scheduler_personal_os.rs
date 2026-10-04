@@ -139,6 +139,8 @@ async fn spawn_full(
     git_seed(&ws);
 
     let home = dir.path().join("home");
+    // The data home is fixed before a task names its space in it.
+    vak_config::paths::isolate_home_for_tests();
     if let Some(build) = seed_tasks {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(
@@ -247,7 +249,7 @@ fn stale_script_task(
         "prompt": "",
         "interval_secs": 3600,
         "enabled": true,
-        "cwd": ws.display().to_string(),
+        "space": vak_config::spaces::bind(ws).unwrap(),
         "created_at": chrono::Utc::now().to_rfc3339(),
         // Two hours of downtime: every "* * * * *" slot since this instant
         // was missed.

@@ -167,7 +167,7 @@ impl vak_tools::Tool for TasksTool {
 
         match action {
             "list" => {
-                let mut tasks = store.for_cwd(&self.cwd);
+                let mut tasks = store.for_workspace(&self.cwd);
                 tasks.sort_by_key(|t| t.created_at);
                 if tasks.is_empty() {
                     return vak_tools::ToolOutput::ok(
@@ -234,7 +234,7 @@ impl vak_tools::Tool for TasksTool {
                     prompt,
                     interval_secs: every_secs.unwrap_or(3600),
                     enabled: true,
-                    cwd: self.cwd.clone(),
+                    space: vak_config::spaces::key(&self.cwd),
                     created_at: chrono::Utc::now(),
                     last_run_at: None,
                     last_session_id: None,
@@ -361,7 +361,7 @@ mod tests {
 
         // Same file the CLI/server store reads — round-trips unchanged.
         let reloaded = TaskStore::load(dir.path()).unwrap();
-        assert_eq!(reloaded.for_cwd(&PathBuf::from("/ws")).len(), 1);
+        assert_eq!(reloaded.for_workspace(&PathBuf::from("/ws")).len(), 1);
     }
 
     #[tokio::test]
@@ -474,7 +474,7 @@ mod tests {
         )
         .await;
         let store = TaskStore::load(dir.path()).unwrap();
-        let id = store.for_cwd(&PathBuf::from("/ws"))[0].id.clone();
+        let id = store.for_workspace(&PathBuf::from("/ws"))[0].id.clone();
 
         let out = t
             .execute(&serde_json::json!({"action": "disable", "id": id}), &ctx())

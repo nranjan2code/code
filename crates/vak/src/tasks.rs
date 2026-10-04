@@ -163,12 +163,11 @@ pub fn build_task_def(
         _ => return Err("exactly one of --prompt or --script is required".into()),
     };
     Ok(TaskDef {
-        // Nanosecond timestamp ids sort like the server's uuid-v7 ids.
         id: format!("cli-{}", timestamp_id()),
         name: name.trim().to_string(),
         interval_secs: every.unwrap_or(3600),
         enabled: true,
-        cwd: cwd.to_path_buf(),
+        space: vak_config::spaces::bind(cwd)?,
         created_at: chrono::Utc::now(),
         last_run_at: None,
         last_session_id: None,
@@ -345,7 +344,10 @@ fn kind_line(t: &TaskDef) -> String {
     if let Some(d) = &t.deliver_to {
         parts.push(format!("deliver {d}"));
     }
-    parts.push(format!("cwd {}", t.cwd.display()));
+    match t.workspace() {
+        Some(folder) => parts.push(format!("in {}", folder.display())),
+        None => parts.push(format!("space {} (no folder on this machine)", t.space)),
+    }
     parts.join(" · ")
 }
 

@@ -606,7 +606,7 @@ export interface OperationsSnapshot {
     state: "running" | "waiting_approval" | string;
     pending_approvals: Array<{ id: string; tool: string; reason: string; requested_at: string }>;
   }>;
-  tasks: Array<TaskItem & { cwd?: string; agent_id?: string; next_fire?: string | null; running?: boolean }>;
+  tasks: Array<TaskItem & { space?: string; workspace?: string | null; agent_id?: string; next_fire?: string | null; running?: boolean }>;
   outbox: {
     pending: number;
     dead_letter: number;

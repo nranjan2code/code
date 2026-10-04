@@ -198,7 +198,7 @@ fn prompt_task(id: &str, ws: &Path, agent_id: Option<&str>) -> serde_json::Value
         "prompt": "summarise the day",
         "interval_secs": 3600,
         "enabled": true,
-        "cwd": ws.display().to_string(),
+        "space": vak_config::spaces::bind(ws).unwrap(),
         "created_at": chrono::Utc::now().to_rfc3339(),
         "last_run_at": null,
         "last_session_id": null,
@@ -227,6 +227,8 @@ fn space(
     }
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
+    // The data home is fixed before a task names its space in it.
+    vak_config::paths::isolate_home_for_tests();
     std::fs::write(
         vak_core::tasks::tasks_file(&home),
         serde_json::to_string_pretty(&tasks(&ws)).unwrap(),
@@ -465,7 +467,6 @@ async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run
         task["enabled"] = serde_json::json!(false);
         serde_json::json!([task])
     });
-    vak_config::paths::set_home_override(&home);
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);

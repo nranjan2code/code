@@ -1488,6 +1488,7 @@ fn operation_tasks(state: &AppState) -> Vec<serde_json::Value> {
         .map(|task| {
             let mut value = serde_json::to_value(task).unwrap_or_else(|_| serde_json::json!({}));
             if let Some(object) = value.as_object_mut() {
+                object.insert("workspace".into(), task_workspace_json(task));
                 object.insert(
                     "next_fire".into(),
                     next_fire
@@ -19266,6 +19267,14 @@ fn update_tasks<T>(state: &AppState, f: impl FnOnce(&mut HashMap<String, TaskDef
     result
 }
 
+/// The folder this machine binds a task's space to, for display; `null`
+/// when the space has none here.
+fn task_workspace_json(task: &TaskDef) -> serde_json::Value {
+    task.workspace()
+        .map(|folder| serde_json::Value::String(folder.to_string_lossy().into_owned()))
+        .unwrap_or(serde_json::Value::Null)
+}
+
 async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
     let cwd = state.core.cwd().clone();
     let next_fire = state
@@ -19277,7 +19286,7 @@ async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .values()
-        .filter(|t| t.cwd == cwd)
+        .filter(|t| t.space == vak_config::spaces::key(&cwd))
         .cloned()
         .collect();
     mine.sort_by_key(|t| t.created_at);
@@ -19310,10 +19319,11 @@ async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
                         .map(|last| last + chrono::Duration::seconds(task.interval_secs as i64))
                 })
                 .or_else(|| Some(now.with_timezone(&Utc)));
-            let mut value = serde_json::to_value(task).unwrap_or_else(|_| serde_json::json!({}));
+            let mut value = serde_json::to_value(&task).unwrap_or_else(|_| serde_json::json!({}));
             // `next_run_at` is an instant; a reader shows it in their own time.
             // The routine's `timezone` stays the zone it was given.
             if let Some(object) = value.as_object_mut() {
+                object.insert("workspace".into(), task_workspace_json(&task));
                 object.insert(
                     "next_run_at".into(),
                     next.map(|at| serde_json::Value::String(at.to_rfc3339()))
@@ -19422,7 +19432,7 @@ async fn create_task(
         // read-only sample run before any schedule or watcher becomes active.
         // Other task kinds retain their established create-and-run behavior.
         enabled: task_enabled_on_create(mail_calendar_scope.is_some()),
-        cwd: state.core.cwd().clone(),
+        space: vak_config::spaces::key(state.core.cwd()),
         created_at: chrono::Utc::now(),
         last_run_at: None,
         last_session_id: None,
@@ -19721,7 +19731,7 @@ async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> S
                 path: wt.path.clone(),
                 branch: wt.branch.clone(),
             };
-            let _ = vak_core::worktree::remove(&task.cwd, &old);
+            let _ = vak_core::worktree::remove(state.core.cwd(), &old);
         }
         StatusCode::OK
     } else {
@@ -19923,6 +19933,14 @@ async fn fire_task_with_force(
     else {
         return Err(NotFired::Gone);
     };
+    // A server runs only its own space's tasks, in the folder it opened.
+    if snapshot.space != vak_config::spaces::key(state.core.cwd()) {
+        return Err(refuse_task(
+            state,
+            &snapshot,
+            "It belongs to another workspace; it runs from a server opened there.".into(),
+        ));
+    }
     if snapshot
         .mail_calendar_scope
         .as_ref()
@@ -20144,13 +20162,13 @@ async fn fire_task_with_force(
     // calendar routine has no workspace tools and runs read-only, so it does
     // not need a project repository or a writable copy.
     let temporary_worktree = snapshot.mail_calendar_scope.is_none();
-    if temporary_worktree && !vak_core::worktree::is_git_repo(&snapshot.cwd) {
+    if temporary_worktree && !vak_core::worktree::is_git_repo(state.core.cwd()) {
         return Err(refuse_task(
             state,
             &snapshot,
             format!(
                 "{} is not a git repository, and a scheduled run works in its own copy of one. Run `git init` there and commit, or move the routine to a folder that is a repository.",
-                snapshot.cwd.display()
+                state.core.cwd().display()
             ),
         ));
     }
@@ -20160,11 +20178,11 @@ async fn fire_task_with_force(
             path: wt.path.clone(),
             branch: wt.branch.clone(),
         };
-        let _ = vak_core::worktree::remove(&snapshot.cwd, &old);
+        let _ = vak_core::worktree::remove(state.core.cwd(), &old);
     }
     let wt = if temporary_worktree {
         let rid = format!("task-{}", uuid::Uuid::now_v7().simple());
-        match vak_core::worktree::create(&snapshot.cwd, &rid) {
+        match vak_core::worktree::create(state.core.cwd(), &rid) {
             Ok(wt) => wt,
             Err(error) => {
                 return Err(refuse_task(
@@ -20176,7 +20194,7 @@ async fn fire_task_with_force(
         }
     } else {
         vak_core::worktree::Worktree {
-            path: snapshot.cwd.clone(),
+            path: state.core.cwd().clone(),
             branch: String::new(),
         }
     };
@@ -20234,7 +20252,7 @@ async fn fire_task_with_force(
             );
         }
         if temporary_worktree {
-            let _ = vak_core::worktree::remove(&snapshot.cwd, &wt);
+            let _ = vak_core::worktree::remove(state.core.cwd(), &wt);
         }
         refuse_task(state, &snapshot, format!("It could not start: {error}."))
     })?;
@@ -20522,7 +20540,7 @@ async fn fire_script_task(
         .clone()
         .with_run_admission(vak_core::admission::RunAdmission::default().cause(cause))
         .mint_trace(None);
-    let outcome = execute_script(&state.core, &task.cwd, script, Some(trace)).await;
+    let outcome = execute_script(&state.core, state.core.cwd(), script, Some(trace)).await;
     let mut delivery_state = "inbox";
     // Deliver FIRST: once the summary is visible on the task, its delivery
     // attempt has already been made. With zero transports configured the
@@ -20665,7 +20683,7 @@ async fn scheduler_tick(state: &AppState) {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         tasks
             .values()
-            .filter(|t| t.enabled && t.cwd.as_path() == state.core.cwd().as_path())
+            .filter(|t| t.enabled && t.space == vak_config::spaces::key(state.core.cwd()))
             .filter(|t| match t.due_at {
                 Some(due) => chrono::Utc::now() >= due,
                 None => match t.schedule.as_deref() {
@@ -20738,7 +20756,7 @@ async fn catch_up_missed_tasks(state: &AppState) {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         tasks
             .values()
-            .filter(|t| t.enabled && t.cwd.as_path() == state.core.cwd().as_path())
+            .filter(|t| t.enabled && t.space == vak_config::spaces::key(state.core.cwd()))
             .filter_map(|t| {
                 let expr = t.schedule.as_deref()?;
                 t.last_run_at
@@ -22063,7 +22081,7 @@ mod scheduler_pure_tests {
             prompt: "check in".into(),
             interval_secs: 3600,
             enabled: true,
-            cwd: std::path::PathBuf::from("/tmp"),
+            space: "spc_test".into(),
             created_at: Utc::now(),
             last_run_at: None,
             last_session_id: None,
@@ -22103,7 +22121,7 @@ mod scheduler_pure_tests {
             prompt: "check mail".into(),
             interval_secs: 60,
             enabled: true,
-            cwd: std::path::PathBuf::from("/tmp"),
+            space: "spc_test".into(),
             created_at: Utc::now(),
             last_run_at: None,
             last_session_id: None,
@@ -22191,7 +22209,7 @@ mod scheduler_pure_tests {
             prompt: "Summarize new mail".into(),
             interval_secs: 60,
             enabled: true,
-            cwd: std::path::PathBuf::from("/tmp"),
+            space: "spc_test".into(),
             created_at: Utc::now(),
             last_run_at: Some(Utc::now()),
             last_session_id: Some("interrupted-session".into()),
@@ -22277,7 +22295,7 @@ mod scheduler_pure_tests {
             prompt: "Prepare for this event".into(),
             interval_secs: 60,
             enabled: true,
-            cwd: std::path::PathBuf::from("/tmp"),
+            space: "spc_test".into(),
             created_at: Utc::now(),
             last_run_at: Some(Utc::now()),
             last_session_id: Some("interrupted-event-session".into()),
@@ -26728,7 +26746,7 @@ mod scheduler_state_tests {
             "name": id,
             "prompt": "summarise",
             "enabled": true,
-            "cwd": cwd,
+            "space": vak_config::spaces::bind(cwd).unwrap(),
             "created_at": chrono::Utc::now(),
             "last_run_at": null,
             "last_session_id": null,
@@ -26878,7 +26896,7 @@ mod scheduler_state_tests {
             "name": "Scheduled mail summary",
             "prompt": "Summarize recent mail.",
             "enabled": true,
-            "cwd": ws,
+            "space": vak_config::spaces::bind(std::path::Path::new(&ws)).unwrap(),
             "created_at": chrono::Utc::now(),
             "last_run_at": null,
             "last_session_id": null,

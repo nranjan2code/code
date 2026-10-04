@@ -872,7 +872,7 @@ pub(super) async fn routine_history(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(&routine_id)
         .filter(|task| {
-            task.cwd.as_path() == state.core.cwd().as_path()
+            task.space == vak_config::spaces::key(state.core.cwd())
                 && task.agent_id.as_deref() == Some(agent_id.as_str())
                 && task
                     .mail_calendar_scope
@@ -3810,7 +3810,7 @@ mod tests {
                 "id": id,
                 "name": id,
                 "enabled": true,
-                "cwd": "/tmp/mail-calendar-test",
+                "space": "spc_test",
                 "created_at": now,
                 "last_run_at": null,
                 "last_session_id": null,
@@ -4039,7 +4039,7 @@ mod tests {
             "id": "expired-mail-watch",
             "name": "expired mail watch",
             "enabled": true,
-            "cwd": state.core.cwd(),
+            "space": vak_config::spaces::key(state.core.cwd()),
             "created_at": Utc::now(),
             "last_run_at": null,
             "last_session_id": null,
