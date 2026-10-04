@@ -121,7 +121,7 @@ fn append_block(
         "## {} [{kind}] tag={tag} session={session_id}{turn_part}",
         ts.to_rfc3339()
     );
-    crate::documents::create(&path.join(note_id(&header)), &format!("{header}\n{text}\n"))?;
+    vak_session::documents::create(&path.join(note_id(&header)), &format!("{header}\n{text}\n"))?;
     Ok(NoteBlock {
         id: note_id(&header),
         ts,
@@ -177,9 +177,9 @@ pub fn forget_profile_note(home: &Path, note_id: &str) -> Result<usize, String> 
 /// The notes of one tier, oldest first. Each note is its own Document
 /// under the tier's name, so appending one never rewrites the others.
 fn blocks_at(path: &Path) -> Vec<NoteBlock> {
-    let mut notes: Vec<NoteBlock> = crate::documents::under(path)
+    let mut notes: Vec<NoteBlock> = vak_session::documents::under(path)
         .iter()
-        .filter_map(|note| crate::documents::read(note).ok().flatten())
+        .filter_map(|note| vak_session::documents::read(note).ok().flatten())
         .flat_map(|raw| parse_blocks(&raw))
         .collect();
     notes.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.id.cmp(&b.id)));
@@ -257,10 +257,10 @@ pub fn parse_blocks(raw: &str) -> Vec<NoteBlock> {
 /// versions are released for collection; the other notes are untouched.
 pub fn forget_note(path: &Path, note_id: &str) -> Result<usize, String> {
     let note = path.join(note_id);
-    let size = crate::documents::read(&note)?
+    let size = vak_session::documents::read(&note)?
         .ok_or_else(|| format!("no note '{note_id}' in {}", path.display()))?
         .len();
-    crate::documents::forget(&note)?;
+    vak_session::documents::forget(&note)?;
     Ok(size)
 }
 
@@ -274,7 +274,7 @@ pub fn amend_note(path: &Path, note_id: &str, new_text: &str) -> Result<(), Stri
     if text.len() > 128 * 1024 {
         return Err("note exceeds the 128 KiB limit".into());
     }
-    crate::documents::update(&path.join(note_id), |old| {
+    vak_session::documents::update(&path.join(note_id), |old| {
         let old = old.ok_or_else(|| format!("no note '{note_id}' in {}", path.display()))?;
         let header_end = old.find('\n').unwrap_or(old.len());
         Ok(Some((format!("{}\n{text}\n", &old[..header_end]), ())))
@@ -331,6 +331,7 @@ mod tests {
 
     #[test]
     fn append_then_parse_roundtrips() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let cwd = dir.path().join("ws");
@@ -354,6 +355,7 @@ mod tests {
 
     #[test]
     fn parser_tolerates_hand_edits_and_junk() {
+        vak_config::paths::isolate_home_for_tests();
         let raw = "leading junk line\n\n## not a real header just text\nmore prose\n\n## 2026-08-23T10:00:00+00:00 [fact] session=abc\nthe deploy script lives in scripts/deploy.sh\ncustom user line\n";
         let blocks = parse_blocks(raw);
         // The malformed heading becomes part of the leading-junk block? No:
@@ -367,6 +369,7 @@ mod tests {
 
     #[test]
     fn empty_note_rejected() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let err = append_note(dir.path(), dir.path(), "fact", "", "s", "   ");
         assert!(err.is_err());
@@ -374,6 +377,7 @@ mod tests {
 
     #[test]
     fn header_metadata_rejects_control_characters() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         assert!(append_note(dir.path(), dir.path(), "fact", "bad\ntag", "s", "x").is_err());
         assert!(append_note(dir.path(), dir.path(), "fact", "ok", "s\n2", "x").is_err());
@@ -381,6 +385,7 @@ mod tests {
 
     #[test]
     fn malformed_heading_remains_in_preceding_note() {
+        vak_config::paths::isolate_home_for_tests();
         let raw = "## 2026-08-23T10:00:00+00:00 [fact] session=s\nfirst\n## not metadata\nmore\n";
         let notes = parse_blocks(raw);
         assert_eq!(notes.len(), 1);
@@ -390,6 +395,7 @@ mod tests {
 
     #[test]
     fn concurrent_appends_keep_every_block_intact() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_path_buf();
         let cwd = dir.path().join("ws");
@@ -418,6 +424,7 @@ mod tests {
 
     #[test]
     fn forget_removes_exactly_one_block_preserving_rest_byte_for_byte() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let cwd = dir.path().join("ws");
@@ -435,7 +442,7 @@ mod tests {
         );
         let path = memory_path(home, &cwd);
         assert_eq!(
-            crate::documents::read(&path.join(&b.id))
+            vak_session::documents::read(&path.join(&b.id))
                 .unwrap()
                 .as_deref(),
             Some(block_b.as_str())
@@ -454,6 +461,7 @@ mod tests {
 
     #[test]
     fn amend_swaps_body_and_preserves_provenance_header() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let cwd = dir.path().join("ws");
@@ -465,10 +473,10 @@ mod tests {
         amend_note(&path, &n.id, "revised body with more detail").unwrap();
 
         assert_eq!(
-            crate::documents::read(&path.join(&n.id)).unwrap(),
+            vak_session::documents::read(&path.join(&n.id)).unwrap(),
             Some(format!("{header}\nrevised body with more detail\n"))
         );
-        assert_eq!(crate::documents::version_count(&path.join(&n.id)), 2);
+        assert_eq!(vak_session::documents::version_count(&path.join(&n.id)), 2);
         let notes = list_notes(home, &cwd);
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, n.id);
@@ -484,6 +492,7 @@ mod tests {
 
     #[test]
     fn profile_tier_roundtrips() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
 
@@ -523,6 +532,7 @@ mod tests {
 
     #[test]
     fn load_matrix_scales_real_store_from_low_to_high() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let cwd = home.join("load-workspace");
@@ -549,12 +559,13 @@ mod tests {
 
     #[test]
     fn old_notes_are_retained_until_explicitly_forgotten() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let cwd = home.join("retention-workspace");
         let path = memory_path(home, &cwd);
         let raw = "## 2020-01-01T00:00:00+00:00 [fact] tag=old session=historical\nlong-lived knowledge\n";
-        crate::documents::create(&path.join(&parse_blocks(raw)[0].id), raw).unwrap();
+        vak_session::documents::create(&path.join(&parse_blocks(raw)[0].id), raw).unwrap();
         let notes = list_notes(home, &cwd);
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].text, "long-lived knowledge");

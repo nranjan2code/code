@@ -57,9 +57,9 @@ fn io_error(error: String) -> std::io::Error {
 
 /// List all entities in the target workspace (or global if cwd is None).
 pub fn list_entities(home: &Path, cwd: Option<&Path>) -> Vec<EntityRecord> {
-    crate::documents::under(&entities_file(home, cwd))
+    vak_session::documents::under(&entities_file(home, cwd))
         .iter()
-        .filter_map(|path| crate::documents::read(path).ok().flatten())
+        .filter_map(|path| vak_session::documents::read(path).ok().flatten())
         .filter_map(|raw| serde_json::from_str::<EntityRecord>(&raw).ok())
         .collect()
 }
@@ -67,7 +67,7 @@ pub fn list_entities(home: &Path, cwd: Option<&Path>) -> Vec<EntityRecord> {
 /// Retrieve a specific entity by ID.
 pub fn get_entity(home: &Path, cwd: Option<&Path>, id: &str) -> Option<EntityRecord> {
     let path = entity_document(home, cwd, id).ok()?;
-    let raw = crate::documents::read(&path).ok().flatten()?;
+    let raw = vak_session::documents::read(&path).ok().flatten()?;
     serde_json::from_str(&raw).ok()
 }
 
@@ -104,7 +104,7 @@ pub fn upsert_entity(
     record.updated_at = Utc::now();
     let json = serde_json::to_string(&record)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    crate::documents::update(&path, |_| Ok(Some((json.clone(), ())))).map_err(io_error)?;
+    vak_session::documents::update(&path, |_| Ok(Some((json.clone(), ())))).map_err(io_error)?;
     Ok(record)
 }
 
@@ -113,7 +113,7 @@ pub fn delete_entity(home: &Path, cwd: Option<&Path>, id: &str) -> Result<bool, 
     let Ok(path) = entity_document(home, cwd, id) else {
         return Ok(false);
     };
-    crate::documents::forget(&path).map_err(io_error)
+    vak_session::documents::forget(&path).map_err(io_error)
 }
 
 pub struct EntityRecordTool {
@@ -389,6 +389,7 @@ mod tests {
 
     #[test]
     fn entity_crud_and_search_roundtrip() {
+        vak_config::paths::isolate_home_for_tests();
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
         let cwd = temp.path().join("cwd");
@@ -448,6 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn entity_record_and_query_tools_execute() {
+        vak_config::paths::isolate_home_for_tests();
         use vak_tools::Tool;
 
         let temp = tempfile::tempdir().unwrap();

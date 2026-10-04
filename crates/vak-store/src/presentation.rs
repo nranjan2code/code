@@ -4,7 +4,6 @@
 //! selection receipts remain append-only in `vak-session`; this file stores
 //! only the current reusable definitions and activation pointers.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use vak_presentation::{PresentationLibrary, StoredPresentation};
@@ -44,12 +43,14 @@ impl PresentationStore {
         &self.path
     }
 
+    /// The library is a Document named by `path` (plan M3b slice 3).
     pub fn load(&self) -> Result<PresentationLibrary, PresentationStoreError> {
-        if !self.path.exists() {
+        let Some(text) =
+            vak_session::documents::read(&self.path).map_err(PresentationStoreError::Invalid)?
+        else {
             return Ok(PresentationLibrary::default());
-        }
-        let bytes = fs::read(&self.path)?;
-        let disk: PresentationDisk = serde_json::from_slice(&bytes)?;
+        };
+        let disk: PresentationDisk = serde_json::from_str(&text)?;
         if disk.schema_version != PRESENTATION_STORE_SCHEMA {
             return Err(PresentationStoreError::Invalid(format!(
                 "unsupported presentation store schema {}",
@@ -65,25 +66,15 @@ impl PresentationStore {
     }
 
     pub fn save(&self, library: &PresentationLibrary) -> Result<(), PresentationStoreError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let disk = PresentationDisk {
             schema_version: PRESENTATION_STORE_SCHEMA,
             definitions: library.definitions().cloned().collect(),
             activations: library.activations().to_vec(),
             suppressions: library.suppressions().to_vec(),
         };
-        let bytes = serde_json::to_vec_pretty(&disk)?;
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0);
-        let temp = self
-            .path
-            .with_extension(format!("tmp-{}-{nonce}", std::process::id()));
-        fs::write(&temp, bytes)?;
-        fs::rename(temp, &self.path)?;
+        let text = serde_json::to_string_pretty(&disk)?;
+        vak_session::documents::update(&self.path, |_| Ok(Some((text.clone(), ()))))
+            .map_err(PresentationStoreError::Invalid)?;
         Ok(())
     }
 
@@ -123,6 +114,7 @@ mod tests {
 
     #[test]
     fn missing_store_is_empty_and_roundtrips_atomically() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempdir().expect("tempdir");
         let store = PresentationStore::new(dir.path().join("nested/presentations.json"));
         let library = store.load().expect("load");
@@ -132,6 +124,7 @@ mod tests {
 
     #[test]
     fn pack_registration_and_plugin_revocation_are_atomic() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempdir().expect("tempdir");
         let store = PresentationStore::new(dir.path().join("presentations.json"));
         let spec: PresentationSpec = serde_json::from_value(serde_json::json!({
@@ -169,6 +162,7 @@ mod tests {
 
     #[test]
     fn activation_is_durable_and_revoke_clears_it_immediately() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempdir().expect("tempdir");
         let store = PresentationStore::new(dir.path().join("presentations.json"));
         let spec: PresentationSpec = serde_json::from_value(serde_json::json!({
@@ -222,6 +216,7 @@ mod tests {
 
     #[test]
     fn live_pack_lifecycle_exports_imports_and_preserves_history_projection() {
+        vak_config::paths::isolate_home_for_tests();
         let source_dir = tempdir().expect("tempdir");
         let source = PresentationStore::new(source_dir.path().join("presentations.json"));
         let spec = PresentationSpec {
@@ -315,11 +310,12 @@ mod tests {
 
     #[test]
     fn unsupported_store_schema_fails_closed() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("presentations.json");
-        std::fs::write(
+        vak_session::documents::create(
             &path,
-            serde_json::json!({ "schema_version": 99, "definitions": [], "activations": [] })
+            &serde_json::json!({ "schema_version": 99, "definitions": [], "activations": [] })
                 .to_string(),
         )
         .expect("write");

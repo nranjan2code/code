@@ -279,7 +279,7 @@ impl vak_tools::Tool for ProposeSkillTool {
             sid = self.session_id,
             ts = chrono::Utc::now().to_rfc3339(),
         );
-        if let Err(e) = crate::documents::create(&dir.join(format!("{id}.md")), &body) {
+        if let Err(e) = vak_session::documents::create(&dir.join(format!("{id}.md")), &body) {
             return vak_tools::ToolOutput::error(format!("write proposal: {e}"));
         }
         vak_tools::ToolOutput::ok(format!(
@@ -323,11 +323,11 @@ fn list_proposals_in_dir(
     cwd: &Path,
 ) -> Vec<SkillProposal> {
     let mut found = Vec::new();
-    for path in crate::documents::under(dir) {
+    for path in vak_session::documents::under(dir) {
         let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
             continue;
         };
-        let Some(text) = crate::documents::read(&path).ok().flatten() else {
+        let Some(text) = vak_session::documents::read(&path).ok().flatten() else {
             continue;
         };
         let Some(skill) = crate::skills::parse_text(&text, &path) else {
@@ -344,7 +344,7 @@ fn list_proposals_in_dir(
                 id,
                 name: skill.name,
                 description: with_duplicate_note(&skill.description, tag.as_deref()),
-                derived_from: crate::documents::read(&path)
+                derived_from: vak_session::documents::read(&path)
                     .ok()
                     .flatten()
                     .and_then(|b| proposal_provenance(&b)),
@@ -403,10 +403,11 @@ pub fn promote(
             target.display()
         ));
     }
-    let text = crate::documents::read(&p.path)?.ok_or_else(|| format!("no proposal '{id}'"))?;
+    let text =
+        vak_session::documents::read(&p.path)?.ok_or_else(|| format!("no proposal '{id}'"))?;
     std::fs::create_dir_all(&target_dir).map_err(|e| format!("create skill dir: {e}"))?;
     std::fs::write(&target, text).map_err(|e| format!("install skill: {e}"))?;
-    crate::documents::forget(&p.path)?;
+    vak_session::documents::forget(&p.path)?;
     Ok(p.name.clone())
 }
 
@@ -416,7 +417,7 @@ pub fn reject(scope: &vak_config::scope::AgentScope, cwd: &Path, id: &str) -> Re
         .iter()
         .find(|p| p.id == id)
         .ok_or_else(|| format!("no proposal '{id}'"))?;
-    crate::documents::forget(&p.path).map(|_| ())
+    vak_session::documents::forget(&p.path).map(|_| ())
 }
 
 // ---- duplicate screening (docs/design/29-personal-os.md P5) -----------------
@@ -477,7 +478,7 @@ fn duplicate_tag_in(frontmatter: &str) -> Option<String> {
 /// Insert the tag as the last frontmatter line. Malformed headers are left
 /// untouched — screening must never corrupt a reviewable draft.
 fn persist_duplicate_tag(path: &Path, dup: &str) -> Result<(), String> {
-    crate::documents::update(path, |text| {
+    vak_session::documents::update(path, |text| {
         let Some(text) = text else {
             return Ok(None);
         };
@@ -509,7 +510,7 @@ fn tagged(text: &str, dup: &str) -> Option<String> {
 
 /// Existing-or-newly-persisted duplicate flag for one pending proposal.
 fn screen_proposal(path: &Path, name: &str, accepted: &[(String, String)]) -> Option<String> {
-    let text = crate::documents::read(path).ok().flatten()?;
+    let text = vak_session::documents::read(path).ok().flatten()?;
     let (frontmatter, body) = split_header(&text)?;
     if let Some(tag) = duplicate_tag_in(frontmatter) {
         return Some(tag);
@@ -578,6 +579,7 @@ mod tests {
 
     #[test]
     fn duplicate_of_flags_identical_skill() {
+        vak_config::paths::isolate_home_for_tests();
         let existing = vec![(
             "rotate-release-tags".to_string(),
             "pause before rollback so the deploy script can finish".to_string(),
@@ -594,6 +596,7 @@ mod tests {
 
     #[test]
     fn duplicate_of_catches_paraphrase_over_threshold() {
+        vak_config::paths::isolate_home_for_tests();
         let existing = vec![(
             "rotate-release-tags".to_string(),
             "pause before rollback so the deploy script can finish".to_string(),
@@ -610,6 +613,7 @@ mod tests {
 
     #[test]
     fn duplicate_of_allows_disjoint_skills() {
+        vak_config::paths::isolate_home_for_tests();
         let existing = vec![
             (
                 "frobulate-widget-frames".to_string(),
@@ -640,6 +644,7 @@ mod tests {
 
     #[test]
     fn duplicate_of_returns_first_matching_existing() {
+        vak_config::paths::isolate_home_for_tests();
         let dup = (
             "rotate-release-tags".to_string(),
             "pause before rollback so the deploy script can finish".to_string(),
@@ -678,7 +683,7 @@ mod tests {
     }
 
     fn pending_paths(home: &Path, cwd: &Path) -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = crate::documents::under(&proposals_dir(
+        let mut v: Vec<PathBuf> = vak_session::documents::under(&proposals_dir(
             &vak_config::scope::AgentScope::new(home),
             cwd,
         ));
@@ -696,6 +701,7 @@ mod tests {
 
     #[tokio::test]
     async fn propose_submission_tags_duplicate_and_promotion_still_works() {
+        vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
         seed_accepted_skill(
             &home,
@@ -720,7 +726,7 @@ mod tests {
         assert!(!tool.execute(&args, &ctx).await.is_error);
 
         for path in pending_paths(&home, &cwd) {
-            let text = crate::documents::read(&path).unwrap().unwrap();
+            let text = vak_session::documents::read(&path).unwrap().unwrap();
             assert!(text.contains("duplicate-of: \"rotate-release-tags\""));
             assert_eq!(
                 text.matches("duplicate-of:").count(),
@@ -759,6 +765,7 @@ mod tests {
 
     #[tokio::test]
     async fn propose_submission_leaves_disjoint_skills_untagged() {
+        vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
         seed_accepted_skill(
             &home,
@@ -786,7 +793,7 @@ mod tests {
         assert!(!out.is_error);
 
         for path in pending_paths(&home, &cwd) {
-            let text = crate::documents::read(&path).unwrap().unwrap();
+            let text = vak_session::documents::read(&path).unwrap().unwrap();
             assert!(!text.contains("duplicate-of"), "{text}");
         }
         let listed = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
@@ -796,6 +803,7 @@ mod tests {
 
     #[test]
     fn reflection_authored_draft_is_screened_on_review_without_stacking() {
+        vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
         seed_accepted_skill(
             &home,
@@ -808,7 +816,7 @@ mod tests {
         let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("aaa111.md");
-        crate::documents::create(
+        vak_session::documents::create(
             &file,
             "---\nname: \"rotate-release-tags-v3\"\ndescription: \"hold deploys at the rollback gate\"\n---\n\npause before rollback so the deploy script can finish cleanly\n\n<!-- proposed-by: sess-r at 2026-01-01T00:00:00+00:00; proposal id aaa111; source: reflection -->\n",
     )
@@ -824,7 +832,7 @@ mod tests {
             first[0].description
         );
         assert_eq!(
-            crate::documents::read(&file)
+            vak_session::documents::read(&file)
                 .unwrap()
                 .unwrap()
                 .matches("duplicate-of:")
@@ -836,7 +844,7 @@ mod tests {
         let second = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
         assert_eq!(second[0].description, first[0].description);
         assert_eq!(
-            crate::documents::read(&file)
+            vak_session::documents::read(&file)
                 .unwrap()
                 .unwrap()
                 .matches("duplicate-of:")
@@ -851,11 +859,12 @@ mod tests {
 
     #[test]
     fn tagged_header_is_inert_to_consumer_parsers() {
+        vak_config::paths::isolate_home_for_tests();
         let (_dir, home, cwd) = temp_home_cwd();
         let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("bbb222.md");
-        crate::documents::create(
+        vak_session::documents::create(
             &file,
             "---\nname: \"hand-tagged\"\ndescription: \"original text\"\nduplicate-of: \"rotate-release-tags\"\n---\n\nbody here\n\n<!-- proposed-by: sess-h at ts; proposal id bbb222 -->\n",
     )
@@ -863,7 +872,7 @@ mod tests {
 
         // Replicates skills::parse as used by discovery and every listing:
         // unknown frontmatter keys are skipped, name/description untouched.
-        let text = crate::documents::read(&file).unwrap().unwrap();
+        let text = vak_session::documents::read(&file).unwrap().unwrap();
         let parsed = crate::skills::parse_text(&text, &file).expect("tagged header still parses");
         assert_eq!(parsed.name, "hand-tagged");
         assert_eq!(parsed.description, "original text");

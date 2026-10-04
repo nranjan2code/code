@@ -6,6 +6,7 @@
 //! entry, never a deletion.
 
 pub mod chain;
+pub mod documents;
 pub mod ids;
 mod index;
 pub mod log;

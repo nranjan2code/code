@@ -303,6 +303,7 @@ mod tests {
 
     #[tokio::test]
     async fn profile_tier_recalled_as_profile_role_alongside_memory() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let cwd = home.join("ws");
@@ -363,6 +364,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_stores_still_answer_cleanly() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().join("ws");
         std::fs::create_dir_all(&cwd).unwrap();
@@ -392,6 +394,7 @@ mod tests {
 
     #[tokio::test]
     async fn transcript_recall_is_scoped_to_agent_and_audience() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let cwd = dir.path().join("workspace");
@@ -478,6 +481,7 @@ mod tests {
 
     #[tokio::test]
     async fn entities_recalled_via_session_search() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let cwd = dir.path().join("workspace");

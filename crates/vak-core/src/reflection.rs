@@ -393,7 +393,7 @@ pub fn apply(
             ts = chrono::Utc::now().to_rfc3339(),
             turn_part = turn.map(|t| format!("; turn: {t}")).unwrap_or_default(),
         );
-        crate::documents::create(&dir.join(format!("{id}.md")), &body)?;
+        vak_session::documents::create(&dir.join(format!("{id}.md")), &body)?;
         queued = true;
     }
     Ok((written, queued))

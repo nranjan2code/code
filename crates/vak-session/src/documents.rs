@@ -13,15 +13,11 @@ use vak_storage::documents::Documents;
 const RETRIES: usize = 16;
 
 fn tenant_store() -> Result<Arc<dyn vak_storage::store::Store>, String> {
-    // This crate's unit tests write memory through many helpers; none may
-    // reach the operator's real tenant store.
-    #[cfg(test)]
-    vak_config::paths::isolate_home_for_tests();
     let tenant = vak_config::paths::tenant_home_at(
         &vak_config::paths::data_home(),
-        &vak_session::trace::local::tenant().to_string(),
+        &crate::trace::local::tenant().to_string(),
     );
-    vak_session::objects::TenantObjects::for_tenant(&tenant)
+    crate::objects::TenantObjects::for_tenant(&tenant)
         .map(|objects| objects.store())
         .map_err(|error| error.to_string())
 }

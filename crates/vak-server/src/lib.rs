@@ -2950,13 +2950,13 @@ async fn search_sessions(
     if all {
         workspace_notes.clear();
         for path in
-            vak_core::documents::under(&vak_config::scope::AgentScope::new(&home).memory_root())
+            vak_session::documents::under(&vak_config::scope::AgentScope::new(&home).memory_root())
         {
             let in_workspace_tier = path
                 .parent()
                 .and_then(|tier| tier.file_name())
                 .is_some_and(|name| name == "MEMORY.md");
-            if in_workspace_tier && let Ok(Some(raw)) = vak_core::documents::read(&path) {
+            if in_workspace_tier && let Ok(Some(raw)) = vak_session::documents::read(&path) {
                 workspace_notes.extend(vak_core::memory::parse_blocks(&raw));
             }
         }

@@ -17,7 +17,6 @@ pub mod custom_commands;
 pub mod data_engine;
 pub mod digest;
 pub mod discovery;
-pub mod documents;
 pub mod entities;
 pub mod file_mentions;
 pub mod files;

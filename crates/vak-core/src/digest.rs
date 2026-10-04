@@ -131,7 +131,7 @@ fn fold_costs(
 }
 
 fn count_fresh_notes(path: &Path, since: chrono::DateTime<chrono::Utc>) -> usize {
-    let Ok(Some(raw)) = crate::documents::read(path) else {
+    let Ok(Some(raw)) = vak_session::documents::read(path) else {
         return 0;
     };
     crate::memory::parse_blocks(&raw)
@@ -142,13 +142,13 @@ fn count_fresh_notes(path: &Path, since: chrono::DateTime<chrono::Utc>) -> usize
 
 /// Every memory note Document of the Agent, in both tiers.
 fn memory_files(scope: &vak_config::scope::AgentScope) -> Vec<PathBuf> {
-    let mut out = crate::documents::under(&scope.memory_root());
+    let mut out = vak_session::documents::under(&scope.memory_root());
     out.sort();
     out
 }
 
 fn proposal_opened_ts(path: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
-    let raw = crate::documents::read(path).ok().flatten()?;
+    let raw = vak_session::documents::read(path).ok().flatten()?;
     // Proposals carry "<!-- proposed-by: <sid> at <rfc3339>; ... -->".
     if let Some(rest) = raw.split(" at ").nth(1)
         && let Some(ts_raw) = rest.split(';').next()
@@ -192,7 +192,7 @@ pub fn digest(
         report.memory_notes_appended += count_fresh_notes(&path, since);
     }
 
-    let mut proposals = crate::documents::under(&scope.skill_proposals_root());
+    let mut proposals = vak_session::documents::under(&scope.skill_proposals_root());
     proposals.sort();
     report.skill_proposals_opened = proposals
         .iter()
@@ -232,6 +232,7 @@ mod tests {
 
     #[test]
     fn missing_files_yield_zeros_not_errors() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let r = digest(
             &vak_config::scope::AgentScope::new(dir.path()),
@@ -260,6 +261,7 @@ mod tests {
 
     #[test]
     fn zero_days_is_an_empty_window() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let ledger = crate::finops::FinOpsLedger::new(dir.path());
         ledger
@@ -276,6 +278,7 @@ mod tests {
 
     #[test]
     fn ledger_math_matches_seeded_rows() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let ledger = crate::finops::FinOpsLedger::new(dir.path());
         let now = chrono::Utc::now();
@@ -371,7 +374,7 @@ mod tests {
         let old_header =
             "## 2026-01-01T00:00:00+00:00 [fact] tag=stale session=old\nancient note\n";
         let notes = vak_config::scope::AgentScope::new(home).memory_notes(&cwd);
-        crate::documents::update(&notes, |fresh| {
+        vak_session::documents::update(&notes, |fresh| {
             Ok(Some((
                 format!("{}{old_header}", fresh.unwrap_or_default()),
                 (),
@@ -394,24 +397,25 @@ mod tests {
 
     #[test]
     fn skill_proposals_counted_within_window() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let proj = home.join("skill-proposals").join("abc");
 
         let now = chrono::Utc::now().to_rfc3339();
-        crate::documents::create(
+        vak_session::documents::create(
             &proj.join("fresh.md"),
             &format!("---\nname: \"a\"\ndescription: \"d\"\n---\n\nbody\n\n<!-- proposed-by: s1 at {now}; proposal id x -->\n"),
         )
         .unwrap();
-        crate::documents::create(
+        vak_session::documents::create(
             &proj.join("old.md"),
             "---\nname: \"b\"\ndescription: \"d\"\n---\n\nbody\n\n<!-- proposed-by: s2 at 2026-01-01T00:00:00+00:00; proposal id y -->\n",
         )
         .unwrap();
         // A proposal states when it was opened; one that does not is not
         // counted, because a Document has no file time to guess from.
-        crate::documents::create(&proj.join("undated.md"), "no comment here").unwrap();
+        vak_session::documents::create(&proj.join("undated.md"), "no comment here").unwrap();
 
         let r = digest(
             &vak_config::scope::AgentScope::new(home),

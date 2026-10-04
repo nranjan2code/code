@@ -201,6 +201,7 @@ mod tests {
 
     #[test]
     fn memory_consolidation_promotes_invariants_and_detects_conflicts() {
+        vak_config::paths::isolate_home_for_tests();
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
         let cwd = temp.path().join("cwd");

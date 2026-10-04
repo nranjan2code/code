@@ -318,11 +318,6 @@ pub const REGISTRY: &[StateEntry] = &[
     agent_entry("agents/{agent}/security-events", "vak-core", Class::Record),
     agent_entry("agents/{agent}/cost-log", "vak-core", Class::Record),
     agent_entry("agents/{agent}/activity-log", "vak-core", Class::Record),
-    agent_entry(
-        "agents/{agent}/presentations.json",
-        "vak-store",
-        Class::Document,
-    ),
     agent_entry("agents/{agent}/flow-runs", "vak-flow", Class::Record),
     agent_entry("agents/{agent}/agent-network", "vak-core", Class::Desired),
     agent_entry(
@@ -331,11 +326,6 @@ pub const REGISTRY: &[StateEntry] = &[
         Class::Record,
     ),
     agent_entry("agents/{agent}/sandbox", "vak-server", Class::Record),
-    agent_entry(
-        "agents/{agent}/office-workspaces",
-        "vak-server",
-        Class::Document,
-    ),
     agent_entry("agents/{agent}/coworking", "vak-server", Class::Record),
     // One Canvas per conversation, rewritten as its tabs change; the newest
     // revision is all there is (docs/design/66 §0a).
@@ -800,7 +790,7 @@ mod tests {
         ));
         assert!(is_declared(
             Root::Data,
-            Path::new("agents/writer/office-workspaces/s/r.json")
+            Path::new("agents/writer/sandbox/records.jsonl")
         ));
         assert!(!is_declared(
             Root::Data,

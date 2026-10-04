@@ -143,37 +143,25 @@ fn room_path(state: &AppState, session_id: &str, room_id: &str) -> Option<PathBu
     )
 }
 
+/// A room is a Document named by its room path (plan M3b slice 3).
 fn load(path: &FsPath) -> Result<OfficeRoom, ()> {
-    let bytes = fs::read(path).map_err(|_| ())?;
-    if bytes.len() > 4 * 1024 * 1024 {
+    let text = vak_session::documents::read(path)
+        .map_err(|_| ())?
+        .ok_or(())?;
+    if text.len() > 4 * 1024 * 1024 {
         return Err(());
     }
-    serde_json::from_slice(&bytes).map_err(|_| ())
+    serde_json::from_str(&text).map_err(|_| ())
 }
 
 fn save(path: &FsPath, room: &OfficeRoom) -> Result<(), ()> {
-    let parent = path.parent().ok_or(())?;
-    fs::create_dir_all(parent).map_err(|_| ())?;
-    let temp = parent.join(format!(".{}.{}.tmp", room.room_id, uuid::Uuid::now_v7()));
-    let bytes = serde_json::to_vec(room).map_err(|_| ())?;
-    if bytes.len() > 4 * 1024 * 1024 {
+    let text = serde_json::to_string(room).map_err(|_| ())?;
+    if text.len() > 4 * 1024 * 1024 {
         return Err(());
     }
-    let result = (|| {
-        use std::io::Write;
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        fs::rename(&temp, path)?;
-        Ok::<(), std::io::Error>(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    result.map_err(|_| ())
+    vak_session::documents::update(path, |_| Ok(Some((text.clone(), ()))))
+        .map(|_| ())
+        .map_err(|_| ())
 }
 
 /// The principal behind a room edit: the enrolled owner for the operator,
@@ -302,17 +290,10 @@ pub(super) async fn list(
         return status.into_response();
     }
     let root = crate::session_agent_scope(&state, &session_id).office_workspaces(&session_id);
-    let entries = match fs::read_dir(root) {
-        Ok(e) => e,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Json(serde_json::json!({"workspaces": []})).into_response();
-        }
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
     let mut rooms = Vec::new();
-    for entry in entries.flatten() {
-        if entry.path().extension().is_some_and(|e| e == "json") {
-            match load(&entry.path()) {
+    for path in vak_session::documents::under(&root) {
+        if path.extension().is_some_and(|e| e == "json") {
+            match load(&path) {
                 Ok(room) if room.session_id == session_id => rooms.push(room),
                 Ok(_) => return StatusCode::FORBIDDEN.into_response(),
                 Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -377,7 +358,11 @@ pub(super) async fn mutate(
     let Some(path) = room_path(&state, &session_id, &room_id) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let lock_path = path.with_extension("lock");
+    // The edit lock is ephemeral: it lives in the runtime root, not with
+    // the room it guards.
+    let lock_path = vak_config::paths::runtime_dir()
+        .join("office-locks")
+        .join(format!("{session_id}-{room_id}.lock"));
     if let Some(parent) = lock_path.parent()
         && fs::create_dir_all(parent).is_err()
     {
