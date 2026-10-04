@@ -238,7 +238,9 @@ directories with group commit, and large payloads are tenant objects).
 Slice 3 is done (2026-10-04): side ledgers are record chains, D25 is
 fixed, `auth/` and feeds are in the tenant tree, and Agent-authored state
 (memory, entities, skill proposals, Office rooms, presentations) is
-Documents in the tenant store. No session starts a later step unasked.
+Documents in the tenant store. Slice 4 is done (2026-10-04): execution
+state, drafts, Agent workspaces and run environments live outside the
+project tree. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;

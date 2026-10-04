@@ -572,7 +572,7 @@ carries the tenant store whole.
 - `auth/` becomes tenant Desired (public keys and recovery-code digests,
   always backed up).
 
-**Slice 4 — runtime out of the project tree (L4, L10)** — in progress.
+**Slice 4 — runtime out of the project tree (L4, L10)** — done 2026-10-04.
 Step 1 done (2026-10-04): execution temp files and caches live in
 `<runtime>/executions/<space>/<agent>/` (`vak_config::scope::execution_dir`),
 and write sandboxes grant exactly the workspace and that space's execution
@@ -582,7 +582,7 @@ candidates live there too, still named `.vak/scratch/<agent>/<execution>/…`
 (`draft_location`, `vak_tools::drafts`), with a scoped exception to
 invariant 10 (`drafts_live_outside_the_project`,
 `another_agents_drafts_are_unreachable`); the Review flow has not yet been
-checked live in a browser. Step 3 done (2026-10-04): a non-built-in
+checked live in a browser at the time. Step 3 done (2026-10-04): a non-built-in
 Agent's workspace is `tenants/<tenant>/workspaces/<space>/<agent>/`
 (`vak_config::paths::agent_workspace`, Workspace class), and a
 `space-root` file beside it names the project whose layer defines the
@@ -592,8 +592,11 @@ worktree, a revision's task copy, a staging tree) is
 `tenants/<tenant>/environments/<run>/` (`vak_config::paths::environment_dir`),
 never in a project or an Agent home. No `.vak` literal is left outside
 `vak_config::scope` and tests, and the client's `.vak/scratch` checks stay:
-step 2 kept that name for drafts, so they recognise drafts correctly. Left
-in slice 4: the live browser check of Review. Step 2's design:
+step 2 kept that name for drafts, so they recognise drafts correctly.
+Checked live on 2026-10-04 on a fresh 7.0 data home with a local Ollama
+model: `office_apply` wrote its draft to the execution root, Review read
+and diffed it, and accepting it put the file in the workspace, which
+held nothing else but its `.vak/config.toml`. Step 2's design:
 - A draft is addressed relative to its execution root
   (`<execution>/<workspace path>` under `execution_dir(space, agent)`),
   never as a `.vak/scratch/…` workspace path; `office_apply::draft_dir`,
