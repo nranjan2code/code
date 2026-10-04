@@ -140,7 +140,7 @@ async fn no_undeclared_paths_any_root() {
             &vak_config::paths::data_home(),
             &vak_session::trace::local::tenant().to_string()
         )
-        .join("objects")
+        .join("store")
         .exists(),
         "the turn stored its windowed result as an object"
     );

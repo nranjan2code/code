@@ -2192,7 +2192,6 @@ function MemoryView() {
   const [editing, setEditing] = createSignal<string | null>(null);
   const [editText, setEditText] = createSignal("");
   const [forgetTarget, setForgetTarget] = createSignal<MemoryItem | null>(null);
-  const [cleaning, setCleaning] = createSignal(false);
   const [togglingFlag, setTogglingFlag] = createSignal<string | null>(null);
   const [filterScope, setFilterScope] = createSignal<"all" | "profile" | "workspace">("all");
   const [filterFreshness, setFilterFreshness] = createSignal<"all" | "fresh" | "stale">("all");
@@ -2250,20 +2249,6 @@ function MemoryView() {
     }
   };
 
-  const cleanArtifacts = async () => {
-    if (!canWriteMemory()) return;
-    if (!confirmDestructive("Remove only abandoned memory lock/temp files and empty workspace folders? Notes will not be deleted.")) return;
-    setCleaning(true);
-    try {
-      const report = await api.cleanupMemory(selectedAgentIdOrUndefined());
-      pushToast("info", `Cleaned ${report.removed_locks} locks, ${report.removed_temps} temp files, ${report.removed_empty_dirs} empty folders`);
-    } catch (err) {
-      pushToast("alert", `${err}`);
-    } finally {
-      setCleaning(false);
-    }
-  };
-
   const addNote = async () => {
     if (!noteText().trim() || busy() || !canWriteMemory()) return;
     setBusy(true);
@@ -2317,9 +2302,8 @@ function MemoryView() {
       <PageHeader
         title="Memory"
         description="Things Vakyartha should keep in mind between sessions — about you, or about this workspace."
-        actions={<button class="ghost small" disabled={cleaning() || !canWriteMemory()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>}
       />
-      <Show when={!canWriteMemory()}><div class="info-banner">This combined view gathers notes from each agent. Select one agent to add notes or clean memory. You can amend or forget a listed note here; each action applies only to its owning agent.</div></Show>
+      <Show when={!canWriteMemory()}><div class="info-banner">This combined view gathers notes from each agent. Select one agent to add notes. You can amend or forget a listed note here; each action applies only to its owning agent.</div></Show>
 
       <div class="stat-strip">
         <StatCard label="Total memories" value={notes().length} />

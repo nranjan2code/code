@@ -1220,7 +1220,6 @@ fn router_with_state(state: AppState) -> Router {
         .route("/voice/speak", post(voice::voice_speak))
         .route("/voice/providers", get(voice::voice_providers))
         .route("/memory", get(list_memory).post(append_memory))
-        .route("/memory/cleanup", post(cleanup_memory))
         .route("/memory/consolidate", post(consolidate_memory_route))
         .route(
             "/memory/{note_id}",
@@ -2467,47 +2466,6 @@ async fn list_memory(
     Json(serde_json::json!({ "notes": blocks })).into_response()
 }
 
-async fn cleanup_memory(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let core = scoped_core!(&state, None, q.agent.as_deref());
-    let mut homes = vec![core.scope().into_root(), state.core.scope().into_root()];
-    let shared = state.core.shared_scope().into_root();
-    if !homes.contains(&shared) {
-        homes.push(shared);
-    }
-    let mut report = vak_core::memory::CleanupReport::default();
-    let mut seen_home = std::collections::HashSet::new();
-    for home in homes {
-        if !seen_home.insert(home.clone()) {
-            continue;
-        }
-        let home_report =
-            vak_core::memory::cleanup_artifacts(&home, std::time::Duration::from_secs(86_400));
-        report.removed_locks += home_report.removed_locks;
-        report.removed_temps += home_report.removed_temps;
-        report.removed_empty_dirs += home_report.removed_empty_dirs;
-    }
-    vak_core::security_events::record(
-        &core.scope(),
-        vak_core::security_events::EventKind::ConfigChange,
-        "memory_cleanup",
-        &format!(
-            "locks={} temps={} empty_dirs={}",
-            report.removed_locks, report.removed_temps, report.removed_empty_dirs
-        ),
-        None,
-    );
-    Json(serde_json::json!({
-        "removed_locks": report.removed_locks,
-        "removed_temps": report.removed_temps,
-        "removed_empty_dirs": report.removed_empty_dirs,
-    }))
-    .into_response()
-}
-
 async fn consolidate_memory_route(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
@@ -2990,14 +2948,16 @@ async fn search_sessions(
     let mut extras = Vec::new();
     let mut workspace_notes = vak_core::memory::list_notes(&home, &cwd);
     if all {
-        let root = home.join("memory");
-        if let Ok(entries) = std::fs::read_dir(&root) {
-            workspace_notes.clear();
-            for entry in entries.flatten() {
-                let path = entry.path().join("MEMORY.md");
-                if let Ok(raw) = std::fs::read_to_string(path) {
-                    workspace_notes.extend(vak_core::memory::parse_blocks(&raw));
-                }
+        workspace_notes.clear();
+        for path in
+            vak_core::documents::under(&vak_config::scope::AgentScope::new(&home).memory_root())
+        {
+            let in_workspace_tier = path
+                .parent()
+                .and_then(|tier| tier.file_name())
+                .is_some_and(|name| name == "MEMORY.md");
+            if in_workspace_tier && let Ok(Some(raw)) = vak_core::documents::read(&path) {
+                workspace_notes.extend(vak_core::memory::parse_blocks(&raw));
             }
         }
     }

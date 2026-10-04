@@ -79,6 +79,21 @@ impl Documents {
         format!("doc/{name}")
     }
 
+    /// Live documents whose names start with `prefix`, sorted; forgotten
+    /// ones are left out.
+    pub fn names(&self, prefix: &str) -> Result<Vec<String>> {
+        let mut live = Vec::new();
+        for full in self.store.ref_names(&Self::ref_name(prefix))? {
+            let Some(name) = full.strip_prefix("doc/") else {
+                continue;
+            };
+            if matches!(self.head(name), Ok(Some(_))) {
+                live.push(name.to_string());
+            }
+        }
+        Ok(live)
+    }
+
     fn version(&self, id: &ObjectId) -> Result<Version> {
         decode(id, &self.store.get_object(id, &self.scope)?)
     }

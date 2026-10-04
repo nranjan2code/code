@@ -34,7 +34,7 @@ async fn evidence_body_is_a_tenant_object_not_ledger_bytes() {
 
     let objects =
         vak_config::paths::tenant_home_at(&home, &vak_session::trace::local::tenant().to_string())
-            .join("objects");
+            .join("store");
     assert!(
         walk_files(&objects) > 0,
         "the body is stored under {objects:?}"

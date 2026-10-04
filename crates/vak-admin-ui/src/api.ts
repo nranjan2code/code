@@ -776,8 +776,6 @@ export const api = {
       body: JSON.stringify({ text, scope, agent }),
     }).then(handleVoid),
 
-  cleanupMemory: (agent?: string): Promise<{ removed_locks: number; removed_temps: number; removed_empty_dirs: number }> =>
-    fetch(agent ? `/memory/cleanup?agent=${encodeURIComponent(agent)}` : "/memory/cleanup", { method: "POST" }).then((r) => handle(r)),
 
   doctor: (sessionId?: string): Promise<{ report: string; ok: boolean; failures?: number; checks?: Array<{ label: string; ok: boolean; detail: string }>; facts?: string[] }> => {
     const query = sessionId ? `?session=${encodeURIComponent(sessionId)}` : "";

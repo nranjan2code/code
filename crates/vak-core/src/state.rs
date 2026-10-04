@@ -288,11 +288,12 @@ pub const REGISTRY: &[StateEntry] = &[
     },
     // ---- the tenant tree (docs/design/73 §6) ----
     StateEntry {
-        path: "tenants/{tenant}/objects",
+        path: "tenants/{tenant}/store",
         root: Root::Data,
         owner: "vak-session",
         schema: None,
-        // Ledger payloads, sealed per object and granted per conversation.
+        // Objects (ledger payloads, Document versions) sealed per object and
+        // granted per scope, and the refs naming each Document's head.
         class: Class::Object,
         on_purge: OnPurge::Remove,
     },
@@ -310,7 +311,6 @@ pub const REGISTRY: &[StateEntry] = &[
     // Agent whichever Agent owns the session (doc 73 D25); M3b moves them.
     agent_entry("agents/{agent}/sessions", "vak-session", Class::Record),
     agent_entry("agents/{agent}/checkpoints", "vak-core", Class::Record),
-    agent_entry("agents/{agent}/memory", "vak-core", Class::Document),
     agent_entry("agents/{agent}/entities", "vak-core", Class::Document),
     agent_entry(
         "agents/{agent}/skill-proposals",
@@ -837,7 +837,7 @@ mod tests {
         for rel in [
             "agents/vak/sessions/h/a.jsonl",
             "agents/writer/sessions/h/b.jsonl",
-            "agents/writer/memory/user/USER.md",
+            "agents/writer/entities/global/ENTITIES.jsonl",
         ] {
             let path = home.path().join(rel);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -852,8 +852,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            find("agents/{agent}/memory").expand(home.path()),
-            vec![PathBuf::from("agents/writer/memory")]
+            find("agents/{agent}/entities").expand(home.path()),
+            vec![PathBuf::from("agents/writer/entities")]
         );
         assert!(
             find("agents/{agent}/sandbox")

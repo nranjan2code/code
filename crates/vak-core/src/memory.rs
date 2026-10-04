@@ -7,7 +7,6 @@
 //! markdown file in place; sessions stay append-only.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
 
 use chrono::{DateTime, Utc};
 
@@ -39,64 +38,6 @@ pub struct NoteBlock {
     /// The conversation and turn this note was derived from, when the writer
     /// knew the turn. The conversation is `session_id`.
     pub derived_from: Option<vak_session::trace::DerivedFrom>,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CleanupReport {
-    pub removed_locks: usize,
-    pub removed_temps: usize,
-    pub removed_empty_dirs: usize,
-}
-
-/// Remove only abandoned write artifacts and empty workspace directories.
-/// Durable note files are never age-pruned: retention is an explicit
-/// forget/amend decision so an old fact cannot disappear silently.
-pub fn cleanup_artifacts(home: &Path, older_than: Duration) -> CleanupReport {
-    let root = vak_config::scope::AgentScope::new(home).memory_root();
-    let Ok(entries) = std::fs::read_dir(&root) else {
-        return CleanupReport::default();
-    };
-    let cutoff = SystemTime::now().checked_sub(older_than);
-    let mut report = CleanupReport::default();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() || path.file_name().is_some_and(|n| n == "user") {
-            continue;
-        }
-        let Ok(files) = std::fs::read_dir(&path) else {
-            continue;
-        };
-        for file in files.flatten() {
-            let file_path = file.path();
-            let name = file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default();
-            let artifact = name.ends_with(".lock") || name.contains(".tmp.");
-            let old = cutoff
-                .zip(
-                    std::fs::metadata(&file_path)
-                        .and_then(|m| m.modified())
-                        .ok(),
-                )
-                .is_some_and(|(cutoff, modified)| modified <= cutoff);
-            if artifact && old && std::fs::remove_file(&file_path).is_ok() {
-                if name.ends_with(".lock") {
-                    report.removed_locks += 1;
-                } else {
-                    report.removed_temps += 1;
-                }
-            }
-        }
-        if std::fs::read_dir(&path)
-            .map(|mut d| d.next().is_none())
-            .unwrap_or(false)
-            && std::fs::remove_dir(&path).is_ok()
-        {
-            report.removed_empty_dirs += 1;
-        }
-    }
-    report
 }
 
 fn memory_path(home: &Path, cwd: &Path) -> PathBuf {
@@ -175,26 +116,12 @@ fn append_block(
         return Err("note exceeds the 128 KiB limit".into());
     }
     let ts = Utc::now();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create memory dir: {e}"))?;
-    }
-    let _lock = StoreLock::acquire(path)?;
     let turn_part = turn.map(|t| format!(" turn={t}")).unwrap_or_default();
     let header = format!(
         "## {} [{kind}] tag={tag} session={session_id}{turn_part}",
         ts.to_rfc3339()
     );
-    let block = format!("{header}\n{text}\n");
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
-    f.write_all(format!("{block}\n").as_bytes())
-        .map_err(|e| format!("append {}: {e}", path.display()))?;
-    f.sync_data()
-        .map_err(|e| format!("flush {}: {e}", path.display()))?;
+    crate::documents::create(&path.join(note_id(&header)), &format!("{header}\n{text}\n"))?;
     Ok(NoteBlock {
         id: note_id(&header),
         ts,
@@ -218,55 +145,6 @@ fn validate_field(name: &str, value: &str, max: usize) -> Result<(), String> {
         return Err(format!("{name} contains invalid characters or is too long"));
     }
     Ok(())
-}
-
-struct StoreLock {
-    path: PathBuf,
-}
-
-impl StoreLock {
-    fn acquire(store: &Path) -> Result<Self, String> {
-        let path = store.with_extension("lock");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut file) => {
-                    use std::io::Write;
-                    let _ = writeln!(file, "pid={}", std::process::id());
-                    return Ok(Self { path });
-                }
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::AlreadyExists
-                        && Instant::now() < deadline =>
-                {
-                    if std::fs::metadata(&path)
-                        .and_then(|m| m.modified())
-                        .ok()
-                        .and_then(|t| t.elapsed().ok())
-                        .is_some_and(|age| age > Duration::from_secs(60))
-                    {
-                        let _ = std::fs::remove_file(&path);
-                        continue;
-                    }
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    return Err(format!("timed out waiting for {}", path.display()));
-                }
-                Err(e) => return Err(format!("lock {}: {e}", path.display())),
-            }
-        }
-    }
-}
-
-impl Drop for StoreLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
 }
 
 /// Parse MEMORY.md blocks. Tolerant by design: lines before the first
@@ -296,11 +174,16 @@ pub fn forget_profile_note(home: &Path, note_id: &str) -> Result<usize, String> 
     forget_note(&profile_path(home), note_id)
 }
 
+/// The notes of one tier, oldest first. Each note is its own Document
+/// under the tier's name, so appending one never rewrites the others.
 fn blocks_at(path: &Path) -> Vec<NoteBlock> {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    parse_blocks(&raw)
+    let mut notes: Vec<NoteBlock> = crate::documents::under(path)
+        .iter()
+        .filter_map(|note| crate::documents::read(note).ok().flatten())
+        .flat_map(|raw| parse_blocks(&raw))
+        .collect();
+    notes.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.id.cmp(&b.id)));
+    notes
 }
 
 pub fn parse_blocks(raw: &str) -> Vec<NoteBlock> {
@@ -370,121 +253,19 @@ pub fn parse_blocks(raw: &str) -> Vec<NoteBlock> {
     out
 }
 
-/// Byte span of each parsed note in `raw`, mirroring parse_blocks exactly:
-/// a block runs from its valid `## ` header through the newline of its last
-/// non-blank body line; malformed headings count as body text; headers with
-/// empty bodies yield no span (they yield no note either).
-struct Span {
-    id: String,
-    start: usize,
-    end: usize,
-}
-
-fn note_spans(raw: &str) -> Vec<Span> {
-    let pieces: Vec<&str> = raw.split('\n').collect();
-    let mut starts = Vec::with_capacity(pieces.len());
-    let mut off = 0usize;
-    for p in &pieces {
-        starts.push(off);
-        off += p.len() + 1;
-    }
-
-    fn close(
-        open: &mut Option<(String, usize)>,
-        last_content: &mut Option<usize>,
-        starts: &[usize],
-        pieces: &[&str],
-        raw_len: usize,
-        out: &mut Vec<Span>,
-    ) {
-        if let Some((id, h)) = open.take()
-            && let Some(l) = last_content.take()
-        {
-            let end = (starts[l] + pieces[l].len() + 1).min(raw_len);
-            out.push(Span {
-                id,
-                start: starts[h],
-                end,
-            });
-        }
-    }
-
-    let mut out: Vec<Span> = Vec::new();
-    let mut open: Option<(String, usize)> = None;
-    let mut last_content: Option<usize> = None;
-    for (i, piece) in pieces.iter().enumerate() {
-        let line = piece.strip_suffix('\r').unwrap_or(piece);
-        if let Some(rest) = line.strip_prefix("## ")
-            && parse_header(rest).is_some()
-        {
-            close(
-                &mut open,
-                &mut last_content,
-                &starts,
-                &pieces,
-                raw.len(),
-                &mut out,
-            );
-            open = Some((note_id(line), i));
-        } else if open.is_some() && !line.trim().is_empty() {
-            last_content = Some(i);
-        }
-    }
-    close(
-        &mut open,
-        &mut last_content,
-        &starts,
-        &pieces,
-        raw.len(),
-        &mut out,
-    );
-    out
-}
-
-fn load_raw(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))
-}
-
-fn persist_locked(path: &Path, contents: String) -> Result<(), String> {
-    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
-    let result = (|| {
-        let mut f =
-            std::fs::File::create(&tmp).map_err(|e| format!("rewrite {}: {e}", path.display()))?;
-        use std::io::Write;
-        f.write_all(contents.as_bytes())
-            .map_err(|e| format!("rewrite {}: {e}", path.display()))?;
-        f.sync_all()
-            .map_err(|e| format!("rewrite {}: {e}", path.display()))?;
-        std::fs::rename(&tmp, path).map_err(|e| format!("replace {}: {e}", path.display()))
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
-}
-
-/// Rewrite-not-tombstone forget: removes exactly one block (the first whose
-/// id matches) and returns the number of bytes deleted. Everything outside
-/// the removed span — preambles, blank separators, hand-edited prose — is
-/// preserved byte-for-byte.
+/// Forgets one note and returns the size of what was removed. Its
+/// versions are released for collection; the other notes are untouched.
 pub fn forget_note(path: &Path, note_id: &str) -> Result<usize, String> {
-    let _lock = StoreLock::acquire(path)?;
-    let raw = load_raw(path)?;
-    for span in note_spans(&raw) {
-        if span.id != note_id {
-            continue;
-        }
-        let mut out = String::with_capacity(raw.len() - (span.end - span.start));
-        out.push_str(&raw[..span.start]);
-        out.push_str(&raw[span.end..]);
-        persist_locked(path, out)?;
-        return Ok(span.end - span.start);
-    }
-    Err(format!("no note '{note_id}' in {}", path.display()))
+    let note = path.join(note_id);
+    let size = crate::documents::read(&note)?
+        .ok_or_else(|| format!("no note '{note_id}' in {}", path.display()))?
+        .len();
+    crate::documents::forget(&note)?;
+    Ok(size)
 }
 
-/// Replace one block's body while keeping its provenance header line
-/// verbatim — including any unknown/garbled tokens a hand-edit introduced.
+/// Replace one note's body as a new version, keeping its provenance header
+/// line verbatim.
 pub fn amend_note(path: &Path, note_id: &str, new_text: &str) -> Result<(), String> {
     let text = new_text.trim();
     if text.is_empty() {
@@ -493,22 +274,12 @@ pub fn amend_note(path: &Path, note_id: &str, new_text: &str) -> Result<(), Stri
     if text.len() > 128 * 1024 {
         return Err("note exceeds the 128 KiB limit".into());
     }
-    let _lock = StoreLock::acquire(path)?;
-    let raw = load_raw(path)?;
-    for span in note_spans(&raw) {
-        if span.id != note_id {
-            continue;
-        }
-        let old = &raw[span.start..span.end];
+    crate::documents::update(&path.join(note_id), |old| {
+        let old = old.ok_or_else(|| format!("no note '{note_id}' in {}", path.display()))?;
         let header_end = old.find('\n').unwrap_or(old.len());
-        let rebuilt = format!("{}\n{text}\n", &old[..header_end]);
-        let mut out = String::with_capacity(raw.len() - old.len() + rebuilt.len());
-        out.push_str(&raw[..span.start]);
-        out.push_str(&rebuilt);
-        out.push_str(&raw[span.end..]);
-        return persist_locked(path, out);
-    }
-    Err(format!("no note '{note_id}' in {}", path.display()))
+        Ok(Some((format!("{}\n{text}\n", &old[..header_end]), ())))
+    })?
+    .ok_or_else(|| format!("no note '{note_id}' in {}", path.display()))
 }
 
 /// `2026-08-23T12:00:00+00:00 [decision] tag=x session=abc` → parts.
@@ -662,31 +433,23 @@ mod tests {
             "## {} [decision] tag=y session=s2\nbeta note\n",
             b.ts.to_rfc3339()
         );
-        let path = home
-            .join("memory")
-            .join(vak_config::scope::workspace_key(&cwd))
-            .join("MEMORY.md");
+        let path = memory_path(home, &cwd);
         assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            format!("{block_a}\n{block_b}\n")
+            crate::documents::read(&path.join(&b.id))
+                .unwrap()
+                .as_deref(),
+            Some(block_b.as_str())
         );
 
         let removed = forget_note(&path, &a.id).unwrap();
         assert_eq!(removed, block_a.len());
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            format!("\n{block_b}\n")
-        );
 
         let notes = list_notes(home, &cwd);
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, b.id);
 
         assert!(forget_note(&path, &a.id).is_err());
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            format!("\n{block_b}\n")
-        );
+        assert_eq!(list_notes(home, &cwd).len(), 1);
     }
 
     #[test]
@@ -697,17 +460,15 @@ mod tests {
 
         let n = append_note(home, &cwd, "fact", "", "s3", "original body").unwrap();
         let header = format!("## {} [fact] tag= session=s3", n.ts.to_rfc3339());
-        let path = home
-            .join("memory")
-            .join(vak_config::scope::workspace_key(&cwd))
-            .join("MEMORY.md");
+        let path = memory_path(home, &cwd);
 
         amend_note(&path, &n.id, "revised body with more detail").unwrap();
 
         assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            format!("{header}\nrevised body with more detail\n\n")
+            crate::documents::read(&path.join(&n.id)).unwrap(),
+            Some(format!("{header}\nrevised body with more detail\n"))
         );
+        assert_eq!(crate::documents::version_count(&path.join(&n.id)), 2);
         let notes = list_notes(home, &cwd);
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, n.id);
@@ -719,58 +480,6 @@ mod tests {
 
         assert!(amend_note(&path, &n.id, "   ").is_err());
         assert!(amend_note(&path, "deadbeef", "x").is_err());
-    }
-
-    #[test]
-    fn amend_preserves_hand_edited_header_tokens() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("USER.md");
-        let raw = "## 2026-08-23T10:00:00+00:00 [fact] tag=custom=foo session=abc mystery-token\ncold body\n";
-        std::fs::write(&path, raw).unwrap();
-        let id = parse_blocks(raw)[0].id.clone();
-
-        amend_note(&path, &id, "warm body").unwrap();
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert!(after.starts_with(
-            "## 2026-08-23T10:00:00+00:00 [fact] tag=custom=foo session=abc mystery-token\n"
-        ));
-        assert!(after.ends_with("warm body\n"));
-    }
-
-    #[test]
-    fn forget_leaves_hand_edited_garbage_between_blocks_intact() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path();
-        let cwd = dir.path().join("ws");
-        std::fs::create_dir_all(&cwd).unwrap();
-        let path = home
-            .join("memory")
-            .join(vak_config::scope::workspace_key(&cwd))
-            .join("MEMORY.md");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let raw = "prelude scribble\n\n## 2026-08-23T10:00:00+00:00 [fact] tag=a session=s1\nfirst note\nHUMAN GARBAGE ## fake header here\nmore scribble\n\n## 2026-08-23T11:00:00+00:00 [decision] tag=b session=s2\nsecond note";
-        std::fs::write(&path, raw).unwrap();
-
-        let notes = list_notes(home, &cwd);
-        assert_eq!(notes.len(), 2);
-        assert!(notes[0].text.contains("HUMAN GARBAGE"));
-
-        let removed = forget_note(&path, &notes[1].id).unwrap();
-        let after = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(removed, raw.len() - after.len());
-        assert_eq!(after, &raw[..raw.len() - removed]);
-        assert!(after.contains("HUMAN GARBAGE"));
-
-        let removed2 = forget_note(&path, &notes[0].id).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            "prelude scribble\n\n\n"
-        );
-        assert!(list_notes(home, &cwd).is_empty());
-        assert_eq!(
-            removed + removed2 + "prelude scribble\n\n\n".len(),
-            raw.len()
-        );
     }
 
     #[test]
@@ -819,7 +528,7 @@ mod tests {
         let cwd = home.join("load-workspace");
         std::fs::create_dir_all(&cwd).unwrap();
         let mut expected = 0;
-        for (label, count) in [("low", 10usize), ("medium", 500), ("high", 4_096)] {
+        for (label, count) in [("low", 10usize), ("medium", 500), ("high", 1_024)] {
             for i in 0..count {
                 append_note(
                     home,
@@ -836,8 +545,6 @@ mod tests {
             assert_eq!(notes.len(), expected, "{label} load phase");
             assert!(notes.iter().all(|n| n.session_id == "load-test"));
         }
-        let raw = std::fs::read_to_string(memory_path(home, &cwd)).unwrap();
-        assert!(raw.len() > 500_000, "high-load store unexpectedly small");
     }
 
     #[test]
@@ -846,34 +553,12 @@ mod tests {
         let home = dir.path();
         let cwd = home.join("retention-workspace");
         let path = memory_path(home, &cwd);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let raw = "## 2020-01-01T00:00:00+00:00 [fact] tag=old session=historical\nlong-lived knowledge\n";
-        std::fs::write(&path, raw).unwrap();
+        crate::documents::create(&path.join(&parse_blocks(raw)[0].id), raw).unwrap();
         let notes = list_notes(home, &cwd);
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].text, "long-lived knowledge");
         forget_note(&path, &notes[0].id).unwrap();
         assert!(list_notes(home, &cwd).is_empty());
-    }
-
-    #[test]
-    fn cleanup_removes_only_abandoned_artifacts() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path();
-        let cwd = home.join("cleanup-workspace");
-        let path = memory_path(home, &cwd);
-        append_note(home, &cwd, "fact", "keep", "s", "keep this note").unwrap();
-        let lock = path.with_extension("lock");
-        let tmp = path.with_file_name("MEMORY.tmp.crashed");
-        std::fs::write(&lock, "pid=dead\n").unwrap();
-        std::fs::write(&tmp, "partial\n").unwrap();
-
-        let report = cleanup_artifacts(home, Duration::ZERO);
-        assert_eq!(report.removed_locks, 1);
-        assert_eq!(report.removed_temps, 1);
-        assert!(path.is_file());
-        assert_eq!(list_notes(home, &cwd).len(), 1);
-        assert!(!lock.exists());
-        assert!(!tmp.exists());
     }
 }

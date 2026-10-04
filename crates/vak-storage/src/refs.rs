@@ -20,6 +20,8 @@ pub trait RefStore: Send + Sync {
     /// `expected` is the generation the caller read (`None` to create).
     fn cas(&self, name: &str, expected: Option<u64>, epoch: u64, target: &[u8])
     -> Result<RefValue>;
+    /// Names starting with `prefix`, sorted.
+    fn names(&self, prefix: &str) -> Result<Vec<String>>;
 }
 
 fn decide(cur: Option<&RefValue>, expected: Option<u64>, epoch: u64) -> Result<u64> {
@@ -61,6 +63,17 @@ impl MemoryRefStore {
 impl RefStore for MemoryRefStore {
     fn get(&self, name: &str) -> Result<Option<RefValue>> {
         Ok(self.lock()?.get(name).cloned())
+    }
+
+    fn names(&self, prefix: &str) -> Result<Vec<String>> {
+        let mut names: Vec<String> = self
+            .lock()?
+            .keys()
+            .filter(|name| name.starts_with(prefix))
+            .cloned()
+            .collect();
+        names.sort();
+        Ok(names)
     }
 
     fn cas(
@@ -131,6 +144,21 @@ impl RefStore for SqliteRefStore {
             .lock()
             .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
         Self::read(&c, name)
+    }
+
+    fn names(&self, prefix: &str) -> Result<Vec<String>> {
+        let c = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
+        let mut statement =
+            c.prepare("SELECT name FROM refs WHERE substr(name, 1, ?2) = ?1 ORDER BY name")?;
+        let names = statement
+            .query_map(params![prefix, prefix.len() as i64], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(names)
     }
 
     fn cas(

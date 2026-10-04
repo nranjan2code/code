@@ -22,6 +22,10 @@ const COMMIT_REF: &str = "_store/commit";
 const EPOCH_REF: &str = "_store/epoch";
 
 pub trait Store: Send + Sync {
+    /// The id `put_object` gives `plaintext`, without storing it.
+    fn object_id(&self, plaintext: &[u8]) -> ObjectId;
+    /// User ref names starting with `prefix`, sorted.
+    fn ref_names(&self, prefix: &str) -> Result<Vec<String>>;
     fn put_object(&self, plaintext: &[u8], scope: &str) -> Result<ObjectId>;
     fn get_object(&self, id: &ObjectId, scope: &str) -> Result<Vec<u8>>;
     fn remove_grant(&self, id: &ObjectId, scope: &str) -> Result<()>;
@@ -174,6 +178,15 @@ impl LocalStore {
 }
 
 impl Store for LocalStore {
+    fn object_id(&self, plaintext: &[u8]) -> ObjectId {
+        self.objects.id(plaintext)
+    }
+
+    fn ref_names(&self, prefix: &str) -> Result<Vec<String>> {
+        user_ref(prefix)?;
+        self.meta.refs.names(prefix)
+    }
+
     fn put_object(&self, plaintext: &[u8], scope: &str) -> Result<ObjectId> {
         let id = self.objects.put(plaintext, scope)?;
         self.meta.committed()?;
@@ -260,6 +273,15 @@ impl MemoryStore {
 }
 
 impl Store for MemoryStore {
+    fn object_id(&self, plaintext: &[u8]) -> ObjectId {
+        self.id_key.id(plaintext)
+    }
+
+    fn ref_names(&self, prefix: &str) -> Result<Vec<String>> {
+        user_ref(prefix)?;
+        self.meta.refs.names(prefix)
+    }
+
     fn put_object(&self, plaintext: &[u8], scope: &str) -> Result<ObjectId> {
         let id = self.id_key.id(plaintext);
         {

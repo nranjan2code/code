@@ -695,12 +695,6 @@ pub(crate) enum TasksAction {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum MemoryAction {
-    /// Remove abandoned lock/temp artifacts without deleting notes
-    Clean {
-        /// Only remove artifacts older than this many seconds
-        #[arg(long, default_value_t = 86_400)]
-        older_than_secs: u64,
-    },
     /// List memory notes (ids are usable with forget/amend)
     List {
         /// Read the global USER.md profile tier instead of this workspace

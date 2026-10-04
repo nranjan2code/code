@@ -17,6 +17,7 @@ pub mod custom_commands;
 pub mod data_engine;
 pub mod digest;
 pub mod discovery;
+pub mod documents;
 pub mod entities;
 pub mod file_mentions;
 pub mod files;
@@ -3228,7 +3229,7 @@ impl Core {
             &vak_session::trace::local::tenant().to_string(),
         );
         let opened: Arc<dyn vak_session::objects::Objects> =
-            Arc::new(vak_session::objects::TenantObjects::open(&tenant)?);
+            vak_session::objects::TenantObjects::for_tenant(&tenant)?;
         Ok(self.inner.objects.get_or_init(|| opened).clone())
     }
 
@@ -11100,6 +11101,7 @@ mod spend_gate_persistence_tests {
     use vak_llm::Usage;
 
     fn core_with_run_cap(dir: &std::path::Path, cap: f64) -> Core {
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.join("cwd")).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.join("home")));
         core.apply_persisted_finops_caps(Some(Some(cap)), None);

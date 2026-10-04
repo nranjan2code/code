@@ -248,15 +248,6 @@ pub fn import_from(
         match conflict {
             Conflict::Skip => report.skipped += 1,
             Conflict::Rename => {
-                // Memory stores are discovered by their canonical filename;
-                // renaming USER.md/MEMORY.md would preserve bytes but make
-                // them invisible to recall. Merge the incoming append-only
-                // blocks into the active store instead.
-                if is_memory_store(rel) {
-                    merge_memory_file(&file, &target)?;
-                    report.copied += 1;
-                    continue;
-                }
                 let stem = target
                     .file_stem()
                     .and_then(|s| s.to_str())
@@ -282,35 +273,6 @@ pub fn import_from(
         }
     }
     Ok(report)
-}
-
-fn is_memory_store(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|n| n.to_str()),
-        Some("MEMORY.md") | Some("USER.md")
-    )
-}
-
-fn merge_memory_file(from: &Path, to: &Path) -> Result<(), BackupError> {
-    let incoming = std::fs::read(from).map_err(|source| io_err(from, source))?;
-    if incoming.is_empty() {
-        return Ok(());
-    }
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| io_err(parent, source))?;
-    }
-    let mut out = std::fs::OpenOptions::new()
-        .append(true)
-        .open(to)
-        .map_err(|source| io_err(to, source))?;
-    use std::io::Write;
-    let needs_separator = std::fs::metadata(to).map(|m| m.len() > 0).unwrap_or(false);
-    if needs_separator {
-        out.write_all(b"\n").map_err(|source| io_err(to, source))?;
-    }
-    out.write_all(&incoming)
-        .map_err(|source| io_err(to, source))?;
-    out.sync_all().map_err(|source| io_err(to, source))
 }
 
 #[cfg(test)]
@@ -458,7 +420,7 @@ mod tests {
         let home = tempdir().unwrap();
         for rel in [
             "agents/vak/sessions/h/a.jsonl",
-            "agents/writer/memory/user/USER.md",
+            "agents/writer/entities/global/ENTITIES.jsonl",
             "agents/writer/stray/undeclared.txt",
         ] {
             let p = home.path().join(rel);
@@ -471,7 +433,7 @@ mod tests {
         assert!(dest.path().join("agents/vak/sessions/h/a.jsonl").is_file());
         assert!(
             dest.path()
-                .join("agents/writer/memory/user/USER.md")
+                .join("agents/writer/entities/global/ENTITIES.jsonl")
                 .is_file()
         );
         assert!(!dest.path().join("agents/writer/stray").exists());

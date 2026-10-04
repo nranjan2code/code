@@ -244,19 +244,6 @@ async fn memory_list_forget_amend_across_scopes() {
         .unwrap();
     assert_eq!(res.status(), 400);
 
-    // Cleanup is explicit and safe: it removes an empty orphan directory but
-    // never removes the profile note that remains above.
-    std::fs::create_dir_all(srv.home.join("memory/orphan-empty")).unwrap();
-    let res = srv
-        .client
-        .post(format!("{}/memory/cleanup", srv.base))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-    let cleanup: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(cleanup["removed_empty_dirs"], 1);
-    assert!(!srv.home.join("memory/orphan-empty").exists());
     assert_eq!(vak_core::memory::list_profile_notes(&srv.home).len(), 1);
 }
 

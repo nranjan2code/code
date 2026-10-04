@@ -11,7 +11,8 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use vak_storage::keys::{KekVault, VaultKeyAuthority};
-use vak_storage::objects::{LocalObjectStore, ObjectId};
+use vak_storage::objects::ObjectId;
+use vak_storage::store::{LocalStore, Store};
 
 /// A payload held outside the ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,14 +55,32 @@ impl KekVault for CredentialVault {
     }
 }
 
-/// The tenant's object store at `<tenant>/objects`, its keys in the
-/// credential store and its revocations in `<tenant>/keys/revoked`.
+/// The tenant's store at `<tenant>/store` (objects and refs), its keys in
+/// the credential store and its revocations in `<tenant>/keys/revoked`.
+/// One per tenant per process (`TenantObjects::for_tenant`), shared by
+/// ledgers and Documents.
 pub struct TenantObjects {
-    store: LocalObjectStore,
+    store: Arc<LocalStore>,
 }
 
 impl TenantObjects {
-    pub fn open(tenant_home: &Path) -> Result<Self, SessionError> {
+    /// The process's handle on the tenant at `tenant_home`, opened once.
+    pub fn for_tenant(tenant_home: &Path) -> Result<Arc<Self>, SessionError> {
+        static OPEN: std::sync::OnceLock<Mutex<HashMap<PathBuf, Arc<TenantObjects>>>> =
+            std::sync::OnceLock::new();
+        let mut open = OPEN
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| SessionError::Objects("tenant stores poisoned".into()))?;
+        if let Some(found) = open.get(tenant_home) {
+            return Ok(found.clone());
+        }
+        let opened = Arc::new(Self::open(tenant_home)?);
+        open.insert(tenant_home.to_path_buf(), opened.clone());
+        Ok(opened)
+    }
+
+    fn open(tenant_home: &Path) -> Result<Self, SessionError> {
         let keys = tenant_home.join("keys");
         std::fs::create_dir_all(&keys)?;
         let lock = File::create(keys.join("LOCK"))?;
@@ -72,17 +91,23 @@ impl TenantObjects {
         )
         .map_err(objects_error)?;
         let id_key = authority.id_key().map_err(objects_error)?;
-        drop(lock);
-        let store =
-            LocalObjectStore::open(&tenant_home.join("objects"), id_key, Arc::new(authority))
-                .map_err(objects_error)?;
-        Ok(Self { store })
+        let _ = lock.unlock();
+        let store = LocalStore::open(&tenant_home.join("store"), id_key, Arc::new(authority))
+            .map_err(objects_error)?;
+        Ok(Self {
+            store: Arc::new(store),
+        })
+    }
+
+    /// The store under these objects, for Documents.
+    pub fn store(&self) -> Arc<dyn Store> {
+        self.store.clone()
     }
 }
 
 impl Objects for TenantObjects {
     fn put(&self, bytes: &[u8], scope: &str) -> Result<ObjectRef, SessionError> {
-        let id = self.store.put(bytes, scope).map_err(objects_error)?;
+        let id = self.store.put_object(bytes, scope).map_err(objects_error)?;
         Ok(ObjectRef {
             id: id.0,
             len: bytes.len() as u64,
@@ -91,12 +116,12 @@ impl Objects for TenantObjects {
 
     fn get(&self, object: &ObjectRef, scope: &str) -> Result<Vec<u8>, SessionError> {
         self.store
-            .get(&ObjectId(object.id.clone()), scope)
+            .get_object(&ObjectId(object.id.clone()), scope)
             .map_err(objects_error)
     }
 
     fn id_of(&self, bytes: &[u8]) -> String {
-        self.store.id(bytes).0
+        self.store.object_id(bytes).0
     }
 
     fn release(&self, object: &ObjectRef, scope: &str) -> Result<(), SessionError> {
@@ -106,7 +131,7 @@ impl Objects for TenantObjects {
     }
 
     fn collect(&self) -> Result<usize, SessionError> {
-        self.store.gc().map_err(objects_error)
+        self.store.gc(&|_| false).map_err(objects_error)
     }
 }
 

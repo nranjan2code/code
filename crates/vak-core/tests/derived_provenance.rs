@@ -8,6 +8,7 @@ use vak_session::trace::DerivedFrom;
 
 #[test]
 fn derived_writes_record_provenance() {
+    vak_config::paths::isolate_home_for_tests();
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let cwd = dir.path().join("ws");

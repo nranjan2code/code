@@ -81,6 +81,7 @@ const GOOD_REPLY: &str = r#"{"notes":[{"note":"the deploy pipeline pauses before
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reflection_writes_once_and_dedups_repeats() {
+    vak_config::paths::isolate_home_for_tests();
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let cwd = dir.path().to_path_buf();

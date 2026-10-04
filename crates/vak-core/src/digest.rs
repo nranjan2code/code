@@ -131,7 +131,7 @@ fn fold_costs(
 }
 
 fn count_fresh_notes(path: &Path, since: chrono::DateTime<chrono::Utc>) -> usize {
-    let Ok(raw) = std::fs::read_to_string(path) else {
+    let Ok(Some(raw)) = crate::documents::read(path) else {
         return 0;
     };
     crate::memory::parse_blocks(&raw)
@@ -140,33 +140,9 @@ fn count_fresh_notes(path: &Path, since: chrono::DateTime<chrono::Utc>) -> usize
         .count()
 }
 
-/// Every markdown store under `<home>/memory/` — per-workspace MEMORY.md
-/// files plus the global USER.md profile tier.
+/// Every memory note Document of the Agent, in both tiers.
 fn memory_files(scope: &vak_config::scope::AgentScope) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let root = scope.memory_root();
-    let Ok(read) = std::fs::read_dir(&root) else {
-        return out;
-    };
-    let mut projects: Vec<PathBuf> = read.flatten().map(|e| e.path()).collect();
-    projects.sort();
-    for project in projects {
-        if project.is_file() {
-            if project.extension().and_then(|e| e.to_str()) == Some("md") {
-                out.push(project);
-            }
-            continue;
-        }
-        let Ok(files) = std::fs::read_dir(&project) else {
-            continue;
-        };
-        out.extend(
-            files
-                .flatten()
-                .map(|f| f.path())
-                .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("md")),
-        );
-    }
+    let mut out = crate::documents::under(&scope.memory_root());
     out.sort();
     out
 }
@@ -400,6 +376,7 @@ mod tests {
 
     #[test]
     fn memory_notes_and_profile_counted_from_provenance_ts() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let cwd = home.join("ws");
@@ -409,12 +386,14 @@ mod tests {
 
         let old_header =
             "## 2026-01-01T00:00:00+00:00 [fact] tag=stale session=old\nancient note\n";
-        let mem_dir = home
-            .join("memory")
-            .join(vak_config::scope::workspace_key(&cwd));
-        std::fs::create_dir_all(&mem_dir).unwrap();
-        let fresh = std::fs::read_to_string(mem_dir.join("MEMORY.md")).unwrap();
-        std::fs::write(mem_dir.join("MEMORY.md"), format!("{fresh}{old_header}")).unwrap();
+        let notes = vak_config::scope::AgentScope::new(home).memory_notes(&cwd);
+        crate::documents::update(&notes, |fresh| {
+            Ok(Some((
+                format!("{}{old_header}", fresh.unwrap_or_default()),
+                (),
+            )))
+        })
+        .unwrap();
 
         memory::append_profile_note(home, "preference", "editor", "vim bindings", "su").unwrap();
 

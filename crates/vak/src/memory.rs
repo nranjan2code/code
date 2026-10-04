@@ -18,15 +18,6 @@ pub fn run_memory(cwd: PathBuf, action: Option<crate::cli::MemoryAction>) -> i32
     let home = core.scope().into_root();
     let workspace = core.cwd().clone();
     match action.unwrap_or(crate::cli::MemoryAction::List { profile: false }) {
-        crate::cli::MemoryAction::Clean { older_than_secs } => {
-            let report =
-                memory::cleanup_artifacts(&home, std::time::Duration::from_secs(older_than_secs));
-            println!(
-                "cleaned {} locks, {} temp files, {} empty workspace directories",
-                report.removed_locks, report.removed_temps, report.removed_empty_dirs
-            );
-            0
-        }
         crate::cli::MemoryAction::List { profile } => {
             list(&home, &workspace, profile);
             0
@@ -181,6 +172,7 @@ mod tests {
 
     #[test]
     fn store_paths_split_tiers() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let ws = dir.path().join("ws");
@@ -198,6 +190,7 @@ mod tests {
 
     #[test]
     fn add_list_roundtrip_both_tiers() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let ws = dir.path().join("ws");
