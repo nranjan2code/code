@@ -405,6 +405,16 @@ pub fn parse(path: &Path) -> Option<Skill> {
 
 pub fn validate(path: &Path) -> Result<(Skill, Vec<String>), String> {
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    validate_text(&text, path)
+}
+
+/// `parse` over text already read, e.g. a skill proposal Document; `path`
+/// is where the skill is said to live.
+pub fn parse_text(text: &str, path: &Path) -> Option<Skill> {
+    validate_text(text, path).ok().map(|(skill, _)| skill)
+}
+
+fn validate_text(text: &str, path: &Path) -> Result<(Skill, Vec<String>), String> {
     let rest = text
         .strip_prefix("---")
         .ok_or_else(|| "file must begin with YAML frontmatter delimiter ---".to_string())?;

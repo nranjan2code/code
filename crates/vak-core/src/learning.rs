@@ -261,9 +261,6 @@ impl vak_tools::Tool for ProposeSkillTool {
             &vak_config::scope::AgentScope::new(&self.sessions_home),
             &self.cwd,
         );
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            return vak_tools::ToolOutput::error(format!("create proposals dir: {e}"));
-        }
         let dup_line = match duplicate_of(
             &name,
             prose(instructions),
@@ -282,8 +279,7 @@ impl vak_tools::Tool for ProposeSkillTool {
             sid = self.session_id,
             ts = chrono::Utc::now().to_rfc3339(),
         );
-        let path = dir.join(format!("{id}.md"));
-        if let Err(e) = std::fs::write(&path, body) {
+        if let Err(e) = crate::documents::create(&dir.join(format!("{id}.md")), &body) {
             return vak_tools::ToolOutput::error(format!("write proposal: {e}"));
         }
         vak_tools::ToolOutput::ok(format!(
@@ -326,16 +322,15 @@ fn list_proposals_in_dir(
     scope: &vak_config::scope::AgentScope,
     cwd: &Path,
 ) -> Vec<SkillProposal> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
     let mut found = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
+    for path in crate::documents::under(dir) {
         let Some(id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
             continue;
         };
-        let Some(skill) = crate::skills::parse(&path) else {
+        let Some(text) = crate::documents::read(&path).ok().flatten() else {
+            continue;
+        };
+        let Some(skill) = crate::skills::parse_text(&text, &path) else {
             continue;
         };
         found.push((id, path, skill));
@@ -349,8 +344,9 @@ fn list_proposals_in_dir(
                 id,
                 name: skill.name,
                 description: with_duplicate_note(&skill.description, tag.as_deref()),
-                derived_from: std::fs::read_to_string(&path)
+                derived_from: crate::documents::read(&path)
                     .ok()
+                    .flatten()
                     .and_then(|b| proposal_provenance(&b)),
                 path,
             });
@@ -407,9 +403,10 @@ pub fn promote(
             target.display()
         ));
     }
+    let text = crate::documents::read(&p.path)?.ok_or_else(|| format!("no proposal '{id}'"))?;
     std::fs::create_dir_all(&target_dir).map_err(|e| format!("create skill dir: {e}"))?;
-    std::fs::copy(&p.path, &target).map_err(|e| format!("install skill: {e}"))?;
-    std::fs::remove_file(&p.path).map_err(|e| format!("remove pending file: {e}"))?;
+    std::fs::write(&target, text).map_err(|e| format!("install skill: {e}"))?;
+    crate::documents::forget(&p.path)?;
     Ok(p.name.clone())
 }
 
@@ -419,7 +416,7 @@ pub fn reject(scope: &vak_config::scope::AgentScope, cwd: &Path, id: &str) -> Re
         .iter()
         .find(|p| p.id == id)
         .ok_or_else(|| format!("no proposal '{id}'"))?;
-    std::fs::remove_file(&p.path).map_err(|e| format!("remove proposal: {e}"))
+    crate::documents::forget(&p.path).map(|_| ())
 }
 
 // ---- duplicate screening (docs/design/29-personal-os.md P5) -----------------
@@ -479,13 +476,22 @@ fn duplicate_tag_in(frontmatter: &str) -> Option<String> {
 
 /// Insert the tag as the last frontmatter line. Malformed headers are left
 /// untouched — screening must never corrupt a reviewable draft.
-fn persist_duplicate_tag(path: &Path, dup: &str) -> std::io::Result<()> {
-    let text = std::fs::read_to_string(path)?;
-    let Some((frontmatter, body)) = split_header(&text) else {
-        return Ok(());
-    };
+fn persist_duplicate_tag(path: &Path, dup: &str) -> Result<(), String> {
+    crate::documents::update(path, |text| {
+        let Some(text) = text else {
+            return Ok(None);
+        };
+        Ok(tagged(text, dup).map(|out| (out, ())))
+    })
+    .map(|_| ())
+}
+
+/// `text` with a `duplicate-of` line added to its frontmatter, `None` when
+/// it has one already or has no frontmatter.
+fn tagged(text: &str, dup: &str) -> Option<String> {
+    let (frontmatter, body) = split_header(text)?;
     if duplicate_tag_in(frontmatter).is_some() {
-        return Ok(());
+        return None;
     }
     let mut out = String::with_capacity(text.len() + DUPLICATE_KEY.len() + dup.len() + 5);
     out.push_str("---");
@@ -498,12 +504,12 @@ fn persist_duplicate_tag(path: &Path, dup: &str) -> std::io::Result<()> {
     out.push_str(dup);
     out.push_str("\"\n---");
     out.push_str(body);
-    std::fs::write(path, out)
+    Some(out)
 }
 
 /// Existing-or-newly-persisted duplicate flag for one pending proposal.
 fn screen_proposal(path: &Path, name: &str, accepted: &[(String, String)]) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = crate::documents::read(path).ok().flatten()?;
     let (frontmatter, body) = split_header(&text)?;
     if let Some(tag) = duplicate_tag_in(frontmatter) {
         return Some(tag);
@@ -672,14 +678,10 @@ mod tests {
     }
 
     fn pending_paths(home: &Path, cwd: &Path) -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = std::fs::read_dir(proposals_dir(
+        let mut v: Vec<PathBuf> = crate::documents::under(&proposals_dir(
             &vak_config::scope::AgentScope::new(home),
             cwd,
-        ))
-        .unwrap()
-        .flatten()
-        .map(|e| e.path())
-        .collect();
+        ));
         v.sort();
         v
     }
@@ -718,7 +720,7 @@ mod tests {
         assert!(!tool.execute(&args, &ctx).await.is_error);
 
         for path in pending_paths(&home, &cwd) {
-            let text = std::fs::read_to_string(&path).unwrap();
+            let text = crate::documents::read(&path).unwrap().unwrap();
             assert!(text.contains("duplicate-of: \"rotate-release-tags\""));
             assert_eq!(
                 text.matches("duplicate-of:").count(),
@@ -784,7 +786,7 @@ mod tests {
         assert!(!out.is_error);
 
         for path in pending_paths(&home, &cwd) {
-            let text = std::fs::read_to_string(&path).unwrap();
+            let text = crate::documents::read(&path).unwrap().unwrap();
             assert!(!text.contains("duplicate-of"), "{text}");
         }
         let listed = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
@@ -806,10 +808,10 @@ mod tests {
         let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("aaa111.md");
-        std::fs::write(
+        crate::documents::create(
             &file,
             "---\nname: \"rotate-release-tags-v3\"\ndescription: \"hold deploys at the rollback gate\"\n---\n\npause before rollback so the deploy script can finish cleanly\n\n<!-- proposed-by: sess-r at 2026-01-01T00:00:00+00:00; proposal id aaa111; source: reflection -->\n",
-        )
+    )
         .unwrap();
 
         let first = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
@@ -822,7 +824,8 @@ mod tests {
             first[0].description
         );
         assert_eq!(
-            std::fs::read_to_string(&file)
+            crate::documents::read(&file)
+                .unwrap()
                 .unwrap()
                 .matches("duplicate-of:")
                 .count(),
@@ -833,7 +836,8 @@ mod tests {
         let second = list_proposals(&vak_config::scope::AgentScope::new(&home), &cwd);
         assert_eq!(second[0].description, first[0].description);
         assert_eq!(
-            std::fs::read_to_string(&file)
+            crate::documents::read(&file)
+                .unwrap()
                 .unwrap()
                 .matches("duplicate-of:")
                 .count(),
@@ -851,15 +855,16 @@ mod tests {
         let dir = proposals_dir(&vak_config::scope::AgentScope::new(&home), &cwd);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("bbb222.md");
-        std::fs::write(
+        crate::documents::create(
             &file,
             "---\nname: \"hand-tagged\"\ndescription: \"original text\"\nduplicate-of: \"rotate-release-tags\"\n---\n\nbody here\n\n<!-- proposed-by: sess-h at ts; proposal id bbb222 -->\n",
-        )
+    )
         .unwrap();
 
         // Replicates skills::parse as used by discovery and every listing:
         // unknown frontmatter keys are skipped, name/description untouched.
-        let parsed = crate::skills::parse(&file).expect("tagged header still parses");
+        let text = crate::documents::read(&file).unwrap().unwrap();
+        let parsed = crate::skills::parse_text(&text, &file).expect("tagged header still parses");
         assert_eq!(parsed.name, "hand-tagged");
         assert_eq!(parsed.description, "original text");
 

@@ -139,7 +139,7 @@ async fn agent_home_subpaths_are_declared() {
         .filter(|rel| !is_incidental(rel))
         .filter(|rel| rel.starts_with("agents"))
         .collect();
-    for subpath in ["sessions", "entities", "security-events"] {
+    for subpath in ["sessions", "security-events"] {
         assert!(
             written.iter().any(|rel| rel
                 .components()

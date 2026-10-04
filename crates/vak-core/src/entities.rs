@@ -1,15 +1,13 @@
 //! Semantic Entity Knowledge Graph (tri-partite memory architecture).
 //!
 //! Stores typed domain entities with attributes and cross-entity relations
-//! per workspace in `<sessions_home>/entities/<hash>/ENTITIES.jsonl`
-//! (and global entities in `<sessions_home>/entities/global/ENTITIES.jsonl`).
+//! per workspace (and globally), each entity a Document named under the
+//! Agent's `entities/<hash>/ENTITIES.jsonl` (`vak_core::documents`).
 //!
 //! Entities participate in recall via `session_search` and can be inspected
 //! or updated across turns.
 
 use std::collections::BTreeMap;
-use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -41,29 +39,36 @@ pub fn entities_file(home: &Path, cwd: Option<&Path>) -> PathBuf {
     vak_config::scope::AgentScope::new(home).entities_file(cwd)
 }
 
+/// Each entity is its own Document under the tier's name, so recording one
+/// never rewrites the others (plan M3b slice 3).
+fn entity_document(home: &Path, cwd: Option<&Path>, id: &str) -> Result<PathBuf, std::io::Error> {
+    if id.is_empty() || id.contains(['/', '\\']) || id == "." || id == ".." {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("entity id {id:?} is not a plain slug"),
+        ));
+    }
+    Ok(entities_file(home, cwd).join(id))
+}
+
+fn io_error(error: String) -> std::io::Error {
+    std::io::Error::other(error)
+}
+
 /// List all entities in the target workspace (or global if cwd is None).
 pub fn list_entities(home: &Path, cwd: Option<&Path>) -> Vec<EntityRecord> {
-    let path = entities_file(home, cwd);
-    let Ok(file) = File::open(&path) else {
-        return Vec::new();
-    };
-    let reader = BufReader::new(file);
-    let mut records = Vec::new();
-    for line in reader.lines().map_while(Result::ok) {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(record) = serde_json::from_str::<EntityRecord>(trimmed) {
-            records.push(record);
-        }
-    }
-    records
+    crate::documents::under(&entities_file(home, cwd))
+        .iter()
+        .filter_map(|path| crate::documents::read(path).ok().flatten())
+        .filter_map(|raw| serde_json::from_str::<EntityRecord>(&raw).ok())
+        .collect()
 }
 
 /// Retrieve a specific entity by ID.
 pub fn get_entity(home: &Path, cwd: Option<&Path>, id: &str) -> Option<EntityRecord> {
-    list_entities(home, cwd).into_iter().find(|e| e.id == id)
+    let path = entity_document(home, cwd, id).ok()?;
+    let raw = crate::documents::read(&path).ok().flatten()?;
+    serde_json::from_str(&raw).ok()
 }
 
 /// Search entities by keyword across name, entity_type, summary, attributes, and relations.
@@ -89,72 +94,26 @@ pub fn search_entities(home: &Path, cwd: Option<&Path>, query: &str) -> Vec<Enti
         .collect()
 }
 
-/// Upsert an entity record: updates in-place if matching ID exists, or appends.
+/// Records an entity as a new version of its Document.
 pub fn upsert_entity(
     home: &Path,
     cwd: Option<&Path>,
     mut record: EntityRecord,
 ) -> Result<EntityRecord, std::io::Error> {
-    let path = entities_file(home, cwd);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let path = entity_document(home, cwd, &record.id)?;
     record.updated_at = Utc::now();
-    let mut all = list_entities(home, cwd);
-    if let Some(pos) = all.iter().position(|e| e.id == record.id) {
-        all[pos] = record.clone();
-    } else {
-        all.push(record.clone());
-    }
-
-    // Atomic overwrite via temp file
-    let tmp_path = path.with_extension("tmp");
-    {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp_path)?;
-        for entry in &all {
-            let json = serde_json::to_string(entry)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            writeln!(file, "{json}")?;
-        }
-        file.flush()?;
-    }
-    std::fs::rename(&tmp_path, &path)?;
+    let json = serde_json::to_string(&record)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    crate::documents::update(&path, |_| Ok(Some((json.clone(), ())))).map_err(io_error)?;
     Ok(record)
 }
 
 /// Delete an entity by ID. Returns true if removed, false if not found.
 pub fn delete_entity(home: &Path, cwd: Option<&Path>, id: &str) -> Result<bool, std::io::Error> {
-    let path = entities_file(home, cwd);
-    if !path.is_file() {
+    let Ok(path) = entity_document(home, cwd, id) else {
         return Ok(false);
-    }
-    let all = list_entities(home, cwd);
-    let orig_len = all.len();
-    let filtered: Vec<_> = all.into_iter().filter(|e| e.id != id).collect();
-    if filtered.len() == orig_len {
-        return Ok(false);
-    }
-
-    let tmp_path = path.with_extension("tmp");
-    {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp_path)?;
-        for entry in &filtered {
-            let json = serde_json::to_string(entry)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            writeln!(file, "{json}")?;
-        }
-        file.flush()?;
-    }
-    std::fs::rename(&tmp_path, &path)?;
-    Ok(true)
+    };
+    crate::documents::forget(&path).map_err(io_error)
 }
 
 pub struct EntityRecordTool {

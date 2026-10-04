@@ -148,7 +148,7 @@ fn memory_files(scope: &vak_config::scope::AgentScope) -> Vec<PathBuf> {
 }
 
 fn proposal_opened_ts(path: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
-    let raw = std::fs::read_to_string(path).ok()?;
+    let raw = crate::documents::read(path).ok().flatten()?;
     // Proposals carry "<!-- proposed-by: <sid> at <rfc3339>; ... -->".
     if let Some(rest) = raw.split(" at ").nth(1)
         && let Some(ts_raw) = rest.split(';').next()
@@ -156,9 +156,7 @@ fn proposal_opened_ts(path: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
     {
         return Some(ts.with_timezone(&chrono::Utc));
     }
-    let meta = std::fs::metadata(path).ok()?;
-    let modified = meta.modified().ok()?;
-    Some(chrono::DateTime::<chrono::Utc>::from(modified))
+    None
 }
 
 /// Build the digest over the trailing `days` (24h windows). `days == 0`
@@ -194,21 +192,7 @@ pub fn digest(
         report.memory_notes_appended += count_fresh_notes(&path, since);
     }
 
-    let mut proposals: Vec<PathBuf> = Vec::new();
-    let root = scope.skill_proposals_root();
-    if let Ok(read) = std::fs::read_dir(&root) {
-        for project in read.flatten() {
-            let Ok(files) = std::fs::read_dir(project.path()) else {
-                continue;
-            };
-            proposals.extend(
-                files
-                    .flatten()
-                    .map(|f| f.path())
-                    .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md")),
-            );
-        }
-    }
+    let mut proposals = crate::documents::under(&scope.skill_proposals_root());
     proposals.sort();
     report.skill_proposals_opened = proposals
         .iter()
@@ -413,27 +397,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let proj = home.join("skill-proposals").join("abc");
-        std::fs::create_dir_all(&proj).unwrap();
 
         let now = chrono::Utc::now().to_rfc3339();
-        std::fs::write(
-            proj.join("fresh.md"),
-            format!("---\nname: \"a\"\ndescription: \"d\"\n---\n\nbody\n\n<!-- proposed-by: s1 at {now}; proposal id x -->\n"),
+        crate::documents::create(
+            &proj.join("fresh.md"),
+            &format!("---\nname: \"a\"\ndescription: \"d\"\n---\n\nbody\n\n<!-- proposed-by: s1 at {now}; proposal id x -->\n"),
         )
         .unwrap();
-        std::fs::write(
-            proj.join("old.md"),
+        crate::documents::create(
+            &proj.join("old.md"),
             "---\nname: \"b\"\ndescription: \"d\"\n---\n\nbody\n\n<!-- proposed-by: s2 at 2026-01-01T00:00:00+00:00; proposal id y -->\n",
         )
         .unwrap();
-        // No parseable comment → falls back to mtime (now) → counts.
-        std::fs::write(proj.join("mtime-only.md"), "no comment here").unwrap();
+        // A proposal states when it was opened; one that does not is not
+        // counted, because a Document has no file time to guess from.
+        crate::documents::create(&proj.join("undated.md"), "no comment here").unwrap();
 
         let r = digest(
             &vak_config::scope::AgentScope::new(home),
             &vak_config::scope::SharedScope::new(home),
             7,
         );
-        assert_eq!(r.skill_proposals_opened, 2);
+        assert_eq!(r.skill_proposals_opened, 1);
     }
 }

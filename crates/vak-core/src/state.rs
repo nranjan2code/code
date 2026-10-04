@@ -311,12 +311,6 @@ pub const REGISTRY: &[StateEntry] = &[
     // Agent whichever Agent owns the session (doc 73 D25); M3b moves them.
     agent_entry("agents/{agent}/sessions", "vak-session", Class::Record),
     agent_entry("agents/{agent}/checkpoints", "vak-core", Class::Record),
-    agent_entry("agents/{agent}/entities", "vak-core", Class::Document),
-    agent_entry(
-        "agents/{agent}/skill-proposals",
-        "vak-core",
-        Class::Document,
-    ),
     agent_entry("agents/{agent}/skills", "vak-core", Class::Desired),
     agent_entry("agents/{agent}/commitments", "vak-commit", Class::Record),
     agent_entry("agents/{agent}/routing-evidence", "vak-core", Class::Record),
@@ -445,22 +439,6 @@ pub const REGISTRY: &[StateEntry] = &[
         owner: "vak-core",
         schema: None,
         class: Class::Record,
-        on_purge: OnPurge::Remove,
-    },
-    StateEntry {
-        path: "memory",
-        root: Root::Data,
-        owner: "vak-core",
-        schema: None,
-        class: Class::Document,
-        on_purge: OnPurge::Remove,
-    },
-    StateEntry {
-        path: "skill-proposals",
-        root: Root::Data,
-        owner: "vak-core",
-        schema: None,
-        class: Class::Document,
         on_purge: OnPurge::Remove,
     },
     StateEntry {
@@ -837,7 +815,7 @@ mod tests {
         for rel in [
             "agents/vak/sessions/h/a.jsonl",
             "agents/writer/sessions/h/b.jsonl",
-            "agents/writer/entities/global/ENTITIES.jsonl",
+            "agents/writer/checkpoints/s/0000.json",
         ] {
             let path = home.path().join(rel);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -852,8 +830,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            find("agents/{agent}/entities").expand(home.path()),
-            vec![PathBuf::from("agents/writer/entities")]
+            find("agents/{agent}/checkpoints").expand(home.path()),
+            vec![PathBuf::from("agents/writer/checkpoints")]
         );
         assert!(
             find("agents/{agent}/sandbox")

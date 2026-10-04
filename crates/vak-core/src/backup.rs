@@ -284,9 +284,9 @@ mod tests {
     fn seed_home(home: &Path) {
         for rel in [
             "sessions/abc123/ledger.jsonl",
-            "memory/user/USER.md",
+            "tenants/t1/store/refs.db",
             "checkpoints/s1/000.json",
-            "skill-proposals/deadbeef/p.md",
+            "tenants/t1/keys/revoked",
             "trusted/allow.toml",
         ] {
             let p = home.join(rel);
@@ -310,9 +310,9 @@ mod tests {
         assert_eq!(manifest.file_count, 9);
         let expected_bytes: u64 = [
             "sessions/abc123/ledger.jsonl",
-            "memory/user/USER.md",
+            "tenants/t1/store/refs.db",
             "checkpoints/s1/000.json",
-            "skill-proposals/deadbeef/p.md",
+            "tenants/t1/keys/revoked",
             "trusted/allow.toml",
             "cost-log",
             "routing-evidence",
@@ -334,7 +334,7 @@ mod tests {
             "sessions/abc123/ledger.jsonl",
             "cost-log",
             "desktop.json",
-            "memory/user/USER.md",
+            "tenants/t1/store/refs.db",
         ] {
             assert_eq!(
                 std::fs::read(restored.path().join(rel)).unwrap(),
@@ -379,8 +379,12 @@ mod tests {
 
         let dest = tempdir().unwrap();
         std::fs::write(dest.path().join("tasks.json"), "incoming").unwrap();
-        std::fs::create_dir_all(dest.path().join("memory")).unwrap();
-        std::fs::write(dest.path().join("memory/new.md"), "fresh note").unwrap();
+        std::fs::create_dir_all(dest.path().join("tenants/t1/keys")).unwrap();
+        std::fs::write(
+            dest.path().join("tenants/t1/keys/revoked"),
+            "conversation:x\n",
+        )
+        .unwrap();
 
         let report = import_from(dest.path(), home.path(), Conflict::Rename).unwrap();
         assert_eq!(report.renamed, 1);
@@ -420,7 +424,7 @@ mod tests {
         let home = tempdir().unwrap();
         for rel in [
             "agents/vak/sessions/h/a.jsonl",
-            "agents/writer/entities/global/ENTITIES.jsonl",
+            "agents/writer/checkpoints/s/0000.json",
             "agents/writer/stray/undeclared.txt",
         ] {
             let p = home.path().join(rel);
@@ -433,7 +437,7 @@ mod tests {
         assert!(dest.path().join("agents/vak/sessions/h/a.jsonl").is_file());
         assert!(
             dest.path()
-                .join("agents/writer/entities/global/ENTITIES.jsonl")
+                .join("agents/writer/checkpoints/s/0000.json")
                 .is_file()
         );
         assert!(!dest.path().join("agents/writer/stray").exists());
