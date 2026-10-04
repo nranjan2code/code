@@ -656,8 +656,7 @@ async fn checkpoints_resolve_the_owning_agent_once_the_session_is_closed() {
     // exactly as a real run would have via `vak_core::checkpoints::capture`
     // — no session handle is ever registered for `sid`, simulating a
     // session that closed (or a server restart) before this request.
-    let newsy_cwd = vak_config::paths::agent_workspace(core.cwd(), "newsy");
-    std::fs::create_dir_all(&newsy_cwd).unwrap();
+    let newsy_cwd = vak_config::paths::ensure_agent_workspace(core.cwd(), "newsy").unwrap();
     let newsy_home = vak_config::paths::agent_home_at(&core.shared_scope().into_root(), "newsy");
     let sid = "closed-newsy-session";
     let objects = core.objects().unwrap();

@@ -58,7 +58,7 @@ pub fn is_trusted(cwd: &Path) -> bool {
 /// "trust this workspace?" prompt does — a file at [`marker_path`], so every
 /// later [`is_trusted`] call (including `CorePool`'s) sees it immediately.
 ///
-/// A user-created Agent's isolated workspace (`.vak/agents/<id>/workspace`)
+/// A user-created Agent's workspace (`vak_config::paths::agent_workspace`)
 /// is never visited or prompted about directly, so without this it can never
 /// pass `is_trusted` and its own `permission_mode`, `hooks`, `mcp.servers`,
 /// and other privileged config are silently stripped forever (see

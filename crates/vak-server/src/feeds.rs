@@ -53,7 +53,7 @@ fn authorize_feed_scope(scope: &str, mode: vak_config::PermissionMode) -> Result
 fn tenant_home() -> PathBuf {
     vak_config::paths::tenant_home_at(
         &vak_config::paths::data_home(),
-        &vak_session::trace::local::tenant().to_string(),
+        vak_config::paths::LOCAL_TENANT,
     )
 }
 

@@ -66,8 +66,7 @@ fn principal_for(id: Uuid) -> PrincipalId {
 }
 
 fn auth_root(data_home: &std::path::Path) -> PathBuf {
-    vak_config::paths::tenant_home_at(data_home, &vak_session::trace::local::tenant().to_string())
-        .join("auth")
+    vak_config::paths::tenant_home_at(data_home, vak_config::paths::LOCAL_TENANT).join("auth")
 }
 
 impl OwnerAuth {

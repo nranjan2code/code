@@ -197,9 +197,10 @@ Two roots hold an Agent's things, and they are different directories:
 - **The workspace** is the directory an Agent's file and shell tools work in
   (`vak_config::paths::agent_workspace`). The built-in `vak` Agent works in
   the base workspace itself (`~/vak-home` for services, or the directory a
-  person opened); any other Agent works in
-  `<workspace>/.vak/agents/<agent_id>/workspace/`, so Agents never see each
-  other's files.
+  person opened); any other Agent works in its own Workspace-class tree,
+  `<data home>/tenants/<tenant>/workspaces/<space>/<agent_id>/`, bound to
+  that space and Agent, so Agents never see each other's files and no
+  project tree carries an Agent's work.
 
 ```text
 <data home>/
@@ -212,6 +213,7 @@ Two roots hold an Agent's things, and they are different directories:
 │   ├── store/                         # objects and refs: ledger payloads and
 │   │                                  # Documents (memory, entities, skill
 │   │                                  # proposals, Office rooms, presentations)
+│   ├── workspaces/<space>/<agent_id>/ # a non-built-in Agent's workspace
 │   ├── keys/                          # revocations; the KEKs are in the credential store
 │   ├── auth/                          # the owner's passkeys and recovery digests
 │   └── feeds/, feeds.toml
@@ -226,9 +228,9 @@ Two roots hold an Agent's things, and they are different directories:
 
 <workspace>/
 ├── .vak/config.toml                   # the project layer
-├── .vak/agents.json                   # Agent definitions for this workspace
-├── .vak/agents/<agent_id>/workspace/  # a non-built-in Agent's workspace
-└── .vak/scratch/<agent_id>/           # execution runtime state (invariant 35)
+└── .vak/agents.json                   # Agent definitions for this workspace
+
+<runtime>/executions/<space>/<agent_id>/                      # execution runtime state and drafts (invariant 35)
 ```
 
 1. **Private Agent state (`vak_config::paths::agent_home`)**:
@@ -236,8 +238,8 @@ Two roots hold an Agent's things, and they are different directories:
    - Each Agent's session logs, memory notes (`append_note`), reflection entries and skill proposals stay isolated.
    - Admission locks are acquired per-agent and per-session, ensuring that turns running on one Agent never block or stall turns running on another Agent.
 
-2. **Execution Scratch (`.vak/scratch/<agent_id>/`)**:
-   - `BashTool` works in the workspace; its runtime state is partitioned per Agent: temp files under `<cwd>/.vak/scratch/<agent_id>/<execution-id>/tmp`, caches under `<cwd>/.vak/scratch/<agent_id>/cache` (AGENTS.md invariant 35).
+2. **Execution state (`vak_config::scope::execution_dir`)**:
+   - `BashTool` works in the workspace; its runtime state is partitioned per Agent outside the project: temp files under `<runtime>/executions/<space>/<agent_id>/<execution-id>/tmp`, caches under `<runtime>/executions/<space>/<agent_id>/cache` (AGENTS.md invariant 35).
    - Concurrent tasks spawned by different Agents in the same workspace never share temp files or caches.
    - Promotion manifests (`CandidateManifest`) and diff viewers review candidates only from an execution that ran inside the agent-scoped scratch path.
 

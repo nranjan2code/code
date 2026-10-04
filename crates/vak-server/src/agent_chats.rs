@@ -114,15 +114,13 @@ pub(crate) fn resolve_agent_core(
             default_root
         }
     };
-    let workspace = vak_config::paths::agent_workspace(&base, &identity.id);
-    // `agents::save` already creates this directory once at agent-creation
-    // time; opening an agent is idempotent and hit repeatedly (reload, tab
-    // switch, reconnect), so skip the mkdir once it's confirmed to exist
-    // rather than paying the syscalls on every open.
-    if !workspace.is_dir()
-        && let Err(e) = std::fs::create_dir_all(&workspace)
-    {
-        return Err(error(StatusCode::INTERNAL_SERVER_ERROR, e));
+    let mut workspace = vak_config::paths::agent_workspace(&base, &identity.id);
+    // `agents::save` already creates it once at agent-creation time; opening
+    // an agent is idempotent and hit repeatedly (reload, tab switch,
+    // reconnect), so skip the creation once it's confirmed to exist.
+    if !workspace.is_dir() {
+        workspace = vak_config::paths::ensure_agent_workspace(&base, &identity.id)
+            .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
     }
     let core = pinned_core_for_workspace(state, &active, &identity, &workspace)
         .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;

@@ -64,21 +64,14 @@ export default function AgentPickerModal() {
     return [defaultAgent, ...list];
   });
 
-  // Mirrors vak_config::paths::agent_workspace() (crates/vak-config/src/paths.rs):
-  // the built-in "vak" agent uses the base workspace directly; every other
-  // agent gets an isolated subdirectory nested under that same base, so two
-  // agents never share a working directory.
-  const resolveAgentWorkspace = (base: string, agentId: string) =>
-    agentId === "vak" ? base : `${base}/.vak/agents/${agentId}/workspace`;
-
-  // The session for the currently open chat already carries a server-resolved
-  // cwd (see api.openAgent); fall back to computing it client-side when no
-  // session has been opened yet for the agent selected in the Fleet Roster.
+  // The open chat's session carries the server-resolved workspace (see
+  // api.openAgent). Before one is open only the built-in agent's is known: it
+  // works in the base workspace, and every other agent's workspace is
+  // resolved by the server (vak_config::paths::agent_workspace).
   const activeWorkspace = createMemo(() => {
     const live = sessions().find((s) => s.session_id === activeId())?.cwd;
     if (live) return live;
-    const base = backend().cwd;
-    return base ? resolveAgentWorkspace(base, activeAgentId()) : "";
+    return activeAgentId() === "vak" ? backend().cwd ?? "" : "";
   });
 
   const filteredAgents = createMemo(() => {

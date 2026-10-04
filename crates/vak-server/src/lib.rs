@@ -23309,8 +23309,7 @@ mod sandbox_promotion_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
-        let agent = dir.path().join(".vak/agents/helper/workspace");
-        std::fs::create_dir_all(&agent).unwrap();
+        let agent = vak_config::paths::ensure_agent_workspace(dir.path(), "helper").unwrap();
         std::fs::write(agent.join("counter.html"), "<p>made by the agent</p>").unwrap();
         std::fs::write(dir.path().join("other.html"), "<p>server workspace</p>").unwrap();
         let scratch = exec_dir(dir.path(), ".vak/scratch/vak/call-1");

@@ -19,8 +19,7 @@ use crate::{APP_VERSION, Core, install};
 /// with the one refusal message, which names the fix.
 fn layout_check() -> HealthCheck {
     let data = vak_config::paths::data_home();
-    let tenant =
-        vak_config::paths::tenant_home_at(&data, &vak_session::trace::local::tenant().to_string());
+    let tenant = vak_config::paths::tenant_home_at(&data, vak_config::paths::LOCAL_TENANT);
     let detail = crate::baseline::check_data_home(&data).and_then(|()| {
         if tenant.is_dir() {
             Ok(format!(

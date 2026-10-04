@@ -280,9 +280,9 @@ pub fn save(
     for profile in &next {
         let agent_dir = vak_config::paths::agent_home(&profile.id);
         let _ = std::fs::create_dir_all(&agent_dir);
-        let workspace_dir = vak_config::paths::agent_workspace(cwd, &profile.id);
-        let _ = std::fs::create_dir_all(&workspace_dir);
-        if trusted {
+        if let Ok(workspace_dir) = vak_config::paths::ensure_agent_workspace(cwd, &profile.id)
+            && trusted
+        {
             let _ = vak_core::trust::mark_trusted(&workspace_dir);
         }
     }

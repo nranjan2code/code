@@ -1065,18 +1065,10 @@ fn is_scratch_workspace(path: &str) -> bool {
     {
         return true;
     }
-    // A user-created Agent's isolated workspace is nested under its base
-    // workspace at `.vak/agents/<id>/workspace` (see
-    // `vak_config::paths::agent_workspace`) — an implementation detail, not
-    // a project a person would recognize or want to switch into.
-    let components: Vec<_> = std::path::Path::new(path)
-        .components()
-        .filter_map(|c| c.as_os_str().to_str())
-        .collect();
-    if components
-        .windows(2)
-        .any(|pair| pair == [vak_config::scope::PROJECT_DIR, "agents"])
-    {
+    // A user-created Agent's workspace lives in the tenant tree (see
+    // `vak_config::paths::agent_workspace`): an implementation detail, not a
+    // project a person would recognize or want to switch into.
+    if vak_config::paths::agent_workspace_space(std::path::Path::new(path)).is_some() {
         return true;
     }
     // Windows temp dirs: %TEMP%, %TMP%, C:\Windows\Temp, C:\Temp.

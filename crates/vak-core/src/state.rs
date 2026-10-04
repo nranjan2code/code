@@ -306,6 +306,16 @@ pub const REGISTRY: &[StateEntry] = &[
         class: Class::Desired,
         on_purge: OnPurge::Remove,
     },
+    StateEntry {
+        path: "tenants/{tenant}/workspaces",
+        root: Root::Data,
+        owner: "vak-config (paths::agent_workspace)",
+        schema: None,
+        // Each non-built-in Agent's own working tree, bound to (space, Agent),
+        // and one `space-root` file per space naming the project it serves.
+        class: Class::Workspace,
+        on_purge: OnPurge::Remove,
+    },
     // ---- every Agent home, one entry per subpath ----
     // Some server-side stores here are written under the server Core's own
     // Agent whichever Agent owns the session (doc 73 D25); M3b moves them.
@@ -757,6 +767,32 @@ pub fn root_path(root: Root) -> PathBuf {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+
+    /// Exit test of M3b slice 4: an Agent's workspace is a Workspace-class
+    /// tree in the tenant, bound to (space, Agent); it is neither inside the
+    /// project nor an execution environment in the runtime directory.
+    #[test]
+    fn agent_workspace_is_not_an_environment() {
+        vak_config::paths::isolate_home_for_tests();
+        let space = tempfile::tempdir().unwrap();
+        let workspace = vak_config::paths::ensure_agent_workspace(space.path(), "writer").unwrap();
+        let data = vak_config::paths::data_home();
+        let relative = workspace.strip_prefix(&data).unwrap();
+        let entry = REGISTRY.iter().find(|e| e.matches(relative)).unwrap();
+        assert_eq!(entry.class, Class::Workspace);
+        assert!(!workspace.starts_with(space.path()));
+        assert!(!workspace.starts_with(vak_config::paths::runtime_dir()));
+        assert!(!workspace.starts_with(vak_config::scope::executions_root(space.path())));
+        assert_eq!(
+            vak_config::paths::agent_workspace_space(&workspace),
+            Some(space.path().canonicalize().unwrap())
+        );
+        assert_eq!(
+            vak_config::paths::agent_workspace(space.path(), "vak"),
+            space.path()
+        );
+    }
+
     use super::*;
 
     #[test]

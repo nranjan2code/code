@@ -582,9 +582,13 @@ candidates live there too, still named `.vak/scratch/<agent>/<execution>/…`
 (`draft_location`, `vak_tools::drafts`), with a scoped exception to
 invariant 10 (`drafts_live_outside_the_project`,
 `another_agents_drafts_are_unreachable`); the Review flow has not yet been
-checked live in a browser. Left in slice 4: the Agent workspace move to
-`workspaces/<spc>/<agt>/`, worktree environments, the remaining `.vak`
-literals and the client's `.vak/scratch` directory check. Step 2's design:
+checked live in a browser. Step 3 done (2026-10-04): a non-built-in
+Agent's workspace is `tenants/<tenant>/workspaces/<space>/<agent>/`
+(`vak_config::paths::agent_workspace`, Workspace class), and a
+`space-root` file beside it names the project whose layer defines the
+Agent (`agent_workspace_is_not_an_environment`). Left in slice 4: worktree
+environments, the remaining `.vak` literals and the client's
+`.vak/scratch` directory check. Step 2's design:
 - A draft is addressed relative to its execution root
   (`<execution>/<workspace path>` under `execution_dir(space, agent)`),
   never as a `.vak/scratch/…` workspace path; `office_apply::draft_dir`,

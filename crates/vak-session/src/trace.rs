@@ -199,6 +199,12 @@ pub mod local {
         TenantId::derived("local")
     }
 
+    #[cfg(test)]
+    #[test]
+    fn local_tenant_matches_its_directory() {
+        assert_eq!(tenant().to_string(), vak_config::paths::LOCAL_TENANT);
+    }
+
     /// The workspace's Space, bound by its path until a Space has an id of
     /// its own.
     pub fn space(cwd: &Path) -> SpaceId {

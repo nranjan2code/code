@@ -770,12 +770,14 @@ impl GatewayState {
             vak_config::paths::agent_workspace(&agent_base, selected_agent)
         };
         if !workspace.is_dir() {
-            std::fs::create_dir_all(&workspace).map_err(|error| {
-                format!(
-                    "could not create Agent workspace {}: {error}",
-                    workspace.display()
-                )
-            })?;
+            vak_config::paths::ensure_agent_workspace(&agent_base, selected_agent).map_err(
+                |error| {
+                    format!(
+                        "could not create Agent workspace {}: {error}",
+                        workspace.display()
+                    )
+                },
+            )?;
         }
         if identity.id != "vak"
             && effective_catalog

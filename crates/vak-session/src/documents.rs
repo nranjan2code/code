@@ -13,10 +13,7 @@ use vak_storage::documents::Documents;
 const RETRIES: usize = 16;
 
 fn tenant_store() -> Result<Arc<dyn vak_storage::store::Store>, String> {
-    let tenant = vak_config::paths::tenant_home_at(
-        &vak_config::paths::data_home(),
-        &crate::trace::local::tenant().to_string(),
-    );
+    let tenant = vak_config::paths::local_tenant_home();
     crate::objects::TenantObjects::for_tenant(&tenant)
         .map(|objects| objects.store())
         .map_err(|error| error.to_string())

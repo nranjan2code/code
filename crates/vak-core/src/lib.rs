@@ -1296,7 +1296,7 @@ impl Core {
         crate::baseline::check_data_home(&sessions_home).map_err(CoreError::PreBaseline)?;
         let _ = std::fs::create_dir_all(vak_config::paths::tenant_home_at(
             &sessions_home,
-            &vak_session::trace::local::tenant().to_string(),
+            vak_config::paths::LOCAL_TENANT,
         ));
         // Warn about plugins whose skill descriptions reference retired
         // tool names. These plugins can cause model hallucinations
@@ -3224,7 +3224,7 @@ impl Core {
         }
         let tenant = vak_config::paths::tenant_home_at(
             &self.inner.sessions_home,
-            &vak_session::trace::local::tenant().to_string(),
+            vak_config::paths::LOCAL_TENANT,
         );
         let opened: Arc<dyn vak_session::objects::Objects> =
             vak_session::objects::TenantObjects::for_tenant(&tenant)?;

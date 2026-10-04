@@ -207,8 +207,8 @@ Read before changing behaviour in these areas:
 conversations, private state under `<data home>/agents/<agent_id>/`
 (`vak_config::paths::agent_home`: session ledgers, memory), their own
 workspace (`vak_config::paths::agent_workspace`: the base workspace for the
-built-in `vak`, `<workspace>/.vak/agents/<agent_id>/workspace/` for any
-other), lifecycle, channel targets, scheduled work, request admission, and
+built-in `vak`, `tenants/<tenant>/workspaces/<space>/<agent_id>/` in the
+data home for any other), lifecycle, channel targets, scheduled work, request admission, and
 delivery provenance. Bots are transport identities and channels are
 endpoints; internal tasks are implementation details behind the Agent
 conversation. Global infrastructure (gateway, operations, FinOps, tasks, the

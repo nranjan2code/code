@@ -102,25 +102,74 @@ pub fn office_workspaces_at(data: &std::path::Path, session_id: &str) -> PathBuf
     data.join("office-workspaces").join(session_id)
 }
 
-/// Per-agent project workspace (the directory file/shell tools operate in),
-/// distinct from `agent_home` (which holds sessions/memory). The built-in
-/// "vak" agent keeps using the base workspace so existing single-agent
-/// installs see no path change; every other agent gets an isolated
-/// subdirectory nested *under that same base workspace*, so agents never see
-/// each other's files, while the same agent id opened against two different
-/// base workspaces (e.g. two server instances, or a gateway channel pointed
-/// at a different project) still resolves to two independently isolated
-/// workspaces rather than one shared global directory keyed on agent id
-/// alone.
+/// The local tenant's id, the directory its tree lives in under `tenants/`.
+/// It is `vak_session::trace::local::tenant()` written out, so the paths
+/// module can name the tree without depending on the id types; a test there
+/// pins the two together.
+pub const LOCAL_TENANT: &str = "ten_00000000-0000-7602-9145-b8d712473797";
+
+/// The local tenant's tree under the data home.
+pub fn local_tenant_home() -> PathBuf {
+    tenant_home_at(&data_home(), LOCAL_TENANT)
+}
+
+/// The file in a space's workspaces directory naming the space's root, so an
+/// Agent workspace can find the project layer that defines its Agent.
+const SPACE_ROOT_FILE: &str = "space-root";
+
+fn space_workspaces(base: &std::path::Path) -> PathBuf {
+    let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    local_tenant_home()
+        .join("workspaces")
+        .join(crate::scope::workspace_key(&base))
+}
+
+/// Per-Agent workspace (the directory file and shell tools operate in),
+/// distinct from `agent_home` (sessions and memory). The built-in `vak`
+/// Agent works in the space itself; every other Agent works in its own
+/// Workspace-class directory in the tenant tree, bound to (space, Agent):
+/// `tenants/<tenant>/workspaces/<space>/<agent>/` (data-architecture plan,
+/// M3b slice 4). It is never inside the project, so no Agent sees another's
+/// files and no project tree carries an Agent's work.
 pub fn agent_workspace(base: &std::path::Path, agent_id: &str) -> PathBuf {
     if agent_id == "vak" {
         base.to_path_buf()
     } else {
-        base.join(crate::scope::PROJECT_DIR)
-            .join("agents")
-            .join(agent_id)
-            .join("workspace")
+        space_workspaces(base).join(agent_id)
     }
+}
+
+/// Create `agent_id`'s workspace in the space at `base` and record the space
+/// root beside it, returning the workspace.
+pub fn ensure_agent_workspace(base: &std::path::Path, agent_id: &str) -> std::io::Result<PathBuf> {
+    let workspace = agent_workspace(base, agent_id);
+    std::fs::create_dir_all(&workspace)?;
+    if agent_id != "vak" {
+        let root = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+        let marker = space_workspaces(base).join(SPACE_ROOT_FILE);
+        if std::fs::read_to_string(&marker).ok().as_deref() != Some(&*root.to_string_lossy()) {
+            std::fs::write(&marker, root.to_string_lossy().as_bytes())?;
+        }
+    }
+    Ok(workspace)
+}
+
+/// The space root an Agent workspace belongs to, when `cwd` is one; `None`
+/// for any other directory.
+pub fn agent_workspace_space(cwd: &std::path::Path) -> Option<PathBuf> {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let workspaces = local_tenant_home().join("workspaces");
+    let workspaces = workspaces.canonicalize().unwrap_or(workspaces);
+    let rest = cwd.strip_prefix(&workspaces).ok()?;
+    let mut parts = rest.components();
+    let space = parts.next()?;
+    parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    std::fs::read_to_string(workspaces.join(space).join(SPACE_ROOT_FILE))
+        .ok()
+        .map(PathBuf::from)
 }
 
 /// Resolve the gateway workspace from an explicit data home. This variant
@@ -528,7 +577,8 @@ mod tests {
         assert_ne!(a, base);
         assert_ne!(b, base);
         assert_ne!(a, b);
-        assert_eq!(a, base.join(".vak/agents/agent-a/workspace"));
+        assert!(!a.starts_with(&base));
+        assert_eq!(a.parent(), b.parent());
     }
 
     #[test]

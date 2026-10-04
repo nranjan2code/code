@@ -96,20 +96,17 @@ pub fn load(cwd: &Path) -> Result<Vec<AgentDefinition>, String> {
 }
 
 /// The workspace whose project layer defines `agent_id` for a turn running in
-/// `cwd`. A custom Agent's `Core` runs in its own workspace
-/// (`<base>/.vak/agents/<id>/workspace`, `vak_config::paths::agent_workspace`)
-/// but is defined in the project layer of `<base>`, so the base is where its
-/// definition is. Any other `cwd` is its own base.
+/// `cwd`. A custom Agent's `Core` runs in its own workspace in the tenant tree
+/// (`vak_config::paths::agent_workspace`) but is defined in the project layer
+/// of its space, which that workspace records. Any other `cwd` is its own
+/// base.
 fn definition_base(cwd: &Path, agent_id: &str) -> PathBuf {
-    let tail = Path::new(vak_config::scope::PROJECT_DIR)
-        .join("agents")
-        .join(agent_id)
-        .join("workspace");
-    if cwd.ends_with(&tail) {
-        cwd.ancestors().nth(4).unwrap_or(cwd).to_path_buf()
-    } else {
-        cwd.to_path_buf()
-    }
+    vak_config::paths::agent_workspace_space(cwd)
+        .filter(|space| {
+            let own = vak_config::paths::agent_workspace(space, agent_id);
+            own.canonicalize().unwrap_or(own) == cwd.canonicalize().unwrap_or(cwd.to_path_buf())
+        })
+        .unwrap_or_else(|| cwd.to_path_buf())
 }
 
 /// The saved definition of one Agent as a turn running in `core` sees it:
