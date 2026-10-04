@@ -231,12 +231,27 @@ pub struct AllowlistRoute {
     pub model: String,
 }
 
+/// The folder this machine binds the space `id` to (`vak_config::spaces`).
+pub(crate) fn space_folder(id: &str) -> Option<PathBuf> {
+    vak_config::spaces::bindings(id).into_iter().next()
+}
+
+/// The folder a gateway record's space resolves to, for display.
+pub(crate) fn space_folder_json(space: Option<&str>) -> serde_json::Value {
+    space
+        .and_then(space_folder)
+        .map(|folder| serde_json::Value::String(folder.to_string_lossy().into_owned()))
+        .unwrap_or(serde_json::Value::Null)
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AllowlistEntry {
     pub key: String,
     pub status: AllowlistStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<PathBuf>,
+    /// The space this applies to (`vak_config::spaces`), never a folder
+    /// path; [`space_folder`] finds its folder on this machine.
+    pub space: Option<String>,
     /// Agent selected for this endpoint. Missing values are normalized to the
     /// reserved Vakyartha identity when loading older allowlist rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -349,7 +364,9 @@ pub struct Bot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route: Option<AllowlistRoute>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<PathBuf>,
+    /// The space this applies to (`vak_config::spaces`), never a folder
+    /// path; [`space_folder`] finds its folder on this machine.
+    pub space: Option<String>,
     /// Voice/persona override for this bot's spoken replies. `None`
     /// inherits the workspace default (no voice); `Some` sets this bot's
     /// tier for any chat that inherits it.
@@ -451,7 +468,9 @@ pub(crate) struct ChannelBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<PathBuf>,
+    /// The space this applies to (`vak_config::spaces`), never a folder
+    /// path; [`space_folder`] finds its folder on this machine.
+    pub space: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_revision: Option<String>,
 }
@@ -566,7 +585,7 @@ impl GatewayState {
                             AllowlistEntry {
                                 key: key.clone(),
                                 status: AllowlistStatus::Allowed,
-                                workspace: None,
+                                space: None,
                                 agent_id: Some("vak".into()),
                                 route: None,
                                 voice: None,
@@ -661,10 +680,7 @@ impl GatewayState {
             .filter(|e| e.inherit_bot_policy)
             .and_then(|e| e.bot_id.as_deref())
             .and_then(|id| self.bot_get(id));
-        let configured_workspace = allowed_entry
-            .and_then(|e| e.workspace.clone())
-            .or_else(|| bot.as_ref().and_then(|b| b.workspace.clone()))
-            .unwrap_or_else(|| default_core.cwd().clone());
+        let configured_workspace = self.workspace_for_entry(default_core, key)?;
 
         // Policy: bot policy (lower tier) folded under the chat's own
         // (higher tier) via the same restrictive-only merge used to
@@ -764,21 +780,12 @@ impl GatewayState {
                 .map(|profile| profile.identity())
                 .ok_or_else(|| format!("configured Agent '{selected_agent}' is unavailable"))?
         };
-        let workspace = if selected_agent == "vak" {
-            agent_base.clone()
-        } else {
-            vak_config::paths::agent_workspace(&agent_base, selected_agent)
-        };
-        if !workspace.is_dir() {
-            vak_config::paths::ensure_agent_workspace(&agent_base, selected_agent).map_err(
-                |error| {
-                    format!(
-                        "could not create Agent workspace {}: {error}",
-                        workspace.display()
-                    )
-                },
-            )?;
-        }
+        // Ensured, not merely computed: the base is bound to its space first,
+        // so the path is the space's and never an unbound one.
+        let workspace = vak_config::paths::ensure_agent_workspace(&agent_base, selected_agent)
+            .map_err(|error| {
+                format!("could not create Agent workspace for '{selected_agent}': {error}")
+            })?;
 
         let resolved = self.core_pool.resolve_at_with_policy(
             &workspace,
@@ -801,22 +808,10 @@ impl GatewayState {
         Ok(resolved.with_agent_identity(Some(identity)))
     }
 
-    pub(crate) fn workspace_for_entry(&self, default_core: &Core, key: &str) -> PathBuf {
-        let entry = self.allowlist_get(key);
-        let allowed = entry
-            .as_ref()
-            .filter(|e| e.status == AllowlistStatus::Allowed);
-        let bot = allowed
-            .filter(|e| e.inherit_bot_policy)
-            .and_then(|e| e.bot_id.as_deref())
-            .and_then(|id| self.bot_get(id));
-        allowed
-            .and_then(|e| e.workspace.clone())
-            .or_else(|| bot.and_then(|b| b.workspace))
-            .unwrap_or_else(|| default_core.cwd().to_path_buf())
-    }
-
-    pub(crate) fn workspace_override_for_entry(&self, key: &str) -> Option<PathBuf> {
+    /// The space an allowed chat is configured for: its own, else (when it
+    /// inherits) its bot's. `None` means it inherits the gateway's default
+    /// workspace.
+    pub(crate) fn configured_space(&self, key: &str) -> Option<String> {
         let entry = self.allowlist_get(key)?;
         if entry.status != AllowlistStatus::Allowed {
             return None;
@@ -826,7 +821,25 @@ impl GatewayState {
             .then_some(entry.bot_id.as_deref())
             .flatten()
             .and_then(|id| self.bot_get(id));
-        entry.workspace.or_else(|| bot.and_then(|b| b.workspace))
+        entry.space.or_else(|| bot.and_then(|b| b.space))
+    }
+
+    /// The folder a chat's turns run in: its configured space's folder, or
+    /// the gateway's default when it configures none. A configured space with
+    /// no folder on this machine is refused, never swapped for the default.
+    pub(crate) fn workspace_for_entry(
+        &self,
+        default_core: &Core,
+        key: &str,
+    ) -> Result<PathBuf, String> {
+        match self.configured_space(key) {
+            None => Ok(default_core.cwd().to_path_buf()),
+            Some(space) => space_folder(&space).ok_or_else(|| {
+                format!(
+                    "the workspace this chat is set to has no folder on this machine (space {space}); choose its workspace again"
+                )
+            }),
+        }
     }
 
     pub(crate) fn set_enabled(&mut self, enabled: bool) {
@@ -1152,7 +1165,7 @@ impl GatewayState {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let binding = bindings.entry(key).or_default();
         binding.session_id = Some(session_id);
-        binding.workspace = Some(core.cwd().clone());
+        binding.space = Some(vak_config::spaces::key(core.cwd()));
         binding.route_revision = Some(revision);
         drop(bindings);
         persist_bindings(core, self);
@@ -1370,7 +1383,7 @@ impl GatewayState {
                         AllowlistEntry {
                             key: key.to_string(),
                             status: AllowlistStatus::Pending,
-                            workspace: None,
+                            space: None,
                             agent_id: bot_agent.or_else(|| Some("vak".into())),
                             route: None,
                             voice: None,
@@ -1403,7 +1416,7 @@ impl GatewayState {
         &self,
         core: &Core,
         key: &str,
-        workspace: PathBuf,
+        space: String,
         agent_id: Option<String>,
         route: Option<AllowlistRoute>,
         permission_mode: Option<vak_config::PermissionMode>,
@@ -1424,7 +1437,7 @@ impl GatewayState {
             let entry = AllowlistEntry {
                 key: key.to_string(),
                 status: AllowlistStatus::Allowed,
-                workspace: Some(workspace),
+                space: Some(space),
                 agent_id: agent_id.or(bot_agent).or_else(|| Some("vak".into())),
                 route,
                 voice: None,
@@ -1454,7 +1467,7 @@ impl GatewayState {
             let entry = AllowlistEntry {
                 key: key.to_string(),
                 status: AllowlistStatus::Denied,
-                workspace: None,
+                space: None,
                 agent_id: Some("vak".into()),
                 route: None,
                 voice: None,
@@ -1490,7 +1503,7 @@ impl GatewayState {
         &self,
         core: &Core,
         key: &str,
-        workspace: Option<PathBuf>,
+        space: Option<String>,
         agent_id: Option<Option<String>>,
         route: Option<AllowlistRoute>,
         permission_mode: Option<vak_config::PermissionMode>,
@@ -1509,7 +1522,7 @@ impl GatewayState {
             if entry.status != AllowlistStatus::Allowed {
                 return None;
             }
-            entry.workspace = workspace;
+            entry.space = space;
             if let Some(agent_id) = agent_id {
                 entry.agent_id = agent_id.and_then(|s| {
                     let trimmed = s.trim();
@@ -1564,7 +1577,7 @@ impl GatewayState {
         self.allowlist_patch(
             core,
             key,
-            entry.workspace,
+            entry.space,
             Some(entry.agent_id),
             route,
             entry.permission_mode,
@@ -3241,7 +3254,7 @@ async fn gateway_status(State(state): State<AppState>) -> Json<serde_json::Value
                 "session_id": binding.session_id,
                 "provider": binding.provider,
                 "model": binding.model,
-                "workspace": binding.workspace,
+                "workspace": space_folder_json(binding.space.as_deref()),
                 "route_revision": binding.route_revision,
                 "paused": paused,
             })
@@ -3300,7 +3313,7 @@ fn busy_binding_matches_revision(state: &AppState, core: &Core, key: &str, revis
         .get(key)
         .is_some_and(|binding| {
             binding.route_revision.as_deref() == Some(revision)
-                && binding.workspace.as_deref() == Some(core.cwd().as_path())
+                && binding.space.as_deref() == Some(vak_config::spaces::key(core.cwd()).as_str())
         })
 }
 
@@ -3733,7 +3746,7 @@ fn http_client() -> reqwest::Client {
 
 /// Delivery plus its durable pull-side twin (docs/design/29-personal-os.md
 /// P6): append the same signal before transport so a failed push cannot erase it.
-/// `<home>/inbox.jsonl` under `inbox_kind` so unattended output survives
+/// the inbox record chain under `inbox_kind` so unattended output survives
 /// even when no chat channel is reachable. Inbox recording is best-effort
 /// by contract — it can never fail a delivery that already happened.
 pub(crate) async fn deliver_and_record(
@@ -4561,7 +4574,7 @@ mod tests {
                 policy: Default::default(),
                 permission_mode: None,
                 route: None,
-                workspace: None,
+                space: None,
                 voice: Some(vak_config::VoiceConfig {
                     voice_name: Some("Kore".into()),
                     persona: Some("legacy persona".into()),
@@ -4573,7 +4586,7 @@ mod tests {
         state.gateway.allowlist_approve(
             &core,
             "telegram:42",
-            core.cwd().clone(),
+            vak_config::spaces::key(core.cwd()),
             None,
             None,
             None,
@@ -4603,7 +4616,7 @@ mod tests {
         state.gateway.allowlist_patch(
             &core,
             "telegram:42",
-            entry.workspace,
+            entry.space,
             Some(entry.agent_id),
             entry.route,
             entry.permission_mode,
@@ -4782,7 +4795,7 @@ mod tests {
         gw.allowlist_approve(
             &core,
             "telegram:agent",
-            core.cwd().clone(),
+            vak_config::spaces::key(core.cwd()),
             Some("support".into()),
             None,
             None,
@@ -4832,7 +4845,7 @@ mod tests {
         gw.allowlist_approve(
             &core,
             "telegram:res-chat",
-            core.cwd().clone(),
+            vak_config::spaces::key(core.cwd()),
             None,
             None,
             None,
@@ -4851,7 +4864,7 @@ mod tests {
         gw.allowlist_patch(
             &core,
             "telegram:res-chat",
-            Some(core.cwd().clone()),
+            Some(vak_config::spaces::key(core.cwd())),
             Some(Some("vak".into())),
             None,
             None,
@@ -4902,7 +4915,7 @@ mod tests {
         gw.allowlist_patch(
             &core,
             "telegram:res-chat",
-            Some(core.cwd().clone()),
+            Some(vak_config::spaces::key(core.cwd())),
             Some(Some("support".into())),
             None,
             None,
@@ -4924,7 +4937,7 @@ mod tests {
         gw.allowlist_patch(
             &core,
             "telegram:res-chat",
-            Some(core.cwd().clone()),
+            Some(vak_config::spaces::key(core.cwd())),
             Some(None),
             None,
             None,
@@ -4967,7 +4980,7 @@ mod tests {
         gw.allowlist_approve(
             &core,
             "telegram:paused",
-            core.cwd().clone(),
+            vak_config::spaces::key(core.cwd()),
             Some("paused".into()),
             None,
             None,
@@ -4996,6 +5009,35 @@ mod tests {
         assert_eq!(entries[0].added_by, "config_import");
     }
 
+    /// A chat set to a space whose folder is gone from this machine is
+    /// refused with a reason, never run in the gateway's default workspace.
+    #[test]
+    fn a_chat_whose_space_has_no_folder_here_is_refused() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let gw = GatewayState::load(&core, true);
+        gw.allowlist_approve(
+            &core,
+            "telegram:404",
+            "spc_00000000-0000-7000-8000-000000000404".into(),
+            None,
+            None,
+            None,
+            vak_config::ChannelPolicy::default(),
+            None,
+            true,
+            "admin",
+        );
+        let refused = gw.workspace_for_entry(&core, "telegram:404").unwrap_err();
+        assert!(refused.contains("no folder on this machine"), "{refused}");
+        assert!(gw.core_for_entry(&core, "telegram:404").is_err());
+        assert_eq!(
+            gw.workspace_for_entry(&core, "telegram:unconfigured")
+                .unwrap(),
+            core.cwd().to_path_buf(),
+            "a chat that names no space inherits the default"
+        );
+    }
+
     #[test]
     fn allowlist_approve_deny_revoke_roundtrip() {
         let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
@@ -5006,7 +5048,7 @@ mod tests {
         let approved = gw.allowlist_approve(
             &core,
             "telegram:7",
-            core.cwd().clone(),
+            vak_config::spaces::key(core.cwd()),
             None,
             Some(AllowlistRoute {
                 provider: "anthropic".into(),
@@ -5019,7 +5061,10 @@ mod tests {
             "admin",
         );
         assert_eq!(approved.status, AllowlistStatus::Allowed);
-        assert_eq!(approved.workspace.as_deref(), Some(core.cwd().as_path()));
+        assert_eq!(
+            approved.space.as_deref(),
+            Some(vak_config::spaces::key(core.cwd()).as_str())
+        );
         assert_eq!(approved.agent_id.as_deref(), Some("vak"));
         assert_eq!(approved.route.as_ref().unwrap().provider, "anthropic");
 
@@ -5105,7 +5150,7 @@ mod tests {
         let inherited = gw.allowlist_get("telegram:8846301562:VakBot").unwrap();
         assert_eq!(inherited.status, AllowlistStatus::Allowed);
         assert_eq!(inherited.bot_id.as_deref(), Some("VakBot"));
-        assert_eq!(inherited.workspace, legacy.workspace);
+        assert_eq!(inherited.space, legacy.space);
         // The legacy row's *allowlist entry* is untouched — it stays
         // around as the ancestor a third bot could still inherit from
         // later.
@@ -5176,7 +5221,7 @@ mod tests {
         gw.allowlist_approve(
             &core,
             "telegram:100",
-            core.cwd().clone(),
+            vak_config::spaces::key(core.cwd()),
             None,
             None,
             None,

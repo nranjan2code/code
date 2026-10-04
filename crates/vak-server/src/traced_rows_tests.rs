@@ -179,7 +179,7 @@ fn records() -> Vec<Record> {
             "AudienceGrant",
             "crates/vak-server/src/coworking.rs",
             "ledger",
-            "coworking/grants.jsonl",
+            "coworking/grants",
             serde_json::json!({
                 "grant_id": "g", "principal_id": "p", "display_name": "d",
                 "conversation_id": "c", "audience_id": "a", "capabilities": [],
@@ -197,7 +197,7 @@ fn records() -> Vec<Record> {
             "EnvironmentRecord",
             "crates/vak-sandbox/src/lib.rs",
             "ledger",
-            "sandbox/records.jsonl",
+            "sandbox/records",
             serde_json::json!({
                 "record_id": "r", "environment_id": "env-1", "state": "Ready", "plan": plan,
                 "updated_at": ts,
@@ -207,7 +207,7 @@ fn records() -> Vec<Record> {
             "PreviewPreparationRecord",
             "crates/vak-sandbox/src/lib.rs",
             "ledger",
-            "sandbox/records.jsonl",
+            "sandbox/records",
             serde_json::json!({
                 "record_id": "r", "session_id": "s", "result_id": "x", "candidate_id": "c",
                 "candidate_digest": "d", "environment_id": "e", "state": "Ready",
@@ -218,7 +218,7 @@ fn records() -> Vec<Record> {
             "PromotionRecord",
             "crates/vak-sandbox/src/lib.rs",
             "ledger",
-            "sandbox/records.jsonl",
+            "sandbox/records",
             serde_json::json!({
                 "record_id": "r", "session_id": "s", "result_id": "x",
                 "candidate_digest": "d", "candidate_id": "c", "updated_at": ts,
@@ -232,7 +232,7 @@ fn records() -> Vec<Record> {
             "CandidateRecord",
             "crates/vak-sandbox/src/lib.rs",
             "ledger",
-            "sandbox/records.jsonl",
+            "sandbox/records",
             serde_json::json!({
                 "record_id": "r", "session_id": "s", "turn_id": "t", "result_id": "x",
                 "execution_id": "e", "environment_id": "env", "candidate_digest": "d",

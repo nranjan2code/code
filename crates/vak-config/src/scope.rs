@@ -221,11 +221,6 @@ impl AgentScope {
         self.root.join("sandbox")
     }
 
-    /// Display names the admin console keeps for workspaces.
-    pub fn workspace_names(&self) -> PathBuf {
-        self.root.join("workspace-names.json")
-    }
-
     /// Output preferences of the user layer.
     pub fn output_prefs(&self) -> PathBuf {
         self.root.join("output.toml")
@@ -234,7 +229,7 @@ impl AgentScope {
     /// Server-side sandbox records of this Agent's sessions. The caller
     /// picks the session's Agent (doc 73 D25).
     pub fn sandbox_records(&self) -> PathBuf {
-        self.sandbox_dir().join("records.jsonl")
+        self.sandbox_dir().join("records")
     }
 
     /// Candidate roots of this Agent's sessions.
@@ -244,14 +239,12 @@ impl AgentScope {
 
     /// One of this Agent's sessions' execution stream.
     pub fn sandbox_executions(&self, session_id: &str) -> PathBuf {
-        self.sandbox_dir()
-            .join("executions")
-            .join(format!("{session_id}.jsonl"))
+        self.sandbox_dir().join("executions").join(session_id)
     }
 
     /// Coworking grants of this Agent's conversations.
     pub fn coworking_grants(&self) -> PathBuf {
-        self.root.join("coworking").join("grants.jsonl")
+        self.root.join("coworking").join("grants")
     }
 
     /// Shared Office rooms of one of this Agent's sessions.
@@ -494,14 +487,13 @@ mod tests {
         assert_eq!(s.inbox_dedupe_lock(), home.join("inbox.dedupe.lock"));
         assert_eq!(s.env_file(), home.join(".env"));
         assert_eq!(s.managed_flow_runs(), home.join("flow-runs/managed"));
-        assert_eq!(s.sandbox_records(), home.join("sandbox/records.jsonl"));
+        assert_eq!(s.sandbox_records(), home.join("sandbox/records"));
         assert_eq!(s.sandbox_candidates(), home.join("sandbox/candidates"));
         assert_eq!(
             s.sandbox_executions("s1"),
-            home.join("sandbox/executions/s1.jsonl")
+            home.join("sandbox/executions/s1")
         );
-        assert_eq!(s.coworking_grants(), home.join("coworking/grants.jsonl"));
-        assert_eq!(s.workspace_names(), home.join("workspace-names.json"));
+        assert_eq!(s.coworking_grants(), home.join("coworking/grants"));
         assert_eq!(s.output_prefs(), home.join("output.toml"));
         assert_eq!(s.office_workspaces("s1"), home.join("office-workspaces/s1"));
     }

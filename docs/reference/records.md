@@ -47,7 +47,7 @@ Type `ActivityRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in:
 
 ## audience_grant
 
-Type `AudienceGrant` in `crates/vak-server/src/coworking.rs`. Class: ledger. Stored in: `coworking/grants.jsonl`. Version: 1.
+Type `AudienceGrant` in `crates/vak-server/src/coworking.rs`. Class: ledger. Stored in: `coworking/grants`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -78,7 +78,7 @@ Type `BudgetAlertRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored 
 
 ## candidate_record
 
-Type `CandidateRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records.jsonl`. Version: 1.
+Type `CandidateRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -132,7 +132,7 @@ Type `CostRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `co
 
 ## environment_record
 
-Type `EnvironmentRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records.jsonl`. Version: 1.
+Type `EnvironmentRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -236,7 +236,7 @@ Type `OutboxRecord` in `crates/vak-delivery/src/outbox.rs`. Class: record. Store
 
 ## preview_preparation_record
 
-Type `PreviewPreparationRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records.jsonl`. Version: 1.
+Type `PreviewPreparationRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -255,7 +255,7 @@ Type `PreviewPreparationRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledge
 
 ## promotion_record
 
-Type `PromotionRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records.jsonl`. Version: 1.
+Type `PromotionRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records`. Version: 1.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|

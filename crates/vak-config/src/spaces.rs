@@ -32,13 +32,39 @@ struct Registry {
 struct Space {
     #[serde(default)]
     bindings: Vec<PathBuf>,
+    /// What a person calls the space; its folder's name when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    /// Hidden from the lists a surface offers until it is opened again.
+    /// Forgetting is not deleting: its sessions, memory and settings stay.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    forgotten: bool,
+    /// When it was last opened as a workspace, in seconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_opened: Option<u64>,
     #[serde(flatten)]
     rest: toml::Table,
 }
 
+/// One space as a surface lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaceRecord {
+    pub id: String,
+    /// The folder this machine binds it to.
+    pub folder: Option<PathBuf>,
+    pub name: Option<String>,
+    pub forgotten: bool,
+    pub last_opened: Option<u64>,
+}
+
 /// The registry file of the local tenant.
 pub fn registry_path() -> PathBuf {
-    crate::paths::local_tenant_home().join("spaces.toml")
+    registry_path_at(&crate::paths::data_home())
+}
+
+/// The local tenant's registry file under the data home `data`.
+pub fn registry_path_at(data: &Path) -> PathBuf {
+    crate::paths::tenant_home_at(data, crate::paths::LOCAL_TENANT).join("spaces.toml")
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -91,7 +117,13 @@ fn mint() -> String {
     format!("{PREFIX}{}", uuid::Uuid::now_v7().hyphenated())
 }
 
-fn insert(registry_file: &Path, path: &Path) -> Result<String, String> {
+/// Change the space `path` is bound to (binding it first) under the
+/// registry lock, and write the registry back atomically.
+fn modify(
+    registry_file: &Path,
+    path: &Path,
+    change: impl FnOnce(&mut Space),
+) -> Result<String, String> {
     let dir = registry_file
         .parent()
         .ok_or("space registry has no directory")?;
@@ -104,16 +136,12 @@ fn insert(registry_file: &Path, path: &Path) -> Result<String, String> {
         .map_err(|error| error.to_string())?;
     lock.lock().map_err(|error| error.to_string())?;
     let mut registry = load(registry_file)?;
-    if let Some(id) = find(&registry, path) {
-        return Ok(id);
+    let id = find(&registry, path).unwrap_or_else(mint);
+    let space = registry.spaces.entry(id.clone()).or_default();
+    if !space.bindings.iter().any(|bound| bound == path) {
+        space.bindings.push(path.to_path_buf());
     }
-    let id = mint();
-    registry
-        .spaces
-        .entry(id.clone())
-        .or_default()
-        .bindings
-        .push(path.to_path_buf());
+    change(space);
     let text = toml::to_string(&registry).map_err(|error| error.to_string())?;
     let temp = dir.join(format!("spaces.toml.{}", std::process::id()));
     let mut file = std::fs::File::create(&temp).map_err(|error| error.to_string())?;
@@ -122,6 +150,27 @@ fn insert(registry_file: &Path, path: &Path) -> Result<String, String> {
         .map_err(|error| error.to_string())?;
     std::fs::rename(&temp, registry_file).map_err(|error| error.to_string())?;
     Ok(id)
+}
+
+/// The key of a run's environment (`paths::environment_dir`): `env-<run>`.
+/// An environment belongs to its run, never to a space of its own, so it is
+/// never bound and the registry does not grow with every run.
+fn environment_owner(path: &Path) -> Option<String> {
+    let root = crate::paths::local_tenant_home().join("environments");
+    for root in [canonical(&root), root] {
+        if let Ok(rest) = path.strip_prefix(&root)
+            && let Some(std::path::Component::Normal(run)) = rest.components().next()
+        {
+            return Some(format!("env-{}", run.to_str()?));
+        }
+    }
+    None
+}
+
+/// What `path` belongs to without the registry: an Agent workspace's space,
+/// or a run environment's run.
+fn owner(path: &Path) -> Option<String> {
+    agent_workspace_owner(path).or_else(|| environment_owner(path))
 }
 
 /// The space an Agent workspace under the tenant's `workspaces/` belongs to.
@@ -142,26 +191,86 @@ pub(crate) fn agent_workspace_owner(path: &Path) -> Option<String> {
 /// Bind the folder `path` to a space, minting the space the first time the
 /// folder is opened as a workspace, and return its id. The one writer.
 pub fn bind(path: &Path) -> Result<String, String> {
+    bind_at(&crate::paths::data_home(), path)
+}
+
+/// [`bind`] against the registry of the data home `data`.
+pub fn bind_at(data: &Path, path: &Path) -> Result<String, String> {
     let path = canonical(path);
-    if let Some(id) = agent_workspace_owner(&path) {
+    if let Some(id) = owner(&path) {
         return Ok(id);
     }
-    let registry = registry_path();
+    let registry = registry_path_at(data);
     if let Some(id) = cached(&registry, &path) {
         return Ok(id);
     }
     let id = match find(&load(&registry)?, &path) {
         Some(id) => id,
-        None => insert(&registry, &path)?,
+        None => modify(&registry, &path, |_| {})?,
     };
     remember(&registry, &path, &id);
     Ok(id)
 }
 
+fn change(path: &Path, apply: impl FnOnce(&mut Space)) -> Result<String, String> {
+    let path = canonical(path);
+    if let Some(id) = owner(&path) {
+        return Ok(id);
+    }
+    let registry = registry_path();
+    let id = modify(&registry, &path, apply)?;
+    remember(&registry, &path, &id);
+    Ok(id)
+}
+
+/// Record that the folder `path` was opened as a workspace: bound, shown
+/// again if it was forgotten, and first in the recent list.
+pub fn opened(path: &Path) -> Result<String, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default();
+    change(path, |space| {
+        space.forgotten = false;
+        space.last_opened = Some(now);
+    })
+}
+
+/// Stop offering the space of `path`. Nothing it holds is touched.
+pub fn forget(path: &Path) -> Result<String, String> {
+    change(path, |space| space.forgotten = true)
+}
+
+/// Name the space of `path`.
+pub fn set_name(path: &Path, name: &str) -> Result<String, String> {
+    let name = name.to_string();
+    change(path, |space| space.name = Some(name))
+}
+
+/// Every space in the registry, the most recently opened first.
+pub fn all() -> Vec<SpaceRecord> {
+    let Ok(registry) = load(&registry_path()) else {
+        return Vec::new();
+    };
+    let mut spaces: Vec<SpaceRecord> = registry
+        .spaces
+        .into_iter()
+        .map(|(id, space)| SpaceRecord {
+            id,
+            folder: space.bindings.into_iter().next(),
+            name: space.name,
+            forgotten: space.forgotten,
+            last_opened: space.last_opened,
+        })
+        .collect();
+    spaces.sort_by_key(|space| std::cmp::Reverse(space.last_opened));
+    spaces
+}
+
 /// The id of the space `path` is bound to; `None` for a folder never opened.
 pub fn bound_space(path: &Path) -> Option<String> {
     let path = canonical(path);
-    if let Some(id) = agent_workspace_owner(&path) {
+    if let Some(id) = owner(&path) {
         return Some(id);
     }
     let registry = registry_path();
@@ -175,11 +284,33 @@ pub fn bound_space(path: &Path) -> Option<String> {
 
 /// The folders on this machine bound to the space `id`.
 pub fn bindings(id: &str) -> Vec<PathBuf> {
-    load(&registry_path())
+    bindings_at(&crate::paths::data_home(), id)
+}
+
+/// [`bindings`] in the registry of the data home `data`.
+pub fn bindings_at(data: &Path, id: &str) -> Vec<PathBuf> {
+    load(&registry_path_at(data))
         .ok()
         .and_then(|mut registry| registry.spaces.remove(id))
         .map(|space| space.bindings)
         .unwrap_or_default()
+}
+
+/// Refuse a write whose location is partitioned by an `unbound-` key: the
+/// folder was never opened as a workspace, so anything written there would
+/// be orphaned the moment it is. Space-keyed writers call this.
+pub fn require_bound(location: &Path) -> Result<(), String> {
+    match location.components().find(|part| {
+        part.as_os_str()
+            .to_str()
+            .is_some_and(|part| part.starts_with("unbound-"))
+    }) {
+        Some(_) => Err(format!(
+            "{} belongs to a folder never opened as a workspace; open it first",
+            location.display()
+        )),
+        None => Ok(()),
+    }
 }
 
 /// The key a space-keyed store files `path` under: its space id, or for a
@@ -209,6 +340,11 @@ mod tests {
         assert_eq!(bound_space(one.path()), None);
         assert!(key(one.path()).starts_with("unbound-"));
         assert_eq!(bound_space(one.path()), None, "resolving a key never binds");
+        let orphan = Path::new("/data/agents/vak/sessions").join(key(one.path()));
+        assert!(
+            require_bound(&orphan).is_err(),
+            "no write under an unbound key"
+        );
         let id = bind(one.path()).unwrap();
         assert!(id.starts_with(PREFIX));
         assert_eq!(bind(one.path()).unwrap(), id);
@@ -216,6 +352,15 @@ mod tests {
         assert_ne!(bind(two.path()).unwrap(), id);
         let workspace = crate::paths::ensure_agent_workspace(one.path(), "mira").unwrap();
         assert_eq!(key(&workspace), id, "an Agent workspace is its space's");
+        let environment = crate::paths::environment_dir("run-7").join("work");
+        std::fs::create_dir_all(&environment).unwrap();
+        assert_eq!(bind(&environment).unwrap(), "env-run-7");
+        assert!(
+            all()
+                .iter()
+                .all(|space| space.folder.as_deref() != Some(environment.as_path())),
+            "a run's environment is never a space"
+        );
         assert_eq!(bindings(&id), vec![one.path().canonicalize().unwrap()]);
         assert!(!one.path().join(".vak").exists());
     }

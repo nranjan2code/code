@@ -1498,15 +1498,6 @@ pub struct PluginAuditEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginInvocationEvent {
-    pub at_unix: u64,
-    pub trace_id: String,
-    pub plugin: String,
-    pub capability: String,
-    pub success: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginHook {
     pub event: String,
     #[serde(rename = "match", default)]
@@ -1597,62 +1588,6 @@ impl PluginStore {
 
     pub fn source_registry_path(&self) -> PathBuf {
         self.home.join("plugins/sources.json")
-    }
-
-    pub fn invocation_log_path(&self) -> PathBuf {
-        self.home.join("plugins/invocations.jsonl")
-    }
-
-    pub fn record_invocation(
-        &self,
-        trace_id: &str,
-        plugin: &str,
-        capability: &str,
-        success: bool,
-    ) -> Result<(), PluginError> {
-        let _lock = RegistryLock::acquire(&self.home.join("plugins"))?;
-        let path = self.invocation_log_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| io_error(parent, error))?;
-        }
-        let event = PluginInvocationEvent {
-            at_unix: now_unix(),
-            trace_id: trace_id.to_string(),
-            plugin: plugin.to_string(),
-            capability: capability.to_string(),
-            success,
-        };
-        let bytes = serde_json::to_vec(&event).map_err(|source| PluginError::Json {
-            path: path.clone(),
-            source,
-        })?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .map_err(|error| io_error(&path, error))?;
-        file.write_all(&bytes)
-            .map_err(|error| io_error(&path, error))?;
-        file.write_all(b"\n")
-            .map_err(|error| io_error(&path, error))?;
-        file.sync_data().map_err(|error| io_error(&path, error))
-    }
-
-    pub fn invocations(&self) -> Result<Vec<PluginInvocationEvent>, PluginError> {
-        let path = self.invocation_log_path();
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        let text = fs::read_to_string(&path).map_err(|error| io_error(&path, error))?;
-        text.lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| {
-                serde_json::from_str(line).map_err(|source| PluginError::Json {
-                    path: path.clone(),
-                    source,
-                })
-            })
-            .collect()
     }
 
     pub fn load_sources(&self) -> Result<MarketplaceSourceRegistry, PluginError> {
@@ -2833,10 +2768,6 @@ mod tests {
             store.set_source_enabled(&source.id, false),
             Err(PluginError::UnsafePackage(_))
         ));
-        store
-            .record_invocation(&source.trace_id, "tool", "mcp:plugin.tool.lookup", true)
-            .unwrap();
-        assert_eq!(store.invocations().unwrap().len(), 1);
     }
 
     #[test]

@@ -240,7 +240,9 @@ fixed, `auth/` and feeds are in the tenant tree, and Agent-authored state
 (memory, entities, skill proposals, Office rooms, presentations) is
 Documents in the tenant store. Slice 4 is done (2026-10-04): execution
 state, drafts, Agent workspaces and run environments live outside the
-project tree. No session starts a later step unasked.
+project tree. Slice 5 is done (2026-10-04): every space-keyed store keys
+by a `spc_` id from the tenant space registry (`vak_config::spaces`),
+never a path hash. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -368,6 +370,15 @@ project tree. No session starts a later step unasked.
 - Keep Agent-authored state as Documents (`vak_session::documents`), never
   as a file written beside the data; a test that touches one isolates its
   home first.
+- Key anything about a workspace by its space id (`vak_config::spaces`),
+  never by its path. Only `spaces::bind` writes the registry: a writer of
+  space-keyed state binds its folder first (`SessionPath::new_session_file`
+  and the memory, entity and proposal writers do), a reader never binds, and
+  a ledger or Document under an `unbound-` key is refused
+  (`spaces::require_bound`). An Agent workspace is its space's; a run
+  environment is `env-<run>`, never a space.
+- A reader that decides something from a record chain (a status, whether a
+  grant is revoked) fails on a row it cannot decode; it never skips one.
 
 ### Pending: the visual refresh (V1, V2, V3 and V4.4 done; V4 in progress)
 

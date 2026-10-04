@@ -749,7 +749,7 @@ async fn create_revision(
         revision_session_id: None,
         narrowed: None,
     };
-    if vak_sandbox::append_record(
+    if crate::sandbox_records::append(
         &super::sandbox_records_path(state, &session_id),
         &vak_sandbox::DurableRecord::Candidate(saved.clone()),
     )

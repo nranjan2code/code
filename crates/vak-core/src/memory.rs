@@ -44,6 +44,14 @@ fn memory_path(home: &Path, cwd: &Path) -> PathBuf {
     vak_config::scope::AgentScope::new(home).memory_notes(cwd)
 }
 
+/// [`memory_path`] for a write: noting something about `cwd` treats it as a
+/// workspace, so it is bound to its space first; if that fails the store
+/// refuses the write under its `unbound-` key and says why.
+fn memory_write_path(home: &Path, cwd: &Path) -> PathBuf {
+    let _ = vak_config::spaces::bind(cwd);
+    memory_path(home, cwd)
+}
+
 /// Global profile-tier store, keyed to the user rather than a workspace.
 pub fn profile_path(home: &Path) -> PathBuf {
     vak_config::scope::AgentScope::new(home).user_memory()
@@ -57,7 +65,14 @@ pub fn append_note(
     session_id: &str,
     text: &str,
 ) -> Result<NoteBlock, String> {
-    append_block(&memory_path(home, cwd), kind, tag, session_id, None, text)
+    append_block(
+        &memory_write_path(home, cwd),
+        kind,
+        tag,
+        session_id,
+        None,
+        text,
+    )
 }
 
 /// `append_note` that also records the turn the note was derived from.
@@ -70,7 +85,14 @@ pub fn append_note_from_turn(
     turn: Option<&str>,
     text: &str,
 ) -> Result<NoteBlock, String> {
-    append_block(&memory_path(home, cwd), kind, tag, session_id, turn, text)
+    append_block(
+        &memory_write_path(home, cwd),
+        kind,
+        tag,
+        session_id,
+        turn,
+        text,
+    )
 }
 
 /// Append to the global USER.md profile tier (same grammar, same validation,
@@ -563,7 +585,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let cwd = home.join("retention-workspace");
-        let path = memory_path(home, &cwd);
+        let path = memory_write_path(home, &cwd);
         let raw = "## 2020-01-01T00:00:00+00:00 [fact] tag=old session=historical\nlong-lived knowledge\n";
         vak_session::documents::create(&path.join(&parse_blocks(raw)[0].id), raw).unwrap();
         let notes = list_notes(home, &cwd);

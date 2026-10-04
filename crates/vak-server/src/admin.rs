@@ -660,10 +660,17 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
     let mut bound_targets = std::collections::HashSet::new();
     for (target, binding) in gw.bindings_snapshot() {
         bound_targets.insert(target.clone());
-        let configured_workspace = gw.workspace_override_for_entry(&target);
+        let configured_workspace = gw
+            .configured_space(&target)
+            .and_then(|space| crate::gateway::space_folder(&space));
         let effective_workspace = configured_workspace
             .clone()
-            .or_else(|| binding.workspace.clone())
+            .or_else(|| {
+                binding
+                    .space
+                    .as_deref()
+                    .and_then(crate::gateway::space_folder)
+            })
             .unwrap_or_else(|| state.core.cwd().to_path_buf());
         let channel_override = binding.provider.clone().zip(binding.model.clone());
         let (provider, model, source, revision) = match &channel_override {
@@ -692,7 +699,11 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
                         .and_then(|session| session.header().cloned())
                 })
                 .or_else(|| {
-                    crate::read_historical_header(&state, session_id, binding.workspace.as_deref())
+                    let folder = binding
+                        .space
+                        .as_deref()
+                        .and_then(crate::gateway::space_folder);
+                    crate::read_historical_header(&state, session_id, folder.as_deref())
                 })
         });
         let stale_reasons = contract
@@ -777,8 +788,9 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
         bindings.push(serde_json::json!({
             "target": entry.key,
             "session_id": null,
-            "workspace": workspace,
-            "configured_workspace": gw.workspace_override_for_entry(&entry.key),
+            "workspace": workspace.as_ref().ok(),
+            "workspace_error": workspace.as_ref().err(),
+            "configured_workspace": crate::gateway::space_folder_json(gw.configured_space(&entry.key).as_deref()),
             "override": channel_override.map(|(provider, model)| serde_json::json!({
                 "provider": provider,
                 "model": model,
@@ -906,20 +918,8 @@ pub(crate) struct WorkspaceNamePatch {
     pub name: String,
 }
 
-fn workspace_names_path(state: &AppState) -> PathBuf {
-    state.core.scope().workspace_names()
-}
-
-fn read_workspace_names(state: &AppState) -> HashMap<String, String> {
-    let path = workspace_names_path(state);
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
 async fn patch_workspace_name(
-    State(state): State<AppState>,
+    State(_): State<AppState>,
     Json(body): Json<WorkspaceNamePatch>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let path = std::path::PathBuf::from(body.path.trim());
@@ -937,46 +937,18 @@ async fn patch_workspace_name(
         ));
     }
     let key = path.to_string_lossy().to_string();
-    let mut names = read_workspace_names(&state);
-    names.insert(key.clone(), name.to_string());
-    let destination = workspace_names_path(&state);
-    let temp = destination.with_extension("json.tmp");
-    let content = serde_json::to_vec_pretty(&names).map_err(|e| {
+    vak_config::spaces::set_name(&path, name).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("could not encode workspace names: {e}"),
-        )
-    })?;
-    if let Some(parent) = destination.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("could not create workspace registry: {e}"),
-            )
-        })?;
-    }
-    tokio::fs::write(&temp, content).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("could not write workspace registry: {e}"),
-        )
-    })?;
-    tokio::fs::rename(&temp, &destination).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("could not commit workspace registry: {e}"),
+            format!("could not name the workspace: {e}"),
         )
     })?;
     Ok(Json(serde_json::json!({ "path": key, "name": name })))
 }
 
-/// Workspaces vak has session ledgers for, newest-first, plus the
-/// gateway's own cwd and any currently pooled workspace.
-///
-/// Sessions are stored per-cwd (`<home>/sessions/<hash>/<id>.jsonl`) and
-/// the real path lives in each ledger's header, so this reads only the
-/// first line of one file per project directory — no store rebuild, no
-/// `Core` start.
+/// The workspaces the console offers: the default, the gateway's own, the
+/// current one, every pooled one, then every space this machine has opened
+/// (`vak_config::spaces`), most recent first, minus forgotten ones.
 fn known_workspaces(state: &AppState) -> Vec<String> {
     let mut seen: Vec<String> = vec![vak_config::paths::default_workspace().display().to_string()];
     let gateway_workspace = vak_config::paths::gateway_workspace_at(
@@ -1003,46 +975,35 @@ fn known_workspaces(state: &AppState) -> Vec<String> {
     {
         push(entry.workspace.display().to_string());
     }
-    let shared = state.core.shared_scope().into_root();
-    let mut scan_sessions_root = |sessions_root: std::path::PathBuf| {
-        let Ok(projects) = std::fs::read_dir(&sessions_root) else {
-            return;
-        };
-        for project in projects.flatten() {
-            let Ok(files) = std::fs::read_dir(project.path()) else {
-                continue;
-            };
-            for file in files.flatten() {
-                let path = file.path();
-                if let Ok(header) = vak_session::SessionLog::read_header(&path) {
-                    push(header.cwd.display().to_string());
-                    break;
-                }
-            }
-        }
-    };
-    scan_sessions_root(state.core.scope().sessions_root());
-    if let Ok(agents) = std::fs::read_dir(vak_config::scope::SharedScope::new(&shared).agents_dir())
-    {
-        for agent in agents.flatten() {
-            scan_sessions_root(vak_config::scope::AgentScope::new(agent.path()).sessions_root());
+    for space in vak_config::spaces::all() {
+        if !space.forgotten
+            && let Some(folder) = space.folder
+        {
+            push(folder.display().to_string());
         }
     }
     seen
 }
 
 pub(crate) fn workspace_catalog(state: &AppState) -> Vec<serde_json::Value> {
-    let names = read_workspace_names(state);
     known_workspaces(state)
         .into_iter()
         .map(|path| {
-            let fallback = std::path::Path::new(&path)
+            let folder = std::path::Path::new(&path);
+            let named = vak_config::spaces::bound_space(folder).and_then(|id| {
+                vak_config::spaces::all()
+                    .into_iter()
+                    .find(|space| space.id == id)
+                    .and_then(|space| space.name)
+            });
+            let fallback = folder
                 .file_name()
                 .and_then(|value| value.to_str())
-                .unwrap_or(&path);
+                .unwrap_or(&path)
+                .to_string();
             serde_json::json!({
                 "path": path,
-                "name": names.get(&path).cloned().unwrap_or_else(|| fallback.to_string()),
+                "name": named.unwrap_or(fallback),
             })
         })
         .collect()
@@ -1205,9 +1166,10 @@ fn resolve_entry_permission(
     // Same precedence `core_for_entry` uses: the chat's own workspace, else
     // its bot's, else the gateway's default.
     let workspace = e
-        .workspace
+        .space
         .clone()
-        .or_else(|| bot.as_ref().and_then(|b| b.workspace.clone()))
+        .or_else(|| bot.as_ref().and_then(|b| b.space.clone()))
+        .and_then(|space| crate::gateway::space_folder(&space))
         .unwrap_or_else(|| state.core.cwd().clone());
     crate::gateway::resolve_channel_permission(
         &workspace,
@@ -1243,7 +1205,8 @@ fn allowlist_entry_json(state: &AppState, e: &crate::gateway::AllowlistEntry) ->
     serde_json::json!({
         "key": e.key,
         "status": e.status,
-        "workspace": e.workspace,
+        "space": e.space,
+        "workspace": crate::gateway::space_folder_json(e.space.as_deref()),
         "agent_id": e.agent_id,
         "effective_agent_id": effective_agent_id,
         "route": e.route,
@@ -1339,9 +1302,10 @@ fn record_permission_cap(state: &AppState, key: &str, entry: &crate::gateway::Al
         &format!(
             "key={key} workspace={} requested={} capped_to={} by={ceiling}",
             entry
-                .workspace
-                .as_ref()
-                .unwrap_or(state.core.cwd())
+                .space
+                .as_deref()
+                .and_then(crate::gateway::space_folder)
+                .unwrap_or_else(|| state.core.cwd().clone())
                 .display(),
             resolved
                 .requested
@@ -1430,10 +1394,14 @@ pub(crate) async fn approve_gateway_allowlist(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    let space = match vak_config::spaces::bind(&workspace) {
+        Ok(space) => space,
+        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
+    };
     let entry = state.gateway.allowlist_approve(
         &state.core,
         &key,
-        workspace,
+        space,
         body.agent_id
             .as_deref()
             .map(str::trim)
@@ -1453,7 +1421,7 @@ pub(crate) async fn approve_gateway_allowlist(
         &format!("key={key}"),
         None,
     );
-    note_workspace_trust(&state, entry.workspace.as_deref());
+    note_workspace_trust(&state, Some(&workspace));
     record_permission_cap(&state, &key, &entry);
     state
         .hub
@@ -1616,10 +1584,18 @@ pub(crate) async fn patch_gateway_allowlist(
         )
             .into_response();
     }
+    let space = match workspace
+        .as_deref()
+        .map(vak_config::spaces::bind)
+        .transpose()
+    {
+        Ok(space) => space,
+        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
+    };
     let Some(entry) = state.gateway.allowlist_patch(
         &state.core,
         &key,
-        workspace,
+        space,
         agent_id,
         route,
         permission_mode,
@@ -1644,8 +1620,7 @@ pub(crate) async fn patch_gateway_allowlist(
         "chat_edited",
         &format!(
             "key={key} workspace={} permission_mode={}",
-            entry
-                .workspace
+            workspace
                 .as_ref()
                 .map(|w| w.display().to_string())
                 .unwrap_or_else(|| "(inherit)".into()),
@@ -1656,7 +1631,7 @@ pub(crate) async fn patch_gateway_allowlist(
         ),
         None,
     );
-    note_workspace_trust(&state, entry.workspace.as_deref());
+    note_workspace_trust(&state, workspace.as_deref());
     state
         .hub
         .emit_config_changed("gateway_allowlist_patched", &key);
@@ -2215,7 +2190,11 @@ mod tests {
         // The point of this endpoint: the workspace is explicit in the
         // response even when the caller didn't supply one.
         let ws = json["workspace"].as_str().expect("workspace must be shown");
-        assert_eq!(std::path::Path::new(ws), state.core.cwd().as_path());
+        assert_eq!(
+            std::path::Path::new(ws),
+            state.core.cwd().canonicalize().unwrap(),
+            "a binding is the canonical folder"
+        );
     }
 
     #[tokio::test]
@@ -2459,7 +2438,7 @@ mod tests {
         state.gateway.allowlist_approve(
             &state.core,
             "telegram:66",
-            ws.path().to_path_buf(),
+            vak_config::spaces::bind(ws.path()).unwrap(),
             None,
             None,
             Some(vak_config::PermissionMode::ReadOnly),
@@ -2653,7 +2632,13 @@ mod tests {
             "entry kept a route the binding cleared"
         );
         // The workspace is untouched by a route-only edit.
-        assert_eq!(entry.workspace.unwrap().to_string_lossy(), "/tmp/one");
+        let folder = crate::gateway::space_folder(&entry.space.unwrap()).unwrap();
+        assert_eq!(
+            folder,
+            std::path::Path::new("/tmp/one")
+                .canonicalize()
+                .unwrap_or_else(|_| "/tmp/one".into())
+        );
     }
 
     #[test]

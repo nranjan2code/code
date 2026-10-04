@@ -1282,17 +1282,9 @@ impl Core {
         let config = vak_config::load_with_trust(&cwd, trust_project_config)?;
         let route = route_from_config(&cwd, &config, false);
         let route_fingerprint = vak_config::config_fingerprint(&cwd);
-        // Canonical layout (doc 32): one resolver for the whole workspace.
-        // The cwd fallback covers exotic environments with no HOME.
+        // Canonical layout (doc 32): one resolver, which never falls back to
+        // the workspace (invariant 18).
         let sessions_home = vak_config::paths::data_home();
-        let sessions_home = if std::env::var_os("VAK_HOME").is_none()
-            && std::env::var_os("HOME").is_none()
-            && std::env::var_os("USERPROFILE").is_none()
-        {
-            vak_config::scope::WorkspaceScope::new(&cwd).project_dir()
-        } else {
-            sessions_home
-        };
         // Invariant 29: a data home written before the 7.0 baseline is
         // refused with the one message; a 7.0 home carries its tenant tree
         // from its first use (docs/design/73 §6).
@@ -2200,20 +2192,15 @@ impl Core {
         }
     }
 
-    fn plugin_mcp_invocation_context(&self) -> Vec<(vak_plugin::PluginStore, String, String)> {
-        let mut context = Vec::new();
-        for root in self.capability_roots() {
-            let store = vak_plugin::PluginStore::new(root.path);
-            let Ok(plugins) = store.enabled() else {
-                continue;
-            };
-            context.extend(
-                plugins
-                    .into_iter()
-                    .map(|plugin| (store.clone(), plugin.name, plugin.trace_id)),
-            );
-        }
-        context
+    /// The enabled plugins, by name, an MCP call's Activity row is credited
+    /// to.
+    fn enabled_plugin_names(&self) -> Vec<String> {
+        self.capability_roots()
+            .into_iter()
+            .filter_map(|root| vak_plugin::PluginStore::new(root.path).enabled().ok())
+            .flatten()
+            .map(|plugin| plugin.name)
+            .collect()
     }
 
     pub fn apply_channel_policy(&self, policy: vak_config::ChannelPolicy) {
@@ -3243,7 +3230,7 @@ impl Core {
     /// Reopens an existing session ledger for resumed runs.
     pub async fn open_session(&self, session_id: &str) -> Result<SessionLog, CoreError> {
         self.refuse_trashed(session_id)?;
-        let path = vak_session::SessionPath::new_session_file(
+        let path = vak_session::SessionPath::existing_session_file(
             self.scope().root(),
             &self.inner.cwd,
             session_id,
@@ -3254,7 +3241,7 @@ impl Core {
     /// Opens an existing session ledger in read-only mode without acquiring an exclusive write lock.
     pub async fn open_session_read_only(&self, session_id: &str) -> Result<SessionLog, CoreError> {
         self.refuse_trashed(session_id)?;
-        let path = vak_session::SessionPath::new_session_file(
+        let path = vak_session::SessionPath::existing_session_file(
             self.scope().root(),
             &self.inner.cwd,
             session_id,
@@ -6949,16 +6936,16 @@ impl Core {
             // manager is reused across turns and this lazy meta-tool only
             // connects when the model calls it.
             let policy = self.channel_policy().unwrap_or_default();
-            let context = self.plugin_mcp_invocation_context();
+            let plugins = self.enabled_plugin_names();
             let activity_ledger = finops::ActivityLedger::new(self.scope().root());
             let activity_session = session.header().map(|h| h.session_id.clone());
             let activity_trace = run_trace.clone();
             let recorder = Arc::new(
                 move |server: &str, tool: &str, success: bool, duration_ms: u64| {
-                    let plugin = context
+                    let plugin = plugins
                         .iter()
-                        .find(|(_, plugin, _)| server.starts_with(&format!("plugin.{plugin}.")))
-                        .map(|(_, plugin, _)| plugin.clone());
+                        .find(|plugin| server.starts_with(&format!("plugin.{plugin}.")))
+                        .cloned();
                     let _ = activity_ledger.append(&finops::ActivityRow {
                         ts: chrono::Utc::now(),
                         kind: "mcp".into(),
@@ -6971,17 +6958,6 @@ impl Core {
                         actor: activity_trace.actor,
                         trace: Some(activity_trace.child()),
                     });
-                    for (store, plugin, trace_id) in &context {
-                        if server.starts_with(&format!("plugin.{plugin}.")) {
-                            let _ = store.record_invocation(
-                                trace_id,
-                                plugin,
-                                &format!("mcp:{server}/{tool}"),
-                                success,
-                            );
-                            break;
-                        }
-                    }
                 },
             );
             let admitted_servers = turn_capabilities.mcp_server_names.clone();
@@ -7281,7 +7257,6 @@ impl Core {
         let hooks: std::sync::Arc<Vec<vak_hooks::HookDef>> =
             std::sync::Arc::new(turn_capabilities.hooks);
         cfg.hooks = Some(hooks.clone());
-        let shared_root = self.shared_capability_root();
         let plugin_hooks: Vec<_> = self
             .capability_roots()
             .into_iter()
@@ -7291,8 +7266,6 @@ impl Core {
                     .unwrap_or_default()
             })
             .collect();
-        let shared_home = shared_root;
-        let workspace_home = self.workspace_scope().project_dir();
         let activity_ledger = finops::ActivityLedger::new(self.scope().root());
         let activity_session = session.header().map(|h| h.session_id.clone());
         let hook_trace = run_trace.clone();
@@ -7317,21 +7290,6 @@ impl Core {
                     actor: hook_trace.actor,
                     trace: Some(hook_trace.child()),
                 });
-                if let Some((plugin, _)) = plugin_hooks
-                    .iter()
-                    .find(|(_, candidate)| candidate.command == hook.command)
-                {
-                    let store = vak_plugin::PluginStore::new(match plugin.scope {
-                        vak_plugin::InstallScope::User => &shared_home,
-                        vak_plugin::InstallScope::Workspace => &workspace_home,
-                    });
-                    let _ = store.record_invocation(
-                        &plugin.trace_id,
-                        &plugin.name,
-                        &format!("hook:{}", hook.event.as_str()),
-                        success,
-                    );
-                }
             },
         ));
         let tool_activity_ledger = finops::ActivityLedger::new(self.scope().root());

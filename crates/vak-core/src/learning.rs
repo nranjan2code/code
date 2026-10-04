@@ -257,6 +257,7 @@ impl vak_tools::Tool for ProposeSkillTool {
         }
 
         let id = uuid::Uuid::now_v7().simple().to_string();
+        let _ = vak_config::spaces::bind(&self.cwd);
         let dir = proposals_dir(
             &vak_config::scope::AgentScope::new(&self.sessions_home),
             &self.cwd,
@@ -696,6 +697,8 @@ mod tests {
         let home = dir.path().join("home");
         let cwd = dir.path().join("ws");
         std::fs::create_dir_all(&cwd).unwrap();
+        // The workspace is opened (bound to its space), as a Core would.
+        vak_config::spaces::bind(&cwd).unwrap();
         (dir, home, cwd)
     }
 

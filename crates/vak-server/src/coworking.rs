@@ -6,7 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
 
@@ -103,29 +102,21 @@ pub fn token_hash(token: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(token.as_bytes()))
 }
 
+/// Grant events are a record chain (`AgentScope::coworking_grants`), never a
+/// file appended to directly.
 fn append(path: &Path, event: &GrantEvent) -> Result<(), Error> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut line = serde_json::to_vec(event).map_err(|error| Error::Invalid(error.to_string()))?;
-    line.push(b'\n');
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    file.write_all(&line)?;
-    file.sync_data()?;
-    Ok(())
+    vak_session::chain::RecordChain::at(path)
+        .append(event)
+        .map_err(|error| Error::Invalid(error.to_string()))
 }
 
+/// Every grant event, in order. A row that does not decode is an error,
+/// never skipped: a skipped revocation would leave a grant valid.
 fn load(path: &Path) -> Result<Vec<GrantEvent>, Error> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    std::fs::read_to_string(path)?
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).map_err(|error| Error::Invalid(error.to_string())))
+    vak_session::chain::RecordChain::at(path)
+        .read::<serde_json::Value>()
+        .into_iter()
+        .map(|row| serde_json::from_value(row).map_err(|error| Error::Invalid(error.to_string())))
         .collect()
 }
 
@@ -314,7 +305,7 @@ mod tests {
         let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
         let token = generate_token();
         invite(&path, grant(&token, "2026-09-22T00:00:00Z")).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
+        let text = vak_session::chain::RecordChain::at(&path).text();
         assert!(!text.contains(&token));
         let principal = verify(
             &path,
@@ -327,6 +318,24 @@ mod tests {
         .unwrap();
         assert_eq!(principal.principal_id, "person-2");
         assert_eq!(principal.capabilities, vec!["read", "comment"]);
+    }
+
+    #[test]
+    fn an_unreadable_grant_row_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
+        let token = generate_token();
+        invite(&path, grant(&token, "2026-09-22T00:00:00Z")).unwrap();
+        vak_session::chain::RecordChain::at(&path)
+            .append(&serde_json::json!({"not": "a grant event"}))
+            .unwrap();
+        let now = chrono::DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
+            .unwrap()
+            .into();
+        assert!(
+            verify(&path, &token, now).is_err(),
+            "a row that may be a revocation is never skipped"
+        );
     }
 
     #[test]

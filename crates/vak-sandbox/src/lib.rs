@@ -727,37 +727,6 @@ pub enum DurableRecord {
     CandidateRevision(CandidateRevisionRecord),
 }
 
-pub fn append_record(path: &Path, record: &DurableRecord) -> Result<(), Error> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut line = serde_json::to_vec(record)
-        .map_err(|e| Error::InvalidPlan(format!("record serialization failed: {e}")))?;
-    line.push(b'\n');
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    use std::io::Write;
-    file.write_all(&line)?;
-    file.sync_data()?;
-    Ok(())
-}
-
-pub fn load_records(path: &Path) -> Result<Vec<DurableRecord>, Error> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let text = fs::read_to_string(path)?;
-    text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            serde_json::from_str(line)
-                .map_err(|e| Error::InvalidPlan(format!("record parse failed: {e}")))
-        })
-        .collect()
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("path escapes its root: {0}")]
@@ -2494,9 +2463,8 @@ mod tests {
     }
 
     #[test]
-    fn durable_records_are_append_only_and_replayable() {
+    fn durable_records_round_trip_their_serialized_form() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sandbox").join("records.jsonl");
         let plan = EnvironmentPlan {
             id: "env-1".into(),
             outcome_revision: 7,
@@ -2517,7 +2485,6 @@ mod tests {
             updated_at: "2026-09-08T00:00:00Z".into(),
             detail: None,
         });
-        append_record(&path, &record).unwrap();
         let preparation = DurableRecord::PreviewPreparation(PreviewPreparationRecord {
             trace: None,
             actor: None,
@@ -2532,7 +2499,14 @@ mod tests {
             evidence: "dependencies prepared".into(),
             updated_at: "2026-09-08T00:01:00Z".into(),
         });
-        append_record(&path, &preparation).unwrap();
-        assert_eq!(load_records(&path).unwrap(), vec![record, preparation]);
+        // Where records are kept is the server's (a record chain); what this
+        // crate owns is that each one survives its serialized form intact.
+        for original in [record, preparation] {
+            let text = serde_json::to_string(&original).unwrap();
+            assert_eq!(
+                serde_json::from_str::<DurableRecord>(&text).unwrap(),
+                original
+            );
+        }
     }
 }

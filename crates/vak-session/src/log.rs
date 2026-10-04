@@ -144,6 +144,7 @@ impl SessionLog {
         })
     }
     pub fn create(path: PathBuf, header: SessionHeader) -> Result<Self, SessionError> {
+        vak_config::spaces::require_bound(&path).map_err(SessionError::Unbound)?;
         std::fs::create_dir_all(&path)?;
         // Cross-process safety: an exclusive lock for the lifetime of the
         // handle keeps two processes from interleaving appends.
@@ -2651,7 +2652,17 @@ impl SessionPath {
         vak_config::scope::AgentScope::new(home).sessions_dir(cwd)
     }
 
+    /// Where a new session's ledger goes. Creating a session for `cwd`
+    /// opens it as a workspace, so the folder is bound to its space first
+    /// (`vak_config::spaces::bind`); if that fails, the path keeps its
+    /// `unbound-` key and `SessionLog::create` refuses it with the reason.
     pub fn new_session_file(home: &Path, cwd: &Path, session_id: &str) -> PathBuf {
+        let _ = vak_config::spaces::bind(cwd);
+        Self::existing_session_file(home, cwd, session_id)
+    }
+
+    /// Where an existing session's ledger is; never binds a folder.
+    pub fn existing_session_file(home: &Path, cwd: &Path, session_id: &str) -> PathBuf {
         vak_config::scope::session_ledger(&Self::sessions_dir(home, cwd), session_id)
     }
 }

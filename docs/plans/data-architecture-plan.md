@@ -621,7 +621,7 @@ held nothing else but its `.vak/config.toml`. Step 2's design:
   and the space root.
 - `App.tsx:903` loses its `.vak/scratch` check.
 
-**Slice 5 — space identity (review R12)** — in progress.
+**Slice 5 — space identity (review R12)** — done 2026-10-04.
 Decided by the maintainer on 2026-10-04: a space id is a `spc_` UUIDv7 in
 the tenant registry (`tenants/<tenant>/spaces.toml`, Desired) with this
 machine's folder bindings, nothing is written into the project, and every
@@ -639,8 +639,23 @@ names its space (`TaskDef.space`), the scheduler and every task list
 compare space ids, a server runs only its own space's tasks in the folder
 it opened, and the task APIs project the folder as `workspace`. Test
 binaries isolate their home automatically, so no test reaches the real
-data home or keychain. Left: the allowlist workspace fields, the gateway
-default workspace and `/workspaces` with its names. Kept as paths, by
+data home or keychain. Step 2b done (2026-10-04): allowlist entries, bots
+and channel bindings store a space id (the admin API still takes and shows
+a folder, binding it when set); `gateway/default-workspace` holds a space
+id; recent, forgotten and named workspaces are fields of the space
+registry, so `workspaces.json` and `workspace-names.json` are gone and the
+console lists spaces instead of scanning ledger directories; the desktop
+trust gate goes through `vak_core::trust`, keyed by space. An audit the
+same day closed what slices 3 to 5 had left as bridges: a run's
+environment keys as `env-<run>` and never enters the registry; a chat set
+to a space with no folder here is refused, never moved to the default
+workspace; space-keyed writers bind first and a ledger or Document under an
+`unbound-` key is refused; sandbox records, execution streams and
+coworking grants are record chains whose decision readers fail on an
+undecodable row; the plugin invocation log, which duplicated Activity rows
+and sat in the project's `.vak`, is gone with its unused endpoint; and
+`Core` no longer falls back to a data home inside the project. The mail and
+calendar connection ledger stays its own encrypted file (doc 80). Kept as paths, by
 decision: `CorePool` keys (a `Core` is rooted at a folder, and one space's
 Agent workspaces are separate folders) and `[server] workspace_roots` (a
 browsing boundary, not a space).

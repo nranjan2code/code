@@ -61,6 +61,7 @@ pub fn update<T>(
     path: &Path,
     mut change: impl FnMut(Option<&str>) -> Result<Option<(String, T)>, String>,
 ) -> Result<Option<T>, String> {
+    vak_config::spaces::require_bound(path)?;
     let (name, scope) = name_and_scope(path);
     let docs = documents(&scope)?;
     for _ in 0..RETRIES {
@@ -111,6 +112,7 @@ pub fn under(dir: &Path) -> Vec<PathBuf> {
 /// Saves `content` as a new Document at `path`; fails if one is already
 /// there, so two writers can never both believe they created it.
 pub fn create(path: &Path, content: &str) -> Result<(), String> {
+    vak_config::spaces::require_bound(path)?;
     let (name, scope) = name_and_scope(path);
     documents(&scope)?
         .save(&name, content.as_bytes(), None)

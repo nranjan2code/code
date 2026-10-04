@@ -113,7 +113,7 @@ belongs to by id, never by position in the file. Audited at `0ab1e4ffb`:
 | Activity | `activity_id` | **ordinal** (`turn: Option<usize>`), not id | **no** | ordinals shift with branches and resets |
 | Approval | `approval-{request id}` | **no** (`turn: None`) | **no**: tool name and arguments only | |
 | Hook run | span id (`ActivityRow` in the FinOps ledger) | **no** | **no** for pre/post-tool hooks | outside the session ledger |
-| Plugin invocation | none (`trace_id` string) | no | no | `plugins/invocations.jsonl` |
+| Plugin invocation | an Activity row's `plugin` (no separate log since 2026-10-04) | yes | yes | `activity-log` |
 | Child run | child session `child-{uuid}-{seq}` | — | yes, `Cause::Delegation { tool_use_id }` | **empty** when the call has no sandbox sink |
 | Commitment, episode | yes | **no**: an episode names only its session | no | |
 | File effect | none; path only | no | yes, `execution_id` = call id | `ArtifactGenerated` in `sandbox/executions/{session}.jsonl`, written under the server Core's Agent home (D25); no content digest; reads are not recorded; typed `ArtifactId` unused |

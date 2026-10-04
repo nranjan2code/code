@@ -75,6 +75,7 @@ mod preview;
 mod projection;
 mod rate_limit;
 mod sandbox_output;
+mod sandbox_records;
 mod service_control;
 mod site;
 mod social;
@@ -884,7 +885,6 @@ fn router_with_state(state: AppState) -> Router {
         .route("/plugins", get(list_plugins))
         .route("/plugins/catalog", get(plugin_catalog))
         .route("/plugins/audit", get(plugin_audit))
-        .route("/plugins/invocations", get(plugin_invocations))
         .route(
             "/presentations",
             get(list_presentations).post(register_presentations),
@@ -1403,7 +1403,7 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
                 "session_id": binding.session_id,
                 "provider": binding.provider,
                 "model": binding.model,
-                "workspace": binding.workspace,
+                "workspace": crate::gateway::space_folder_json(binding.space.as_deref()),
                 "route_revision": binding.route_revision,
             })).collect::<Vec<_>>(),
             "approvals": {
@@ -1594,7 +1594,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
             serde_json::json!({
                 "target": target,
                 "session_id": binding.session_id,
-                "workspace": binding.workspace,
+                "workspace": crate::gateway::space_folder_json(binding.space.as_deref()),
                 "agent_id": agent_id,
                 "provider": binding
                     .provider
@@ -1613,7 +1613,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
         bindings.push(serde_json::json!({
             "target": entry.key,
             "session_id": null,
-            "workspace": state.gateway.workspace_for_entry(&state.core, &entry.key),
+            "workspace": state.gateway.workspace_for_entry(&state.core, &entry.key).ok(),
             "agent_id": entry.agent_id.as_deref().unwrap_or("vak"),
             "provider": entry.route.as_ref().map(|route| route.provider.clone()).unwrap_or_else(|| state.core.effective_provider()),
             "model": entry.route.as_ref().map(|route| route.model.clone()).unwrap_or_else(|| state.core.effective_model()),
@@ -4444,7 +4444,7 @@ pub(crate) fn index_session_later(
     });
 }
 
-/// Locate `<home>/sessions/<hash>/<session>.jsonl` and import it into the
+/// Locate `<home>/sessions/<space id>/<session>/` and import it into the
 /// index synchronously. Idempotent; cheap when nothing changed.
 pub(crate) fn import_session_sync(
     store: &vak_store::Store,
@@ -11270,22 +11270,6 @@ async fn plugin_audit(
     Json(serde_json::json!({ "audit": events })).into_response()
 }
 
-async fn plugin_invocations(
-    State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let core = scoped_core!(&state, None, q.agent.as_deref());
-    let mut events = Vec::new();
-    for scope in [InstallScope::User, InstallScope::Workspace] {
-        if let Ok(items) = plugin_store(&core, scope).invocations() {
-            events.extend(items);
-        }
-    }
-    events.sort_by_key(|event| event.at_unix);
-    Json(serde_json::json!({ "invocations": events })).into_response()
-}
-
 async fn plugin_sources(
     State(state): State<AppState>,
     Query(query): Query<PluginScopeQuery>,
@@ -12072,7 +12056,7 @@ fn all_sandbox_records(state: &AppState) -> Vec<vak_sandbox::DurableRecord> {
         .flatten()
         .flatten()
         .filter_map(|agent| {
-            vak_sandbox::load_records(
+            crate::sandbox_records::load(
                 &vak_config::scope::AgentScope::new(agent.path()).sandbox_records(),
             )
             .ok()
@@ -12118,17 +12102,11 @@ fn execution_artifact_path(
         .and_then(std::path::Path::parent)
         .and_then(std::path::Path::parent)
         .ok_or(StatusCode::NOT_FOUND)?;
-    let events_path = session_home
-        .join("sandbox")
-        .join("executions")
-        .join(format!("{session_id}.jsonl"));
-    let text = std::fs::read_to_string(events_path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let events_path =
+        vak_config::scope::AgentScope::new(session_home).sandbox_executions(session_id);
     let mut scratch = None;
     let mut reported = false;
-    for event in text
-        .lines()
-        .filter_map(|line| serde_json::from_str::<vak_tools::SandboxEvent>(line).ok())
-    {
+    for event in crate::sandbox_records::events::<vak_tools::SandboxEvent>(&events_path) {
         match event {
             vak_tools::SandboxEvent::ExecutionStarted {
                 execution_id: id,
@@ -12233,21 +12211,7 @@ async fn session_sandbox_executions(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = session_sandbox_events_path(&state, &id);
-    let text = match tokio::fs::read_to_string(&path).await {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": error.to_string()})),
-            )
-                .into_response();
-        }
-    };
-    let events = text
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .collect::<Vec<_>>();
+    let events = crate::sandbox_records::events::<serde_json::Value>(&path);
     Json(serde_json::json!({ "session_id": id, "events": events })).into_response()
 }
 
@@ -12264,27 +12228,8 @@ fn append_session_sandbox_event(
     if lines.is_empty() {
         return;
     }
-    let path = home
-        .join("sandbox")
-        .join("executions")
-        .join(format!("{session_id}.jsonl"));
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if std::fs::create_dir_all(parent).is_err() {
-        return;
-    }
-    let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
-        return;
-    };
-    use std::io::Write;
-    for line in lines {
-        let _ = writeln!(file, "{line}");
-    }
+    let path = vak_config::scope::AgentScope::new(home).sandbox_executions(session_id);
+    let _ = crate::sandbox_records::append_events(&path, &lines);
 }
 
 async fn list_sandbox_records(State(state): State<AppState>) -> axum::response::Response {
@@ -12305,7 +12250,7 @@ async fn list_session_sandbox_records(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = sandbox_records_path(&state, &id);
-    match vak_sandbox::load_records(&path) {
+    match crate::sandbox_records::load(&path) {
         Ok(records) => {
             let records = records
                 .into_iter()
@@ -12379,17 +12324,16 @@ fn sandbox_execution_scratch(
     execution_id: &str,
 ) -> Option<std::path::PathBuf> {
     let workspace = sandbox_session_workspace(state, session_id)?;
-    let text = std::fs::read_to_string(session_sandbox_events_path(state, session_id)).ok()?;
-    text.lines().find_map(|line| {
-        let event = serde_json::from_str::<vak_tools::SandboxEvent>(line).ok()?;
-        match event {
-            vak_tools::SandboxEvent::ExecutionStarted {
-                execution_id: observed,
-                scratch_dir,
-                ..
-            } if observed == execution_id => execution_path(&workspace, &scratch_dir),
-            _ => None,
-        }
+    let events = crate::sandbox_records::events::<vak_tools::SandboxEvent>(
+        &session_sandbox_events_path(state, session_id),
+    );
+    events.into_iter().find_map(|event| match event {
+        vak_tools::SandboxEvent::ExecutionStarted {
+            execution_id: observed,
+            scratch_dir,
+            ..
+        } if observed == execution_id => execution_path(&workspace, &scratch_dir),
+        _ => None,
     })
 }
 
@@ -12607,7 +12551,7 @@ async fn export_sandbox_candidate(
                 revision_session_id: None,
                 narrowed: None,
             });
-            match vak_sandbox::append_record(&records_path, &record) {
+            match crate::sandbox_records::append(&records_path, &record) {
                 Ok(()) => Json(record).into_response(),
                 Err(error) => {
                     let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
@@ -12633,7 +12577,7 @@ async fn sandbox_candidate_file_bytes(
     candidate_id: &str,
     relative_path: &str,
 ) -> Result<Vec<u8>, StatusCode> {
-    let records = match vak_sandbox::load_records(&sandbox_records_path(state, session_id)) {
+    let records = match crate::sandbox_records::load(&sandbox_records_path(state, session_id)) {
         Ok(records) => records,
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
@@ -12676,7 +12620,7 @@ fn saved_candidate(
     session_id: &str,
     candidate_id: &str,
 ) -> Result<vak_sandbox::CandidateRecord, StatusCode> {
-    let records = vak_sandbox::load_records(&sandbox_records_path(state, session_id))
+    let records = crate::sandbox_records::load(&sandbox_records_path(state, session_id))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     records
         .into_iter()
@@ -13093,7 +13037,7 @@ async fn narrow_sandbox_candidate_office(
             "choose changes from the full draft, not from a version made from it".into(),
         );
     }
-    let applied = vak_sandbox::load_records(&sandbox_records_path(&state, &session_id))
+    let applied = crate::sandbox_records::load(&sandbox_records_path(&state, &session_id))
         .map(|records| {
             records.iter().any(|record| {
                 matches!(record, vak_sandbox::DurableRecord::Promotion(promoted)
@@ -13196,7 +13140,7 @@ async fn narrow_sandbox_candidate_office(
             keep: body.keep,
         }),
     });
-    match vak_sandbox::append_record(&sandbox_records_path(&state, &session_id), &record) {
+    match crate::sandbox_records::append(&sandbox_records_path(&state, &session_id), &record) {
         Ok(()) => Json(record).into_response(),
         Err(error) => {
             let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
@@ -13271,7 +13215,7 @@ async fn list_sandbox_candidate_comments(
     Path((session_id, candidate_id)): Path<(String, String)>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state, &session_id)) {
+    let records = match crate::sandbox_records::load(&sandbox_records_path(&state, &session_id)) {
         Ok(records) => records,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -13349,7 +13293,7 @@ async fn comment_on_sandbox_candidate(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state, &session_id)) {
+    let records = match crate::sandbox_records::load(&sandbox_records_path(&state, &session_id)) {
         Ok(records) => records,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -13579,7 +13523,7 @@ async fn dispatch_candidate_revision(
             .into_response();
     };
     let records_path = sandbox_records_path(&state, &saved.session_id);
-    let records = match vak_sandbox::load_records(&records_path) {
+    let records = match crate::sandbox_records::load(&records_path) {
         Ok(records) => records,
         Err(error) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
@@ -13619,7 +13563,7 @@ async fn dispatch_candidate_revision(
                 if active {
                     return (StatusCode::ACCEPTED, Json(serde_json::json!({"request_id": previous.revision_id, "state": "running"}))).into_response();
                 }
-                let _ = vak_sandbox::append_record(&records_path, &vak_sandbox::DurableRecord::CandidateRevision(vak_sandbox::CandidateRevisionRecord {
+                let _ = crate::sandbox_records::append(&records_path, &vak_sandbox::DurableRecord::CandidateRevision(vak_sandbox::CandidateRevisionRecord {
                     record_id: format!("revision-{}-interrupted", previous.revision_id),
                     status: vak_sandbox::CandidateRevisionStatus::Failed,
                     detail: Some("The isolated revision was interrupted before a new candidate was saved".into()),
@@ -13736,7 +13680,7 @@ async fn dispatch_candidate_revision(
         detail: None,
         updated_at: chrono::Utc::now().to_rfc3339(),
     };
-    if let Err(error) = vak_sandbox::append_record(
+    if let Err(error) = crate::sandbox_records::append(
         &records_path,
         &vak_sandbox::DurableRecord::CandidateRevision(running.clone()),
     ) {
@@ -13758,7 +13702,7 @@ async fn dispatch_candidate_revision(
         if let Ok(mut admissions) = parent.admissions.lock() {
             admissions.remove(&admission);
         }
-        let _ = vak_sandbox::append_record(
+        let _ = crate::sandbox_records::append(
             &records_path,
             &vak_sandbox::DurableRecord::CandidateRevision(vak_sandbox::CandidateRevisionRecord {
                 record_id: format!("revision-{revision_id}-failed"),
@@ -13861,7 +13805,7 @@ async fn dispatch_candidate_revision(
                                     revision_session_id: Some(child_session_id.clone()),
                                     narrowed: None,
                                 };
-                                match vak_sandbox::append_record(
+                                match crate::sandbox_records::append(
                                     &records_path,
                                     &vak_sandbox::DurableRecord::Candidate(record),
                                 ) {
@@ -13923,7 +13867,7 @@ async fn dispatch_candidate_revision(
             updated_at: chrono::Utc::now().to_rfc3339(),
             ..running
         };
-        let _ = vak_sandbox::append_record(
+        let _ = crate::sandbox_records::append(
             &records_path,
             &vak_sandbox::DurableRecord::CandidateRevision(finished),
         );
@@ -13958,7 +13902,7 @@ async fn request_revision_from_candidate_comment(
     Path((session_id, candidate_id, comment_id)): Path<(String, String, String)>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state, &session_id)) {
+    let records = match crate::sandbox_records::load(&sandbox_records_path(&state, &session_id)) {
         Ok(records) => records,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -14056,7 +14000,7 @@ async fn promote_sandbox_candidate(
         )
             .into_response();
     }
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state, &session_id)) {
+    let records = match crate::sandbox_records::load(&sandbox_records_path(&state, &session_id)) {
         Ok(records) => records,
         Err(error) => {
             return (
@@ -14168,7 +14112,7 @@ async fn promote_sandbox_candidate(
         workspace_checks: selected_workspace_checks,
         updated_at: chrono::Utc::now().to_rfc3339(),
     });
-    if let Err(error) = vak_sandbox::append_record(&records_path, &record) {
+    if let Err(error) = crate::sandbox_records::append(&records_path, &record) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
@@ -14242,7 +14186,7 @@ async fn undo_sandbox_promotion(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let records_path = sandbox_records_path(&state, &session_id);
-    let records = match vak_sandbox::load_records(&records_path) {
+    let records = match crate::sandbox_records::load(&records_path) {
         Ok(records) => records,
         Err(error) => {
             return (
@@ -14303,7 +14247,7 @@ async fn undo_sandbox_promotion(
         updated_at: chrono::Utc::now().to_rfc3339(),
     };
     let durable = vak_sandbox::DurableRecord::PromotionUndo(record);
-    if let Err(error) = vak_sandbox::append_record(&records_path, &durable) {
+    if let Err(error) = crate::sandbox_records::append(&records_path, &durable) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": error.to_string() })),
@@ -14325,7 +14269,7 @@ async fn run_sandbox_workspace_check(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let records_path = sandbox_records_path(&state, &session_id);
-    let records = match vak_sandbox::load_records(&records_path) {
+    let records = match crate::sandbox_records::load(&records_path) {
         Ok(records) => records,
         Err(error) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
@@ -14442,7 +14386,7 @@ async fn run_sandbox_workspace_check(
         updated_at: chrono::Utc::now().to_rfc3339(),
     };
     let durable = vak_sandbox::DurableRecord::WorkspaceCheck(record);
-    match vak_sandbox::append_record(&records_path, &durable) {
+    match crate::sandbox_records::append(&records_path, &durable) {
         Ok(()) => Json(durable).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
@@ -15663,6 +15607,10 @@ async fn list_bots(State(state): State<AppState>) -> Json<serde_json::Value> {
             let mut value = serde_json::to_value(&bot).unwrap_or_else(|_| serde_json::json!({}));
             if let Some(map) = value.as_object_mut() {
                 map.insert("token_configured".into(), serde_json::json!(configured));
+                map.insert(
+                    "workspace".into(),
+                    crate::gateway::space_folder_json(bot.space.as_deref()),
+                );
             }
             value
         })
@@ -15815,10 +15763,19 @@ async fn update_bot(
         bot.route = route;
     }
     if let Some(ws) = body.workspace {
-        bot.workspace = match ws {
+        bot.space = match ws {
             None => None,
             Some(ws) if ws.trim().is_empty() => None,
-            Some(ws) => Some(PathBuf::from(ws.trim())),
+            Some(ws) => match vak_config::spaces::bind(std::path::Path::new(ws.trim())) {
+                Ok(space) => Some(space),
+                Err(error) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": error })),
+                    )
+                        .into_response();
+                }
+            },
         };
     }
     if let Some(voice) = body.voice {
@@ -21323,7 +21280,7 @@ fn saved_launch_candidate(
     session_id: &str,
     candidate_id: &str,
 ) -> Result<vak_sandbox::CandidateRecord, String> {
-    vak_sandbox::load_records(&sandbox_records_path(state, session_id))
+    crate::sandbox_records::load(&sandbox_records_path(state, session_id))
         .map_err(|error| error.to_string())?
         .into_iter()
         .rev()
@@ -21451,7 +21408,7 @@ fn append_preview_preparation(
             evidence: evidence.into(),
             updated_at: chrono::Utc::now().to_rfc3339(),
         });
-    vak_sandbox::append_record(&sandbox_records_path(state, &saved.session_id), &record)
+    crate::sandbox_records::append(&sandbox_records_path(state, &saved.session_id), &record)
         .map_err(|error| error.to_string())
 }
 
@@ -23382,11 +23339,12 @@ mod sandbox_promotion_tests {
             .unwrap()
             .parent()
             .unwrap();
-        let events = home.join("sandbox/executions/session-1.jsonl");
-        std::fs::create_dir_all(events.parent().unwrap()).unwrap();
+        let events = home.join("sandbox/executions/session-1");
         let started = serde_json::json!({"kind":"ExecutionStarted","execution_id":"exec-1","owner_session_id":"session-1","tool":"office_apply","code_preview":"","language":"json","scratch_dir":scratch});
         let artifact = serde_json::json!({"kind":"ArtifactGenerated","execution_id":"exec-1","path":".vak/scratch/vak/exec-1/draft.xlsx","mime_type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","size_bytes":5});
-        std::fs::write(events, format!("{started}\n{artifact}\n")).unwrap();
+        vak_session::chain::RecordChain::at(&events)
+            .append_all(&[started, artifact])
+            .unwrap();
         drop(log);
         let state = AppState::new(core);
         assert_eq!(
@@ -24725,7 +24683,7 @@ mod sandbox_promotion_tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(!dir.path().join("result.json").exists());
         assert_eq!(
-            vak_sandbox::load_records(&sandbox_records_path(&state, "session-1"))
+            crate::sandbox_records::load(&sandbox_records_path(&state, "session-1"))
                 .unwrap()
                 .len(),
             3
@@ -25190,7 +25148,8 @@ mod sandbox_promotion_tests {
         let newer = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 let records =
-                    vak_sandbox::load_records(&sandbox_records_path(&state, "session-1")).unwrap();
+                    crate::sandbox_records::load(&sandbox_records_path(&state, "session-1"))
+                        .unwrap();
                 if let Some(record) = records.iter().rev().find_map(|record| match record {
                     vak_sandbox::DurableRecord::Candidate(candidate)
                         if candidate.parent_candidate_id.as_deref()
@@ -25321,7 +25280,8 @@ mod sandbox_promotion_tests {
         let newer = tokio::time::timeout(Duration::from_secs(30), async {
             loop {
                 let records =
-                    vak_sandbox::load_records(&sandbox_records_path(&state, "session-1")).unwrap();
+                    crate::sandbox_records::load(&sandbox_records_path(&state, "session-1"))
+                        .unwrap();
                 if let Some(failed) = records.iter().rev().find_map(|record| match record {
                     vak_sandbox::DurableRecord::CandidateRevision(revision)
                         if revision.status == vak_sandbox::CandidateRevisionStatus::Failed =>
@@ -25468,8 +25428,8 @@ mod sandbox_promotion_tests {
             &mut crate::sandbox_output::test_spool(),
             &finish,
         );
-        let path = dir.path().join("sandbox/executions/parent-session.jsonl");
-        let lines = std::fs::read_to_string(path).unwrap();
+        let path = dir.path().join("sandbox/executions/parent-session");
+        let lines = vak_session::chain::RecordChain::at(path).text();
         assert_eq!(lines.lines().count(), 2);
         assert!(lines.contains("child-session"));
         assert!(lines.contains("ExecutionFinished"));

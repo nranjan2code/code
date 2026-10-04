@@ -1153,6 +1153,10 @@ pub enum SessionError {
     Locked(std::path::PathBuf),
     #[error("object store: {0}")]
     Objects(String),
+    /// The ledger's workspace was never opened as a space
+    /// (`vak_config::spaces::require_bound`).
+    #[error("{0}")]
+    Unbound(String),
 }
 
 #[cfg(test)]

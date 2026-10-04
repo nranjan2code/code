@@ -77,8 +77,9 @@ pub fn default_workspace() -> PathBuf {
     resolve(get_var("VAK_HOME").as_deref()).workspace
 }
 
-/// The gateway's persisted workspace selection. An absent or malformed
-/// selection intentionally falls back to the canonical default workspace.
+/// The gateway's persisted workspace selection: the folder its selected
+/// space is bound to here. An absent selection, or a space with no folder on
+/// this machine, falls back to the canonical default workspace.
 pub fn gateway_workspace() -> PathBuf {
     let homes = resolve(get_var("VAK_HOME").as_deref());
     gateway_workspace_at(&homes.data, &homes.workspace)
@@ -158,18 +159,22 @@ pub fn agent_workspace_space(cwd: &std::path::Path) -> Option<PathBuf> {
     crate::spaces::bindings(&space).into_iter().next()
 }
 
-/// Resolve the gateway workspace from an explicit data home. This variant
-/// keeps server tests isolated when a `Core` uses a temporary sessions home.
+/// [`gateway_workspace`] under the data home `data`. The selection is a
+/// space id in `gateway/default-workspace`, never a folder path.
 pub fn gateway_workspace_at(data: &std::path::Path, default: &std::path::Path) -> PathBuf {
-    let path = data.join("gateway/default-workspace");
-    std::fs::read_to_string(path)
+    std::fs::read_to_string(data.join("gateway/default-workspace"))
         .ok()
-        .map(|raw| PathBuf::from(raw.trim()))
-        .filter(|workspace| workspace.is_absolute() && workspace.is_dir())
+        .and_then(|space| {
+            crate::spaces::bindings_at(data, space.trim())
+                .into_iter()
+                .next()
+        })
+        .filter(|workspace| workspace.is_dir())
         .unwrap_or_else(|| default.to_path_buf())
 }
 
-/// Persist or clear the user-selected gateway workspace atomically.
+/// Persist or clear the gateway's selected workspace atomically, as the
+/// space its folder is bound to.
 pub fn persist_gateway_workspace_at(
     data: &std::path::Path,
     workspace: Option<&std::path::Path>,
@@ -179,8 +184,9 @@ pub fn persist_gateway_workspace_at(
     let path = dir.join("default-workspace");
     match workspace {
         Some(workspace) => {
+            let space = crate::spaces::bind_at(data, workspace).map_err(std::io::Error::other)?;
             let temp = dir.join(format!(".default-workspace.{}.tmp", std::process::id()));
-            std::fs::write(&temp, format!("{}\n", workspace.display()))?;
+            std::fs::write(&temp, format!("{space}\n"))?;
             std::fs::rename(temp, path)?;
         }
         None => match std::fs::remove_file(path) {
@@ -553,17 +559,26 @@ mod tests {
         assert_eq!(gateway_workspace_at(data.path(), &default), default);
         let selected = tempfile::tempdir().unwrap();
         persist_gateway_workspace_at(data.path(), Some(selected.path())).unwrap();
-        assert_eq!(gateway_workspace_at(data.path(), &default), selected.path());
+        let stored =
+            std::fs::read_to_string(data.path().join("gateway/default-workspace")).unwrap();
+        assert!(
+            stored.trim().starts_with(crate::spaces::PREFIX),
+            "a space id, never a path"
+        );
+        assert_eq!(
+            gateway_workspace_at(data.path(), &default),
+            selected.path().canonicalize().unwrap()
+        );
         persist_gateway_workspace_at(data.path(), None).unwrap();
         assert_eq!(gateway_workspace_at(data.path(), &default), default);
     }
 
     #[test]
-    fn gateway_workspace_ignores_relative_or_missing_sidecars() {
+    fn gateway_workspace_falls_back_for_a_space_with_no_folder_here() {
         let data = tempfile::tempdir().unwrap();
         let path = data.path().join("gateway/default-workspace");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "relative\n").unwrap();
+        std::fs::write(&path, "spc_00000000-0000-7000-8000-000000000000\n").unwrap();
         let default = PathBuf::from("/Users/example/vak-home");
         assert_eq!(gateway_workspace_at(data.path(), &default), default);
     }

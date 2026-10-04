@@ -15,7 +15,7 @@ impl Core {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let path = SessionPath::new_session_file(self.scope().root(), self.cwd(), session_id);
+        let path = SessionPath::existing_session_file(self.scope().root(), self.cwd(), session_id);
         {
             let mut pending = self
                 .inner
@@ -137,9 +137,10 @@ impl Core {
         let root = SessionPath::sessions_dir(self.scope().root(), self.cwd())
             .canonicalize()
             .map_err(SessionError::from)?;
-        let expected = SessionPath::new_session_file(self.scope().root(), self.cwd(), session_id)
-            .canonicalize()
-            .map_err(SessionError::from)?;
+        let expected =
+            SessionPath::existing_session_file(self.scope().root(), self.cwd(), session_id)
+                .canonicalize()
+                .map_err(SessionError::from)?;
         if !expected.starts_with(&root) {
             return Err(SessionError::Corrupt {
                 line: 0,

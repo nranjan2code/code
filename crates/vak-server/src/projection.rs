@@ -273,13 +273,7 @@ pub(crate) fn append_sandbox_artifacts(
         })
         .collect();
     let path = vak_config::scope::AgentScope::new(home).sandbox_executions(session_id);
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return;
-    };
-    let events = text
-        .lines()
-        .filter_map(|line| serde_json::from_str::<vak_tools::SandboxEvent>(line).ok())
-        .collect::<Vec<_>>();
+    let events = crate::sandbox_records::events::<vak_tools::SandboxEvent>(&path);
     let reviewable_roots = events
         .iter()
         .filter_map(|event| match event {
@@ -296,7 +290,7 @@ pub(crate) fn append_sandbox_artifacts(
     // Unreadable records leave every draft's status unknown rather than
     // reporting a version the records may contradict.
     let drafts =
-        vak_sandbox::load_records(&vak_config::scope::AgentScope::new(home).sandbox_records())
+        crate::sandbox_records::load(&vak_config::scope::AgentScope::new(home).sandbox_records())
             .ok()
             .map(|records| DraftVersions::new(records, session_id));
     for event in events {
@@ -570,12 +564,8 @@ pub(crate) fn sandbox_artifact_markdown(
     session_id: &str,
 ) -> Option<String> {
     let path = vak_config::scope::AgentScope::new(home).sandbox_executions(session_id);
-    let text = std::fs::read_to_string(path).ok()?;
     let mut rows = Vec::new();
-    for line in text.lines() {
-        let Ok(event) = serde_json::from_str::<vak_tools::SandboxEvent>(line) else {
-            continue;
-        };
+    for event in crate::sandbox_records::events::<vak_tools::SandboxEvent>(&path) {
         let vak_tools::SandboxEvent::ArtifactGenerated {
             path,
             mime_type,
@@ -2756,15 +2746,12 @@ mod tests {
             language: "sh".into(),
             scratch_dir: scratch.to_string_lossy().into_owned(),
         };
-        std::fs::write(
-            events.join("session-1.jsonl"),
-            format!(
-                "{}\n{}\n",
-                serde_json::to_string(&started).expect("started json"),
-                serde_json::to_string(&event).expect("event json")
-            ),
-        )
-        .expect("event sidecar");
+        vak_session::chain::RecordChain::at(events.join("session-1"))
+            .append_all(&[
+                serde_json::to_value(&started).expect("started json"),
+                serde_json::to_value(&event).expect("event json"),
+            ])
+            .expect("event sidecar");
 
         let mut timeline = OutputTimeline::empty("session-1");
         timeline.items.push(OutputItem {
@@ -2873,15 +2860,12 @@ mod tests {
             mime_type: "text/html".into(),
             size_bytes: 120,
         };
-        std::fs::write(
-            events.join("session-1.jsonl"),
-            format!(
-                "{}\n{}\n",
-                serde_json::to_string(&started).expect("started json"),
-                serde_json::to_string(&generated).expect("event json")
-            ),
-        )
-        .expect("write events");
+        vak_session::chain::RecordChain::at(events.join("session-1"))
+            .append_all(&[
+                serde_json::to_value(&started).expect("started json"),
+                serde_json::to_value(&generated).expect("event json"),
+            ])
+            .expect("write events");
         let candidate = |id: &str, session: &str| {
             serde_json::json!({"kind": "Candidate", "record": {
                 "record_id": format!("record-{id}"), "session_id": session, "turn_id": "turn-1",
@@ -2906,8 +2890,11 @@ mod tests {
             }})
         };
         let status_after = |records: &[serde_json::Value]| {
-            let text: String = records.iter().map(|record| format!("{record}\n")).collect();
-            std::fs::write(home.path().join("sandbox/records.jsonl"), text).expect("records");
+            let chain = home.path().join("sandbox/records");
+            let _ = std::fs::remove_dir_all(&chain);
+            vak_session::chain::RecordChain::at(&chain)
+                .append_all(records)
+                .expect("records");
             let mut timeline = OutputTimeline::empty("session-1");
             super::append_sandbox_artifacts(&mut timeline, home.path(), "session-1");
             let item = timeline
@@ -2972,7 +2959,11 @@ mod tests {
             "a version saved after an acceptance starts a new round"
         );
 
-        std::fs::write(home.path().join("sandbox/records.jsonl"), "not json\n").expect("records");
+        let chain = home.path().join("sandbox/records");
+        let _ = std::fs::remove_dir_all(&chain);
+        vak_session::chain::RecordChain::at(&chain)
+            .append(&serde_json::json!({"kind": "NotARecord"}))
+            .expect("records");
         let mut timeline = OutputTimeline::empty("session-1");
         super::append_sandbox_artifacts(&mut timeline, home.path(), "session-1");
         let OutputContent::Artifact { artifact } = &timeline.items[0].content else {
@@ -2995,14 +2986,9 @@ mod tests {
             mime_type: "text/html".into(),
             size_bytes: 21,
         };
-        std::fs::write(
-            events.join("session-1.jsonl"),
-            format!(
-                "{}\n",
-                serde_json::to_string(&observed).expect("event json")
-            ),
-        )
-        .expect("event sidecar");
+        vak_session::chain::RecordChain::at(events.join("session-1"))
+            .append(&observed)
+            .expect("event sidecar");
         let mut timeline = OutputTimeline::empty("session-1");
         timeline.items.push(OutputItem {
             id: "write-1-artifact".into(),

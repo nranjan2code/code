@@ -100,6 +100,11 @@ pub fn upsert_entity(
     cwd: Option<&Path>,
     mut record: EntityRecord,
 ) -> Result<EntityRecord, std::io::Error> {
+    if let Some(cwd) = cwd {
+        // Recording an entity for a workspace binds it to its space; if that
+        // fails the store refuses the write under its `unbound-` key.
+        let _ = vak_config::spaces::bind(cwd);
+    }
     let path = entity_document(home, cwd, &record.id)?;
     record.updated_at = Utc::now();
     let json = serde_json::to_string(&record)

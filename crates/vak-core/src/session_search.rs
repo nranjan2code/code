@@ -34,10 +34,10 @@ fn session_in_scope(
     if agent_id.is_none() && audience_id.is_none() {
         return true;
     }
-    let mut path = vak_session::SessionPath::new_session_file(home, cwd, session_id);
+    let mut path = vak_session::SessionPath::existing_session_file(home, cwd, session_id);
     if !path.exists() {
         if let Some(parent) = home.parent().and_then(|p| p.parent()) {
-            let p = vak_session::SessionPath::new_session_file(parent, cwd, session_id);
+            let p = vak_session::SessionPath::existing_session_file(parent, cwd, session_id);
             if p.exists() {
                 path = p;
             }
@@ -49,7 +49,7 @@ fn session_in_scope(
                     let p = entry.path();
                     if p.is_dir() {
                         let candidate =
-                            vak_session::SessionPath::new_session_file(&p, cwd, session_id);
+                            vak_session::SessionPath::existing_session_file(&p, cwd, session_id);
                         if candidate.exists() {
                             path = candidate;
                             break;
