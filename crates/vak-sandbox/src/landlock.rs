@@ -123,8 +123,15 @@ impl Landlock {
             }
         }
         let _ = allow_host_temp;
+        // Executions keep temp files and caches in the runtime root, outside
+        // the project tree; a write sandbox grants exactly that beside the
+        // workspace (plan M3b slice 4).
+        let executions = vak_config::scope::executions_root(&canonical);
+        let _ = std::fs::create_dir_all(&executions);
+        let executions = executions.canonicalize().unwrap_or(executions);
+        read_paths.push(executions.clone());
         let write_paths = match mode {
-            SandboxMode::WorkspaceWrite => vec![canonical],
+            SandboxMode::WorkspaceWrite => vec![canonical, executions],
             _ => Vec::new(),
         };
         Landlock {

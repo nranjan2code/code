@@ -71,16 +71,17 @@ impl Tool for BashTool {
         // work, so what one tool writes the next can read. Running each
         // command in its own empty scratch folder made a file written here
         // invisible to `read`, and a small model looped rewriting it. Runtime
-        // state (temp files, tool caches) still goes to scratch (invariant 35).
+        // state (temp files, tool caches) goes to the runtime root, outside
+        // the project tree (invariant 35).
         let agent_id = ctx.agent_id.as_deref().unwrap_or("vak");
-        let scratch_root = vak_config::scope::WorkspaceScope::new(&ctx.cwd).scratch(agent_id);
+        let execution_root = vak_config::scope::execution_dir(&ctx.cwd, agent_id);
         let temp_dir = ctx
             .sandbox_sink
             .as_ref()
-            .map(|sink| scratch_root.join(sink.execution_id()))
-            .unwrap_or_else(|| scratch_root.join("shell"))
+            .map(|sink| execution_root.join(sink.execution_id()))
+            .unwrap_or_else(|| execution_root.join("shell"))
             .join("tmp");
-        let cache_dir = scratch_root.join("cache");
+        let cache_dir = execution_root.join("cache");
         let _ = std::fs::create_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&cache_dir);
 
@@ -996,6 +997,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn killing_the_group_reaches_a_background_grandchild() {
+        vak_config::paths::isolate_home_for_tests();
         use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
         let mut cmd = super::shell_command("sleep 30 & echo started; wait");
         cmd.stdin(std::process::Stdio::null())
@@ -1030,6 +1032,7 @@ mod tests {
 
     #[tokio::test]
     async fn cwd_dot_runs_in_the_workspace_root() {
+        vak_config::paths::isolate_home_for_tests();
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let test_file = workspace.path().join("marker.txt");
@@ -1053,7 +1056,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_command_works_in_the_workspace_and_keeps_temp_files_in_scratch() {
+    async fn a_command_works_in_the_workspace_and_keeps_temp_files_in_the_runtime_root() {
+        vak_config::paths::isolate_home_for_tests();
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         std::fs::write(workspace.path().join("unsorted.txt"), "delta\nalpha\n").unwrap();
@@ -1074,7 +1078,7 @@ mod tests {
             "alpha\ndelta\n",
             "the output is where `read` looks for it"
         );
-        let temp = workspace.path().join(".vak/scratch/vak/sort-1/tmp");
+        let temp = vak_config::scope::execution_dir(workspace.path(), "vak").join("sort-1/tmp");
         assert!(
             out.content.contains(&format!("tmp={}", temp.display())),
             "{}",
@@ -1091,6 +1095,7 @@ mod tests {
 
     #[tokio::test]
     async fn custom_cwd_is_respected() {
+        vak_config::paths::isolate_home_for_tests();
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let sub = workspace
@@ -1118,6 +1123,7 @@ mod tests {
 
     #[tokio::test]
     async fn custom_cwd_rejects_workspace_escape() {
+        vak_config::paths::isolate_home_for_tests();
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let (sink, _rx) = SandboxEventSink::new_with_id("test-cwd-escape".into());
@@ -1137,6 +1143,7 @@ mod tests {
 
     #[tokio::test]
     async fn temp_files_are_scoped_to_the_agent() {
+        vak_config::paths::isolate_home_for_tests();
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let (sink, _events) = SandboxEventSink::new_with_id("test-agent-scratch".into());
@@ -1149,8 +1156,12 @@ mod tests {
             .await;
         assert!(!out.is_error, "stdout/stderr: {}", out.content);
         assert!(
-            out.content
-                .contains(".vak/scratch/researcher-99/test-agent-scratch/tmp"),
+            out.content.contains(
+                &vak_config::scope::execution_dir(workspace.path(), "researcher-99")
+                    .join("test-agent-scratch/tmp")
+                    .display()
+                    .to_string()
+            ),
             "{}",
             out.content
         );
@@ -1158,6 +1169,7 @@ mod tests {
 
     #[tokio::test]
     async fn workspace_command_promotes_user_visible_result() {
+        vak_config::paths::isolate_home_for_tests();
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let (sink, mut events) = SandboxEventSink::new_with_id("test-workspace-result".into());

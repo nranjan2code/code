@@ -881,9 +881,12 @@ in progress, and the rest of V4 follows it.
     passing only minimal operational paths (`PATH`, `HOME`, virtual
     environment paths) and zero parent credentials or model API keys. Runtime
     state never lands in the project tree: temp files (`TMPDIR`) go to
-    `.vak/scratch/<agent_id>/<execution-id>/tmp`, and tool caches and
-    bytecode (`XDG_CACHE_HOME`, `PYTHONPYCACHEPREFIX`, the pip and npm caches)
-    to `.vak/scratch/<agent_id>/cache`. Files a command creates or changes in
+    `<runtime>/executions/<space>/<agent_id>/<execution-id>/tmp`, and tool
+    caches and bytecode (`XDG_CACHE_HOME`, `PYTHONPYCACHEPREFIX`, the pip
+    and npm caches) to `<runtime>/executions/<space>/<agent_id>/cache`
+    (`vak_config::scope::execution_dir`); a write sandbox grants exactly the
+    workspace and that space's execution root. Drafts and candidates still
+    live in `.vak/scratch/<agent_id>/` until M3b slice 4 moves them. Files a command creates or changes in
     the workspace are the work itself and are reported as Workbench
     artifacts; a candidate is exported only from an execution that ran inside
     `.vak/scratch/`. All executions stream live stdout, stderr, package

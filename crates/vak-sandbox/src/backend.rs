@@ -137,8 +137,15 @@ impl Seatbelt {
                 }
             }
         }
+        // Executions keep temp files and caches in the runtime root, outside
+        // the project tree; a write sandbox grants exactly that beside the
+        // workspace (plan M3b slice 4).
+        let executions = vak_config::scope::executions_root(&canonical);
+        let _ = std::fs::create_dir_all(&executions);
+        let executions = executions.canonicalize().unwrap_or(executions);
+        read_paths.push(executions.clone());
         let write_paths = match mode {
-            SandboxMode::WorkspaceWrite => vec![canonical],
+            SandboxMode::WorkspaceWrite => vec![canonical, executions],
             _ => Vec::new(),
         };
         Seatbelt {
@@ -297,6 +304,52 @@ mod tests {
         assert!(!profile.contains("(allow file-write* (subpath \"/private/tmp\"))"));
         assert!(!profile.contains("(allow file-write* (subpath \"/private/var/folders\"))"));
         assert!(!sandbox.read_paths.contains(&PathBuf::from("/private/tmp")));
+    }
+
+    /// Exit test of M3b slice 4: a write sandbox grants the workspace and
+    /// its space's execution root in the runtime root, and nothing else; a
+    /// command writes its temp file there and cannot write beside it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sandbox_writes_only_execution_dir_and_space() {
+        vak_config::paths::isolate_home_for_tests();
+        let root = tempfile::tempdir().expect("test root");
+        let space = root.path().join("space");
+        let neighbour = root.path().join("neighbour");
+        std::fs::create_dir_all(&space).expect("space");
+        std::fs::create_dir_all(&neighbour).expect("neighbour");
+        let sandbox = Seatbelt::new(SandboxMode::WorkspaceWrite, &space);
+        let executions = vak_config::scope::executions_root(&space)
+            .canonicalize()
+            .expect("execution root exists");
+        let canonical_space = space.canonicalize().expect("space");
+        assert_eq!(
+            sandbox.write_paths,
+            vec![canonical_space.clone(), executions.clone()]
+        );
+        assert!(
+            !executions.starts_with(&canonical_space),
+            "runtime state is outside the project"
+        );
+
+        let run = |target: &std::path::Path| {
+            std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(sandbox.wrap(&format!(
+                    "echo x > {}",
+                    shell_quote(&target.display().to_string())
+                )))
+                .status()
+                .expect("command")
+                .success()
+        };
+        assert!(run(&space.join("work.txt")));
+        assert!(run(&executions.join("tmp.txt")));
+        assert!(!run(&neighbour.join("forbidden.txt")));
+        assert!(!run(&executions
+            .parent()
+            .expect("executions dir")
+            .join("other-space.txt")));
     }
 
     #[cfg(target_os = "macos")]

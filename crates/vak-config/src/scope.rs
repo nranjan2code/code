@@ -51,6 +51,21 @@ pub fn ledger_session_id(path: &Path) -> Option<String> {
     path.file_name()?.to_str().map(str::to_string)
 }
 
+/// Where a space's executions keep their temp files and tool caches: the
+/// runtime root, never the project tree (plan M3b slice 4, L4). Sandboxes
+/// grant exactly this beside the workspace.
+pub fn executions_root(cwd: &Path) -> PathBuf {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    crate::paths::runtime_dir()
+        .join("executions")
+        .join(workspace_key(&cwd))
+}
+
+/// One Agent's executions in the space at `cwd`.
+pub fn execution_dir(cwd: &Path, agent_id: &str) -> PathBuf {
+    executions_root(cwd).join(agent_id)
+}
+
 pub fn workspace_key(cwd: &Path) -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in cwd.to_string_lossy().as_bytes() {
