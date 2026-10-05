@@ -43,45 +43,87 @@ pub trait CredentialStore: Send + Sync {
     fn list(&self, scope: &str) -> Vec<(String, String)>;
 }
 
-/// [`scope_key_for`] for a write: storing a secret for a folder is an act
-/// about it as a workspace, so the folder is bound to its space first and the
-/// secret is never filed under an `unbound-` key it would leave behind.
-fn bound_scope_key_for(hint_path: &Path) -> io::Result<String> {
-    let dir = hint_path.parent().unwrap_or(hint_path);
-    let key = scope_key_for(hint_path);
-    if key.starts_with("space-") {
-        crate::spaces::bind(dir).map_err(io::Error::other)?;
-        return Ok(scope_key_for(hint_path));
+fn fnv16(text: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    Ok(key)
+    format!("{hash:016x}")
 }
 
-/// The secret scope named by the directory a caller used for a secret layer
-/// (the parent of what was once a literal `<dir>/.env`), keyed by owner
-/// rather than by path (review R12): an Agent home is `agent-<id>`, the data
-/// home is `tenant`, and any other directory is the space it is bound to,
-/// `space-<spc_…>`.
-fn scope_key_for(hint_path: &Path) -> String {
+/// What a scope hint's directory belongs to.
+enum Owner {
+    /// Somewhere in the data home: the home itself, an Agent home, a
+    /// tenant's key vault, or another of its folders. Never a project.
+    Home(String),
+    /// A project folder, filed under its space.
+    Space(std::path::PathBuf),
+}
+
+fn owner_of(hint_path: &Path) -> Owner {
     let dir = hint_path.parent().unwrap_or(hint_path);
     let forms = |path: &Path| {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         [path.to_path_buf(), canonical]
     };
-    for data in forms(&crate::paths::data_home()) {
+    let data = crate::paths::data_home();
+    // The data home's identity is its location: two homes on one machine
+    // (a `VAK_HOME` home beside the default) never share an OS keychain
+    // entry.
+    let home = format!(
+        "home-{}",
+        fnv16(
+            &data
+                .canonicalize()
+                .unwrap_or_else(|_| data.clone())
+                .to_string_lossy()
+        )
+    );
+    for data in forms(&data) {
         for dir in forms(dir) {
-            if dir == data {
-                return "tenant".to_string();
-            }
-            if let Ok(rest) = dir.strip_prefix(data.join("agents"))
-                && let Some(agent) = rest
-                    .to_str()
-                    .filter(|agent| !agent.is_empty() && !agent.contains('/'))
-            {
-                return format!("agent-{agent}");
-            }
+            let Ok(rest) = dir.strip_prefix(&data) else {
+                continue;
+            };
+            let parts: Vec<String> = rest
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect();
+            return Owner::Home(match parts.as_slice() {
+                [] => home,
+                [agents, agent] if agents == "agents" => format!("{home}-agent-{agent}"),
+                [tenants, tenant, keys] if tenants == "tenants" && keys == "keys" => {
+                    format!("{home}-tenant-{tenant}-keys")
+                }
+                _ => format!("{home}-{}", fnv16(&parts.join("/"))),
+            });
         }
     }
-    format!("space-{}", crate::spaces::key(dir))
+    Owner::Space(dir.to_path_buf())
+}
+
+/// [`scope_key_for`] for a write: storing a secret for a project folder is
+/// an act about it as a workspace, so the folder is bound to its space first
+/// and the secret is never filed under an `unbound-` key it would leave
+/// behind. A folder in the data home is never bound.
+fn bound_scope_key_for(hint_path: &Path) -> io::Result<String> {
+    if let Owner::Space(dir) = owner_of(hint_path) {
+        crate::spaces::bind(&dir).map_err(io::Error::other)?;
+    }
+    Ok(scope_key_for(hint_path))
+}
+
+/// The secret scope named by the directory a caller used for a secret layer
+/// (the parent of what was once a literal `<dir>/.env`), keyed by owner
+/// rather than by path (review R12): a scope in the data home is named for
+/// that home and its owner (`home-<id>`, `home-<id>-agent-<agent>`,
+/// `home-<id>-tenant-<t>-keys`), and a project folder is the space it is
+/// bound to, `space-<spc_…>`.
+fn scope_key_for(hint_path: &Path) -> String {
+    match owner_of(hint_path) {
+        Owner::Home(key) => key,
+        Owner::Space(dir) => format!("space-{}", crate::spaces::key(&dir)),
+    }
 }
 
 fn store() -> &'static dyn CredentialStore {
@@ -594,8 +636,20 @@ mod tests {
         let space = crate::spaces::bind(dir.path()).unwrap();
         assert_eq!(scope_key_for(&a), format!("space-{space}"));
         let agent = crate::paths::agent_home("mira").join(".env");
-        assert_eq!(scope_key_for(&agent), "agent-mira");
-        let tenant = crate::paths::data_home().join(".env");
-        assert_eq!(scope_key_for(&tenant), "tenant");
+        assert!(scope_key_for(&agent).ends_with("-agent-mira"));
+        let home = scope_key_for(&crate::paths::data_home().join(".env"));
+        assert!(home.starts_with("home-") && !home.contains('/'));
+        let vault = crate::paths::local_tenant_home().join("keys/vault");
+        assert!(
+            scope_key_for(&vault)
+                .ends_with(&format!("-tenant-{}-keys", crate::paths::LOCAL_TENANT))
+        );
+        let _ = set(&vault, "KEY_VAULT_PROBE", "x");
+        assert!(
+            crate::spaces::all()
+                .iter()
+                .all(|space| space.folder.as_deref() != vault.parent()),
+            "the key vault's folder is never bound as a project"
+        );
     }
 }

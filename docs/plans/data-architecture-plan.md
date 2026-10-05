@@ -688,8 +688,16 @@ the server's scans of it, a 6.x location, are gone. Docs 02, 04, 22, 28,
 78, 82 and 85 and AGENTS.md describe the 7.0 layout; CHANGELOG has the 7.0
 entry; the site needed no change. `docs/architecture/write-paths-and-growth.html`
 stays a dated v3.5.1 measurement with a 7.0 note: a growth remeasure needs
-a 7.0 home with real use. Left: the live dev run, then the release (7.0.0,
-or a relabel the maintainer is weighing).
+a 7.0 home with real use. The first live dev run failed to start: the tenant key vault's credential
+scope (`<tenant>/keys/vault`) had been read as a project folder by slice
+5's scope rule, so its key was looked up under a new name and a bogus
+project was bound; `tenant`/`agent-<id>` scopes could also collide between
+two data homes in one OS keychain. Credential scopes are now named by
+explicit owner (`home-<id>`, `home-<id>-agent-<a>`,
+`home-<id>-tenant-<t>-keys`, a folder in the data home by its relative
+path, never bound; `space-<spc>` for a project), and the unreadable dev
+home was moved to the Trash with the maintainer's agreement. Left: the live
+dev run, then the release (7.0.0, or a relabel the maintainer is weighing).
 
 **Screens**
 - Admin: Spaces (A13), with the word settled in doc 75 (L11).
