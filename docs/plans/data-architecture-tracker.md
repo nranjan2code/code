@@ -55,7 +55,7 @@ Known slow tests (each over 60 s, not failures):
 | 5 | M4.5 `effects/` chain; delivery is its first kind; the outbox goes; `/effects`; Discord nonce; the new effects invariant in AGENTS.md | `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`, `discord_resend_reuses_nonce` | Done, 94b826ed6 |
 | 6 | M4.6 mail and calendar send, create, update and RSVP become effects; their single-use claims go | `mail_send_is_one_effect`, `unknown_mail_send_never_resent` | Done, 9eb561d78 |
 | 7 | M4.7 cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` | In progress |
-| 7a | M4.7a cursor primitive, gap chain, Telegram/Discord/Slack pollers on cursors | `cursor_resync_records_gap`, `second_poller_is_fenced` | Done, COMMIT |
+| 7a | M4.7a cursor primitive, gap chain, Telegram/Discord/Slack pollers on cursors | `cursor_resync_records_gap`, `second_poller_is_fenced` | Done, 6a03aab5f |
 | 7b | M4.7b mail vault cursors and backlog onto cursor refs (backlog an encrypted tenant object); fold or justify the vault's routine run history | (M4.7 exit tests over the vault) | Next |
 | 8 | M4.8 `CopyEnvironment`; the non-git refusal goes; invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 restated against the shipped shapes | `non_git_space_routine_runs_in_copy_environment` | |
 | 9 | M2 remainder: credential-store `KeyAuthority`, torn-write seal test, fuzz corpus, flock single-writer lock, blob streaming | plan §M2 | |
