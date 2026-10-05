@@ -96,8 +96,8 @@ const countdown = (iso: string | null | undefined): string => {
 /// Incident fingerprints Home already derives a row of its own from.
 ///
 /// `/ops/center` folds the same signals Home reads — failed checks, held
-/// gates, the outbox, the gateway unit — into durable incident records, so
-/// rendering both produced three rows for one dead-lettered queue. The
+/// gates, sent messages, the gateway unit — into durable incident records, so
+/// rendering both produced three rows for one stuck message. The
 /// incident is the better *record* and the worse *prompt*: it is titled for
 /// an operations timeline, not for someone deciding what to do next. Home
 /// keeps its own wording and drops the duplicate; every incident still
@@ -106,8 +106,8 @@ const countdown = (iso: string | null | undefined): string => {
 const INCIDENTS_STATED_DIRECTLY = new Set([
   "doctor:health-checks",
   "permission:pending-approvals",
-  "delivery:outbox",
-  "delivery:outbox-read",
+  "delivery:effects",
+  "delivery:effects-read",
   "service:gateway",
 ]);
 
@@ -234,7 +234,7 @@ function categoryOf(item: AttentionItem): string {
   if (item.id.startsWith("setup") || item.id.startsWith("unattended")) return "Setup";
   if (item.id.startsWith("appr")) return "Approval";
   if (item.id.startsWith("doc") || item.id.startsWith("incident")) return "Doctor";
-  if (item.id.startsWith("outbox")) return "Delivery";
+  if (item.id.startsWith("delivery")) return "Delivery";
   if (item.id.startsWith("cap")) return "Budget";
   if (item.id.startsWith("gateway")) return "Gateway";
   return "Advisory";
@@ -816,7 +816,7 @@ function MoneyPanel(props: { finops: FinOpsStatus | null; error: boolean }) {
 
 export function Home() {
   // One heavy poller. `/ops/center` is the control plane's coherent sample —
-  // health checks, incidents, runs, outbox, tasks, pool, services, security
+  // health checks, incidents, runs, sent messages, tasks, pool, services, security
   // and server facts arrive together, so Home reads it once instead of
   // stitching eight endpoints into a picture that was never true at one
   // instant. Everything else refetches off the event hub.
@@ -999,13 +999,13 @@ export function Home() {
 
     const delivery: Subsystem = !snap
       ? unknown("delivery", "Delivery", "#/operations/channels")
-      : snap.outbox.error
-        ? { id: "delivery", label: "Delivery", href: "#/operations/channels", state: "unknown", detail: "outbox could not be read" }
-        : snap.outbox.dead_letter > 0
-          ? { id: "delivery", label: "Delivery", href: "#/operations/channels", state: "bad", detail: `${snap.outbox.dead_letter} message(s) gave up` }
-          : snap.outbox.pending > 0
-            ? { id: "delivery", label: "Delivery", href: "#/operations/channels", state: "warn", detail: `${snap.outbox.pending} still in flight` }
-            : { id: "delivery", label: "Delivery", href: "#/operations/channels", state: "ok", detail: "outbox clear" };
+      : snap.effects.error
+        ? { id: "delivery", label: "Delivery", href: "#/operations/channels", state: "unknown", detail: "sent messages could not be read" }
+        : snap.effects.failed + snap.effects.unknown > 0
+          ? { id: "delivery", label: "Delivery", href: "#/operations/channels", state: "bad", detail: `${snap.effects.failed + snap.effects.unknown} message(s) need a decision` }
+          : snap.effects.waiting > 0
+            ? { id: "delivery", label: "Delivery", href: "#/operations/channels", state: "warn", detail: `${snap.effects.waiting} still sending` }
+            : { id: "delivery", label: "Delivery", href: "#/operations/channels", state: "ok", detail: "everything sent" };
 
     const gates: Subsystem = !snap
       ? unknown("gates", "Approval gates", "#/inbox")
@@ -1084,22 +1084,22 @@ export function Home() {
       });
     }
 
-    // One row for the outbox, not one per state: dead-lettered and pending
-    // are the same queue seen at two depths, and splitting them made a
-    // single stuck adapter read as two independent problems.
-    if (snap && snap.outbox.dead_letter > 0) {
+    // One row for delivery, not one per state: a message that may or may
+    // not have arrived and one that did not both wait on the same decision.
+    const undecided = snap ? snap.effects.failed + snap.effects.unknown : 0;
+    if (snap && undecided > 0) {
       items.push({
-        id: "outbox", severity: "critical",
-        title: `${snap.outbox.dead_letter} repl${snap.outbox.dead_letter === 1 ? "y" : "ies"} never reached anyone`,
-        detail: `The adapter exhausted its retries. The work happened; the answer did not arrive.${snap.outbox.pending > 0 ? ` ${snap.outbox.pending} more are still retrying behind them.` : ""}`,
-        action: "Replay them", href: "#/operations/channels",
+        id: "delivery", severity: "critical",
+        title: `${undecided} message${undecided === 1 ? "" : "s"} may not have reached anyone`,
+        detail: `${snap.effects.unknown > 0 ? `${snap.effects.unknown} not sure ${snap.effects.unknown === 1 ? "it was" : "they were"} sent. ` : ""}${snap.effects.failed > 0 ? `${snap.effects.failed} didn't send. ` : ""}Nothing is sent again by itself.`,
+        action: "Decide", href: "#/operations/channels",
       });
-    } else if (snap && snap.outbox.pending > 0) {
+    } else if (snap && snap.effects.waiting > 0) {
       items.push({
-        id: "outbox", severity: "warning",
-        title: `${snap.outbox.pending} outbound message${snap.outbox.pending === 1 ? "" : "s"} still queued`,
-        detail: "Durably recorded and retrying. Nothing is lost, but nothing has landed yet.",
-        action: "Watch the queue", href: "#/operations/channels",
+        id: "delivery", severity: "warning",
+        title: `${snap.effects.waiting} message${snap.effects.waiting === 1 ? "" : "s"} still sending`,
+        detail: "Recorded before sending and being tried again. Nothing has landed yet.",
+        action: "Watch them", href: "#/operations/channels",
       });
     }
 

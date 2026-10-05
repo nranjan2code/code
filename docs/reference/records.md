@@ -130,6 +130,18 @@ Type `CostRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `co
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 
+## effect_event
+
+Type `EffectEvent` in `crates/vak-session/src/effects.rs`. Class: ledger. Stored in: `effects`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `effect` | `EffectId` | yes |  |
+| `at` | `DateTime<Utc>` | yes |  |
+| `trace` | `Option<TraceKey>` | no | The key of the run the effect serves, on the event that prepares it. |
+| `actor` | `Option<PrincipalId>` | no | Who caused this step: the run's actor when it is prepared, the |
+| `step` | `EffectStep` | yes | (flattened into the row) |
+
 ## environment_record
 
 Type `EnvironmentRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records`. Version: 1.
@@ -214,23 +226,6 @@ Type `MisreadRow` in `crates/vak-core/src/misread.rs`. Class: ledger. Stored in:
 | `outcome` | `String` | yes |  |
 | `wanted` | `Option<String>` | no | The tool the model used after the reading left it deferred. Present |
 | `sliced` | `bool` | no | Whether the reading was confident enough to decide what was loaded. |
-| `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
-| `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
-
-## outbox_record
-
-Type `OutboxRecord` in `crates/vak-delivery/src/outbox.rs`. Class: record. Stored in: `gateway outbox, one file per delivery job`. Version: 1.
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `schema_version` | `u16` | yes |  |
-| `job` | `DeliveryJob` | yes |  |
-| `state` | `OutboxState` | yes |  |
-| `attempts` | `u32` | yes |  |
-| `created_at_ms` | `u64` | yes |  |
-| `updated_at_ms` | `u64` | yes |  |
-| `packet` | `Option<DeliveryPacket>` | no |  |
-| `last_error` | `Option<String>` | no |  |
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 

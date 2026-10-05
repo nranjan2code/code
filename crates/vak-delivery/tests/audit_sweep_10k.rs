@@ -15,17 +15,17 @@
     suspicious_double_ref_op
 )]
 
-//! 10,000-scenario deep sweep of vak-delivery across all surfaces.
+//! 9,500-scenario deep sweep of vak-delivery across all surfaces.
 //!
 //! Red Team — 5,000 adversarial scenarios (×6 surfaces = 30,000 checks):
 //!   XSS injection, malformed tables, code-fence abuse, spoiler edge cases,
 //!   unicode abuse, extreme inputs, link injection, nested markdown abuse,
 //!   worker-protocol fuzz, empty/null inputs.
 //!
-//! Blue Team — 5,000 defensive scenarios:
+//! Blue Team — 4,500 defensive scenarios:
 //!   error-path non-panic, HTML sanitization, determinism, coverage
-//!   accounting, capability validation, template revision security, outbox
-//!   state machine, signal accuracy, skill validation, worker round-trip,
+//!   accounting, capability validation, template revision security,
+//!   signal accuracy, skill validation, worker round-trip,
 //!   structured-output parsing.
 //!
 //! Each scenario closure tests ALL six surfaces (telegram, discord, slack,
@@ -40,7 +40,6 @@ use vak_delivery::Markup;
 use vak_delivery::ProgressPayload;
 use vak_delivery::ToolResultPayload;
 use vak_delivery::discord;
-use vak_delivery::outbox::{Outbox, OutboxError, OutboxState};
 use vak_delivery::skills::{
     PRESENTATION_SKILL_API, PresentationSkillManifest, SignalContext, StructuredOutput,
     built_in_recipes, built_in_skill_registry, parse_fragment, project_structured_fences,
@@ -104,17 +103,6 @@ fn answer_job(source: &str, markup: Markup, surface: &str) -> DeliveryJob {
         trace: None,
         actor: None,
     }
-}
-
-fn make_root() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "vak-sweep-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ))
 }
 
 const SURFACES: &[(&str, Markup)] = &[
@@ -978,56 +966,6 @@ fn blue_team_template_revision_security() {
     }
 
     run("blue_team_template_revision_security", scenarios);
-}
-
-#[test]
-fn blue_team_outbox_state_machine() {
-    let mut scenarios: Vec<Scenario> = vec![];
-
-    for i in 0..500usize {
-        let root = make_root();
-        let source = format!("# Test {i}\n\nState machine verification body.");
-        let job = answer_job(&source, Markup::Markdown, "desktop");
-        let i = i;
-        scenarios.push(tc(&format!("outbox_{i}"), move || {
-            let outbox = Outbox::new(&root);
-
-            // Step 1: enqueue
-            let rec = outbox.enqueue(job.clone()).expect("enqueue");
-            assert_eq!(rec.state, OutboxState::Pending);
-            assert_eq!(rec.attempts, 0);
-
-            // Step 2: idempotent re-enqueue
-            let rec2 = outbox.enqueue(job.clone()).expect("retry enqueue");
-            assert_eq!(rec2.state, OutboxState::Pending);
-
-            // Step 3: mark failed
-            let rec3 = outbox.mark_failed("sweep", "error").expect("fail");
-            assert_eq!(rec3.attempts, 1);
-
-            // Step 4: mark failed again
-            let rec4 = outbox.mark_failed("sweep", "error2").expect("fail2");
-            assert_eq!(rec4.attempts, 2);
-
-            // Step 5: deliver
-            let packet = render(&job).expect("render");
-            let rec5 = outbox.mark_delivered("sweep", packet).expect("deliver");
-            assert_eq!(rec5.state, OutboxState::Delivered);
-            assert_eq!(rec5.attempts, 3);
-
-            // Step 6: pending should be empty
-            let pending = outbox.pending().expect("pending");
-            assert!(pending.is_empty(), "pending not empty after deliver");
-
-            // Step 7: list contains the delivered record
-            let records = outbox.list().expect("list");
-            assert!(records.iter().any(|r| r.state == OutboxState::Delivered));
-
-            let _ = std::fs::remove_dir_all(&root);
-        }));
-    }
-
-    run("blue_team_outbox_state_machine", scenarios);
 }
 
 #[test]

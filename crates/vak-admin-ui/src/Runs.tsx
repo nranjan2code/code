@@ -9,6 +9,7 @@ import { api } from "./api";
 import { navigate } from "./store";
 import type { RunRecord, RunStatus } from "./types";
 import { SessionTrail } from "./OperationsCenter";
+import { RunEffects } from "./Effects";
 
 const STATUS_WORDS: Record<RunStatus, string> = {
   running: "Running",
@@ -149,6 +150,7 @@ function RunDetail(props: { id: string }) {
             <Show when={(record().sessions ?? []).length > 0} fallback={<section class="panel"><p class="dim">This run wrote no conversation.</p></section>}>
               <For each={record().sessions ?? []}>{(session) => <SessionTrail sessionId={session} />}</For>
             </Show>
+            <RunEffects run={record().id} />
           </>
         )}
       </Show>

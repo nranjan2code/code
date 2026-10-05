@@ -558,6 +558,8 @@ export interface Trigger {
   /** When a run last finished its work: a mail watch's last successful check. */
   last_completed_at?: string | null;
   delivery_state?: string | null;
+  /** The last run's message a person may send again, when there is one. */
+  delivery_effect?: string | null;
   running?: boolean;
 }
 

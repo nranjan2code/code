@@ -375,6 +375,12 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<RunsAction>,
     },
+    /// Effect records: every action taken outside Vak (list / show /
+    /// reconcile)
+    Effects {
+        #[command(subcommand)]
+        action: Option<EffectsAction>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -609,6 +615,36 @@ pub(crate) enum RunsAction {
     },
     /// Show one run as JSON
     Show { id: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum EffectsAction {
+    /// List effects, newest first
+    List {
+        /// Only effects in this state (held, queued, sending, sent,
+        /// retrying, failed, unknown, superseded)
+        #[arg(long)]
+        status: Option<String>,
+        /// Only the effects of this run
+        #[arg(long)]
+        run: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Show one effect as JSON
+    Show { id: String },
+    /// Say whether an effect nobody could prove was sent
+    Reconcile {
+        id: String,
+        #[arg(long, value_enum)]
+        outcome: ReconcileArg,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum ReconcileArg {
+    Sent,
+    NotSent,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1217,6 +1253,33 @@ mod tests {
             parse(&["runs", "show", "run_x"]),
             Command::Runs {
                 action: Some(RunsAction::Show { .. })
+            }
+        ));
+    }
+
+    #[test]
+    fn effects_subactions_parse() {
+        assert!(matches!(
+            parse(&["effects"]),
+            Command::Effects { action: None }
+        ));
+        match parse(&["effects", "list", "--status", "unknown", "--run", "run_x"]) {
+            Command::Effects {
+                action: Some(EffectsAction::List { status, run, limit }),
+            } => {
+                assert_eq!(status.as_deref(), Some("unknown"));
+                assert_eq!(run.as_deref(), Some("run_x"));
+                assert_eq!(limit, 50);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert!(matches!(
+            parse(&["effects", "reconcile", "eff_x", "--outcome", "not-sent"]),
+            Command::Effects {
+                action: Some(EffectsAction::Reconcile {
+                    outcome: ReconcileArg::NotSent,
+                    ..
+                })
             }
         ));
     }

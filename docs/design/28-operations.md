@@ -171,14 +171,14 @@ recipient process.
 | Tray | native menu — Open Admin Console or Open Operations Center |
 | TUI | `/services [start\|stop\|restart] [gateway\|telegram]` |
 | Desktop | Settings ▸ Services (5 s poll) and Learning pages |
-| HTTP | `GET /ops/status`, `GET /ops/diagnostics`, `GET /ops/center`, `GET /ops/incidents`, `GET /ops/actions`, `GET /ops/outbox`, `POST /ops/{gateway\|telegram}/{action}`, `POST /ops/outbox/{job_id}/replay` |
+| HTTP | `GET /ops/status`, `GET /ops/diagnostics`, `GET /ops/center`, `GET /ops/incidents`, `GET /ops/actions`, `POST /ops/{gateway\|telegram}/{action}`; effects: `GET /effects`, `POST /effects/{id}/resend`, `POST /effects/{id}/reconcile` |
 
 ### Fencing
 
 A server reads the tenant store's writer epoch when it opens the store. If
 the store is restored while it runs (plan M4.1), the epoch moves past the
 one it holds and the process is fenced for good: its scheduler, heartbeat,
-commitment upkeep and outbox replay stop, it opens no conversation and
+commitment upkeep and delivery replay stop, it opens no conversation and
 begins no turn, and `/health` reports `status = "fenced"`, `fenced = true`
 and `posture = "fenced"`, which the Operations Center shows with the remedy
 (restart). Each process has a `prc_` id, shown in `/health` as `process`,
@@ -192,24 +192,29 @@ console. It combines the doctor report (including a separate `posture` signal
 beside `/health`'s readiness `status`), platform
 service state, gateway bindings and approval count, warm CorePool entries,
 live session handles, scheduled tasks and next-fire markers, security events,
-and the durable delivery outbox. Incidents are derived only from those
-sources: failed checks, blocked approvals, service drift, or pending/dead
-delivery jobs. An unreadable outbox is itself a critical incident rather than
-an empty queue. The incident projection is reconciled into the append-only
+and the effect records (plan M4.5). Incidents are derived only from those
+sources: failed checks, blocked approvals, service drift, or messages still
+sending, not sure they were sent, or not sent (`delivery:effects`). An
+unreadable effects chain is itself a critical incident
+(`delivery:effects-read`) rather than an empty list. The incident projection is reconciled into the append-only
 `operations/incidents` record chain: repeated observations
 are grouped by fingerprint, disappearance records a resolution, and a later
 reappearance reopens the same causal record. `GET /ops/incidents` exposes the
 folded history for audit consumers.
 
-`GET /ops/outbox` exposes metadata for all persisted jobs. The replay endpoint
-re-enters the same serialized renderer and adapter path as the background
-replay worker; delivered jobs are rejected and a failed replay remains
-durable with its incremented attempt/error state. Service actions return a
+`GET /effects` lists effect records (`?run=&state=`). `POST
+/effects/{id}/resend` re-enters the same serialized renderer and adapter path
+as the background replay: an effect still queued or proven not sent is tried
+now, an unknown Discord effect goes again under its key (Discord drops the
+repeat), and any other unknown or failed effect is superseded by a new one.
+`POST /effects/{id}/reconcile` records the owner's word that an unsettled
+effect was or was not sent. A sent or superseded effect is refused. Both
+append a receipt (AGENTS.md invariant 41). Service actions return a
 conflict on a manager failure and append an audit event; the HTTP probe never
 starts a competing supervisor.
 
 Every mutating operations endpoint returns an operation receipt with a
-stable id, before/after manager or outbox state, and an explicit
+stable id, before/after manager or effect state, and an explicit
 `verified`/`pending`/`failed` verification result. Receipts are also appended
 to the `operations/actions` record chain and surfaced in the center;
 they remain useful when a manager accepts a request but takes time to reach
@@ -238,9 +243,8 @@ bookmark always reopens the same operational scope. Detail routes descend
 from the same namespace — for example
 `#/operations/work/runs/<session>`,
 `#/operations/channels/<target>`,
-`#/operations/channels/delivery/<job>`, and
 `#/operations/incidents/<incident>` — and each ends at raw ledger, receipt,
-outbox, incident, or manager evidence. A missing record is rendered as an
+effect, incident, or manager evidence. A missing record is rendered as an
 explicit historical/unavailable state; the UI never invents a green value.
 
 Service-manager probes that use a blocking client execute on a blocking worker

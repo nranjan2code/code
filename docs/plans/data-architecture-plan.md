@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is in progress; M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is in progress (M4.1 to M4.4 done 2026-10-05). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is in progress; M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is in progress (M4.1 to M4.5 done 2026-10-05). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -774,7 +774,7 @@ proposals bring the rest.
 - `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`,
   `restore_fences_old_writer`, `cursor_resync_records_gap`.
 
-#### M4 design (agreed 2026-10-05; M4.1 to M4.4 done)
+#### M4 design (agreed 2026-10-05; M4.1 to M4.5 done)
 
 The maintainer asked for the design that serves the later kinds best, since
 there are no users to keep. Implementation starts in a later session, one
@@ -859,7 +859,7 @@ RunStep::Skipped { reason }            // slot or event decided without starting
 RunStep::Coalesced { into: RunId }     // missed slots folded into one run
 RunStep::Session { session_id }        // each ledger the run writes or spawns
 RunStep::Settled { outcome: Completed | Failed{reason} | Cancelled,
-                   result_id, effects: Vec<EffectId>, cost }
+                   result_id, cost }   // a run's effects name it (M4.5)
 RunStep::Abandoned { holder, noticed_by: ProcessId }
 Slot = At(DateTime<Utc>) | Event(EventId)
 ```
@@ -999,7 +999,7 @@ invariant 30) and is committed green before the next starts.
 | M4.2 | **Done 2026-10-05. A run's `work` (flow or plan) names what a run that is not a turn does. A turn's run record costs two syncs (opened with its ledger named, then settled), so M3b's per-turn budget is now eight.** `runs/` chain and `RunRecord`, written for every cause; abandoned sweep; `/runs`; `vak runs`; flows keyed by `RunId`; admin Runs and Run detail; `#/runs/<id>` | `every_cause_writes_run`, `abandoned_run_is_recorded`, `run_open_failure_refuses_admission` |
 | M4.3 | **Done 2026-10-05. Until M4.4, slots count from the newest run that started (a refused slot stays due), each run keeps its own worktree, and delivery state is read from the outbox by trigger.** `Trigger` replaces `TaskDef`: Document store, kinds, `on_crash`, no `last_*`; `/triggers`; `vak triggers`; the `automations` tool; Automations screen and client Runs panel; the new words; `scheduled_runs.rs` and `scheduler_personal_os.rs` rewritten | `last_run_is_a_query`, `trigger_round_trips_as_document` |
 | M4.4 | **Done 2026-10-05. `high_water` is the newest schedule slot spent (an instant: a run-now event never moves it). Missed slots are one record for the range (`Missed { from, through }`), coalesced into the run that starts or skipped, never one record per slot. The claimant renews its liveness before it moves a claim, and an `Abandoned` record names the trigger and slot, so a run abandoned before it opened is still that trigger's. "Last run" skips coalesced records.** Claims and the one `due(now)`; `next_fire` and the mail OS lease go; skipped and coalesced records; `on_crash` | `schedule_slot_at_most_once_under_restart` (property test over crash points), `two_processes_do_not_double_start`, `skipped_slot_is_a_record`, `retry_once_retries_once` |
-| M4.5 | `effects/` chain; delivery as the first kind; the outbox goes; unknown outcomes and reconcile; `/effects`; Discord nonce; AGENTS.md's new effects invariant | `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`, `discord_resend_reuses_nonce` |
+| M4.5 | **Done 2026-10-05. `EffectKind` has only `Delivery` until M4.6 adds its kinds; `run` is optional, because a delivery with no admitted run (a budget alert) names none. An effect's status is held, queued, sending, sent, retrying, failed, unknown or superseded; a failure not proven unsent (part of a multi-message send) reads unknown. A held effect waits: no digest or completion flush exists yet. Webhooks get the key as `Idempotency-Key`. The admin Run detail lists a run's actions; the per-job Operations route is gone.** `effects/` chain; delivery as the first kind; the outbox goes; unknown outcomes and reconcile; `/effects`; Discord nonce; AGENTS.md's new effects invariant | `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`, `discord_resend_reuses_nonce` |
 | M4.6 | Mail and calendar send, create, update and RSVP become effects; their single-use claims go | `mail_send_is_one_effect`, `unknown_mail_send_never_resent` |
 | M4.7 | Cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` |
 | M4.8 | `CopyEnvironment`; the non-git refusal goes; AGENTS.md invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 cite the shipped shapes | `non_git_space_routine_runs_in_copy_environment` |

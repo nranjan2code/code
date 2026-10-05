@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as api from "../../api";
 import { closeArtifactCanvas, setTranscriptViewId, technicalDetails } from "../../store";
 import { relAgo } from "../../time";
-import { actionText, automationState, cadenceWords, canRetryDelivery, deliveryCount, deliveryStatusLabel, nextRunWords, runStatusLabel, scheduleZone } from "../../automationWords";
+import { actionText, automationState, cadenceWords, canSendAgain, deliveryStatusLabel, sentAgainWords, nextRunWords, runStatusLabel, scheduleZone } from "../../automationWords";
 import type { Trigger } from "../../types";
 import { createLoader, problemWords } from "./createLoader";
 import LoadState from "./LoadState";
@@ -124,11 +124,8 @@ export default function AutomationViewer(props: ViewerProps) {
                 <div class="automation-actions">
                   <button type="button" class="artifact-canvas-btn" disabled={busy() || !task().enabled} onClick={() => void act(async () => { await api.runTrigger(task().id); return "Started. It runs on the server, so you can close this."; })}>Run now</button>
                   <button type="button" class="artifact-canvas-btn" disabled={busy()} onClick={() => void act(async () => { await api.putTrigger(task().id, api.draftOf(task(), { enabled: !task().enabled })); })}>{task().enabled ? "Pause" : "Resume"}</button>
-                  <Show when={canRetryDelivery(task())}>
-                    <button type="button" class="artifact-canvas-btn" disabled={busy()} onClick={() => void act(async () => {
-                      const result = await api.retryTriggerDelivery(task().id);
-                      return result.failed ? `${deliveryCount(result.replayed)} sent again; ${result.failed} still waiting` : `${deliveryCount(result.replayed)} sent again`;
-                    })}>Retry delivery</button>
+                  <Show when={canSendAgain(task())}>
+                    <button type="button" class="artifact-canvas-btn" disabled={busy()} onClick={() => void act(async () => sentAgainWords(await api.resendEffect(task().delivery_effect!)))}>Send again</button>
                   </Show>
                   <Show when={lastSession()}>
                     {(session) => <button type="button" class="artifact-canvas-btn" onClick={() => {

@@ -6417,6 +6417,17 @@ impl Core {
         result
     }
 
+    /// The effect records of this Core's data home (plan M4.5).
+    pub fn effects(&self) -> vak_session::effects::Effects {
+        vak_session::effects::Effects::at(
+            self.shared_scope().effects(),
+            vak_config::paths::tenant_home_at(
+                &self.inner.sessions_home,
+                vak_config::paths::LOCAL_TENANT,
+            ),
+        )
+    }
+
     /// The run records of this Core's data home (plan M4.2).
     pub fn runs(&self) -> vak_session::runs::Runs {
         vak_session::runs::Runs::at(

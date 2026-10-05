@@ -374,13 +374,6 @@ impl<'a> Widget for OpsView<'a> {
                 ),
                 Span::styled("OK", self.theme.style_ok()),
             ]),
-            Line::from(vec![
-                Span::styled(
-                    format!("outbox.delivery       {queue_depth:<8} "),
-                    self.theme.style_card(),
-                ),
-                Span::styled("OK", self.theme.style_ok()),
-            ]),
         ];
 
         let bus_block = Block::default()

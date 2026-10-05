@@ -538,7 +538,7 @@ is rewiring rather than new infrastructure:
 | `Schedule` | `vak-core/src/triggers.rs` cron engine + scheduler catch-up |
 | `Predicate` | a script trigger's watchdog — **zero tokens while the predicate stays false** |
 | `Commitment` | dependency edge |
-| `External` | `vak-delivery` outbox / webhook |
+| `External` | a delivery effect (`vak_session::effects`) / webhook |
 
 #### Long-horizon mechanics
 
@@ -578,7 +578,7 @@ highest ranked runnable commitment.
 ### Delivery posture
 
 `DeliveryPosture` decides *when* a packet goes out, never what it says: the
-semantic contract, the renderer and the outbox are untouched. Two rules
+semantic contract and the renderer are untouched. Two rules
 override the cadence, and both are about not losing something that matters —
 an `Interrupt` urgency always sends, because an irreversible step's
 confirmation must not sit in a digest until morning; and an approval always

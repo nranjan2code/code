@@ -17,9 +17,9 @@ import { relAgo } from "../time";
 import {
   actionText,
   cadenceBadge,
-  canRetryDelivery,
-  deliveryCount,
+  canSendAgain,
   deliveryStatusLabel,
+  sentAgainWords,
   missedWords,
   nextRunWords,
   runStatusLabel,
@@ -197,12 +197,10 @@ export default function AutomationsModal() {
       if (diffTarget() && t.last_run?.sessions?.[0] === diffTarget()) setDiffTarget(null);
     });
 
-  const retryDelivery = async (t: Trigger) => {
+  const sendAgain = async (t: Trigger) => {
+    if (!t.delivery_effect) return;
     try {
-      const result = await api.retryTriggerDelivery(t.id);
-      setError(result.failed
-        ? `${deliveryCount(result.replayed)} sent again; ${result.failed} still waiting`
-        : `${deliveryCount(result.replayed)} sent again`);
+      setError(sentAgainWords(await api.resendEffect(t.delivery_effect)));
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -256,8 +254,8 @@ export default function AutomationsModal() {
                 <div class="task-actions">
                   <button type="button" class="chip sm" onClick={() => openInCanvas(t)} title="See this automation in the Canvas">open</button>
                   <button type="button" class="chip sm" onClick={() => void act(() => api.runTrigger(t.id))}>run now</button>
-                  <Show when={canRetryDelivery(t)}>
-                    <button type="button" class="chip sm" onClick={() => void retryDelivery(t)}>retry delivery</button>
+                  <Show when={canSendAgain(t)}>
+                    <button type="button" class="chip sm" onClick={() => void sendAgain(t)}>send again</button>
                   </Show>
                   <Show when={t.last_run?.sessions?.[0]}>
                     {(session) => <button type="button" class="chip sm" onClick={() => openDiff(session())}>diff</button>}

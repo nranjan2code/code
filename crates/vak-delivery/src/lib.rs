@@ -14,7 +14,6 @@ pub mod adapters;
 pub mod adaptive;
 pub mod client;
 pub mod discord;
-pub mod outbox;
 pub mod presentation;
 pub mod skills;
 pub mod slack;
@@ -1443,7 +1442,7 @@ fn chunk_markdown_preserving_fences(text: &str, max_chars: Option<usize>) -> Vec
 }
 
 pub mod worker {
-    //! Line-oriented worker protocol used by the future server outbox.
+    //! Line-oriented worker protocol the server renders delivery jobs through.
 
     use super::{DeliveryJob, DeliveryPacket, render};
     use serde::{Deserialize, Serialize};
@@ -2341,7 +2340,7 @@ mod tests {
 ///
 /// The one behaviour worth having: an unattended overnight run must not send
 /// forty notifications nobody reads. Nothing about the *content* changes — the
-/// semantic contract, the renderer, and the outbox are untouched — this only
+/// semantic contract and the renderer are untouched — this only
 /// decides whether a packet goes out now, waits for the unit of work to
 /// finish, or rolls into the next digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

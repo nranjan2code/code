@@ -259,6 +259,7 @@ async fn webhook_missing_token_fails_closed() {
     let client = client_with(&gw.token);
 
     // The run itself still completes; only the delivery is withheld.
+    let last_run;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         assert!(
@@ -274,6 +275,7 @@ async fn webhook_missing_token_fails_closed() {
             .await
             .unwrap();
         if t["last_run"]["status"] == "completed" && t["delivery_state"] == "pending" {
+            last_run = t["last_run"]["id"].as_str().unwrap().to_string();
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -283,11 +285,20 @@ async fn webhook_missing_token_fails_closed() {
         captured.lock().unwrap().is_empty(),
         "missing credential must fail closed: nothing posted"
     );
-    let pending = vak_session::chain::RecordChain::at(gw.cwd.join("home/delivery/jobs")).text();
-    assert!(pending.contains("\"state\":\"pending\""), "{pending}");
+    // The run's delivery is an effect proven not sent, kept for a retry.
+    let effects: serde_json::Value = client
+        .get(format!("{}/effects?run={last_run}", gw.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let effect = &effects["effects"][0];
+    assert_eq!(effect["status"], "retrying", "{effects}");
     assert!(
-        pending.contains("secret output"),
-        "exact output survives: {pending}"
+        effect["reason"].as_str().unwrap().contains("token_env"),
+        "{effects}"
     );
     let inbox = vak_session::chain::RecordChain::at(gw.cwd.join("home/inbox"))
         .read::<serde_json::Value>()

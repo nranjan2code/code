@@ -192,7 +192,7 @@ The desktop's routines daemon graduates into the platform scheduler:
 
 The agent emits GitHub-flavored markdown; `vak-delivery` projects it through a
 typed, loss-accounted packet. See `30-output-engineering.md` for the isolated
-renderer, templates, durable outbox, multi-message contract, and adapter recipe.
+renderer, templates, durable delivery effects, multi-message contract, and adapter recipe.
 
 | Surface | Flavor |
 |---|---|

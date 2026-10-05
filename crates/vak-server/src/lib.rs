@@ -63,6 +63,7 @@ mod client_ui;
 mod core_pool;
 mod coworking;
 mod delivery;
+mod effects;
 mod embedded_ui;
 mod events;
 mod feeds;
@@ -952,10 +953,10 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/triggers/{id}/run", post(automations::run_trigger))
         .route("/triggers/{id}/slots", get(automations::trigger_slots))
-        .route(
-            "/triggers/{id}/retry-delivery",
-            post(automations::retry_trigger_delivery),
-        )
+        .route("/effects", get(effects::list))
+        .route("/effects/{id}", get(effects::detail))
+        .route("/effects/{id}/resend", post(effects::resend))
+        .route("/effects/{id}/reconcile", post(effects::reconcile))
         .route("/sessions/{id}/launch", get(get_launch))
         .route("/sessions/{id}/launch/prepare", post(prepare_launch))
         .route("/sessions/{id}/launch/start", post(start_launch))
@@ -1210,11 +1211,6 @@ fn router_with_state(state: AppState) -> Router {
         .route("/ops/center", get(operations_center))
         .route("/ops/actions", get(operations_actions))
         .route("/ops/incidents", get(operations_incidents))
-        .route("/ops/outbox", get(operations_outbox))
-        .route(
-            "/ops/outbox/{job_id}/replay",
-            post(replay_operations_outbox),
-        )
         .route("/ops/{service}/{action}", post(ops_action))
         .route("/ops/diagnostics", get(ops_diagnostics))
         // Activation, explicitly (docs/design/46 D6). Configuration writes
@@ -1483,35 +1479,6 @@ fn operation_tasks(state: &AppState) -> Vec<serde_json::Value> {
     automations::projections(state).unwrap_or_default()
 }
 
-fn operation_outbox(state: &AppState) -> Result<(Vec<serde_json::Value>, usize, usize), String> {
-    let records = delivery::outbox_records(&state.core)?;
-    let pending = records
-        .iter()
-        .filter(|record| record.state == vak_delivery::outbox::OutboxState::Pending)
-        .count();
-    let dead = records
-        .iter()
-        .filter(|record| record.state == vak_delivery::outbox::OutboxState::DeadLetter)
-        .count();
-    let rows = records
-        .into_iter()
-        .take(200)
-        .map(|record| {
-            serde_json::json!({
-                "job_id": record.job.job_id,
-                "target": record.job.target,
-                "kind": record.job.kind,
-                "state": record.state,
-                "attempts": record.attempts,
-                "created_at_ms": record.created_at_ms,
-                "updated_at_ms": record.updated_at_ms,
-                "last_error": record.last_error,
-            })
-        })
-        .collect();
-    Ok((rows, pending, dead))
-}
-
 /// Unified, evidence-backed projection for the Operations Center. Every row
 /// is derived from an existing ledger, manager probe, or in-process handle;
 /// unavailable state stays explicit instead of being painted green.
@@ -1597,10 +1564,9 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
             "cold": true,
         }));
     }
-    let (outbox, outbox_pending, outbox_dead, outbox_error) = match operation_outbox(&state) {
-        Ok((rows, pending, dead)) => (rows, pending, dead, None),
-        Err(error) => (Vec::new(), 0, 0, Some(error)),
-    };
+    let effects = effects::operations_view(&state);
+    let count = |key: &str| effects[key].as_u64().unwrap_or(0);
+    let (waiting, unknown, failed) = (count("waiting"), count("unknown"), count("failed"));
     let runs = operation_runs(&state);
     let approvals = state
         .live_handles()
@@ -1651,10 +1617,10 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
                 .collect(),
         });
     }
-    if outbox_pending > 0 || outbox_dead > 0 {
+    if waiting > 0 || unknown > 0 || failed > 0 {
         candidates.push(operations::IncidentCandidate {
-            fingerprint: "delivery:outbox".to_string(),
-            severity: if outbox_dead > 0 {
+            fingerprint: "delivery:effects".to_string(),
+            severity: if failed > 0 || unknown > 0 {
                 "critical"
             } else {
                 "warning"
@@ -1662,24 +1628,33 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
             .to_string(),
             source: "delivery".to_string(),
             title: "Outbound delivery needs attention".to_string(),
-            detail: format!("{outbox_pending} pending, {outbox_dead} dead-lettered"),
+            detail: format!(
+                "{waiting} still sending, {unknown} not sure they were sent, {failed} not sent"
+            ),
             workspace: workspace.clone(),
-            evidence: outbox
-                .iter()
-                .filter(|row| row["state"] != "delivered")
-                .filter_map(|row| row["job_id"].as_str().map(|id| format!("outbox:{id}")))
+            evidence: effects["records"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|row| {
+                    matches!(
+                        row["status"].as_str(),
+                        Some("queued" | "sending" | "retrying" | "unknown" | "failed")
+                    )
+                })
+                .filter_map(|row| row["id"].as_str().map(|id| format!("effect:{id}")))
                 .collect(),
         });
     }
-    if let Some(error) = &outbox_error {
+    if let Some(error) = effects["error"].as_str() {
         candidates.push(operations::IncidentCandidate {
-            fingerprint: "delivery:outbox-read".to_string(),
+            fingerprint: "delivery:effects-read".to_string(),
             severity: "critical".to_string(),
             source: "delivery".to_string(),
             title: "Delivery evidence is unavailable".to_string(),
-            detail: error.clone(),
+            detail: error.to_string(),
             workspace: workspace.clone(),
-            evidence: vec!["outbox:read".to_string()],
+            evidence: vec!["effects:read".to_string()],
         });
     }
     if services["gateway"]["state"] != "running" && state.gateway.enabled {
@@ -1744,7 +1719,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
         },
         "runs": runs,
         "tasks": operation_tasks(&state),
-        "outbox": { "pending": outbox_pending, "dead_letter": outbox_dead, "records": outbox, "error": outbox_error },
+        "effects": effects,
         "bus": state.hub.bus_status(),
         "security": security,
         "incidents": incidents,
@@ -1763,110 +1738,6 @@ async fn operations_incidents(State(state): State<AppState>) -> Json<serde_json:
     Json(serde_json::json!({
         "incidents": operations::list(&vak_config::scope::SharedScope::new(state.core.scope().root())),
     }))
-}
-
-async fn operations_outbox(State(state): State<AppState>) -> axum::response::Response {
-    match delivery::outbox_records(&state.core) {
-        Ok(records) => Json(serde_json::json!({
-            "records": records.into_iter().take(500).map(|record| serde_json::json!({
-                "job_id": record.job.job_id,
-                "target": record.job.target,
-                "kind": record.job.kind,
-                "state": record.state,
-                "attempts": record.attempts,
-                "created_at_ms": record.created_at_ms,
-                "updated_at_ms": record.updated_at_ms,
-                "last_error": record.last_error,
-            })).collect::<Vec<_>>(),
-        }))
-        .into_response(),
-        Err(error) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error })),
-        )
-            .into_response(),
-    }
-}
-
-async fn replay_operations_outbox(
-    State(state): State<AppState>,
-    Path(job_id): Path<String>,
-) -> axum::response::Response {
-    let state_label = |state: vak_delivery::outbox::OutboxState| match state {
-        vak_delivery::outbox::OutboxState::Pending => "pending",
-        vak_delivery::outbox::OutboxState::Delivered => "delivered",
-        vak_delivery::outbox::OutboxState::DeadLetter => "dead_letter",
-    };
-    let before = delivery::outbox_records(&state.core)
-        .ok()
-        .and_then(|records| {
-            records
-                .into_iter()
-                .find(|record| record.job.job_id == job_id)
-        })
-        .map(|record| state_label(record.state).to_string())
-        .unwrap_or_else(|| "not found".to_string());
-    let requested_at = Utc::now();
-    match delivery::replay_outbox_job(&state.core, &job_id).await {
-        Ok(()) => {
-            let after_record = delivery::outbox_records(&state.core)
-                .ok()
-                .and_then(|records| {
-                    records
-                        .into_iter()
-                        .find(|record| record.job.job_id == job_id)
-                });
-            let after = after_record
-                .as_ref()
-                .map(|record| state_label(record.state).to_string())
-                .unwrap_or_else(|| "not found".to_string());
-            let verification_status = if after == "delivered" {
-                "verified"
-            } else {
-                "pending"
-            };
-            let mut receipt = operations::ActionReceipt {
-                receipt_id: format!("OP-{}", uuid::Uuid::now_v7().simple()),
-                service: format!("outbox:{job_id}"),
-                action: "replay".to_string(),
-                requested_at,
-                completed_at: Utc::now(),
-                succeeded: true,
-                verification: operations::ActionVerification {
-                    status: verification_status.to_string(),
-                    before,
-                    after,
-                    detail: if verification_status == "verified" {
-                        "The adapter delivered the replayed job during the verification probe."
-                    } else {
-                        "Replay was accepted; the durable outbox record remains pending until the adapter confirms delivery."
-                    }
-                    .to_string(),
-                },
-                persisted: false,
-                trace: Some(request_trace(&state, "ops-replay")),
-                actor: Some(request_actor(&state)),
-            };
-            receipt.persisted = operations::record_action(
-                &vak_config::scope::SharedScope::new(state.core.scope().root()),
-                &receipt,
-            )
-            .is_ok();
-            Json(serde_json::json!({
-                "ok": true,
-                "job_id": job_id,
-                "receipt_id": receipt.receipt_id,
-                "receipt_persisted": receipt.persisted,
-                "verification": receipt.verification,
-            }))
-            .into_response()
-        }
-        Err(error) => (
-            StatusCode::CONFLICT,
-            Json(serde_json::json!({ "error": error })),
-        )
-            .into_response(),
-    }
 }
 
 /// Trailing window for the admin console's spend trend chart — long enough

@@ -7,12 +7,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use vak_core::Core;
 use vak_delivery::client::WorkerClient;
-use vak_delivery::outbox::{Outbox, OutboxRecord};
 use vak_delivery::templates::{ChannelPreference, load_layers};
 use vak_delivery::{
     AnswerDraft, DeliveryAction, DeliveryContent, DeliveryJob, DeliveryKind, DeliveryPacket,
     DeliveryProfile, Markup,
 };
+use vak_session::effects::{Dispatch, EffectKind, EffectRecord, Prepare, Receipt};
+use vak_session::ids::EffectId;
 
 const WORKER_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CHANNEL_CHARS: usize = 100_000;
@@ -82,11 +83,91 @@ pub struct RequestedCapabilities {
     pub accepts_files: Option<bool>,
 }
 
+/// Whether a failed send left anything with the provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Landed {
+    /// The provider answered that it took nothing.
+    No,
+    /// Part of it landed before the provider refused the rest.
+    Partly,
+    /// Nobody can say: it timed out, or the provider failed after taking it.
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SendFailure {
+    pub(crate) reason: String,
+    pub(crate) landed: Landed,
+}
+
+impl SendFailure {
+    pub(crate) fn not_sent(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            landed: Landed::No,
+        }
+    }
+
+    /// A transport error: refused before a connection was made means
+    /// nothing was sent; any other means nobody knows.
+    pub(crate) fn transport(operation: &str, error: &reqwest::Error, sent_before: bool) -> Self {
+        let landed = if error.is_connect() || error.is_builder() {
+            if sent_before {
+                Landed::Partly
+            } else {
+                Landed::No
+            }
+        } else {
+            Landed::Unknown
+        };
+        Self {
+            reason: format!("{operation}: {error}"),
+            landed,
+        }
+    }
+
+    /// A provider's answer: a 4xx (429 included) took nothing; a 5xx may
+    /// have taken it.
+    pub(crate) fn status(operation: &str, status: reqwest::StatusCode, sent_before: bool) -> Self {
+        let landed = if status.is_client_error() {
+            if sent_before {
+                Landed::Partly
+            } else {
+                Landed::No
+            }
+        } else {
+            Landed::Unknown
+        };
+        Self {
+            reason: format!("{operation} returned {status}"),
+            landed,
+        }
+    }
+}
+
 #[async_trait]
 trait ChannelAdapter: Send + Sync {
     fn scheme(&self) -> &'static str;
     fn profile(&self) -> DeliveryProfile;
-    async fn send(&self, core: &Core, packet: &DeliveryPacket) -> Result<(), String>;
+    /// Sends `packet`, telling the provider `key` where it takes one.
+    /// Returns the provider's id for what it created, when it gives one:
+    /// an id the provider returned proves the message landed.
+    async fn send(
+        &self,
+        core: &Core,
+        packet: &DeliveryPacket,
+        key: &str,
+    ) -> Result<Option<String>, SendFailure>;
+    /// Whether a success proves the message landed rather than that the
+    /// provider took it.
+    fn confirms(&self) -> bool {
+        true
+    }
+    /// Whether the provider drops a repeat of a key it has seen, so an
+    /// unknown send may be sent again under the same key.
+    fn dedupes(&self) -> bool {
+        false
+    }
 }
 
 struct AdapterRegistry {
@@ -245,7 +326,6 @@ impl AdapterRegistry {
 }
 
 struct DeliveryRuntime {
-    outbox: Outbox,
     worker: Option<WorkerClient>,
     adapters: AdapterRegistry,
     serial: tokio::sync::Mutex<()>,
@@ -262,7 +342,6 @@ impl DeliveryRuntime {
             })
             .map(|path| WorkerClient::new(path, WORKER_TIMEOUT));
         Self {
-            outbox: Outbox::new(core.shared_scope().delivery_jobs()),
             worker,
             adapters: AdapterRegistry::built_in(&core.shared_scope().into_root()),
             serial: tokio::sync::Mutex::new(()),
@@ -288,13 +367,63 @@ impl DeliveryRuntime {
         Ok(packet)
     }
 
-    async fn deliver_record(
+    /// Sends the effect `id` if this process takes it (`how`), and
+    /// records how it went. Only a taken effect is sent.
+    async fn dispatch(
         &self,
         core: &Core,
-        record: OutboxRecord,
+        id: EffectId,
+        how: Dispatch,
     ) -> Result<DeliveryPacket, String> {
-        let mut packet = self.render(&record.job).await?;
-        let (adapter, address) = self.adapters.resolve(&record.job.target)?;
+        let effects = core.effects();
+        let record = effects
+            .begin_dispatch(id, how)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("effect {id} is not this server's to send now"))?;
+        match self.send(core, &record).await {
+            Ok((packet, receipt, confirmed)) => {
+                let recorded = if confirmed {
+                    effects.confirmed(id, receipt)
+                } else {
+                    effects.accepted(id, receipt)
+                };
+                if let Err(error) = recorded {
+                    eprintln!("[delivery] effect {id} was sent but not recorded: {error}");
+                }
+                Ok(packet)
+            }
+            Err(failure) => {
+                let recorded = match failure.landed {
+                    Landed::No => effects.failed(id, &failure.reason, true),
+                    Landed::Partly => effects.failed(id, &failure.reason, false),
+                    Landed::Unknown => effects.unknown(id, &failure.reason),
+                };
+                if let Err(error) = recorded {
+                    eprintln!("[delivery] effect {id} outcome not recorded: {error}");
+                }
+                Err(failure.reason)
+            }
+        }
+    }
+
+    async fn send(
+        &self,
+        core: &Core,
+        record: &EffectRecord,
+    ) -> Result<(DeliveryPacket, Receipt, bool), SendFailure> {
+        let payload = core
+            .effects()
+            .payload(record)
+            .map_err(|error| SendFailure::not_sent(format!("effect payload: {error}")))?;
+        let mut job: DeliveryJob = serde_json::from_slice(&payload)
+            .map_err(|error| SendFailure::not_sent(format!("effect payload: {error}")))?;
+        // A job sent again carries the id of the effect that sends it.
+        job.job_id = record.id.to_string();
+        let mut packet = self.render(&job).await.map_err(SendFailure::not_sent)?;
+        let (adapter, address) = self
+            .adapters
+            .resolve(&record.target)
+            .map_err(SendFailure::not_sent)?;
         // Each adapter's own `send` re-derives its address from
         // `packet.target` via a plain `surface:address` split — normalize
         // away a three-part bot-scoped target (`surface:address:bot_id`)
@@ -302,11 +431,20 @@ impl DeliveryRuntime {
         // segment it has no use for once the right adapter is already
         // picked.
         packet.target = format!("{}:{address}", adapter.scheme());
-        adapter.send(core, &packet).await?;
-        self.outbox
-            .mark_delivered(&record.job.job_id, packet.clone())
-            .map_err(|error| error.to_string())?;
-        Ok(packet)
+        let provider_id = adapter.send(core, &packet, &record.idempotency_key).await?;
+        let receipt = Receipt {
+            provider: adapter.scheme().to_string(),
+            provider_id,
+            at: chrono::Utc::now(),
+        };
+        Ok((packet, receipt, adapter.confirms()))
+    }
+
+    /// Whether the provider behind `target` drops a repeat of a key.
+    fn dedupes(&self, target: &str) -> bool {
+        self.adapters
+            .resolve(target)
+            .is_ok_and(|(adapter, _)| adapter.dedupes())
     }
 }
 
@@ -527,8 +665,12 @@ pub(crate) async fn render_response(
     Ok(packet)
 }
 
+/// Delivers `content` to `target` as an effect of the run `trace` names:
+/// prepared before anything is sent, then sent now unless its posture
+/// holds it.
 pub(crate) async fn deliver(
     core: &Core,
+    trace: Option<&vak_session::trace::TraceKey>,
     target: &str,
     kind: DeliveryKind,
     content: DeliveryContent,
@@ -539,9 +681,8 @@ pub(crate) async fn deliver(
     let (adapter, _) = runtime.adapters.resolve(target)?;
     let profile = apply_preferences(core, adapter.profile());
     let content = enrich_provenance(core, content);
-    // Posture decides WHEN a packet goes out, never what it says.
-    // Held packets (HoldUntilComplete / HoldForDigest) are enqueued to the
-    // outbox and delivered later by the replay loop or turn-completion flush.
+    // Posture decides WHEN a packet goes out, never what it says. A held
+    // packet is a prepared effect with its hold.
     let disposition = profile.posture.disposition(kind);
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),
@@ -550,46 +691,49 @@ pub(crate) async fn deliver(
         content,
         profile: profile.clone(),
         skill_registry: Some(merged_presentation_skills(core)),
-        trace: core.admitted_trace().cloned(),
-        actor: core.admitted_trace().and_then(|trace| trace.actor),
+        trace: trace.cloned(),
+        actor: trace.and_then(|trace| trace.actor),
     };
-    let record = runtime
-        .outbox
-        .enqueue(job)
+    let hold = match disposition {
+        vak_delivery::Disposition::Send => None,
+        vak_delivery::Disposition::HoldUntilComplete => Some("until_complete".to_string()),
+        vak_delivery::Disposition::HoldForDigest => Some("digest".to_string()),
+    };
+    let payload = serde_json::to_vec(&job).map_err(|error| error.to_string())?;
+    let record = core
+        .effects()
+        .prepare(Prepare {
+            kind: EffectKind::delivery(target),
+            target: target.into(),
+            trace: trace.cloned(),
+            payload,
+            hold: hold.clone(),
+            supersedes: None,
+        })
         .map_err(|error| error.to_string())?;
-    if disposition == vak_delivery::Disposition::Send {
-        match runtime.deliver_record(core, record.clone()).await {
-            Ok(packet) => Ok(packet),
-            Err(error) => {
-                let _ = runtime.outbox.mark_failed(&record.job.job_id, &error);
-                Err(error)
-            }
-        }
-    } else {
-        Ok(vak_delivery::DeliveryPacket {
+    match hold {
+        None => runtime.dispatch(core, record.id, Dispatch::Fresh).await,
+        Some(hold) => Ok(vak_delivery::DeliveryPacket {
             schema_version: vak_delivery::DELIVERY_SCHEMA_VERSION,
-            job_id: record.job.job_id.clone(),
-            target: record.job.target.clone(),
-            surface: record.job.profile.surface.clone(),
-            kind: record.job.kind,
+            job_id: record.id.to_string(),
+            target: job.target.clone(),
+            surface: job.profile.surface.clone(),
+            kind: job.kind,
             payload: vak_delivery::DeliveryPayload::Text(String::new()),
             fallback_markdown: String::new(),
             chunks: Vec::new(),
             actions: Vec::new(),
             coverage: Vec::new(),
-            diagnostics: vec![format!(
-                "delivery held: disposition={:?}, will retry via outbox",
-                disposition
-            )],
+            diagnostics: vec![format!("delivery held: {hold}")],
             presentation: None,
-            trace: record.job.trace.clone(),
-            actor: record.job.actor,
-        })
+            trace: job.trace.clone(),
+            actor: job.actor,
+        }),
     }
 }
 
 /// Attach the immutable ownership envelope before a generic task, schedule, or
-/// approval packet enters the durable outbox. Gateway rendering supplies a
+/// approval packet becomes an effect. Gateway rendering supplies a
 /// request id as well; this common path guarantees that packets emitted by
 /// internal machinery still identify the Agent and authorized audience.
 fn enrich_provenance(core: &Core, mut content: DeliveryContent) -> DeliveryContent {
@@ -683,6 +827,7 @@ pub(crate) async fn deliver_feed_intents(
         );
         deliver(
             core,
+            core.admitted_trace(),
             target,
             DeliveryKind::Alert,
             DeliveryContent::Text { markdown },
@@ -693,6 +838,10 @@ pub(crate) async fn deliver_feed_intents(
     Ok(delivered)
 }
 
+/// Sends what is waiting, every 30 seconds: first records as unknown
+/// what a stopped process was sending (never sent again by itself), then
+/// takes each queued effect and each one proven not sent with attempts
+/// left. Held effects wait.
 pub(crate) fn start_replay(core: &Core) {
     let core = core.clone();
     tokio::spawn(async move {
@@ -701,77 +850,82 @@ pub(crate) fn start_replay(core: &Core) {
         loop {
             interval.tick().await;
             // A fenced process dispatches nothing: the restored store's
-            // writer owns the outbox now.
+            // writer owns the effects now.
             if vak_session::fence::is_fenced() {
                 continue;
             }
             let _serial = runtime.serial.lock().await;
-            let records = match runtime.outbox.pending() {
-                Ok(records) => records,
+            let effects = core.effects();
+            if let Err(error) = effects.recover(chrono::Utc::now()) {
+                eprintln!("[delivery] effect recovery failed: {error}");
+                continue;
+            }
+            let waiting = match effects.dispatchable() {
+                Ok(waiting) => waiting,
                 Err(error) => {
-                    eprintln!("[delivery] outbox replay scan failed: {error}");
+                    eprintln!("[delivery] effect scan failed: {error}");
                     continue;
                 }
             };
-            for record in records.into_iter().take(100) {
-                if record.attempts >= 10 {
-                    let _ = runtime
-                        .outbox
-                        .mark_dead_letter(&record.job.job_id, "delivery retry budget exhausted");
-                    eprintln!(
-                        "[delivery] {} moved to dead letter after {} attempts",
-                        record.job.job_id, record.attempts
-                    );
-                    continue;
-                }
-                // Respect held postures: a packet held for completion or
-                // digest stays in the outbox until its posture changes.
-                let disposition = record.job.profile.posture.disposition(record.job.kind);
-                if disposition != vak_delivery::Disposition::Send {
-                    eprintln!(
-                        "[delivery] {} held (disposition={:?}); skipping replay",
-                        record.job.job_id, disposition
-                    );
-                    continue;
-                }
-                if let Err(error) = runtime.deliver_record(&core, record.clone()).await {
-                    let _ = runtime.outbox.mark_failed(&record.job.job_id, &error);
-                    eprintln!("[delivery] replay {} failed: {error}", record.job.job_id);
+            for record in waiting.into_iter().take(100) {
+                if let Err(error) = runtime.dispatch(&core, record.id, Dispatch::Fresh).await {
+                    eprintln!("[delivery] effect {} not sent: {error}", record.id);
                 }
             }
         }
     });
 }
 
-/// Read the durable outbox for the operations surfaces. Records are returned
-/// as-is so the console can distinguish pending, delivered and dead-lettered
-/// work without inventing a second status store.
-pub(crate) fn outbox_records(core: &Core) -> Result<Vec<OutboxRecord>, String> {
-    runtime(core)
-        .outbox
-        .list()
-        .map_err(|error| error.to_string())
+/// What the owner asked for when they chose Send again.
+pub(crate) enum Resent {
+    /// The same effect, sent again under its key to a provider that drops
+    /// repeats, or one proven not sent, tried now.
+    Same(EffectId),
+    /// A new effect that supersedes it.
+    New(EffectId),
 }
 
-/// Replay one pending or dead-lettered job through the same serialized
-/// renderer/adapter path as the background worker. A missing job is surfaced
-/// as an error; no new delivery target or capability is inferred here.
-pub(crate) async fn replay_outbox_job(core: &Core, job_id: &str) -> Result<(), String> {
-    let runtime = runtime(core);
-    let _serial = runtime.serial.lock().await;
-    let record = runtime
-        .outbox
-        .get(job_id)
-        .map_err(|error| error.to_string())?;
-    if record.state == vak_delivery::outbox::OutboxState::Delivered {
-        return Err("delivery job is already delivered".into());
-    }
-    match runtime.deliver_record(core, record.clone()).await {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            let _ = runtime.outbox.mark_failed(job_id, &error);
-            Err(error)
-        }
+/// Sends an effect again for the owner. An unknown effect goes again
+/// under the same key only where the provider drops a repeat of it
+/// (Discord's nonce); anywhere else it is superseded by a new effect,
+/// because sending it again under its key could deliver it twice. An
+/// effect proven not sent, or still queued, is tried now.
+pub(crate) async fn resend(core: &Core, id: EffectId) -> Result<Resent, String> {
+    vak_session::fence::check().map_err(|error| error.to_string())?;
+    runtime(core).resend(core, id).await
+}
+
+impl DeliveryRuntime {
+    async fn resend(&self, core: &Core, id: EffectId) -> Result<Resent, String> {
+        let _serial = self.serial.lock().await;
+        let effects = core.effects();
+        let record = effects
+            .get(id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("no effect {id}"))?;
+        use vak_session::effects::EffectStatus as S;
+        let (sent, outcome) = match record.status {
+            S::Queued | S::Retrying => (
+                self.dispatch(core, id, Dispatch::Fresh).await,
+                Resent::Same(id),
+            ),
+            S::Unknown if self.dedupes(&record.target) => (
+                self.dispatch(core, id, Dispatch::Dedupe).await,
+                Resent::Same(id),
+            ),
+            S::Unknown | S::Failed => {
+                let next = effects.send_again(id).map_err(|error| error.to_string())?;
+                (
+                    self.dispatch(core, next.id, Dispatch::Fresh).await,
+                    Resent::New(next.id),
+                )
+            }
+            S::Held => return Err("it is waiting for its digest".into()),
+            S::Sending => return Err("it is being sent now".into()),
+            S::Sent => return Err("it was sent".into()),
+            S::Superseded => return Err("it was already sent again".into()),
+        };
+        sent.map(|_| outcome)
     }
 }
 
@@ -797,7 +951,12 @@ impl ChannelAdapter for LogAdapter {
         }
     }
 
-    async fn send(&self, core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
+    async fn send(
+        &self,
+        core: &Core,
+        packet: &DeliveryPacket,
+        _key: &str,
+    ) -> Result<Option<String>, SendFailure> {
         let path = core.shared_scope().gateway_deliveries();
         let mut line = serde_json::json!({
             "ts": chrono::Utc::now().to_rfc3339(),
@@ -814,7 +973,8 @@ impl ChannelAdapter for LogAdapter {
         }
         vak_session::chain::RecordChain::at(path)
             .append(&line)
-            .map_err(|error| format!("append deliveries log: {error}"))
+            .map(|()| None)
+            .map_err(|error| SendFailure::not_sent(format!("append deliveries log: {error}")))
     }
 }
 
@@ -840,12 +1000,24 @@ impl ChannelAdapter for WebhookAdapter {
         }
     }
 
-    async fn send(&self, core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
+    async fn send(
+        &self,
+        core: &Core,
+        packet: &DeliveryPacket,
+        key: &str,
+    ) -> Result<Option<String>, SendFailure> {
         let (_, name) = packet
             .target
             .split_once(':')
-            .ok_or_else(|| "webhook target has no name".to_string())?;
-        super::gateway::deliver_webhook_packet(core, name, packet).await
+            .ok_or_else(|| SendFailure::not_sent("webhook target has no name"))?;
+        super::gateway::deliver_webhook_packet(core, name, packet, key)
+            .await
+            .map(|()| None)
+    }
+
+    /// A 2xx says the receiver took it, not what it did with it.
+    fn confirms(&self) -> bool {
+        false
     }
 }
 
@@ -903,11 +1075,16 @@ impl ChannelAdapter for TelegramAdapter {
         }
     }
 
-    async fn send(&self, _core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
+    async fn send(
+        &self,
+        _core: &Core,
+        packet: &DeliveryPacket,
+        _key: &str,
+    ) -> Result<Option<String>, SendFailure> {
         let (_, chat_id) = packet
             .target
             .split_once(':')
-            .ok_or_else(|| "telegram target has no chat id".to_string())?;
+            .ok_or_else(|| SendFailure::not_sent("telegram target has no chat id"))?;
         let chunks: Vec<&str> = if packet.chunks.is_empty() {
             vec![packet.fallback_markdown.as_str()]
         } else {
@@ -915,6 +1092,7 @@ impl ChannelAdapter for TelegramAdapter {
         };
         let client = reqwest::Client::new();
         let last = chunks.len().saturating_sub(1);
+        let mut message_id = None;
         for (i, chunk) in chunks.iter().enumerate() {
             let mut body = serde_json::json!({
                 "chat_id": chat_id,
@@ -935,12 +1113,21 @@ impl ChannelAdapter for TelegramAdapter {
                 .json(&body)
                 .send()
                 .await
-                .map_err(|error| format!("telegram sendMessage: {error}"))?;
+                .map_err(|error| SendFailure::transport("telegram sendMessage", &error, i > 0))?;
             if !resp.status().is_success() {
-                return Err(format!("telegram sendMessage returned {}", resp.status()));
+                return Err(SendFailure::status(
+                    "telegram sendMessage",
+                    resp.status(),
+                    i > 0,
+                ));
             }
+            let answer: serde_json::Value = resp.json().await.unwrap_or_default();
+            message_id = answer["result"]["message_id"]
+                .as_i64()
+                .map(|id| id.to_string())
+                .or(message_id);
         }
-        Ok(())
+        Ok(message_id)
     }
 }
 
@@ -977,21 +1164,36 @@ impl ChannelAdapter for DiscordAdapter {
         built_in_surface_profile("discord")
     }
 
-    async fn send(&self, _core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
+    /// Every message carries a nonce made from the effect's key and its
+    /// index, with `enforce_nonce`, so Discord returns the message it
+    /// already made rather than making a second one when the same effect
+    /// is sent again.
+    async fn send(
+        &self,
+        _core: &Core,
+        packet: &DeliveryPacket,
+        key: &str,
+    ) -> Result<Option<String>, SendFailure> {
         let (_, channel_id) = packet
             .target
             .split_once(':')
-            .ok_or_else(|| "discord target has no channel id".to_string())?;
-        post_chunks(
+            .ok_or_else(|| SendFailure::not_sent("discord target has no channel id"))?;
+        let url = format!("{}/channels/{channel_id}/messages", self.api_base);
+        let mut message_id = post_chunks(
             packet,
-            |chunk, last| {
+            |chunk, index, last| {
                 let mut content = chunk.to_string();
                 if last && let Some(prompt) = typed_verdict_prompt(&packet.actions) {
                     content.push_str(&prompt);
                 }
                 (
-                    format!("{}/channels/{channel_id}/messages", self.api_base),
-                    serde_json::json!({ "content": content, "allowed_mentions": {"parse": []} }),
+                    url.clone(),
+                    serde_json::json!({
+                        "content": content,
+                        "allowed_mentions": {"parse": []},
+                        "nonce": discord_nonce(key, index),
+                        "enforce_nonce": true,
+                    }),
                 )
             },
             |request| request.header("Authorization", format!("Bot {}", self.bot_token)),
@@ -1004,25 +1206,41 @@ impl ChannelAdapter for DiscordAdapter {
             .cloned()
             .collect::<Vec<_>>();
         if !cards.is_empty() {
+            let index = packet.chunks.len().max(1);
             let response = reqwest::Client::new()
-                .post(format!("{}/channels/{channel_id}/messages", self.api_base))
+                .post(&url)
                 .header("Authorization", format!("Bot {}", self.bot_token))
                 .json(&serde_json::json!({
                     "embeds": vak_delivery::discord::structured_card_embeds(&cards),
                     "allowed_mentions": {"parse": []},
+                    "nonce": discord_nonce(key, index),
+                    "enforce_nonce": true,
                 }))
                 .send()
                 .await
-                .map_err(|error| format!("discord createMessage: {error}"))?;
+                .map_err(|error| SendFailure::transport("discord createMessage", &error, true))?;
             if !response.status().is_success() {
-                return Err(format!(
-                    "discord createMessage returned {}",
-                    response.status()
+                return Err(SendFailure::status(
+                    "discord createMessage",
+                    response.status(),
+                    true,
                 ));
             }
+            let answer: serde_json::Value = response.json().await.unwrap_or_default();
+            message_id = answer["id"].as_str().map(str::to_string).or(message_id);
         }
-        Ok(())
+        Ok(message_id)
     }
+
+    fn dedupes(&self) -> bool {
+        true
+    }
+}
+
+/// The nonce of one message of an effect: its key and the message's
+/// index, within Discord's 25 characters.
+fn discord_nonce(key: &str, index: usize) -> String {
+    format!("{key}{index}").chars().take(25).collect()
 }
 
 /// Proactive push to a Slack channel/DM via `chat.postMessage`.
@@ -1041,20 +1259,26 @@ impl ChannelAdapter for SlackAdapter {
         built_in_surface_profile("slack")
     }
 
-    async fn send(&self, _core: &Core, packet: &DeliveryPacket) -> Result<(), String> {
+    async fn send(
+        &self,
+        _core: &Core,
+        packet: &DeliveryPacket,
+        _key: &str,
+    ) -> Result<Option<String>, SendFailure> {
         let (_, channel_id) = packet
             .target
             .split_once(':')
-            .ok_or_else(|| "slack target has no channel id".to_string())?;
-        post_chunks(
+            .ok_or_else(|| SendFailure::not_sent("slack target has no channel id"))?;
+        let url = format!("{}/chat.postMessage", self.api_base);
+        let mut message_ts = post_chunks(
             packet,
-            |chunk, last| {
+            |chunk, _, last| {
                 let mut text = chunk.to_string();
                 if last && let Some(prompt) = typed_verdict_prompt(&packet.actions) {
                     text.push_str(&prompt);
                 }
                 (
-                    format!("{}/chat.postMessage", self.api_base),
+                    url.clone(),
                     serde_json::json!({ "channel": channel_id, "text": text }),
                 )
             },
@@ -1079,8 +1303,9 @@ impl ChannelAdapter for SlackAdapter {
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
+            let operation = "slack chat.postMessage";
             let response = reqwest::Client::new()
-                .post(format!("{}/chat.postMessage", self.api_base))
+                .post(&url)
                 .bearer_auth(&self.bot_token)
                 .json(&serde_json::json!({
                     "channel": channel_id,
@@ -1090,37 +1315,55 @@ impl ChannelAdapter for SlackAdapter {
                 }))
                 .send()
                 .await
-                .map_err(|error| format!("slack chat.postMessage: {error}"))?;
+                .map_err(|error| SendFailure::transport(operation, &error, true))?;
             if !response.status().is_success() {
-                return Err(format!(
-                    "slack chat.postMessage returned {}",
-                    response.status()
-                ));
+                return Err(SendFailure::status(operation, response.status(), true));
             }
-            let result: serde_json::Value = response
-                .json()
-                .await
-                .map_err(|error| format!("slack response: {error}"))?;
-            if result["ok"].as_bool() != Some(true) {
-                return Err(format!(
-                    "slack chat.postMessage not ok: {}",
-                    result["error"].as_str().unwrap_or("?")
-                ));
-            }
+            message_ts = slack_answer(operation, response, true)
+                .await?
+                .or(message_ts);
         }
-        Ok(())
+        Ok(message_ts)
     }
 }
 
-/// Shared chunk-and-POST loop for the two Phase 3 adapters: `body` builds
-/// the (url, json) for one chunk and is told whether it is the last one,
-/// `auth` applies the surface's auth header.
+/// Slack answers 200 with `ok: false` when it refused a message, so the
+/// body decides; an unreadable body after a 200 may have been taken.
+async fn slack_answer(
+    operation: &str,
+    response: reqwest::Response,
+    sent_before: bool,
+) -> Result<Option<String>, SendFailure> {
+    let result: serde_json::Value = response.json().await.map_err(|error| SendFailure {
+        reason: format!("{operation} response: {error}"),
+        landed: Landed::Unknown,
+    })?;
+    if result["ok"].as_bool() != Some(true) {
+        return Err(SendFailure {
+            reason: format!(
+                "{operation} not ok: {}",
+                result["error"].as_str().unwrap_or("?")
+            ),
+            landed: if sent_before {
+                Landed::Partly
+            } else {
+                Landed::No
+            },
+        });
+    }
+    Ok(result["ts"].as_str().map(str::to_string))
+}
+
+/// Shared chunk-and-POST loop for Discord and Slack: `body` builds the
+/// (url, json) for one chunk from its index and whether it is the last,
+/// `auth` applies the surface's auth header. Returns the provider's id of
+/// the last message.
 async fn post_chunks(
     packet: &DeliveryPacket,
-    body: impl Fn(&str, bool) -> (String, serde_json::Value),
+    body: impl Fn(&str, usize, bool) -> (String, serde_json::Value),
     auth: impl Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
     operation: &str,
-) -> Result<(), String> {
+) -> Result<Option<String>, SendFailure> {
     let chunks: Vec<&str> = if packet.chunks.is_empty() {
         vec![packet.fallback_markdown.as_str()]
     } else {
@@ -1128,30 +1371,25 @@ async fn post_chunks(
     };
     let client = reqwest::Client::new();
     let last = chunks.len().saturating_sub(1);
+    let mut id = None;
     for (i, chunk) in chunks.iter().enumerate() {
-        let (url, json) = body(chunk, i == last);
+        let (url, json) = body(chunk, i, i == last);
         let resp = auth(client.post(url))
             .json(&json)
             .send()
             .await
-            .map_err(|error| format!("{operation}: {error}"))?;
+            .map_err(|error| SendFailure::transport(operation, &error, i > 0))?;
         if !resp.status().is_success() {
-            return Err(format!("{operation} returned {}", resp.status()));
+            return Err(SendFailure::status(operation, resp.status(), i > 0));
         }
         if operation.starts_with("slack ") {
-            let result: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|error| format!("{operation} response: {error}"))?;
-            if result["ok"].as_bool() != Some(true) {
-                return Err(format!(
-                    "{operation} not ok: {}",
-                    result["error"].as_str().unwrap_or("?")
-                ));
-            }
+            id = slack_answer(operation, resp, i > 0).await?.or(id);
+        } else {
+            let answer: serde_json::Value = resp.json().await.unwrap_or_default();
+            id = answer["id"].as_str().map(str::to_string).or(id);
         }
     }
-    Ok(())
+    Ok(id)
 }
 
 #[cfg(test)]
@@ -1421,5 +1659,169 @@ mod tests {
         };
         assert!(registry.resolve("telegram").is_err());
         assert!(registry.resolve("telegram:").is_err());
+    }
+
+    /// An unknown Discord send goes again as the same effect with the same
+    /// nonce and `enforce_nonce`, so Discord returns the message it already
+    /// made instead of posting a second one.
+    #[tokio::test]
+    async fn discord_resend_reuses_nonce() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use vak_session::effects::EffectStatus;
+        let bodies: Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let app = axum::Router::new().route(
+            "/channels/{channel}/messages",
+            axum::routing::post({
+                let bodies = bodies.clone();
+                let calls = calls.clone();
+                move |axum::Json(body): axum::Json<serde_json::Value>| {
+                    let bodies = bodies.clone();
+                    let calls = calls.clone();
+                    async move {
+                        bodies.lock().unwrap().push(body);
+                        // The first post fails after Discord may have taken it.
+                        if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                            (
+                                axum::http::StatusCode::BAD_GATEWAY,
+                                axum::Json(serde_json::json!({})),
+                            )
+                        } else {
+                            (
+                                axum::http::StatusCode::OK,
+                                axum::Json(serde_json::json!({ "id": "m-1" })),
+                            )
+                        }
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        let mut adapters = AdapterRegistry {
+            adapters: HashMap::new(),
+            bot_adapters: HashMap::new(),
+        };
+        adapters.register_bot(
+            "discord",
+            "bot".into(),
+            DiscordAdapter {
+                bot_token: "t".into(),
+                api_base: format!("http://{addr}"),
+            },
+        );
+        let runtime = DeliveryRuntime {
+            worker: None,
+            adapters,
+            serial: tokio::sync::Mutex::new(()),
+        };
+        let target = "discord:chan:bot";
+        let job = DeliveryJob {
+            job_id: "j".into(),
+            target: target.into(),
+            kind: DeliveryKind::Assistant,
+            content: DeliveryContent::Answer(AnswerDraft::from_markdown("hello")),
+            profile: built_in_surface_profile("discord"),
+            skill_registry: None,
+            trace: None,
+            actor: None,
+        };
+        let effect = core
+            .effects()
+            .prepare(Prepare {
+                kind: EffectKind::delivery(target),
+                target: target.into(),
+                trace: None,
+                payload: serde_json::to_vec(&job).unwrap(),
+                hold: None,
+                supersedes: None,
+            })
+            .unwrap();
+        assert!(
+            runtime
+                .dispatch(&core, effect.id, Dispatch::Fresh)
+                .await
+                .is_err()
+        );
+        let unknown = core.effects().get(effect.id).unwrap().unwrap();
+        assert_eq!(unknown.status, EffectStatus::Unknown);
+
+        let resent = runtime.resend(&core, effect.id).await.unwrap();
+        assert!(matches!(resent, Resent::Same(id) if id == effect.id));
+        let sent = core.effects().get(effect.id).unwrap().unwrap();
+        assert_eq!(sent.status, EffectStatus::Sent);
+        assert_eq!(sent.attempts, 2);
+        assert_eq!(
+            sent.receipt
+                .and_then(|receipt| receipt.provider_id)
+                .as_deref(),
+            Some("m-1")
+        );
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 2);
+        assert_eq!(bodies[0]["nonce"], bodies[1]["nonce"]);
+        assert_eq!(bodies[1]["enforce_nonce"], true);
+        let nonce = bodies[0]["nonce"].as_str().unwrap();
+        assert!(nonce.starts_with(&effect.idempotency_key) && nonce.len() <= 25);
+    }
+
+    /// Anywhere a provider does not drop repeats, an unknown send is sent
+    /// again only as a new effect that supersedes it.
+    #[tokio::test]
+    async fn unknown_send_elsewhere_is_superseded_not_resent() {
+        use vak_session::effects::EffectStatus;
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        let mut adapters = AdapterRegistry {
+            adapters: HashMap::new(),
+            bot_adapters: HashMap::new(),
+        };
+        adapters.register(LogAdapter);
+        let runtime = DeliveryRuntime {
+            worker: None,
+            adapters,
+            serial: tokio::sync::Mutex::new(()),
+        };
+        let target = "log:main";
+        let job = DeliveryJob {
+            job_id: "j".into(),
+            target: target.into(),
+            kind: DeliveryKind::Assistant,
+            content: DeliveryContent::Answer(AnswerDraft::from_markdown("hello")),
+            profile: DeliveryProfile::plain("log"),
+            skill_registry: None,
+            trace: None,
+            actor: None,
+        };
+        let effects = core.effects();
+        let effect = effects
+            .prepare(Prepare {
+                kind: EffectKind::delivery(target),
+                target: target.into(),
+                trace: None,
+                payload: serde_json::to_vec(&job).unwrap(),
+                hold: None,
+                supersedes: None,
+            })
+            .unwrap();
+        effects
+            .begin_dispatch(effect.id, Dispatch::Fresh)
+            .unwrap()
+            .unwrap();
+        effects.unknown(effect.id, "timed out").unwrap();
+        let Resent::New(next) = runtime.resend(&core, effect.id).await.unwrap() else {
+            unreachable!("a log send is never resent under its key");
+        };
+        assert_eq!(
+            effects.get(effect.id).unwrap().unwrap().status,
+            EffectStatus::Superseded
+        );
+        let next = effects.get(next).unwrap().unwrap();
+        assert_eq!(next.status, EffectStatus::Sent);
+        assert_eq!(next.supersedes, Some(effect.id));
     }
 }

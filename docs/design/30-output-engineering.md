@@ -11,7 +11,7 @@ snapshot/SSE projection with merged planner, isolated worker, trusted templates,
 plugin-extensible skill registry, structured fence projection on all markup
 surfaces, engagement posture integration, Telegram/Slack/Discord projections,
 semantic webhook envelope, adapter registry, ordered multi-message output, and
-durable retry outbox implemented. TUI remains follow-up work.
+durable delivery as effects (plan M4.5, AGENTS.md invariant 41) implemented. TUI remains follow-up work.
 
 ## Problem
 
@@ -114,20 +114,22 @@ until explicitly activated.
 
 `DeliveryProfile` carries a `DeliveryPosture` (cadence × urgency) that the
 session or task sets. The posture decides **when** a packet goes out, never
-**what** it says — the renderer, packet contents, and outbox are untouched.
+**what** it says — the renderer and packet contents are untouched.
 
 - `Disposition::Send` — render and deliver immediately (the pre-kernel default).
-- `Disposition::HoldUntilComplete` — enqueue to the outbox; the replay loop
-  skips held packets until the turn completes or the posture resolves to
-  `Send`.
-- `Disposition::HoldForDigest` — enqueue to the outbox; the digest flush
-  delivers it.
+- `Disposition::HoldUntilComplete` — prepared as an effect with
+  `hold = "until_complete"`; replay never takes a held effect.
+- `Disposition::HoldForDigest` — prepared as an effect with `hold = "digest"`.
+
+Nothing releases a held effect yet: no turn-completion or digest flush has
+been built, so a held packet waits in the effects chain, visible as "Waiting
+for the digest".
 
 Two rules override the cadence: an `Interrupt` urgency always sends (an
 irreversible step's confirmation must not wait), and any packet needing a
 person (`DeliveryKind::Approval`, `Alert`) always sends because a held gate is
-a stopped run. The outbox replay checks posture before attempting delivery,
-so held packets do not burn retry budget.
+a stopped run. A held effect is never dispatchable, so it burns no retry
+budget.
 
 Every block receives an ID and a coverage disposition. Unknown structures stay
 in the exact fallback even when the target cannot render them richly. Silent
@@ -184,12 +186,21 @@ populates it with the merged registry (builtins + plugin-contributed
 presentation skills), which the worker uses for ```vak fence validation. When
 `None`, the worker falls back to `built_in_skill_registry()`.
 
-Before push, the server creates an append-only job-state JSONL under
-`<home>/delivery/jobs/`. It records pending, delivered, failed-attempt, and
-dead-letter snapshots without deleting the exact job. Writes are synced; Unix
-also syncs the containing directory on creation. Replay scans at most 100 jobs
-every 30 seconds and stops after ten attempts. The inbox copy is written before
-transport, so missing credentials or remote failure cannot erase the signal.
+Before push, the server prepares the job as an effect (plan M4.5,
+`vak_session::effects`): an `effects/` record names its run, target and
+idempotency key, and the job itself is a tenant object. Only the process
+that moves the effect's `eff/<key>` ref sends it. Each attempt ends with the
+provider's receipt (a message id proves it landed), a failure proven not
+sent (a 4xx, a refused connection), or an unknown outcome (a timeout, a 5xx,
+part of a multi-message send). Replay, every 30 seconds, first records as
+unknown what a stopped process was sending, then takes at most 100 queued
+effects and failures proven not sent, up to ten attempts. An unknown effect
+is never sent again by itself: Discord drops a repeat of the effect's key
+(its `nonce`, with `enforce_nonce`), so Send again reuses the effect there;
+anywhere else Send again makes a new effect that supersedes it, or the owner
+says whether it arrived. Webhooks receive the key as `Idempotency-Key`. The
+inbox copy is written before transport, so missing credentials or remote
+failure cannot erase the signal.
 
 Attached TUI and desktop clients should normally render semantic events locally:
 they know terminal width, theme, accessibility mode, and window state. The
@@ -359,7 +370,7 @@ Primary references:
 - The worker is deterministic by default; no LLM editorial pass is in the
   delivery critical path.
 - The server does not wait on remote rendering or transport calls after a
-  committed run; the outbox is the handoff point.
+  committed run; the prepared effect is the handoff point.
 - Worker concurrency, payload size, and per-target retry budgets are bounded.
 - Template files are data, not code: they are schema-validated, size-bounded,
   and resolved by explicit precedence.
@@ -411,7 +422,7 @@ Markdown remains the export and emergency fallback for every projection.
 
 ## Integration status
 
-1. Durable outbox records and a persistent worker supervisor: complete.
+1. Durable delivery effects and a persistent worker supervisor: complete.
 2. Telegram conversion behind the worker with tag-safe chunking: complete.
 3. Slack `mrkdwn` and Discord markdown conversion behind the worker, both
    with fence-safe chunking: complete.

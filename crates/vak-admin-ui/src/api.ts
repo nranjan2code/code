@@ -1,5 +1,7 @@
 import type {
   RunRecord,
+  EffectRecord,
+  EffectStatus,
   ChatSurface,
   OnboardingState,
   AllowlistEntry,
@@ -178,6 +180,23 @@ export const api = {
   },
   run: (id: string): Promise<RunRecord> =>
     fetch(`/runs/${encodeURIComponent(id)}`).then((r) => handle(r)),
+  effects: (filter: { run?: string; state?: EffectStatus } = {}, limit = 200): Promise<{ effects: EffectRecord[] }> => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (filter.run) q.set("run", filter.run);
+    if (filter.state) q.set("state", filter.state);
+    return fetch(`/effects?${q}`).then((r) => handle(r));
+  },
+  effect: (id: string): Promise<EffectRecord> =>
+    fetch(`/effects/${encodeURIComponent(id)}`).then((r) => handle(r)),
+  /** Send an action again: the same one where the provider drops repeats, else a new one that replaces it. */
+  resendEffect: (id: string): Promise<{ ok: boolean; effect: string; new: boolean; status: string }> =>
+    fetch(`/effects/${encodeURIComponent(id)}/resend`, { method: "POST" }).then((r) => handle(r)),
+  reconcileEffect: (id: string, outcome: "sent" | "not_sent"): Promise<{ ok: boolean; effect: EffectRecord }> =>
+    fetch(`/effects/${encodeURIComponent(id)}/reconcile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outcome }),
+    }).then((r) => handle(r)),
 
   /** `total` counts every session matching the filter, not just the page
    * `limit` returned — the list itself is capped, the count isn't. */
@@ -264,14 +283,9 @@ export const api = {
   operations: (): Promise<OperationsSnapshot> =>
     fetch("/ops/center").then((r) => handle<OperationsSnapshot>(r)),
 
-  operationsOutbox: (): Promise<{ records: OperationsSnapshot["outbox"]["records"] }> =>
-    fetch("/ops/outbox").then((r) => handle(r)),
-
   operationsActions: (): Promise<{ actions: OperationsSnapshot["actions"] }> =>
     fetch("/ops/actions").then((r) => handle(r)),
 
-  replayOperationsOutbox: (jobId: string): Promise<{ ok: boolean; job_id: string }> =>
-    fetch(`/ops/outbox/${encodeURIComponent(jobId)}/replay`, { method: "POST" }).then((r) => handle(r)),
 
   opsAction: (service: "gateway" | "bridges", action: "start" | "stop" | "restart" | "install" | "uninstall"): Promise<{ ok: boolean; action?: string; error?: string; receipt_id?: string; receipt_persisted?: boolean; verification?: { status: string; before: string; after: string; detail: string } }> =>
     fetch(`/ops/${service}/${action}`, { method: "POST" }).then((r) => handle(r)),

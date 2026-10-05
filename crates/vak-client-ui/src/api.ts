@@ -2079,8 +2079,10 @@ export function runTrigger(id: string): Promise<unknown> {
   return req(`/triggers/${encodeURIComponent(id)}/run`, { method: "POST" });
 }
 
-export function retryTriggerDelivery(id: string): Promise<{ replayed: number; failed: number }> {
-  return req(`/triggers/${encodeURIComponent(id)}/retry-delivery`, { method: "POST", body: "{}" });
+/** Sends a message again: the same one where the provider drops repeats,
+ *  otherwise a new one that replaces it (plan M4.5). */
+export function resendEffect(id: string): Promise<{ ok: boolean; effect: string; new: boolean; status: string }> {
+  return req(`/effects/${encodeURIComponent(id)}/resend`, { method: "POST", body: "{}" });
 }
 
 /** An automation's runs, newest first. */

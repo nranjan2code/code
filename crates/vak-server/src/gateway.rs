@@ -3807,7 +3807,15 @@ pub(crate) async fn deliver_and_record(
     task_id: Option<&str>,
 ) -> Result<(), String> {
     deliver_and_record_with_result(
-        core, target, text, inbox_kind, title, session_id, task_id, None,
+        core,
+        core.admitted_trace(),
+        target,
+        text,
+        inbox_kind,
+        title,
+        session_id,
+        task_id,
+        None,
     )
     .await
     .map(|_| ())
@@ -3816,6 +3824,7 @@ pub(crate) async fn deliver_and_record(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn deliver_and_record_with_result(
     core: &Core,
+    trace: Option<&vak_session::trace::TraceKey>,
     target: &str,
     text: &str,
     inbox_kind: vak_core::inbox::Kind,
@@ -3834,15 +3843,10 @@ pub(crate) async fn deliver_and_record_with_result(
         task_id,
         result_id,
         dedupe_key.as_deref(),
-        core.admitted_trace(),
+        trace,
     );
     let cleaned_text = crate::projection::clean_scaffolding(text);
     let mut answer = AnswerDraft::from_markdown(cleaned_text);
-    if let Some(value) = task_id {
-        answer
-            .metadata
-            .insert(crate::automations::TRIGGER_METADATA.into(), value.into());
-    }
     if let Some(value) = session_id {
         answer
             .metadata
@@ -3853,6 +3857,7 @@ pub(crate) async fn deliver_and_record_with_result(
     }
     crate::delivery::deliver(
         core,
+        trace,
         target,
         DeliveryKind::TaskSummary,
         DeliveryContent::Answer(answer),
@@ -3904,6 +3909,7 @@ async fn deliver_approval_and_record(
     };
     crate::delivery::deliver(
         core,
+        core.admitted_trace(),
         target,
         DeliveryKind::Approval,
         DeliveryContent::Approval(approval),
@@ -3936,22 +3942,28 @@ fn webhook_retryable(status: Option<u16>) -> bool {
     }
 }
 
+/// Posts `packet` to the webhook `name` with the effect's `key` as its
+/// `Idempotency-Key`. A receiver that never answered with a definite
+/// refusal, or failed with a 5xx after taking it, leaves it unknown.
 pub(crate) async fn deliver_webhook_packet(
     core: &Core,
     name: &str,
     packet: &DeliveryPacket,
-) -> Result<(), String> {
+    key: &str,
+) -> Result<(), crate::delivery::SendFailure> {
+    use crate::delivery::SendFailure;
     let hook = core.config().gateway.webhooks.get(name).ok_or_else(|| {
         let known: Vec<&String> = core.config().gateway.webhooks.keys().collect();
-        format!("unknown webhook '{name}'; configured: {known:?}")
+        SendFailure::not_sent(format!("unknown webhook '{name}'; configured: {known:?}"))
     })?;
     // Fail closed: a configured credential that is missing must not turn
     // into an unauthenticated post of agent output.
     let token = match &hook.token_env {
-        Some(env_name) => Some(
-            vak_config::get_var(env_name)
-                .ok_or_else(|| format!("webhook '{name}' token_env '{env_name}' is not set"))?,
-        ),
+        Some(env_name) => Some(vak_config::get_var(env_name).ok_or_else(|| {
+            SendFailure::not_sent(format!(
+                "webhook '{name}' token_env '{env_name}' is not set"
+            ))
+        })?),
         None => None,
     };
     let payload = serde_json::json!({
@@ -3962,14 +3974,16 @@ pub(crate) async fn deliver_webhook_packet(
         "delivery": packet,
     });
 
-    let mut last_error = String::new();
+    // Unknown once any attempt may have been taken; otherwise refused.
+    let mut last_error = SendFailure::not_sent(format!("webhook '{name}' was not posted"));
+    let mut maybe_taken = false;
     for attempt in 0..WEBHOOK_ATTEMPTS {
         if attempt > 0 {
             tokio::time::sleep(Duration::from_millis(400u64 << (attempt - 1))).await;
         }
         let mut req = http_client()
             .post(&hook.url)
-            .header("Idempotency-Key", &packet.job_id)
+            .header("Idempotency-Key", key)
             .json(&payload);
         if let Some(token) = &token {
             req = req.bearer_auth(token);
@@ -3980,15 +3994,19 @@ pub(crate) async fn deliver_webhook_packet(
                 if status.is_success() {
                     return Ok(());
                 }
-                last_error = format!("webhook '{name}' returned {status}");
+                last_error = SendFailure::status(&format!("webhook '{name}'"), status, false);
                 if !webhook_retryable(Some(status.as_u16())) {
                     return Err(last_error);
                 }
             }
             Err(e) => {
-                last_error = format!("webhook '{name}' post failed: {e}");
+                last_error = SendFailure::transport(&format!("webhook '{name}' post"), &e, false);
             }
         }
+        maybe_taken |= last_error.landed == crate::delivery::Landed::Unknown;
+    }
+    if maybe_taken {
+        last_error.landed = crate::delivery::Landed::Unknown;
     }
     Err(last_error)
 }

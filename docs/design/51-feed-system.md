@@ -91,8 +91,8 @@ queries return an empty result set with explicit metadata.
 Alerts have the same scope rules as sources. Evaluation is idempotent per
 `(alert_id, item_id)`, records a match receipt, and marks delivery successful
 only after the canonical host delivery runtime accepts or confirms the
-outbox job. Alert content is a typed delivery payload; feed code never
-constructs or writes delivery outbox records directly.
+delivery effect. Alert content is a typed delivery payload; feed code never
+constructs or writes effect records directly.
 
 ## API contract
 
@@ -107,6 +107,6 @@ cannot contain a hidden script failure or a fabricated empty result.
 
 The old split authority is retired: no handler may write one configuration
 file while ingestion reads another, no source operation may update only a
-database shadow, and no feed script may bypass the host delivery outbox.
+database shadow, and no feed script may bypass the host delivery runtime.
 Compatibility code is removed once the canonical path is live and covered by
 regression tests.

@@ -303,11 +303,6 @@ impl SharedScope {
         self.gateway().join("deliveries")
     }
 
-    /// The durable delivery outbox.
-    pub fn delivery_jobs(&self) -> PathBuf {
-        self.root.join("delivery").join("jobs")
-    }
-
     pub fn operations_incidents(&self) -> PathBuf {
         self.operations().join("incidents")
     }
@@ -345,6 +340,12 @@ impl SharedScope {
     /// unit of work, whatever caused it.
     pub fn runs(&self) -> PathBuf {
         self.root.join("runs")
+    }
+
+    /// The effect records (plan M4.5): one chain of effect events for
+    /// every action taken outside Vak, deliveries first.
+    pub fn effects(&self) -> PathBuf {
+        self.root.join("effects")
     }
 
     pub fn cost_log(&self) -> PathBuf {
@@ -516,7 +517,7 @@ mod tests {
         assert_eq!(s.gateway_bindings(), data.join("gateway/bindings.json"));
         assert_eq!(s.gateway_bots(), data.join("gateway/bots.json"));
         assert_eq!(s.gateway_deliveries(), data.join("gateway/deliveries"));
-        assert_eq!(s.delivery_jobs(), data.join("delivery/jobs"));
+        assert_eq!(s.effects(), data.join("effects"));
         assert_eq!(s.operations_incidents(), data.join("operations/incidents"));
         assert_eq!(s.operations_actions(), data.join("operations/actions"));
         assert_eq!(s.sandbox_promotions(), data.join("sandbox/promotions"));

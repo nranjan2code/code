@@ -344,7 +344,7 @@ async fn operations_center_is_a_real_evidence_projection() {
     assert!(body["health"]["checks"].is_array());
     assert!(body["pool"]["entries"].is_array());
     assert!(body["runs"].is_array());
-    assert!(body["outbox"]["records"].is_array());
+    assert!(body["effects"]["records"].is_array());
     assert!(body["incidents"].is_array());
 }
 
@@ -392,8 +392,8 @@ async fn secured_operations_center_uses_the_bound_port() {
     assert!(body["server"]["uptime_secs"].as_u64().is_some());
     assert_eq!(body["services"]["gateway_healthy"], true);
 
-    let outbox: serde_json::Value = client
-        .get(format!("http://{addr}/ops/outbox"))
+    let effects: serde_json::Value = client
+        .get(format!("http://{addr}/effects"))
         .bearer_auth(&token)
         .send()
         .await
@@ -403,15 +403,16 @@ async fn secured_operations_center_uses_the_bound_port() {
         .json()
         .await
         .unwrap();
-    assert!(outbox["records"].is_array());
+    assert!(effects["effects"].is_array());
 
-    let replay_missing = client
-        .post(format!("http://{addr}/ops/outbox/not-a-real-job/replay"))
+    let missing = vak_session::ids::EffectId::new();
+    let resend_missing = client
+        .post(format!("http://{addr}/effects/{missing}/resend"))
         .bearer_auth(&token)
         .send()
         .await
         .unwrap();
-    assert_eq!(replay_missing.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(resend_missing.status(), reqwest::StatusCode::CONFLICT);
 
     handle.abort();
 }

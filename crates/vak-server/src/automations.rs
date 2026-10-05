@@ -15,7 +15,8 @@ use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 use vak_agent::AgentEvent;
 use vak_core::triggers::{self, Trigger, TriggerAction, TriggerError, TriggerKind};
-use vak_session::ids::TriggerId;
+use vak_session::effects::{EffectRecord, EffectStatus};
+use vak_session::ids::{EffectId, TriggerId};
 use vak_session::runs::{OpenRun, RunOutcome, RunRecord, RunStatus, Slot};
 
 use crate::AppState;
@@ -69,43 +70,47 @@ fn last_started(runs: &[RunRecord]) -> Option<&RunRecord> {
     runs.iter().find(|run| run.status != RunStatus::Skipped)
 }
 
-/// What a delivery of the trigger's last run looks like now, read from the
-/// outbox until effects replace it (plan M4.5).
+/// What the delivery of the trigger's last run looks like now, read from
+/// that run's effects, and the effect a person may send again.
 fn delivery_state(
     trigger: &Trigger,
     last: Option<&RunRecord>,
-    outbox: &[vak_delivery::outbox::OutboxRecord],
-) -> Option<&'static str> {
-    let last = last?;
+    effects: &[EffectRecord],
+) -> (Option<&'static str>, Option<EffectId>) {
+    let Some(last) = last else {
+        return (None, None);
+    };
     if trigger.scope.is_some() {
-        return Some("agent_session");
+        return (Some("agent_session"), None);
     }
     if last.status == RunStatus::Running {
-        return Some("pending");
+        return (Some("pending"), None);
     }
     if trigger.deliver_to.is_none() {
-        return Some("inbox");
+        return (Some("inbox"), None);
     }
-    let id = trigger.id.to_string();
-    let mine = outbox.iter().filter(|record| match &record.job.content {
-        vak_delivery::DeliveryContent::Answer(answer) => {
-            answer.metadata.get(TRIGGER_METADATA).map(String::as_str) == Some(id.as_str())
-        }
-        _ => false,
-    });
-    let mut state = Some("delivered");
-    for record in mine {
-        match record.state {
-            vak_delivery::outbox::OutboxState::Pending => return Some("pending"),
-            vak_delivery::outbox::OutboxState::DeadLetter => state = Some("failed"),
-            vak_delivery::outbox::OutboxState::Delivered => {}
+    // An effect sent again is its successor's story.
+    let mut worst: (u8, Option<&'static str>, Option<EffectId>) = (0, Some("delivered"), None);
+    for effect in effects
+        .iter()
+        .filter(|effect| effect.run == Some(last.id))
+        .filter(|effect| effect.status != EffectStatus::Superseded)
+    {
+        let (rank, state, resend) = match effect.status {
+            EffectStatus::Unknown => (4, "unknown", true),
+            EffectStatus::Failed => (3, "failed", true),
+            EffectStatus::Retrying => (2, "pending", true),
+            EffectStatus::Queued | EffectStatus::Sending | EffectStatus::Held => {
+                (1, "pending", false)
+            }
+            EffectStatus::Sent | EffectStatus::Superseded => continue,
+        };
+        if rank > worst.0 {
+            worst = (rank, Some(state), resend.then_some(effect.id));
         }
     }
-    state
+    (worst.1, worst.2)
 }
-
-/// The outbox metadata key a trigger's deliveries carry.
-pub(crate) const TRIGGER_METADATA: &str = "vak_trigger_id";
 
 /// A trigger as the API shows it: the stored trigger, its folder here, its
 /// next slot, and what its last run and delivery did.
@@ -113,7 +118,7 @@ fn projection(
     state: &AppState,
     trigger: &Trigger,
     runs: &[RunRecord],
-    outbox: &[vak_delivery::outbox::OutboxRecord],
+    effects: &[EffectRecord],
 ) -> serde_json::Value {
     // Slots folded into a run are part of it, not runs of their own.
     let last = runs.iter().find(|run| run.coalesced_into.is_none());
@@ -143,10 +148,9 @@ fn projection(
                     .map(|run| run.opened_at)
             ),
         );
-        object.insert(
-            "delivery_state".into(),
-            serde_json::json!(delivery_state(trigger, last, outbox)),
-        );
+        let (delivery, resend) = delivery_state(trigger, last, effects);
+        object.insert("delivery_state".into(), serde_json::json!(delivery));
+        object.insert("delivery_effect".into(), serde_json::json!(resend));
         object.insert("running".into(), serde_json::Value::Bool(running));
     }
     value
@@ -154,7 +158,7 @@ fn projection(
 
 pub(crate) fn projections(state: &AppState) -> Result<Vec<serde_json::Value>, TriggerError> {
     let grouped = runs_by_trigger(state);
-    let outbox = crate::delivery::outbox_records(&state.core).unwrap_or_default();
+    let effects = state.core.effects().list().unwrap_or_default();
     Ok(of_this_space(state)?
         .iter()
         .map(|trigger| {
@@ -162,7 +166,7 @@ pub(crate) fn projections(state: &AppState) -> Result<Vec<serde_json::Value>, Tr
                 state,
                 trigger,
                 grouped.get(&trigger.id).map_or(&[][..], Vec::as_slice),
-                &outbox,
+                &effects,
             )
         })
         .collect())
@@ -196,8 +200,8 @@ pub(crate) async fn get_trigger(State(state): State<AppState>, Path(id): Path<St
     let runs = runs_by_trigger(&state)
         .remove(&trigger.id)
         .unwrap_or_default();
-    let outbox = crate::delivery::outbox_records(&state.core).unwrap_or_default();
-    Json(projection(&state, &trigger, &runs, &outbox)).into_response()
+    let effects = state.core.effects().list().unwrap_or_default();
+    Json(projection(&state, &trigger, &runs, &effects)).into_response()
 }
 
 /// What a person or client gives to create or replace a trigger. The id,
@@ -458,38 +462,6 @@ pub(crate) async fn trigger_slots(
         .into_response(),
         Err(response) => *response,
     }
-}
-
-/// Replays a trigger's pending deliveries without running it again (until
-/// effects replace this, plan M4.5).
-pub(crate) async fn retry_trigger_delivery(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Response {
-    let records = match crate::delivery::outbox_records(&state.core) {
-        Ok(records) => records,
-        Err(error) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, error),
-    };
-    let jobs = records
-        .into_iter()
-        .filter(|record| record.state == vak_delivery::outbox::OutboxState::Pending)
-        .filter(|record| match &record.job.content {
-            vak_delivery::DeliveryContent::Answer(answer) => {
-                answer.metadata.get(TRIGGER_METADATA).map(String::as_str) == Some(id.as_str())
-            }
-            _ => false,
-        })
-        .map(|record| record.job.job_id)
-        .collect::<Vec<_>>();
-    let mut replayed = 0usize;
-    let mut failed = 0usize;
-    for job_id in jobs {
-        match crate::delivery::replay_outbox_job(&state.core, &job_id).await {
-            Ok(()) => replayed += 1,
-            Err(_) => failed += 1,
-        }
-    }
-    Json(serde_json::json!({ "replayed": replayed, "failed": failed })).into_response()
 }
 
 // ---- Firing ----------------------------------------------------------------
@@ -792,7 +764,7 @@ async fn fire(
         scope.clone(),
         false,
         vak_core::admission::RunAdmission::default()
-            .trace(trace)
+            .trace(trace.clone())
             .trigger(trigger.id),
     )
     .await
@@ -848,6 +820,8 @@ async fn fire(
         let child_session = child_id.clone();
         let name = trigger.name.clone();
         let deliver_to = trigger.deliver_to.clone();
+        // The summary is an effect of this run.
+        let run_trace = trace.clone();
         let mail_calendar_task = scope.is_some();
         let routine_history_vault = routine_vault.clone();
         let routine_history_run = routine_run.clone();
@@ -916,7 +890,7 @@ async fn fire(
                     }
                     // Mail/calendar output may contain personal content: it
                     // stays only in the owning Agent's append-only session,
-                    // never in the shared Inbox or outbox.
+                    // never in the shared Inbox or a delivery.
                     if !mail_calendar_task {
                         let text = crate::last_assistant_text(&child_handle)
                             .unwrap_or_else(|| summary.clone());
@@ -937,6 +911,7 @@ async fn fire(
                         if let Some(target) = &deliver_to {
                             let _ = crate::gateway::deliver_and_record_with_result(
                                 &st.core,
+                                Some(&run_trace),
                                 target,
                                 &body,
                                 vak_core::inbox::Kind::TaskSummary,
@@ -970,7 +945,10 @@ async fn fire(
         // Subscribe the completion watcher before starting the turn so fast
         // scripted/provider responses cannot publish RunFinished into a void.
         tokio::task::yield_now().await;
-        crate::begin_turn(&h, &h.core, &scheduled_prompt, false);
+        // The turn is the claimed run's work, not a run of its own: the
+        // handle cleared its admitted key when it was registered.
+        let turn_core = h.core.clone().with_admitted_trace(Some(trace));
+        crate::begin_turn(&h, &turn_core, &scheduled_prompt, false);
     } else {
         run.settle_with(
             RunOutcome::Failed {
@@ -993,7 +971,8 @@ async fn fire_script(
     trace: vak_session::trace::TraceKey,
 ) {
     let id = trigger.id.to_string();
-    let outcome = crate::execute_script(&state.core, state.core.cwd(), script, Some(trace)).await;
+    let outcome =
+        crate::execute_script(&state.core, state.core.cwd(), script, Some(trace.clone())).await;
     run.settle_with(
         if outcome.ok {
             RunOutcome::Completed
@@ -1022,6 +1001,7 @@ async fn fire_script(
                 Some(target) => {
                     let _ = crate::gateway::deliver_and_record_with_result(
                         &state.core,
+                        Some(&trace),
                         target,
                         &outcome.text,
                         vak_core::inbox::Kind::TaskSummary,
@@ -1053,6 +1033,7 @@ async fn fire_script(
             .unwrap_or(crate::FALLBACK_ALERT_TARGET);
         let _ = crate::gateway::deliver_and_record_with_result(
             &state.core,
+            Some(&trace),
             target,
             &format!("watchdog '{}' alert:\n{}", trigger.name, outcome.text),
             vak_core::inbox::Kind::TaskSummary,

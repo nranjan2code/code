@@ -142,9 +142,9 @@ Three forces pull in different directions:
                     │
                     ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Durability Layer (vak-delivery/src/outbox.rs)               │
-│  Append-only JSONL per job_id, Pending → Delivered/DeadLetter │
-│  Oldest-first replay, 10 attempts, then DLQ                 │
+│  Durability Layer (vak-session/src/effects.rs, M4.5)         │
+│  effects/ chain: prepared → dispatched → sent | failed |     │
+│  unknown → reconciled; payload a tenant object; 10 attempts │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -348,13 +348,18 @@ purely for auditability.
 
 ### 30.7 The Durability Layer
 
-`Outbox` in `outbox.rs`:
-- Append-only JSONL per `job_id` under `<home>/delivery/jobs/`
-- States: `Pending` → `Delivered` / `DeadLetter`
-- `update()` uses a process-level `Arc<Mutex<()>>` for atomic read-modify-append
-- Reads try full record, fall back to last valid JSON line on torn writes
-- `pending()` returns oldest-first (no starvation), caps at 100 records
-- Replay interval: 30s. Retry budget: 10 attempts. Then dead-letter.
+Every delivery is an effect (`vak_session::effects`, plan M4.5, AGENTS.md
+invariant 41):
+- An `effects/` record chain in the shared scope; the job is a tenant object.
+- Steps: `prepared` (with an optional `hold`) → `dispatched` → `accepted` |
+  `confirmed` | `failed { proven_not_sent }` | `unknown` → `reconciled` or
+  `superseded`.
+- One dispatcher per attempt: the process that moves `eff/<key>` under the
+  writer epoch.
+- `dispatchable()` returns oldest-first (no starvation); replay takes 100.
+- Replay interval: 30s. Retry budget: 10 attempts for failures proven not
+  sent; an unknown outcome is never retried by itself.
+- A row the reader cannot decode is an error, never skipped.
 - `fallback_markdown` is always in the packet, so a delivery failure never
   loses the exact source.
 
@@ -387,7 +392,7 @@ requests, regardless of which model or provider produced the original output.
 
 3. **Delivery posture integration** (Gap 7).
    `DeliveryPosture` (cadence × urgency) now consulted by `render_response()`
-   before enqueue/send, routing to outbox when appropriate.
+   before it prepares or sends, holding the effect when appropriate.
 
 4. **`DeliveryContent::{Text, Progress, ToolResult}` go through markup conversion** (Gap 5).
    Previously these bypassed the markup converters entirely. Now all content

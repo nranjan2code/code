@@ -45,34 +45,6 @@ fn record<T: Traced + Serialize + DeserializeOwned>(
     }
 }
 
-fn outbox_sample() -> serde_json::Value {
-    let job = vak_delivery::DeliveryJob {
-        job_id: "job-1".into(),
-        target: "log:main".into(),
-        kind: vak_delivery::DeliveryKind::Assistant,
-        content: vak_delivery::DeliveryContent::Answer(vak_delivery::AnswerDraft::from_markdown(
-            "hello",
-        )),
-        profile: vak_delivery::DeliveryProfile::plain("log"),
-        skill_registry: None,
-        trace: None,
-        actor: None,
-    };
-    serde_json::to_value(vak_delivery::outbox::OutboxRecord {
-        schema_version: 1,
-        job,
-        state: vak_delivery::outbox::OutboxState::Pending,
-        attempts: 0,
-        created_at_ms: 1,
-        updated_at_ms: 1,
-        packet: None,
-        last_error: None,
-        trace: None,
-        actor: None,
-    })
-    .unwrap()
-}
-
 /// Every durable record type that carries the trace key and an actor, with a
 /// sample row. Adding a ledger row type means adding it here; the count test
 /// below fails until it is.
@@ -91,6 +63,16 @@ fn records() -> Vec<Record> {
             serde_json::json!({
                 "run": "run_01920000-0000-7000-8000-000000000001", "at": ts,
                 "step": "session", "session_id": "s",
+            }),
+        ),
+        record::<vak_session::effects::EffectEvent>(
+            "EffectEvent",
+            "crates/vak-session/src/effects.rs",
+            "ledger",
+            "effects",
+            serde_json::json!({
+                "effect": "eff_01920000-0000-7000-8000-000000000001", "at": ts,
+                "step": "unknown", "reason": "r",
             }),
         ),
         record::<vak_core::finops::CostRow>(
@@ -195,13 +177,6 @@ fn records() -> Vec<Record> {
                 "conversation_id": "c", "audience_id": "a", "capabilities": [],
                 "token_hash": "h", "created_at": ts, "expires_at": ts,
             }),
-        ),
-        record::<vak_delivery::outbox::OutboxRecord>(
-            "OutboxRecord",
-            "crates/vak-delivery/src/outbox.rs",
-            "record",
-            "gateway outbox, one file per delivery job",
-            outbox_sample(),
         ),
         record::<vak_sandbox::EnvironmentRecord>(
             "EnvironmentRecord",

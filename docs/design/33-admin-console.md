@@ -68,13 +68,12 @@ window into the query string and every Operations link carries those values:
 | `#/operations` | Posture and topology overview |
 | `#/operations/work` | Sessions, active runs, approvals, scheduled work |
 | `#/operations/runtime` | Service manager, CorePool, action receipts |
-| `#/operations/channels` | Gateway bindings and delivery outbox |
+| `#/operations/channels` | Gateway bindings and sent messages (effects) |
 | `#/operations/automations` | Durable scheduled task definitions and state |
 | `#/operations/providers` | Effective provider/model route and provenance |
 | `#/operations/incidents` | Durable correlated incident queue and history |
 | `#/operations/work/runs/:id` | Run ledger and provider receipt trail |
 | `#/operations/channels/:target` | Binding identity, route, and dependencies |
-| `#/operations/channels/delivery/:job` | Outbox record, replay, and verification |
 | `#/operations/incidents/:id` | Incident timeline, correlation, and Doctor |
 
 The browser can therefore move from posture → subsystem → resource → incident
@@ -172,8 +171,9 @@ SDKs to preflight a model.
 | `/ops/center` | GET | Unified operational posture and evidence snapshot |
 | `/ops/incidents` | GET | Folded durable incident history |
 | `/ops/actions` | GET | Operation receipts and post-action verification |
-| `/ops/outbox` | GET | Durable delivery records and retry/dead-letter state |
-| `/ops/outbox/:job_id/replay` | POST | Replay one non-delivered outbox job through the canonical delivery path |
+| `/effects` | GET | Effect records (`?run=&state=`), plan M4.5 |
+| `/effects/:id/resend` | POST | Send again: same effect where the provider drops repeats, else a superseding one |
+| `/effects/:id/reconcile` | POST | The owner says whether an unknown effect was sent |
 | `/store/rebuild` | POST | Full index rebuild (mutation ⇒ POST) |
 | `/store/import/:id` | POST | Import one session's JSONL |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
@@ -224,7 +224,7 @@ and workspace-scope enforcement as desktop and gateway clients.
     pattern, and a printed word, never by colour alone.
   - **Attention queue** — one severity-ranked list merging every signal in
     the product that blocks, asks, or drifts: held approval gates, failed
-    doctor checks, open incidents, dead-lettered and queued deliveries,
+    doctor checks, open incidents, undecided and still-sending messages,
     budget position, chats knocking at the allowlist, a stopped gateway
     unit, drifted bindings, configuration warnings, provider errors and
     rate limits seen on the hub, overdue scheduled jobs, best-of-N drafts,
@@ -262,14 +262,14 @@ and workspace-scope enforcement as desktop and gateway clients.
   Posture view renders a selectable topology (server → gateway/CorePool →
   work/delivery), live run and service cards, and an inspector. Deeper routes
   expose approval gates, manager-backed service actions, pool idle state,
-  route provenance, durable outbox replay, security evidence, and doctor
+  route provenance, sent messages with Send again and reconcile, security evidence, and doctor
   checks. Empty or unavailable data is labelled explicitly; the page does not
   infer health from a missing record.
   The context bar keeps workspace and time-window scope in the URL, alongside
   connection, approval, incident, search, and Doctor affordances. Internal
   drill-down links carry that context into run, binding, delivery, and
   incident detail pages. Each detail page links the next evidence layer and
-  stops at the raw transcript, receipt, manager probe, or outbox record rather
+  stops at the raw transcript, receipt, manager probe, or effect record rather
   than inventing a summary. Resolved incidents remain visible as history;
   operation mutations show their durable receipt and verification state.
 - **Commitments** — the portfolio (`docs/design/47-commitment-kernel.md`).
@@ -333,7 +333,7 @@ candidates are folded into the `operations/incidents` chain, where repeated
 observations are
 grouped by fingerprint, disappearance records resolution, and reappearance
 reopens the same incident. The Admin UI displays both ledgers and links them
-back to the affected run, binding, or outbox record.
+back to the affected run, binding, or effect record.
 
 ### Gateway information architecture
 

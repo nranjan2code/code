@@ -609,20 +609,13 @@ export interface OperationsSnapshot {
     pending_approvals: Array<{ id: string; tool: string; reason: string; requested_at: string }>;
   }>;
   tasks: AutomationItem[];
-  outbox: {
-    pending: number;
-    dead_letter: number;
+  effects: {
+    waiting: number;
+    held: number;
+    unknown: number;
+    failed: number;
     error?: string | null;
-    records: Array<{
-      job_id: string;
-      target: string;
-      kind: string;
-      state: "pending" | "delivered" | "dead_letter" | string;
-      attempts: number;
-      created_at_ms: number;
-      updated_at_ms: number;
-      last_error: string | null;
-    }>;
+    records: EffectRecord[];
   };
   security: SecurityEvent[];
   incidents: Array<{
@@ -1440,6 +1433,29 @@ export interface RunCause {
   parent_run?: string;
   trigger?: string;
   job?: string;
+}
+
+/** Where an action outside Vakyartha stands (plan M4.5). */
+export type EffectStatus = "held" | "queued" | "sending" | "sent" | "retrying" | "failed" | "unknown" | "superseded";
+
+/** One action Vakyartha took outside itself: today a delivery to a channel. */
+export interface EffectRecord {
+  id: string;
+  kind: { type: "delivery"; surface: string; chat: string; bot?: string };
+  run?: string | null;
+  target: string;
+  idempotency_key: string;
+  hold?: string | null;
+  supersedes?: string | null;
+  superseded_by?: string | null;
+  status: EffectStatus;
+  attempts: number;
+  holder?: string | null;
+  receipt?: { provider: string; provider_id?: string; at: string } | null;
+  reason?: string | null;
+  reconciled_by?: string | null;
+  prepared_at: string;
+  updated_at: string;
 }
 
 export interface RunRecord {

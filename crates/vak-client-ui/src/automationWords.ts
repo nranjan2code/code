@@ -60,17 +60,25 @@ export function runStatusLabel(status: RunStatus): string {
 
 export function deliveryStatusLabel(status: string): string {
   return ({
-    pending: "Delivery waiting",
+    pending: "Sending",
     delivered: "Sent",
-    failed: "Couldn’t send",
+    failed: "Didn’t send",
+    unknown: "Not sure it was sent",
     inbox: "Saved in Inbox",
     agent_session: "Kept in the Agent’s conversation",
   } as Record<string, string>)[status] ?? status;
 }
 
-/** Whether a waiting delivery can be tried again. */
-export function canRetryDelivery(trigger: Pick<Trigger, "delivery_state">): boolean {
-  return trigger.delivery_state === "pending";
+/** Whether the last run's message can be sent again: one that didn't
+ *  send, may not have, or is waiting for another try. */
+export function canSendAgain(trigger: Pick<Trigger, "delivery_effect">): boolean {
+  return Boolean(trigger.delivery_effect);
+}
+
+/** What sending a message again did. */
+export function sentAgainWords(result: { new: boolean; status: string }): string {
+  if (result.status === "sent") return result.new ? "Sent again as a new message" : "Sent";
+  return "Tried again; it hasn’t arrived yet";
 }
 
 export type AutomationState = "paused" | "running" | "scheduled";
@@ -89,10 +97,6 @@ export function nextRunWords(at: string | null | undefined): string {
   return date.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 }
 
-/** How many deliveries, in words. */
-export function deliveryCount(count: number): string {
-  return `${count} ${count === 1 ? "delivery" : "deliveries"}`;
-}
 
 /** What it does, in one line. */
 export function actionText(trigger: Pick<Trigger, "action">): string {

@@ -964,7 +964,7 @@ export function buildWorkflowGraph(
       renderer_projection: "Universal outcome-first renderer (docs/design/30 & 61)",
       available_renderers: "Diff inspector, test matrix, telemetry crosshairs, terminal session, dynamic recipe, calm prose",
       delivery_mode: "Continuous chat canvas with contextual drawer (doc 61)",
-      retry_outbox: "Durable store-and-forward outbox active (doc 31)",
+      delivery_record: "Every message is an action recorded before it is sent (plan M4.5)",
     },
     raw_payload: turn.tool_calls.length > 0
       ? "Outcome projected to universal renderer with interactive telemetry and diff inspector."

@@ -11,7 +11,7 @@
 //! opens: whoever moves it starts the slot, and nobody else can.
 
 use crate::chain::RecordChain;
-use crate::ids::{EffectId, PrincipalId, ProcessId, RunId, TriggerId};
+use crate::ids::{PrincipalId, ProcessId, RunId, TriggerId};
 use crate::trace::TraceKey;
 use crate::types::SessionError;
 use chrono::{DateTime, Utc};
@@ -92,8 +92,6 @@ pub enum RunStep {
         outcome: RunOutcome,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result_id: Option<String>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        effects: Vec<EffectId>,
     },
     Abandoned {
         holder: ProcessId,
@@ -157,8 +155,6 @@ pub struct RunRecord {
     pub sessions: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<EffectId>,
     /// Why it failed or was skipped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -186,7 +182,6 @@ impl RunRecord {
             holder: None,
             sessions: Vec::new(),
             result_id: None,
-            effects: Vec::new(),
             reason: None,
             coalesced_into: None,
             missed: None,
@@ -240,11 +235,7 @@ impl RunRecord {
                     self.sessions.push(session_id);
                 }
             }
-            RunStep::Settled {
-                outcome,
-                result_id,
-                effects,
-            } => {
+            RunStep::Settled { outcome, result_id } => {
                 self.status = match &outcome {
                     RunOutcome::Completed => RunStatus::Completed,
                     RunOutcome::Failed { reason } => {
@@ -254,7 +245,6 @@ impl RunRecord {
                     RunOutcome::Cancelled => RunStatus::Cancelled,
                 };
                 self.result_id = result_id;
-                self.effects = effects;
                 self.settled_at = Some(at);
             }
             RunStep::Abandoned {
@@ -448,14 +438,7 @@ impl Runs {
         outcome: RunOutcome,
         result_id: Option<String>,
     ) -> Result<(), SessionError> {
-        self.append(
-            run,
-            RunStep::Settled {
-                outcome,
-                result_id,
-                effects: Vec::new(),
-            },
-        )
+        self.append(run, RunStep::Settled { outcome, result_id })
     }
 
     /// Records a slot or event decided without starting a run.
@@ -864,7 +847,7 @@ impl Drop for OpenRun {
 /// Renews this process's liveness now, and keeps renewing it from a
 /// background thread for as long as the process lives and is not fenced,
 /// so a run it holds is never judged abandoned while it works.
-fn keep_alive(tenant_home: &Path) -> Result<(), SessionError> {
+pub(crate) fn keep_alive(tenant_home: &Path) -> Result<(), SessionError> {
     static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     crate::fence::renew_liveness(
         tenant_home,

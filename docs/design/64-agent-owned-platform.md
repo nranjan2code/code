@@ -91,7 +91,7 @@ request-origin destination recorded at admission.
 All identifiers are stable UUID/slug values, not display names. New stores are
 versioned and additive within the new major baseline. The shapes below describe
 logical responsibilities, not a requirement to create a database for each one.
-Reuse the session ledger, capability registry, scheduler, and delivery outbox.
+Reuse the session ledger, capability registry, scheduler, and delivery effects.
 
 ```rust
 AgentDefinition {
@@ -309,7 +309,7 @@ Agent pause cancels its runs, schedules, and descendants; endpoint pause affects
 work authorized through that endpoint. Resume never automatically replays
 cancelled effects. Denial remains sticky. Archive disables admission and retains
 evidence. Removal requires explicit disposition of endpoint, schedule, and
-outbox references; dangling references fail visibly.
+effect references; dangling references fail visibly.
 
 There is one resolver used by desktop, CLI, TUI, voice, gateway, schedules,
 heartbeats, flows, best-of-N, and workers:
@@ -346,7 +346,7 @@ redirect in-flight answers or retries. Recheck current access/revocation before
 sending; hold denied delivery with an actionable reason. Resolve credentials
 only for the designated bot; never fall back to another bot on failure.
 
-Reuse the durable outbox, ordered chunks, degradation diagnostics, and receipts.
+Reuse durable delivery effects, ordered chunks, degradation diagnostics, and receipts.
 Track execution completion separately from delivery completion. Recover accepted
 input and pending output after restart; reconcile uncertain effects before
 replay. Do not promise exactly-once effects where transports lack idempotency.
