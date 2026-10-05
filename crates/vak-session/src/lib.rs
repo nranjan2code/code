@@ -12,6 +12,7 @@ pub mod ids;
 mod index;
 pub mod log;
 pub mod objects;
+pub mod runs;
 pub mod search;
 pub mod trace;
 pub mod turns;

@@ -260,7 +260,7 @@ async fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
     let admitted = core.mint_trace(None);
     let header = SessionHeader {
         space: None,
-        run: Some(admitted.run),
+        run: core.admitted_trace().map(|trace| trace.run),
         cause: Some(admitted.cause),
         agent: Some(vak_core::vak_agent_identity()),
         session_id: HEARTBEAT_SESSION_ID.to_string(),

@@ -44,6 +44,7 @@ export const ICONS = {
   prompts: "M4 4h16v16H4z M8 9h8 M8 13h8 M8 17h5",
   overview: "M3 3v18h18M7 15l4-6 4 4 5-8",
   operations: "M4 6h16M4 12h16M4 18h16 M8 6v12 M16 6v12",
+  runs: "M5 4l7 8-7 8 M13 4l7 8-7 8",
   commitments: "M5 3h11l3 3v15H5z M9 8h6 M9 12h6 M9 16.5l1.7 1.7L14 15",
   sessions: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87",
   integrations: "M16.5 9.4 7.55 4.24a1.78 1.78 0 0 0-2.5 1.55v12.42a1.78 1.78 0 0 0 2.5 1.55L16.5 14.6a1.78 1.78 0 0 0 0-3.2z M21 12h-3 M3 12h1",

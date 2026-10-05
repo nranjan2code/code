@@ -23,6 +23,7 @@ mod office;
 mod plugins;
 mod prompts;
 mod question_prompt;
+mod runs;
 mod setup;
 mod tasks;
 mod update_check;
@@ -576,6 +577,7 @@ async fn main() {
         Some(Command::Digest { days }) => digest::run_digest(cwd, days),
         Some(Command::Tasks { action }) => tasks::run_tasks(cwd, action),
         Some(Command::Inbox { action }) => inbox::run_inbox(cwd, action),
+        Some(Command::Runs { action }) => runs::run_runs(cwd, action),
         Some(Command::Plan {
             task,
             yes,

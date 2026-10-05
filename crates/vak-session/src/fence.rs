@@ -79,21 +79,28 @@ pub fn renew_liveness(tenant_home: &Path, alive_until: DateTime<Utc>) -> Result<
     let name = liveness_ref(&process());
     let target = serde_json::to_vec(&Liveness { alive_until })
         .map_err(|error| SessionError::Objects(error.to_string()))?;
-    let current = store.get_ref(&name).map_err(objects_error)?;
-    store
-        .cas_ref(
+    // Only this process moves its own ref, but its threads may renew at
+    // once: a lost race re-reads and tries again.
+    let mut attempts = 0;
+    loop {
+        let current = store.get_ref(&name).map_err(objects_error)?;
+        match store.cas_ref(
             &name,
             current.map(|value| value.generation),
             tenant.writer_epoch().0,
             &target,
-        )
-        .map_err(|error| match error {
-            vak_storage::StorageError::StaleEpoch { presented, current } => SessionError::Fenced {
-                held: presented,
-                current,
-            },
-            other => objects_error(other),
-        })?;
+        ) {
+            Ok(_) => break,
+            Err(vak_storage::StorageError::Conflict { .. }) if attempts < 8 => attempts += 1,
+            Err(vak_storage::StorageError::StaleEpoch { presented, current }) => {
+                return Err(SessionError::Fenced {
+                    held: presented,
+                    current,
+                });
+            }
+            Err(other) => return Err(objects_error(other)),
+        }
+    }
     Ok(())
 }
 

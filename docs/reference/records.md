@@ -270,6 +270,18 @@ Type `PromotionRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 
+## run_event
+
+Type `RunEvent` in `crates/vak-session/src/runs.rs`. Class: ledger. Stored in: `runs`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `run` | `RunId` | yes |  |
+| `at` | `DateTime<Utc>` | yes |  |
+| `trace` | `Option<TraceKey>` | no | The run's key, on the event that opens it. |
+| `actor` | `Option<PrincipalId>` | no | Who caused this step: the run's actor when it opens. |
+| `step` | `RunStep` | yes | (flattened into the row) |
+
 ## security_event
 
 Type `SecurityEvent` in `crates/vak-core/src/security_events.rs`. Class: ledger. Stored in: `security-events`. Version: 1.

@@ -1,6 +1,8 @@
 //! Exit tests of M3b slice 2 (docs/plans/data-architecture-plan.md):
 //! a turn grows its ledger by at most 20 KB mean and costs at most six
-//! record syncs. Turns are real Core turns with a tool call and an answer;
+//! record syncs for its ledger and side ledgers, plus the two its run
+//! record adds at M4.2 (opened with its ledger named, then settled; a
+//! settle lost to a power cut would read a finished run as abandoned). Turns are real Core turns with a tool call and an answer;
 //! the first turn, which binds the capability interface in full, is
 //! excluded from the mean.
 
@@ -18,7 +20,7 @@ use vak_llm::{EventStream, LlmError, Provider};
 
 const TURNS: u64 = 5;
 const BYTES_PER_TURN: u64 = 20 * 1024;
-const SYNCS_PER_TURN: u64 = 6;
+const SYNCS_PER_TURN: u64 = 8;
 
 /// Each turn reads a file, then answers.
 struct ReadThenAnswer {

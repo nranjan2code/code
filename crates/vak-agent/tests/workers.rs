@@ -140,6 +140,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
     cfg.max_output = 512;
     cfg.declared_window = 8_000;
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
+        runs: None,
         objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         parent_agent_identity: None,
         role_prompts: Default::default(),

@@ -99,15 +99,24 @@ async fn spawn_gateway(allowlist: &[&str]) -> String {
 }
 
 /// POST a message to the gateway inbound endpoint (no auth for gateway_router).
+/// The status, with the body printed when it is not a success, so a
+/// refusal says why.
 async fn post_inbound(base: &str, body: serde_json::Value) -> reqwest::StatusCode {
     let client = reqwest::Client::new();
-    client
+    let response = client
         .post(format!("{base}/gateway/inbound"))
         .json(&body)
         .send()
         .await
-        .unwrap()
-        .status()
+        .unwrap();
+    let status = response.status();
+    if !status.is_success() {
+        eprintln!(
+            "inbound answered {status}: {}",
+            response.text().await.unwrap_or_default()
+        );
+    }
+    status
 }
 
 /// Two bots sharing one physical chat get independent allowlist entries.

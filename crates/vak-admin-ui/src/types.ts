@@ -600,6 +600,8 @@ export interface OperationsSnapshot {
   };
   runs: Array<{
     session_id: string;
+    /** The open run working on this conversation, when one is recorded. */
+    run_id?: string | null;
     workspace: string;
     agent_id?: string;
     agent_name?: string;
@@ -1417,4 +1419,32 @@ export interface CommitmentPriority {
 export interface CommitmentList {
   commitments: Commitment[];
   priorities: CommitmentPriority[];
+}
+
+/** One run record (plan M4.2): a unit of work and how it ended. */
+export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "abandoned" | "skipped";
+
+export interface RunCause {
+  kind: "user" | "channel" | "schedule" | "delegation" | "revision" | "trigger" | "heartbeat" | "system";
+  endpoint?: string;
+  schedule?: string;
+  parent_run?: string;
+  trigger?: string;
+  job?: string;
+}
+
+export interface RunRecord {
+  id: string;
+  status: RunStatus;
+  opened_at: string;
+  settled_at?: string;
+  trace?: { agent: string; cause: RunCause; actor?: string };
+  trigger?: string;
+  attempt: number;
+  holder?: string;
+  sessions?: string[];
+  result_id?: string;
+  reason?: string;
+  coalesced_into?: string;
+  noticed_by?: string;
 }

@@ -154,6 +154,7 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
     cfg.model = "test-model".into();
     cfg.tail = parent_tail.clone();
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
+        runs: None,
         objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         parent_agent_identity: None,
         role_prompts: Default::default(),

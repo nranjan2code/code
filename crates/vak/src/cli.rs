@@ -369,6 +369,11 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<InboxAction>,
     },
+    /// Run records: every unit of work, whatever caused it (list / show)
+    Runs {
+        #[command(subcommand)]
+        action: Option<RunsAction>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -588,6 +593,21 @@ pub(crate) enum SelfAction {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum RunsAction {
+    /// List runs, newest first
+    List {
+        /// Only runs in this state (running, completed, failed, cancelled,
+        /// abandoned, skipped)
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Show one run as JSON
+    Show { id: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1172,6 +1192,26 @@ mod tests {
             } => assert_eq!(id, "abc"),
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    #[test]
+    fn runs_subactions_parse() {
+        assert!(matches!(parse(&["runs"]), Command::Runs { action: None }));
+        match parse(&["runs", "list", "--status", "failed", "--limit", "5"]) {
+            Command::Runs {
+                action: Some(RunsAction::List { status, limit }),
+            } => {
+                assert_eq!(status.as_deref(), Some("failed"));
+                assert_eq!(limit, 5);
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert!(matches!(
+            parse(&["runs", "show", "run_x"]),
+            Command::Runs {
+                action: Some(RunsAction::Show { .. })
+            }
+        ));
     }
 
     #[test]

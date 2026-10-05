@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import Projects from "./Projects";
+import Runs from "./Runs";
 import { api, AuthRequired } from "./api";
 import { headlessAuth } from "./headlessAuth";
 import { pendingRecoveryCodes, setPendingRecoveryCodes } from "./ownerRecovery";
@@ -7447,6 +7448,7 @@ const NAV: NavItem[] = [
   { group: "Overview", hash: "#/overview", label: "Home", icon: ICONS.overview, scope: "global" },
   { group: "Overview", hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
   { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions, scope: "global" },
+  { group: "Work", hash: "#/runs", label: "Runs", icon: ICONS.runs, scope: "global" },
   { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments, scope: "project" },
   {
     group: "Operate",
@@ -8336,6 +8338,9 @@ export default function App() {
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>
               <Match when={currentRoute() === "#/finops"}><FinOpsView /></Match>
               <Match when={currentRoute() === "#/projects"}><Projects /></Match>
+              <Match when={currentRoute() === "#/runs"}>
+                <Runs id={route().split("?", 1)[0].startsWith("#/runs/") ? decodeURIComponent(route().split("?", 1)[0].slice("#/runs/".length)) : undefined} />
+              </Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
               <Match when={currentRoute() === "#/prompts"}><PromptsPage /></Match>
               <Match when={currentRoute() === "#/settings"}><Settings /></Match>

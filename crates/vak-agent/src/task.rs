@@ -39,6 +39,8 @@ fn vak_core_identity() -> vak_session::types::AgentIdentity {
 }
 
 pub struct TaskDeps {
+    /// Where a child opens and settles its own run (plan M4.2).
+    pub runs: Option<vak_session::runs::Runs>,
     /// The tenant object store child ledgers keep their large payloads in.
     pub objects: Arc<dyn vak_session::objects::Objects>,
     /// Resolved parent Agent identity; inherited by default-delegated children.
@@ -920,10 +922,32 @@ impl TaskTool {
                 prompt_layers,
             },
         };
+        // The child is its own run, opened before its ledger exists.
+        let mut child_run = match (&self.deps.runs, &child_trace) {
+            (Some(runs), Some(trace)) => match runs.begin(trace, None, None) {
+                Ok(run) => Some(run),
+                Err(e) => return ToolOutput::error(format!("child run not admitted: {e}")),
+            },
+            _ => None,
+        };
         let log = match SessionLog::create(path, header) {
             Ok(l) => l.with_objects(self.deps.objects.clone()),
-            Err(e) => return ToolOutput::error(format!("cannot create child session: {e}")),
+            Err(e) => {
+                if let Some(run) = child_run.as_mut() {
+                    run.end_with(vak_session::runs::RunEnd::Settled(
+                        vak_session::runs::RunOutcome::Failed {
+                            reason: format!("cannot create child session: {e}"),
+                        },
+                    ));
+                }
+                return ToolOutput::error(format!("cannot create child session: {e}"));
+            }
         };
+        if let (Some(runs), Some(run)) = (&self.deps.runs, &child_run)
+            && let Err(e) = runs.session(run.id(), &session_id)
+        {
+            return ToolOutput::error(format!("child run not recorded: {e}"));
+        }
 
         let label = args
             .get("label")
@@ -1049,6 +1073,7 @@ impl TaskTool {
             parent_events: self.deps.events.clone(),
             progress,
             registry_guard,
+            child_run,
             finish_into: background
                 .then(|| self.deps.registry.clone())
                 .flatten()
@@ -1078,6 +1103,8 @@ struct DriveChild {
     parent_events: Option<tokio::sync::mpsc::Sender<crate::AgentEvent>>,
     progress: Arc<Mutex<WorkerProgress>>,
     registry_guard: Option<RegistryGuard>,
+    /// The child's own run, settled with how the child ended.
+    child_run: Option<vak_session::runs::OpenRun>,
     /// Where a background worker records how it ended, with its parent.
     finish_into: Option<(Arc<WorkerRegistry>, String)>,
 }
@@ -1096,6 +1123,7 @@ impl DriveChild {
             parent_events,
             progress,
             registry_guard,
+            mut child_run,
             finish_into,
         } = self;
         let _registry_guard = registry_guard;
@@ -1160,6 +1188,9 @@ impl DriveChild {
         }
         let started = std::time::Instant::now();
         let outcome = agent.run(&prompt, &steering, cancel, ev_tx).await;
+        if let Some(run) = child_run.as_mut() {
+            run.end_with(vak_session::runs::RunEnd::Settled(outcome.run_outcome()));
+        }
         let child_status = match &outcome {
             crate::TurnOutcome::Completed { .. } => vak_session::types::ChildRunStatus::Completed,
             crate::TurnOutcome::Failed { .. } => vak_session::types::ChildRunStatus::Failed,

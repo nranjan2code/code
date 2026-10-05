@@ -311,6 +311,23 @@ pub enum TurnOutcome {
     MaxTurnsReached,
 }
 
+impl TurnOutcome {
+    /// How this outcome settles the run that ran the turn (plan M4.2).
+    pub fn run_outcome(&self) -> vak_session::runs::RunOutcome {
+        use vak_session::runs::RunOutcome;
+        match self {
+            Self::Completed { .. } => RunOutcome::Completed,
+            Self::Aborted { .. } => RunOutcome::Cancelled,
+            Self::Failed { error } => RunOutcome::Failed {
+                reason: error.to_string(),
+            },
+            Self::MaxTurnsReached => RunOutcome::Failed {
+                reason: "the turn reached its step limit".into(),
+            },
+        }
+    }
+}
+
 pub struct AgentConfig {
     /// The admitted result contract for this run. It is execution context,
     /// not model-authored authority; permission and broker checks remain the

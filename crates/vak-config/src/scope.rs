@@ -344,6 +344,12 @@ impl SharedScope {
         self.root.join("operations")
     }
 
+    /// The run records (plan M4.2): one chain of run events for every
+    /// unit of work, whatever caused it.
+    pub fn runs(&self) -> PathBuf {
+        self.root.join("runs")
+    }
+
     pub fn cost_log(&self) -> PathBuf {
         self.root.join("cost-log")
     }

@@ -847,6 +847,8 @@ fn router_with_state(state: AppState) -> Router {
             post(session_work_reassign),
         )
         .route("/flows", get(flows_list))
+        .route("/runs", get(runs_list))
+        .route("/runs/{id}", get(run_detail))
         .route("/flows/{name}/runs", get(flow_runs_list))
         .route("/flows/{name}/runs/{run}/graph", get(flow_run_graph))
         .route("/sessions/{id}/checkpoints", get(list_checkpoints))
@@ -1427,6 +1429,23 @@ fn operation_services(cfg: &vak_ops::OpsConfig) -> serde_json::Value {
 }
 
 fn operation_runs(state: &AppState) -> Vec<serde_json::Value> {
+    // The open run working on each live conversation, so live work links
+    // to its run (plan M4.2). Unreadable records leave the link out.
+    let open_runs: std::collections::HashMap<String, String> = state
+        .core
+        .runs()
+        .list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(vak_session::runs::RunRecord::is_open)
+        .rev()
+        .flat_map(|run| {
+            let id = run.id.to_string();
+            run.sessions
+                .into_iter()
+                .map(move |session| (session, id.clone()))
+        })
+        .collect();
     state
         .live_handles()
         .into_iter()
@@ -1460,6 +1479,7 @@ fn operation_runs(state: &AppState) -> Vec<serde_json::Value> {
                 .unwrap_or_else(|| ("vak".to_string(), "Vakyartha".to_string()));
             Some(serde_json::json!({
                 "session_id": handle.id,
+                "run_id": open_runs.get(&handle.id),
                 "workspace": handle.cwd,
                 "agent_id": agent_id,
                 "agent_name": agent_name,
@@ -2203,6 +2223,8 @@ async fn ops_action(
     Path((service, action)): Path<(String, String)>,
     axum::extract::Query(q): axum::extract::Query<OpsActionQuery>,
 ) -> axum::response::Response {
+    // The request is a run, opened before anything it changes.
+    let run_trace = request_trace(&state, "ops-action");
     use axum::response::IntoResponse;
     let svc = match service.as_str() {
         "gateway" => Some(vak_ops::Service::Gateway),
@@ -2340,7 +2362,7 @@ async fn ops_action(
             detail: verification_detail.to_string(),
         },
         persisted: false,
-        trace: Some(request_trace(&state, "ops-action")),
+        trace: Some(run_trace.clone()),
         actor: Some(request_actor(&state)),
     };
     receipt.persisted = operations::record_action(
@@ -3137,6 +3159,10 @@ fn secured_router_with_port_and_test_oauth_endpoint(
                 browser_sessions: state.browser_sessions.clone(),
             },
             require_bearer,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            settle_request_runs,
         ))
         .layer(cors)
         .layer(axum::middleware::from_fn(security_headers));
@@ -5267,17 +5293,36 @@ async fn run_turn_chain<F, Fut>(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = CancellationToken::new();
 
+        // A run admitted before the chain (a channel request) settles once,
+        // with its last leg; a turn with no admitted run settled its own.
+        let leg_outcome = match &outcome {
+            Ok((turn, _)) => turn.run_outcome(),
+            Err(error) => vak_session::runs::RunOutcome::Failed {
+                reason: error.to_string(),
+            },
+        };
+        let settle_admitted = |outcome: vak_session::runs::RunOutcome| {
+            if let Some(trace) = core.admitted_trace()
+                && let Err(error) = core.runs().settle(trace.run, outcome, None)
+            {
+                eprintln!("[runs] {} did not settle: {error}", trace.run);
+            }
+        };
         let (ledger, summary, is_error) = settle(&session_id, outcome).await;
         let _ = handle
             .events_tx
             .send(AgentEvent::RunFinished { summary, is_error });
 
         let Some(ledger) = ledger else {
+            settle_admitted(leg_outcome);
             return;
         };
 
         match continue_or_release(&handle, ledger) {
-            None => return,
+            None => {
+                settle_admitted(leg_outcome);
+                return;
+            }
             Some((ledger, merged)) => {
                 taken = ledger;
                 start = TurnStart::message(merged);
@@ -7352,6 +7397,57 @@ async fn flows_list(State(state): State<AppState>) -> Json<Vec<String>> {
 }
 
 /// Run ledger filenames for one flow, oldest first.
+#[derive(serde::Deserialize)]
+struct RunsQuery {
+    status: Option<vak_session::runs::RunStatus>,
+    limit: Option<usize>,
+}
+
+/// The run records, newest first (plan M4.2): every unit of work, whatever
+/// caused it. A record that cannot be read is an error, never skipped.
+async fn runs_list(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<RunsQuery>,
+) -> axum::response::Response {
+    match state.core.runs().list() {
+        Ok(runs) => {
+            let runs: Vec<_> = runs
+                .into_iter()
+                .filter(|run| query.status.is_none_or(|status| run.status == status))
+                .take(query.limit.unwrap_or(200).min(1000))
+                .collect();
+            Json(serde_json::json!({ "runs": runs })).into_response()
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+async fn run_detail(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let Ok(run) = vak_session::ids::RunId::parse(&id) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "not a run id" })),
+        )
+            .into_response();
+    };
+    match state.core.runs().get(run) {
+        Ok(Some(record)) => Json(record).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn flow_runs_list(
     State(state): State<AppState>,
     Path(name): Path<String>,
@@ -12426,6 +12522,8 @@ async fn export_sandbox_candidate(
     Path(session_id): Path<String>,
     Json(body): Json<SandboxCandidateBody>,
 ) -> axum::response::Response {
+    // The request is a run, opened before anything it changes.
+    let run_trace = request_trace(&state, "candidate-export");
     use axum::response::IntoResponse;
     let records_path = sandbox_records_path(&state, &session_id);
     let (turn_id, result_id) = match sandbox_result_binding(&state, &session_id, &body.execution_id)
@@ -12510,7 +12608,7 @@ async fn export_sandbox_candidate(
                 }
             };
             let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
-                trace: Some(request_trace(&state, "candidate-export")),
+                trace: Some(run_trace.clone()),
                 actor: Some(request_actor(&state)),
                 record_id: format!("candidate-{id}"),
                 session_id,
@@ -12982,6 +13080,8 @@ async fn narrow_sandbox_candidate_office(
     Path((session_id, candidate_id)): Path<(String, String)>,
     Json(body): Json<OfficeNarrowBody>,
 ) -> axum::response::Response {
+    // The request is a run, opened before anything it changes.
+    let run_trace = request_trace(&state, "candidate-narrow");
     use axum::response::IntoResponse;
     let refuse = |status: StatusCode, message: String| {
         (status, Json(serde_json::json!({ "error": message }))).into_response()
@@ -13096,7 +13196,7 @@ async fn narrow_sandbox_candidate_office(
         }
     };
     let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
-        trace: Some(request_trace(&state, "candidate-narrow")),
+        trace: Some(run_trace.clone()),
         actor: Some(request_actor(&state)),
         record_id: format!("candidate-{id}"),
         session_id: saved.session_id.clone(),
@@ -13960,6 +14060,8 @@ async fn promote_sandbox_candidate(
     Path(session_id): Path<String>,
     Json(body): Json<SandboxPromotionBody>,
 ) -> axum::response::Response {
+    // The request is a run, opened before anything it changes.
+    let run_trace = request_trace(&state, "promotion");
     use axum::response::IntoResponse;
     let records_path = sandbox_records_path(&state, &session_id);
     if body.files.is_empty()
@@ -14077,7 +14179,7 @@ async fn promote_sandbox_candidate(
     }
     let promoted_from = (session_id.clone(), saved.execution_id.clone());
     let record = vak_sandbox::DurableRecord::Promotion(vak_sandbox::PromotionRecord {
-        trace: Some(request_trace(&state, "promotion")),
+        trace: Some(run_trace.clone()),
         actor: Some(request_actor(&state)),
         record_id: format!("promotion-{}", receipt.candidate_id),
         session_id,
@@ -18547,6 +18649,43 @@ pub(crate) fn request_actor(state: &AppState) -> vak_session::ids::PrincipalId {
         .unwrap_or_else(vak_session::trace::local::local_owner)
 }
 
+tokio::task_local! {
+    /// The runs a request opened through [`request_trace_for`], settled by
+    /// [`settle_request_runs`] from how the request ended.
+    static REQUEST_RUNS: std::cell::RefCell<Vec<vak_session::ids::RunId>>;
+}
+
+/// Settles the runs a request opened (plan M4.2): a request a person made
+/// of this server is a run, and it succeeded exactly when it answered with
+/// success.
+async fn settle_request_runs(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    REQUEST_RUNS
+        .scope(std::cell::RefCell::new(Vec::new()), async move {
+            let response = next.run(req).await;
+            let opened = REQUEST_RUNS.with(|runs| runs.take());
+            let status = response.status();
+            let runs = state.core.runs();
+            for run in opened {
+                let outcome = if status.is_success() || status.is_redirection() {
+                    vak_session::runs::RunOutcome::Completed
+                } else {
+                    vak_session::runs::RunOutcome::Failed {
+                        reason: format!("the request answered {status}"),
+                    }
+                };
+                if let Err(error) = runs.settle(run, outcome, None) {
+                    eprintln!("[runs] {run} did not settle: {error}");
+                }
+            }
+            response
+        })
+        .await
+}
+
 /// The trace for work a person asked of this server directly: a fresh run
 /// whose cause is `what`, acting as [`request_actor`].
 pub(crate) fn request_trace(state: &AppState, what: &str) -> vak_session::trace::TraceKey {
@@ -18562,7 +18701,7 @@ pub(crate) fn request_trace_for(
     state: &AppState,
     cause: vak_session::trace::Cause,
 ) -> vak_session::trace::TraceKey {
-    state
+    let trace = state
         .core
         .clone()
         .with_run_admission(
@@ -18570,7 +18709,25 @@ pub(crate) fn request_trace_for(
                 .cause(cause)
                 .actor(request_actor(state)),
         )
-        .mint_trace(None)
+        .mint_trace(None);
+    // Opened now, before what the handler goes on to do; the request's
+    // answer settles it. Outside a request the run is the record it stamps,
+    // so it settles once that is written: it is opened and settled here.
+    let runs = state.core.runs();
+    match runs.open(&trace, None, None, 1) {
+        Ok(run) => {
+            let in_request = REQUEST_RUNS
+                .try_with(|opened| opened.borrow_mut().push(run))
+                .is_ok();
+            if !in_request
+                && let Err(error) = runs.settle(run, vak_session::runs::RunOutcome::Completed, None)
+            {
+                eprintln!("[runs] {run} did not settle: {error}");
+            }
+        }
+        Err(error) => eprintln!("[runs] {} was not opened: {error}", trace.run),
+    }
+    trace
 }
 
 /// One isolated run inside `wt`: child Core + session + registered handle +
@@ -19803,8 +19960,22 @@ fn mark_mail_calendar_check_succeeded(
 /// the scheduler retries the slot every tick, and the key changes only when
 /// the task has run since.
 fn refuse_task(state: &AppState, task: &TaskDef, reason: String) -> NotFired {
-    let slot = task.last_run_at.unwrap_or(task.created_at).to_rfc3339();
+    let slot_at = task.last_run_at.unwrap_or(task.created_at);
+    let slot = slot_at.to_rfc3339();
     let key = format!("routine-failed|{}|{slot}", task.id);
+    // A refused slot is a run record, once per slot like the note.
+    if !vak_core::inbox::has_dedupe_key(&state.core.shared_scope().as_agent(), &key)
+        && let Err(error) = state.core.runs().skip(
+            Some(vak_session::ids::TriggerId::derived(&task.id)),
+            Some(vak_session::runs::Slot::At { at: slot_at }),
+            &reason,
+        )
+    {
+        eprintln!(
+            "[runs] a refused slot of task {} was not recorded: {error}",
+            task.id
+        );
+    }
     let _ = vak_core::inbox::record_with_result_and_key(
         &state.core.shared_scope().as_agent(),
         vak_core::inbox::Kind::RoutineFailed,
@@ -20473,7 +20644,34 @@ async fn fire_script_task(
         .clone()
         .with_run_admission(vak_core::admission::RunAdmission::default().cause(cause))
         .mint_trace(None);
+    let mut open_run = match state.core.runs().begin(
+        &trace,
+        Some(vak_session::ids::TriggerId::derived(&task.id)),
+        None,
+    ) {
+        Ok(run) => run,
+        Err(error) => {
+            state
+                .script_inflight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&task.id);
+            refuse_task(
+                state,
+                task,
+                format!("its run could not be recorded: {error}"),
+            );
+            return None;
+        }
+    };
     let outcome = execute_script(&state.core, state.core.cwd(), script, Some(trace)).await;
+    open_run.end_with(vak_session::runs::RunEnd::Settled(if outcome.ok {
+        vak_session::runs::RunOutcome::Completed
+    } else {
+        vak_session::runs::RunOutcome::Failed {
+            reason: "the script failed".into(),
+        }
+    }));
     let mut delivery_state = "inbox";
     // Deliver FIRST: once the summary is visible on the task, its delivery
     // attempt has already been made. With zero transports configured the
@@ -20736,6 +20934,20 @@ fn background_work_allowed(state: &AppState) -> bool {
     }
 }
 
+/// Records as abandoned every open run whose holding process stopped
+/// renewing its liveness (plan M4.2), so a crash never leaves a run
+/// looking as if it were still going.
+fn sweep_abandoned_runs(state: &AppState) {
+    match state.core.runs().sweep_abandoned(chrono::Utc::now()) {
+        Ok(abandoned) => {
+            for run in abandoned {
+                eprintln!("[runs] {run} was abandoned by a process that stopped");
+            }
+        }
+        Err(error) => eprintln!("[runs] abandoned-run sweep failed: {error}"),
+    }
+}
+
 /// Background loop: evaluates due tasks every 20 seconds. Holds only weak
 /// state via `state` clones living inside the router — when the server
 /// shuts down the loop dies with the runtime.
@@ -20753,6 +20965,7 @@ pub fn start_scheduler(state: &AppState) {
         loop {
             tick.tick().await;
             if background_work_allowed(&st) {
+                sweep_abandoned_runs(&st);
                 scheduler_tick(&st).await;
             }
         }

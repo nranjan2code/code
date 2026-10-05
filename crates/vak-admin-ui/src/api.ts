@@ -1,4 +1,5 @@
 import type {
+  RunRecord,
   ChatSurface,
   OnboardingState,
   AllowlistEntry,
@@ -170,6 +171,13 @@ export const api = {
     ),
 
   health: () => fetch("/health").then((r) => handle<HealthInfo>(r)),
+  runs: (status?: string, limit = 200): Promise<{ runs: RunRecord[] }> => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (status) q.set("status", status);
+    return fetch(`/runs?${q}`).then((r) => handle(r));
+  },
+  run: (id: string): Promise<RunRecord> =>
+    fetch(`/runs/${encodeURIComponent(id)}`).then((r) => handle(r)),
 
   /** `total` counts every session matching the filter, not just the page
    * `limit` returned — the list itself is capped, the count isn't. */

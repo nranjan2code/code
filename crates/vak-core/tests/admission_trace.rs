@@ -92,7 +92,9 @@ async fn session_header_names_cause_for_each_surface() {
             "{:?}",
             header.cause
         );
-        assert!(header.run.is_some());
+        // Opening a session is not a run: its turns are, and each names
+        // this ledger in its run record (plan M4.2).
+        assert_eq!(header.run, None);
         assert_eq!(header.space, None, "no Space id exists yet");
     }
 

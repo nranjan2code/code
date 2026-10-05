@@ -19,7 +19,7 @@
 /// than rendering a decorative green tick.
 import { For, Index, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, AuthRequired } from "./api";
-import { scopeOperations } from "./OperationsCenter";
+import { liveRunHref, scopeOperations } from "./OperationsCenter";
 import {
   EVENT_LABELS, PageHeader, PathCell, SETUP_STEPS, modeLabel, providerLabel, secKindLabel,
   summarizeEvent,
@@ -501,7 +501,7 @@ function RightNow(props: { ops: OperationsSnapshot | null; error: boolean }) {
             <Index each={runs()}>
               {(run) => (
                 <li>
-                  <button onClick={() => navigate(`#/operations/work/runs/${encodeURIComponent(run().session_id)}`)}>
+                  <button onClick={() => navigate(liveRunHref(run()))}>
                     <span class={`run-pip run-pip-${run().state === "running" ? "live" : "held"}`} />
                     <span class="mono">{shortId(run().session_id)}</span>
                     <Show when={run().agent_name || run().agent_id}>

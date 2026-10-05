@@ -211,6 +211,7 @@ fn agent(
 
 fn task_tool(dir: &tempfile::TempDir, provider: Arc<Scripted>, parent: &str) -> Arc<dyn Tool> {
     Arc::new(TaskTool::new(TaskDeps {
+        runs: None,
         objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         parent_agent_identity: None,
         role_prompts: Default::default(),

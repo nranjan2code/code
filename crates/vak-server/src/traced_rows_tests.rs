@@ -83,6 +83,16 @@ fn records() -> Vec<Record> {
         "backend": "local", "image": null, "network_policy": "none", "setup_recipe": [],
     });
     vec![
+        record::<vak_session::runs::RunEvent>(
+            "RunEvent",
+            "crates/vak-session/src/runs.rs",
+            "ledger",
+            "runs",
+            serde_json::json!({
+                "run": "run_01920000-0000-7000-8000-000000000001", "at": ts,
+                "step": "session", "session_id": "s",
+            }),
+        ),
         record::<vak_core::finops::CostRow>(
             "CostRow",
             "crates/vak-core/src/finops.rs",
@@ -263,7 +273,7 @@ fn every_ledger_row_type_is_traced() {
     let total = names.len();
     names.dedup();
     assert_eq!(total, names.len(), "row type names are unique");
-    assert_eq!(total, 16);
+    assert_eq!(total, 17);
 
     let mut declared = 0;
     for entry in std::fs::read_dir(workspace_root().join("crates"))
@@ -283,7 +293,11 @@ fn every_ledger_row_type_is_traced() {
                     let text = std::fs::read_to_string(&path).unwrap_or_default();
                     declared += text
                         .lines()
-                        .filter(|line| line.trim_start().starts_with("vak_session::impl_traced!("))
+                        .filter(|line| {
+                            let line = line.trim_start();
+                            line.starts_with("vak_session::impl_traced!(")
+                                || line.starts_with("crate::impl_traced!(")
+                        })
                         .count();
                 }
             }
@@ -295,11 +309,11 @@ fn every_ledger_row_type_is_traced() {
     );
 }
 
-/// Each of the sixteen row types reads back an actor written onto its row
+/// Each of the seventeen row types reads back an actor written onto its row
 /// and writes it out again (the assertion lives in `record`).
 #[test]
 fn every_ledger_row_type_names_its_actor() {
-    assert_eq!(records().len(), 16);
+    assert_eq!(records().len(), 17);
 }
 
 struct Field {

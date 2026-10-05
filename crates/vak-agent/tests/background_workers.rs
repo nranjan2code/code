@@ -182,6 +182,7 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
     });
     let registry = Arc::new(WorkerRegistry::new());
     let task = TaskTool::new(TaskDeps {
+        runs: None,
         objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         parent_agent_identity: None,
         role_prompts: Default::default(),

@@ -2800,10 +2800,25 @@ async fn gateway_inbound(
     // starts share it, so they are one trace.
     let admitted = core.mint_trace(None);
     let core = core.with_run_admission(admission.trace(admitted.clone()));
+    // The request is its run, opened before anything it causes; every way
+    // out of this handler ends it, or hands it to the turn chain that does.
+    let mut open_run = match core.runs().begin(&admitted, None, None) {
+        Ok(run) => run,
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": format!("request not admitted: {error}")})),
+            )
+                .into_response();
+        }
+    };
 
     let handle = match resolve_session(&state, &core, &key).await {
         Ok(h) => h,
         Err(e) => {
+            open_run.end_with(vak_session::runs::RunEnd::Settled(
+                vak_session::runs::RunOutcome::Failed { reason: e.clone() },
+            ));
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"error": e})),
@@ -2828,6 +2843,9 @@ async fn gateway_inbound(
             })
             .unwrap_or(false);
     if already_admitted {
+        open_run.end_with(vak_session::runs::RunEnd::Skipped(
+            "the request was already admitted".into(),
+        ));
         return (
             StatusCode::ACCEPTED,
             Json(serde_json::json!({
@@ -2931,6 +2949,9 @@ async fn gateway_inbound(
             | vak_intent::InterventionKind::RemoveRequirement
     ) && let Some(id) = session_id.clone()
     {
+        open_run.end_with(vak_session::runs::RunEnd::Settled(
+            vak_session::runs::RunOutcome::Completed,
+        ));
         return crate::plan_change(
             axum::extract::State(state.clone()),
             axum::extract::Path(id),
@@ -2941,6 +2962,17 @@ async fn gateway_inbound(
             }),
         )
         .await;
+    }
+    if matches!(
+        intervention,
+        vak_intent::InterventionKind::Status
+            | vak_intent::InterventionKind::Pause
+            | vak_intent::InterventionKind::Resume
+            | vak_intent::InterventionKind::Cancel
+    ) {
+        open_run.end_with(vak_session::runs::RunEnd::Settled(
+            vak_session::runs::RunOutcome::Completed,
+        ));
     }
     match intervention {
         vak_intent::InterventionKind::Status => {
@@ -3019,6 +3051,9 @@ async fn gateway_inbound(
             &body.attachments,
             core.cwd(),
         ));
+        open_run.end_with(vak_session::runs::RunEnd::Skipped(
+            "joined the conversation's running turn".into(),
+        ));
         return (
             StatusCode::ACCEPTED,
             Json(serde_json::json!({
@@ -3030,6 +3065,11 @@ async fn gateway_inbound(
     }
 
     if core.provider().is_err() {
+        open_run.end_with(vak_session::runs::RunEnd::Settled(
+            vak_session::runs::RunOutcome::Failed {
+                reason: "no provider credential configured".into(),
+            },
+        ));
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({"error": "no provider credential configured"})),
@@ -3091,6 +3131,7 @@ async fn gateway_inbound(
         // decline to advertise a capability this chat could never use.
         .with_approver_answerable(state.gateway.forward_mode())
         .with_prompt_overlays(state.gateway.resolve_prompt_overlays(&key));
+    open_run.hand_off();
     start_turn_chain(
         &state,
         &core_for_turn,
@@ -3542,6 +3583,13 @@ async fn execute_turn_chain(
         // Lost the race with another writer; hand our full prompt (text +
         // images) to the winner as steering instead of dropping it.
         handle.steering.push_steering_message(prompt);
+        if let Some(trace) = core.admitted_trace()
+            && let Err(error) = core
+                .runs()
+                .skip_open(trace.run, "joined the conversation's running turn")
+        {
+            eprintln!("[runs] {} did not settle: {error}", trace.run);
+        }
         return;
     };
 

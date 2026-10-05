@@ -5764,10 +5764,13 @@ impl Core {
                 self.surface.slug(),
             ))
         });
+        // The header names the run that created the session only when one
+        // was admitted; a session a person opens is not a run, and its turns
+        // are, each naming this ledger in its run record.
         let admission_trace = self.mint_trace(None);
         let header = SessionHeader {
             space: None,
-            run: Some(admission_trace.run),
+            run: self.admitted_trace().map(|trace| trace.run),
             cause: Some(admission_trace.cause.clone()),
             agent: self.agent_identity.clone(),
             session_id,
@@ -6362,7 +6365,67 @@ impl Core {
     /// funnels through here, which is what makes that one place enough.
     #[allow(clippy::too_many_arguments)]
     async fn run_turn_inner(
+        self,
+        session: SessionLog,
+        prompt: vak_session::MessageRecord,
+        cancel: CancellationToken,
+        approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
+        permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
+        steering: Option<std::sync::Arc<vak_agent::SteeringQueues>>,
+        events: tokio::sync::mpsc::Sender<AgentEvent>,
+        goal: Option<(String, Vec<String>)>,
+        work_mode: Option<WorkMode>,
+    ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        let runs = self.runs();
+        let opened: Arc<std::sync::OnceLock<vak_session::ids::RunId>> = Arc::default();
+        let result = self
+            .run_turn_recorded(
+                opened.clone(),
+                session,
+                prompt,
+                cancel,
+                approver,
+                permission,
+                steering,
+                events,
+                goal,
+                work_mode,
+            )
+            .await;
+        // The run this turn opened settles with whatever the turn returned,
+        // on every path out of it.
+        if let Some(run) = opened.get() {
+            let (outcome, result_id) = match &result {
+                Ok((outcome, log)) => (outcome.run_outcome(), last_answer_id(log)),
+                Err(error) => (
+                    vak_session::runs::RunOutcome::Failed {
+                        reason: error.to_string(),
+                    },
+                    None,
+                ),
+            };
+            if let Err(error) = runs.settle(*run, outcome, result_id) {
+                eprintln!("[runs] {run} did not settle: {error}");
+            }
+        }
+        result
+    }
+
+    /// The run records of this Core's data home (plan M4.2).
+    pub fn runs(&self) -> vak_session::runs::Runs {
+        vak_session::runs::Runs::at(
+            self.shared_scope().runs(),
+            vak_config::paths::tenant_home_at(
+                &self.inner.sessions_home,
+                vak_config::paths::LOCAL_TENANT,
+            ),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_turn_recorded(
         mut self,
+        opened: Arc<std::sync::OnceLock<vak_session::ids::RunId>>,
         mut session: SessionLog,
         prompt: vak_session::MessageRecord,
         cancel: CancellationToken,
@@ -6459,6 +6522,17 @@ impl Core {
                 &turn_id,
             );
         cfg.trace = Some(run_trace.clone());
+        // A turn with no admitted run is its own run, and opens it before
+        // anything is written; an admitted run was opened by whoever minted
+        // it. Either way the run names this ledger.
+        let runs = self.runs();
+        let session_id = session.header().map(|header| header.session_id.clone());
+        if self.run_admission.trace.is_none() {
+            runs.open_in(&run_trace, None, None, 1, session_id.as_deref())?;
+            let _ = opened.set(run_trace.run);
+        } else if let Some(session_id) = &session_id {
+            runs.session(run_trace.run, session_id)?;
+        }
 
         // ---- intent resolution (docs/design/47-commitment-kernel.md) ----
         // Runs before anything reads a knob it governs. Everything derived
@@ -7037,6 +7111,7 @@ impl Core {
                 child_core.system_prompt_for_capabilities(&child_capability_set);
             let role_prompts = child_core.role_prompts(&child_capability_set);
             tools.push(Arc::new(vak_agent::TaskTool::new(vak_agent::TaskDeps {
+                runs: Some(self.runs()),
                 objects: self.objects()?,
                 parent_agent_identity: self.agent_identity().cloned(),
                 outcome_objective: Some(prompt_text.to_string()),
@@ -9495,6 +9570,19 @@ impl KebabLower for str {
 /// ordered and collision-safe even across clock rewinds (the previous
 /// nanosecond-hex scheme appended a second header onto an existing file
 /// on collision).
+/// The entry id of the turn's answer: the newest assistant message.
+fn last_answer_id(log: &SessionLog) -> Option<String> {
+    log.active_entries_rev()
+        .find_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Message(record)
+                if record.message.role == vak_llm::Role::Assistant =>
+            {
+                Some(entry.id.clone())
+            }
+            _ => None,
+        })
+}
+
 fn uuid_like() -> String {
     uuid::Uuid::now_v7().to_string()
 }

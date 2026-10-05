@@ -204,6 +204,13 @@ pub fn record_for_call(
     )
 }
 
+/// Whether an entry with `key` was already recorded.
+pub fn has_dedupe_key(scope: &vak_config::scope::AgentScope, key: &str) -> bool {
+    list(scope, MAX_SCAN)
+        .into_iter()
+        .any(|entry| entry.dedupe_key.as_deref() == Some(key))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn insert(
     scope: &vak_config::scope::AgentScope,
