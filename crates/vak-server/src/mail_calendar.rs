@@ -635,14 +635,21 @@ pub(super) async fn list_candidates(
         Ok(vault) => vault,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
-    let receipts = match vault.list_action_receipts() {
-        Ok(receipts) => receipts,
+    let effects = match state.core.effects().list() {
+        Ok(effects) => effects,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
     match vault.list_candidates() {
         Ok(candidates) => Json(serde_json::json!({
             "candidates": candidates.into_iter().filter_map(|candidate| {
-                let state = receipts.iter().find(|receipt| receipt.candidate_id == candidate.id).map(|receipt| receipt.state);
+                let target = vak_mail_calendar::effect::candidate_target(&candidate.id);
+                let state = effects
+                    .iter()
+                    .find(|effect| {
+                        effect.target == target
+                            && effect.status != vak_session::effects::EffectStatus::Superseded
+                    })
+                    .map(vak_mail_calendar::effect::action_state);
                 candidate_view(candidate, state)
             }).collect::<Vec<_>>()
         }))
@@ -725,14 +732,11 @@ pub(super) async fn candidate_review_context(
         )
             .into_response();
     }
-    let receipts = match vault.list_action_receipts() {
-        Ok(receipts) => receipts,
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    let attempted = match candidate_effect(&state, &candidate.id) {
+        Ok(effect) => effect.is_some(),
+        Err(status) => return status.into_response(),
     };
-    if receipts
-        .iter()
-        .any(|receipt| receipt.candidate_id == candidate.id)
-    {
+    if attempted {
         return (
             StatusCode::CONFLICT,
             "This draft already has a provider-action outcome.",
@@ -1064,9 +1068,10 @@ fn candidate_view(
     Some(value)
 }
 
-/// Commit only an exact, owner-confirmed supported provider candidate. The account
-/// lock spans revalidation, durable single-use claim, provider dispatch, and
-/// receipt persistence so local disconnect/revision paths cannot cross it.
+/// Commit only an exact, owner-confirmed supported provider candidate, as its
+/// one effect (`effect::commit_candidate`). The account lock spans
+/// revalidation, the effect's preparation and only attempt, and its outcome,
+/// so local disconnect/revision paths cannot cross it.
 pub(super) async fn send_mail_candidate(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
@@ -1282,150 +1287,59 @@ pub(super) async fn send_mail_candidate(
     {
         return StatusCode::FORBIDDEN.into_response();
     }
-    // Fail before claiming if the client cannot be constructed. Once the
-    // claim is durable, every result is single-use, including unknown.
+    // Fail before preparing if the client cannot be constructed. Once the
+    // effect is taken, every result is single-use, including unknown.
     let client = match ProviderEffectClient::new() {
         Ok(client) => client,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
-    let mut receipt = match vault.begin_action(&candidate) {
-        Ok(receipt) => receipt,
-        Err(vak_mail_calendar::vault::VaultError::Conflict) => {
-            let prior = vault.list_action_receipts().ok().and_then(|receipts| {
-                receipts
-                    .into_iter()
-                    .find(|receipt| receipt.candidate_id == candidate.id)
-            });
+    let effects = state.core.effects();
+    let committed = vak_mail_calendar::effect::commit_candidate(
+        &client,
+        &effects,
+        Some(crate::request_trace(&state, "mail-calendar-change")),
+        &account,
+        &vault,
+        &agent_id,
+        &candidate,
+    )
+    .await;
+    let (effect, outcome) = match committed {
+        Ok(vak_mail_calendar::effect::Committed::Attempted { effect, outcome }) => {
+            (effect, outcome)
+        }
+        Ok(vak_mail_calendar::effect::Committed::AlreadyAttempted(prior)) => {
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
                     "error": "This draft already has a provider action attempt; it will not be retried.",
-                    "receipt": prior,
+                    "receipt": effect_receipt(&prior),
                 })),
             )
                 .into_response();
         }
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    };
-    let result = match &candidate.action {
-        ProposedAction::SendMail { draft } => {
-            client
-                .send_mail(
-                    &account,
-                    &vault,
-                    &agent_id,
-                    &candidate.audience_id,
-                    &receipt.attempt_id,
-                    draft,
-                )
-                .await
-        }
-        ProposedAction::CreateEvent { draft } => {
-            client
-                .create_event(
-                    &account,
-                    &vault,
-                    &agent_id,
-                    &candidate.audience_id,
-                    &receipt.attempt_id,
-                    draft,
-                )
-                .await
-        }
-        ProposedAction::UpdateEvent {
-            event_id,
-            source_version,
-            draft,
-        } => {
-            client
-                .update_event(
-                    &account,
-                    &vault,
-                    &agent_id,
-                    &candidate.audience_id,
-                    &receipt.attempt_id,
-                    event_id,
-                    source_version,
-                    draft,
-                )
-                .await
-        }
-        ProposedAction::CancelEvent {
-            event_id,
-            source_version,
-            occurrence_id,
-            whole_series,
-        } => {
-            client
-                .cancel_event(
-                    &account,
-                    &vault,
-                    &agent_id,
-                    &candidate.audience_id,
-                    &receipt.attempt_id,
-                    event_id,
-                    source_version,
-                    occurrence_id.as_deref(),
-                    *whole_series,
-                )
-                .await
-        }
-        ProposedAction::RespondToEvent {
-            event_id,
-            source_version,
-            response,
-        } => {
-            client
-                .respond_to_event(
-                    &account,
-                    &vault,
-                    &agent_id,
-                    &candidate.audience_id,
-                    &receipt.attempt_id,
-                    event_id,
-                    source_version,
-                    *response,
-                )
-                .await
+        // The effect could not be recorded: if it was taken, the provider
+        // may have been called, and the effect stays unsendable.
+        Err(_) => {
+            return (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "state": "dispatching",
+                    "message": "The provider request may have been made; do not retry this draft.",
+                })),
+            )
+                .into_response();
         }
     };
-    match result {
-        Ok(accepted) => {
-            receipt.state = ActionState::ProviderAccepted;
-            receipt.provider_item_id = accepted.provider_item_id;
-            receipt.detail_code = Some(
-                if matches!(candidate.action, ProposedAction::CancelEvent { .. }) {
-                    "provider_accepted_event_cancelled"
-                } else {
-                    "provider_accepted_not_delivery"
-                }
-                .into(),
-            );
+    let detail_code = match &outcome {
+        Ok(_) if matches!(candidate.action, ProposedAction::CancelEvent { .. }) => {
+            "provider_accepted_event_cancelled"
         }
-        Err(error) => {
-            receipt.state = match error {
-                ProviderEffectError::Unknown => ActionState::Unknown,
-                _ => ActionState::Failed,
-            };
-            receipt.detail_code = Some(
-                match error {
-                    ProviderEffectError::Unknown => "outcome_unknown",
-                    ProviderEffectError::ReauthorizationRequired => "reauthorization_required",
-                    ProviderEffectError::NotAdmitted => "account_not_admitted",
-                    ProviderEffectError::Unsupported => "operation_unsupported",
-                    ProviderEffectError::Rejected => "provider_rejected",
-                    ProviderEffectError::Conflict => "source_version_conflict",
-                }
-                .into(),
-            );
-            if error == ProviderEffectError::ReauthorizationRequired {
-                mark_account_reauthentication_required(
-                    &state,
-                    &account,
-                    "provider_effect_rejected",
-                );
-            }
-        }
+        Ok(_) => "provider_accepted_not_delivery",
+        Err(error) => vak_mail_calendar::effect::error_code(error),
+    };
+    if outcome == Err(ProviderEffectError::ReauthorizationRequired) {
+        mark_account_reauthentication_required(&state, &account, "provider_effect_rejected");
     }
     record_account_event(
         &state,
@@ -1444,29 +1358,69 @@ pub(super) async fn send_mail_candidate(
         &account.id,
         account.provider,
         &account.capabilities,
-        receipt.detail_code.as_deref().unwrap_or("outcome_unknown"),
+        detail_code,
     );
-    let accepted = receipt.state == ActionState::ProviderAccepted;
-    if vault.settle_action(receipt.clone()).is_err() {
-        // The durable dispatch claim remains, so clients cannot repeat the
-        // effect. Report ambiguity until an explicit reconciliation exists.
-        return (
-            StatusCode::ACCEPTED,
-            Json(serde_json::json!({
-                "state": "dispatching",
-                "message": "The provider request was made; do not retry this draft.",
-            })),
-        )
-            .into_response();
-    }
-    let status = if accepted {
-        StatusCode::ACCEPTED
-    } else if receipt.detail_code.as_deref() == Some("source_version_conflict") {
-        StatusCode::CONFLICT
-    } else {
-        StatusCode::BAD_GATEWAY
+    let status = match &outcome {
+        Ok(_) => StatusCode::ACCEPTED,
+        Err(ProviderEffectError::Conflict) => StatusCode::CONFLICT,
+        Err(_) => StatusCode::BAD_GATEWAY,
     };
+    let mut receipt = effect_receipt(&effect);
+    receipt["detail_code"] = serde_json::json!(detail_code);
     (status, Json(serde_json::json!({ "receipt": receipt }))).into_response()
+}
+
+/// Records that the provider shows the effect's change landed, and
+/// answers with its receipt.
+fn confirm_by_provider(
+    state: &AppState,
+    effect: &vak_session::effects::EffectRecord,
+    provider: Provider,
+    provider_item_id: String,
+    detail_code: &str,
+) -> Response {
+    let effects = state.core.effects();
+    let receipt = vak_session::effects::Receipt {
+        provider: provider.as_str().to_owned(),
+        provider_id: Some(provider_item_id),
+        at: Utc::now(),
+    };
+    let confirmed = effects
+        .confirmed(effect.id, receipt)
+        .and_then(|()| effects.get(effect.id));
+    match confirmed {
+        Ok(Some(effect)) => {
+            let mut receipt = effect_receipt(&effect);
+            receipt["detail_code"] = serde_json::json!(detail_code);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"matched": true, "receipt": receipt})),
+            )
+                .into_response()
+        }
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// A candidate's effect as Review reads it: its state in the candidate's
+/// words, the provider's id, and why it failed or is unknown.
+fn effect_receipt(effect: &vak_session::effects::EffectRecord) -> serde_json::Value {
+    serde_json::json!({
+        "effect": effect.id.to_string(),
+        "state": vak_mail_calendar::effect::action_state(effect),
+        "provider_item_id": effect.receipt.as_ref().and_then(|receipt| receipt.provider_id.clone()),
+        "detail_code": effect.reason,
+        "observed_at": effect.updated_at,
+    })
+}
+
+/// The candidate's effect, if any, read from the effects chain.
+fn candidate_effect(
+    state: &AppState,
+    candidate_id: &str,
+) -> Result<Option<vak_session::effects::EffectRecord>, StatusCode> {
+    vak_mail_calendar::effect::candidate_effect(&state.core.effects(), candidate_id)
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
 }
 
 #[derive(Deserialize)]
@@ -1560,18 +1514,20 @@ pub(super) async fn reconcile_event_candidate(
                     .into_response();
             }
         };
-    let Some(mut receipt) = vault.list_action_receipts().ok().and_then(|rows| {
-        rows.into_iter()
-            .find(|row| row.candidate_id == candidate.id)
-    }) else {
+    let effects = state.core.effects();
+    let Ok(Some(effect)) = candidate_effect(&state, &candidate.id) else {
         return StatusCode::CONFLICT.into_response();
     };
     if !matches!(
-        receipt.state,
-        ActionState::Unknown | ActionState::Dispatching
-    ) || receipt.candidate_digest != request.candidate_digest
-        || receipt.account_id != candidate.account_id
-    {
+        effect.status,
+        vak_session::effects::EffectStatus::Unknown | vak_session::effects::EffectStatus::Sending
+    ) || !vak_mail_calendar::effect::is_effect_of(
+        &effects,
+        &effect,
+        &candidate.id,
+        &request.candidate_digest,
+        &candidate.account_id,
+    ) {
         return (
             StatusCode::CONFLICT,
             "This calendar action does not have a reconcilable ambiguous outcome.",
@@ -1652,7 +1608,7 @@ pub(super) async fn reconcile_event_candidate(
                 &vault,
                 &agent_id,
                 &candidate.audience_id,
-                &receipt.attempt_id,
+                &vak_mail_calendar::effect::attempt_marker(&effect),
                 event_id,
             )
             .await
@@ -1663,7 +1619,7 @@ pub(super) async fn reconcile_event_candidate(
                 &vault,
                 &agent_id,
                 &candidate.audience_id,
-                &receipt.attempt_id,
+                &vak_mail_calendar::effect::attempt_marker(&effect),
                 event_id,
             )
             .await
@@ -1674,7 +1630,7 @@ pub(super) async fn reconcile_event_candidate(
                 &vault,
                 &agent_id,
                 &candidate.audience_id,
-                &receipt.attempt_id,
+                &vak_mail_calendar::effect::attempt_marker(&effect),
                 event_id,
                 response,
             )
@@ -1686,16 +1642,13 @@ pub(super) async fn reconcile_event_candidate(
                 &vault,
                 &agent_id,
                 &candidate.audience_id,
-                &receipt.attempt_id,
+                &vak_mail_calendar::effect::attempt_marker(&effect),
             )
             .await
     };
     match provider_result {
         Ok(Some(provider_item_id)) => {
-            receipt.state = ActionState::Confirmed;
-            receipt.provider_item_id = Some(provider_item_id);
-            receipt.detail_code = Some(
-                if reconcile_cancel_event.is_some() {
+            let detail_code = if reconcile_cancel_event.is_some() {
                     "provider_event_cancel_confirmed_by_reconciliation"
                 } else if reconcile_response_event.is_some() {
                     "provider_event_response_confirmed_by_reconciliation"
@@ -1703,14 +1656,10 @@ pub(super) async fn reconcile_event_candidate(
                     "provider_event_update_confirmed_by_reconciliation"
                 } else {
                     "provider_event_confirmed_by_reconciliation"
-                }
-                .into(),
-            );
-            receipt.observed_at = Utc::now();
-            if vault.settle_action(receipt.clone()).is_err() { return StatusCode::SERVICE_UNAVAILABLE.into_response(); }
-            (StatusCode::OK, Json(serde_json::json!({"matched": true, "receipt": receipt}))).into_response()
+                };
+            confirm_by_provider(&state, &effect, account.provider, provider_item_id, detail_code)
         }
-        Ok(None) => (StatusCode::OK, Json(serde_json::json!({"matched": false, "state": receipt.state, "message": "No matching event is visible yet. The outcome remains unknown and the action cannot be retried."}))).into_response(),
+        Ok(None) => (StatusCode::OK, Json(serde_json::json!({"matched": false, "state": vak_mail_calendar::effect::action_state(&effect), "message": "No matching event is visible yet. The outcome remains unknown and the action cannot be retried."}))).into_response(),
         Err(ProviderEffectError::ReauthorizationRequired) => (StatusCode::PRECONDITION_REQUIRED, "Refresh this account's sign-in before checking the event result.").into_response(),
         Err(ProviderEffectError::NotAdmitted) => StatusCode::FORBIDDEN.into_response(),
         Err(_) => StatusCode::BAD_GATEWAY.into_response(),
@@ -1786,18 +1735,20 @@ pub(super) async fn reconcile_mail_candidate(
         )
             .into_response();
     }
-    let Some(mut receipt) = vault.list_action_receipts().ok().and_then(|rows| {
-        rows.into_iter()
-            .find(|row| row.candidate_id == candidate.id)
-    }) else {
+    let effects = state.core.effects();
+    let Ok(Some(effect)) = candidate_effect(&state, &candidate.id) else {
         return StatusCode::CONFLICT.into_response();
     };
     if !matches!(
-        receipt.state,
-        ActionState::Unknown | ActionState::Dispatching
-    ) || receipt.candidate_digest != request.candidate_digest
-        || receipt.account_id != candidate.account_id
-    {
+        effect.status,
+        vak_session::effects::EffectStatus::Unknown | vak_session::effects::EffectStatus::Sending
+    ) || !vak_mail_calendar::effect::is_effect_of(
+        &effects,
+        &effect,
+        &candidate.id,
+        &request.candidate_digest,
+        &candidate.account_id,
+    ) {
         return (
             StatusCode::CONFLICT,
             "This mail action does not have a reconcilable ambiguous outcome.",
@@ -1864,16 +1815,15 @@ pub(super) async fn reconcile_mail_candidate(
         Ok(client) => client,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
-    match client.reconcile_sent_mail(&account, &vault, &agent_id, &candidate.audience_id, &receipt.attempt_id).await {
-        Ok(Some(item_id)) => {
-            receipt.state = ActionState::Confirmed;
-            receipt.provider_item_id = Some(item_id);
-            receipt.detail_code = Some("provider_mail_confirmed_by_reconciliation".into());
-            receipt.observed_at = Utc::now();
-            if vault.settle_action(receipt.clone()).is_err() { return StatusCode::SERVICE_UNAVAILABLE.into_response(); }
-            (StatusCode::OK, Json(serde_json::json!({"matched": true, "receipt": receipt}))).into_response()
-        }
-        Ok(None) => (StatusCode::OK, Json(serde_json::json!({"matched": false, "state": receipt.state, "message": "No matching sent message is visible yet. The outcome remains unknown and the action cannot be retried."}))).into_response(),
+    match client.reconcile_sent_mail(&account, &vault, &agent_id, &candidate.audience_id, &vak_mail_calendar::effect::attempt_marker(&effect)).await {
+        Ok(Some(item_id)) => confirm_by_provider(
+            &state,
+            &effect,
+            account.provider,
+            item_id,
+            "provider_mail_confirmed_by_reconciliation",
+        ),
+        Ok(None) => (StatusCode::OK, Json(serde_json::json!({"matched": false, "state": vak_mail_calendar::effect::action_state(&effect), "message": "No matching sent message is visible yet. The outcome remains unknown and the action cannot be retried."}))).into_response(),
         Err(ProviderEffectError::ReauthorizationRequired) => (StatusCode::PRECONDITION_REQUIRED, "Refresh this account's sign-in before checking the send result.").into_response(),
         Err(ProviderEffectError::NotAdmitted) => StatusCode::FORBIDDEN.into_response(),
         Err(_) => StatusCode::BAD_GATEWAY.into_response(),

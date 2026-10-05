@@ -8,7 +8,6 @@ license.workspace = true
 test-support = []
 
 [dependencies]
-async-trait = { workspace = true }
 async-imap = { version = "0.11.3", default-features = false, features = ["runtime-tokio"] }
 async-native-tls = { version = "0.6.0", default-features = false, features = ["runtime-tokio"] }
 base64 = { workspace = true }
@@ -30,6 +29,8 @@ url = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
 vak-config = { workspace = true }
+# Provider changes are effects in the effects/ chain (plan M4.6).
+vak-session = { workspace = true }
 
 [dev-dependencies]
 axum = { workspace = true }

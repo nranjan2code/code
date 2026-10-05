@@ -6,7 +6,6 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -44,6 +43,17 @@ pub enum Provider {
     Google,
     Microsoft,
     AppleIcloud,
+}
+
+impl Provider {
+    /// The provider's name as it is serialized.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Google => "google",
+            Self::Microsoft => "microsoft",
+            Self::AppleIcloud => "apple_icloud",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -650,6 +660,8 @@ impl CandidateApproval {
     }
 }
 
+/// How a reviewed candidate's provider change stands, as Review shows it;
+/// read from its effect (`effect::action_state`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionState {
@@ -662,51 +674,6 @@ pub enum ActionState {
     Unknown,
     Cancelled,
     Expired,
-}
-
-impl ActionState {
-    pub fn can_transition_to(self, next: Self) -> bool {
-        use ActionState::*;
-        matches!(
-            (self, next),
-            (
-                Prepared,
-                AwaitingApproval | Dispatching | Cancelled | Expired
-            ) | (AwaitingApproval, Dispatching | Cancelled | Expired)
-                | (Dispatching, ProviderAccepted | Confirmed | Failed | Unknown)
-                | (ProviderAccepted, Confirmed | Failed | Unknown)
-                | (Unknown, Confirmed | Failed)
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ActionReceipt {
-    pub logical_action_id: String,
-    pub attempt_id: String,
-    pub candidate_id: CandidateId,
-    pub candidate_digest: String,
-    pub account_id: AccountId,
-    pub state: ActionState,
-    pub provider_item_id: Option<String>,
-    pub observed_at: DateTime<Utc>,
-    pub detail_code: Option<String>,
-}
-
-impl ActionReceipt {
-    pub fn new(candidate: &ActionCandidate, state: ActionState) -> Result<Self, ContractError> {
-        Ok(Self {
-            logical_action_id: candidate.id.clone(),
-            attempt_id: Uuid::now_v7().to_string(),
-            candidate_id: candidate.id.clone(),
-            candidate_digest: candidate.digest()?,
-            account_id: candidate.account_id.clone(),
-            state,
-            provider_item_id: None,
-            observed_at: Utc::now(),
-            detail_code: None,
-        })
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -891,40 +858,6 @@ fn hex_digest(bytes: &[u8]) -> String {
         let _ = write!(value, "{byte:02x}");
     }
     value
-}
-
-/// An implementation operates on typed values only. The host broker resolves
-/// and injects credentials, pins the provider endpoint, and authorizes every
-/// method independently; this trait alone conveys no authority.
-#[async_trait]
-pub trait ProviderAdapter: Send + Sync {
-    fn provider(&self) -> Provider;
-
-    async fn list_messages(&self, request: ReadRequest) -> Result<Vec<MailMessage>, ProviderError>;
-
-    async fn list_events(&self, request: ReadRequest) -> Result<Vec<CalendarEvent>, ProviderError>;
-
-    async fn free_busy(&self, request: ReadRequest) -> Result<Vec<FreeBusySlot>, ProviderError>;
-
-    async fn commit(
-        &self,
-        candidate: ActionCandidate,
-        approval: CandidateApproval,
-    ) -> Result<ActionReceipt, ProviderError>;
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ProviderError {
-    #[error("account authorization is required")]
-    ReauthorizationRequired,
-    #[error("the connected account does not permit this operation")]
-    CapabilityDenied,
-    #[error("the provider item changed; review the updated item")]
-    Conflict,
-    #[error("the provider outcome is unknown and must be reconciled")]
-    OutcomeUnknown,
-    #[error("the provider request failed: {code}")]
-    Failed { code: String },
 }
 
 #[cfg(test)]

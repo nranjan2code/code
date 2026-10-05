@@ -37,9 +37,35 @@ pub enum EffectKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bot: Option<String>,
     },
+    /// An email sent from a connected account (plan M4.6). The target
+    /// names the reviewed candidate; the effect carries no content.
+    MailSend {
+        account: String,
+    },
+    /// A calendar event created, changed, cancelled or answered from a
+    /// connected account.
+    CalendarCreate {
+        account: String,
+    },
+    CalendarUpdate {
+        account: String,
+    },
+    CalendarCancel {
+        account: String,
+    },
+    CalendarRsvp {
+        account: String,
+    },
 }
 
 impl EffectKind {
+    /// Whether an attempt proven not sent is tried again by itself. A
+    /// delivery is; a mail or calendar change was approved once, for one
+    /// attempt, and is never sent again without a new review.
+    pub fn retries(&self) -> bool {
+        matches!(self, Self::Delivery { .. })
+    }
+
     /// The delivery kind for a target `surface:chat[:bot]`.
     pub fn delivery(target: &str) -> Self {
         let mut parts = target.splitn(3, ':');
@@ -176,6 +202,8 @@ pub struct EffectRecord {
     pub attempts: u32,
     pub holder: Option<ProcessId>,
     pub receipt: Option<Receipt>,
+    /// Whether the provider proved it landed, rather than only took it.
+    pub confirmed: bool,
     /// Why it failed or is unknown.
     pub reason: Option<String>,
     pub reconciled_by: Option<PrincipalId>,
@@ -223,6 +251,7 @@ impl EffectRecord {
             attempts: 0,
             holder: None,
             receipt: None,
+            confirmed: false,
             reason: None,
             reconciled_by: None,
             prepared_at: at,
@@ -240,8 +269,14 @@ impl EffectRecord {
                 self.status = EffectStatus::Sending;
                 self.reason = None;
             }
-            EffectStep::Accepted { receipt } | EffectStep::Confirmed { receipt } => {
+            EffectStep::Accepted { receipt } => {
                 self.receipt = Some(receipt);
+                self.status = EffectStatus::Sent;
+                self.reason = None;
+            }
+            EffectStep::Confirmed { receipt } => {
+                self.receipt = Some(receipt);
+                self.confirmed = true;
                 self.status = EffectStatus::Sent;
                 self.reason = None;
             }
@@ -251,7 +286,7 @@ impl EffectRecord {
             } => {
                 self.status = if !proven_not_sent {
                     EffectStatus::Unknown
-                } else if self.attempts < MAX_ATTEMPTS {
+                } else if self.kind.retries() && self.attempts < MAX_ATTEMPTS {
                     EffectStatus::Retrying
                 } else {
                     EffectStatus::Failed
@@ -306,6 +341,25 @@ pub struct Prepare {
     pub supersedes: Option<EffectId>,
 }
 
+impl Prepare {
+    /// An effect with no hold and nothing it supersedes.
+    pub fn new(
+        kind: EffectKind,
+        target: impl Into<String>,
+        trace: Option<TraceKey>,
+        payload: Vec<u8>,
+    ) -> Self {
+        Self {
+            kind,
+            target: target.into(),
+            trace,
+            payload,
+            hold: None,
+            supersedes: None,
+        }
+    }
+}
+
 /// How a sender asks to take an effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dispatch {
@@ -328,6 +382,16 @@ struct DispatchClaim {
 
 fn dispatch_ref(key: &str) -> String {
     format!("eff/{key}")
+}
+
+/// An idempotency key: twenty hex digits of the hash of the kind, the
+/// target, the payload digest and `basis`, short enough that a key with a
+/// chunk index fits a provider's 25-character nonce.
+fn key_of(prepare: &Prepare, payload_digest: &str, basis: &str) -> Result<String, SessionError> {
+    let kind_json = serde_json::to_string(&prepare.kind)
+        .map_err(|error| SessionError::Objects(error.to_string()))?;
+    let source = format!("{basis}\n{kind_json}\n{}\n{payload_digest}", prepare.target);
+    Ok(digest(source.as_bytes())[..20].to_string())
 }
 
 fn payload_scope(effect: &EffectId) -> String {
@@ -392,7 +456,6 @@ impl Effects {
     /// already carry the same four), so it is the same if the same job is
     /// prepared from the same run again.
     pub fn prepare(&self, prepare: Prepare) -> Result<EffectRecord, SessionError> {
-        let effect = EffectId::new();
         let run = prepare.trace.as_ref().map(|trace| trace.run);
         let payload_digest = digest(&prepare.payload);
         let ordinal = self
@@ -405,16 +468,41 @@ impl Effects {
                     && record.payload_digest == payload_digest
             })
             .count();
-        let kind_json = serde_json::to_string(&prepare.kind)
-            .map_err(|error| SessionError::Objects(error.to_string()))?;
         let run_text = run.map(|run| run.to_string()).unwrap_or_default();
-        let key_source = format!(
-            "{run_text}\n{kind_json}\n{}\n{payload_digest}\n{ordinal}",
-            prepare.target
-        );
-        // Twenty hex digits: short enough that a key with a chunk index
-        // fits a provider's 25-character nonce.
-        let idempotency_key = digest(key_source.as_bytes())[..20].to_string();
+        let key = key_of(&prepare, &payload_digest, &format!("{run_text}\n{ordinal}"))?;
+        self.write_prepared(prepare, key, payload_digest)
+    }
+
+    /// Records the one effect `prepare` describes, whatever run asks: its
+    /// key is the hash of its kind, target and payload digest alone, so
+    /// the same action prepared twice (a second click, a second process)
+    /// is one effect. Returns the effect prepared now, or the one that
+    /// already exists as `Err`. Only one effect under a key is ever taken
+    /// (`begin_dispatch`), so a race that prepares two sends at most once.
+    pub fn prepare_once(
+        &self,
+        prepare: Prepare,
+    ) -> Result<Result<EffectRecord, EffectRecord>, SessionError> {
+        let payload_digest = digest(&prepare.payload);
+        let key = key_of(&prepare, &payload_digest, "once")?;
+        if let Some(existing) = self
+            .list()?
+            .into_iter()
+            .find(|record| record.idempotency_key == key)
+        {
+            return Ok(Err(existing));
+        }
+        self.write_prepared(prepare, key, payload_digest).map(Ok)
+    }
+
+    fn write_prepared(
+        &self,
+        prepare: Prepare,
+        idempotency_key: String,
+        payload_digest: String,
+    ) -> Result<EffectRecord, SessionError> {
+        let effect = EffectId::new();
+        let run = prepare.trace.as_ref().map(|trace| trace.run);
         let tenant = TenantObjects::for_tenant(&self.tenant_home)?;
         let payload = tenant.put(&prepare.payload, &payload_scope(&effect))?;
         let actor = prepare.trace.as_ref().and_then(|trace| trace.actor);
@@ -478,6 +566,7 @@ impl Effects {
         }
         let attempt = record.attempts + 1;
         let holder = self.holder;
+        let mut taken_by = None;
         let moved = crate::fence::swap_ref(
             &self.tenant_home,
             &dispatch_ref(&record.idempotency_key),
@@ -489,6 +578,12 @@ impl Effects {
                         })
                     })
                     .transpose()?;
+                // Another effect under this key took it: this one is a
+                // twin a race prepared, and is never sent.
+                if let Some(claim) = current.as_ref().filter(|claim| claim.effect != effect) {
+                    taken_by = Some(claim.effect);
+                    return Ok(None);
+                }
                 let (last, retryable) = current
                     .as_ref()
                     .map_or((0, true), |claim| (claim.attempt, claim.retryable));
@@ -511,6 +606,9 @@ impl Effects {
             },
         )?;
         if !moved {
+            if let Some(by) = taken_by {
+                self.append(effect, None, None, EffectStep::Superseded { by })?;
+            }
             return Ok(None);
         }
         let step = EffectStep::Dispatched { attempt, holder };
@@ -684,6 +782,36 @@ impl Effects {
         Ok(unknown)
     }
 
+    /// Records as failed, never sent, every effect of a kind that is not
+    /// sent again by itself that is still queued `max_age` after it was
+    /// prepared: the request that approved it stopped before it sent it,
+    /// and its approval has lapsed. Returns them.
+    pub fn fail_unsent(
+        &self,
+        now: DateTime<Utc>,
+        max_age: chrono::Duration,
+    ) -> Result<Vec<EffectId>, SessionError> {
+        let mut failed = Vec::new();
+        for record in self.list()? {
+            if record.status == EffectStatus::Queued
+                && !record.kind.retries()
+                && now - record.prepared_at > max_age
+            {
+                self.append(
+                    record.id,
+                    None,
+                    None,
+                    EffectStep::Failed {
+                        reason: "its approval lapsed before it was sent".into(),
+                        proven_not_sent: true,
+                    },
+                )?;
+                failed.push(record.id);
+            }
+        }
+        Ok(failed)
+    }
+
     /// Every event, in order. A row that is not an effect event is an
     /// error, never skipped.
     pub fn events(&self) -> Result<Vec<EffectEvent>, SessionError> {
@@ -737,12 +865,14 @@ impl Effects {
             .collect())
     }
 
-    /// Effects a sender may take now, oldest first.
+    /// Effects the background sender may take now, oldest first: only
+    /// kinds that are sent again by themselves (`EffectKind::retries`). A
+    /// mail or calendar change is sent only by the request that approved it.
     pub fn dispatchable(&self) -> Result<Vec<EffectRecord>, SessionError> {
         let mut list: Vec<EffectRecord> = self
             .list()?
             .into_iter()
-            .filter(EffectRecord::is_dispatchable)
+            .filter(|record| record.kind.retries() && record.is_dispatchable())
             .collect();
         list.reverse();
         Ok(list)
@@ -926,6 +1056,99 @@ mod tests {
         let old = effects.get(record.id).expect("get").expect("record");
         assert_eq!(old.status, EffectStatus::Superseded);
         assert_eq!(old.superseded_by, Some(next.id));
+    }
+
+    fn mail(candidate: &str) -> Prepare {
+        Prepare::new(
+            EffectKind::MailSend {
+                account: "acct".into(),
+            },
+            format!("candidate:{candidate}"),
+            Some(trace()),
+            candidate.as_bytes().to_vec(),
+        )
+    }
+
+    #[test]
+    fn a_once_effect_is_one_effect_and_is_never_retried() {
+        let (_dir, effects) = home();
+        let first = effects
+            .prepare_once(mail("c1"))
+            .expect("prepare")
+            .expect("new");
+        let again = effects.prepare_once(mail("c1")).expect("prepare");
+        assert_eq!(again.expect_err("existing").id, first.id);
+        effects
+            .begin_dispatch(first.id, Dispatch::Fresh)
+            .expect("dispatch")
+            .expect("taken");
+        effects.failed(first.id, "refused", true).expect("failed");
+        let failed = effects.get(first.id).expect("get").expect("record");
+        assert_eq!(failed.status, EffectStatus::Failed);
+        assert!(effects.dispatchable().expect("dispatchable").is_empty());
+        assert!(
+            effects
+                .begin_dispatch(first.id, Dispatch::Fresh)
+                .expect("fresh")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_raced_twin_is_superseded_not_sent() {
+        let (_dir, effects) = home();
+        let first = effects
+            .prepare_once(mail("c2"))
+            .expect("prepare")
+            .expect("new");
+        // A second process prepared the same action before it saw the first.
+        let twin = effects
+            .write_prepared(
+                mail("c2"),
+                first.idempotency_key.clone(),
+                first.payload_digest.clone(),
+            )
+            .expect("twin");
+        effects
+            .begin_dispatch(first.id, Dispatch::Fresh)
+            .expect("dispatch")
+            .expect("taken");
+        assert!(
+            effects
+                .begin_dispatch(twin.id, Dispatch::Fresh)
+                .expect("twin dispatch")
+                .is_none()
+        );
+        let twin = effects.get(twin.id).expect("get").expect("record");
+        assert_eq!(twin.status, EffectStatus::Superseded);
+        assert_eq!(twin.superseded_by, Some(first.id));
+    }
+
+    #[test]
+    fn an_approved_change_left_unsent_fails_once_its_approval_lapses() {
+        let (_dir, effects) = home();
+        let left = effects
+            .prepare_once(mail("c3"))
+            .expect("prepare")
+            .expect("new");
+        let soon = Utc::now() + chrono::Duration::minutes(1);
+        assert!(
+            effects
+                .fail_unsent(soon, chrono::Duration::minutes(5))
+                .expect("sweep")
+                .is_empty()
+        );
+        let later = Utc::now() + chrono::Duration::minutes(6);
+        assert_eq!(
+            effects
+                .fail_unsent(later, chrono::Duration::minutes(5))
+                .expect("sweep"),
+            vec![left.id]
+        );
+        assert_eq!(
+            effects.get(left.id).expect("get").expect("record").status,
+            EffectStatus::Failed
+        );
     }
 
     #[test]

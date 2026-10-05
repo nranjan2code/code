@@ -1,5 +1,5 @@
-/// Actions (plan M4.5): what Vakyartha did outside itself, today a message
-/// sent to a channel. Each is recorded before it is sent. One whose outcome
+/// Actions (plans M4.5, M4.6): what Vakyartha did outside itself: a
+/// message sent to a channel, an email sent or a calendar change. Each is recorded before it is sent. One whose outcome
 /// nobody can prove reads "Not sure it was sent" and waits for a person:
 /// send it again, or say whether it arrived. It is never sent again by itself.
 
@@ -38,12 +38,22 @@ const SURFACES: Record<string, string> = {
   log: "the delivery log",
 };
 
+const CHANGES: Record<string, string> = {
+  mail_send: "Email sent",
+  calendar_create: "Calendar event added",
+  calendar_update: "Calendar event changed",
+  calendar_cancel: "Calendar event cancelled",
+  calendar_rsvp: "Invitation answered",
+};
+
 /** What an action did, in the words a person would use. */
 export function effectWhat(effect: EffectRecord): string {
-  return `Sent to ${SURFACES[effect.kind.surface] ?? effect.kind.surface}`;
+  if (effect.kind.type === "delivery") return `Sent to ${SURFACES[effect.kind.surface] ?? effect.kind.surface}`;
+  return CHANGES[effect.kind.type] ?? effect.kind.type;
 }
 
-const canResend = (status: EffectStatus) => ["queued", "retrying", "failed", "unknown"].includes(status);
+/** A delivery can be sent again here; an email or calendar change only from a new review. */
+const canResend = (effect: EffectRecord) => effect.kind.type === "delivery" && ["queued", "retrying", "failed", "unknown"].includes(effect.status);
 const canSettle = (status: EffectStatus) => ["retrying", "failed", "unknown"].includes(status);
 
 export function EffectList(props: { effects: EffectRecord[]; onChanged?: () => void | Promise<unknown>; empty?: string }) {
@@ -87,7 +97,7 @@ export function EffectList(props: { effects: EffectRecord[]; onChanged?: () => v
                   <td>{new Date(effect.updated_at).toLocaleString()}</td>
                   <td>
                     <div class="ops-action-row">
-                      <Show when={canResend(effect.status)}>
+                      <Show when={canResend(effect)}>
                         <button class="ghost small" onClick={() => void act("Sent again", () => api.resendEffect(effect.id))}>Send again</button>
                       </Show>
                       <Show when={canSettle(effect.status)}>

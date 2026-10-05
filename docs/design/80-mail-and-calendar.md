@@ -36,7 +36,8 @@ remain unsupported. Google and Microsoft support reviewed plain-text email sends
 limited timed-event create profile; Google also supports conditional update and
 cancellation for one unchanged, public, standalone timed event without
 attendees. Provider effects require opt-in scopes, owner confirmation, Core
-permission checks, and durable single-use claims. Event creation has no
+permission checks, and one effect per reviewed candidate (data-architecture
+plan M4.6): its dispatch claim is the single-use claim. Event creation has no
 attendees, recurrence, or reminders. A draft from a selected Google or
 Microsoft conversation message preserves its source and can create a
 provider-threaded reply.
@@ -161,9 +162,9 @@ supplied to the model are retained in current append-only session history.
 Local drafts and scheduled read-only routines are implemented.
 The first plain-text email effect and one timed event-create profile are
 implemented for Google and Microsoft. Calendar creates carry a private,
-provider-side attempt marker bound to the durable single-use dispatch attempt.
+provider-side attempt marker, the UUIDv7 of the candidate's one effect.
 After an ambiguous response or process restart, an owner can ask the broker to
-look for that exact marker. A unique match confirms the stored receipt; no
+look for that exact marker. A unique match records the effect confirmed; no
 match or multiple matches leaves it unknown and permanently non-retryable.
 The supported Google conditional update also stores the attempt marker on the
 event; reconciliation reads that exact event and confirms only the matching
@@ -210,7 +211,7 @@ cancellation outside the single-event Google profile above, Microsoft and
 Apple RSVP operations,
 Agent-initiated effects, and 24-hour recovery acceptance remain open.
 The server checks provider/action compatibility both when saving a candidate
-and before writing its single-use effect claim. Microsoft event update remains
+and before preparing the candidate's effect. Microsoft event update remains
 disabled because the Graph v1.0 event update documentation does not establish
 a conditional-write contract for stale-review protection ([update event](https://learn.microsoft.com/graph/api/event-update?view=graph-rest-1.0), [delete event](https://learn.microsoft.com/graph/api/event-delete?view=graph-rest-1.0)).
 Google and Microsoft calendar-write consent is broader than this limited

@@ -1,11 +1,15 @@
 //! Fixed-host, non-retrying provider effects.
 //!
-//! The caller owns the durable single-use claim and must record `Unknown`
-//! after an ambiguous result. This client never follows redirects or retries.
+//! Every provider change is an effect (plan M4.6, AGENTS.md invariant 41):
+//! [`commit_candidate`] prepares the one effect of a reviewed candidate,
+//! takes its only attempt, and records how the provider answered. Its
+//! dispatch claim is the single-use claim, so a second request for the same
+//! candidate, or a retry after an unknown outcome, never reaches the
+//! provider. This client never follows redirects or retries.
 
 use crate::{
-    CalendarDraft, Capability, ConnectedAccount, MailAddress, MailDraft, ProposedAction, Provider,
-    provider::ProviderReadError, vault::AccountVault,
+    ActionCandidate, CalendarDraft, Capability, ConnectedAccount, MailAddress, MailDraft,
+    ProposedAction, Provider, provider::ProviderReadError, vault::AccountVault,
 };
 use base64::Engine;
 use reqwest::{Response, StatusCode};
@@ -19,7 +23,7 @@ const GRAPH_ACTION_PROPERTY_ID: &str =
 const MAIL_ACTION_HEADER: &str = "X-Vak-Action-ID";
 
 /// Provider/action support is checked before candidates are persisted or a
-/// single-use effect claim is written. Keep this matrix aligned with the
+/// candidate's effect is prepared. Keep this matrix aligned with the
 /// adapters below: Microsoft Graph event mutation stays disabled until a
 /// conditional-write contract suitable for stale-review protection is
 /// verified.
@@ -1190,8 +1194,8 @@ fn attempt_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::from_timestamp_millis(i64::try_from(millis).ok()?)
 }
 
-/// Validate the currently supported plain-text send profile before a durable
-/// single-use dispatch claim is created.
+/// Validate the currently supported plain-text send profile before the
+/// candidate's effect is prepared.
 pub fn validate_mail_draft(draft: &MailDraft) -> Result<(), ProviderEffectError> {
     draft
         .validate()
@@ -1598,6 +1602,248 @@ async fn response_json(response: Response) -> Result<Value, ProviderEffectError>
     serde_json::from_slice(&bytes).map_err(|_| ProviderEffectError::Unknown)
 }
 
+/// What one reviewed candidate's effect payload names: never the draft's
+/// content, which stays in the Agent's vault.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct CandidateRef {
+    agent_id: String,
+    candidate_id: String,
+    candidate_digest: String,
+}
+
+/// The effect target of a candidate.
+pub fn candidate_target(candidate_id: &str) -> String {
+    format!("candidate:{candidate_id}")
+}
+
+/// The effect kind a candidate's action is.
+pub fn effect_kind(candidate: &ActionCandidate) -> vak_session::effects::EffectKind {
+    use vak_session::effects::EffectKind;
+    let account = candidate.account_id.clone();
+    match candidate.action {
+        ProposedAction::SendMail { .. } => EffectKind::MailSend { account },
+        ProposedAction::CreateEvent { .. } => EffectKind::CalendarCreate { account },
+        ProposedAction::UpdateEvent { .. } => EffectKind::CalendarUpdate { account },
+        ProposedAction::CancelEvent { .. } => EffectKind::CalendarCancel { account },
+        ProposedAction::RespondToEvent { .. } => EffectKind::CalendarRsvp { account },
+    }
+}
+
+/// The effect of a candidate, if one was prepared: the one that was not
+/// superseded by a raced twin.
+pub fn candidate_effect(
+    effects: &vak_session::effects::Effects,
+    candidate_id: &str,
+) -> Result<Option<vak_session::effects::EffectRecord>, vak_session::types::SessionError> {
+    let target = candidate_target(candidate_id);
+    Ok(effects.list()?.into_iter().find(|effect| {
+        effect.target == target && effect.status != vak_session::effects::EffectStatus::Superseded
+    }))
+}
+
+/// How a candidate's effect reads in the candidate's own words.
+pub fn action_state(effect: &vak_session::effects::EffectRecord) -> crate::ActionState {
+    use crate::ActionState;
+    use vak_session::effects::EffectStatus;
+    match effect.status {
+        EffectStatus::Held | EffectStatus::Queued | EffectStatus::Sending => {
+            ActionState::Dispatching
+        }
+        EffectStatus::Sent if effect.confirmed => ActionState::Confirmed,
+        EffectStatus::Sent => ActionState::ProviderAccepted,
+        EffectStatus::Retrying | EffectStatus::Failed => ActionState::Failed,
+        EffectStatus::Unknown | EffectStatus::Superseded => ActionState::Unknown,
+    }
+}
+
+/// Whether `effect` is the effect of the reviewed candidate `candidate_id`
+/// with digest `digest` on the account `account_id`: what reconciliation
+/// checks before it reads the provider.
+pub fn is_effect_of(
+    effects: &vak_session::effects::Effects,
+    effect: &vak_session::effects::EffectRecord,
+    candidate_id: &str,
+    digest: &str,
+    account_id: &str,
+) -> bool {
+    use vak_session::effects::EffectKind;
+    let account = match &effect.kind {
+        EffectKind::MailSend { account }
+        | EffectKind::CalendarCreate { account }
+        | EffectKind::CalendarUpdate { account }
+        | EffectKind::CalendarCancel { account }
+        | EffectKind::CalendarRsvp { account } => account,
+        EffectKind::Delivery { .. } => return false,
+    };
+    let reviewed = effects
+        .payload(effect)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<CandidateRef>(&bytes).ok());
+    account == account_id
+        && effect.target == candidate_target(candidate_id)
+        && reviewed.is_some_and(|reviewed| {
+            reviewed.candidate_id == candidate_id && reviewed.candidate_digest == digest
+        })
+}
+
+/// The provider marker an effect's change carries, which reconciliation
+/// searches for: the effect id's UUIDv7, so its time bounds the search.
+pub fn attempt_marker(effect: &vak_session::effects::EffectRecord) -> String {
+    effect.id.uuid().to_string()
+}
+
+/// What [`commit_candidate`] did.
+#[derive(Debug)]
+pub enum Committed {
+    /// The candidate already has its effect; nothing was sent now.
+    AlreadyAttempted(vak_session::effects::EffectRecord),
+    /// This request took the candidate's one attempt. `outcome` is how the
+    /// provider answered; the effect records it.
+    Attempted {
+        effect: vak_session::effects::EffectRecord,
+        outcome: Result<ProviderAcceptance, ProviderEffectError>,
+    },
+}
+
+/// Sends one reviewed, authorized candidate as its one effect: prepared
+/// once by its candidate, taken by this process alone, and settled with
+/// the provider's answer. A refusal the provider gave (or a check that
+/// stopped it before any request) is recorded as not sent; anything else
+/// is unknown, and an unknown change is never attempted again.
+#[allow(clippy::too_many_arguments)]
+pub async fn commit_candidate(
+    client: &ProviderEffectClient,
+    effects: &vak_session::effects::Effects,
+    trace: Option<vak_session::trace::TraceKey>,
+    account: &ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    candidate: &ActionCandidate,
+) -> Result<Committed, vak_session::types::SessionError> {
+    use vak_session::effects::{Dispatch, Prepare, Receipt};
+    let digest = candidate
+        .digest()
+        .map_err(|_| vak_session::types::SessionError::Objects("candidate digest".into()))?;
+    let payload = serde_json::to_vec(&CandidateRef {
+        agent_id: agent_id.to_owned(),
+        candidate_id: candidate.id.clone(),
+        candidate_digest: digest,
+    })
+    .map_err(|error| vak_session::types::SessionError::Objects(error.to_string()))?;
+    let prepared = effects.prepare_once(Prepare::new(
+        effect_kind(candidate),
+        candidate_target(&candidate.id),
+        trace,
+        payload,
+    ))?;
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
+        Err(existing) => return Ok(Committed::AlreadyAttempted(existing)),
+    };
+    let Some(taken) = effects.begin_dispatch(prepared.id, Dispatch::Fresh)? else {
+        let existing = candidate_effect(effects, &candidate.id)?.unwrap_or(prepared);
+        return Ok(Committed::AlreadyAttempted(existing));
+    };
+    let marker = attempt_marker(&taken);
+    let audience = candidate.audience_id.as_str();
+    let outcome = match &candidate.action {
+        ProposedAction::SendMail { draft } => {
+            client
+                .send_mail(account, vault, agent_id, audience, &marker, draft)
+                .await
+        }
+        ProposedAction::CreateEvent { draft } => {
+            client
+                .create_event(account, vault, agent_id, audience, &marker, draft)
+                .await
+        }
+        ProposedAction::UpdateEvent {
+            event_id,
+            source_version,
+            draft,
+        } => {
+            client
+                .update_event(
+                    account,
+                    vault,
+                    agent_id,
+                    audience,
+                    &marker,
+                    event_id,
+                    source_version,
+                    draft,
+                )
+                .await
+        }
+        ProposedAction::CancelEvent {
+            event_id,
+            source_version,
+            occurrence_id,
+            whole_series,
+        } => {
+            client
+                .cancel_event(
+                    account,
+                    vault,
+                    agent_id,
+                    audience,
+                    &marker,
+                    event_id,
+                    source_version,
+                    occurrence_id.as_deref(),
+                    *whole_series,
+                )
+                .await
+        }
+        ProposedAction::RespondToEvent {
+            event_id,
+            source_version,
+            response,
+        } => {
+            client
+                .respond_to_event(
+                    account,
+                    vault,
+                    agent_id,
+                    audience,
+                    &marker,
+                    event_id,
+                    source_version,
+                    *response,
+                )
+                .await
+        }
+    };
+    match &outcome {
+        Ok(accepted) => effects.accepted(
+            taken.id,
+            Receipt {
+                provider: account.provider.as_str().to_owned(),
+                provider_id: accepted.provider_item_id.clone(),
+                at: chrono::Utc::now(),
+            },
+        )?,
+        Err(ProviderEffectError::Unknown) => {
+            effects.unknown(taken.id, error_code(&ProviderEffectError::Unknown))?
+        }
+        Err(error) => effects.failed(taken.id, error_code(error), true)?,
+    }
+    let effect = effects.get(taken.id)?.unwrap_or(taken);
+    Ok(Committed::Attempted { effect, outcome })
+}
+
+/// The stable code a provider error is recorded and reported as.
+pub fn error_code(error: &ProviderEffectError) -> &'static str {
+    match error {
+        ProviderEffectError::Unknown => "outcome_unknown",
+        ProviderEffectError::ReauthorizationRequired => "reauthorization_required",
+        ProviderEffectError::NotAdmitted => "account_not_admitted",
+        ProviderEffectError::Unsupported => "operation_unsupported",
+        ProviderEffectError::Rejected => "provider_rejected",
+        ProviderEffectError::Conflict => "source_version_conflict",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1765,6 +2011,175 @@ mod tests {
             recurrence: None,
             occurrence_id: None,
         }
+    }
+
+    /// A Google mail account with a stored token, a reviewed new-mail
+    /// candidate, the effects of a scratch data home, and a mock Gmail send
+    /// endpoint that answers with `status` and counts its calls.
+    async fn mail_fixture(
+        status: StatusCode,
+    ) -> (
+        tempfile::TempDir,
+        vak_session::effects::Effects,
+        ProviderEffectClient,
+        ConnectedAccount,
+        AccountVault,
+        String,
+        ActionCandidate,
+        Arc<Mutex<usize>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-effect-{}", uuid::Uuid::now_v7());
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                crate::vault::AccountSecretMaterial::new(
+                    format!("provider:{account_id}"),
+                    Some("owner@example.test".into()),
+                    None,
+                    Some("mock-access-token".into()),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut account = calendar_account(&agent_id, &account_id, Provider::Google);
+        account.capabilities = [Capability::MailSend].into_iter().collect();
+        let candidate = ActionCandidate::new(
+            account_id,
+            agent_id.clone(),
+            format!("agent:{agent_id}"),
+            vec![],
+            ProposedAction::SendMail {
+                draft: MailDraft {
+                    from_alias: None,
+                    to: vec![MailAddress {
+                        address: "recipient@example.com".into(),
+                        display_name: None,
+                    }],
+                    cc: vec![],
+                    bcc: vec![],
+                    subject: "Project plan".into(),
+                    body_text: "Reviewed".into(),
+                    attachment_refs: vec![],
+                    reply_to_message_id: None,
+                    reply_to_thread_id: None,
+                },
+            },
+        )
+        .unwrap();
+        let calls = Arc::new(Mutex::new(0usize));
+        let counted = Arc::clone(&calls);
+        let app = Router::new().route(
+            "/gmail/v1/users/me/messages/send",
+            post(move || {
+                let counted = Arc::clone(&counted);
+                async move {
+                    *counted.lock().unwrap() += 1;
+                    (status, Json(json!({"id": "sent-1"})))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = ProviderEffectClient::new().unwrap();
+        client.google_gmail_base = format!("http://{address}/gmail/v1");
+        let dir = tempfile::tempdir().unwrap();
+        let effects = vak_session::effects::Effects::at(
+            dir.path().join("effects"),
+            dir.path().join("tenant"),
+        );
+        (
+            dir, effects, client, account, vault, agent_id, candidate, calls, server,
+        )
+    }
+
+    #[tokio::test]
+    async fn mail_send_is_one_effect() {
+        let (_dir, effects, client, account, vault, agent_id, candidate, calls, server) =
+            mail_fixture(StatusCode::OK).await;
+        let first = commit_candidate(
+            &client, &effects, None, &account, &vault, &agent_id, &candidate,
+        )
+        .await
+        .unwrap();
+        let Committed::Attempted { effect, outcome } = first else {
+            unreachable!("the first request takes the attempt");
+        };
+        assert_eq!(outcome.unwrap().provider_item_id.as_deref(), Some("sent-1"));
+        assert_eq!(effect.status, vak_session::effects::EffectStatus::Sent);
+        assert_eq!(action_state(&effect), crate::ActionState::ProviderAccepted);
+        let again = commit_candidate(
+            &client, &effects, None, &account, &vault, &agent_id, &candidate,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(again, Committed::AlreadyAttempted(ref existing) if existing.id == effect.id)
+        );
+        assert_eq!(
+            *calls.lock().unwrap(),
+            1,
+            "one candidate, one provider call"
+        );
+        assert_eq!(
+            effects.list().unwrap().len(),
+            1,
+            "one candidate, one effect"
+        );
+        let payload = String::from_utf8(effects.payload(&effect).unwrap()).unwrap();
+        assert!(
+            !payload.contains("Reviewed"),
+            "the effect carries no mail content"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn unknown_mail_send_never_resent() {
+        let (_dir, effects, client, account, vault, agent_id, candidate, calls, server) =
+            mail_fixture(StatusCode::BAD_GATEWAY).await;
+        let first = commit_candidate(
+            &client, &effects, None, &account, &vault, &agent_id, &candidate,
+        )
+        .await
+        .unwrap();
+        let Committed::Attempted { effect, outcome } = first else {
+            unreachable!("the first request takes the attempt");
+        };
+        assert_eq!(outcome.unwrap_err(), ProviderEffectError::Unknown);
+        assert_eq!(effect.status, vak_session::effects::EffectStatus::Unknown);
+        // Neither a second request, nor recovery, nor the background
+        // sender sends it again.
+        let again = commit_candidate(
+            &client, &effects, None, &account, &vault, &agent_id, &candidate,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(again, Committed::AlreadyAttempted(_)));
+        assert!(effects.recover(chrono::Utc::now()).unwrap().is_empty());
+        assert!(effects.dispatchable().unwrap().is_empty());
+        assert!(
+            effects
+                .begin_dispatch(effect.id, vak_session::effects::Dispatch::Fresh)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(*calls.lock().unwrap(), 1);
+        assert_eq!(
+            candidate_effect(&effects, &candidate.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            vak_session::effects::EffectStatus::Unknown
+        );
+        server.abort();
     }
 
     fn calendar_account(agent_id: &str, account_id: &str, provider: Provider) -> ConnectedAccount {

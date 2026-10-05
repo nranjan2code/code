@@ -1438,10 +1438,12 @@ export interface RunCause {
 /** Where an action outside Vakyartha stands (plan M4.5). */
 export type EffectStatus = "held" | "queued" | "sending" | "sent" | "retrying" | "failed" | "unknown" | "superseded";
 
-/** One action Vakyartha took outside itself: today a delivery to a channel. */
+/** One action Vakyartha took outside itself: a delivery to a channel, an email sent or a calendar change. */
 export interface EffectRecord {
   id: string;
-  kind: { type: "delivery"; surface: string; chat: string; bot?: string };
+  kind:
+    | { type: "delivery"; surface: string; chat: string; bot?: string }
+    | { type: "mail_send" | "calendar_create" | "calendar_update" | "calendar_cancel" | "calendar_rsvp"; account: string };
   run?: string | null;
   target: string;
   idempotency_key: string;

@@ -7289,7 +7289,6 @@ version = "7.0.0-dev"
 dependencies = [
  "async-imap",
  "async-native-tls",
- "async-trait",
  "axum",
  "base64 0.22.1",
  "chrono",
@@ -7311,6 +7310,7 @@ dependencies = [
  "uuid",
  "vak-config",
  "vak-core",
+ "vak-session",
  "zeroize",
 ]
 

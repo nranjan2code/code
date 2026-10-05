@@ -96,6 +96,11 @@ fn row(effect: &EffectRecord) -> String {
         .unwrap_or_default();
     let what = match &effect.kind {
         EffectKind::Delivery { surface, .. } => format!("delivery:{surface}"),
+        EffectKind::MailSend { .. } => "mail:send".into(),
+        EffectKind::CalendarCreate { .. } => "calendar:create".into(),
+        EffectKind::CalendarUpdate { .. } => "calendar:update".into(),
+        EffectKind::CalendarCancel { .. } => "calendar:cancel".into(),
+        EffectKind::CalendarRsvp { .. } => "calendar:rsvp".into(),
     };
     format!(
         "{}  {:<10} {:<18} {}  {}{}",

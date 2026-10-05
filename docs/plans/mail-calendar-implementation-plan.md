@@ -472,9 +472,11 @@ an explicit opt-in provider send grant for Google and Microsoft, exact
 candidate digest/revision review, and a confirmed owner-only send action. The
 broker evaluates `mail_calendar_send` through the Agent Core permission engine,
 rechecks the Agent/account/capability/vault, validates the plain-text profile,
-then writes a cross-process single-use action claim before dispatch. Receipts
-are encrypted in the Agent vault, included as status in the candidate list,
-and removed on account disconnect. Unknown network outcomes cannot be retried;
+then prepares the candidate's one effect before dispatch (data-architecture
+M4.6 replaced the encrypted vault receipts: the effect, which names the
+candidate and its digest and carries no content, is the single-use claim and
+the status the candidate list shows; disconnect leaves the append-only
+effect record). Unknown network outcomes cannot be retried;
 accepted means provider accepted, not delivered. Attachments, aliases, reply
 semantics, event updates/cancellations/RSVP, model-initiated effects, standing grants and full
 provider reconciliation remain unavailable. The first server integration

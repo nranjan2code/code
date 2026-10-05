@@ -839,9 +839,10 @@ pub(crate) async fn deliver_feed_intents(
 }
 
 /// Sends what is waiting, every 30 seconds: first records as unknown
-/// what a stopped process was sending (never sent again by itself), then
-/// takes each queued effect and each one proven not sent with attempts
-/// left. Held effects wait.
+/// what a stopped process was sending (never sent again by itself) and as
+/// failed an approved mail or calendar change its request never sent,
+/// then takes each queued delivery and each one proven not sent with
+/// attempts left. Held effects wait.
 pub(crate) fn start_replay(core: &Core) {
     let core = core.clone();
     tokio::spawn(async move {
@@ -856,9 +857,15 @@ pub(crate) fn start_replay(core: &Core) {
             }
             let _serial = runtime.serial.lock().await;
             let effects = core.effects();
-            if let Err(error) = effects.recover(chrono::Utc::now()) {
+            let now = chrono::Utc::now();
+            if let Err(error) = effects.recover(now) {
                 eprintln!("[delivery] effect recovery failed: {error}");
                 continue;
+            }
+            // A mail or calendar change is approved for five minutes; one
+            // its request never sent is failed, not left waiting.
+            if let Err(error) = effects.fail_unsent(now, chrono::Duration::minutes(5)) {
+                eprintln!("[delivery] unsent approved changes not settled: {error}");
             }
             let waiting = match effects.dispatchable() {
                 Ok(waiting) => waiting,
@@ -904,6 +911,9 @@ impl DeliveryRuntime {
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("no effect {id}"))?;
         use vak_session::effects::EffectStatus as S;
+        if !record.kind.retries() {
+            return Err("a mail or calendar change is sent again only from a new review".into());
+        }
         let (sent, outcome) = match record.status {
             S::Queued | S::Retrying => (
                 self.dispatch(core, id, Dispatch::Fresh).await,

@@ -97,7 +97,8 @@ Read before changing behaviour in these areas:
   bounded Agent-vault working area with local email/event drafts is
   implemented. Owner-reviewed plain-text send and a constrained timed event
   create are available for Google and Microsoft through separate opt-in grants,
-  Core permission checks, and durable single-use claims. Event create has no
+  Core permission checks, and one effect per reviewed candidate (plan M4.6,
+  invariant 41). Event create has no
   attendees, recurrence, or reminders. Google also has an exact-reviewed,
   conditional ETag update for standalone timed events with no attendees;
   Microsoft update, cancel/RSVP and reconciliation,
@@ -119,8 +120,8 @@ Read before changing behaviour in these areas:
   content already recorded in append-only Agent sessions; disclose this until
   lifecycle erasure ships. A first Stage 3 increment enables explicitly
   opted-in Google/Microsoft plain-text email sending through an owner-confirmed
-  exact-candidate Review, Agent Core permission evaluation, and an encrypted
-  single-use action claim. Provider acceptance is not delivery; unknown
+  exact-candidate Review, Agent Core permission evaluation, and the
+  candidate's one effect. Provider acceptance is not delivery; unknown
   outcomes cannot be retried. Apple MailRead-only links verify sign-in against
   fixed-host IMAP and allow bounded inbox metadata reads through a read-only
   session with a 512 KiB transport budget. A selected Apple message is fetched
@@ -289,8 +290,15 @@ effects`, the admin Run detail's actions and the client's Send again.
 Discord messages carry the effect key as their nonce with
 `enforce_nonce`, so an unknown Discord send goes again as the same
 effect. A scheduled prompt's turn now runs under its trigger's claimed
-run rather than opening a second run. No session starts a later step
-unasked.
+run rather than opening a second run. M4.6 is done (2026-10-05): a mail
+send and a calendar create, update, cancel or RSVP is one effect per
+reviewed candidate (`vak_mail_calendar::effect::commit_candidate`,
+`Effects::prepare_once`), which names the candidate and its digest and
+carries no content. Its dispatch claim is the single-use claim; the vault's
+encrypted action receipts and `begin_action` are gone, and Review reads a
+candidate's state from its effect. These kinds are never sent again by
+themselves or by Send again, and one left unsent when its five-minute
+approval lapses is failed. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -1192,7 +1200,7 @@ in progress, and the rest of V4 follows it.
 41. **Every action outside Vak is an effect, and an effect is sent at most
     once unless the provider drops repeats** (plan M4.5,
     docs/design/73-data-architecture-and-lifecycle.md §8). An outbound
-    message (and, from M4.6, a mail send or a calendar change) is
+    message, a mail send or a calendar change is
     prepared in the `effects/` chain (`vak_session::effects`) before
     anything is sent, naming its run, kind, target and an idempotency key
     (the hash of run, kind, target, payload digest and ordinal), with its
@@ -1200,8 +1208,11 @@ in progress, and the rest of V4 follows it.
     ref `eff/<key>` under the writer epoch (`Effects::begin_dispatch`)
     calls the provider for an attempt. An attempt ends accepted or
     confirmed (with the provider's receipt), failed, or unknown; only a
-    failure proven not sent (a 4xx, a refused connection, nothing taken)
-    is tried again, up to `MAX_ATTEMPTS`. A dispatched effect whose sender
+    delivery failure proven not sent (a 4xx, a refused connection, nothing
+    taken) is tried again, up to `MAX_ATTEMPTS`. A mail or calendar change
+    is one effect per reviewed candidate (`Effects::prepare_once`, keyed by
+    the candidate alone), sent once by the request that approved it, and
+    never again without a new review. A dispatched effect whose sender
     stopped before the provider answered becomes unknown
     (`Effects::recover`), and an unknown effect is never sent again by
     itself, after a restart, a restore or a handoff alike: a provider that

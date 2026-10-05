@@ -1545,7 +1545,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         reqwest::StatusCode::BAD_REQUEST
     );
     assert!(vault.list_candidates().unwrap().is_empty());
-    assert!(vault.list_action_receipts().unwrap().is_empty());
+    assert_no_provider_effect(&client, addr, &token).await;
 
     // Simulate an older or imported candidate that bypassed the new save
     // guard. Dispatch must still reject it before writing the single-use
@@ -1598,7 +1598,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         unsupported_dispatch.status(),
         reqwest::StatusCode::BAD_REQUEST
     );
-    assert!(vault.list_action_receipts().unwrap().is_empty());
+    assert_no_provider_effect(&client, addr, &token).await;
     vault
         .delete_candidate(&legacy_candidate.id, legacy_candidate.revision)
         .unwrap();
@@ -1669,7 +1669,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         .await
         .unwrap();
     assert_eq!(local_event_create.status(), reqwest::StatusCode::FORBIDDEN);
-    assert!(vault.list_action_receipts().unwrap().is_empty());
+    assert_no_provider_effect(&client, addr, &token).await;
     for local in [&local_mail, &local_event] {
         let delete = client
             .delete(format!(
@@ -1782,7 +1782,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         .json(&serde_json::json!({ "expected_revision": 1, "candidate_digest": event_digest, "confirm": true }))
         .send().await.unwrap();
     assert_eq!(event_attempt.status(), reqwest::StatusCode::FORBIDDEN);
-    assert!(vault.list_action_receipts().unwrap().is_empty());
+    assert_no_provider_effect(&client, addr, &token).await;
 
     let update_candidate_response = client
         .post(&candidates_url)
@@ -1815,7 +1815,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         .json(&serde_json::json!({ "expected_revision": 1, "candidate_digest": update_digest, "confirm": true }))
         .send().await.unwrap();
     assert_eq!(update_attempt.status(), reqwest::StatusCode::FORBIDDEN);
-    assert!(vault.list_action_receipts().unwrap().is_empty());
+    assert_no_provider_effect(&client, addr, &token).await;
 
     let send_url = format!("{candidates_url}/{candidate_id}/send");
     let unconfirmed = client
@@ -1854,7 +1854,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         .await
         .unwrap();
     assert_eq!(not_granted.status(), reqwest::StatusCode::FORBIDDEN);
-    assert!(vault.list_action_receipts().unwrap().is_empty());
+    assert_no_provider_effect(&client, addr, &token).await;
 
     let update = |revision| {
         client.post(&candidates_url).bearer_auth(&token).json(&serde_json::json!({
@@ -2826,5 +2826,33 @@ async fn a_dropped_file_reaches_the_model_as_a_note_and_the_chat_as_a_file() {
     assert!(
         !sent.contains("deck bytes"),
         "the file's bytes reached the model"
+    );
+}
+
+/// No mail or calendar change was prepared as an effect: a refused
+/// request never reaches the provider's single attempt (plan M4.6).
+async fn assert_no_provider_effect(
+    client: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    token: &str,
+) {
+    let effects: serde_json::Value = client
+        .get(format!("http://{addr}/effects"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        !effects["effects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|effect| effect["target"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("candidate:"))),
+        "{effects}"
     );
 }
