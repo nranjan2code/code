@@ -111,11 +111,24 @@ fn make_executor_with_outcome(
     cwd: std::path::PathBuf,
     outcome: Option<vak_intent::OutcomeSpec>,
 ) -> Executor {
+    Executor::new(deps_with_outcome(
+        provider, state_path, mode, approver, cwd, outcome,
+    ))
+}
+
+fn deps_with_outcome(
+    provider: Arc<TaggedScripted>,
+    state_path: std::path::PathBuf,
+    mode: Mode,
+    approver: Option<Arc<dyn vak_agent::Approver>>,
+    cwd: std::path::PathBuf,
+    outcome: Option<vak_intent::OutcomeSpec>,
+) -> ExecutorDeps {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     std::mem::forget(dir);
-    Executor::new(ExecutorDeps {
+    ExecutorDeps {
         objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         prompt_layers: Vec::new(),
         provider_route: "test".into(),
@@ -146,8 +159,9 @@ fn make_executor_with_outcome(
         state_path,
         agent_identity: None,
         conversation_context: None,
+        run: None,
         work: None,
-    })
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -597,4 +611,80 @@ accept = ["verify: grep -q v1 artifact.txt"]
         st.nodes.get("make").map(|r| r.status),
         Some(vak_flow::NodeStatus::Completed)
     );
+}
+
+/// A flow execution is a run (plan M4.2): opened before any node, named
+/// as the flow's, settled with its outcome, and its id is the checkpoint's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_flow_execution_is_a_run() {
+    vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().unwrap();
+    let toml = r#"
+[flow]
+name = "recorded"
+
+[[nodes]]
+id = "say"
+type = "bash"
+command = "echo recorded"
+"#;
+    let flow = vak_flow::parse_flow(toml).unwrap();
+    let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
+        routes: Mutex::new(HashMap::new()),
+    });
+    let runs = vak_session::runs::Runs::at(
+        workspace.path().join("runs"),
+        vak_config::paths::local_tenant_home(),
+    );
+    let trace = vak_session::trace::TraceKey::root(
+        vak_session::ids::TenantId::new(),
+        vak_session::ids::SpaceId::new(),
+        vak_session::ids::AgentId::new(),
+        vak_session::trace::Cause::User {
+            request_id: "flow-test".into(),
+        },
+    );
+    let checkpoint = workspace.path().join(format!("{}.json", trace.run));
+    let mut deps = deps_with_outcome(
+        provider,
+        checkpoint.clone(),
+        Mode::FullAccess,
+        Some(Arc::new(AutoApprove)),
+        workspace.path().to_path_buf(),
+        None,
+    );
+    deps.run = Some(vak_flow::FlowRun {
+        runs: runs.clone(),
+        trace: trace.clone(),
+        attempt: 1,
+    });
+    let mut state = FlowState {
+        run_id: String::new(),
+        flow_name: "recorded".into(),
+        definition_toml: toml.into(),
+        started_at: chrono::Utc::now(),
+        outcome: None,
+        nodes: Default::default(),
+    };
+    let outcome = drain_run(&Executor::new(deps), &flow, &mut state).await;
+    assert!(
+        matches!(outcome, FlowOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+
+    assert_eq!(state.run_id, trace.run.to_string());
+    let persisted: FlowState =
+        serde_json::from_str(&std::fs::read_to_string(&checkpoint).unwrap()).unwrap();
+    assert_eq!(persisted.run_id, trace.run.to_string());
+    let record = runs.get(trace.run).unwrap().unwrap();
+    assert_eq!(record.status, vak_session::runs::RunStatus::Completed);
+    assert_eq!(
+        record.work,
+        Some(vak_session::runs::RunWork::Flow {
+            name: "recorded".into()
+        })
+    );
+    assert_eq!(runs.of_flow("recorded").unwrap().len(), 1);
+    assert!(runs.of_flow("other").unwrap().is_empty());
 }

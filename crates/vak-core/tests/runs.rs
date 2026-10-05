@@ -294,6 +294,7 @@ fn abandoned_run_is_recorded() {
             trace: Some(orphan.clone()),
             actor: orphan.actor,
             step: vak_session::runs::RunStep::Opened {
+                work: None,
                 trigger: None,
                 slot: None,
                 attempt: 1,

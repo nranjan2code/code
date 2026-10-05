@@ -41,9 +41,9 @@ task + tool catalog ──► planner model ──► candidate TOML DAG
 - **Bounded replan**: max 1 retry; seeded with settled
   outputs ("do not redo this work") and the failure reason. Budget exhausted
   ⇒ `Failed` with the last failing node.
-- Per-attempt state ledgers under
-  `<sessions_home>/flow-runs/plan-<id>-<attempt>.json` freeze the planner's
-  sanitized TOML for audit.
+- A plan is a run (`work = plan`), and each attempt is a run of its own
+  caused by it (plan M4.2), whose checkpoint `flow-runs/<attempt run>.json`
+  freezes the planner's sanitized TOML for audit.
 - Planner system prompt is compact (~350 tokens) and covered by the prompt
   diff discipline (docs/design/07-prompt.md policy).
 

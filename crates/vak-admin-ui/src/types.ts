@@ -1439,6 +1439,8 @@ export interface RunRecord {
   opened_at: string;
   settled_at?: string;
   trace?: { agent: string; cause: RunCause; actor?: string };
+  /** What a run that is not a conversation turn does. */
+  work?: { kind: "flow"; name: string } | { kind: "plan" };
   trigger?: string;
   attempt: number;
   holder?: string;

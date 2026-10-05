@@ -168,13 +168,27 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             }
             (header.session_id.clone(), item.attempt.saturating_add(1))
         };
-        let state_path = self.core.scope().managed_flow_runs().join(format!(
-            "{}-{}-{attempt}.json",
-            managed_run_component(contract_id),
-            managed_run_component(work_item_id),
-        ));
+        // The flow is its own run, caused by this call of the turn's run,
+        // and its checkpoint is keyed by that run.
+        let flow_run = ctx.trace.as_ref().map(|parent| vak_flow::FlowRun {
+            runs: self.core.runs(),
+            trace: parent.delegate(
+                self.core
+                    .agent_identity()
+                    .map_or("vak", |agent| agent.id.as_str()),
+                ctx.sandbox_sink
+                    .as_ref()
+                    .map_or("", |sink| sink.execution_id()),
+            ),
+            attempt,
+        });
+        let run_id = flow_run
+            .as_ref()
+            .map_or_else(vak_session::ids::RunId::new, |run| run.trace.run)
+            .to_string();
+        let state_path = self.core.scope().flow_runs().join(format!("{run_id}.json"));
         let mut state = vak_flow::FlowState {
-            run_id: format!("{contract_id}-{work_item_id}-{attempt}"),
+            run_id,
             flow_name: name.into(),
             definition_toml: definition_toml.clone(),
             started_at: chrono::Utc::now(),
@@ -257,6 +271,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             state_path,
             agent_identity: self.core.agent_identity().cloned(),
             conversation_context: self.core.conversation_context().cloned(),
+            run: flow_run,
             work: Some(vak_flow::FlowWorkContext {
                 session,
                 contract_id: contract_id.into(),
@@ -287,19 +302,6 @@ fn valid_managed_flow_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
-fn managed_run_component(value: &str) -> String {
-    value
-        .bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
-                char::from(byte)
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -6528,7 +6530,7 @@ impl Core {
         let runs = self.runs();
         let session_id = session.header().map(|header| header.session_id.clone());
         if self.run_admission.trace.is_none() {
-            runs.open_in(&run_trace, None, None, 1, session_id.as_deref())?;
+            runs.open_in(&run_trace, None, None, 1, session_id.as_deref(), None)?;
             let _ = opened.set(run_trace.run);
         } else if let Some(session_id) = &session_id {
             runs.session(run_trace.run, session_id)?;

@@ -251,7 +251,7 @@ process is fenced (`vak_session::fence`): it opens no ledger for writing,
 begins no turn, appends no record and moves no ref, its scheduler,
 heartbeat, commitment upkeep and outbox replay stop, and `/health` says
 `fenced`. Each process has a `prc_` id and renews a `proc/<prc>` liveness
-ref every scheduler tick. M4.2 is in progress (2026-10-05): every unit of work
+ref every scheduler tick. M4.2 is done (2026-10-05): every unit of work
 has a run record (`vak_session::runs`, the `runs/` chain in the shared
 scope), opened before any side effect by whoever mints the run and
 settled with how it ended: `Core::run` for a turn with no admitted run,
@@ -260,9 +260,10 @@ the scheduler for a script routine and a refused slot, and the request
 middleware for an action a person asks of the server. An open run whose
 holder stopped renewing its liveness is recorded abandoned by the sweep
 on each scheduler tick. `/runs`, `vak runs` and the admin Runs screen
-(`#/runs`, `#/runs/<id>`) read them. Flows still keep their own
-`flow-runs/<name>/` checkpoints; moving them onto run records finishes
-M4.2. No session starts a later step unasked.
+(`#/runs`, `#/runs/<id>`) read them. A flow execution is a run with
+`work = flow <name>` (a plan is `work = plan`, each attempt a run it
+caused), and its checkpoint is `flow-runs/<run id>.json`. No session
+starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -401,7 +402,9 @@ M4.2. No session starts a later step unasked.
   grant is revoked) fails on a row it cannot decode; it never skips one.
 - Open a run before any work it causes: mint the key, then
   `Core::runs().open` or `begin` (an `OpenRun` ends the run on every path
-  out), and settle it with how the work ended. A session header names a
+  out), and settle it with how the work ended. Key anything a run
+  produces (a checkpoint, a result) by its run id; never mint a `RunId`
+  that has no record. A session header names a
   run only when one was admitted; opening a session is not a run.
 - Write durable state only through the fenced paths (`SessionLog`,
   `RecordChain`, `documents`, tenant objects, refs under

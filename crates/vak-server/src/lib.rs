@@ -1368,23 +1368,10 @@ async fn ops_diagnostics(State(state): State<AppState>) -> Json<serde_json::Valu
     refresh_control_plane(&state);
     let mut cfg = vak_ops::OpsConfig::detect();
     cfg.port = state.ops_port;
-    let root = state.core.scope().flow_runs();
-    let mut flows = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&root) {
-        for entry in entries.flatten().filter(|e| e.path().is_dir()) {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let runs = std::fs::read_dir(entry.path())
-                .map(|items| {
-                    items
-                        .flatten()
-                        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-                        .count()
-                })
-                .unwrap_or(0);
-            flows.push(serde_json::json!({ "name": name, "runs": runs }));
-        }
-    }
-    flows.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    let flows: Vec<serde_json::Value> = flow_run_counts(&state)
+        .into_iter()
+        .map(|(name, runs)| serde_json::json!({ "name": name, "runs": runs }))
+        .collect();
     let gateway = state.gateway.snapshot();
     let services = tokio::task::spawn_blocking(move || ops_payload(&cfg))
         .await
@@ -7381,22 +7368,23 @@ async fn session_work_command(
     }
 }
 
-/// Flow names discovered under `<sessions_home>/flow-runs` (docs/design/42-managed-work-contracts.mdG).
-async fn flows_list(State(state): State<AppState>) -> Json<Vec<String>> {
-    let root = state.core.scope().flow_runs();
-    let mut out = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&root) {
-        for e in entries.flatten() {
-            if e.path().is_dir() {
-                out.push(e.file_name().to_string_lossy().into_owned());
-            }
+/// How many runs each flow has had, by flow name, from the run records
+/// (plan M4.2). Unreadable records count nothing.
+fn flow_run_counts(state: &AppState) -> std::collections::BTreeMap<String, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for run in state.core.runs().list().unwrap_or_default() {
+        if let Some(vak_session::runs::RunWork::Flow { name }) = run.work {
+            *counts.entry(name).or_insert(0) += 1;
         }
     }
-    out.sort();
-    Json(out)
+    counts
 }
 
-/// Run ledger filenames for one flow, oldest first.
+/// The flows that have run, by name.
+async fn flows_list(State(state): State<AppState>) -> Json<Vec<String>> {
+    Json(flow_run_counts(&state).into_keys().collect())
+}
+
 #[derive(serde::Deserialize)]
 struct RunsQuery {
     status: Option<vak_session::runs::RunStatus>,
@@ -7448,53 +7436,38 @@ async fn run_detail(
     }
 }
 
+/// The runs of one flow, newest first (plan M4.2). A record that cannot
+/// be read is an error, never skipped.
 async fn flow_runs_list(
     State(state): State<AppState>,
     Path(name): Path<String>,
-) -> Result<Json<Vec<String>>, StatusCode> {
-    let dir = state.core.scope().flow_runs().join(&name);
-    let mut out = Vec::new();
-    match std::fs::read_dir(&dir) {
-        Ok(entries) => {
-            for e in entries.flatten() {
-                if e.path().extension().map(|x| x == "json").unwrap_or(false) {
-                    out.push(e.file_name().to_string_lossy().into_owned());
-                }
-            }
-            out.sort();
-            Ok(Json(out))
-        }
-        Err(_) => Err(StatusCode::NOT_FOUND),
+) -> axum::response::Response {
+    match state.core.runs().of_flow(&name) {
+        Ok(runs) => Json(runs).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
     }
 }
 
-/// Typed run-graph snapshot (delta+snapshot invariant 4): projection of a
-/// single run ledger — statuses, layers, counts. No rendering opinions.
+/// Typed run-graph snapshot (delta+snapshot invariant 4): projection of
+/// one flow run's checkpoint, which is keyed by its run id. No rendering
+/// opinions.
 async fn flow_run_graph(
     State(state): State<AppState>,
     Path((name, run)): Path<(String, String)>,
 ) -> Result<Json<vak_flow::graph::RunGraph>, StatusCode> {
-    // `run` is either the ledger filename or its stem.
-    let run_file = if run.ends_with(".json") {
-        run.clone()
-    } else {
-        format!("{run}.json")
-    };
-    let path = state
-        .core
-        .scope()
-        .into_root()
-        .join("flow-runs")
-        .join(&name)
-        .join(&run_file);
-    match std::fs::read_to_string(&path) {
-        Ok(body) => {
-            let state: vak_flow::FlowState =
-                serde_json::from_str(&body).map_err(|_| StatusCode::NOT_FOUND)?;
-            Ok(Json(vak_flow::graph::graph_snapshot(&state)))
-        }
-        Err(_) => Err(StatusCode::NOT_FOUND),
+    let run = vak_session::ids::RunId::parse(&run).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let path = state.core.scope().flow_runs().join(format!("{run}.json"));
+    let body = std::fs::read_to_string(&path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let flow_state: vak_flow::FlowState =
+        serde_json::from_str(&body).map_err(|_| StatusCode::NOT_FOUND)?;
+    if flow_state.flow_name != name {
+        return Err(StatusCode::NOT_FOUND);
     }
+    Ok(Json(vak_flow::graph::graph_snapshot(&flow_state)))
 }
 
 /// The `Last-Event-ID` a reconnecting client sent, if any.

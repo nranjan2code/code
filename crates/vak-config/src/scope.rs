@@ -213,10 +213,6 @@ impl AgentScope {
         self.root.join("flow-runs")
     }
 
-    pub fn managed_flow_runs(&self) -> PathBuf {
-        self.flow_runs().join("managed")
-    }
-
     pub fn sandbox_dir(&self) -> PathBuf {
         self.root.join("sandbox")
     }
@@ -492,7 +488,6 @@ mod tests {
         assert_eq!(s.inbox(), home.join("inbox"));
         assert_eq!(s.inbox_dedupe_lock(), home.join("inbox.dedupe.lock"));
         assert_eq!(s.env_file(), home.join(".env"));
-        assert_eq!(s.managed_flow_runs(), home.join("flow-runs/managed"));
         assert_eq!(s.sandbox_records(), home.join("sandbox/records"));
         assert_eq!(s.sandbox_candidates(), home.join("sandbox/candidates"));
         assert_eq!(

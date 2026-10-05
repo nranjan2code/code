@@ -455,11 +455,26 @@ pub async fn plan_and_run(
             ))
             .await;
 
-        // Fresh ledger per attempt; definition frozen from the planner output.
-        let run_id = vak_session::ids::RunId::new().to_string();
+        // Each attempt is its own run, caused by the plan's run, and its
+        // checkpoint is keyed by that run; definition frozen from the
+        // planner output.
+        let attempt_run = deps.run.as_ref().map(|plan| crate::FlowRun {
+            runs: plan.runs.clone(),
+            trace: plan.trace.delegate(
+                deps.agent_identity
+                    .as_ref()
+                    .map_or("vak", |agent| agent.id.as_str()),
+                &format!("plan-attempt-{attempt}"),
+            ),
+            attempt: 1,
+        });
+        let run_id = attempt_run
+            .as_ref()
+            .map_or_else(vak_session::ids::RunId::new, |run| run.trace.run)
+            .to_string();
         let state_path = vak_config::scope::AgentScope::new(&deps.sessions_home)
             .flow_runs()
-            .join(format!("{}.json", run_id));
+            .join(format!("{run_id}.json"));
         let mut state = FlowState {
             run_id,
             flow_name: flow.name.clone(),
@@ -471,6 +486,7 @@ pub async fn plan_and_run(
 
         let mut attempt_deps = (*deps).clone();
         attempt_deps.state_path = state_path.clone();
+        attempt_deps.run = attempt_run;
         let executor = Executor::new(attempt_deps);
         let outcome = executor
             .run(&flow, &mut state, cancel.clone(), events.clone())

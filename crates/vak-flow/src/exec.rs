@@ -100,6 +100,18 @@ pub struct ExecutorDeps {
     pub agent_identity: Option<vak_session::types::AgentIdentity>,
     pub conversation_context: Option<vak_session::ConversationContext>,
     pub work: Option<FlowWorkContext>,
+    /// The run this execution is (plan M4.2): opened before any node and
+    /// settled with the flow's outcome; its id keys the checkpoint.
+    pub run: Option<FlowRun>,
+}
+
+/// The run record of one flow execution.
+#[derive(Clone)]
+pub struct FlowRun {
+    pub runs: vak_session::runs::Runs,
+    pub trace: vak_session::trace::TraceKey,
+    /// 1 for a fresh run; one more than the run it resumes.
+    pub attempt: u32,
 }
 
 #[derive(Clone)]
@@ -133,7 +145,53 @@ impl Executor {
         }
     }
 
+    /// Runs `flow` as its own run when the executor has one: opened before
+    /// any node, and settled with how the flow ended.
     pub async fn run(
+        &self,
+        flow: &FlowDef,
+        state: &mut FlowState,
+        cancel: CancellationToken,
+        events: tokio::sync::mpsc::Sender<String>,
+    ) -> FlowOutcome {
+        let Some(run) = self.deps.run.clone() else {
+            return self.run_nodes(flow, state, cancel, events).await;
+        };
+        if let Err(error) = run.runs.open_in(
+            &run.trace,
+            None,
+            None,
+            run.attempt,
+            None,
+            Some(vak_session::runs::RunWork::Flow {
+                name: flow.name.clone(),
+            }),
+        ) {
+            return FlowOutcome::Failed {
+                node: "<run>".into(),
+                reason: format!("the flow's run could not be recorded: {error}"),
+                outputs: BTreeMap::new(),
+            };
+        }
+        state.run_id = run.trace.run.to_string();
+        // The run's checkpoint exists from its start, even when a resume
+        // finds nothing left to do.
+        self.persist(state);
+        let outcome = self.run_nodes(flow, state, cancel, events).await;
+        let settled = match &outcome {
+            FlowOutcome::Completed { .. } => vak_session::runs::RunOutcome::Completed,
+            FlowOutcome::Failed { node, reason, .. } => vak_session::runs::RunOutcome::Failed {
+                reason: format!("{node}: {reason}"),
+            },
+            FlowOutcome::Aborted => vak_session::runs::RunOutcome::Cancelled,
+        };
+        if let Err(error) = run.runs.settle(run.trace.run, settled, None) {
+            eprintln!("[runs] {} did not settle: {error}", run.trace.run);
+        }
+        outcome
+    }
+
+    async fn run_nodes(
         &self,
         flow: &FlowDef,
         state: &mut FlowState,
@@ -540,8 +598,8 @@ async fn execute_node(
             );
             let header = vak_session::types::SessionHeader {
                 space: None,
-                run: None,
-                cause: None,
+                run: deps.run.as_ref().map(|run| run.trace.run),
+                cause: deps.run.as_ref().map(|run| run.trace.cause.clone()),
                 agent: deps.agent_identity.clone().or_else(|| {
                     Some(vak_session::types::AgentIdentity {
                         id: "vak".into(),
@@ -588,6 +646,11 @@ async fn execute_node(
             let log = SessionLog::create(path, header)
                 .map_err(|e| format!("cannot create node session: {e}"))?
                 .with_objects(deps.objects.clone());
+            if let Some(run) = &deps.run {
+                run.runs
+                    .session(run.trace.run, &session_id)
+                    .map_err(|e| format!("node session not recorded on its run: {e}"))?;
+            }
 
             let mut cfg = AgentConfig::new(system_prompt);
             cfg.outcome = deps.outcome.clone();

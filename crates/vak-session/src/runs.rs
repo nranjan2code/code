@@ -23,6 +23,17 @@ pub enum Slot {
     Event { event: String },
 }
 
+/// What a run does when it is not a conversation turn: the name a list of
+/// such runs is kept by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunWork {
+    /// One execution of the named flow, or one attempt of a plan.
+    Flow { name: String },
+    /// A plan: planned and run as flow attempts, each its own run.
+    Plan,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum RunOutcome {
@@ -36,6 +47,8 @@ pub enum RunOutcome {
 pub enum RunStep {
     /// The run's key, and so its cause, is the event's `trace`.
     Opened {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        work: Option<RunWork>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trigger: Option<TriggerId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -107,6 +120,8 @@ pub struct RunRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<TraceKey>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<RunWork>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger: Option<TriggerId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slot: Option<Slot>,
@@ -136,6 +151,7 @@ impl RunRecord {
             opened_at: at,
             settled_at: None,
             trace: None,
+            work: None,
             trigger: None,
             slot: None,
             attempt: 1,
@@ -152,6 +168,7 @@ impl RunRecord {
     fn apply(&mut self, at: DateTime<Utc>, trace: Option<TraceKey>, step: RunStep) {
         match step {
             RunStep::Opened {
+                work,
                 trigger,
                 slot,
                 attempt,
@@ -159,6 +176,7 @@ impl RunRecord {
             } => {
                 self.opened_at = at;
                 self.trace = trace;
+                self.work = work;
                 self.trigger = trigger;
                 self.slot = slot;
                 self.attempt = attempt;
@@ -267,7 +285,7 @@ impl Runs {
         slot: Option<Slot>,
         attempt: u32,
     ) -> Result<RunId, SessionError> {
-        self.open_in(trace, trigger, slot, attempt, None)
+        self.open_in(trace, trigger, slot, attempt, None, None)
     }
 
     /// Opens the run as [`Runs::open`] does, naming the ledger it writes in
@@ -279,6 +297,7 @@ impl Runs {
         slot: Option<Slot>,
         attempt: u32,
         session_id: Option<&str>,
+        work: Option<RunWork>,
     ) -> Result<RunId, SessionError> {
         keep_alive(&self.tenant_home)?;
         let now = Utc::now();
@@ -288,6 +307,7 @@ impl Runs {
             trace: Some(trace.clone()),
             actor: trace.actor,
             step: RunStep::Opened {
+                work,
                 trigger,
                 slot,
                 attempt,
@@ -416,6 +436,15 @@ impl Runs {
             .collect();
         list.sort_by_key(|record| std::cmp::Reverse(record.opened_at));
         Ok(list)
+    }
+
+    /// Every run of the flow `name`, newest first.
+    pub fn of_flow(&self, name: &str) -> Result<Vec<RunRecord>, SessionError> {
+        Ok(self
+            .list()?
+            .into_iter()
+            .filter(|run| matches!(&run.work, Some(RunWork::Flow { name: n }) if n == name))
+            .collect())
     }
 
     pub fn get(&self, run: RunId) -> Result<Option<RunRecord>, SessionError> {

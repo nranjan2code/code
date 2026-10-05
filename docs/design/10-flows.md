@@ -71,9 +71,14 @@ executor authorizes these checks as brokered Bash calls.
   still produce partial-outcome reports.
 - **Frozen definition + resume**: each run persists a JSON `FlowState` at
   the caller's `state_path`, with run id, name, frozen TOML, start time,
-  optional outcome, and per-node status/output. The CLI's flow run chooses a
-  path under the session home's `flow-runs`; `--resume` skips completed nodes
-  and revisits pending/running ones. A prior failed/skipped node remains so.
+  optional outcome, and per-node status/output. Each execution is a run
+  (plan M4.2): the executor opens its run record, with `work = flow <name>`,
+  before any node, names each node's ledger on it, and settles it with the
+  flow's outcome; the checkpoint is `flow-runs/<run id>.json` in the Agent
+  home. `--resume` is a new run, the next attempt, that continues from the
+  newest run of that flow's checkpoint: it skips completed nodes and
+  revisits pending/running ones. A prior failed/skipped node remains so.
+  `/flows`, `/flows/{name}/runs` and the run graph read the run records.
 
 The executor starts a parent work item when one is supplied, records a
 `FlowNode` evidence reference after each completed node, and moves the work

@@ -30,6 +30,8 @@ const STATUS_TONE: Record<RunStatus, string> = {
 
 /** What started a run, in the words a person would use. */
 export function runCause(run: RunRecord): string {
+  if (run.work?.kind === "flow") return `Flow “${run.work.name}”`;
+  if (run.work?.kind === "plan") return "A plan";
   const cause = run.trace?.cause;
   switch (cause?.kind) {
     case "user": return "You asked";

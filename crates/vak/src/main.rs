@@ -982,25 +982,32 @@ async fn run_flow_exec(
         }
     };
 
-    let runs_dir = core.scope().flow_runs().join(&name);
-    let state_path = if resume {
-        let mut latest: Option<PathBuf> = None;
-        if let Ok(entries) = std::fs::read_dir(&runs_dir) {
-            let mut files: Vec<_> = entries.flatten().map(|e| e.path()).collect();
-            files.sort();
-            latest = files.pop();
-        }
-        match latest {
-            Some(p) => p,
-            None => {
-                eprintln!("error: no previous run to resume");
+    // Each execution is its own run, and its checkpoint is keyed by it. A
+    // resume is a new run, the next attempt, continuing from the newest
+    // run of this flow's checkpoint.
+    let flow_runs = core.scope().flow_runs();
+    let trace = core.mint_trace(None);
+    let (state_path, attempt) = if resume {
+        match core.runs().of_flow(&name) {
+            Ok(previous) => match previous.first() {
+                Some(prior) => (
+                    flow_runs.join(format!("{}.json", prior.id)),
+                    prior.attempt + 1,
+                ),
+                None => {
+                    eprintln!("error: no previous run to resume");
+                    return 2;
+                }
+            },
+            Err(e) => {
+                eprintln!("error: run records unreadable: {e}");
                 return 2;
             }
         }
     } else {
-        let run_id = vak_session::ids::RunId::new().to_string();
-        runs_dir.join(format!("{run_id}.json"))
+        (flow_runs.join(format!("{}.json", trace.run)), 1)
     };
+    let checkpoint_path = flow_runs.join(format!("{}.json", trace.run));
 
     // Recovery audit (docs/design/10-flows.md): classify the snapshot vs
     // the live flow file BEFORE touching anything. Drift fails closed
@@ -1075,9 +1082,14 @@ async fn run_flow_exec(
         cwd: core.cwd().clone(),
         sessions_home: core.scope().into_root().clone(),
         parent_session_id,
-        state_path: state_path.clone(),
+        state_path: checkpoint_path.clone(),
         agent_identity: core.agent_identity().cloned(),
         conversation_context: core.conversation_context().cloned(),
+        run: Some(vak_flow::FlowRun {
+            runs: core.runs(),
+            trace,
+            attempt,
+        }),
         work: None,
     };
     let executor = vak_flow::Executor::new(deps);
@@ -1125,7 +1137,7 @@ async fn run_flow_exec(
         Ok(outcome) => match outcome {
             vak_flow::FlowOutcome::Completed { outputs } => {
                 // Snapshot from the persisted ledger (state moved into the runner).
-                if let Ok(body) = std::fs::read_to_string(&state_path)
+                if let Ok(body) = std::fs::read_to_string(&checkpoint_path)
                     && let Ok(st) = serde_json::from_str::<vak_flow::FlowState>(&body)
                 {
                     let snap = vak_flow::graph::graph_snapshot(&st);
@@ -1134,7 +1146,7 @@ async fn run_flow_exec(
                         snap.completed, snap.failed, snap.skipped, snap.layers_total
                     );
                 }
-                eprintln!("── flow completed · state {}", state_path.display());
+                eprintln!("── flow completed · state {}", checkpoint_path.display());
                 for (id, out) in outputs {
                     println!("[{id}]\n{out}\n");
                 }
@@ -1944,6 +1956,20 @@ async fn run_plan(
             return 2;
         }
     };
+    // The plan is a run; each attempt it makes is a run of its own,
+    // caused by this one (vak_flow::plan_and_run).
+    let plan_trace = core.mint_trace(None);
+    if let Err(e) = core.runs().open_in(
+        &plan_trace,
+        None,
+        None,
+        1,
+        None,
+        Some(vak_session::runs::RunWork::Plan),
+    ) {
+        eprintln!("error: the plan's run could not be recorded: {e}");
+        return 2;
+    }
     let deps = vak_flow::ExecutorDeps {
         objects,
         prompt_layers: Vec::new(),
@@ -1980,9 +2006,17 @@ async fn run_plan(
         cwd: core.cwd().clone(),
         sessions_home: core.scope().into_root().clone(),
         parent_session_id,
-        state_path: core.scope().into_root().join("flow-runs/plan"),
+        state_path: core
+            .scope()
+            .flow_runs()
+            .join(format!("{}.json", plan_trace.run)),
         agent_identity: core.agent_identity().cloned(),
         conversation_context: core.conversation_context().cloned(),
+        run: Some(vak_flow::FlowRun {
+            runs: core.runs(),
+            trace: plan_trace.clone(),
+            attempt: 1,
+        }),
         work: None,
     };
 
@@ -2006,7 +2040,28 @@ async fn run_plan(
         eprintln!("{line}");
     }
 
-    match runner.await {
+    let finished = runner.await;
+    let settled = match &finished {
+        Ok(vak_flow::PlanOutcome::Completed { .. }) => vak_session::runs::RunOutcome::Completed,
+        Ok(vak_flow::PlanOutcome::PlanningFailed { reason }) => {
+            vak_session::runs::RunOutcome::Failed {
+                reason: format!("planning failed: {reason}"),
+            }
+        }
+        Ok(vak_flow::PlanOutcome::Failed { node, reason }) => {
+            vak_session::runs::RunOutcome::Failed {
+                reason: format!("{node}: {reason}"),
+            }
+        }
+        Ok(vak_flow::PlanOutcome::Aborted) => vak_session::runs::RunOutcome::Cancelled,
+        Err(e) => vak_session::runs::RunOutcome::Failed {
+            reason: format!("the planner crashed: {e}"),
+        },
+    };
+    if let Err(e) = core.runs().settle(plan_trace.run, settled, None) {
+        eprintln!("warning: the plan's run did not settle: {e}");
+    }
+    match finished {
         Ok(vak_flow::PlanOutcome::Completed { outputs, attempts }) => {
             eprintln!("── plan completed after {attempts} attempt(s)");
             for (id, out) in outputs {

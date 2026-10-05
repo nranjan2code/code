@@ -73,8 +73,14 @@ fn parse_status(text: &str) -> Result<RunStatus, String> {
         .map_err(|_| format!("unknown status {text}"))
 }
 
-fn cause(run: &RunRecord) -> &'static str {
+fn cause(run: &RunRecord) -> String {
+    use vak_session::runs::RunWork;
     use vak_session::trace::Cause;
+    match &run.work {
+        Some(RunWork::Flow { name }) => return format!("flow:{name}"),
+        Some(RunWork::Plan) => return "plan".into(),
+        None => {}
+    }
     match run.trace.as_ref().map(|trace| &trace.cause) {
         Some(Cause::User { .. }) => "user",
         Some(Cause::Channel { .. }) => "channel",
@@ -86,6 +92,7 @@ fn cause(run: &RunRecord) -> &'static str {
         Some(Cause::System { .. }) => "system",
         None => "-",
     }
+    .into()
 }
 
 fn row(run: &RunRecord) -> String {
@@ -94,7 +101,7 @@ fn row(run: &RunRecord) -> String {
         .and_then(|value| value.as_str().map(str::to_string))
         .unwrap_or_default();
     format!(
-        "{}  {:<10} {:<10} {}  {}{}",
+        "{}  {:<10} {:<16} {}  {}{}",
         run.id,
         status,
         cause(run),

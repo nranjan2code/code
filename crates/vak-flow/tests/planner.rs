@@ -165,6 +165,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
         state_path: home.join("flow-runs/plan"),
         agent_identity: None,
         conversation_context: None,
+        run: None,
         work: None,
     })
 }
