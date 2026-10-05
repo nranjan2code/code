@@ -52,7 +52,7 @@ Known slow tests (each over 60 s, not failures):
 | 2 | M4.2 run records for every cause | `every_cause_writes_run`, `abandoned_run_is_recorded` | Done, 9fc4e5b5c |
 | 3 | M4.3 `Trigger` replaces `TaskDef` | `last_run_is_a_query`, `trigger_round_trips_as_document` | Done, 430ef4e38 |
 | 4 | M4.4 claims, one `due(now)`, `on_crash` | `schedule_slot_at_most_once_under_restart`, `two_processes_do_not_double_start`, `skipped_slot_is_a_record`, `retry_once_retries_once` | Done, 7b3a0ceaf |
-| 5 | M4.5 `effects/` chain; delivery is its first kind; the outbox goes; `/effects`; Discord nonce; the new effects invariant in AGENTS.md | `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`, `discord_resend_reuses_nonce` | Done, COMMIT |
+| 5 | M4.5 `effects/` chain; delivery is its first kind; the outbox goes; `/effects`; Discord nonce; the new effects invariant in AGENTS.md | `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`, `discord_resend_reuses_nonce` | Done, 94b826ed6 |
 | 6 | M4.6 mail and calendar send, create, update and RSVP become effects; their single-use claims go | `mail_send_is_one_effect`, `unknown_mail_send_never_resent` | Next |
 | 7 | M4.7 cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` | |
 | 8 | M4.8 `CopyEnvironment`; the non-git refusal goes; invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 restated against the shipped shapes | `non_git_space_routine_runs_in_copy_environment` | |
