@@ -22,9 +22,17 @@ pub struct RunAdmission {
     /// request on the bus under it). The run adopts it, as a child span, so
     /// the announcement and the work are one trace.
     pub trace: Option<TraceKey>,
+    /// The trigger whose slot or run-now this run serves; its run record
+    /// names it, which is how "last run" is found (plan M4.3).
+    pub trigger: Option<vak_session::ids::TriggerId>,
 }
 
 impl RunAdmission {
+    pub fn trigger(mut self, trigger: vak_session::ids::TriggerId) -> Self {
+        self.trigger = Some(trigger);
+        self
+    }
+
     pub fn cause(mut self, cause: Cause) -> Self {
         self.cause = Some(cause);
         self

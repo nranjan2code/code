@@ -16,3 +16,27 @@ impl Default for CapacityKey {
         ))
     }
 }
+
+/// A `POST /triggers` body for a script automation every `every_secs`.
+#[allow(dead_code)]
+pub fn script_trigger(name: &str, command: &str, every_secs: u64) -> serde_json::Value {
+    serde_json::json!({
+        "name": name,
+        "kind": { "kind": "schedule", "schedule": {
+            "kind": "interval", "every_secs": every_secs, "anchor": chrono::Utc::now(),
+        }},
+        "action": { "kind": "script", "command": command },
+    })
+}
+
+/// A `POST /triggers` body for a prompt automation every `every_secs`.
+#[allow(dead_code)]
+pub fn prompt_trigger(name: &str, text: &str, every_secs: u64) -> serde_json::Value {
+    serde_json::json!({
+        "name": name,
+        "kind": { "kind": "schedule", "schedule": {
+            "kind": "interval", "every_secs": every_secs, "anchor": chrono::Utc::now(),
+        }},
+        "action": { "kind": "prompt", "text": text },
+    })
+}

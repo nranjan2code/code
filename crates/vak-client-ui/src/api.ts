@@ -2028,72 +2028,64 @@ export async function speak(
   return res.blob();
 }
 
-export function listTasks(): Promise<{ tasks: import("./types").TaskDef[] }> {
-  return req("/tasks");
+export function listTriggers(): Promise<{ triggers: import("./types").Trigger[] }> {
+  return req("/triggers");
 }
 
-export interface TaskDraft {
+/** What creates or replaces an automation; the server owns its id, space
+ *  and creation time. */
+export interface TriggerDraft {
   name: string;
-  prompt: string;
-  interval_secs: number;
-  schedule?: string | null;
-  script?: string | null;
-  model_pin?: string | null;
-  agent_id?: string | null;
+  agent?: string | null;
   agent_revision?: number | null;
-  mail_calendar_scope?: {
-    routine_id?: string;
-    account_id: string;
-    mail_folder_id?: string | null;
-    calendar_source_id?: string | null;
-    operations: Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">;
-    max_items: number;
-    watch_new_mail: boolean;
-    read_commitments: boolean;
-    calendar_event_trigger?: {
-      boundary: "start" | "end";
-      /** Positive means before the boundary; negative means after it. */
-      offset_minutes: number;
-      max_lateness_minutes: number;
-    } | null;
-  } | null;
-  timezone?: string | null;
+  enabled?: boolean;
+  kind: import("./types").TriggerKind;
+  action: import("./types").TriggerAction;
   deliver_to?: string | null;
+  on_crash?: "skip" | "retry_once";
+  scope?: import("./types").RoutineScope | null;
 }
 
-export function createTask(draft: TaskDraft): Promise<unknown> {
-  return req("/tasks", { method: "POST", body: JSON.stringify(draft) });
+export function createTrigger(draft: TriggerDraft): Promise<import("./types").Trigger> {
+  return req("/triggers", { method: "POST", body: JSON.stringify(draft) });
 }
 
-/**
- * Tri-state optional strings mirror the server: absent key = keep current,
- * explicit null = clear. `JSON.stringify` drops undefined keys, so callers
- * express "keep" by simply not setting the field.
- */
-export type TaskPatch = Partial<{
-  enabled: boolean;
-  name: string;
-  prompt: string;
-  interval_secs: number;
-  schedule: string | null;
-  script: string | null;
-  model_pin: string | null;
-}>;
-
-export function patchTask(id: string, patch: TaskPatch): Promise<import("./types").TaskDef> {
-  return req(`/tasks/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+/** Replaces an automation's editable fields with `draft`. */
+export function putTrigger(id: string, draft: TriggerDraft): Promise<import("./types").Trigger> {
+  return req(`/triggers/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(draft) });
 }
 
-export function deleteTask(id: string): Promise<unknown> {
-  return req(`/tasks/${id}`, { method: "DELETE" });
+/** The draft that replaces `trigger` with itself, changed by `change`. */
+export function draftOf(trigger: import("./types").Trigger, change: Partial<TriggerDraft> = {}): TriggerDraft {
+  return {
+    name: trigger.name,
+    agent: trigger.agent,
+    agent_revision: trigger.agent_revision ?? null,
+    enabled: trigger.enabled,
+    kind: trigger.kind,
+    action: trigger.action,
+    deliver_to: trigger.deliver_to ?? null,
+    on_crash: trigger.on_crash,
+    scope: trigger.scope ?? null,
+    ...change,
+  };
 }
 
-export function runTaskNow(id: string): Promise<unknown> {
-  return req(`/tasks/${id}/run-now`, { method: "POST" });
+export function deleteTrigger(id: string): Promise<unknown> {
+  return req(`/triggers/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export function retryTaskDelivery(id: string): Promise<{ replayed: number; failed: number }> {
-  return req(`/tasks/${encodeURIComponent(id)}/retry-delivery`, { method: "POST", body: "{}" });
+export function runTrigger(id: string): Promise<unknown> {
+  return req(`/triggers/${encodeURIComponent(id)}/run`, { method: "POST" });
+}
+
+export function retryTriggerDelivery(id: string): Promise<{ replayed: number; failed: number }> {
+  return req(`/triggers/${encodeURIComponent(id)}/retry-delivery`, { method: "POST", body: "{}" });
+}
+
+/** An automation's runs, newest first. */
+export function triggerRuns(id: string, limit = 10): Promise<{ runs: import("./types").RunSummary[] }> {
+  return req(`/runs?trigger=${encodeURIComponent(id)}&limit=${limit}`);
 }
 
 export function getLaunch(id: string, candidateId?: string): Promise<{

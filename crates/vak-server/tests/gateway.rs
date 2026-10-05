@@ -754,7 +754,7 @@ async fn empty_chat_allowlist_denies_by_default() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn cron_task_delivers_summary_to_log_surface() {
+async fn automation_delivers_summary_to_log_surface() {
     let provider = Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("task finished cleanly")])),
@@ -763,46 +763,36 @@ async fn cron_task_delivers_summary_to_log_surface() {
     let client = client_with(&token);
     git_seed(&cwd);
 
-    // Create a routine with a delivery target and fire it immediately.
+    // Create an automation with a delivery target and fire it immediately.
     let res = client
-        .post(format!("{base}/tasks"))
-        .json(&serde_json::json!({
-            "name": "nightly",
-            "prompt": "what is the nightly status?",
-            "interval_secs": 3600,
-            "deliver_to": "log:ops"
-        }))
+        .post(format!("{base}/triggers"))
+        .json(&{
+            let mut body = support::prompt_trigger("nightly", "what is the nightly status?", 3600);
+            body["deliver_to"] = "log:ops".into();
+            body
+        })
         .send()
         .await
         .unwrap();
-    assert_eq!(res.status(), 200, "task create failed");
+    assert_eq!(res.status(), 201, "automation create failed");
+    let created: serde_json::Value = res.json().await.unwrap();
+    let tid = created["id"].as_str().unwrap().to_string();
 
     // Malformed targets are rejected at creation time.
     let res = client
-        .post(format!("{base}/tasks"))
-        .json(&serde_json::json!({
-            "name": "bad",
-            "prompt": "x",
-            "interval_secs": 3600,
-            "deliver_to": "nologseparator"
-        }))
+        .post(format!("{base}/triggers"))
+        .json(&{
+            let mut body = support::prompt_trigger("bad", "x", 3600);
+            body["deliver_to"] = "nologseparator".into();
+            body
+        })
         .send()
         .await
         .unwrap();
     assert_eq!(res.status(), 400);
 
-    let tasks: serde_json::Value = client
-        .get(format!("{base}/tasks"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let tid = tasks["tasks"][0]["id"].as_str().unwrap().to_string();
-
     let res = client
-        .post(format!("{base}/tasks/{tid}/run-now"))
+        .post(format!("{base}/triggers/{tid}/run"))
         .send()
         .await
         .unwrap();
@@ -814,13 +804,16 @@ async fn cron_task_delivers_summary_to_log_surface() {
     let mut found = false;
     while std::time::Instant::now() < deadline {
         let raw = vak_session::chain::RecordChain::at(&path).text();
-        if raw.contains("routine 'nightly' finished") && raw.contains("task finished cleanly") {
+        if raw.contains("automation 'nightly' finished") && raw.contains("task finished cleanly") {
             found = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    assert!(found, "delivery journal never received the routine summary");
+    assert!(
+        found,
+        "delivery journal never received the automation summary"
+    );
 }
 
 fn git_seed(cwd: &std::path::Path) {

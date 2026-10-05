@@ -36,7 +36,7 @@ live acceptance journeys or establish competitor reliability.
 | Parallel execution | `crates/vak-agent/src/lib.rs` schedules parallel tool work; task declarations include resource scopes | Verify independence and shared budget enforcement; unknown conflicting effects must serialize |
 | Admission | `crates/vak-core/src/lib.rs` registers the task capability with permissions, budgets, and contract context | Preserve this boundary for every new dispatch path |
 | Conversation | `crates/vak-client-ui/src/App.tsx` sends input during a running task through steering | Distinguish steering from new independent work without losing either request |
-| Background work | `crates/vak-core/src/tools_tasks.rs`, task storage, and `crates/vak-server/src/heartbeat.rs` provide scheduling and attention mechanisms | Verify durable ownership, recovery, and origin-linked delivery across surfaces |
+| Background work | `crates/vak-core/src/tools_automations.rs`, trigger storage, and `crates/vak-server/src/heartbeat.rs` provide scheduling and attention mechanisms | Verify durable ownership, recovery, and origin-linked delivery across surfaces |
 | Results | `crates/vak-client-ui/src/components/PresentationRenderer.tsx` contains rich renderers and alias dispatch | Complete the existing typed presentation contract and stable result identity |
 | Experience | Design 61 marks the simplified shell implemented and later journeys phased | Deliver and verify those journeys rather than declaring feature parity from component counts |
 

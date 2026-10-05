@@ -608,7 +608,7 @@ export interface OperationsSnapshot {
     state: "running" | "waiting_approval" | string;
     pending_approvals: Array<{ id: string; tool: string; reason: string; requested_at: string }>;
   }>;
-  tasks: Array<TaskItem & { space?: string; workspace?: string | null; agent_id?: string; next_fire?: string | null; running?: boolean }>;
+  tasks: AutomationItem[];
   outbox: {
     pending: number;
     dead_letter: number;
@@ -950,20 +950,29 @@ export interface SkillProposal {
   description: string;
 }
 
-export interface TaskItem {
+/** An automation (plan M4.3) as `/triggers` shows it: the stored trigger
+ *  plus what its runs say, read from the run records. */
+export interface AutomationItem {
   id: string;
   name: string;
-  prompt?: string;
-  interval_secs?: number;
+  agent: string;
+  agent_revision?: number | null;
   enabled: boolean;
-  schedule?: string | null;
-  script?: string | null;
-  model_pin?: string | null;
-  created_at?: string;
-  last_run_at?: string | null;
-  last_run_status?: string | null;
-  last_session_id?: string | null;
-  last_summary?: string | null;
+  kind:
+    | { kind: "schedule"; schedule:
+        | { kind: "cron"; expr: string; timezone?: string | null }
+        | { kind: "interval"; every_secs: number; anchor: string }
+        | { kind: "once"; at: string } }
+    | { kind: "manual" };
+  action: { kind: "prompt"; text: string; model_pin?: string | null } | { kind: "script"; command: string };
+  deliver_to?: string | null;
+  on_crash?: "skip" | "retry_once";
+  scope?: Record<string, unknown> | null;
+  workspace?: string | null;
+  next_run_at?: string | null;
+  last_run?: { id: string; status: RunStatus; opened_at: string; reason?: string | null } | null;
+  delivery_state?: string | null;
+  running?: boolean;
 }
 
 export interface MemoryItem {

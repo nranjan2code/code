@@ -481,8 +481,8 @@ function RightNow(props: { ops: OperationsSnapshot | null; error: boolean }) {
     return Math.min(100, (p.entries.length / p.max) * 100);
   });
   const nextTask = createMemo(() => {
-    const tasks = (props.ops?.tasks ?? []).filter((t) => t.enabled && t.next_fire);
-    return [...tasks].sort((a, b) => Date.parse(a.next_fire!) - Date.parse(b.next_fire!))[0] ?? null;
+    const tasks = (props.ops?.tasks ?? []).filter((t) => t.enabled && t.next_run_at);
+    return [...tasks].sort((a, b) => Date.parse(a.next_run_at!) - Date.parse(b.next_run_at!))[0] ?? null;
   });
 
   return (
@@ -541,7 +541,7 @@ function RightNow(props: { ops: OperationsSnapshot | null; error: boolean }) {
             <dd>
               <Show when={nextTask()} fallback={<span class="dim">none scheduled</span>}>
                 <span>{nextTask()!.name}</span>
-                <span class="dim">{countdown(nextTask()!.next_fire)}</span>
+                <span class="dim">{countdown(nextTask()!.next_run_at)}</span>
               </Show>
             </dd>
           </div>
@@ -903,7 +903,7 @@ export function Home() {
   );
   const overdueTasks = createMemo(() =>
     (snapshot()?.tasks ?? []).filter(
-      (t) => t.enabled && !t.running && t.next_fire && Date.now() - Date.parse(t.next_fire) > 600_000,
+      (t) => t.enabled && !t.running && t.next_run_at && Date.now() - Date.parse(t.next_run_at) > 600_000,
     ),
   );
   const providerTrouble = createMemo(() =>

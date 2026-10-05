@@ -346,3 +346,73 @@ fn runs_opened_together_all_open() {
     });
     assert_eq!(runs.list().unwrap().len(), keys.len());
 }
+
+/// Exit test (plan M4.3): an automation's last run is a query over the run
+/// records that name it; running it never writes to the automation.
+#[test]
+fn last_run_is_a_query() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let shared = vak_config::scope::SharedScope::new(dir.path());
+    let runs = Runs::at(shared.runs(), vak_config::paths::local_tenant_home());
+    let trigger = vak_core::triggers::Trigger {
+        id: vak_session::ids::TriggerId::new(),
+        name: "nightly".into(),
+        agent: "vak".into(),
+        agent_revision: None,
+        space: "spc_test".into(),
+        enabled: true,
+        kind: vak_core::triggers::TriggerKind::Manual,
+        action: vak_core::triggers::TriggerAction::Script {
+            command: "true".into(),
+        },
+        deliver_to: None,
+        on_crash: vak_core::triggers::OnCrash::Skip,
+        scope: None,
+        created_at: chrono::Utc::now(),
+        created_by: None,
+    };
+    vak_core::triggers::create(&shared, &trigger).unwrap();
+    assert!(
+        vak_core::triggers::last_run(&runs, &trigger.id)
+            .unwrap()
+            .is_none()
+    );
+
+    let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+    let key = || {
+        core.clone()
+            .with_run_admission(RunAdmission::default().cause(Cause::Trigger {
+                trigger: trigger.id,
+                request_id: uuid::Uuid::now_v7().to_string(),
+            }))
+            .mint_trace(None)
+    };
+    let first = key();
+    runs.open(&first, Some(trigger.id), None, 1).unwrap();
+    runs.settle(first.run, vak_session::runs::RunOutcome::Completed, None)
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let second = key();
+    runs.open(&second, Some(trigger.id), None, 1).unwrap();
+    // Another trigger's run is not this one's.
+    let other = key();
+    runs.open(&other, Some(vak_session::ids::TriggerId::new()), None, 1)
+        .unwrap();
+
+    let last = vak_core::triggers::last_run(&runs, &trigger.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(last.id, second.run);
+    assert!(last.is_open());
+    assert_eq!(runs.of_trigger(&trigger.id).unwrap().len(), 2);
+    // The automation itself never changed: one version, as created.
+    assert_eq!(
+        vak_session::documents::version_count(&shared.triggers().join(trigger.id.to_string())),
+        1
+    );
+    assert_eq!(
+        vak_core::triggers::get(&shared, &trigger.id.to_string()).unwrap(),
+        Some(trigger)
+    );
+}

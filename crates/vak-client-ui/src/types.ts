@@ -491,49 +491,70 @@ export interface PrStatus {
   summary?: { pass: number; fail: number; pending: number };
 }
 
-export interface TaskDef {
+/** A mail/calendar routine's account and read operations. */
+export interface RoutineScope {
+  routine_id?: string;
+  account_id: string;
+  mail_folder_id?: string | null;
+  calendar_source_id?: string | null;
+  operations: Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">;
+  max_items: number;
+  watch_new_mail: boolean;
+  read_commitments?: boolean;
+  calendar_event_trigger?: {
+    boundary: "start" | "end";
+    /** Positive means before the boundary; negative means after it. */
+    offset_minutes: number;
+    max_lateness_minutes: number;
+  } | null;
+}
+
+export type TriggerSchedule =
+  | { kind: "cron"; expr: string; timezone?: string | null }
+  | { kind: "interval"; every_secs: number; anchor: string }
+  | { kind: "once"; at: string };
+
+export type TriggerKind = { kind: "schedule"; schedule: TriggerSchedule } | { kind: "manual" };
+
+export type TriggerAction =
+  | { kind: "prompt"; text: string; model_pin?: string | null }
+  | { kind: "script"; command: string };
+
+export type RunStatus = "running" | "completed" | "failed" | "cancelled" | "abandoned" | "skipped";
+
+/** One run record (plan M4.2): what a run did and how it ended. */
+export interface RunSummary {
+  id: string;
+  status: RunStatus;
+  opened_at: string;
+  settled_at?: string | null;
+  sessions?: string[];
+  result_id?: string | null;
+  reason?: string | null;
+}
+
+/** An automation (plan M4.3) as the server shows it: the stored trigger,
+ *  plus what its runs say, read from the run records. */
+export interface Trigger {
   id: string;
   name: string;
-  prompt: string;
-  interval_secs: number;
-  enabled: boolean;
-  cwd: string;
-  created_at: string;
-  last_run_at?: string | null;
-  last_session_id?: string | null;
-  last_summary?: string | null;
-  last_result_id?: string | null;
-  last_run_status?: string | null;
-  mail_calendar_last_check_at?: string | null;
-  last_delivery_state?: string | null;
-  last_wt?: { path: string; branch: string } | null;
-  deliver_to?: string | null;
-  /** 5-field cron (`m h dom mon dow`, local time); replaces interval ticks. */
-  schedule?: string | null;
-  /** Watchdog shell one-liner; XOR with prompt (docs/design/29 P2). */
-  script?: string | null;
-  /** Pinned model id; a pinned task never escalates. */
-  model_pin?: string | null;
-  agent_id?: string | null;
+  agent: string;
   agent_revision?: number | null;
-  mail_calendar_scope?: {
-    routine_id: string;
-    account_id: string;
-    mail_folder_id?: string | null;
-    calendar_source_id?: string | null;
-    operations: Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">;
-    max_items: number;
-    watch_new_mail: boolean;
-    read_commitments?: boolean;
-    calendar_event_trigger?: {
-      boundary: "start" | "end";
-      /** Positive means before the boundary; negative means after it. */
-      offset_minutes: number;
-      max_lateness_minutes: number;
-    } | null;
-  } | null;
+  space: string;
+  enabled: boolean;
+  kind: TriggerKind;
+  action: TriggerAction;
+  deliver_to?: string | null;
+  on_crash?: "skip" | "retry_once";
+  scope?: RoutineScope | null;
+  created_at: string;
+  workspace?: string | null;
   next_run_at?: string | null;
-  timezone?: string | null;
+  last_run?: RunSummary | null;
+  /** When a run last finished its work: a mail watch's last successful check. */
+  last_completed_at?: string | null;
+  delivery_state?: string | null;
+  running?: boolean;
 }
 
 export interface OpsServiceState {

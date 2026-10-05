@@ -1,9 +1,10 @@
 //! Scheduled runs that cannot start say so, and runs that do are findable
-//! (docs/plans/data-architecture-plan.md, M0): a refused routine leaves a
-//! `routine_failed` inbox entry with the reason and remedy instead of a log
-//! line; a folder that is not a git repository is refused loudly; two tasks
-//! due in one tick both run; and a run recorded on a task opens after a
-//! restart, because its handle is its ledger id.
+//! (docs/plans/data-architecture-plan.md, M0, M4.3): a refused automation
+//! leaves a `routine_failed` inbox entry with the reason and remedy and a
+//! skipped run record, never a log line; a folder that is not a git
+//! repository is refused loudly; two automations due in one tick both run;
+//! and the run an automation's last run names opens after a restart,
+//! because its handle is its ledger id.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -135,30 +136,35 @@ impl Server {
         (status, response.json().await.unwrap_or_default())
     }
 
-    async fn task(&self, id: &str) -> serde_json::Value {
-        let (_, body) = self.get("/tasks").await;
-        body["tasks"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|task| task["id"] == id)
-            .cloned()
-            .unwrap_or_default()
+    /// An automation as the API shows it, with its last run.
+    async fn trigger(&self, id: &str) -> serde_json::Value {
+        self.get(&format!("/triggers/{id}")).await.1
+    }
+
+    async fn last_run_status(&self, id: &str) -> serde_json::Value {
+        self.trigger(id).await["last_run"]["status"].clone()
     }
 
     async fn run_now(&self, id: &str) -> reqwest::StatusCode {
         self.client()
-            .post(format!("{}/tasks/{id}/run-now", self.base))
+            .post(format!("{}/triggers/{id}/run", self.base))
             .send()
             .await
             .unwrap()
             .status()
     }
 
-    async fn patch_task(&self, id: &str, patch: &serde_json::Value) -> reqwest::StatusCode {
+    /// Replaces an automation with itself, changed by `change`.
+    async fn edit(
+        &self,
+        id: &str,
+        change: impl FnOnce(&mut serde_json::Value),
+    ) -> reqwest::StatusCode {
+        let mut trigger = self.trigger(id).await;
+        change(&mut trigger);
         self.client()
-            .patch(format!("{}/tasks/{id}", self.base))
-            .json(patch)
+            .put(format!("{}/triggers/{id}", self.base))
+            .json(&trigger)
             .send()
             .await
             .unwrap()
@@ -190,30 +196,40 @@ fn git_seed(cwd: &Path) {
     run(&["commit", "-q", "-m", "seed"]);
 }
 
-/// A never-run prompt task in `ws`, due at the first tick.
-fn prompt_task(id: &str, ws: &Path, agent_id: Option<&str>) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
-        "name": id,
-        "prompt": "summarise the day",
-        "interval_secs": 3600,
-        "enabled": true,
-        "space": vak_config::spaces::bind(ws).unwrap(),
-        "created_at": chrono::Utc::now().to_rfc3339(),
-        "last_run_at": null,
-        "last_session_id": null,
-        "last_summary": null,
-        "last_wt": null,
-        "agent_id": agent_id,
-    })
+/// A never-run hourly prompt automation in `ws`, created two hours ago so
+/// a slot is due at the first tick.
+fn prompt_trigger(name: &str, ws: &Path, agent: &str) -> vak_core::triggers::Trigger {
+    vak_core::triggers::Trigger {
+        id: vak_session::ids::TriggerId::new(),
+        name: name.into(),
+        agent: agent.into(),
+        agent_revision: None,
+        space: vak_config::spaces::bind(ws).unwrap(),
+        enabled: true,
+        kind: vak_core::triggers::TriggerKind::Schedule {
+            schedule: vak_core::triggers::Schedule::Interval {
+                every_secs: 3600,
+                anchor: chrono::Utc::now() - chrono::Duration::hours(2),
+            },
+        },
+        action: vak_core::triggers::TriggerAction::Prompt {
+            text: "summarise the day".into(),
+            model_pin: None,
+        },
+        deliver_to: None,
+        on_crash: vak_core::triggers::OnCrash::Skip,
+        scope: None,
+        created_at: chrono::Utc::now() - chrono::Duration::hours(2),
+        created_by: None,
+    }
 }
 
 /// A workspace (a git repository when `git`) and a home seeded with
-/// `tasks`, returned before any server starts.
+/// `triggers`, returned with their ids before any server starts.
 fn space(
     git: bool,
-    tasks: impl FnOnce(&Path) -> serde_json::Value,
-) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    triggers: impl FnOnce(&Path) -> Vec<vak_core::triggers::Trigger>,
+) -> (tempfile::TempDir, PathBuf, PathBuf, Vec<String>) {
     let dir = tempfile::tempdir().unwrap();
     let ws = dir.path().join("ws");
     std::fs::create_dir_all(ws.join(".vak")).unwrap();
@@ -227,14 +243,17 @@ fn space(
     }
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
-    // The data home is fixed before a task names its space in it.
+    // The data home is fixed before an automation names its space in it.
     vak_config::paths::isolate_home_for_tests();
-    std::fs::write(
-        vak_core::tasks::tasks_file(&home),
-        serde_json::to_string_pretty(&tasks(&ws)).unwrap(),
-    )
-    .unwrap();
-    (dir, ws, home)
+    let shared = vak_config::scope::SharedScope::new(&home);
+    let ids = triggers(&ws)
+        .into_iter()
+        .map(|trigger| {
+            vak_core::triggers::create(&shared, &trigger).unwrap();
+            trigger.id.to_string()
+        })
+        .collect();
+    (dir, ws, home, ids)
 }
 
 async fn serve(ws: &Path, home: &Path) -> Server {
@@ -292,8 +311,7 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     use vak_mail_calendar::vault::{AccountSecretMaterial, AccountVault};
     use vak_mail_calendar::{Capability, Provider};
 
-    let (_dir, ws, home) = space(true, |_| serde_json::json!([]));
-    vak_config::paths::set_home_override(&home);
+    let (_dir, ws, home, _) = space(true, |_| Vec::new());
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
@@ -389,14 +407,16 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     .await;
     let create = server
         .client()
-        .post(format!("{}/tasks", server.base))
+        .post(format!("{}/triggers", server.base))
         .json(&serde_json::json!({
             "name": "Synthetic mail review",
-            "prompt": "Summarize the selected recent mail.",
-            "interval_secs": 3600,
-            "agent_id": agent_id,
+            "kind": { "kind": "schedule", "schedule": {
+                "kind": "interval", "every_secs": 3600, "anchor": chrono::Utc::now(),
+            }},
+            "action": { "kind": "prompt", "text": "Summarize the selected recent mail." },
+            "agent": agent_id,
             "agent_revision": agent.revision,
-            "mail_calendar_scope": {
+            "scope": {
                 "account_id": account_id,
                 "operations": ["recent_mail"],
                 "max_items": 5,
@@ -407,15 +427,8 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
         .send()
         .await
         .unwrap();
-    assert_eq!(create.status(), reqwest::StatusCode::OK);
-    let (_, task_list) = server.get("/tasks").await;
-    let created = task_list["tasks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|task| task["name"] == "Synthetic mail review")
-        .cloned()
-        .unwrap();
+    assert_eq!(create.status(), reqwest::StatusCode::CREATED);
+    let created: serde_json::Value = create.json().await.unwrap();
     let task_id = created["id"].as_str().unwrap();
     assert_eq!(created["enabled"], false);
     let run_status = server.run_now(task_id).await;
@@ -428,15 +441,21 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
 
     assert!(
         eventually(15, || async {
-            server.task(task_id).await["last_run_status"] == "complete"
+            server.last_run_status(task_id).await == "completed"
         })
         .await,
         "routine reaches a settled successful state"
     );
     assert_eq!(server.run_now(task_id).await, reqwest::StatusCode::ACCEPTED);
     assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 2 }).await);
-    let task = server.task(task_id).await;
-    let session_id = task["last_session_id"]
+    assert!(
+        eventually(15, || async {
+            server.last_run_status(task_id).await == "completed"
+        })
+        .await
+    );
+    let task = server.trigger(task_id).await;
+    let session_id = task["last_run"]["sessions"][0]
         .as_str()
         .expect("routine session is linked");
     let (_, history) = server
@@ -462,11 +481,12 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run_settle() {
-    let (_dir, ws, home) = space(true, |ws| {
-        let mut task = prompt_task("pause-during-run", ws, None);
-        task["enabled"] = serde_json::json!(false);
-        serde_json::json!([task])
+    let (_dir, ws, home, ids) = space(true, |ws| {
+        let mut trigger = prompt_trigger("pause-during-run", ws, "vak");
+        trigger.enabled = false;
+        vec![trigger]
     });
+    let id = ids[0].as_str();
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
@@ -482,10 +502,7 @@ async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run
     }));
     let server = serve_core(core, calls.clone()).await;
 
-    assert_eq!(
-        server.run_now("pause-during-run").await,
-        reqwest::StatusCode::ACCEPTED
-    );
+    assert_eq!(server.run_now(id).await, reqwest::StatusCode::ACCEPTED);
     tokio::time::timeout(std::time::Duration::from_secs(10), started_rx.recv())
         .await
         .expect("run started before pause")
@@ -493,21 +510,21 @@ async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run
 
     assert_eq!(
         server
-            .patch_task("pause-during-run", &serde_json::json!({"enabled": false}))
+            .edit(id, |trigger| trigger["enabled"] = false.into())
             .await,
         reqwest::StatusCode::OK
     );
     release_tx.send(()).expect("active run still waiting");
     assert!(
         eventually(15, || async {
-            server.task("pause-during-run").await["last_run_status"] == "complete"
+            server.last_run_status(id).await == "completed"
         })
         .await,
         "pausing prevents later admission without corrupting the active run"
     );
     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(server.task("pause-during-run").await["enabled"], false);
+    assert_eq!(server.trigger(id).await["enabled"], false);
 }
 
 async fn eventually<F, Fut>(secs: u64, mut check: F) -> bool
@@ -534,16 +551,17 @@ fn routine_failures(inbox: &[serde_json::Value], task: &str) -> Vec<serde_json::
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn fire_task_records_refusal() {
-    let (_dir, ws, home) = space(true, |ws| {
-        serde_json::json!([prompt_task("for-nobody", ws, Some("no-such-agent"))])
+async fn a_refused_run_is_recorded() {
+    let (_dir, ws, home, ids) = space(true, |ws| {
+        vec![prompt_trigger("for-nobody", ws, "no-such-agent")]
     });
+    let id = ids[0].as_str();
     let server = serve(&ws, &home).await;
     assert_eq!(
-        server.run_now("for-nobody").await,
+        server.run_now(id).await,
         reqwest::StatusCode::UNPROCESSABLE_ENTITY
     );
-    let failures = routine_failures(&server.inbox().await, "for-nobody");
+    let failures = routine_failures(&server.inbox().await, id);
     assert_eq!(
         failures.len(),
         1,
@@ -556,36 +574,40 @@ async fn fire_task_records_refusal() {
             .contains("no-such-agent"),
         "{failures:?}"
     );
+    let last = server.trigger(id).await["last_run"].clone();
     assert_eq!(
-        server.task("for-nobody").await["last_run_status"],
-        "refused"
+        last["status"], "skipped",
+        "a refusal is a run record: {last}"
+    );
+    assert!(
+        last["reason"].as_str().unwrap().contains("no-such-agent"),
+        "{last}"
     );
     assert_eq!(server.dispatches.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn non_git_space_routine_is_refused_loudly() {
-    let (_dir, ws, home) = space(false, |ws| {
-        serde_json::json!([prompt_task("plain-folder", ws, None)])
-    });
+    let (_dir, ws, home, ids) = space(false, |ws| vec![prompt_trigger("plain-folder", ws, "vak")]);
+    let id = ids[0].as_str();
     let server = serve(&ws, &home).await;
     assert!(
         eventually(10, || async {
-            !routine_failures(&server.inbox().await, "plain-folder").is_empty()
+            !routine_failures(&server.inbox().await, id).is_empty()
         })
         .await,
         "the scheduler's refusal reached the inbox"
     );
-    let failures = routine_failures(&server.inbox().await, "plain-folder");
+    let failures = routine_failures(&server.inbox().await, id);
     let body = failures[0]["body"].as_str().unwrap();
     assert!(body.contains("is not a git repository"), "{body}");
     assert!(body.contains("git init"), "the remedy is named: {body}");
     assert_eq!(
-        server.run_now("plain-folder").await,
+        server.run_now(id).await,
         reqwest::StatusCode::UNPROCESSABLE_ENTITY
     );
     assert_eq!(
-        routine_failures(&server.inbox().await, "plain-folder").len(),
+        routine_failures(&server.inbox().await, id).len(),
         1,
         "retries of the same slot do not repeat the entry"
     );
@@ -593,44 +615,43 @@ async fn non_git_space_routine_is_refused_loudly() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn two_tasks_due_same_tick_both_fire() {
-    let (_dir, ws, home) = space(true, |ws| {
-        serde_json::json!([
-            prompt_task("first", ws, None),
-            prompt_task("second", ws, None)
-        ])
+async fn two_automations_due_same_tick_both_fire() {
+    let (_dir, ws, home, ids) = space(true, |ws| {
+        vec![
+            prompt_trigger("first", ws, "vak"),
+            prompt_trigger("second", ws, "vak"),
+        ]
     });
     let server = serve(&ws, &home).await;
     assert!(
         eventually(20, || async {
-            server.task("first").await["last_run_status"] == "complete"
-                && server.task("second").await["last_run_status"] == "complete"
+            server.last_run_status(&ids[0]).await == "completed"
+                && server.last_run_status(&ids[1]).await == "completed"
         })
         .await,
-        "both routines ran: {} / {}",
-        server.task("first").await,
-        server.task("second").await
+        "both automations ran: {} / {}",
+        server.trigger(&ids[0]).await,
+        server.trigger(&ids[1]).await
     );
-    let first = server.task("first").await["last_session_id"].clone();
-    let second = server.task("second").await["last_session_id"].clone();
+    let first = server.trigger(&ids[0]).await["last_run"]["sessions"][0].clone();
+    let second = server.trigger(&ids[1]).await["last_run"]["sessions"][0].clone();
     assert_ne!(first, second);
     assert!(server.dispatches.load(Ordering::SeqCst) >= 2);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scheduled_run_resolves_after_restart() {
-    let (_dir, ws, home) = space(true, |ws| {
-        serde_json::json!([prompt_task("nightly", ws, None)])
-    });
+    let (_dir, ws, home, ids) = space(true, |ws| vec![prompt_trigger("nightly", ws, "vak")]);
+    let id = ids[0].as_str();
     let server = serve(&ws, &home).await;
     assert!(
         eventually(20, || async {
-            server.task("nightly").await["last_run_status"] == "complete"
+            server.last_run_status(id).await == "completed"
         })
         .await,
-        "the routine ran"
+        "the automation ran"
     );
-    let session = server.task("nightly").await["last_session_id"]
+    let session = server.trigger(id).await["last_run"]["sessions"][0]
         .as_str()
         .unwrap()
         .to_string();

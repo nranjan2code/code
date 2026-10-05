@@ -72,8 +72,8 @@ pub enum Capability {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutineScope {
-    /// Set by the server from the owning TaskDef id; callers cannot choose a
-    /// different durable cursor namespace.
+    /// Set by the server from the owning trigger's UUID; callers cannot
+    /// choose a different durable cursor namespace.
     #[serde(default)]
     pub routine_id: String,
     pub account_id: AccountId,

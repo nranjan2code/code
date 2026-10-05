@@ -3,6 +3,7 @@ import { api } from "./api";
 import { conn, navigate, pushToast, route, selectedAgentId, setSelectedAgentId } from "./store";
 import type { OperationsSnapshot, SandboxRecord } from "./types";
 import "./focusTrap";
+import { cadence as automationCadence } from "./Automations";
 
 type Section = "overview" | "work" | "runtime" | "channels" | "automations" | "providers" | "incidents" | "sandbox";
 type TimeWindow = "live" | "1h" | "24h" | "7d" | "custom";
@@ -123,7 +124,7 @@ export function scopeOperations(data: OperationsSnapshot, scopeFilter: string, w
   const pool = data.pool.entries.filter((entry) => inWorkspace(entry.workspace));
   const runs = data.runs.filter((run) => inWorkspace(run.workspace) && matchesAgent(run.agent_id));
   const pendingApprovals = runs.reduce((total, run) => total + run.pending_approvals.length, 0);
-  const tasks = data.tasks.filter((task) => inWorkspace(task.workspace) && matchesAgent(task.agent_id));
+  const tasks = data.tasks.filter((task) => inWorkspace(task.workspace ?? "") && matchesAgent(task.agent));
   const records = data.outbox.records.filter((record) => inWindow(record.updated_at_ms));
   const security = data.security.filter((event) => inWindow(event.ts));
   const incidents = data.incidents.filter((incident) =>
@@ -275,14 +276,14 @@ function WorkView(props: { data: OperationsSnapshot }) {
         </article>}</For></div>
       </Show>
     </section>
-    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Unattended work</span><h2>Scheduled tasks</h2><p class="dim">Loaded from the workspace task store, including next-fire and in-flight state.</p></div><button type="button" class="ghost small" onClick={() => navigate(operationHref("#/operations/automations"))}>Open automations</button></div>
-      <Show when={props.data.tasks.length > 0} fallback={<div class="empty">No scheduled tasks are configured.</div>}>
-        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Name</th><th>Kind</th><th>State</th><th>Next fire</th><th>Last run</th></tr></thead><tbody><For each={props.data.tasks}>{(task) => <tr>
+    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Unattended work</span><h2>Automations</h2><p class="dim">Each with its next run and in-flight state; its last run is read from the run records.</p></div><button type="button" class="ghost small" onClick={() => navigate(operationHref("#/operations/automations"))}>Open automations</button></div>
+      <Show when={props.data.tasks.length > 0} fallback={<div class="empty">No automations are set up.</div>}>
+        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Name</th><th>Kind</th><th>State</th><th>Next run</th><th>Last run</th></tr></thead><tbody><For each={props.data.tasks}>{(task) => <tr>
           <td><strong>{task.name}</strong><p class="mono dim">{task.workspace || "another machine"}</p></td>
-          <td>{task.script ? "script" : "prompt"}<Show when={task.model_pin}><p class="mono dim">{task.model_pin}</p></Show></td>
+          <td>{task.action.kind}<Show when={task.action.kind === "prompt" && task.action.model_pin}><p class="mono dim">{task.action.kind === "prompt" ? task.action.model_pin : ""}</p></Show></td>
           <td><StatusMark value={task.running ? "running" : task.enabled ? "enabled" : "disabled"} /></td>
-          <td>{task.next_fire ? time(task.next_fire) : task.schedule || (task.interval_secs ? `every ${duration(task.interval_secs)}` : "on demand")}</td>
-          <td>{time(task.last_run_at)}</td>
+          <td>{task.next_run_at ? time(task.next_run_at) : automationCadence(task)}</td>
+          <td>{time(task.last_run?.opened_at)}</td>
         </tr>}</For></tbody></table></div>
       </Show>
     </section>
@@ -291,16 +292,16 @@ function WorkView(props: { data: OperationsSnapshot }) {
 
 function AutomationsView(props: { data: OperationsSnapshot }) {
   return <div class="operations-stack">
-    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Operations</span><h2>Automations</h2><p class="dim">Every scheduled task is shown with its actual workspace, cadence, model pin, and latest run state.</p></div><button class="ghost small" onClick={() => navigate("#/integrations/tasks")}>Manage definitions</button></div>
-      <Show when={props.data.tasks.length > 0} fallback={<div class="empty">No automations are configured for this scope. Add a scheduled task to make unattended work visible here.</div>}>
-        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Task</th><th>Workspace</th><th>Cadence</th><th>State</th><th>Model pin</th><th>Last run</th><th /></tr></thead><tbody><For each={props.data.tasks}>{(task) => <tr>
-          <td><strong>{task.name}</strong><p class="mono dim">{task.id.slice(0, 12)}</p></td>
-          <td class="mono">{task.workspace || "another machine"}</td>
-          <td>{task.next_fire ? `next ${time(task.next_fire)}` : task.schedule || (task.interval_secs ? `every ${duration(task.interval_secs)}` : "on demand")}</td>
-          <td><StatusMark value={task.running ? "running" : task.enabled ? "enabled" : "disabled"} /></td>
-          <td class="mono">{task.model_pin || "inherits"}</td>
-          <td>{time(task.last_run_at)}</td>
-          <td><button class="ghost small" onClick={() => navigate(`#/integrations/tasks`)}>Inspect</button></td>
+    <section class="panel"><div class="panel-title-row"><div><span class="eyebrow">Operations</span><h2>Automations</h2><p class="dim">Every automation with its actual workspace, cadence, model pin and last run, read from the run records.</p></div><button class="ghost small" onClick={() => navigate("#/automations")}>Manage automations</button></div>
+      <Show when={props.data.tasks.length > 0} fallback={<div class="empty">No automations are set up for this scope. Add one to make unattended work visible here.</div>}>
+        <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Automation</th><th>Workspace</th><th>Cadence</th><th>State</th><th>Model pin</th><th>Last run</th><th /></tr></thead><tbody><For each={props.data.tasks}>{(item) => <tr>
+          <td><strong>{item.name}</strong><p class="mono dim">{item.id.slice(0, 16)}</p></td>
+          <td class="mono">{item.workspace || "another machine"}</td>
+          <td>{item.next_run_at ? `next ${time(item.next_run_at)}` : automationCadence(item)}</td>
+          <td><StatusMark value={item.running ? "running" : item.enabled ? "enabled" : "disabled"} /></td>
+          <td class="mono">{item.action.kind === "prompt" ? item.action.model_pin || "inherits" : "—"}</td>
+          <td>{item.last_run ? <button class="link-button" onClick={() => navigate(`#/runs/${encodeURIComponent(item.last_run!.id)}`)}>{item.last_run.status} · {time(item.last_run.opened_at)}</button> : "never"}</td>
+          <td><button class="ghost small" onClick={() => navigate("#/automations")}>Inspect</button></td>
         </tr>}</For></tbody></table></div>
       </Show>
     </section>

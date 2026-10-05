@@ -82,3 +82,31 @@ pub fn remove(repo: &Path, wt: &Worktree) -> Result<(), WorktreeError> {
     git(repo, &["branch", "-D", &wt.branch])?;
     Ok(())
 }
+
+/// Removes every worktree whose branch is `vak/<run_prefix>…`, and those
+/// branches; returns how many went. For work that keeps only its latest
+/// run's worktree.
+pub fn remove_runs_with_prefix(repo: &Path, run_prefix: &str) -> Result<usize, WorktreeError> {
+    let branch_prefix = format!("refs/heads/vak/{run_prefix}");
+    let listing = git(repo, &["worktree", "list", "--porcelain"])?;
+    let mut removed = 0;
+    let mut path: Option<PathBuf> = None;
+    for line in listing.lines() {
+        if let Some(p) = line.strip_prefix("worktree ") {
+            path = Some(PathBuf::from(p));
+        } else if let Some(branch) = line.strip_prefix("branch ")
+            && branch.starts_with(&branch_prefix)
+            && let Some(path) = path.take()
+        {
+            remove(
+                repo,
+                &Worktree {
+                    path,
+                    branch: branch.trim_start_matches("refs/heads/").to_string(),
+                },
+            )?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}

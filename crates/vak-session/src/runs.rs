@@ -438,6 +438,15 @@ impl Runs {
         Ok(list)
     }
 
+    /// Every run of the trigger `trigger`, newest first.
+    pub fn of_trigger(&self, trigger: &TriggerId) -> Result<Vec<RunRecord>, SessionError> {
+        Ok(self
+            .list()?
+            .into_iter()
+            .filter(|run| run.trigger.as_ref() == Some(trigger))
+            .collect())
+    }
+
     /// Every run of the flow `name`, newest first.
     pub fn of_flow(&self, name: &str) -> Result<Vec<RunRecord>, SessionError> {
         Ok(self

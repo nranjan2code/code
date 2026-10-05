@@ -3839,7 +3839,9 @@ pub(crate) async fn deliver_and_record_with_result(
     let cleaned_text = crate::projection::clean_scaffolding(text);
     let mut answer = AnswerDraft::from_markdown(cleaned_text);
     if let Some(value) = task_id {
-        answer.metadata.insert("vak_task_id".into(), value.into());
+        answer
+            .metadata
+            .insert(crate::automations::TRIGGER_METADATA.into(), value.into());
     }
     if let Some(value) = session_id {
         answer

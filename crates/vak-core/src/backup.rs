@@ -329,7 +329,7 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, rel).unwrap();
         }
-        for rel in ["cost-log", "routing-evidence", "tasks.json", "desktop.json"] {
+        for rel in ["cost-log", "routing-evidence", "desktop.json"] {
             std::fs::write(home.join(rel), rel).unwrap();
         }
     }
@@ -343,7 +343,7 @@ mod tests {
         let manifest = export_to(home.path(), dest.path(), false).unwrap();
 
         assert_eq!(manifest.version, 1);
-        assert_eq!(manifest.file_count, 9);
+        assert_eq!(manifest.file_count, 8);
         let expected_bytes: u64 = [
             "agents/vak/sessions/spc_test/s1/seg-00000001.log",
             "tenants/t1/store/refs.db",
@@ -352,7 +352,6 @@ mod tests {
             "trusted/allow.toml",
             "cost-log",
             "routing-evidence",
-            "tasks.json",
             "desktop.json",
         ]
         .iter()
@@ -363,7 +362,7 @@ mod tests {
         // Round-trip into a fresh home restores every ledger byte-for-byte.
         let restored = tempdir().unwrap();
         let report = import_from(dest.path(), restored.path(), Conflict::Skip).unwrap();
-        assert_eq!(report.copied, 9);
+        assert_eq!(report.copied, 8);
         assert_eq!(report.skipped, 0);
         assert_eq!(report.renamed, 0);
         for rel in [
@@ -411,10 +410,10 @@ mod tests {
     #[test]
     fn import_rename_preserves_both_copies() {
         let home = tempdir().unwrap();
-        std::fs::write(home.path().join("tasks.json"), "existing").unwrap();
+        std::fs::write(home.path().join("desktop.json"), "existing").unwrap();
 
         let dest = tempdir().unwrap();
-        std::fs::write(dest.path().join("tasks.json"), "incoming").unwrap();
+        std::fs::write(dest.path().join("desktop.json"), "incoming").unwrap();
         std::fs::create_dir_all(dest.path().join("tenants/t1/keys")).unwrap();
         std::fs::write(
             dest.path().join("tenants/t1/keys/revoked"),
@@ -426,19 +425,19 @@ mod tests {
         assert_eq!(report.renamed, 1);
         assert_eq!(report.copied, 1);
         assert_eq!(
-            std::fs::read_to_string(home.path().join("tasks.json")).unwrap(),
+            std::fs::read_to_string(home.path().join("desktop.json")).unwrap(),
             "existing"
         );
         assert_eq!(
-            std::fs::read_to_string(home.path().join("tasks.import1.json")).unwrap(),
+            std::fs::read_to_string(home.path().join("desktop.import1.json")).unwrap(),
             "incoming"
         );
 
         // A second import renames every clashing file to the next free
-        // suffix (tasks.json and the already-restored memory note).
+        // suffix (desktop.json and the already-restored memory note).
         let report2 = import_from(dest.path(), home.path(), Conflict::Rename).unwrap();
         assert_eq!(report2.renamed, 2);
-        assert!(home.path().join("tasks.import2.json").is_file());
+        assert!(home.path().join("desktop.import2.json").is_file());
     }
 
     #[test]

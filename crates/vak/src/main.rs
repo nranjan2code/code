@@ -25,7 +25,7 @@ mod prompts;
 mod question_prompt;
 mod runs;
 mod setup;
-mod tasks;
+mod triggers;
 mod update_check;
 
 use cli::{CheckpointAction, Cli, Command, FlowAction, SkillsAction, SkillsReviewAction};
@@ -575,7 +575,7 @@ async fn main() {
         }
         Some(Command::Backup { action }) => backup::run_backup(cwd, action),
         Some(Command::Digest { days }) => digest::run_digest(cwd, days),
-        Some(Command::Tasks { action }) => tasks::run_tasks(cwd, action),
+        Some(Command::Triggers { action }) => triggers::run_triggers(cwd, action),
         Some(Command::Inbox { action }) => inbox::run_inbox(cwd, action),
         Some(Command::Runs { action }) => runs::run_runs(cwd, action),
         Some(Command::Plan {

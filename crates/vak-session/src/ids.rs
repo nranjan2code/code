@@ -70,6 +70,11 @@ macro_rules! typed_id {
             }
 
             /// Adopt an existing UUIDv7 (an owner record's id) as this id.
+            /// The UUID inside the id, without its prefix.
+            pub fn uuid(&self) -> uuid::Uuid {
+                self.0
+            }
+
             pub fn from_uuid(u: uuid::Uuid) -> Option<Self> {
                 (u.get_version_num() == 7).then_some(Self(u))
             }

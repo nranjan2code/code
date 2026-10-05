@@ -535,8 +535,8 @@ is rewiring rather than new infrastructure:
 | Condition | Mechanism |
 |---|---|
 | `Human` | `vak-core/src/inbox.rs` + gateway approval forwarding |
-| `Schedule` | `vak-core/src/tasks.rs` cron engine + scheduler catch-up |
-| `Predicate` | `TaskDef.script` watchdog — **zero tokens while the predicate stays false** |
+| `Schedule` | `vak-core/src/triggers.rs` cron engine + scheduler catch-up |
+| `Predicate` | a script trigger's watchdog — **zero tokens while the predicate stays false** |
 | `Commitment` | dependency edge |
 | `External` | `vak-delivery` outbox / webhook |
 

@@ -316,8 +316,9 @@ impl SharedScope {
         self.operations().join("actions")
     }
 
-    pub fn tasks(&self) -> PathBuf {
-        self.root.join("tasks.json")
+    /// Where triggers are named: the Documents `triggers/<trg>` (plan M4.3).
+    pub fn triggers(&self) -> PathBuf {
+        self.root.join("triggers")
     }
 
     /// The trash sidecar.
@@ -506,7 +507,7 @@ mod tests {
         assert_eq!(s.agents_dir(), data.join("agents"));
         assert_eq!(s.agent("mira").root(), data.join("agents/mira"));
         assert_eq!(s.gateway_allowlist(), data.join("gateway/allowlist.json"));
-        assert_eq!(s.tasks(), data.join("tasks.json"));
+        assert_eq!(s.triggers(), data.join("triggers"));
         assert_eq!(s.deleted(), data.join("deleted.json"));
         assert_eq!(s.archive(), data.join("archive.json"));
         assert_eq!(s.operations(), data.join("operations"));

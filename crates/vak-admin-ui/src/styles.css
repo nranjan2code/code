@@ -1768,6 +1768,12 @@ a.tab-btn {
 .scope-agent-search { min-height: 30px; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; }
 .scope-agent-search::placeholder { color: var(--faint); }
 .sidebar-scope .scope-control > span:last-child { display: block; margin: 6px 0 0; font-size: 12px; line-height: 1.35; }
+.automation-list { display: grid; gap: 4px; }
+.automation-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-soft); }
+.automation-row-main { display: grid; gap: 3px; min-width: 0; }
+.automation-row-what { overflow-wrap: anywhere; }
+.automation-form { display: grid; gap: 10px; max-width: 560px; }
+.automation-form label { display: grid; gap: 4px; }
 .run-list { display: grid; gap: 4px; }
 .run-filter { display: inline-flex; gap: 8px; align-items: center; }
 .run-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; width: 100%; padding: 10px 0; border: 0; border-top: 1px solid var(--border-soft); background: none; color: inherit; text-align: left; font: inherit; cursor: pointer; }

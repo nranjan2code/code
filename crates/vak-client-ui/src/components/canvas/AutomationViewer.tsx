@@ -1,36 +1,36 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as api from "../../api";
-import { closeArtifactCanvas, isRunning, setTranscriptViewId, technicalDetails } from "../../store";
+import { closeArtifactCanvas, setTranscriptViewId, technicalDetails } from "../../store";
 import { relAgo } from "../../time";
-import { cadenceWords, canRetryDelivery, deliveryCount, deliveryStatusLabel, nextRunWords, routineState, runStatusLabel } from "../../taskWords";
-import type { TaskDef } from "../../types";
+import { actionText, automationState, cadenceWords, canRetryDelivery, deliveryCount, deliveryStatusLabel, nextRunWords, runStatusLabel, scheduleZone } from "../../automationWords";
+import type { Trigger } from "../../types";
 import { createLoader, problemWords } from "./createLoader";
 import LoadState from "./LoadState";
 import type { ViewerProps } from "./types";
 
 const STATE_WORDS = { paused: "Paused", running: "Working now", scheduled: "Scheduled" } as const;
-/** How often an open routine checks for news while the window is in front. */
+/** How often an open automation checks for news while the window is in front. */
 const REFRESH_MS = 10_000;
 
 /**
- * One scheduled routine: when it runs, when it runs next, what it did last and
- * whether the result was delivered, with the controls the task list has for
- * one routine. It reads the task list and keeps itself current while open and
- * in front; a routine that has been deleted says so.
+ * One automation: when it runs, when it runs next, how its last run went
+ * (read from the run records) and whether the result was delivered, with the
+ * controls the Automations sheet has for one. It keeps itself current while
+ * open and in front; one that has been deleted says so.
  */
 export default function AutomationViewer(props: ViewerProps) {
   const taskId = () => (props.subject.kind === "automation" ? props.subject.taskId : "");
-  const [latest, setLatest] = createSignal<TaskDef | null>(null);
+  const [latest, setLatest] = createSignal<Trigger | null>(null);
   const [deleted, setDeleted] = createSignal(false);
   const [note, setNote] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
 
-  const find = async (id: string) => (await api.listTasks()).tasks.find((task) => task.id === id) ?? null;
+  const find = async (id: string) => (await api.listTriggers()).triggers.find((trigger) => trigger.id === id) ?? null;
   const loader = createLoader(
     taskId,
     async (id) => {
       const found = await find(id);
-      if (!found) throw new Error("This routine no longer exists.");
+      if (!found) throw new Error("This automation no longer exists.");
       setDeleted(false);
       setLatest(found);
       return found;
@@ -40,7 +40,7 @@ export default function AutomationViewer(props: ViewerProps) {
   );
 
   // Kept current without a spinner: a refresh that fails keeps what is shown,
-  // and one that no longer finds the routine says it is gone.
+  // and one that no longer finds the automation says it is gone.
   let refreshing = false;
   const refresh = async () => {
     if (refreshing) return;
@@ -65,7 +65,7 @@ export default function AutomationViewer(props: ViewerProps) {
     setNote(null);
     try {
       setNote((await work()) ?? null);
-      if (latest()?.mail_calendar_scope) window.dispatchEvent(new Event("vak:mail-calendar-changed"));
+      if (latest()?.scope) window.dispatchEvent(new Event("vak:mail-calendar-changed"));
     } catch (cause) {
       setNote(problemWords(cause));
     } finally {
@@ -76,13 +76,13 @@ export default function AutomationViewer(props: ViewerProps) {
 
   return (
     <div class="automation-view">
-      <LoadState loader={loader} label="Opening the routine…" stable>{() =>
+      <LoadState loader={loader} label="Opening the automation…" stable>{() =>
         <Show when={!deleted()} fallback={
-          <div class="artifact-canvas-error" role="status"><span>This routine was deleted.</span></div>
+          <div class="artifact-canvas-error" role="status"><span>This automation was deleted.</span></div>
         }>
           <Show when={latest()}>{(task) => {
-            const running = () => !!task().last_session_id && isRunning(task().last_session_id!);
-            const state = () => routineState(task(), running());
+            const state = () => automationState(task());
+            const lastSession = () => task().last_run?.sessions?.[0];
             return (
               <div class="automation-body">
                 <header>
@@ -91,7 +91,7 @@ export default function AutomationViewer(props: ViewerProps) {
                 </header>
                 <dl>
                   <dt>Runs</dt>
-                  <dd>{cadenceWords(task(), technicalDetails())}<Show when={technicalDetails() && task().timezone}>{(zone) => <> · on {zone()} time</>}</Show></dd>
+                  <dd>{cadenceWords(task(), technicalDetails())}<Show when={technicalDetails() && scheduleZone(task())}>{(zone) => <> · on {zone()} time</>}</Show></dd>
                   <dt>Next run</dt>
                   <dd>
                     <Show when={task().enabled} fallback="Paused. It will not run until you resume it.">
@@ -99,41 +99,42 @@ export default function AutomationViewer(props: ViewerProps) {
                     </Show>
                   </dd>
                   <dt>What it does</dt>
-                  <dd class="automation-what">{task().script ? (technicalDetails() ? task().script : "Runs a script, without an AI model.") : task().prompt}</dd>
-                  <Show when={task().last_run_at} fallback={<><dt>Last run</dt><dd>Never run.</dd></>}>
-                    {(at) => <>
+                  <dd class="automation-what">{task().action.kind === "script" ? (technicalDetails() ? actionText(task()) : "Runs a script, without an AI model.") : actionText(task())}</dd>
+                  <Show when={task().last_run} fallback={<><dt>Last run</dt><dd>Never run.</dd></>}>
+                    {(run) => <>
                       <dt>Last run</dt>
-                      <dd>{relAgo(at())}{task().last_run_status ? ` · ${runStatusLabel(task().last_run_status!)}` : ""}</dd>
+                      <dd>{relAgo(run().opened_at)} · {runStatusLabel(run().status)}</dd>
+                      <Show when={run().reason}>
+                        <dt>Why</dt>
+                        <dd class="automation-summary">{run().reason}</dd>
+                      </Show>
                     </>}
                   </Show>
-                  <Show when={task().last_summary}>
-                    <dt>Result</dt>
-                    <dd class="automation-summary">{task().last_summary}</dd>
-                  </Show>
-                  <Show when={task().last_delivery_state}>
+                  <Show when={task().delivery_state}>
                     <dt>Delivery</dt>
-                    <dd>{deliveryStatusLabel(task().last_delivery_state!)}{technicalDetails() && task().deliver_to ? ` · ${task().deliver_to}` : ""}</dd>
+                    <dd>{deliveryStatusLabel(task().delivery_state!)}{technicalDetails() && task().deliver_to ? ` · ${task().deliver_to}` : ""}</dd>
                   </Show>
-                  <Show when={technicalDetails() && task().model_pin}>
-                    <dt>Model</dt>
-                    <dd>{task().model_pin} · never escalates</dd>
+                  <Show when={technicalDetails() && (() => { const action = task().action; return action.kind === "prompt" ? action.model_pin : null; })()}>
+                    {(pin) => <>
+                      <dt>Model</dt>
+                      <dd>{pin()} · never escalates</dd>
+                    </>}
                   </Show>
                 </dl>
                 <div class="automation-actions">
-                  <button type="button" class="artifact-canvas-btn" disabled={busy() || !task().enabled} onClick={() => void act(async () => { await api.runTaskNow(task().id); return "Started. It runs on the server, so you can close this."; })}>Run now</button>
-                  <button type="button" class="artifact-canvas-btn" disabled={busy()} onClick={() => void act(async () => { await api.patchTask(task().id, { enabled: !task().enabled }); })}>{task().enabled ? "Pause" : "Resume"}</button>
+                  <button type="button" class="artifact-canvas-btn" disabled={busy() || !task().enabled} onClick={() => void act(async () => { await api.runTrigger(task().id); return "Started. It runs on the server, so you can close this."; })}>Run now</button>
+                  <button type="button" class="artifact-canvas-btn" disabled={busy()} onClick={() => void act(async () => { await api.putTrigger(task().id, api.draftOf(task(), { enabled: !task().enabled })); })}>{task().enabled ? "Pause" : "Resume"}</button>
                   <Show when={canRetryDelivery(task())}>
                     <button type="button" class="artifact-canvas-btn" disabled={busy()} onClick={() => void act(async () => {
-                      const result = await api.retryTaskDelivery(task().id);
+                      const result = await api.retryTriggerDelivery(task().id);
                       return result.failed ? `${deliveryCount(result.replayed)} sent again; ${result.failed} still waiting` : `${deliveryCount(result.replayed)} sent again`;
                     })}>Retry delivery</button>
                   </Show>
-                  <Show when={task().last_session_id}>
-                    <button type="button" class="artifact-canvas-btn" onClick={() => {
-                      const session = task().last_session_id!;
+                  <Show when={lastSession()}>
+                    {(session) => <button type="button" class="artifact-canvas-btn" onClick={() => {
                       closeArtifactCanvas();
-                      setTranscriptViewId(session);
-                    }}>See the last run</button>
+                      setTranscriptViewId(session());
+                    }}>See the last run</button>}
                   </Show>
                 </div>
                 <Show when={note()}>{(message) => <p class="automation-note" role="status">{message()}</p>}</Show>

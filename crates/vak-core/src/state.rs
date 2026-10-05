@@ -493,14 +493,6 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
-        path: "tasks.json",
-        root: Root::Data,
-        owner: "vak-core",
-        schema: None,
-        class: Class::Desired,
-        on_purge: OnPurge::Remove,
-    },
-    StateEntry {
         path: "desktop.json",
         root: Root::Data,
         owner: "vak-desktop",

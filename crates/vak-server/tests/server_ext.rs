@@ -1060,7 +1060,7 @@ fn git_seed_main(cwd: &std::path::Path) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
+async fn automations_crud_run_now_and_worktree_churn() {
     let provider = Arc::new(Scripted {
         capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
@@ -1074,92 +1074,86 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
 
     // Interval validation is a value, not a panic.
     let bad = client
-        .post(format!("{base}/tasks"))
-        .json(&serde_json::json!({"name":"too hot","prompt":"x","interval_secs":10}))
+        .post(format!("{base}/triggers"))
+        .json(&support::prompt_trigger("too hot", "x", 10))
         .send()
         .await
         .unwrap();
     assert_eq!(bad.status(), 400);
 
     let created = client
-        .post(format!("{base}/tasks"))
-        .json(&serde_json::json!({"name":"nightly sweep","prompt":"sweep the repo","interval_secs":3600}))
+        .post(format!("{base}/triggers"))
+        .json(&support::prompt_trigger(
+            "nightly sweep",
+            "sweep the repo",
+            3600,
+        ))
         .send()
         .await
         .unwrap();
-    assert_eq!(created.status(), 200);
+    assert_eq!(created.status(), 201);
 
     let listed: serde_json::Value = client
-        .get(format!("{base}/tasks"))
+        .get(format!("{base}/triggers"))
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    let tasks = listed["tasks"].as_array().unwrap();
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0]["name"], "nightly sweep");
-    assert_eq!(tasks[0]["enabled"], true);
-    let tid = tasks[0]["id"].as_str().unwrap().to_string();
+    let triggers = listed["triggers"].as_array().unwrap();
+    assert_eq!(triggers.len(), 1);
+    assert_eq!(triggers[0]["name"], "nightly sweep");
+    assert_eq!(triggers[0]["enabled"], true);
+    assert!(triggers[0]["last_run"].is_null(), "no run yet");
+    let tid = triggers[0]["id"].as_str().unwrap().to_string();
 
-    // Run now: child runs in a worktree; transcript completes; task records it.
-    let fired = client
-        .post(format!("{base}/tasks/{tid}/run-now"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(fired.status(), 202);
-
-    #[allow(unused_assignments)]
-    let mut child_id = String::new();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
-    loop {
-        assert!(std::time::Instant::now() < deadline, "task run timeout");
+    // The last run is whatever the run records say, read fresh.
+    let last_run = |client: reqwest::Client, base: String, tid: String| async move {
         let t: serde_json::Value = client
-            .get(format!("{base}/tasks"))
+            .get(format!("{base}/triggers/{tid}"))
             .send()
             .await
             .unwrap()
             .json()
             .await
             .unwrap();
-        let t0 = &t["tasks"][0];
-        if let Some(cid) = t0["last_session_id"].as_str() {
-            child_id = cid.to_string();
-            let _ = &child_id;
-            // The watcher records the run's real final answer, not a
-            // status word (docs/design/22-gateway.md).
-            if t0["last_summary"] == "task ran" {
-                break;
-            }
+        t["last_run"].clone()
+    };
+
+    // Run now: the child runs in a worktree, and its run completes.
+    let fired = client
+        .post(format!("{base}/triggers/{tid}/run"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(fired.status(), 202);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let child_id = loop {
+        assert!(std::time::Instant::now() < deadline, "run timeout");
+        let run = last_run(client.clone(), base.clone(), tid.clone()).await;
+        if run["status"] == "completed"
+            && let Some(session) = run["sessions"][0].as_str()
+        {
+            break session.to_string();
         }
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-    }
+    };
     let ct = wait_transcript(&client, &base, &child_id).await;
     assert_eq!(ct["count"].as_u64(), Some(2));
     assert_eq!(worktree_count(&cwd), 1);
 
     // Second run replaces the worktree (latest-only retention).
     client
-        .post(format!("{base}/tasks/{tid}/run-now"))
+        .post(format!("{base}/triggers/{tid}/run"))
         .send()
         .await
         .unwrap();
     let deadline2 = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         assert!(std::time::Instant::now() < deadline2, "second run timeout");
-        let t: serde_json::Value = client
-            .get(format!("{base}/tasks"))
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        if t["tasks"][0]["last_session_id"].as_str() != Some(child_id.as_str())
-            && t["tasks"][0]["last_summary"] == "task ran again"
-        {
+        let run = last_run(client.clone(), base.clone(), tid.clone()).await;
+        if run["status"] == "completed" && run["sessions"][0].as_str() != Some(child_id.as_str()) {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -1168,7 +1162,7 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
 
     // Delete cleans up the remaining worktree.
     let del = client
-        .delete(format!("{base}/tasks/{tid}"))
+        .delete(format!("{base}/triggers/{tid}"))
         .send()
         .await
         .unwrap();

@@ -35,7 +35,7 @@ export const INBOX_KIND_LABELS: Record<string, string> = {
   digest: "digest",
   heartbeat: "status check-in",
   proposal_opened: "new skill proposed",
-  routine_failed: "routine could not run",
+  routine_failed: "automation could not run",
 };
 
 export const INBOX_KIND_TONES: Record<string, "warning" | "danger" | "info" | "success" | "accent" | "neutral"> = {

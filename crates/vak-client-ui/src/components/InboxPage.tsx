@@ -31,7 +31,7 @@ const KIND_CLASS: Record<string, string> = {
 function kindLabel(kind: string): string {
   return ({
     task_summary: "Task result",
-    routine_failed: "Task couldn’t run",
+    routine_failed: "Automation couldn’t run",
     approval_pending: "Needs your review",
     approval_denied: "Not approved",
     budget_alert: "Usage alert",
@@ -265,7 +265,7 @@ export default function InboxPage() {
                           </Show>
                           <Show when={entry.task_id}>
                             <button class="btn sm primary" onClick={() => { setTaskFocusId(entry.task_id!); setTasksOpen(true); }}>
-                              {entry.kind === "routine_failed" ? "Review failed task" : "View task result"}
+                              {entry.kind === "routine_failed" ? "Review the automation" : "View the automation"}
                             </button>
                           </Show>
                           <Show when={!entry.session_id && !entry.task_id}>

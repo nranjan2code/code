@@ -1,7 +1,8 @@
-//! Scheduler upgrade behaviors (docs/design/29-personal-os.md P2): cron
-//! schedules with startup catch-up, zero-token watchdog script tasks over
-//! the brokered bash path, per-task model pinning verified through work
-//! receipts, and once-per-window budget alerts.
+//! Scheduler behaviors (docs/design/29-personal-os.md P2, plan M4.3): cron
+//! automations with startup catch-up, zero-token watchdog scripts over the
+//! brokered bash path, model pinning verified through work receipts, and
+//! once-per-window budget alerts. What a run did is read from its run
+//! record, never from the automation.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -121,12 +122,12 @@ struct Fixture {
 }
 
 /// Build a hermetic git workspace + home and start the FULL stack (bearer
-/// auth + scheduler). `seed_tasks` receives `(home, ws)` BEFORE the server
-/// starts — writing `<home>/tasks.json` there is the simulated-downtime
-/// injection point, since the scheduler loads it once at startup.
+/// auth + scheduler). `seed` receives the workspace BEFORE the server
+/// starts; its automations are stored first, which is how downtime is
+/// simulated: the scheduler finds them due at its first tick.
 async fn spawn_full(
     config_toml: &str,
-    seed_tasks: Option<impl for<'a> FnOnce(&'a Path, &'a Path) -> serde_json::Value>,
+    seed: impl FnOnce(&Path) -> Vec<vak_core::triggers::Trigger>,
 ) -> Fixture {
     let dir = Arc::new(tempfile::tempdir().unwrap());
     let ws = dir.path().join("ws");
@@ -139,21 +140,17 @@ async fn spawn_full(
     git_seed(&ws);
 
     let home = dir.path().join("home");
-    // The data home is fixed before a task names its space in it.
+    // The data home is fixed before an automation names its space in it.
     vak_config::paths::isolate_home_for_tests();
-    if let Some(build) = seed_tasks {
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::write(
-            vak_core::tasks::tasks_file(&home),
-            serde_json::to_string_pretty(&build(&home, &ws)).unwrap(),
-        )
-        .unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    let shared = vak_config::scope::SharedScope::new(&home);
+    for trigger in seed(&ws) {
+        vak_core::triggers::create(&shared, &trigger).unwrap();
     }
 
     let dispatches = Arc::new(AtomicUsize::new(0));
-    vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(ws.clone(), true).unwrap();
-    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
+    core.set_shared_scope(shared);
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     // A REAL worker executable: a cargo test harness cannot speak the
     // broker protocol.
@@ -180,19 +177,21 @@ async fn spawn_full(
     }
 }
 
+fn no_seed(_: &Path) -> Vec<vak_core::triggers::Trigger> {
+    Vec::new()
+}
+
 fn delivery_lines(home: &Path) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    for v in vak_session::chain::RecordChain::at(home.join("gateway").join("deliveries"))
+    vak_session::chain::RecordChain::at(home.join("gateway").join("deliveries"))
         .read::<serde_json::Value>()
-    {
-        {
-            out.push((
+        .into_iter()
+        .map(|v| {
+            (
                 v["target"].as_str().unwrap_or_default().to_string(),
                 v["text"].as_str().unwrap_or_default().to_string(),
-            ));
-        }
-    }
-    out
+            )
+        })
+        .collect()
 }
 
 async fn wait_until(secs: u64, mut pred: impl FnMut() -> bool) -> bool {
@@ -206,80 +205,88 @@ async fn wait_until(secs: u64, mut pred: impl FnMut() -> bool) -> bool {
     pred()
 }
 
-async fn task_field(srv: &Srv, id: &str, field: &str) -> serde_json::Value {
-    let body = srv.get_json("/tasks").await;
-    body["tasks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["id"] == id)
-        .map(|t| t[field].clone())
-        .unwrap_or(serde_json::Value::Null)
+/// The automation's last run, as the API reads it from the run records.
+async fn last_run(srv: &Srv, id: &str) -> serde_json::Value {
+    srv.get_json(&format!("/triggers/{id}")).await["last_run"].clone()
 }
 
-async fn wait_summary(srv: &Srv, id: &str, secs: u64, pred: impl Fn(&str) -> bool) {
+/// Waits until the automation's last run settles and matches `pred`.
+async fn wait_run(
+    srv: &Srv,
+    id: &str,
+    secs: u64,
+    pred: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
     loop {
+        let run = last_run(srv, id).await;
+        if run["status"] != "running" && !run.is_null() && pred(&run) {
+            return run;
+        }
         assert!(
             std::time::Instant::now() < deadline,
-            "task '{id}' summary never matched"
+            "automation '{id}' never reached the expected run: {run}"
         );
-        let v = task_field(srv, id, "last_summary").await;
-        let matched = match v.as_str() {
-            Some(s) => pred(s),
-            None => false,
-        };
-        if matched {
-            return;
-        }
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
 }
 
-fn stale_script_task(
-    id: &str,
+/// A watchdog on cron `* * * * *`, created two hours ago and never run:
+/// every slot since then was missed while the server was down.
+fn stale_script(
     name: &str,
     ws: &Path,
     deliver_to: &str,
     script: &str,
-) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
+) -> vak_core::triggers::Trigger {
+    vak_core::triggers::Trigger {
+        id: vak_session::ids::TriggerId::new(),
+        name: name.into(),
+        agent: "vak".into(),
+        agent_revision: None,
+        space: vak_config::spaces::bind(ws).unwrap(),
+        enabled: true,
+        kind: vak_core::triggers::TriggerKind::Schedule {
+            schedule: vak_core::triggers::Schedule::Cron {
+                expr: "* * * * *".into(),
+                timezone: None,
+            },
+        },
+        action: vak_core::triggers::TriggerAction::Script {
+            command: script.into(),
+        },
+        deliver_to: Some(deliver_to.into()),
+        on_crash: vak_core::triggers::OnCrash::Skip,
+        scope: None,
+        created_at: chrono::Utc::now() - chrono::Duration::hours(2),
+        created_by: None,
+    }
+}
+
+/// A `POST /triggers` body for a script on a cron that almost never fires
+/// (Feb 29 at midnight), so only run-now runs it.
+fn rare_script(name: &str, command: &str, deliver_to: Option<&str>) -> serde_json::Value {
+    let mut body = serde_json::json!({
         "name": name,
-        "prompt": "",
-        "interval_secs": 3600,
-        "enabled": true,
-        "space": vak_config::spaces::bind(ws).unwrap(),
-        "created_at": chrono::Utc::now().to_rfc3339(),
-        // Two hours of downtime: every "* * * * *" slot since this instant
-        // was missed.
-        "last_run_at": (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339(),
-        "last_session_id": null,
-        "last_summary": null,
-        "last_wt": null,
-        "deliver_to": deliver_to,
-        "schedule": "* * * * *",
-        "script": script,
-        "model_pin": null
-    })
+        "kind": { "kind": "schedule", "schedule": { "kind": "cron", "expr": "0 0 29 2 *" } },
+        "action": { "kind": "script", "command": command },
+    });
+    if let Some(target) = deliver_to {
+        body["deliver_to"] = target.into();
+    }
+    body
 }
 
 // ---- Catch-up -----------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn catch_up_fires_missed_cron_slot_exactly_once_with_zero_dispatch() {
-    let fx = spawn_full(
-        "",
-        Some(|_home: &Path, ws: &Path| {
-            serde_json::json!([stale_script_task(
-                "cu-1",
-                "nightly-watch",
-                ws,
-                "log:cu",
-                "echo caught-up-42"
-            )])
-        }),
-    )
+    let mut id = String::new();
+    let fx = spawn_full("", |ws| {
+        let trigger = stale_script("nightly-watch", ws, "log:cu", "echo caught-up-42");
+        id = trigger.id.to_string();
+        vec![trigger]
+    })
     .await;
 
     // The missed slot fires immediately at startup, stdout verbatim.
@@ -301,32 +308,24 @@ async fn catch_up_fires_missed_cron_slot_exactly_once_with_zero_dispatch() {
     // Watchdogs never touch the LLM: zero provider dispatches overall.
     assert_eq!(fx.srv.dispatches.load(Ordering::SeqCst), 0);
 
-    // The record moved forward (no longer two hours stale).
-    wait_summary(&fx.srv, "cu-1", 5, |s| s.contains("caught-up-42")).await;
-    let last = task_field(&fx.srv, "cu-1", "last_run_at").await;
-    let last = chrono::DateTime::parse_from_rfc3339(last.as_str().unwrap())
+    // The catch-up is a run record, opened just now.
+    let run = wait_run(&fx.srv, &id, 5, |run| run["status"] == "completed").await;
+    let opened = chrono::DateTime::parse_from_rfc3339(run["opened_at"].as_str().unwrap())
         .unwrap()
         .with_timezone(&chrono::Utc);
-    assert!(
-        chrono::Utc::now() - last < chrono::Duration::seconds(30),
-        "last_run_at should be refreshed by the catch-up fire"
-    );
+    assert!(chrono::Utc::now() - opened < chrono::Duration::seconds(30));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn catch_up_disabled_waits_for_next_slot() {
-    let fx = spawn_full(
-        "[automation]\ncatch_up_missed = false\n",
-        Some(|_home: &Path, ws: &Path| {
-            serde_json::json!([stale_script_task(
-                "cu-off",
-                "quiet-watch",
-                ws,
-                "log:cuoff",
-                "echo not-caught-up-99"
-            )])
-        }),
-    )
+    let fx = spawn_full("[automation]\ncatch_up_missed = false\n", |ws| {
+        vec![stale_script(
+            "quiet-watch",
+            ws,
+            "log:cuoff",
+            "echo not-caught-up-99",
+        )]
+    })
     .await;
 
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
@@ -341,28 +340,22 @@ async fn catch_up_disabled_waits_for_next_slot() {
 
 // ---- Watchdog script matrix -----------------------------------------------------
 
-async fn create_task(srv: &Srv, body: serde_json::Value) -> String {
+async fn create_trigger(srv: &Srv, body: serde_json::Value) -> String {
     let res = srv
         .client()
-        .post(format!("{}/tasks", srv.base))
+        .post(format!("{}/triggers", srv.base))
         .json(&body)
         .send()
         .await
         .unwrap();
-    assert_eq!(res.status(), 200, "create failed: {}", res.status());
-    let list = srv.get_json("/tasks").await;
-    list["tasks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["name"] == body["name"])
-        .map(|t| t["id"].as_str().unwrap().to_string())
-        .unwrap()
+    assert_eq!(res.status(), 201, "create failed: {}", res.status());
+    let created: serde_json::Value = res.json().await.unwrap();
+    created["id"].as_str().unwrap().to_string()
 }
 
 async fn run_now(srv: &Srv, id: &str) -> reqwest::StatusCode {
     srv.client()
-        .post(format!("{}/tasks/{id}/run-now", srv.base))
+        .post(format!("{}/triggers/{id}/run", srv.base))
         .send()
         .await
         .unwrap()
@@ -371,56 +364,40 @@ async fn run_now(srv: &Srv, id: &str) -> reqwest::StatusCode {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn script_watchdog_matrix_silent_stdout_failure_and_delivery() {
-    let fx = spawn_full("", None::<fn(&Path, &Path) -> serde_json::Value>).await;
+    let fx = spawn_full("", no_seed).await;
     let srv = &fx.srv;
 
-    let ok_id = create_task(
+    let ok_id = create_trigger(
         srv,
-        serde_json::json!({
-            "name": "ok-watch", "script": "echo watchdog-hello",
-            "schedule": "0 0 29 2 *", "deliver_to": "log:w-ok"
-        }),
+        rare_script("ok-watch", "echo watchdog-hello", Some("log:w-ok")),
     )
     .await;
-    let silent_id = create_task(
+    let silent_id = create_trigger(
         srv,
-        serde_json::json!({
-            "name": "silent-watch", "script": "true",
-            "schedule": "0 0 29 2 *", "deliver_to": "log:w-silent"
-        }),
+        rare_script("silent-watch", "true", Some("log:w-silent")),
     )
     .await;
-    let fail_id = create_task(
+    let fail_id = create_trigger(
         srv,
-        serde_json::json!({
-            "name": "fail-watch", "script": "echo broken >&2; exit 3",
-            "schedule": "0 0 29 2 *"
-        }),
+        rare_script("fail-watch", "echo broken >&2; exit 3", None),
     )
     .await;
 
     // Success delivers trimmed stdout verbatim.
     assert_eq!(run_now(srv, &ok_id).await, 202);
-    wait_summary(srv, &ok_id, 15, |s| s == "watchdog-hello").await;
-    if !wait_until(10, || {
-        delivery_lines(&srv.home)
+    wait_run(srv, &ok_id, 15, |run| run["status"] == "completed").await;
+    assert!(
+        wait_until(10, || delivery_lines(&srv.home)
             .iter()
-            .any(|(t, x)| t == "log:w-ok" && x == "watchdog-hello")
-    })
-    .await
-    {
-        eprintln!(
-            "[DBG-test] deliveries={:?} raw={:?} summary={:?}",
-            delivery_lines(&srv.home),
-            vak_session::chain::RecordChain::at(srv.home.join("gateway").join("deliveries")).text(),
-            task_field(srv, &ok_id, "last_summary").await
-        );
-        panic!("delivery never landed");
-    }
+            .any(|(t, x)| t == "log:w-ok" && x == "watchdog-hello"))
+        .await,
+        "delivery never landed: {:?}",
+        delivery_lines(&srv.home)
+    );
 
-    // Empty stdout is a silent tick: recorded locally, never delivered.
+    // Empty stdout is a silent tick: a completed run, never delivered.
     assert_eq!(run_now(srv, &silent_id).await, 202);
-    wait_summary(srv, &silent_id, 15, |s| s == "(silent tick)").await;
+    wait_run(srv, &silent_id, 15, |run| run["status"] == "completed").await;
     assert!(
         !delivery_lines(&srv.home)
             .iter()
@@ -429,7 +406,8 @@ async fn script_watchdog_matrix_silent_stdout_failure_and_delivery() {
     );
 
     // Failure delivers an error alert EVEN without a configured target
-    // (fallback log surface), carrying exit-code detail.
+    // (fallback log surface), carrying exit-code detail, and its run says
+    // it failed.
     assert_eq!(run_now(srv, &fail_id).await, 202);
     assert!(
         wait_until(15, || delivery_lines(&srv.home).iter().any(|(_, x)| {
@@ -438,7 +416,14 @@ async fn script_watchdog_matrix_silent_stdout_failure_and_delivery() {
         .await,
         "failing watchdog must deliver a typed error alert"
     );
-    wait_summary(srv, &fail_id, 10, |s| s.starts_with("script failed:")).await;
+    let failed = wait_run(srv, &fail_id, 10, |run| run["status"] == "failed").await;
+    assert!(
+        failed["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("script failed:"),
+        "{failed}"
+    );
 
     // Zero tokens by construction AND observed: no provider dispatch ever.
     assert_eq!(fx.srv.dispatches.load(Ordering::SeqCst), 0);
@@ -473,26 +458,22 @@ async fn missing_worker_delivers_typed_error_not_silence() {
     let base = format!("http://{addr}");
     let client = reqwest::Client::new();
 
-    client
-        .post(format!("{base}/tasks"))
-        .json(&serde_json::json!({
-            "name": "brokerless", "script": "echo hi",
-            "interval_secs": 3600, "deliver_to": "log:bw"
-        }))
-        .send()
-        .await
-        .unwrap();
-    let list: serde_json::Value = client
-        .get(format!("{base}/tasks"))
+    let created: serde_json::Value = client
+        .post(format!("{base}/triggers"))
+        .json(&{
+            let mut body = support::script_trigger("brokerless", "echo hi", 3600);
+            body["deliver_to"] = "log:bw".into();
+            body
+        })
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    let id = list["tasks"][0]["id"].as_str().unwrap().to_string();
+    let id = created["id"].as_str().unwrap().to_string();
     let res = client
-        .post(format!("{base}/tasks/{id}/run-now"))
+        .post(format!("{base}/triggers/{id}/run"))
         .send()
         .await
         .unwrap();
@@ -518,42 +499,27 @@ async fn missing_worker_delivers_typed_error_not_silence() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn model_pin_receipts_show_pinned_model_only() {
-    let fx = spawn_full("", None::<fn(&Path, &Path) -> serde_json::Value>).await;
+    let fx = spawn_full("", no_seed).await;
     let srv = &fx.srv;
     let client = srv.client();
 
-    let res = client
-        .post(format!("{}/tasks", srv.base))
-        .json(&serde_json::json!({
+    let tid = create_trigger(
+        srv,
+        serde_json::json!({
             "name": "pinned-nightly",
-            "prompt": "summarize the tree",
-            "interval_secs": 3600,
-            "model_pin": "counting/pinned-model-x"
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-    let list = srv.get_json("/tasks").await;
-    let tid = list["tasks"][0]["id"].as_str().unwrap().to_string();
+            "kind": { "kind": "manual" },
+            "action": {
+                "kind": "prompt",
+                "text": "summarize the tree",
+                "model_pin": "counting/pinned-model-x",
+            },
+        }),
+    )
+    .await;
+    assert_eq!(run_now(srv, &tid).await, 202);
 
-    // A never-run interval task is due immediately, so the SCHEDULER fires
-    // it on its first tick; wait for the child session id it records.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
-    let child = loop {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "task never recorded a child session"
-        );
-        if let Some(c) = task_field(srv, &tid, "last_session_id")
-            .await
-            .as_str()
-            .map(String::from)
-        {
-            break c;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-    };
+    let run = wait_run(srv, &tid, 25, |run| run["status"] == "completed").await;
+    let child = run["sessions"][0].as_str().unwrap().to_string();
     let receipts: serde_json::Value = {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         loop {
@@ -584,20 +550,13 @@ async fn model_pin_receipts_show_pinned_model_only() {
         );
         assert_eq!(r["provider"], "counting");
     }
-
-    // And the run itself completed normally.
-    wait_summary(srv, &tid, 15, |s| s == "done").await;
 }
 
 // ---- Budget alerts ---------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn budget_alert_fires_once_per_window_then_stops() {
-    let fx = spawn_full(
-        "[finops]\nmax_day_usd = 10.0\n",
-        None::<fn(&Path, &Path) -> serde_json::Value>,
-    )
-    .await;
+    let fx = spawn_full("[finops]\nmax_day_usd = 10.0\n", no_seed).await;
     let srv = &fx.srv;
 
     // Day spend already past the 80% threshold of the $10 cap.
@@ -619,15 +578,7 @@ async fn budget_alert_fires_once_per_window_then_stops() {
         .unwrap();
 
     let alerts_path = srv.home.join("budget-alerts");
-
-    let tid = create_task(
-        srv,
-        serde_json::json!({
-            "name": "budget-probe", "script": "true",
-            "schedule": "0 0 29 2 *", "deliver_to": "log:budget"
-        }),
-    )
-    .await;
+    let tid = create_trigger(srv, rare_script("budget-probe", "true", Some("log:budget"))).await;
 
     // First fire crosses the threshold: one audit row, one delivery.
     assert_eq!(run_now(srv, &tid).await, 202);
@@ -662,121 +613,93 @@ async fn budget_alert_fires_once_per_window_then_stops() {
     assert_eq!(deliveries, 1, "same-level alert must not redeliver");
 }
 
-// ---- Task CRUD validation ---------------------------------------------------------
+// ---- Automation API validation ----------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn task_api_validates_schedule_script_and_pin_fields() {
-    let fx = spawn_full("", None::<fn(&Path, &Path) -> serde_json::Value>).await;
+async fn automation_api_validates_schedule_action_and_ownership() {
+    let fx = spawn_full("", no_seed).await;
     let srv = &fx.srv;
     let client = srv.client();
+    let post = |body: serde_json::Value| {
+        let client = client.clone();
+        let base = srv.base.clone();
+        async move {
+            let res = client
+                .post(format!("{base}/triggers"))
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            let status = res.status();
+            (
+                status,
+                res.json::<serde_json::Value>().await.unwrap_or_default(),
+            )
+        }
+    };
 
-    // prompt XOR script.
-    let res = client
-        .post(format!("{}/tasks", srv.base))
-        .json(&serde_json::json!({
-            "name": "both", "prompt": "x", "script": "y", "interval_secs": 3600
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 400);
-    let body: serde_json::Value = res.json().await.unwrap();
-    assert!(body["error"].as_str().unwrap().contains("exactly one"));
-
-    let res = client
-        .post(format!("{}/tasks", srv.base))
-        .json(&serde_json::json!({ "name": "neither", "interval_secs": 3600 }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 400);
+    // An action must say what to do.
+    let (status, body) = post(rare_script("empty", "  ", None)).await;
+    assert_eq!(status, 400, "{body}");
+    let (status, _) = post(serde_json::json!({
+        "name": "neither",
+        "kind": { "kind": "manual" },
+    }))
+    .await;
+    assert!(status.is_client_error());
 
     // Bad cron grammar is rejected with a typed message.
-    let res = client
-        .post(format!("{}/tasks", srv.base))
-        .json(&serde_json::json!({
-            "name": "badcron", "script": "true",
-            "interval_secs": 3600, "schedule": "99 * * * *"
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 400);
-    let body: serde_json::Value = res.json().await.unwrap();
+    let (status, body) = post(serde_json::json!({
+        "name": "badcron",
+        "kind": { "kind": "schedule", "schedule": { "kind": "cron", "expr": "99 * * * *" } },
+        "action": { "kind": "script", "command": "true" },
+    }))
+    .await;
+    assert_eq!(status, 400);
     assert!(body["error"].as_str().unwrap().contains("99"), "{body}");
 
-    // A valid cron+script watchdog is accepted; prompt stays optional.
-    let res = client
-        .post(format!("{}/tasks", srv.base))
-        .json(&serde_json::json!({
-            "name": "goodcron", "script": "true",
-            "interval_secs": 3600, "schedule": "*/5 * * * *",
-            "agent_id": "vak", "agent_revision": 1
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-    let list = srv.get_json("/tasks").await;
-    let good = &list["tasks"][0];
-    assert_eq!(good["schedule"], "*/5 * * * *");
-    assert_eq!(good["agent_id"], "vak");
-    assert_eq!(good["agent_revision"], 1);
+    // A valid cron watchdog is accepted, owned by the built-in Agent.
+    let (status, good) = post(serde_json::json!({
+        "name": "goodcron",
+        "kind": { "kind": "schedule", "schedule": { "kind": "cron", "expr": "*/5 * * * *" } },
+        "action": { "kind": "script", "command": "true" },
+    }))
+    .await;
+    assert_eq!(status, 201, "{good}");
+    assert_eq!(good["agent"], "vak");
+    let id = good["id"].as_str().unwrap().to_string();
+    let put = |body: serde_json::Value| {
+        let client = client.clone();
+        let url = format!("{}/triggers/{id}", srv.base);
+        async move { client.put(url).json(&body).send().await.unwrap().status() }
+    };
 
-    // PATCH to an invalid schedule is rejected and leaves state untouched.
+    // Replacing it with an invalid schedule is refused and changes nothing.
+    let mut invalid = good.clone();
+    invalid["kind"]["schedule"]["expr"] = "* * * *".into();
+    assert_eq!(put(invalid).await, 400);
+    let stored = srv.get_json(&format!("/triggers/{id}")).await;
+    assert_eq!(stored["kind"]["schedule"]["expr"], "*/5 * * * *");
+
+    // A script becomes a prompt in one replacement.
+    let mut prompt = stored.clone();
+    prompt["action"] = serde_json::json!({ "kind": "prompt", "text": "now an agent turn" });
+    assert_eq!(put(prompt).await, 200);
+    let stored = srv.get_json(&format!("/triggers/{id}")).await;
+    assert_eq!(stored["action"]["text"], "now an agent turn");
+    assert!(stored["last_run"].is_null(), "no run state lives on it");
+
+    // Its next slots are listed in order.
+    let slots = srv.get_json(&format!("/triggers/{id}/slots?count=3")).await;
+    assert_eq!(slots["slots"].as_array().unwrap().len(), 3);
+
+    // An unknown automation is a typed 404.
     let res = client
-        .patch(format!(
-            "{}/tasks/{}",
-            srv.base,
-            good["id"].as_str().unwrap()
+        .put(format!(
+            "{}/triggers/trg_00000000-0000-7000-8000-000000000000",
+            srv.base
         ))
-        .json(&serde_json::json!({ "schedule": "* * * *" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 400);
-    let list = srv.get_json("/tasks").await;
-    assert_eq!(
-        list["tasks"][0]["schedule"], "*/5 * * * *",
-        "invalid patch ignored"
-    );
-
-    // Clearing script then setting prompt keeps validation green.
-    let res = client
-        .patch(format!(
-            "{}/tasks/{}",
-            srv.base,
-            good["id"].as_str().unwrap()
-        ))
-        .json(&serde_json::json!({ "script": null, "prompt": "now an agent task" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-    let list = srv.get_json("/tasks").await;
-    assert_eq!(list["tasks"][0]["prompt"], "now an agent task");
-    assert!(list["tasks"][0]["script"].is_null());
-
-    // Agent ownership is patchable and clearing it also clears its revision.
-    let res = client
-        .patch(format!(
-            "{}/tasks/{}",
-            srv.base,
-            good["id"].as_str().unwrap()
-        ))
-        .json(&serde_json::json!({ "agent_id": null }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(res.status(), 200);
-    let list = srv.get_json("/tasks").await;
-    assert!(list["tasks"][0]["agent_id"].is_null());
-    assert!(list["tasks"][0]["agent_revision"].is_null());
-
-    // Unknown task id on PATCH is a typed 404.
-    let res = client
-        .patch(format!("{}/tasks/nope", srv.base))
-        .json(&serde_json::json!({ "name": "x" }))
+        .json(&stored)
         .send()
         .await
         .unwrap();

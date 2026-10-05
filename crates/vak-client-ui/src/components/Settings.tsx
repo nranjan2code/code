@@ -35,7 +35,7 @@ import {
   setTranscriptViewId,
 } from "../store";
 import type { SettingsPageId } from "../store";
-import type { ConfigSnapshot, SessionSummary, TaskDef } from "../types";
+import type { ConfigSnapshot, SessionSummary, Trigger } from "../types";
 import * as api from "../api";
 import { interfaceFonts, contentFonts, codeFonts } from "../typography";
 import { watchConfig } from "../streamHub";
@@ -1281,8 +1281,8 @@ export default function Settings() {
   );
   const [mailCalendarTasks, { refetch: refreshMailCalendarTasks }] = createResource(
     () => page() === "mail-calendar" && !syntheticMailDemo() ? activeAgentId() : null,
-    async (agentId) => (await api.listTasks()).tasks.filter(
-      (task) => !!task.mail_calendar_scope && task.agent_id === agentId,
+    async (agentId) => (await api.listTriggers()).triggers.filter(
+      (task) => !!task.scope && task.agent === agentId,
     ),
   );
   const [mailCalendarPausing, setMailCalendarPausing] = createSignal<string | null>(null);
@@ -1432,16 +1432,15 @@ export default function Settings() {
       setMailCalendarBusy(false);
     }
   };
-  const pauseMailCalendarTask = async (task: TaskDef) => {
-    await api.patchTask(task.id, { enabled: false });
-    if (task.last_run_status === "working" && task.last_session_id) {
-      await api.cancelRun(task.last_session_id);
-    }
+  const pauseMailCalendarTask = async (task: Trigger) => {
+    await api.putTrigger(task.id, api.draftOf(task, { enabled: false }));
+    const session = task.last_run?.status === "running" ? task.last_run.sessions?.[0] : undefined;
+    if (session) await api.cancelRun(session);
   };
   const pauseMailCalendarRoutines = async (accountId?: string) => {
     const scope = accountId ?? "all";
     const selected = (mailCalendarTasks() ?? []).filter((task) =>
-      task.enabled && (!accountId || task.mail_calendar_scope?.account_id === accountId),
+      task.enabled && (!accountId || task.scope?.account_id === accountId),
     );
     if (selected.length === 0) return;
     setMailCalendarPausing(scope);
@@ -2231,15 +2230,15 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "mail-calendar"}>
-              <header class="mail-calendar-settings-header"><div class="mail-calendar-settings-intro"><h1>Connected accounts and access</h1><p>Manage the accounts and permissions available to {agentName()}.</p><p class="settings-hint">Mail, calendar, drafts, Review and routine setup are in Canvas. This page manages account access and lifecycle.</p></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open Today in Canvas</button><p class="settings-hint">Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
+              <header class="mail-calendar-settings-header"><div class="mail-calendar-settings-intro"><h1>Connected accounts and access</h1><p>Manage the accounts and permissions available to {agentName()}.</p><p class="settings-hint">Mail, calendar, drafts, Review and automation setup are in Canvas. This page manages account access and lifecycle.</p></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open Today in Canvas</button><p class="settings-hint">Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
                 <p class="settings-hint" role="status">
                   <Show when={connection() === "offline"} fallback={connection() === "live" && health()
                     ? health()?.automation_scheduler?.status === "stale"
                       ? "The service API answers, but its background scheduler has not checked in recently. The service may be starting, paused, stalled, or the computer may have slept; scheduled work has not been confirmed during this period."
                       : health()?.automation_scheduler?.status === "starting"
-                        ? "The service API answers; its background scheduler is starting. Routine status and provider-check times will update when the scheduler begins reporting."
-                        : "Scheduled and continuous routines run on this Vakyartha service. The computer or server running it must stay awake and connected; each routine's last successful provider check shows source freshness."
-                    : "Connecting to the Vakyartha service. Routine status and source freshness will appear when it is reachable."}>
+                        ? "The service API answers; its background scheduler is starting. Automation status and provider-check times will update when the scheduler begins reporting."
+                        : "Scheduled and continuous automations run on this Vakyartha service. The computer or server running it must stay awake and connected; each automation's last successful provider check shows source freshness."
+                    : "Connecting to the Vakyartha service. Automation status and source freshness will appear when it is reachable."}>
                     The Vakyartha service is offline, so its scheduled and continuous routines cannot run. Missed work follows the task schedule and configured catch-up behavior.
                   </Show>
                 </p>
@@ -2249,7 +2248,7 @@ export default function Settings() {
                   <SyntheticMailCalendarDemoControl checked={syntheticMailDemo()} onChange={(enabled) => { setSyntheticMailCalendarEnabled(enabled); setSyntheticMailDemo(enabled); }} />
                 </Group>
               </Show>
-              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews open in Canvas and do not add provider content to conversation history. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
+              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews open in Canvas and do not add provider content to conversation history. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled automations are available; dependable continuous service recovery is still in progress.</span></div></div>
               <Show when={!syntheticMailDemo()}>
               <Group title="Choose access">
                 <p class="settings-hint">Read access is selected by default. Email sending and calendar changes are optional and request separate provider permissions. Every effect requires exact review and your confirmation. Event creation supports one timed event without attendees, invitations, recurrence, or reminders. Google event updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer; cancellation applies to that event only. Provider calendar-write consent is broader than these actions; Vakyartha exposes only the reviewed operations.</p>
@@ -2308,14 +2307,14 @@ export default function Settings() {
                               : "Connected";
                       const canPreview = account.status === "connected" && account.credential_available && !account.revoked_at;
                       const enabledAccountRoutines = () => (mailCalendarTasks() ?? []).filter(
-                        (task) => task.enabled && task.mail_calendar_scope?.account_id === account.id,
+                        (task) => task.enabled && task.scope?.account_id === account.id,
                       );
                       const pauseAccountKey = `account:${account.id}`;
                       return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${syntheticMailDemo() ? "Synthetic sample · no provider connected" : connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.auth_method === "app_password" ? "App Password · revoke at provider" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}>
                         <div class="settings-actions">
                           <button class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open in Canvas</button>
                           <Show when={!syntheticMailDemo()}>
-                            <Show when={enabledAccountRoutines().length > 0}><button class="settings-button" disabled={mailCalendarPausing() !== null} onClick={() => void pauseMailCalendarRoutines(account.id)}>{mailCalendarPausing() === pauseAccountKey ? "Pausing…" : "Pause routines for this account"}</button></Show>
+                            <Show when={enabledAccountRoutines().length > 0}><button class="settings-button" disabled={mailCalendarPausing() !== null} onClick={() => void pauseMailCalendarRoutines(account.id)}>{mailCalendarPausing() === pauseAccountKey ? "Pausing…" : "Pause automations for this account"}</button></Show>
                             <Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show>
                             <Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show>
                             <button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button>

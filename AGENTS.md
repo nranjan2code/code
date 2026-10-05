@@ -105,7 +105,7 @@ Read before changing behaviour in these areas:
   continuous routines remain in progress. Scheduled read-only routines now
   support an explicitly best-effort email watch with bounded encrypted
   deduplication IDs. The first scheduled read-only routine slice
-  uses the existing `TaskDef` scheduler, pins an Agent revision/account/read
+  uses the trigger scheduler (`vak_core::triggers`), pins an Agent revision/account/read
   allowlist, restricts its unattended child to the brokered mail/calendar
   tool, and pauses when its account is disconnected. The watch polls only
   provider IDs and skips model dispatch when unchanged. An Agent-vault OS
@@ -155,7 +155,7 @@ Read before changing behaviour in these areas:
   blocked. Apple conversation workspaces, live provider checks, and the 24-hour
   service recovery test remain open. Current 4.x session history cannot be
   selectively erased, so account-deletion erasure remains incomplete. Calendar event-relative
-  routines use the existing `TaskDef` cadence, a bounded provider poll, opaque
+  routines use a trigger's cadence, a bounded provider poll, opaque
   encrypted Agent-vault occurrence keys, and brokered reads of matching events;
   Google and Graph calendar reads follow bounded continuation pages with
   same-origin Graph validation. Event-trigger scans detect incomplete pages,
@@ -262,8 +262,14 @@ holder stopped renewing its liveness is recorded abandoned by the sweep
 on each scheduler tick. `/runs`, `vak runs` and the admin Runs screen
 (`#/runs`, `#/runs/<id>`) read them. A flow execution is a run with
 `work = flow <name>` (a plan is `work = plan`, each attempt a run it
-caused), and its checkpoint is `flow-runs/<run id>.json`. No session
-starts a later step unasked.
+caused), and its checkpoint is `flow-runs/<run id>.json`. M4.3 is done
+(2026-10-05): `vak_core::triggers::Trigger` replaces `TaskDef` and
+`tasks.json` as a Document `triggers/<trg>`; every run of one names it,
+so its last run, delivery and last check are queries over the run
+records. `/triggers` replaces `/tasks`, `vak triggers` replaces `vak
+tasks`, the model's `automations` tool replaces `tasks`, and the admin
+Automations screen (`#/automations`) and the client's Automations sheet
+with its Runs panel read them. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -324,8 +330,8 @@ starts a later step unasked.
 - `vak self uninstall --purge` removes the logs root (`purge_includes_logs`).
 - Feed scripts write only where the server says, under `VAK_HOME`
   (`feeds_write_under_overridden_home`).
-- `AgentSchedule` and `agents_runs.jsonl` are deleted; `TaskDef` is the one
-  schedule model.
+- `AgentSchedule` and `agents_runs.jsonl` are deleted; `TaskDef` was the
+  one schedule model (it became `Trigger` at M4.3).
 - A routine that cannot run leaves a `routine_failed` inbox entry, run ids
   are full UUIDv7, a cron slot is spent only by a run that started, a run's
   handle is its ledger id, and a child run's home is not nested
@@ -361,8 +367,10 @@ starts a later step unasked.
   the session header's Agent.
 
 **Until the next milestone lands, don't deepen the debt:**
-- Build no second schedule or trigger model: scheduled work is a `TaskDef`,
-  which grows into Triggers at M4. Docs 76, 80 and 81 use that model.
+- Build no second schedule or trigger model: scheduled work is a
+  `vak_core::triggers::Trigger` (plan M4.3), a Document; docs 76, 80 and 81
+  use that model. Nothing about a run is written back onto a trigger: its
+  last run, delivery and check time are queries over its run records.
 - Build no second identity for "the root of this work": durable accounting
   keys by M1's `RunId` (the reliable-work plan's E1 waits for it).
 - Resolve every new path through `vak_config::paths` and `vak_config::scope`,
@@ -1057,9 +1065,10 @@ in progress, and the rest of V4 follows it.
       specialist prompts without fragmenting core execution. Workers spawned
       via `task` receive specialist archetype instructions and capabilities
       according to assigned roles.
-    - **Scheduled work** is a task (`vak_core::tasks::TaskDef`), the one
-      schedule model, owned by the Agent named in its `agent_id`. A task that
-      cannot run says why in the inbox (`RoutineFailed`), never silently.
+    - **Scheduled work** is an automation (`vak_core::triggers::Trigger`),
+      the one schedule model, owned by the Agent named in its `agent`. One
+      that cannot run says why in the inbox (`RoutineFailed`) and in a run
+      record, never silently.
 39. **Office documents are hostile, lossless, labelled and self-sufficient**
     (docs/design/72-openxml-documents.md, O1–O10; this invariant states the
     part the tree enforces and grows with each phase). Open XML packages are
@@ -1653,8 +1662,8 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      override (docs/design/25-docker-sandbox.md), manual
                      compaction (compact_session_now), runtime MCP table
                      hot-apply, cost ledger + budget admission gate +
-                     alert rows (docs/design/15-reliability.md), task store +
-                     cron engine, health report, backup export/import,
+                     alert rows (docs/design/15-reliability.md), trigger
+                     store + cron engine (triggers.rs), health report, backup export/import,
                      digest, shared transcript_md renderer
                      (docs/design/29-personal-os.md) + AgentDefinition store,
                      Agent/ConversationKey admission and lifecycle resolution,

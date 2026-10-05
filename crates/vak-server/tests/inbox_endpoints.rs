@@ -154,15 +154,14 @@ impl Server {
         (status, res.json::<serde_json::Value>().await.unwrap())
     }
 
-    async fn create_task(&self, body: serde_json::Value) -> String {
-        let (status, _) = self.post_json("/tasks", body).await;
-        assert_eq!(status, 200, "create failed");
-        let list = self.get_json("/tasks").await;
-        list["tasks"][0]["id"].as_str().unwrap().to_string()
+    async fn create_trigger(&self, body: serde_json::Value) -> String {
+        let (status, created) = self.post_json("/triggers", body).await;
+        assert_eq!(status, 201, "create failed: {created}");
+        created["id"].as_str().unwrap().to_string()
     }
 
     async fn run_now(&self, id: &str) -> reqwest::StatusCode {
-        self.post_status(&format!("/tasks/{id}/run-now")).await
+        self.post_status(&format!("/triggers/{id}/run")).await
     }
 
     async fn inbox(&self) -> serde_json::Value {
@@ -213,10 +212,11 @@ async fn watchdog_summary_lands_in_inbox_with_zero_transports() {
 
     // No deliver_to anywhere: no transport can carry this output.
     let tid = srv
-        .create_task(serde_json::json!({
-            "name": "quiet-watch", "script": "echo inbox-signal-42",
-            "interval_secs": 3600
-        }))
+        .create_trigger(support::script_trigger(
+            "quiet-watch",
+            "echo inbox-signal-42",
+            3600,
+        ))
         .await;
     assert_eq!(srv.run_now(&tid).await, 202);
 
@@ -359,10 +359,11 @@ async fn budget_alert_recorded_once_per_window_alongside_delivery() {
         .unwrap();
 
     let tid = srv
-        .create_task(serde_json::json!({
-            "name": "budget-probe", "script": "true",
-            "interval_secs": 3600, "deliver_to": "log:budget"
-        }))
+        .create_trigger({
+            let mut body = support::script_trigger("budget-probe", "true", 3600);
+            body["deliver_to"] = "log:budget".into();
+            body
+        })
         .await;
 
     // First fire crosses the threshold: one delivery AND one inbox entry.

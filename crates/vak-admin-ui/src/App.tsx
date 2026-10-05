@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import Projects from "./Projects";
 import Runs from "./Runs";
+import Automations from "./Automations";
 import { api, AuthRequired } from "./api";
 import { headlessAuth } from "./headlessAuth";
 import { pendingRecoveryCodes, setPendingRecoveryCodes } from "./ownerRecovery";
@@ -39,7 +40,7 @@ import type {
   GatewayApprovalPolicy, GatewayBinding, GatewayStatus, InboxEntry, McpServerConfig, MemoryItem, OpsStatus,
   PermissionMode, ProviderSummary,
   SearchHit, SecurityEvent, SessionCheckpoint, SessionDiff, SessionListItem,
-  ActiveWorker, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
+  ActiveWorker, SkillItem, SkillProposal, TranscriptEntry, VoiceConfig, WorkReceipt,
 } from "./types";
 
 // The client's four theme choices; a stored retired id resolves to system.
@@ -476,8 +477,7 @@ const EXTENSION_TABS = [
   { hash: "#/integrations/plugins", label: "Plugins" },
   { hash: "#/integrations/social", label: "Social" },
   { hash: "#/integrations/skills", label: "Skills" },
-  { hash: "#/integrations/hooks", label: "Automations" },
-  { hash: "#/integrations/tasks", label: "Scheduled tasks" },
+  { hash: "#/integrations/hooks", label: "Hooks" },
 ] as const;
 
 const KNOWLEDGE_TABS = [
@@ -514,9 +514,6 @@ interface ExtensionsCtx {
   proposals: () => SkillProposal[];
   proposalsLoading: () => boolean;
   refetchSkills: () => void | Promise<unknown>;
-  tasks: () => TaskItem[];
-  tasksLoading: () => boolean;
-  refetchTasks: () => void | Promise<unknown>;
   /** Parsed allow/ask/deny rules from the running config. */
   rules: () => ParsedRule[];
   /** Effective permission mode, which decides everything no rule covers. */
@@ -1647,306 +1644,6 @@ Nothing runs alongside your turns. Add one to keep a record of what Vakyartha do
 
 // ---- Extensions › Scheduled tasks ------------------------------------------
 
-function TasksView(props: { ctx: ExtensionsCtx }) {
-  const [name, setName] = createSignal("");
-  const [prompt, setPrompt] = createSignal("");
-  const [script, setScript] = createSignal("");
-  const [taskKind, setTaskKind] = createSignal<"prompt" | "script">("prompt");
-  const [schedule, setSchedule] = createSignal("");
-  const [modelPin, setModelPin] = createSignal("");
-  const [busy, setBusy] = createSignal(false);
-  const [busyId, setBusyId] = createSignal("");
-  const [editingId, setEditingId] = createSignal("");
-  const [editName, setEditName] = createSignal("");
-  const [editPrompt, setEditPrompt] = createSignal("");
-  const [editScript, setEditScript] = createSignal("");
-  const [editTaskKind, setEditTaskKind] = createSignal<"prompt" | "script">("prompt");
-  const [editSchedule, setEditSchedule] = createSignal("");
-  const [editModelPin, setEditModelPin] = createSignal("");
-  /// Set only for a task that runs on a plain interval rather than a cron.
-  const [editInterval, setEditInterval] = createSignal<number | null>(null);
-
-  const guard = async (id: string, work: () => Promise<void>, ok: string) => {
-    setBusyId(id);
-    try {
-      await work();
-      await props.ctx.refetchTasks();
-      pushToast("info", ok);
-    } catch (err) {
-      if (err instanceof AuthRequired) setAuthed(false);
-      else pushToast("alert", `${err}`);
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  const runNow = async (task: TaskItem) => {
-    setBusyId(task.id);
-    try {
-      await api.runTaskNow(task.id);
-      await props.ctx.refetchTasks();
-      pushToast("info", `Started ‘${task.name}’`);
-    } catch (err) {
-      if (err instanceof AuthRequired) setAuthed(false);
-      else {
-        try { await props.ctx.refetchTasks(); } catch { /* Keep the run error visible. */ }
-        const updated = props.ctx.tasks().find((item) => item.id === task.id);
-        pushToast("alert", updated?.last_summary || `${err}`);
-      }
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  const createTask = async () => {
-    const taskScript = taskKind() === "script" ? script().trim() : "";
-    const taskPrompt = taskKind() === "prompt" ? prompt().trim() : "";
-    if (!name().trim() || (!taskPrompt && !taskScript) || busy()) return;
-    setBusy(true);
-    try {
-      await api.createTask({
-        name: name().trim(),
-        prompt: taskPrompt,
-        script: taskScript || undefined,
-        schedule: schedule().trim() || undefined,
-        model_pin: modelPin().trim() || undefined,
-      });
-      pushToast("info", `Scheduled ‘${name().trim()}’`);
-      setName("");
-      setPrompt("");
-      setScript("");
-      setSchedule("");
-      setModelPin("");
-      await props.ctx.refetchTasks();
-    } catch (err) {
-      if (err instanceof AuthRequired) setAuthed(false);
-      else pushToast("alert", `${err}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const beginEdit = (task: TaskItem) => {
-    // Fields before the id, for the same reason as the hooks editor above.
-    setEditName(task.name);
-    setEditPrompt(task.prompt ?? "");
-    setEditScript(task.script ?? "");
-    setEditTaskKind(task.script ? "script" : "prompt");
-    setEditSchedule(task.schedule ?? "");
-    setEditInterval(task.schedule ? null : (task.interval_secs ?? null));
-    setEditModelPin(task.model_pin ?? "");
-    setEditingId(task.id);
-  };
-
-  const saveEdit = async () => {
-    const id = editingId();
-    const taskScript = editTaskKind() === "script" ? editScript().trim() : "";
-    const taskPrompt = editTaskKind() === "prompt" ? editPrompt().trim() : "";
-    if (!id || !editName().trim() || (!taskPrompt && !taskScript) || busyId()) return;
-    setBusyId(id);
-    try {
-      await api.patchTask(id, {
-        name: editName().trim(),
-        prompt: taskPrompt,
-        script: taskScript || null,
-        schedule: editSchedule().trim() || null,
-        model_pin: editModelPin().trim() || null,
-      });
-      await props.ctx.refetchTasks();
-      pushToast("info", "Task updated");
-      setEditingId("");
-    } catch (err) {
-      if (err instanceof AuthRequired) setAuthed(false);
-      else pushToast("alert", `${err}`);
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  return (
-    <>
-      <div class="toolbar">
-        <span class="spacer" />
-        <button class="ghost" onClick={() => props.ctx.refetchTasks()}>Refresh</button>
-      </div>
-
-      <section class="panel">
-        <div class="panel-title-row">
-          <div>
-            <h2>Scheduled tasks</h2>
-            <p class="dim">
-              Runs Vakyartha starts on its own, with nobody watching. Each one runs under the same
-              permission mode as any other turn — <strong>{props.ctx.mode()}</strong> — so a task
-              that needs an approval simply waits for one. Prompt tasks need a Git project; script
-              tasks can run without Git.
-            </p>
-          </div>
-        </div>
-
-        <Switch>
-          <Match when={props.ctx.tasksLoading()}>
-            <table class="table">
-              <thead><tr><th>task</th><th>type</th><th>runs</th><th>model</th><th>last run</th><th>state</th><th /></tr></thead>
-              <tbody><SkeletonRows cols={7} /></tbody>
-            </table>
-          </Match>
-
-          <Match when={props.ctx.tasks().length === 0}>
-            <div class="empty empty-teach">
-              <strong>Nothing is scheduled.</strong>
-              <p>
-A scheduled task is something you ask Vakyartha to do on a repeating schedule — a nightly
-                digest, a weekly check — with the result filed in your Inbox.
-              </p>
-            </div>
-          </Match>
-
-          <Match when={props.ctx.tasks().length > 0}>
-            <table class="table">
-              <thead><tr><th>task</th><th>type</th><th>runs</th><th>model</th><th>last run</th><th>state</th><th /></tr></thead>
-              <tbody>
-                <For each={props.ctx.tasks()}>
-                  {(t) => (
-                    <>
-                    <tr class="row-static">
-                      <td class="bold">{t.name}</td>
-                      <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "runs a script" : "asks vak"}</span></td>
-                      <td class="dim" title={t.schedule ?? ""}>
-                        {t.schedule ? describeSchedule(t.schedule) : `Every ${describeDuration(t.interval_secs ?? 3600)}`}
-                      </td>
-                      <td class="dim">{t.model_pin ?? "Workspace default"}</td>
-                      <td class="dim" title={t.last_run_at ?? ""}>{t.last_run_at ? timeAgo(t.last_run_at) : "never"}</td>
-                      <td>
-                        <span class={t.enabled ? "chip chip-tone-success" : "chip"}>
-                          {t.enabled ? "on" : "paused"}
-                        </span>
-                      </td>
-                      <td>
-                        <div class="row-gap">
-                          <button
-                            class="ghost small"
-                            disabled={busyId() === t.id}
-                            onClick={() => void runNow(t)}
-                          >
-                            Run now
-                          </button>
-                          <button
-                            class="ghost small"
-                            disabled={busyId() === t.id}
-                            onClick={() =>
-                              void guard(
-                                t.id,
-                                () => api.patchTask(t.id, { enabled: !t.enabled }),
-                                t.enabled ? "Task paused" : "Task enabled",
-                              )
-                            }
-                          >
-                            {t.enabled ? "Pause" : "Enable"}
-                          </button>
-                          <button class="ghost small" disabled={busyId() === t.id} onClick={() => beginEdit(t)}>
-                            Edit
-                          </button>
-                          <button
-                            class="danger small"
-                            disabled={busyId() === t.id}
-                            onClick={() => {
-                              if (confirmDestructive(`Delete task “${t.name}”?`)) {
-                                void guard(t.id, () => api.deleteTask(t.id), "Task deleted");
-                              }
-                            }}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                    <Show when={t.last_summary}>
-                      <tr class="row-static task-result-row">
-                        <td colspan={7}>
-                          <span class="dim">{t.last_run_status === "failed" ? "Last run failed" : "Last result"}</span>
-                          <p>{t.last_summary}</p>
-                        </td>
-                      </tr>
-                    </Show>
-                    </>
-                  )}
-                </For>
-              </tbody>
-            </table>
-          </Match>
-        </Switch>
-
-        <Show when={editingId()} keyed>
-          <div class="edit-form" aria-label="Edit scheduled task">
-            <div class="panel-title-row">
-              <div>
-                <h3>Edit task</h3>
-                <p class="dim">Changes apply to the next run. Existing session history is preserved.</p>
-              </div>
-              <button class="ghost small" onClick={() => setEditingId("")}>Cancel</button>
-            </div>
-            <div class="form-row"><label>Name</label><input value={editName()} onInput={(e) => setEditName(e.currentTarget.value)} /></div>
-            <div class="form-row">
-              <label>Task type</label>
-              <div class="row-gap">
-                <button class="ghost small task-kind-choice" aria-pressed={editTaskKind() === "prompt"} onClick={() => setEditTaskKind("prompt")}>Ask Vakyartha</button>
-                <button class="ghost small task-kind-choice" aria-pressed={editTaskKind() === "script"} onClick={() => setEditTaskKind("script")}>Run a script</button>
-              </div>
-              <Show when={editTaskKind() === "script"} fallback={<textarea rows={3} placeholder="What should Vakyartha do each time this runs?" value={editPrompt()} onInput={(e) => setEditPrompt(e.currentTarget.value)} /> }>
-                <textarea rows={3} class="mono" aria-label="Script" value={editScript()} onInput={(e) => setEditScript(e.currentTarget.value)} />
-              </Show>
-            </div>
-            <Show when={editInterval() != null && !editSchedule().trim()}>
-              <p class="dim">
-                This task runs every {describeDuration(editInterval())} at the moment. Leave the
-                schedule alone to keep that, or pick one below to switch it over.
-              </p>
-            </Show>
-            <ScheduleBuilder value={editSchedule()} onChange={setEditSchedule} />
-            <div class="form-row"><label>Model</label><input class="mono" placeholder="Workspace default" value={editModelPin()} onInput={(e) => setEditModelPin(e.currentTarget.value)} /></div>
-            <button disabled={busyId() === editingId() || !editName().trim() || !(editTaskKind() === "script" ? editScript().trim() : editPrompt().trim())} onClick={() => void saveEdit()}>
-              {busyId() === editingId() ? "Saving…" : "Save changes"}
-            </button>
-          </div>
-        </Show>
-
-        <details class="advanced">
-          <summary>Schedule a task</summary>
-          <div class="form-row">
-            <label>Name</label>
-            <input placeholder="Nightly digest, dependency audit…" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
-          </div>
-          <div class="form-row">
-            <label>Task type</label>
-            <div class="row-gap">
-              <button class="ghost small task-kind-choice" aria-pressed={taskKind() === "prompt"} onClick={() => setTaskKind("prompt")}>Ask Vakyartha</button>
-              <button class="ghost small task-kind-choice" aria-pressed={taskKind() === "script"} onClick={() => setTaskKind("script")}>Run a script</button>
-            </div>
-            <Show when={taskKind() === "prompt"}>
-              <textarea rows={3} placeholder="What should Vakyartha do each time this runs?" value={prompt()} onInput={(e) => setPrompt(e.currentTarget.value)} />
-              <p class="dim">Runs in a separate Git project copy so changes can be reviewed.</p>
-            </Show>
-            <Show when={taskKind() === "script"}>
-              <textarea rows={3} class="mono" placeholder="A short shell command, such as: printf 'All clear\\n'" value={script()} onInput={(e) => setScript(e.currentTarget.value)} />
-              <p class="dim">Runs without an AI model or Git project.</p>
-            </Show>
-          </div>
-          <ScheduleBuilder value={schedule()} onChange={setSchedule} />
-          <div class="form-row">
-            <label>Model</label>
-            <input class="mono" placeholder="Optional — otherwise the workspace default" value={modelPin()} onInput={(e) => setModelPin(e.currentTarget.value)} />
-          </div>
-          <div class="row-gap" style="margin-top:12px">
-            <button disabled={busy() || !name().trim() || !(taskKind() === "script" ? script().trim() : prompt().trim())} onClick={() => void createTask()}>
-              {busy() ? "Scheduling…" : "Schedule task"}
-            </button>
-          </div>
-        </details>
-      </section>
-    </>
-  );
-}
-
 // ---- Extensions section shell ----------------------------------------------
 
 function ExtensionsSection() {
@@ -1956,7 +1653,6 @@ function ExtensionsSection() {
   const [skills, skillsActions] = createResource(selectedAgentId, () => api.skills(selectedAgentIdOrUndefined()));
   const [plugins, pluginsActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.plugins(scope === "user" ? "user" : "workspace", selectedAgentIdOrUndefined()));
   const [proposals, proposalsActions] = createResource(selectedAgentId, () => api.skillProposals(selectedAgentIdOrUndefined()));
-  const [tasks, tasksActions] = createResource(() => api.tasks());
   const [sharedMcp] = createResource(selectedAgentId, (agent) => agent !== "all" && agent !== "global" ? api.mcpServers("user", agent) : Promise.resolve({ servers: {} }));
   const [sharedHooks] = createResource(selectedAgentId, (agent) => agent !== "all" && agent !== "global" ? api.hooks("user", agent) : Promise.resolve({ hooks: [] }));
   const [sharedPlugins] = createResource(selectedAgentId, (agent) => agent !== "all" && agent !== "global" ? api.plugins("user", agent) : Promise.resolve({ plugins: [] }));
@@ -1994,9 +1690,6 @@ function ExtensionsSection() {
     proposals: () => proposals()?.proposals ?? [],
     proposalsLoading: () => proposals.loading,
     refetchSkills: async () => { await Promise.all([skillsActions.refetch(), proposalsActions.refetch()]); },
-    tasks: () => tasks()?.tasks ?? [],
-    tasksLoading: () => tasks.loading,
-    refetchTasks: async () => { await tasksActions.refetch(); },
     rules: createMemo(() => parseRuleLists(config()?.permissions)),
     mode: () => config()?.permission_mode ?? "WorkspaceWrite",
     rulesKnown: () => rulesReported(config()),
@@ -2011,11 +1704,10 @@ function ExtensionsSection() {
     for (const [what, res] of [
       ["configuration", config],
       ["connected apps", mcp],
-      ["automations", hooks],
+      ["hooks", hooks],
       ["skills", skills],
       ["plugins", plugins],
       ["skill proposals", proposals],
-      ["scheduled tasks", tasks],
     ] as const) {
       if (res.error) return { what, error: `${res.error}` };
     }
@@ -2038,7 +1730,7 @@ function ExtensionsSection() {
         <div><span class="extension-overline">CAPABILITY HUB</span><strong>Everything Vakyartha can reach</strong><span>Connected apps, instructions, automations, and background work.</span></div>
         <div class="extension-stat"><strong>{Object.keys(ctx.mcp()).length}</strong><span>connected apps</span></div>
         <div class="extension-stat"><strong>{ctx.skills().length}</strong><span>loaded skills</span></div>
-        <div class="extension-stat"><strong>{ctx.hooks().length + ctx.tasks().length}</strong><span>automations</span></div>
+        <div class="extension-stat"><strong>{ctx.hooks().length}</strong><span>hooks</span></div>
       </div>
       <Show when={configScope() === "project" && selectedAgentId() !== "all" && selectedAgentId() !== "global"}>
         <section class="panel agent-capability-inheritance">
@@ -2095,9 +1787,6 @@ function ExtensionsSection() {
                 <Match when={t.hash === "#/integrations/hooks"}>
                   <span class="tab-count">{count(ctx.hooks().length, ctx.hooksLoading())}</span>
                 </Match>
-                <Match when={t.hash === "#/integrations/tasks"}>
-                  <span class="tab-count">{count(ctx.tasks().length, ctx.tasksLoading())}</span>
-                </Match>
               </Switch>
             </a>
           )}
@@ -2110,7 +1799,6 @@ function ExtensionsSection() {
         <Match when={extensionsTab() === "#/integrations/social"}><SocialView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/skills"}><SkillsView ctx={ctx} /></Match>
         <Match when={extensionsTab() === "#/integrations/hooks"}><HooksView ctx={ctx} /></Match>
-        <Match when={extensionsTab() === "#/integrations/tasks"}><TasksView ctx={ctx} /></Match>
       </Switch>
     </div>
   );
@@ -7449,6 +7137,7 @@ const NAV: NavItem[] = [
   { group: "Overview", hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
   { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions, scope: "global" },
   { group: "Work", hash: "#/runs", label: "Runs", icon: ICONS.runs, scope: "global" },
+  { group: "Work", hash: "#/automations", label: "Automations", icon: ICONS.automations, scope: "project" },
   { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments, scope: "project" },
   {
     group: "Operate",
@@ -8338,6 +8027,7 @@ export default function App() {
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>
               <Match when={currentRoute() === "#/finops"}><FinOpsView /></Match>
               <Match when={currentRoute() === "#/projects"}><Projects /></Match>
+              <Match when={currentRoute() === "#/automations"}><Automations /></Match>
               <Match when={currentRoute() === "#/runs"}>
                 <Runs id={route().split("?", 1)[0].startsWith("#/runs/") ? decodeURIComponent(route().split("?", 1)[0].slice("#/runs/".length)) : undefined} />
               </Match>

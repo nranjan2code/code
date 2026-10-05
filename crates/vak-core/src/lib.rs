@@ -50,10 +50,10 @@ pub mod state;
 pub mod trash;
 
 pub mod gateway_token;
-pub mod tasks;
+pub mod tools_automations;
 pub mod tools_commitments;
-pub mod tools_tasks;
 pub mod transcript_md;
+pub mod triggers;
 pub mod trust;
 pub mod workspaces;
 pub mod worktree;
@@ -686,9 +686,9 @@ pub struct Core {
     /// `<surface>:<chat>` for the conversation this turn is running
     /// inside, when known (set by the gateway per inbound message; unset
     /// for the CLI and desktop app, which have no chat to reply into).
-    /// Read once, at tool-build time, as [`tasks::TasksTool`]'s default
-    /// `deliver_to` — so a task created by a prompt in that chat ("remind
-    /// me every Monday at 9am") reports back into the same chat without
+    /// Read once, at tool-build time, as [`tools_automations::AutomationsTool`]'s
+    /// default `deliver_to` — so an automation created by a prompt in that
+    /// chat ("remind me every Monday at 9am") reports back into the same chat without
     /// the model having to know or guess its own channel address.
     default_deliver_to: Option<String>,
     /// Which product surface this turn is running on, when known. Carried
@@ -3813,9 +3813,13 @@ impl Core {
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
         let mut tools = vak_tools::brokered_tools(worker, &self.new_documents);
         tools.push(Arc::new(vak_tools::RecallTool));
-        tools.push(Arc::new(tools_tasks::TasksTool {
-            sessions_home: self.shared_scope().into_root(),
+        tools.push(Arc::new(tools_automations::AutomationsTool {
+            shared: self.shared_scope(),
+            runs: self.runs(),
             cwd: self.inner.cwd.clone(),
+            agent: self
+                .agent_identity()
+                .map_or_else(|| "vak".to_string(), |agent| agent.id.clone()),
             default_deliver_to: self.default_deliver_to.clone(),
         }));
         if self.effective_commitment() {
@@ -6530,7 +6534,14 @@ impl Core {
         let runs = self.runs();
         let session_id = session.header().map(|header| header.session_id.clone());
         if self.run_admission.trace.is_none() {
-            runs.open_in(&run_trace, None, None, 1, session_id.as_deref(), None)?;
+            runs.open_in(
+                &run_trace,
+                self.run_admission.trigger,
+                None,
+                1,
+                session_id.as_deref(),
+                None,
+            )?;
             let _ = opened.set(run_trace.run);
         } else if let Some(session_id) = &session_id {
             runs.session(run_trace.run, session_id)?;

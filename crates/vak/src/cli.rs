@@ -359,10 +359,11 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = 7)]
         days: u32,
     },
-    /// Scheduled tasks stored as tasks.json in the sessions home: CRUD without the server
-    Tasks {
+    /// Automations (triggers): list, add, enable, disable and remove them
+    /// without the server
+    Triggers {
         #[command(subcommand)]
-        action: TasksAction,
+        action: TriggersAction,
     },
     /// Durable attention inbox (gateway pushes): list / show / ack / count
     Inbox {
@@ -669,47 +670,53 @@ pub(crate) enum BackupAction {
     },
 }
 
+#[derive(clap::Args, Debug)]
+pub(crate) struct TriggerAdd {
+    /// Its name (with --preset: overrides the preset's default name)
+    #[arg(long, required_unless_present = "preset")]
+    pub(crate) name: Option<String>,
+    /// Prompt dispatched to the model on each run
+    #[arg(long, conflicts_with = "preset")]
+    pub(crate) prompt: Option<String>,
+    /// Watchdog shell one-liner (zero tokens while stdout stays empty)
+    #[arg(long, conflicts_with = "preset")]
+    pub(crate) script: Option<String>,
+    /// Seconds between runs (default 3600 when no cron given)
+    #[arg(long, conflicts_with = "preset")]
+    pub(crate) every: Option<u64>,
+    /// 5-field cron expression (`m h dom mon dow`)
+    #[arg(long, conflicts_with = "preset")]
+    pub(crate) cron: Option<String>,
+    /// IANA timezone the cron is read in (default: this machine's)
+    #[arg(long)]
+    pub(crate) timezone: Option<String>,
+    /// Working directory for runs (default: this directory)
+    #[arg(long)]
+    pub(crate) cwd: Option<PathBuf>,
+    /// Delivery surface for run summaries, e.g. telegram:12345
+    #[arg(long)]
+    pub(crate) deliver: Option<String>,
+    /// Pin a prompt automation to a model id (never escalates)
+    #[arg(long)]
+    pub(crate) model: Option<String>,
+    /// Expand a built-in preset: weekly-digest (Mondays 09:00,
+    /// runs `digest --days 7` via this binary)
+    #[arg(long)]
+    pub(crate) preset: Option<String>,
+}
+
 #[derive(Subcommand, Debug)]
-pub(crate) enum TasksAction {
-    /// List tasks with schedule and next-fire preview
+pub(crate) enum TriggersAction {
+    /// List automations with their schedule, next run and last run
     List,
-    /// Add a task, or expand a built-in preset (prompt XOR script;
+    /// Add an automation, or expand a built-in preset (prompt XOR script;
     /// interval XOR cron)
-    Add {
-        /// Task name (with --preset: overrides the preset's default name)
-        #[arg(long, required_unless_present = "preset")]
-        name: Option<String>,
-        /// Prompt dispatched to the model on each run
-        #[arg(long, conflicts_with = "preset")]
-        prompt: Option<String>,
-        /// Watchdog shell one-liner (zero tokens while stdout stays empty)
-        #[arg(long, conflicts_with = "preset")]
-        script: Option<String>,
-        /// Seconds between runs (default 3600 when no cron given)
-        #[arg(long, conflicts_with = "preset")]
-        every: Option<u64>,
-        /// 5-field cron expression (`m h dom mon dow`, local time)
-        #[arg(long, conflicts_with = "preset")]
-        cron: Option<String>,
-        /// Working directory for runs (default: this directory)
-        #[arg(long)]
-        cwd: Option<PathBuf>,
-        /// Delivery surface for run summaries, e.g. telegram:12345
-        #[arg(long)]
-        deliver: Option<String>,
-        /// Pin this task to a model id (never escalates)
-        #[arg(long)]
-        model: Option<String>,
-        /// Expand a built-in preset: weekly-digest (Mondays 09:00,
-        /// runs `digest --days 7` via this binary)
-        #[arg(long)]
-        preset: Option<String>,
-    },
-    /// Remove a task by id
+    Add(Box<TriggerAdd>),
+    /// Remove an automation by id
     Remove { id: String },
-    /// Enable a task
+    /// Enable an automation
     Enable { id: String },
-    /// Disable a task without deleting it
+    /// Disable an automation without deleting it
     Disable { id: String },
 }
 
@@ -1079,9 +1086,9 @@ mod tests {
     }
 
     #[test]
-    fn tasks_add_prompt_and_script_are_separate_flags() {
+    fn triggers_add_prompt_and_script_are_separate_flags() {
         match parse(&[
-            "tasks",
+            "triggers",
             "add",
             "--name",
             "nightly",
@@ -1092,19 +1099,19 @@ mod tests {
             "--model",
             "haiku",
         ]) {
-            Command::Tasks {
-                action:
-                    TasksAction::Add {
-                        name,
-                        prompt,
-                        script,
-                        every,
-                        cron,
-                        deliver,
-                        model,
-                        ..
-                    },
+            Command::Triggers {
+                action: TriggersAction::Add(add),
             } => {
+                let TriggerAdd {
+                    name,
+                    prompt,
+                    script,
+                    every,
+                    cron,
+                    deliver,
+                    model,
+                    ..
+                } = *add;
                 assert_eq!(name.as_deref(), Some("nightly"));
                 assert_eq!(prompt.as_deref(), Some("tidy"));
                 assert_eq!(script, None);
@@ -1118,22 +1125,22 @@ mod tests {
     }
 
     #[test]
-    fn tasks_add_preset_parses_without_name_or_content_flags() {
-        match parse(&["tasks", "add", "--preset", "weekly-digest"]) {
-            Command::Tasks {
-                action:
-                    TasksAction::Add {
-                        name,
-                        prompt,
-                        script,
-                        every,
-                        cron,
-                        deliver,
-                        model,
-                        preset,
-                        ..
-                    },
+    fn triggers_add_preset_parses_without_name_or_content_flags() {
+        match parse(&["triggers", "add", "--preset", "weekly-digest"]) {
+            Command::Triggers {
+                action: TriggersAction::Add(add),
             } => {
+                let TriggerAdd {
+                    name,
+                    prompt,
+                    script,
+                    every,
+                    cron,
+                    deliver,
+                    model,
+                    preset,
+                    ..
+                } = *add;
                 assert_eq!(preset.as_deref(), Some("weekly-digest"));
                 assert_eq!(name, None);
                 assert_eq!(prompt, None);
@@ -1148,14 +1155,14 @@ mod tests {
     }
 
     #[test]
-    fn tasks_add_preset_conflicts_are_clap_errors() {
+    fn triggers_add_preset_conflicts_are_clap_errors() {
         for extra in [
             vec!["--prompt", "tidy"],
             vec!["--script", "echo tick"],
             vec!["--cron", "0 9 * * 1"],
             vec!["--every", "60"],
         ] {
-            let args: Vec<&str> = ["tasks", "add", "--preset", "weekly-digest"]
+            let args: Vec<&str> = ["triggers", "add", "--preset", "weekly-digest"]
                 .into_iter()
                 .chain(extra.iter().copied())
                 .collect();
@@ -1166,29 +1173,29 @@ mod tests {
     }
 
     #[test]
-    fn tasks_add_requires_name_without_preset() {
-        let err = Cli::try_parse_from(["vak", "tasks", "add"])
+    fn triggers_add_requires_name_without_preset() {
+        let err = Cli::try_parse_from(["vak", "triggers", "add"])
             .expect_err("--name is required without --preset");
         assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
-    fn tasks_enable_disable_remove_take_ids() {
+    fn triggers_enable_disable_remove_take_ids() {
         assert!(matches!(
-            parse(&["tasks", "enable", "abc"]),
-            Command::Tasks {
-                action: TasksAction::Enable { .. }
+            parse(&["triggers", "enable", "abc"]),
+            Command::Triggers {
+                action: TriggersAction::Enable { .. }
             }
         ));
         assert!(matches!(
-            parse(&["tasks", "disable", "abc"]),
-            Command::Tasks {
-                action: TasksAction::Disable { .. }
+            parse(&["triggers", "disable", "abc"]),
+            Command::Triggers {
+                action: TriggersAction::Disable { .. }
             }
         ));
-        match parse(&["tasks", "remove", "abc"]) {
-            Command::Tasks {
-                action: TasksAction::Remove { id },
+        match parse(&["triggers", "remove", "abc"]) {
+            Command::Triggers {
+                action: TriggersAction::Remove { id },
             } => assert_eq!(id, "abc"),
             other => panic!("unexpected: {other:?}"),
         }

@@ -110,7 +110,7 @@ import ShortcutsModal from "./components/ShortcutsModal";
 import SideChatPanel from "./components/SideChatPanel";
 import BestOfNDialog from "./components/BestOfNDialog";
 import PrPanel from "./components/PrPanel";
-import TasksModal from "./components/TasksModal";
+import AutomationsModal from "./components/AutomationsModal";
 import CheckpointsModal from "./components/CheckpointsModal";
 import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
@@ -1545,7 +1545,7 @@ export default function App() {
           <Show when={bestOfOpen()}>
             <BestOfNDialog />
           </Show>
-          <TasksModal />
+          <AutomationsModal />
           <Show when={historyOpen()}>
             <CheckpointsModal />
           </Show>

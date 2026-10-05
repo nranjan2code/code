@@ -55,7 +55,7 @@ import type {
   PluginItem,
   MarketplaceSource,
   MarketplaceEntry,
-  TaskItem,
+  AutomationItem,
   TranscriptEntry,
   VoiceConfig,
   WorkReceipt,
@@ -736,28 +736,29 @@ export const api = {
     );
   },
 
-  tasks: (): Promise<{ tasks: TaskItem[] }> =>
-    fetch("/tasks").then((r) => handle(r)),
+  triggers: (): Promise<{ triggers: AutomationItem[] }> =>
+    fetch("/triggers").then((r) => handle(r)),
 
-  createTask: (body: { name: string; prompt?: string; script?: string; interval_secs?: number; schedule?: string; model_pin?: string; deliver_to?: string }): Promise<TaskItem> =>
-    fetch("/tasks", {
+  createTrigger: (draft: Pick<AutomationItem, "name" | "kind" | "action"> & Partial<AutomationItem>): Promise<AutomationItem> =>
+    fetch("/triggers", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(draft),
     }).then((r) => handle(r)),
 
-  runTaskNow: (id: string): Promise<void> =>
-    fetch(`/tasks/${encodeURIComponent(id)}/run-now`, { method: "POST" }).then(handleVoid),
-
-  patchTask: (id: string, patch: Partial<TaskItem>): Promise<void> =>
-    fetch(`/tasks/${encodeURIComponent(id)}`, {
-      method: "PATCH",
+  /** Replaces an automation's editable fields; extra fields are ignored. */
+  putTrigger: (id: string, draft: AutomationItem): Promise<AutomationItem> =>
+    fetch(`/triggers/${encodeURIComponent(id)}`, {
+      method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(patch),
-    }).then(handleVoid),
+      body: JSON.stringify(draft),
+    }).then((r) => handle(r)),
 
-  deleteTask: (id: string): Promise<void> =>
-    fetch(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }).then(handleVoid),
+  runTrigger: (id: string): Promise<void> =>
+    fetch(`/triggers/${encodeURIComponent(id)}/run`, { method: "POST" }).then(handleVoid),
+
+  deleteTrigger: (id: string): Promise<void> =>
+    fetch(`/triggers/${encodeURIComponent(id)}`, { method: "DELETE" }).then(handleVoid),
 
   memory: (agent?: string): Promise<{ notes: MemoryItem[] }> =>
     fetch(agent ? `/memory?agent=${encodeURIComponent(agent)}` : "/memory").then((r) => handle(r)),

@@ -866,30 +866,15 @@ pub(super) async fn routine_history(
     if !registered_agent(&state, &agent_id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let task = state
-        .tasks
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&routine_id)
-        .filter(|task| {
-            task.space == vak_config::spaces::key(state.core.cwd())
-                && task.agent_id.as_deref() == Some(agent_id.as_str())
-                && task
-                    .mail_calendar_scope
-                    .as_ref()
-                    .is_some_and(|scope| scope.routine_id == routine_id)
-        })
-        .cloned();
-    let Some(task) = task else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Some(scope) = task.mail_calendar_scope else {
+    let Some(scope) = crate::automations::routine(&state, &agent_id, &routine_id)
+        .and_then(|routine| routine.scope)
+    else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let Ok(vault) = AccountVault::for_agent(&agent_id) else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    match vault.list_routine_runs(&routine_id, &scope.account_id) {
+    match vault.list_routine_runs(&scope.routine_id, &scope.account_id) {
         Ok(runs) => Json(serde_json::json!({ "runs": runs })).into_response(),
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
@@ -2647,18 +2632,7 @@ fn mark_account_reauthentication_required(
 }
 
 fn pause_routines_for_account(state: &AppState, agent_id: &str, account_id: &str) {
-    crate::update_tasks(state, |tasks| {
-        for task in tasks.values_mut() {
-            let owns_account = task.agent_id.as_deref() == Some(agent_id)
-                && task
-                    .mail_calendar_scope
-                    .as_ref()
-                    .is_some_and(|scope| scope.account_id == account_id);
-            if owns_account {
-                task.enabled = false;
-            }
-        }
-    });
+    crate::automations::pause_account_routines(state, agent_id, account_id, None);
 }
 
 fn preview_account(
@@ -3804,52 +3778,58 @@ mod tests {
     #[test]
     fn reauthentication_pauses_only_routines_for_that_agent_account_pair() {
         let state = crate::test_support::state();
-        let now = Utc::now();
-        let routine = |id: &str, agent_id: &str, account_id: &str| {
-            serde_json::from_value::<vak_core::tasks::TaskDef>(serde_json::json!({
-                "id": id,
-                "name": id,
-                "enabled": true,
-                "space": "spc_test",
-                "created_at": now,
-                "last_run_at": null,
-                "last_session_id": null,
-                "last_summary": null,
-                "agent_id": agent_id,
-                "mail_calendar_scope": {
-                    "routine_id": id,
-                    "account_id": account_id,
-                    "operations": ["recent_mail"],
-                    "max_items": 5,
-                    "watch_new_mail": true
-                }
-            }))
-            .unwrap()
+        let shared = state.core.shared_scope();
+        let accounts = [
+            uuid::Uuid::now_v7().to_string(),
+            uuid::Uuid::now_v7().to_string(),
+        ];
+        let routine = |agent: &str, account: &str| {
+            let id = vak_session::ids::TriggerId::new();
+            let trigger = vak_core::triggers::Trigger {
+                id,
+                name: format!("{agent} {account}"),
+                agent: agent.into(),
+                agent_revision: Some(1),
+                space: "spc_test".into(),
+                enabled: true,
+                kind: vak_core::triggers::TriggerKind::Manual,
+                action: vak_core::triggers::TriggerAction::Prompt {
+                    text: "summarise".into(),
+                    model_pin: None,
+                },
+                deliver_to: None,
+                on_crash: vak_core::triggers::OnCrash::Skip,
+                scope: Some(
+                    serde_json::from_value(serde_json::json!({
+                        "routine_id": id.uuid().to_string(),
+                        "account_id": account,
+                        "operations": ["recent_mail"],
+                        "max_items": 5,
+                        "watch_new_mail": true
+                    }))
+                    .unwrap(),
+                ),
+                created_at: Utc::now(),
+                created_by: None,
+            };
+            vak_core::triggers::create(&shared, &trigger).unwrap();
+            id.to_string()
         };
-        crate::update_tasks(&state, |tasks| {
-            tasks.insert(
-                "same-account".into(),
-                routine("same-account", "agent-a", "account-1"),
-            );
-            tasks.insert(
-                "other-account".into(),
-                routine("other-account", "agent-a", "account-2"),
-            );
-            tasks.insert(
-                "other-agent".into(),
-                routine("other-agent", "agent-b", "account-1"),
-            );
-        });
+        let same = routine("agent-a", &accounts[0]);
+        let other_account = routine("agent-a", &accounts[1]);
+        let other_agent = routine("agent-b", &accounts[0]);
 
-        pause_routines_for_account(&state, "agent-a", "account-1");
+        pause_routines_for_account(&state, "agent-a", &accounts[0]);
 
-        let tasks = state
-            .tasks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert!(!tasks["same-account"].enabled);
-        assert!(tasks["other-account"].enabled);
-        assert!(tasks["other-agent"].enabled);
+        let enabled = |id: &str| {
+            vak_core::triggers::get(&shared, id)
+                .unwrap()
+                .unwrap()
+                .enabled
+        };
+        assert!(!enabled(&same));
+        assert!(enabled(&other_account));
+        assert!(enabled(&other_agent));
     }
 
     // Needs the loopback OAuth endpoint, which exists only with `test-support`.
@@ -4035,28 +4015,35 @@ mod tests {
         );
         server.abort();
 
-        let routine = serde_json::from_value::<vak_core::tasks::TaskDef>(serde_json::json!({
-            "id": "expired-mail-watch",
-            "name": "expired mail watch",
-            "enabled": true,
-            "space": vak_config::spaces::key(state.core.cwd()),
-            "created_at": Utc::now(),
-            "last_run_at": null,
-            "last_session_id": null,
-            "last_summary": null,
-            "agent_id": agent_id,
-            "mail_calendar_scope": {
-                "routine_id": "expired-mail-watch",
-                "account_id": account_id,
-                "operations": ["recent_mail"],
-                "max_items": 5,
-                "watch_new_mail": true
-            }
-        }))
-        .unwrap();
-        crate::update_tasks(&state, |tasks| {
-            tasks.insert(routine.id.clone(), routine);
-        });
+        let routine_id = vak_session::ids::TriggerId::new();
+        let routine = vak_core::triggers::Trigger {
+            id: routine_id,
+            name: "expired mail watch".into(),
+            agent: agent_id.into(),
+            agent_revision: Some(1),
+            space: vak_config::spaces::key(state.core.cwd()),
+            enabled: true,
+            kind: vak_core::triggers::TriggerKind::Manual,
+            action: vak_core::triggers::TriggerAction::Prompt {
+                text: "watch".into(),
+                model_pin: None,
+            },
+            deliver_to: None,
+            on_crash: vak_core::triggers::OnCrash::Skip,
+            scope: Some(
+                serde_json::from_value(serde_json::json!({
+                    "routine_id": routine_id.uuid().to_string(),
+                    "account_id": account_id,
+                    "operations": ["recent_mail"],
+                    "max_items": 5,
+                    "watch_new_mail": true
+                }))
+                .unwrap(),
+            ),
+            created_at: Utc::now(),
+            created_by: None,
+        };
+        vak_core::triggers::create(&state.core.shared_scope(), &routine).unwrap();
 
         let result = refresh_routine_account_if_needed(&state, agent_id, &account_id).await;
         assert!(result.is_err());
@@ -4071,10 +4058,9 @@ mod tests {
             AccountStatus::ReauthenticationRequired
         );
         assert!(
-            !state
-                .tasks
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)["expired-mail-watch"]
+            !vak_core::triggers::get(&state.core.shared_scope(), &routine_id.to_string())
+                .unwrap()
+                .unwrap()
                 .enabled
         );
     }
@@ -4696,22 +4682,12 @@ pub(super) async fn disconnect_account(
         );
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
-    crate::update_tasks(&state, |tasks| {
-        for task in tasks.values_mut() {
-            if task.agent_id.as_deref() == Some(agent_id.as_str())
-                && task
-                    .mail_calendar_scope
-                    .as_ref()
-                    .is_some_and(|scope| scope.account_id == account_id)
-            {
-                task.enabled = false;
-                task.last_run_status = Some("account_disconnected".into());
-                task.last_delivery_state = Some("paused".into());
-                task.last_summary =
-                    Some("Paused because its linked account was disconnected.".into());
-            }
-        }
-    });
+    crate::automations::pause_account_routines(
+        &state,
+        &agent_id,
+        &account_id,
+        Some("Paused because its linked account was disconnected."),
+    );
     record_account_event(
         &state,
         "account_disconnected",

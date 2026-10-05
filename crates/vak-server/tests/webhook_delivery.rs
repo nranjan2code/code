@@ -176,35 +176,30 @@ fn client_with(token: &str) -> reqwest::Client {
         .unwrap()
 }
 
-async fn run_nightly(gw: &Gateway) -> () {
+async fn run_nightly(gw: &Gateway) -> String {
     let client = client_with(&gw.token);
     git_seed(&gw.cwd);
 
-    client
-        .post(format!("{}/tasks", gw.base))
-        .json(&serde_json::json!({
-            "name": "nightly",
-            "prompt": "what is the nightly status?",
-            "interval_secs": 3600,
-            "deliver_to": "webhook:ci"
-        }))
-        .send()
-        .await
-        .unwrap();
-    let tasks: serde_json::Value = client
-        .get(format!("{}/tasks", gw.base))
+    let created: serde_json::Value = client
+        .post(format!("{}/triggers", gw.base))
+        .json(&{
+            let mut body = support::prompt_trigger("nightly", "what is the nightly status?", 3600);
+            body["deliver_to"] = "webhook:ci".into();
+            body
+        })
         .send()
         .await
         .unwrap()
         .json()
         .await
         .unwrap();
-    let tid = tasks["tasks"][0]["id"].as_str().unwrap().to_string();
+    let tid = created["id"].as_str().unwrap().to_string();
     client
-        .post(format!("{}/tasks/{tid}/run-now", gw.base))
+        .post(format!("{}/triggers/{tid}/run", gw.base))
         .send()
         .await
         .unwrap();
+    tid
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -235,7 +230,7 @@ async fn webhook_delivery_posts_run_output() {
     let (auth, body) = &cap[0];
     assert!(auth.is_none(), "no token_env configured: must post bare");
     let text = body["text"].as_str().unwrap_or_default();
-    assert!(text.contains("routine 'nightly' finished"), "{body}");
+    assert!(text.contains("automation 'nightly' finished"), "{body}");
     assert!(text.contains("built ok"), "real answer delivered: {body}");
     assert_eq!(body["delivery"]["kind"], "task_summary");
     assert_eq!(body["delivery"]["fallback_markdown"], body["text"]);
@@ -260,26 +255,25 @@ async fn webhook_missing_token_fails_closed() {
     // Sanity: the credential really is absent from this environment.
     assert!(std::env::var("GATEWAY_TEST_UNSET_TOKEN").is_err());
 
-    run_nightly(&gw).await;
+    let tid = run_nightly(&gw).await;
     let client = client_with(&gw.token);
 
-    // The run itself still completes and records its answer; only the
-    // delivery is withheld.
+    // The run itself still completes; only the delivery is withheld.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         assert!(
             std::time::Instant::now() < deadline,
-            "task never recorded a summary"
+            "the run never completed"
         );
         let t: serde_json::Value = client
-            .get(format!("{}/tasks", gw.base))
+            .get(format!("{}/triggers/{tid}", gw.base))
             .send()
             .await
             .unwrap()
             .json()
             .await
             .unwrap();
-        if t["tasks"][0]["last_summary"] == "secret output" {
+        if t["last_run"]["status"] == "completed" && t["delivery_state"] == "pending" {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
