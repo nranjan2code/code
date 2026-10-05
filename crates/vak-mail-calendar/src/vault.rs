@@ -45,13 +45,6 @@ pub enum VaultError {
     Conflict,
 }
 
-/// Cross-process exclusive claim for one Agent's mail/calendar routine.
-/// Keep this value alive for the full run; closing the file releases the OS
-/// advisory lock, including when the process exits or crashes.
-pub struct RoutineLease {
-    _lock_file: File,
-}
-
 /// Cross-process exclusive claim for one Agent account's OAuth rotation.
 /// Keep it alive until the rotated secret and ledger metadata are committed.
 pub struct AccountRefreshLease {
@@ -327,40 +320,6 @@ impl AccountVault {
     pub fn credential_ref(account_id: &str) -> Result<String, VaultError> {
         validate_account_id(account_id)?;
         Ok(format!("vak_mail_calendar_{account_id}"))
-    }
-
-    /// Try to claim one routine run across server processes. `None` means
-    /// another process currently owns the run; errors fail closed.
-    pub fn try_acquire_routine_lease(
-        &self,
-        routine_id: &str,
-    ) -> Result<Option<RoutineLease>, VaultError> {
-        validate_account_id(routine_id)?;
-        let agent_home = self
-            .scope_hint
-            .parent()
-            .ok_or(VaultError::InvalidReference)?;
-        let work_dir = agent_home.join("mail-calendar");
-        ensure_agent_directory(&work_dir, true)?;
-        let lock_path = work_dir.join(format!(".routine-{routine_id}.lease"));
-        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
-            && (metadata.file_type().is_symlink() || !metadata.is_file())
-        {
-            return Err(VaultError::InvalidReference);
-        }
-        let mut options = OpenOptions::new();
-        options.create(true).truncate(false).read(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-        }
-        let file = options.open(lock_path).map_err(VaultError::Store)?;
-        match file.try_lock_exclusive() {
-            Ok(()) => Ok(Some(RoutineLease { _lock_file: file })),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-            Err(error) => Err(VaultError::Store(error)),
-        }
     }
 
     /// Prevent separate local Vakyartha processes from refreshing one
@@ -1662,9 +1621,9 @@ impl AccountVault {
         };
         validate_routine_run_record(&record)?;
         self.with_routine_history(|mut runs| {
-            // The caller holds this routine's OS lease. Any still-running
-            // record therefore belongs to a process that exited before it
-            // could settle the run.
+            // The caller's run holds this routine's trigger claim. Any
+            // still-running record therefore belongs to a process that
+            // exited before it could settle the run.
             for previous in runs.iter_mut().filter(|previous| {
                 previous.routine_id == routine_id && previous.status == RoutineRunStatus::Running
             }) {
@@ -2513,34 +2472,6 @@ mod tests {
     }
 
     #[test]
-    fn routine_lease_serializes_independent_server_vault_handles() {
-        vak_config::paths::isolate_home_for_tests();
-        let agent_id = format!("mailcal-lease-{}", Uuid::now_v7());
-        let first_vault = AccountVault::for_agent(&agent_id).unwrap();
-        let second_vault = AccountVault::for_agent(&agent_id).unwrap();
-        let routine_id = Uuid::now_v7().to_string();
-
-        let lease = first_vault
-            .try_acquire_routine_lease(&routine_id)
-            .unwrap()
-            .expect("first process claim");
-        assert!(
-            second_vault
-                .try_acquire_routine_lease(&routine_id)
-                .unwrap()
-                .is_none()
-        );
-
-        drop(lease);
-        assert!(
-            second_vault
-                .try_acquire_routine_lease(&routine_id)
-                .unwrap()
-                .is_some()
-        );
-    }
-
-    #[test]
     fn account_refresh_lease_serializes_independent_server_vault_handles() {
         vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-refresh-lease-{}", Uuid::now_v7());
@@ -2566,60 +2497,6 @@ mod tests {
                 .try_acquire_account_refresh_lease(&account_id)
                 .unwrap()
                 .is_some()
-        );
-    }
-
-    #[test]
-    fn routine_lease_admits_only_one_concurrent_trigger() {
-        vak_config::paths::isolate_home_for_tests();
-        use std::sync::{Arc, Barrier, mpsc};
-
-        const CONTENDERS: usize = 16;
-        let agent_id = format!("mailcal-lease-race-{}", Uuid::now_v7());
-        let routine_id = Uuid::now_v7().to_string();
-        let vaults = (0..CONTENDERS)
-            .map(|_| AccountVault::for_agent(&agent_id).unwrap())
-            .collect::<Vec<_>>();
-        let start = Arc::new(Barrier::new(CONTENDERS + 1));
-        let release = Arc::new(Barrier::new(2));
-        let (tx, rx) = mpsc::channel();
-        let workers = vaults
-            .into_iter()
-            .map(|vault| {
-                let start = start.clone();
-                let release = release.clone();
-                let tx = tx.clone();
-                let routine_id = routine_id.clone();
-                std::thread::spawn(move || {
-                    start.wait();
-                    let lease = vault.try_acquire_routine_lease(&routine_id).unwrap();
-                    tx.send(lease.is_some()).unwrap();
-                    if lease.is_some() {
-                        release.wait();
-                    }
-                    drop(lease);
-                })
-            })
-            .collect::<Vec<_>>();
-        drop(tx);
-
-        start.wait();
-        let winners = (0..CONTENDERS)
-            .filter(|_| rx.recv().expect("every contender reports its result"))
-            .count();
-        release.wait();
-        for worker in workers {
-            worker.join().unwrap();
-        }
-        assert_eq!(winners, 1, "one trigger must own the run lease");
-
-        assert!(
-            AccountVault::for_agent(&agent_id)
-                .unwrap()
-                .try_acquire_routine_lease(&routine_id)
-                .unwrap()
-                .is_some(),
-            "the lease must be released after its owner exits"
         );
     }
 

@@ -1,8 +1,10 @@
 //! Automations (plan M4.3): the `/triggers` API and the scheduler over
 //! `vak_core::triggers`. A trigger is desired state; what its runs did is
 //! read from the run records (`vak_session::runs`) that name it, so nothing
-//! here writes run state back onto a trigger. The scheduler's due rule and
-//! the mail routine lease are replaced by claims at M4.4.
+//! here writes run state back onto a trigger. A slot starts only through
+//! the trigger's claim (plan M4.4, `triggers::claim_due`): the tick, startup
+//! catch-up and Run now all go through it, so two processes never start
+//! one slot and every slot spent is a run record.
 
 use std::collections::HashMap;
 
@@ -14,7 +16,7 @@ use chrono::{DateTime, Utc};
 use vak_agent::AgentEvent;
 use vak_core::triggers::{self, Trigger, TriggerAction, TriggerError, TriggerKind};
 use vak_session::ids::TriggerId;
-use vak_session::runs::{RunOutcome, RunRecord, RunStatus};
+use vak_session::runs::{OpenRun, RunOutcome, RunRecord, RunStatus, Slot};
 
 use crate::AppState;
 
@@ -113,13 +115,10 @@ fn projection(
     runs: &[RunRecord],
     outbox: &[vak_delivery::outbox::OutboxRecord],
 ) -> serde_json::Value {
-    let last = runs.first();
-    let running = state
-        .script_inflight
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .contains(&trigger.id.to_string())
-        || last.is_some_and(RunRecord::is_open);
+    // Slots folded into a run are part of it, not runs of their own.
+    let last = runs.iter().find(|run| run.coalesced_into.is_none());
+    let claim = state.core.runs().claim(&trigger.id).unwrap_or_default();
+    let running = claim.active.is_some() || last.is_some_and(RunRecord::is_open);
     let mut value = serde_json::to_value(trigger).unwrap_or_else(|_| serde_json::json!({}));
     if let Some(object) = value.as_object_mut() {
         object.insert(
@@ -131,12 +130,7 @@ fn projection(
         );
         object.insert(
             "next_run_at".into(),
-            serde_json::json!(
-                trigger
-                    .enabled
-                    .then(|| trigger.next_slot_after(Utc::now()))
-                    .flatten()
-            ),
+            serde_json::json!(triggers::next_slot(trigger, &claim, catch_up(state))),
         );
         object.insert("last_run".into(), serde_json::json!(last));
         // When a run last finished its work: a mail watch's last successful
@@ -386,15 +380,21 @@ pub(crate) async fn delete_trigger(
         Ok(trigger) => trigger,
         Err(_) => return StatusCode::NOT_FOUND,
     };
-    let _routine_lease = if let Some(scope) = trigger.scope.as_ref() {
-        let vault = match vak_mail_calendar::vault::AccountVault::for_agent(&trigger.agent) {
-            Ok(vault) => vault,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
-        };
-        let lease = match vault.try_acquire_routine_lease(&scope.routine_id) {
-            Ok(Some(lease)) => lease,
-            Ok(None) => return StatusCode::CONFLICT,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+    // A run that holds the trigger's claim is still working.
+    let runs = state.core.runs();
+    let running = match runs.claim(&trigger.id) {
+        Ok(claim) => claim.active.is_some_and(|active| {
+            runs.holding(&active, Utc::now())
+                .is_ok_and(|holding| holding == vak_session::runs::Holding::Live)
+        }),
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    if running {
+        return StatusCode::CONFLICT;
+    }
+    if let Some(scope) = trigger.scope.as_ref() {
+        let Ok(vault) = vak_mail_calendar::vault::AccountVault::for_agent(&trigger.agent) else {
+            return StatusCode::INTERNAL_SERVER_ERROR;
         };
         if vault
             .remove_routine_cursor(&scope.routine_id, &scope.account_id)
@@ -405,22 +405,13 @@ pub(crate) async fn delete_trigger(
         {
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
-        Some(lease)
-    } else {
-        None
-    };
-    let running = runs_by_trigger(&state)
-        .get(&trigger.id)
-        .and_then(|runs| runs.first())
-        .is_some_and(RunRecord::is_open);
+    }
     match triggers::delete(&shared(&state), &id) {
         Ok(true) => {
-            if !running {
-                let _ = vak_core::worktree::remove_runs_with_prefix(
-                    state.core.cwd(),
-                    &worktree_prefix(&trigger),
-                );
-            }
+            let _ = vak_core::worktree::remove_runs_with_prefix(
+                state.core.cwd(),
+                &worktree_prefix(&trigger),
+            );
             StatusCode::OK
         }
         Ok(false) => StatusCode::NOT_FOUND,
@@ -428,29 +419,24 @@ pub(crate) async fn delete_trigger(
     }
 }
 
-/// Runs a trigger now.
-pub(crate) async fn run_trigger(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> StatusCode {
-    match fire(&state, &id, Firing::Manual).await {
-        Ok(_) => StatusCode::ACCEPTED,
-        Err(NotFired::Gone) => StatusCode::NOT_FOUND,
-        Err(NotFired::Refused) => StatusCode::UNPROCESSABLE_ENTITY,
-        // A scheduler tick may be running this very script now: the
-        // requested execution is happening, so it is accepted.
-        Err(NotFired::Busy) => {
-            if state
-                .script_inflight
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .contains(&id)
-            {
-                StatusCode::ACCEPTED
-            } else {
-                StatusCode::CONFLICT
-            }
-        }
+/// Runs a trigger now: a run of its own, claimed like any slot, so it never
+/// starts while a run of it is going.
+pub(crate) async fn run_trigger(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let trigger = match find(&state, &id) {
+        Ok(trigger) => trigger,
+        Err(response) => return *response,
+    };
+    let event = uuid::Uuid::now_v7().to_string();
+    match claim_and_fire(&state, trigger, Utc::now(), Some(event)).await {
+        Ok(_) => StatusCode::ACCEPTED.into_response(),
+        Err(NotFired::Refused) => error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "It could not run; the inbox says why.",
+        ),
+        Err(NotFired::Busy) => error_response(
+            StatusCode::CONFLICT,
+            "It is already running, so this run was skipped.",
+        ),
     }
 }
 
@@ -508,99 +494,44 @@ pub(crate) async fn retry_trigger_delivery(
 
 // ---- Firing ----------------------------------------------------------------
 
-/// Why a due trigger did not start a run.
+/// Why a trigger did not start a run.
 pub(crate) enum NotFired {
-    /// The trigger no longer exists.
-    Gone,
-    /// Its previous run is still going; the slot waits for the next tick.
+    /// Its previous run still holds it; the slot was spent and recorded.
     Busy,
     /// It cannot run as it stands; the reason is in the inbox and a run
     /// record.
     Refused,
 }
 
-/// Why a trigger is being fired now: a slot came due, or a person asked.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Firing {
-    Schedule,
-    Manual,
-}
-
-fn cause(trigger: &Trigger, firing: Firing) -> vak_session::trace::Cause {
-    match firing {
-        Firing::Schedule => vak_session::trace::Cause::Schedule {
-            schedule: trigger.id.to_string(),
-            slot: Utc::now().to_rfc3339(),
-        },
-        Firing::Manual => vak_session::trace::Cause::Trigger {
-            trigger: trigger.id,
-            request_id: format!("manual:{}", uuid::Uuid::now_v7()),
-        },
+/// How this server treats slots that passed while nothing ran them.
+fn catch_up(state: &AppState) -> triggers::CatchUp {
+    triggers::CatchUp {
+        missed: state.core.config().automation.catch_up_missed,
+        floor: state.scheduler_started_at,
     }
 }
 
-/// The slot scheduling counts from: the newest run that started, else the
-/// trigger's creation; with catch-up off, never before this server started.
-fn anchor(state: &AppState, trigger: &Trigger, runs: &[RunRecord]) -> DateTime<Utc> {
-    let mut anchor = last_started(runs).map_or(trigger.created_at, |run| run.opened_at);
-    if !state.core.config().automation.catch_up_missed {
-        anchor = anchor.max(state.scheduler_started_at);
-    }
-    anchor
-}
-
-/// Tells the person why a due trigger could not start, once per slot (the
-/// scheduler tries the slot again every tick until M4.4's claims spend it):
-/// an inbox note and a skipped run that names the trigger and slot.
-fn refuse(state: &AppState, trigger: &Trigger, reason: String) -> NotFired {
-    let runs = runs_by_trigger(state)
-        .remove(&trigger.id)
-        .unwrap_or_default();
-    let slot_at = anchor(state, trigger, &runs);
-    let key = format!("routine-failed|{}|{}", trigger.id, slot_at.to_rfc3339());
-    if !vak_core::inbox::has_dedupe_key(&state.core.shared_scope().as_agent(), &key)
-        && let Err(error) = state.core.runs().skip(
-            Some(trigger.id),
-            Some(vak_session::runs::Slot::At { at: slot_at }),
-            &reason,
-        )
-    {
-        eprintln!(
-            "[runs] a refused slot of {} was not recorded: {error}",
-            trigger.id
-        );
-    }
+/// The inbox note that says why an automation could not run, once per run.
+fn note_refusal(state: &AppState, trigger: &Trigger, run: &str, reason: &str) {
     let _ = vak_core::inbox::record_with_result_and_key(
         &state.core.shared_scope().as_agent(),
         vak_core::inbox::Kind::RoutineFailed,
         &format!("automation '{}' could not run", trigger.name),
-        &reason,
+        reason,
         None,
         Some(&trigger.id.to_string()),
         None,
-        Some(&key),
+        Some(&format!("routine-failed|{}|{run}", trigger.id)),
         None,
     );
-    NotFired::Refused
 }
 
-/// Records a run that did its work without an Agent turn: a mail watch
-/// that checked and found nothing new.
-fn record_checked(state: &AppState, trigger: &Trigger, firing: Firing) {
-    let trace = state
-        .core
-        .clone()
-        .with_run_admission(
-            vak_core::admission::RunAdmission::default().cause(cause(trigger, firing)),
-        )
-        .mint_trace(None);
-    let runs = state.core.runs();
-    let recorded = runs
-        .open(&trace, Some(trigger.id), None, 1)
-        .and_then(|run| runs.settle(run, RunOutcome::Completed, None));
-    if let Err(error) = recorded {
-        eprintln!("[runs] a check of {} was not recorded: {error}", trigger.id);
-    }
+/// Tells the person why a run could not do its work: it settles failed,
+/// which spends its slot, and the inbox says why.
+fn refuse(state: &AppState, trigger: &Trigger, run: &mut OpenRun, reason: String) -> NotFired {
+    note_refusal(state, trigger, &run.id().to_string(), &reason);
+    run.settle_with(RunOutcome::Failed { reason }, None);
+    NotFired::Refused
 }
 
 fn finish_routine_history(
@@ -623,71 +554,77 @@ fn finish_routine_history(
     }
 }
 
-pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<String, NotFired> {
-    let trigger = match triggers::get(&shared(state), id) {
-        Ok(Some(trigger)) => trigger,
-        Ok(None) => return Err(NotFired::Gone),
+/// Claims what is due of `trigger` at `now` (a slot, or with `run_now`
+/// the run someone asked for) and does it.
+pub(crate) async fn claim_and_fire(
+    state: &AppState,
+    trigger: Trigger,
+    now: DateTime<Utc>,
+    run_now: Option<String>,
+) -> Result<Option<String>, NotFired> {
+    let runs = state.core.runs();
+    let cwd = state.core.cwd().clone();
+    let claimed = triggers::claim_due(&runs, &trigger, now, catch_up(state), run_now, |slot| {
+        trigger.trace_for(slot, &cwd)
+    });
+    match claimed {
+        Ok(triggers::Claimed::Idle) => Ok(None),
+        Ok(triggers::Claimed::Spent) => Err(NotFired::Busy),
+        Ok(triggers::Claimed::Started(started)) => fire(state, trigger, *started).await.map(Some),
         Err(error) => {
-            eprintln!("[scheduler] automation {id} unreadable: {error}");
-            return Err(NotFired::Gone);
+            eprintln!("[scheduler] automation {} not claimed: {error}", trigger.id);
+            Err(NotFired::Refused)
         }
-    };
-    let force_mail_watch_run = firing == Firing::Manual;
-    // A server runs only its own space's triggers, in the folder it opened.
-    if trigger.space != vak_config::spaces::key(state.core.cwd()) {
-        return Err(refuse(
-            state,
-            &trigger,
-            "It belongs to another workspace; it runs from a server opened there.".into(),
-        ));
     }
+}
+
+/// Does the work of a claimed, opened run.
+async fn fire(
+    state: &AppState,
+    trigger: Trigger,
+    started: triggers::Started,
+) -> Result<String, NotFired> {
+    let triggers::Started {
+        mut run,
+        trace,
+        slot,
+        ..
+    } = started;
+    let id = trigger.id.to_string();
+    let force_mail_watch_run = matches!(slot, Slot::Event { .. });
     let scope = trigger.scope.clone();
     if scope.as_ref().is_some_and(|scope| scope.read_commitments)
         && !state.active_core().effective_commitment()
     {
-        return Err(refuse(
-            state,
-            &trigger,
+        return Err(refuse(state, &trigger, &mut run,
             "This routine includes Agent commitments, but commitments are now disabled. Re-enable them or recreate the routine without that read.".into(),
         ));
     }
-    let runs = runs_by_trigger(state)
+    // Earlier runs of it, not this one.
+    let runs: Vec<RunRecord> = runs_by_trigger(state)
         .remove(&trigger.id)
-        .unwrap_or_default();
-    if runs.first().is_some_and(RunRecord::is_open) {
-        return Err(NotFired::Busy);
-    }
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|record| record.id != run.id())
+        .collect();
     if let Some(script) = trigger.script().map(str::trim).filter(|s| !s.is_empty()) {
         let script = script.to_string();
-        return fire_script(state, &trigger, &script, cause(&trigger, firing))
-            .await
-            .ok_or(NotFired::Busy);
+        fire_script(state, &trigger, &script, run, trace).await;
+        return Ok(id);
     }
-    // The scheduler and Run now can fire one Agent routine from separate
-    // server processes; an OS lease held through the run stops a duplicate
-    // watch or model run (replaced by the trigger's claim at M4.4).
-    let (routine_vault, mut routine_lease) = if let Some(scope) = scope.as_ref() {
-        let vault =
-            vak_mail_calendar::vault::AccountVault::for_agent(&trigger.agent).map_err(|_| {
-                refuse(
-                    state,
-                    &trigger,
-                    "The Agent's mail and calendar vault is unavailable.".into(),
-                )
-            })?;
-        match vault.try_acquire_routine_lease(&scope.routine_id) {
-            Ok(Some(lease)) => (Some(vault), Some(lease)),
-            Ok(None) => return Err(NotFired::Busy),
+    let routine_vault = match scope.as_ref() {
+        Some(_) => match vak_mail_calendar::vault::AccountVault::for_agent(&trigger.agent) {
+            Ok(vault) => Some(vault),
             Err(_) => {
                 return Err(refuse(
                     state,
                     &trigger,
-                    "The routine could not claim its cross-process run lease.".into(),
+                    &mut run,
+                    "The Agent's mail and calendar vault is unavailable.".into(),
                 ));
             }
-        }
-    } else {
-        (None, None)
+        },
+        None => None,
     };
     let routine_run = if let (Some(vault), Some(scope)) = (routine_vault.as_ref(), scope.as_ref()) {
         match vault.start_routine_run(
@@ -705,6 +642,7 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
                 return Err(refuse(
                     state,
                     &trigger,
+                    &mut run,
                     "The routine could not safely record its run history.".into(),
                 ));
             }
@@ -725,7 +663,7 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
             crate::mail_calendar::prepare_routine_account(state, &trigger.agent, scope).await
     {
         history_failed(vak_mail_calendar::vault::RoutineRunStatus::Failed);
-        return Err(refuse(state, &trigger, error));
+        return Err(refuse(state, &trigger, &mut run, error));
     }
     if !force_mail_watch_run
         && let Some(scope) = scope
@@ -761,16 +699,17 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
                     return Err(refuse(
                         state,
                         &trigger,
+                        &mut run,
                         "The routine could not settle its run history.".into(),
                     ));
                 }
-                record_checked(state, &trigger, firing);
-                return Ok(id.to_owned());
+                run.settle_with(RunOutcome::Completed, None);
+                return Ok(id);
             }
             Ok(_) => {}
             Err(error) => {
                 history_failed(vak_mail_calendar::vault::RoutineRunStatus::Failed);
-                return Err(refuse(state, &trigger, error));
+                return Err(refuse(state, &trigger, &mut run, error));
             }
         }
     }
@@ -781,6 +720,7 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
             return Err(refuse(
                 state,
                 &trigger,
+                &mut run,
                 format!(
                     "No model is available to run it ({error}). Connect a provider in Settings; it runs at its next check."
                 ),
@@ -795,6 +735,7 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
         return Err(refuse(
             state,
             &trigger,
+            &mut run,
             format!(
                 "{} is not a git repository, and a scheduled run works in its own copy of one. Run `git init` there and commit, or move the automation to a folder that is a repository.",
                 state.core.cwd().display()
@@ -814,6 +755,7 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
                 return Err(refuse(
                     state,
                     &trigger,
+                    &mut run,
                     format!("Its working copy could not be made: {error}."),
                 ));
             }
@@ -849,8 +791,9 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
         trigger.agent_revision,
         scope.clone(),
         false,
-        cause(&trigger, firing),
-        Some(trigger.id),
+        vak_core::admission::RunAdmission::default()
+            .trace(trace)
+            .trigger(trigger.id),
     )
     .await
     .map_err(|error| {
@@ -858,16 +801,21 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
         if temporary_worktree {
             let _ = vak_core::worktree::remove(state.core.cwd(), &wt);
         }
-        refuse(state, &trigger, format!("It could not start: {error}."))
+        refuse(
+            state,
+            &trigger,
+            &mut run,
+            format!("It could not start: {error}."),
+        )
     })?;
 
-    if let (Some(vault), Some(run), Some(scope)) =
+    if let (Some(vault), Some(history), Some(scope)) =
         (routine_vault.as_ref(), routine_run.as_ref(), scope.as_ref())
         && vault
             .attach_routine_run_session(
                 &scope.routine_id,
                 &scope.account_id,
-                &run.run_id,
+                &history.run_id,
                 &child_id,
             )
             .is_err()
@@ -876,6 +824,7 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
         return Err(refuse(
             state,
             &trigger,
+            &mut run,
             "The routine could not link its private run history to the Agent session.".into(),
         ));
     }
@@ -883,7 +832,7 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
     if matches!(
         trigger.schedule(),
         Some(vak_core::triggers::Schedule::Once { .. })
-    ) && let Err(error) = triggers::update(&shared(state), id, |t| {
+    ) && let Err(error) = triggers::update(&shared(state), &id, |t| {
         t.enabled = false;
         Ok(())
     }) {
@@ -903,17 +852,44 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
         let routine_history_vault = routine_vault.clone();
         let routine_history_run = routine_run.clone();
         let routine_history_scope = scope.clone();
-        let routine_lease = routine_lease.take();
         let rx = h.events_tx.subscribe();
+        // The run holds the trigger's claim until the child settles; one
+        // that ends without finishing failed.
+        let mut run = run;
+        run.settle_with(
+            RunOutcome::Failed {
+                reason: "its turn ended without finishing".into(),
+            },
+            None,
+        );
         tokio::spawn(async move {
-            // Keep the cross-process lease until the child settles or this
-            // watcher is dropped during process shutdown.
-            let _routine_lease = routine_lease;
             use tokio_stream::StreamExt;
             use tokio_stream::wrappers::BroadcastStream;
             let mut stream = BroadcastStream::new(rx);
             while let Some(Ok(ev)) = stream.next().await {
                 if let AgentEvent::RunFinished { summary, is_error } = ev.event {
+                    let answer = child_handle
+                        .session
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .as_ref()
+                        .and_then(vak_core::last_answer_id);
+                    run.settle_with(
+                        if is_error {
+                            RunOutcome::Failed {
+                                reason: summary
+                                    .lines()
+                                    .next()
+                                    .unwrap_or("it failed")
+                                    .chars()
+                                    .take(200)
+                                    .collect(),
+                            }
+                        } else {
+                            RunOutcome::Completed
+                        },
+                        answer,
+                    );
                     if let (Some(vault), Some(run), Some(scope)) = (
                         routine_history_vault.as_ref(),
                         routine_history_run.as_ref(),
@@ -989,11 +965,19 @@ pub(crate) async fn fire(state: &AppState, id: &str, firing: Firing) -> Result<S
                     break;
                 }
             }
+            drop(run);
         });
         // Subscribe the completion watcher before starting the turn so fast
         // scripted/provider responses cannot publish RunFinished into a void.
         tokio::task::yield_now().await;
         crate::begin_turn(&h, &h.core, &scheduled_prompt, false);
+    } else {
+        run.settle_with(
+            RunOutcome::Failed {
+                reason: "its session could not be found".into(),
+            },
+            None,
+        );
     }
     Ok(child_id)
 }
@@ -1005,60 +989,30 @@ async fn fire_script(
     state: &AppState,
     trigger: &Trigger,
     script: &str,
-    cause: vak_session::trace::Cause,
-) -> Option<String> {
+    mut run: OpenRun,
+    trace: vak_session::trace::TraceKey,
+) {
     let id = trigger.id.to_string();
-    // One execution at a time per script: a tick and run-now never double
-    // fire (or double deliver) the same slot.
-    if !state
-        .script_inflight
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(id.clone())
-    {
-        return None;
-    }
-    let release = || {
-        state
-            .script_inflight
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&id);
-    };
-    let trace = state
-        .core
-        .clone()
-        .with_run_admission(vak_core::admission::RunAdmission::default().cause(cause))
-        .mint_trace(None);
-    let mut open_run = match state.core.runs().begin(&trace, Some(trigger.id), None) {
-        Ok(run) => run,
-        Err(error) => {
-            release();
-            refuse(
-                state,
-                trigger,
-                format!("its run could not be recorded: {error}"),
-            );
-            return None;
-        }
-    };
     let outcome = crate::execute_script(&state.core, state.core.cwd(), script, Some(trace)).await;
-    open_run.end_with(vak_session::runs::RunEnd::Settled(if outcome.ok {
-        RunOutcome::Completed
-    } else {
-        // The first line of what failed (its exit code), not the output.
-        RunOutcome::Failed {
-            reason: outcome
-                .text
-                .lines()
-                .next()
-                .unwrap_or("script failed")
-                .chars()
-                .take(200)
-                .collect(),
-        }
-    }));
-    drop(open_run);
+    run.settle_with(
+        if outcome.ok {
+            RunOutcome::Completed
+        } else {
+            // The first line of what failed (its exit code), not the output.
+            RunOutcome::Failed {
+                reason: outcome
+                    .text
+                    .lines()
+                    .next()
+                    .unwrap_or("script failed")
+                    .chars()
+                    .take(200)
+                    .collect(),
+            }
+        },
+        None,
+    );
+    drop(run);
     // Deliver: with no transport configured the inbox is the sink
     // (docs/design/29 P6), and a failure is never silent.
     if outcome.ok {
@@ -1110,41 +1064,22 @@ async fn fire_script(
         .await;
     }
     crate::check_budget_alert(state, &id).await;
-    release();
-    Some(id)
 }
 
 // ---- Scheduling ------------------------------------------------------------
 
-/// The enabled triggers of this space whose next slot after their anchor
-/// has arrived.
-pub(crate) fn due(state: &AppState, now: DateTime<Utc>) -> Vec<String> {
+/// One scheduler pass, and startup catch-up: whatever is due of each of this
+/// space's triggers is claimed and started.
+pub(crate) async fn tick(state: &AppState) {
     let triggers = match of_this_space(state) {
         Ok(triggers) => triggers,
         Err(error) => {
             eprintln!("[scheduler] automations unreadable: {error}");
-            return Vec::new();
+            return;
         }
     };
-    let grouped = runs_by_trigger(state);
-    triggers
-        .into_iter()
-        .filter(|trigger| trigger.enabled)
-        .filter(|trigger| {
-            let runs = grouped.get(&trigger.id).map_or(&[][..], Vec::as_slice);
-            trigger
-                .next_slot_after(anchor(state, trigger, runs))
-                .is_some_and(|slot| slot <= now)
-        })
-        .map(|trigger| trigger.id.to_string())
-        .collect()
-}
-
-/// One scheduler pass: every due trigger fires. A refused or busy one keeps
-/// its slot and is tried again next tick.
-pub(crate) async fn tick(state: &AppState) {
-    for id in due(state, Utc::now()) {
-        let _ = fire(state, &id, Firing::Schedule).await;
+    for trigger in triggers {
+        let _ = claim_and_fire(state, trigger, Utc::now(), None).await;
     }
 }
 

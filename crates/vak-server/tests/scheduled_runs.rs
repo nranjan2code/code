@@ -557,31 +557,43 @@ async fn a_refused_run_is_recorded() {
     });
     let id = ids[0].as_str();
     let server = serve(&ws, &home).await;
+    // The overdue slot is refused at startup; a run asked for while that
+    // run held the trigger would be refused as busy instead.
+    assert!(
+        eventually(10, || async {
+            !routine_failures(&server.inbox().await, id).is_empty()
+        })
+        .await,
+        "the scheduler's refusal reached the inbox"
+    );
     assert_eq!(
         server.run_now(id).await,
         reqwest::StatusCode::UNPROCESSABLE_ENTITY
     );
-    let failures = routine_failures(&server.inbox().await, id);
-    assert_eq!(
-        failures.len(),
-        1,
-        "one entry for the missed slot, however often it is retried"
-    );
-    assert!(
-        failures[0]["body"]
-            .as_str()
-            .unwrap()
-            .contains("no-such-agent"),
-        "{failures:?}"
-    );
     let last = server.trigger(id).await["last_run"].clone();
     assert_eq!(
-        last["status"], "skipped",
-        "a refusal is a run record: {last}"
+        last["status"], "failed",
+        "a refusal is a run record, and spends its slot: {last}"
     );
     assert!(
         last["reason"].as_str().unwrap().contains("no-such-agent"),
         "{last}"
+    );
+    // One inbox entry per refused run, never one per retry.
+    let (_, runs) = server.get(&format!("/runs?trigger={id}")).await;
+    let failed = runs["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|run| run["status"] == "failed")
+        .count();
+    let failures = routine_failures(&server.inbox().await, id);
+    assert_eq!(failures.len(), failed, "{failures:?}");
+    assert!(
+        failures
+            .iter()
+            .all(|entry| entry["body"].as_str().unwrap().contains("no-such-agent")),
+        "{failures:?}"
     );
     assert_eq!(server.dispatches.load(Ordering::SeqCst), 0);
 }
@@ -608,8 +620,8 @@ async fn non_git_space_routine_is_refused_loudly() {
     );
     assert_eq!(
         routine_failures(&server.inbox().await, id).len(),
-        1,
-        "retries of the same slot do not repeat the entry"
+        2,
+        "the spent slot is not retried; the run asked for is refused once"
     );
     assert_eq!(server.dispatches.load(Ordering::SeqCst), 0);
 }

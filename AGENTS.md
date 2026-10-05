@@ -108,9 +108,9 @@ Read before changing behaviour in these areas:
   uses the trigger scheduler (`vak_core::triggers`), pins an Agent revision/account/read
   allowlist, restricts its unattended child to the brokered mail/calendar
   tool, and pauses when its account is disconnected. The watch polls only
-  provider IDs and skips model dispatch when unchanged. An Agent-vault OS
-  lease prevents duplicate runs of one routine across local server processes
-  through child completion. Apple UID, Gmail history, and Microsoft Graph
+  provider IDs and skips model dispatch when unchanged. The trigger's claim
+  (plan M4.4) prevents duplicate runs of one routine across server
+  processes through child completion. Apple UID, Gmail history, and Microsoft Graph
   per-folder delta cursors now advance atomically with the encrypted backlog;
   multi-host fencing remains outstanding. Startup catch-up now evaluates cron slots in the task's
   configured IANA timezone and compares absolute instants across DST changes.
@@ -269,7 +269,17 @@ so its last run, delivery and last check are queries over the run
 records. `/triggers` replaces `/tasks`, `vak triggers` replaces `vak
 tasks`, the model's `automations` tool replaces `tasks`, and the admin
 Automations screen (`#/automations`) and the client's Automations sheet
-with its Runs panel read them. No session starts a later step unasked.
+with its Runs panel read them. M4.4 is done (2026-10-05): a slot starts
+only through its trigger's claim, a ref `trg/<id>/claim` moved by CAS
+under the writer epoch before the run opens (`triggers::claim_due` over
+the pure `triggers::due`), which serves the tick, startup catch-up and
+Run now alike. Missed slots are one coalesced (or, with catch-up off,
+skipped) record; a slot due while the previous run holds the trigger is
+a skipped record; a refused run is a failed record, and each spends its
+slot. A run whose holder stopped is abandoned, and `on_crash = retry_once`
+runs its slot once more as attempt 2. The mail routine's OS lease and the
+server's in-flight script set are gone. No session starts a later step
+unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -369,7 +379,9 @@ with its Runs panel read them. No session starts a later step unasked.
 **Until the next milestone lands, don't deepen the debt:**
 - Build no second schedule or trigger model: scheduled work is a
   `vak_core::triggers::Trigger` (plan M4.3), a Document; docs 76, 80 and 81
-  use that model. Nothing about a run is written back onto a trigger: its
+  use that model. Start a trigger's work only through
+  `triggers::claim_due` (plan M4.4), never with a lock, lease or in-memory
+  set of your own. Nothing about a run is written back onto a trigger: its
   last run, delivery and check time are queries over its run records.
 - Build no second identity for "the root of this work": durable accounting
   keys by M1's `RunId` (the reliable-work plan's E1 waits for it).
@@ -1066,9 +1078,10 @@ in progress, and the rest of V4 follows it.
       via `task` receive specialist archetype instructions and capabilities
       according to assigned roles.
     - **Scheduled work** is an automation (`vak_core::triggers::Trigger`),
-      the one schedule model, owned by the Agent named in its `agent`. One
-      that cannot run says why in the inbox (`RoutineFailed`) and in a run
-      record, never silently.
+      the one schedule model, owned by the Agent named in its `agent`, with
+      at most one start per slot or event (its claim). One that cannot run
+      says why in the inbox (`RoutineFailed`) and in a run record, never
+      silently.
 39. **Office documents are hostile, lossless, labelled and self-sufficient**
     (docs/design/72-openxml-documents.md, O1–O10; this invariant states the
     part the tree enforces and grows with each phase). Open XML packages are

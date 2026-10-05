@@ -20,6 +20,7 @@ import {
   canRetryDelivery,
   deliveryCount,
   deliveryStatusLabel,
+  missedWords,
   nextRunWords,
   runStatusLabel,
   scheduleZone,
@@ -67,6 +68,9 @@ function RunsPanel(props: { trigger: Trigger; open: boolean }) {
                 {relAgo(run.opened_at)} · {new Date(run.opened_at).toLocaleString()}
                 <Show when={run.reason}>
                   <p class="task-run-summary">{run.reason}</p>
+                </Show>
+                <Show when={missedWords(run, (at) => new Date(at).toLocaleString())}>
+                  {(words) => <p class="task-run-summary">{words()}</p>}
                 </Show>
                 <Show when={run.sessions?.[0]}>
                   {(session) => (

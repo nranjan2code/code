@@ -50,6 +50,15 @@ function when(value?: string): string {
   return value ? new Date(value).toLocaleString() : "—";
 }
 
+/** Which slots a skipped or caught-up record stands for, in words. */
+function missedWords(run: { missed?: { from: string; through: string } | null; coalesced_into?: string | null }, when: (at: string) => string): string | null {
+  if (!run.missed) return null;
+  const { from, through } = run.missed;
+  const one = from === through;
+  const range = one ? `The run due ${when(from)} was` : `The runs due from ${when(from)} to ${when(through)} were`;
+  return run.coalesced_into ? `${range} missed and caught up by the next run.` : `${range} missed.`;
+}
+
 function took(run: RunRecord): string {
   if (!run.settled_at) return "";
   const ms = new Date(run.settled_at).getTime() - new Date(run.opened_at).getTime();
@@ -87,6 +96,7 @@ function RunList() {
                   <span class="dim">{when(run.opened_at)}{took(run) ? ` · took ${took(run)}` : ""}</span>
                 </span>
                 <Show when={run.reason}><span class="dim run-row-reason">{run.reason}</span></Show>
+                <Show when={missedWords(run, when)}>{(words) => <span class="dim run-row-reason">{words()}</span>}</Show>
               </button>
             )}
           </For>
@@ -113,6 +123,10 @@ function RunDetail(props: { id: string }) {
                 <Status status={record().status} />
               </div>
               <Show when={record().reason}><p>{record().reason}</p></Show>
+              <Show when={missedWords(record(), when)}>{(words) => <p>{words()}</p>}</Show>
+              <Show when={record().coalesced_into}>
+                {(into) => <button class="ghost small" onClick={() => navigate(`#/runs/${encodeURIComponent(into())}`)}>Open the run that caught them up</button>}
+              </Show>
               <Show when={record().status === "abandoned"}>
                 <p class="dim">The process running this stopped before it finished, so nothing settled it.</p>
               </Show>

@@ -9584,7 +9584,8 @@ impl KebabLower for str {
 /// nanosecond-hex scheme appended a second header onto an existing file
 /// on collision).
 /// The entry id of the turn's answer: the newest assistant message.
-fn last_answer_id(log: &SessionLog) -> Option<String> {
+/// The id of the last answer in `log`, which a run that produced it names.
+pub fn last_answer_id(log: &SessionLog) -> Option<String> {
     log.active_entries_rev()
         .find_map(|entry| match &entry.payload {
             vak_session::EntryPayload::Message(record)

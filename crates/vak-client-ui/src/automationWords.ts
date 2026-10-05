@@ -38,6 +38,15 @@ export function scheduleZone(trigger: Pick<Trigger, "kind">): string | null {
     : null;
 }
 
+/** Which slots a skipped or caught-up record stands for, in words. */
+export function missedWords(run: { missed?: { from: string; through: string } | null; coalesced_into?: string | null }, when: (at: string) => string): string | null {
+  if (!run.missed) return null;
+  const { from, through } = run.missed;
+  const one = from === through;
+  const range = one ? `The run due ${when(from)} was` : `The runs due from ${when(from)} to ${when(through)} were`;
+  return run.coalesced_into ? `${range} missed and caught up by the next run.` : `${range} missed.`;
+}
+
 export function runStatusLabel(status: RunStatus): string {
   return ({
     running: "Working now",

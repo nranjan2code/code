@@ -305,9 +305,9 @@ links for the inbox. IDs fetched by a tool are committed only after the
 scheduler observes a completed run; failed or interrupted runs requeue them.
 This gives at-least-once recovery across local restarts. Invalid or expired
 cursors fail visibly and require the owner to recreate the routine; backlog
-overflow also fails closed. A per-routine OS lease prevents duplicate
-local server-process runs through
-child completion; it does not provide multi-host coordination. Email send, a
+overflow also fails closed. The trigger's claim (a ref moved by CAS under
+the store's writer epoch, data-architecture plan M4.4) prevents duplicate
+runs across server processes through child completion. Email send, a
 constrained timed event create, Google standalone event update and
 cancellation, and Google RSVP for one standalone invitation have effect-aware
 owner confirmation and supported exact-marker reconciliation paths. Other

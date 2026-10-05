@@ -1,0 +1,83 @@
+# Data architecture: working tracker
+
+Status: **working tracker, temporary. Delete this file in the same commit
+that marks M9 done.** The plan (`data-architecture-plan.md`) holds the
+design, decisions and exit tests. This file holds only the order of work,
+where it stands, and the rules every step follows. Update it in the commit
+that finishes each step.
+
+## How to work a step
+
+1. Read AGENTS.md ("Pending: the data architecture refactor" and its
+   "don't deepen the debt" list), then the plan section for the step.
+2. Re-scan what the step touches (`rg` for the names it replaces). The
+   blast-radius doc's counts are old.
+3. Build it whole:
+   - code, tests, UI (admin and client), docs and the AGENTS.md text;
+   - the replaced path removed in the same change (invariant 30);
+   - no compatibility code and no migration (there are no users);
+   - rewrite old-shape tests, never patch them to pass.
+4. Verify:
+   ```
+   cargo fmt --all --check
+   cargo clippy --workspace --all-targets -- -D warnings
+   cargo test --workspace --no-fail-fast
+   scripts/check-version.sh
+   python3 scripts/check_doc_paths.py
+   ```
+   - If a frontend changed, run `npm run build` in `crates/vak-admin-ui`
+     and `crates/vak-client-ui`. Rebuild before `cargo check`, or the
+     stale-bundle guard fails.
+   - Check that the real registry
+     `~/Library/Application Support/vak/tenants/ten_00000000-0000-7602-9145-b8d712473797/spaces.toml`
+     still names only `/private/tmp/vak-live/workspace`.
+5. Commit and push straight to `main`: no PRs, no branches, no leftover
+   worktrees. Then:
+   - mark the row below done, with the commit;
+   - update the plan's step row and Status line;
+   - update the AGENTS.md "Pending" paragraph.
+6. Never change a version number. The release is held for the
+   maintainer's version decision.
+
+Known slow tests (each over 60 s, not failures):
+- `reinstall_from_the_installed_binary_leaves_a_working_install`
+- `memory::tests::load_matrix_scales_real_store_from_low_to_high`
+- `one_turn_one_id_from_intent_to_side_ledgers`
+
+## Order and status
+
+| # | Step | Exit tests (plan) | Status |
+|---|---|---|---|
+| 1 | M4.1 fencing | `restore_fences_old_writer`, `fenced_process_stops_background_work` | Done, 5ba742a6b |
+| 2 | M4.2 run records for every cause | `every_cause_writes_run`, `abandoned_run_is_recorded` | Done, 9fc4e5b5c |
+| 3 | M4.3 `Trigger` replaces `TaskDef` | `last_run_is_a_query`, `trigger_round_trips_as_document` | Done, 430ef4e38 |
+| 4 | M4.4 claims, one `due(now)`, `on_crash` | `schedule_slot_at_most_once_under_restart`, `two_processes_do_not_double_start`, `skipped_slot_is_a_record`, `retry_once_retries_once` | Done (see git log) |
+| 5 | M4.5 `effects/` chain; delivery is its first kind; the outbox goes; `/effects`; Discord nonce; the new effects invariant in AGENTS.md | `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`, `discord_resend_reuses_nonce` | Next |
+| 6 | M4.6 mail and calendar send, create, update and RSVP become effects; their single-use claims go | `mail_send_is_one_effect`, `unknown_mail_send_never_resent` | |
+| 7 | M4.7 cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` | |
+| 8 | M4.8 `CopyEnvironment`; the non-git refusal goes; invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 restated against the shipped shapes | `non_git_space_routine_runs_in_copy_environment` | |
+| 9 | M2 remainder: credential-store `KeyAuthority`, torn-write seal test, fuzz corpus, flock single-writer lock, blob streaming | plan §M2 | |
+| 10 | M5 telemetry (may run beside M4) | `library_crates_have_no_eprintln`, `one_run_one_trace_id`, `log_lines_are_json_with_trace_fields`, `telemetry_carries_no_content` | |
+| 11 | M6 data catalog, search, lineage | `lineage_from_any_artifact_to_cause`, `search_respects_audience`, `catalog_rebuild_equals_incremental`, `turn_path_reads_flat`, `catalog_query_p95_under_50ms_at_1m_nodes` | |
+| 12 | M6.5 intake (doc 76) | `intake_item_has_trace_and_provenance`, `quarantined_item_absent_from_agent_retrieval`, `feed_pipeline_is_gone` | |
+| 13 | M7a lifecycle: honest deletion (after M6) | see plan §M7a (reconciler, erasure, hold, quota and soak tests, doc 74 §9 browser runs) | |
+| 14 | M7b lifecycle: governance (after M7a) | `label_on_any_node_resolves` and the remaining doc 74 §9 runs | |
+| 15 | M8 artifacts, sharing, information architecture (after M6, beside M7) | `concurrent_edit_creates_sibling_versions`, `share_inherits_and_breaks`, `revoked_grant_hides_from_search`, `saved_version_survives_origin_erasure`, browser run | |
+| 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | |
+
+Some large steps may need more than one commit, as M3b did. Add sub-rows
+when you split one, and finish every part before you mark it done.
+
+## Open items carried along
+
+- M4.5 replaces `retry_trigger_delivery` and the outbox-based
+  `delivery_state` in `crates/vak-server/src/automations.rs` with effect
+  queries.
+- A deleted trigger's claim ref (`trg/<id>/claim`) is left behind,
+  because refs have no delete. M7a's reconciler should remove it.
+- The mail vault keeps its own private routine run history beside the run
+  records. Fold it into runs, or justify keeping it, at M4.6 or M4.7.
+- Still open from M3b:
+  - remeasure write-path growth on a used 7.0 home;
+  - a backup policy for the Workspace data class;
+  - a small model echoes the stop guard's "Please continue."

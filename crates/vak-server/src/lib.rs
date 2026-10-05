@@ -231,7 +231,6 @@ pub struct AppState {
     scheduler_last_tick_at: Arc<Mutex<Option<chrono::DateTime<Utc>>>>,
     /// Script tasks currently executing (no child session to inspect, so
     /// this stands in for the busy-check that prompt tasks get).
-    script_inflight: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Managed dev servers (preview pane), keyed by session::name.
     procs: Arc<Mutex<HashMap<String, ManagedProc>>>,
     /// Gateway surface bindings + enable gate (docs/design/22-gateway.md).
@@ -324,7 +323,6 @@ impl AppState {
             best_runs: Arc::new(Mutex::new(HashMap::new())),
             scheduler_started_at: Utc::now(),
             scheduler_last_tick_at: Arc::new(Mutex::new(None)),
-            script_inflight: Arc::new(Mutex::new(std::collections::HashSet::new())),
             procs: Arc::new(Mutex::new(HashMap::new())),
             gateway,
             heartbeat: Arc::new(heartbeat::HeartbeatRuntime::new()),
@@ -18548,10 +18546,9 @@ async fn start_bestofn(
             None,
             None,
             true,
-            vak_session::trace::Cause::User {
+            vak_core::admission::RunAdmission::default().cause(vak_session::trace::Cause::User {
                 request_id: format!("best-of-n:{}", uuid::Uuid::now_v7()),
-            },
-            None,
+            }),
         )
         .await
         {
@@ -18719,8 +18716,7 @@ async fn spawn_isolated_run(
     agent_revision: Option<u64>,
     mail_calendar_scope: Option<vak_mail_calendar::RoutineScope>,
     start_turn: bool,
-    cause: vak_session::trace::Cause,
-    trigger: Option<vak_session::ids::TriggerId>,
+    admission: vak_core::admission::RunAdmission,
 ) -> Result<String, String> {
     let identity = if let Some(agent_id) = agent_id {
         let profiles = agents::effective(&state.active_core())?;
@@ -18751,12 +18747,7 @@ async fn spawn_isolated_run(
             c.with_agent_identity(identity)
                 .with_conversation_context(routine_conversation)
                 .with_surface(vak_core::Surface::Background)
-                .with_run_admission(match trigger {
-                    Some(trigger) => vak_core::admission::RunAdmission::default()
-                        .cause(cause)
-                        .trigger(trigger),
-                    None => vak_core::admission::RunAdmission::default().cause(cause),
-                })
+                .with_run_admission(admission)
                 // Unattended, and stamped BEFORE `start_session` composes and
                 // freezes the prompt. Stamping afterwards would be too late:
                 // the prompt would already have advertised a gated capability
@@ -25186,34 +25177,43 @@ mod scheduler_state_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn cron_slot_not_lost_on_failure() {
+    async fn skipped_slot_is_a_record() {
+        use vak_session::runs::RunStatus;
         let dir = tempfile::tempdir().unwrap();
         let (ws, home) = (dir.path().join("ws"), dir.path().join("home"));
         std::fs::create_dir_all(&ws).unwrap();
         let trigger = cron_trigger(&ws, "vak");
-        let id = trigger.id.to_string();
         let state = state_with(&ws, &home, vec![trigger.clone()], None);
-        let now = chrono::Utc::now();
-        assert_eq!(automations::due(&state, now), vec![id.clone()]);
 
-        // Not a repository: refused, recorded as a skipped run, and the
-        // slot stays due.
+        // Not a repository: the newest slot's run is refused and spent,
+        // and the earlier missed slot is recorded folded into it.
         scheduler_tick(&state).await;
         let runs = state.core.runs().of_trigger(&trigger.id).unwrap();
-        assert_eq!(runs.len(), 1);
-        assert_eq!(runs[0].status, vak_session::runs::RunStatus::Skipped);
-        assert_eq!(
-            automations::due(&state, now),
-            vec![id.clone()],
-            "a refused run leaves its slot to be tried again"
+        let failed: Vec<_> = runs
+            .iter()
+            .filter(|run| run.status == RunStatus::Failed)
+            .collect();
+        assert_eq!(failed.len(), 1, "{runs:#?}");
+        assert!(
+            failed[0]
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("not a git repository")),
+            "{runs:#?}"
+        );
+        assert!(
+            runs.iter()
+                .any(|run| run.coalesced_into == Some(failed[0].id) && run.missed.is_some()),
+            "the missed slot names the run it folded into: {runs:#?}"
         );
 
+        // Spent: the next tick before the next slot records nothing.
         make_repo(&ws);
         scheduler_tick(&state).await;
-        settled_run(&state, &trigger.id).await;
-        assert!(
-            automations::due(&state, chrono::Utc::now()).is_empty(),
-            "the slot is spent once a run starts"
+        assert_eq!(
+            state.core.runs().of_trigger(&trigger.id).unwrap().len(),
+            runs.len(),
+            "a spent slot is never tried again"
         );
     }
 
@@ -25377,13 +25377,11 @@ mod scheduler_state_tests {
         };
         let trigger = cron_trigger(&ws, "writer");
         let state = state_with(&ws, &home, vec![trigger.clone()], Some(vak));
-        let session = automations::fire(
-            &state,
-            &trigger.id.to_string(),
-            automations::Firing::Schedule,
-        )
-        .await
-        .unwrap_or_else(|_| panic!("the routine starts"));
+        let session = automations::claim_and_fire(&state, trigger, chrono::Utc::now(), None)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| panic!("the routine starts"));
 
         let ledger = std::fs::read_dir(home.join("agents").join("writer").join("sessions"))
             .unwrap()

@@ -1727,8 +1727,9 @@ remains open.
   fetches explicit bounded batches without downloading content during polling,
   stages fetched IDs until the TaskDef run settles, consumes them after a
   completed run, and puts them back at the front after a failed or interrupted
-  run. A per-routine OS lease also serializes the watcher across local server
-  processes; deleting a routine clears its cursor while holding that lease.
+  run. The trigger's claim (data-architecture plan M4.4) serializes the
+  watcher across server processes; a routine is deleted only while no run
+  holds its claim, and deleting it clears its cursor.
   Google, Microsoft Graph, and Apple IMAP now fetch only selected IDs, and
   Apple uses UID FETCH metadata without setting Seen or fetching bodies.
   Limits are explicit: polling scans only the latest 100 IDs, so a larger

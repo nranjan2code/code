@@ -531,6 +531,10 @@ export interface RunSummary {
   sessions?: string[];
   result_id?: string | null;
   reason?: string | null;
+  /** The slots a skipped or caught-up record stands for. */
+  missed?: { from: string; through: string } | null;
+  /** The run those slots were caught up by. */
+  coalesced_into?: string | null;
 }
 
 /** An automation (plan M4.3) as the server shows it: the stored trigger,

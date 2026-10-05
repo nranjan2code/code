@@ -73,35 +73,67 @@ fn liveness_ref(process: &ProcessId) -> String {
 /// `alive_until`, under the writer epoch: a fenced process cannot renew,
 /// so its leases lapse.
 pub fn renew_liveness(tenant_home: &Path, alive_until: DateTime<Utc>) -> Result<(), SessionError> {
+    renew_liveness_of(tenant_home, &process(), alive_until)
+}
+
+/// Moves `holder`'s liveness ref. Only [`renew_liveness`] keeps one fresh;
+/// a run held by another holder is renewed once, when it opens
+/// (`crate::runs::Runs::as_process`), and then lapses as a stopped
+/// process's would.
+pub(crate) fn renew_liveness_of(
+    tenant_home: &Path,
+    holder: &ProcessId,
+    alive_until: DateTime<Utc>,
+) -> Result<(), SessionError> {
+    let target = serde_json::to_vec(&Liveness { alive_until })
+        .map_err(|error| SessionError::Objects(error.to_string()))?;
+    // Only one process moves its own ref, but its threads may renew at
+    // once: a lost race re-reads and tries again.
+    swap_ref(tenant_home, &liveness_ref(holder), |_| {
+        Ok(Some(target.clone()))
+    })?;
+    Ok(())
+}
+
+/// Moves the ref `name` to what `next` makes of its current target, under
+/// the writer epoch, re-reading on a lost race; `next` returning `None`
+/// leaves it as it is. Returns whether it moved.
+pub(crate) fn swap_ref(
+    tenant_home: &Path,
+    name: &str,
+    mut next: impl FnMut(Option<&[u8]>) -> Result<Option<Vec<u8>>, SessionError>,
+) -> Result<bool, SessionError> {
     check()?;
     let tenant = TenantObjects::for_tenant(tenant_home)?;
     let store = tenant.store();
-    let name = liveness_ref(&process());
-    let target = serde_json::to_vec(&Liveness { alive_until })
-        .map_err(|error| SessionError::Objects(error.to_string()))?;
-    // Only this process moves its own ref, but its threads may renew at
-    // once: a lost race re-reads and tries again.
     let mut attempts = 0;
     loop {
-        let current = store.get_ref(&name).map_err(objects_error)?;
+        let current = store.get_ref(name).map_err(objects_error)?;
+        let Some(target) = next(current.as_ref().map(|value| value.target.as_slice()))? else {
+            return Ok(false);
+        };
         match store.cas_ref(
-            &name,
+            name,
             current.map(|value| value.generation),
             tenant.writer_epoch().0,
             &target,
         ) {
-            Ok(_) => break,
+            Ok(_) => return Ok(true),
             Err(vak_storage::StorageError::Conflict { .. }) if attempts < 8 => attempts += 1,
-            Err(vak_storage::StorageError::StaleEpoch { presented, current }) => {
-                return Err(SessionError::Fenced {
-                    held: presented,
-                    current,
-                });
-            }
-            Err(other) => return Err(objects_error(other)),
+            Err(error) => return Err(cas_error(error)),
         }
     }
-    Ok(())
+}
+
+/// A ref move refused for a stale epoch is this process being fenced.
+pub(crate) fn cas_error(error: vak_storage::StorageError) -> SessionError {
+    match error {
+        vak_storage::StorageError::StaleEpoch { presented, current } => SessionError::Fenced {
+            held: presented,
+            current,
+        },
+        other => objects_error(other),
+    }
 }
 
 /// When `process` last said it would still be alive, `None` if it never

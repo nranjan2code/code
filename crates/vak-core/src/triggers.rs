@@ -243,7 +243,7 @@ pub enum TriggerKind {
     Manual,
 }
 
-/// What a slot whose run was interrupted gets (used from plan M4.4).
+/// What a slot whose run was interrupted (its holder stopped) gets.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OnCrash {
@@ -538,11 +538,332 @@ pub fn for_workspace(triggers: Vec<Trigger>, cwd: &Path) -> Vec<Trigger> {
 }
 
 /// The newest run of `trigger`: "last run" is this query, never a field.
+/// Slots folded into a run are part of that run, not a run of their own.
 pub fn last_run(
     runs: &vak_session::runs::Runs,
     trigger: &vak_session::ids::TriggerId,
 ) -> Result<Option<vak_session::runs::RunRecord>, vak_session::SessionError> {
-    Ok(runs.of_trigger(trigger)?.into_iter().next())
+    Ok(runs
+        .of_trigger(trigger)?
+        .into_iter()
+        .find(|run| run.coalesced_into.is_none()))
+}
+
+// ---- Claims and the one `due(now)` (plan M4.4) -----------------------------
+
+/// How the scheduler treats slots that passed while nothing ran them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CatchUp {
+    /// `[automation] catch_up_missed`: missed slots fold into the newest,
+    /// which runs; off, they are skipped, and so is a newest slot from
+    /// before `floor`.
+    pub missed: bool,
+    /// When this scheduler started.
+    pub floor: DateTime<Utc>,
+}
+
+/// What `due` decided for one trigger.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decision {
+    /// The claim to write.
+    pub claim: vak_session::runs::Claim,
+    /// The slot that starts, and its attempt.
+    pub start: Option<(vak_session::runs::Slot, u32)>,
+    /// The run the claim named, whose holder stopped before it settled.
+    pub abandon: Option<vak_session::runs::ActiveRun>,
+    /// Earlier slots spent with the one that starts (coalesced into it
+    /// when catch-up is on) or without a run (skipped).
+    pub missed: Option<vak_session::runs::Missed>,
+    /// The slot spent because the previous run still holds the trigger.
+    pub busy: Option<vak_session::runs::Slot>,
+}
+
+impl Decision {
+    fn idle(claim: &vak_session::runs::Claim) -> Self {
+        Self {
+            claim: claim.clone(),
+            start: None,
+            abandon: None,
+            missed: None,
+            busy: None,
+        }
+    }
+
+    /// Whether it changes nothing, so the claim is left as it is.
+    pub fn is_idle(&self, claim: &vak_session::runs::Claim) -> bool {
+        self.start.is_none()
+            && self.abandon.is_none()
+            && self.missed.is_none()
+            && self.busy.is_none()
+            && self.claim == *claim
+    }
+}
+
+/// Past this many slots a scan jumps to the last day: only a dense
+/// schedule left for weeks gets there, and its range is still exact.
+const SCAN_CAP: usize = 20_000;
+
+/// The slots of a trigger that passed: the first, the one before the
+/// newest, and the newest.
+struct Passed {
+    first: DateTime<Utc>,
+    previous: Option<DateTime<Utc>>,
+    newest: DateTime<Utc>,
+}
+
+/// The slots of `trigger` after `after` up to `now`.
+fn passed_slots(trigger: &Trigger, after: DateTime<Utc>, now: DateTime<Utc>) -> Option<Passed> {
+    let first = trigger.next_slot_after(after).filter(|slot| *slot <= now)?;
+    let (mut previous, mut newest) = (None, first);
+    let mut cursor = first;
+    let mut scanned = 0;
+    let mut jumped = false;
+    loop {
+        scanned += 1;
+        if scanned == SCAN_CAP && !jumped {
+            jumped = true;
+            cursor = cursor.max(now - chrono::Duration::days(1));
+        }
+        let Some(next) = trigger.next_slot_after(cursor).filter(|slot| *slot <= now) else {
+            break;
+        };
+        if next > newest {
+            previous = Some(newest);
+            newest = next;
+        }
+        cursor = next;
+    }
+    Some(Passed {
+        first,
+        previous,
+        newest,
+    })
+}
+
+/// What a trigger does at `now`, from its claim and how the claim's run
+/// stands: the one decision behind the tick, startup catch-up and run-now
+/// (`run_now`, an event id). Pure: the caller writes the claim by CAS and
+/// then the records.
+///
+/// - A run whose holder stopped is abandoned; with `on_crash = retry_once`
+///   its slot starts again once, as attempt 2.
+/// - The newest slot after the high-water mark starts; earlier ones are
+///   coalesced into it, or skipped with catch-up off.
+/// - A slot that comes due while the previous run holds the trigger is
+///   spent and skipped.
+pub fn due(
+    trigger: &Trigger,
+    claim: &vak_session::runs::Claim,
+    holding: Option<vak_session::runs::Holding>,
+    now: DateTime<Utc>,
+    catch_up: CatchUp,
+    run_now: Option<String>,
+) -> Decision {
+    use vak_session::runs::{Holding, Missed, Slot};
+    let mut decision = Decision::idle(claim);
+    let live = matches!(holding, Some(Holding::Live));
+    let mut retry = None;
+    if let (Some(active), Some(stood)) = (&claim.active, holding)
+        && stood != Holding::Live
+    {
+        decision.claim.active = None;
+        if stood == Holding::Dead {
+            decision.abandon = Some(active.clone());
+            if trigger.enabled && trigger.on_crash == OnCrash::RetryOnce && active.attempt < 2 {
+                retry = Some((active.slot.clone(), active.attempt + 1));
+            }
+        }
+    }
+    if let Some(event) = run_now {
+        let slot = Slot::Event { event };
+        if live {
+            decision.busy = Some(slot);
+        } else {
+            decision.start = Some((slot, 1));
+        }
+        return decision;
+    }
+    if retry.is_some() {
+        decision.start = retry;
+        return decision;
+    }
+    if !trigger.enabled {
+        return decision;
+    }
+    let after = claim.high_water.unwrap_or(trigger.created_at);
+    let Some(Passed {
+        first,
+        previous,
+        newest,
+    }) = passed_slots(trigger, after, now)
+    else {
+        return decision;
+    };
+    decision.claim.high_water = Some(newest);
+    let earlier = previous.map(|through| Missed {
+        from: first,
+        through,
+    });
+    if live {
+        decision.busy = Some(Slot::At { at: newest });
+        decision.missed = earlier;
+    } else if !catch_up.missed && newest < catch_up.floor {
+        decision.missed = Some(Missed {
+            from: first,
+            through: newest,
+        });
+    } else {
+        decision.start = Some((Slot::At { at: newest }, 1));
+        decision.missed = earlier;
+    }
+    decision
+}
+
+impl Trigger {
+    /// The key of the run serving `slot`, in the space at `cwd`: its
+    /// Agent's work, on its owner's behalf, caused by the slot (a schedule)
+    /// or by someone running it (an event).
+    pub fn trace_for(
+        &self,
+        slot: &vak_session::runs::Slot,
+        cwd: &Path,
+    ) -> vak_session::trace::TraceKey {
+        use vak_session::trace::{Cause, TraceKey, local};
+        let cause = match slot {
+            vak_session::runs::Slot::At { at } => Cause::Schedule {
+                schedule: self.id.to_string(),
+                slot: at.to_rfc3339(),
+            },
+            vak_session::runs::Slot::Event { event } => Cause::Trigger {
+                trigger: self.id,
+                request_id: format!("manual:{event}"),
+            },
+        };
+        TraceKey::root(
+            local::tenant(),
+            local::space(cwd),
+            local::agent(&self.agent),
+            cause,
+        )
+        .acting(
+            local::agent_principal(&self.agent),
+            Some(local::local_owner()),
+        )
+    }
+}
+
+/// A trigger's slot, claimed and opened: the guard settles the run and
+/// then releases the claim.
+pub struct Started {
+    pub run: vak_session::runs::OpenRun,
+    pub trace: vak_session::trace::TraceKey,
+    pub slot: vak_session::runs::Slot,
+    pub attempt: u32,
+}
+
+/// What claiming a trigger at `now` came to.
+pub enum Claimed {
+    /// Nothing was due.
+    Idle,
+    /// What was due was spent: the previous run still holds the trigger,
+    /// or the slots were missed. Each is a run record.
+    Spent,
+    Started(Box<Started>),
+}
+
+/// Claims what is due of `trigger` at `now` and records it: the claim moves
+/// by CAS first, then the run opens (minted by `mint` for its slot), then
+/// the abandoned, coalesced and skipped records are written. At most one
+/// process starts a slot, because only one moves the claim past it.
+pub fn claim_due(
+    runs: &vak_session::runs::Runs,
+    trigger: &Trigger,
+    now: DateTime<Utc>,
+    catch_up: CatchUp,
+    run_now: Option<String>,
+    mint: impl Fn(&vak_session::runs::Slot) -> vak_session::trace::TraceKey,
+) -> Result<Claimed, vak_session::SessionError> {
+    use vak_session::runs::ActiveRun;
+    runs.renew()?;
+    let moved = runs.move_claim(&trigger.id, now, |claim, holding| {
+        let mut decision = due(trigger, claim, holding, now, catch_up, run_now.clone());
+        if decision.is_idle(claim) {
+            return None;
+        }
+        let trace = decision.start.as_ref().map(|(slot, attempt)| {
+            let trace = mint(slot);
+            decision.claim.active = Some(ActiveRun {
+                run: trace.run,
+                holder: runs.holder(),
+                attempt: *attempt,
+                slot: slot.clone(),
+            });
+            trace
+        });
+        Some((decision.claim.clone(), (decision, trace)))
+    })?;
+    let Some((_, (decision, trace))) = moved else {
+        return Ok(Claimed::Idle);
+    };
+    if let Some(active) = &decision.abandon {
+        runs.abandon(trigger.id, active)?;
+    }
+    let started = match (decision.start, trace) {
+        (Some((slot, attempt)), Some(trace)) => {
+            let run = runs.open_claimed(&trace, trigger.id, slot.clone(), attempt)?;
+            Some(Started {
+                run,
+                trace,
+                slot,
+                attempt,
+            })
+        }
+        _ => None,
+    };
+    if let Some(missed) = decision.missed {
+        match &started {
+            Some(started) if catch_up.missed => {
+                runs.coalesce(trigger.id, started.run.id(), missed)?;
+            }
+            _ => {
+                let reason = if decision.busy.is_some() {
+                    "the previous run was still going"
+                } else {
+                    "missed while Vakyartha was not running"
+                };
+                runs.skip_slots(trigger.id, None, Some(missed), reason)?;
+            }
+        }
+    }
+    if let Some(slot) = decision.busy {
+        runs.skip_slots(
+            trigger.id,
+            Some(slot),
+            None,
+            "the previous run was still going",
+        )?;
+    }
+    Ok(match started {
+        Some(started) => Claimed::Started(Box::new(started)),
+        None => Claimed::Spent,
+    })
+}
+
+/// When `trigger`'s next slot falls, judged from its claim; an overdue one
+/// starts at the next tick.
+pub fn next_slot(
+    trigger: &Trigger,
+    claim: &vak_session::runs::Claim,
+    catch_up: CatchUp,
+) -> Option<DateTime<Utc>> {
+    if !trigger.enabled {
+        return None;
+    }
+    let mut after = claim.high_water.unwrap_or(trigger.created_at);
+    if !catch_up.missed {
+        after = after.max(catch_up.floor);
+    }
+    trigger.next_slot_after(after)
 }
 
 #[cfg(test)]

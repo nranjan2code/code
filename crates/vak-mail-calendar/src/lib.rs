@@ -94,7 +94,8 @@ pub struct RoutineScope {
     #[serde(default)]
     pub read_commitments: bool,
     /// Optional trigger relative to one timed calendar event. Execution still
-    /// uses the owning TaskDef scheduler and its one-run-per-routine lease.
+    /// goes through the owning trigger's scheduler and its claim, one run at
+    /// a time.
     #[serde(default)]
     pub calendar_event_trigger: Option<CalendarEventTrigger>,
 }

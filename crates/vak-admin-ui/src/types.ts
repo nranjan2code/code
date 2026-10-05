@@ -1457,5 +1457,7 @@ export interface RunRecord {
   result_id?: string;
   reason?: string;
   coalesced_into?: string;
+  /** The slots a skipped or caught-up record stands for. */
+  missed?: { from: string; through: string };
   noticed_by?: string;
 }

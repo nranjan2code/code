@@ -5,6 +5,10 @@
 //! admitted. An open run names the process holding it, and a run whose
 //! holder stopped renewing its liveness (`crate::fence`) is recorded
 //! abandoned by whichever process notices.
+//!
+//! A trigger's slots are started through its claim (plan M4.4), a ref
+//! `trg/<id>/claim` moved by CAS under the writer epoch before the run
+//! opens: whoever moves it starts the slot, and nobody else can.
 
 use crate::chain::RecordChain;
 use crate::ids::{EffectId, PrincipalId, ProcessId, RunId, TriggerId};
@@ -21,6 +25,14 @@ use std::path::{Path, PathBuf};
 pub enum Slot {
     At { at: DateTime<Utc> },
     Event { event: String },
+}
+
+/// A range of a trigger's slots, `from` through `through`, decided
+/// together without a run of their own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Missed {
+    pub from: DateTime<Utc>,
+    pub through: DateTime<Utc>,
 }
 
 /// What a run does when it is not a conversation turn: the name a list of
@@ -63,9 +75,16 @@ pub enum RunStep {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         slot: Option<Slot>,
         reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        missed: Option<Missed>,
     },
-    /// Missed slots folded into one run.
-    Coalesced { into: RunId },
+    /// Missed slots folded into the run `into`, which serves the newest.
+    Coalesced {
+        into: RunId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<TriggerId>,
+        missed: Missed,
+    },
     /// A ledger the run writes or spawns.
     Session { session_id: String },
     Settled {
@@ -79,6 +98,12 @@ pub enum RunStep {
     Abandoned {
         holder: ProcessId,
         noticed_by: ProcessId,
+        /// The trigger and slot whose claim named it, so a run abandoned
+        /// before it opened is still found as that trigger's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trigger: Option<TriggerId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slot: Option<Slot>,
     },
 }
 
@@ -139,6 +164,9 @@ pub struct RunRecord {
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coalesced_into: Option<RunId>,
+    /// The slots a skipped or coalesced record stands for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missed: Option<Missed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub noticed_by: Option<ProcessId>,
 }
@@ -161,6 +189,7 @@ impl RunRecord {
             effects: Vec::new(),
             reason: None,
             coalesced_into: None,
+            missed: None,
             noticed_by: None,
         }
     }
@@ -186,16 +215,24 @@ impl RunRecord {
                 trigger,
                 slot,
                 reason,
+                missed,
             } => {
                 self.status = RunStatus::Skipped;
                 self.trigger = trigger.or(self.trigger);
                 self.slot = slot.or(self.slot.take());
                 self.reason = Some(reason);
+                self.missed = missed.or(self.missed);
                 self.settled_at = Some(at);
             }
-            RunStep::Coalesced { into } => {
+            RunStep::Coalesced {
+                into,
+                trigger,
+                missed,
+            } => {
                 self.status = RunStatus::Skipped;
+                self.trigger = trigger.or(self.trigger);
                 self.coalesced_into = Some(into);
+                self.missed = Some(missed);
                 self.settled_at = Some(at);
             }
             RunStep::Session { session_id } => {
@@ -220,8 +257,15 @@ impl RunRecord {
                 self.effects = effects;
                 self.settled_at = Some(at);
             }
-            RunStep::Abandoned { holder, noticed_by } => {
+            RunStep::Abandoned {
+                holder,
+                noticed_by,
+                trigger,
+                slot,
+            } => {
                 self.status = RunStatus::Abandoned;
+                self.trigger = self.trigger.or(trigger);
+                self.slot = self.slot.take().or(slot);
                 self.holder = Some(holder);
                 self.noticed_by = Some(noticed_by);
                 self.settled_at = Some(at);
@@ -250,6 +294,7 @@ const LIVENESS_RENEW_SECS: u64 = 20;
 pub struct Runs {
     chain: RecordChain,
     tenant_home: PathBuf,
+    holder: ProcessId,
 }
 
 impl Runs {
@@ -259,7 +304,46 @@ impl Runs {
         Self {
             chain: RecordChain::at(dir),
             tenant_home: tenant_home.into(),
+            holder: crate::fence::process(),
         }
+    }
+
+    /// These records, acting as the process `holder` rather than this one:
+    /// what it opens names it, and its liveness is renewed once per open
+    /// and never kept fresh, so its runs lapse as a stopped process's do.
+    /// For tests and tools that stand in for another process.
+    pub fn as_process(mut self, holder: ProcessId) -> Self {
+        self.holder = holder;
+        self
+    }
+
+    /// Renews the holder's liveness: kept fresh from now on for this
+    /// process, once for a stand-in. A claimant renews before it moves a
+    /// claim, so nobody judges its fresh claim's holder gone.
+    pub fn renew(&self) -> Result<(), SessionError> {
+        if self.holder == crate::fence::process() {
+            keep_alive(&self.tenant_home)
+        } else {
+            crate::fence::renew_liveness_of(
+                &self.tenant_home,
+                &self.holder,
+                Utc::now() + chrono::Duration::seconds(LIVENESS_HOLD_SECS),
+            )
+        }
+    }
+
+    /// The process this handle opens runs as.
+    pub fn holder(&self) -> ProcessId {
+        self.holder
+    }
+
+    /// Whether `holder` is alive at `now`: this handle's own process is
+    /// while it runs.
+    pub fn is_alive(&self, holder: &ProcessId, now: DateTime<Utc>) -> Result<bool, SessionError> {
+        if *holder == crate::fence::process() {
+            return Ok(true);
+        }
+        crate::fence::is_alive(&self.tenant_home, holder, now)
     }
 
     pub fn path(&self) -> &Path {
@@ -299,7 +383,7 @@ impl Runs {
         session_id: Option<&str>,
         work: Option<RunWork>,
     ) -> Result<RunId, SessionError> {
-        keep_alive(&self.tenant_home)?;
+        self.renew()?;
         let now = Utc::now();
         let mut events = vec![RunEvent {
             run: trace.run,
@@ -311,7 +395,7 @@ impl Runs {
                 trigger,
                 slot,
                 attempt,
-                holder: crate::fence::process(),
+                holder: self.holder,
             },
         }];
         if let Some(session_id) = session_id {
@@ -342,7 +426,9 @@ impl Runs {
             runs: self.clone(),
             run,
             end: None,
+            result_id: None,
             handed_off: false,
+            claim: None,
         })
     }
 
@@ -386,6 +472,7 @@ impl Runs {
                 trigger,
                 slot,
                 reason: reason.to_string(),
+                missed: None,
             },
         )?;
         Ok(run)
@@ -399,6 +486,7 @@ impl Runs {
                 trigger: None,
                 slot: None,
                 reason: reason.to_string(),
+                missed: None,
             },
         )
     }
@@ -464,7 +552,7 @@ impl Runs {
     /// abandoned; returns them. A run this process holds is never swept by
     /// it.
     pub fn sweep_abandoned(&self, now: DateTime<Utc>) -> Result<Vec<RunId>, SessionError> {
-        let me = crate::fence::process();
+        let me = self.holder;
         let mut abandoned = Vec::new();
         for record in self.list()? {
             if !record.is_open() {
@@ -473,7 +561,7 @@ impl Runs {
             let Some(holder) = record.holder else {
                 continue;
             };
-            if holder == me || crate::fence::is_alive(&self.tenant_home, &holder, now)? {
+            if holder == me || self.is_alive(&holder, now)? {
                 continue;
             }
             self.append(
@@ -481,11 +569,214 @@ impl Runs {
                 RunStep::Abandoned {
                     holder,
                     noticed_by: me,
+                    trigger: None,
+                    slot: None,
                 },
             )?;
             abandoned.push(record.id);
         }
         Ok(abandoned)
+    }
+}
+
+/// What a trigger's claim ref holds: the newest schedule slot spent, and
+/// the run that holds the trigger now.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Claim {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high_water: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<ActiveRun>,
+}
+
+/// The run a claim names as holding its trigger.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActiveRun {
+    pub run: RunId,
+    pub holder: ProcessId,
+    pub attempt: u32,
+    pub slot: Slot,
+}
+
+/// How the run a claim names stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holding {
+    /// Its holder is alive and it has not settled (or is still opening).
+    Live,
+    /// Its holder stopped before it settled.
+    Dead,
+    /// It settled; the claim was not released.
+    Settled,
+}
+
+fn claim_ref(trigger: &TriggerId) -> String {
+    format!("trg/{trigger}/claim")
+}
+
+fn decode_claim(target: Option<&[u8]>) -> Result<Claim, SessionError> {
+    target.map_or(Ok(Claim::default()), |bytes| {
+        serde_json::from_slice(bytes)
+            .map_err(|error| SessionError::Objects(format!("trigger claim: {error}")))
+    })
+}
+
+impl Runs {
+    /// The claim of `trigger` as it stands.
+    pub fn claim(&self, trigger: &TriggerId) -> Result<Claim, SessionError> {
+        let tenant = crate::objects::TenantObjects::for_tenant(&self.tenant_home)?;
+        let value = tenant
+            .store()
+            .get_ref(&claim_ref(trigger))
+            .map_err(crate::objects::objects_error)?;
+        decode_claim(value.as_ref().map(|value| value.target.as_slice()))
+    }
+
+    /// How `active` stands at `now`.
+    pub fn holding(&self, active: &ActiveRun, now: DateTime<Utc>) -> Result<Holding, SessionError> {
+        if self
+            .get(active.run)?
+            .is_some_and(|record| !record.is_open())
+        {
+            return Ok(Holding::Settled);
+        }
+        Ok(if self.is_alive(&active.holder, now)? {
+            Holding::Live
+        } else {
+            Holding::Dead
+        })
+    }
+
+    /// Moves the claim of `trigger` to what `decide` makes of it, under the
+    /// writer epoch. `decide` sees the claim and how its active run stands
+    /// at `now`, and returns the claim to write with what that decided, or
+    /// `None` to leave it. A lost race re-reads and decides again, so only
+    /// a decision made on the claim as written is returned, with the claim
+    /// it replaced.
+    pub fn move_claim<T>(
+        &self,
+        trigger: &TriggerId,
+        now: DateTime<Utc>,
+        mut decide: impl FnMut(&Claim, Option<Holding>) -> Option<(Claim, T)>,
+    ) -> Result<Option<(Claim, T)>, SessionError> {
+        let mut decided = None;
+        crate::fence::swap_ref(&self.tenant_home, &claim_ref(trigger), |target| {
+            let current = decode_claim(target)?;
+            let holding = match &current.active {
+                Some(active) => Some(self.holding(active, now)?),
+                None => None,
+            };
+            let Some((next, value)) = decide(&current, holding) else {
+                decided = None;
+                return Ok(None);
+            };
+            let bytes = serde_json::to_vec(&next)
+                .map_err(|error| SessionError::Objects(error.to_string()))?;
+            decided = Some((current, value));
+            Ok(Some(bytes))
+        })?;
+        Ok(decided)
+    }
+
+    /// Opens the run `trace.run` for the slot of `trigger` whose claim now
+    /// names it, as a guard that settles it and then releases the claim.
+    /// If the open fails, the claim is released at once.
+    pub fn open_claimed(
+        &self,
+        trace: &TraceKey,
+        trigger: TriggerId,
+        slot: Slot,
+        attempt: u32,
+    ) -> Result<OpenRun, SessionError> {
+        match self.open(trace, Some(trigger), Some(slot), attempt) {
+            Ok(run) => Ok(OpenRun {
+                runs: self.clone(),
+                run,
+                end: None,
+                result_id: None,
+                handed_off: false,
+                claim: Some(trigger),
+            }),
+            Err(error) => {
+                let _ = self.release_claim(&trigger, trace.run);
+                Err(error)
+            }
+        }
+    }
+
+    /// Clears the claim of `trigger` if it still names `run`.
+    pub fn release_claim(&self, trigger: &TriggerId, run: RunId) -> Result<(), SessionError> {
+        crate::fence::swap_ref(&self.tenant_home, &claim_ref(trigger), |target| {
+            let mut claim = decode_claim(target)?;
+            if claim.active.as_ref().is_none_or(|active| active.run != run) {
+                return Ok(None);
+            }
+            claim.active = None;
+            serde_json::to_vec(&claim)
+                .map(Some)
+                .map_err(|error| SessionError::Objects(error.to_string()))
+        })?;
+        Ok(())
+    }
+
+    /// Records the run `active`, which held the claim of `trigger`, as
+    /// abandoned by its holder, unless it already settled.
+    pub fn abandon(&self, trigger: TriggerId, active: &ActiveRun) -> Result<(), SessionError> {
+        if self
+            .get(active.run)?
+            .is_some_and(|record| !record.is_open())
+        {
+            return Ok(());
+        }
+        self.append(
+            active.run,
+            RunStep::Abandoned {
+                holder: active.holder,
+                noticed_by: self.holder,
+                trigger: Some(trigger),
+                slot: Some(active.slot.clone()),
+            },
+        )
+    }
+
+    /// Records the slots `missed` of `trigger` as folded into the run `into`.
+    pub fn coalesce(
+        &self,
+        trigger: TriggerId,
+        into: RunId,
+        missed: Missed,
+    ) -> Result<RunId, SessionError> {
+        let run = RunId::new();
+        self.append(
+            run,
+            RunStep::Coalesced {
+                into,
+                trigger: Some(trigger),
+                missed,
+            },
+        )?;
+        Ok(run)
+    }
+
+    /// Records slots of `trigger` spent without a run: `slot`, or the range
+    /// `missed`, and why.
+    pub fn skip_slots(
+        &self,
+        trigger: TriggerId,
+        slot: Option<Slot>,
+        missed: Option<Missed>,
+        reason: &str,
+    ) -> Result<RunId, SessionError> {
+        let run = RunId::new();
+        self.append(
+            run,
+            RunStep::Skipped {
+                trigger: Some(trigger),
+                slot,
+                reason: reason.to_string(),
+                missed,
+            },
+        )?;
+        Ok(run)
     }
 }
 
@@ -505,7 +796,10 @@ pub struct OpenRun {
     runs: Runs,
     run: RunId,
     end: Option<RunEnd>,
+    result_id: Option<String>,
     handed_off: bool,
+    /// The trigger whose claim this run holds, released once it ends.
+    claim: Option<TriggerId>,
 }
 
 impl OpenRun {
@@ -515,6 +809,12 @@ impl OpenRun {
 
     pub fn end_with(&mut self, end: RunEnd) {
         self.end = Some(end);
+    }
+
+    /// Ends it settled with `outcome`, naming the answer it produced.
+    pub fn settle_with(&mut self, outcome: RunOutcome, result_id: Option<String>) {
+        self.end = Some(RunEnd::Settled(outcome));
+        self.result_id = result_id;
     }
 
     /// The work this run admitted is starting elsewhere, which settles it.
@@ -534,18 +834,29 @@ impl Drop for OpenRun {
             .take()
             .unwrap_or_else(|| RunEnd::Skipped("the request ended before a turn started".into()));
         let written = match end {
-            RunEnd::Settled(outcome) => self.runs.settle(self.run, outcome, None),
+            RunEnd::Settled(outcome) => self.runs.settle(self.run, outcome, self.result_id.take()),
             RunEnd::Skipped(reason) => self.runs.append(
                 self.run,
                 RunStep::Skipped {
                     trigger: None,
                     slot: None,
                     reason,
+                    missed: None,
                 },
             ),
         };
         if let Err(error) = written {
             eprintln!("[runs] {} did not settle: {error}", self.run);
+        }
+        // Settled first, then released: a claim never frees a slot whose
+        // run still reads as running.
+        if let Some(trigger) = self.claim.take()
+            && let Err(error) = self.runs.release_claim(&trigger, self.run)
+        {
+            eprintln!(
+                "[runs] {trigger} kept its claim after {}: {error}",
+                self.run
+            );
         }
     }
 }
