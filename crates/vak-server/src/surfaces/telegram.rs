@@ -9,7 +9,6 @@
 //! `TELEGRAM_BOT_TOKEN` in the environment (the credential store included).
 
 use serde_json::Value;
-use std::path::PathBuf;
 
 use crate::gateway::{InboundChannel, InboundRequest};
 
@@ -95,9 +94,10 @@ pub struct TelegramBridge {
     pub token_env: String,
     pub gateway_url: String,
     pub gateway_token: String,
-    /// Directory for the per-token single-instance lock
-    /// (`$VAK_HOME/locks`). None skips locking (tests only).
-    pub locks_dir: Option<PathBuf>,
+    /// Where the poll resumes (the next update offset), held by one poller
+    /// per bot: a second bridge for the same bot on this data home stands
+    /// by (plan M4.7).
+    pub cursor: super::PollCursor,
     /// This bot's id in the admin console's Bots list (`--bot-id`), when
     /// running the multi-bot path. Forwarded on every inbound message so a
     /// chat's first-sight pending entry already knows which bot delivered
@@ -150,91 +150,8 @@ fn identity() -> String {
     format!("{}[pid {}]", hostname_fallback(), std::process::id())
 }
 
-/// Cross-process single-instance guard keyed by bot-token hash: two
-/// bridges on one machine can never fight each other (flock releases
-/// automatically when the holder dies, so stale locks are impossible).
-/// Cross-process AND cross-description single-instance guard keyed by
-/// bot-token hash: O_EXCL marker plus PID liveness check. A crashed
-/// holder leaves a stale marker; the next contender detects the dead PID
-/// and takes over. No unsafe, no extra dependencies.
-#[derive(Debug)]
-pub struct InstanceLock {
-    path: PathBuf,
-    owned: bool,
-}
-
-impl Drop for InstanceLock {
-    fn drop(&mut self) {
-        if self.owned {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
-
-impl InstanceLock {
-    pub fn acquire(locks_dir: &PathBuf, bot_token: &str) -> Result<InstanceLock, String> {
-        std::fs::create_dir_all(locks_dir)
-            .map_err(|e| format!("lock dir {}: {e}", locks_dir.display()))?;
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for b in bot_token.as_bytes() {
-            h ^= u64::from(*b);
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        let path = locks_dir.join(format!("telegram-{h:016x}.lock"));
-
-        if let Ok(lock) = Self::try_create(&path) {
-            return Ok(lock);
-        }
-
-        // Marker exists: is its holder still alive?
-        let holder = std::fs::read_to_string(&path).unwrap_or_default();
-        let pid: Option<u32> = holder
-            .split_whitespace()
-            .find_map(|t| t.parse::<u32>().ok());
-        match pid {
-            Some(p) if Self::pid_alive(p) => Err(format!(
-                "another vak telegram bridge already owns this bot\n  \
-                 lock: {}\n  \
-                 holder pid: {p}\n  \
-                 stop it first (launchctl kickstart -k gui/$(id -u)/com.vak.telegram,\n  \
-                 or kill the stale process); rotating TELEGRAM_BOT_TOKEN also helps",
-                path.display()
-            )),
-            _ => {
-                // Stale marker (crashed holder): take over.
-                let _ = std::fs::remove_file(&path);
-                Self::try_create(&path)
-            }
-        }
-    }
-
-    fn try_create(path: &PathBuf) -> Result<InstanceLock, String> {
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|e| e.to_string())?;
-        drop(file);
-        let me = format!("{} pid {}\n", hostname_fallback(), std::process::id());
-        std::fs::write(path, &me).map_err(|e| e.to_string())?;
-        Ok(InstanceLock {
-            path: path.clone(),
-            owned: true,
-        })
-    }
-
-    /// Safe liveness probe without libc: `kill -0` via a subprocess.
-    fn pid_alive(pid: u32) -> bool {
-        std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|st| st.success())
-            .unwrap_or(false)
-    }
-}
+/// The one stream a Telegram bot reads: its updates.
+const UPDATES_STREAM: &str = "updates";
 
 struct TelegramUpdate {
     update_id: i64,
@@ -323,20 +240,36 @@ impl TelegramBridge {
     /// vanishing.
     const DOCUMENT_MAX_BYTES: usize = crate::gateway::INBOUND_DOCUMENT_MAX_BYTES;
 
-    /// Long-poll once, route every text through the gateway, deliver each
-    /// reply. Returns the next offset even when nothing arrived.
-    pub async fn tick(&self, offset: i64) -> Result<i64, String> {
+    /// Long-poll once from the cursor's offset, route every text through
+    /// the gateway, deliver each reply. Each update moves the cursor past
+    /// it before it is routed, so a restart never replays one. Telegram
+    /// keeps an unread update for 24 hours: when the first update is past
+    /// the offset, the ones between expired unread, and that range is
+    /// recorded as a gap. Returns the next offset.
+    pub async fn tick(&self) -> Result<i64, String> {
+        let offset: i64 = self
+            .cursor
+            .position(UPDATES_STREAM)?
+            .and_then(|position| position.parse().ok())
+            .unwrap_or(0);
         let updates = self.get_updates(offset).await?;
+        if offset > 0
+            && let Some(first) = updates.first().filter(|first| first.update_id > offset)
+        {
+            self.cursor.resync(
+                UPDATES_STREAM,
+                &first.update_id.to_string(),
+                "updates expired at Telegram before the bridge read them",
+            )?;
+        }
         let mut next = offset;
         for u in updates {
+            next = next.max(u.update_id + 1);
+            self.cursor.advance(UPDATES_STREAM, &next.to_string())?;
             if let Some(cb) = &u.callback {
                 if let Err(e) = self.handle_callback(cb).await {
                     eprintln!("[telegram] callback handling failed: {e}");
                 }
-                // Resolving a gate twice is a no-op on the server side, so
-                // this is safe to advance unconditionally — unlike a text
-                // turn, replaying a button tap can't re-run a tool.
-                next = next.max(u.update_id + 1);
                 continue;
             }
             if u.text.trim().is_empty()
@@ -432,7 +365,6 @@ impl TelegramBridge {
             {
                 eprintln!("[telegram] voice reply unavailable: {error}");
             }
-            next = next.max(u.update_id + 1);
         }
         Ok(next)
     }
@@ -1025,12 +957,9 @@ impl TelegramBridge {
     }
 
     pub async fn run(&self) -> Result<(), String> {
-        // Local mutual exclusion first: two bridges on one host must fail
-        // fast with the holder's identity instead of flapping 409s.
-        let _instance_lock = match &self.locks_dir {
-            Some(dir) => Some(InstanceLock::acquire(dir, &self.bot_token)?),
-            None => None,
-        };
+        // One poller per bot on this data home: a second fails fast with
+        // the holder's identity instead of flapping 409s.
+        self.cursor.hold()?;
 
         // Ownership probe: if another machine/session holds the long-poll,
         // become hot standby instead of hammering 409s forever.
@@ -1039,7 +968,6 @@ impl TelegramBridge {
             Err(PollBlock::Transient) | Ok(()) => {}
         }
 
-        let mut offset: i64 = 0;
         let mut failures: u32 = 0;
         let watch = (!self.token_env.is_empty())
             .then(|| super::CredentialWatch::new(&self.token_env, &self.bot_token));
@@ -1067,11 +995,9 @@ impl TelegramBridge {
                     }
                 }
             }
-            match self.tick(offset).await {
-                Ok(next) => {
-                    offset = next;
-                    failures = 0;
-                }
+            match self.tick().await {
+                Ok(_) => failures = 0,
+                Err(e) if e == super::CURSOR_LOST => return Err(e),
                 Err(e) => {
                     failures += 1;
                     match classify_poll_error(&e) {
@@ -1208,20 +1134,6 @@ mod tests {
         assert_eq!(standby_backoff_secs(1), 2);
         assert_eq!(standby_backoff_secs(5), 30);
         assert_eq!(standby_backoff_secs(50), 30);
-    }
-
-    #[test]
-    fn instance_lock_is_exclusive_per_token_and_released_on_drop() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-A");
-        assert!(a.is_ok(), "first holder acquires");
-        let b = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-A");
-        assert!(b.is_err(), "second holder on SAME token rejected");
-        let c = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-B");
-        assert!(c.is_ok(), "different token = different lock file");
-        drop(a);
-        let d = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-A");
-        assert!(d.is_ok(), "flock releases when holder drops");
     }
 
     /// Opt-in network smoke test: set `VAK_LIVE_TELEGRAM_CHAT_ID` and run

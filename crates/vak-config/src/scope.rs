@@ -348,6 +348,12 @@ impl SharedScope {
         self.root.join("effects")
     }
 
+    /// The cursor gap rows (plan M4.7): each range of an external stream a
+    /// cursor skipped when it resynced.
+    pub fn cursors(&self) -> PathBuf {
+        self.root.join("cursors")
+    }
+
     pub fn cost_log(&self) -> PathBuf {
         self.root.join("cost-log")
     }
@@ -518,6 +524,7 @@ mod tests {
         assert_eq!(s.gateway_bots(), data.join("gateway/bots.json"));
         assert_eq!(s.gateway_deliveries(), data.join("gateway/deliveries"));
         assert_eq!(s.effects(), data.join("effects"));
+        assert_eq!(s.cursors(), data.join("cursors"));
         assert_eq!(s.operations_incidents(), data.join("operations/incidents"));
         assert_eq!(s.operations_actions(), data.join("operations/actions"));
         assert_eq!(s.sandbox_promotions(), data.join("sandbox/promotions"));

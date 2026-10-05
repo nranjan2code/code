@@ -130,6 +130,21 @@ Type `CostRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `co
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 
+## cursor_gap
+
+Type `CursorGap` in `crates/vak-session/src/cursors.rs`. Class: ledger. Stored in: `cursors`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `owner` | `String` | yes |  |
+| `stream` | `String` | yes |  |
+| `at` | `DateTime<Utc>` | yes |  |
+| `from` | `Option<String>` | no | The position that could not be resumed; `None` if there was none. |
+| `to` | `String` | yes | The position it resynced to. |
+| `reason` | `String` | yes |  |
+| `trace` | `Option<TraceKey>` | no |  |
+| `actor` | `Option<PrincipalId>` | no |  |
+
 ## effect_event
 
 Type `EffectEvent` in `crates/vak-session/src/effects.rs`. Class: ledger. Stored in: `effects`. Version: 1.

@@ -609,6 +609,11 @@ export interface OperationsSnapshot {
     pending_approvals: Array<{ id: string; tool: string; reason: string; requested_at: string }>;
   }>;
   tasks: AutomationItem[];
+  /** Ranges a channel bridge resynced past, newest first (plan M4.7). */
+  cursor_gaps: {
+    records: Array<{ owner: string; stream: string; at: string; from?: string | null; to: string; reason: string }>;
+    error?: string | null;
+  };
   effects: {
     waiting: number;
     held: number;

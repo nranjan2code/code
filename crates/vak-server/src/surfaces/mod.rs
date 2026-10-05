@@ -12,6 +12,92 @@ pub mod discord;
 pub mod slack;
 pub mod telegram;
 
+/// What a poller's tick returns when another process took its cursors: the
+/// poller stops rather than read the stream twice (plan M4.7).
+pub const CURSOR_LOST: &str = "another poller holds this bot's cursor now";
+
+/// A cursor older than this when its poller resumes is not replayed: the
+/// poller resyncs to the newest position and records the gap.
+pub const RESUME_BOUND: chrono::Duration = chrono::Duration::hours(24);
+
+/// A bot poller's hold on its stream positions (`vak_session::cursors`):
+/// one owner per bot (`bot/<surface>/<bot id>`), one stream per channel
+/// (Telegram has one, `updates`). Only the process that holds the owner
+/// reads the stream, so a second poller of the same bot stands by.
+#[derive(Debug, Clone)]
+pub struct PollCursor {
+    cursors: vak_session::cursors::Cursors,
+    owner: String,
+}
+
+impl PollCursor {
+    /// The cursors of the data home this process uses.
+    pub fn for_bot(surface: &str, bot_id: Option<&str>) -> Self {
+        let data = vak_config::paths::data_home();
+        Self::at(
+            vak_session::cursors::Cursors::at(
+                vak_config::scope::SharedScope::new(&data).cursors(),
+                vak_config::paths::tenant_home_at(&data, vak_config::paths::LOCAL_TENANT),
+            ),
+            surface,
+            bot_id,
+        )
+    }
+
+    pub fn at(cursors: vak_session::cursors::Cursors, surface: &str, bot_id: Option<&str>) -> Self {
+        Self {
+            cursors,
+            owner: format!("bot/{surface}/{}", bot_id.unwrap_or("default")),
+        }
+    }
+
+    /// Takes hold of this bot's cursors, or says which live process holds
+    /// them.
+    pub fn hold(&self) -> Result<(), String> {
+        match self
+            .cursors
+            .hold(&self.owner, chrono::Utc::now())
+            .map_err(|error| error.to_string())?
+        {
+            vak_session::cursors::Hold::Held => Ok(()),
+            vak_session::cursors::Hold::Elsewhere(holder) => Err(format!(
+                "{} is polled by another process ({holder}); this one stands by",
+                self.owner
+            )),
+        }
+    }
+
+    /// The position of `stream`, if it has one.
+    pub fn position(&self, stream: &str) -> Result<Option<String>, String> {
+        self.cursors
+            .get(&self.owner, stream)
+            .map(|cursor| cursor.map(|cursor| cursor.position))
+            .map_err(|error| error.to_string())
+    }
+
+    /// Moves `stream` to `position`; [`CURSOR_LOST`] if another process
+    /// holds this bot now.
+    pub fn advance(&self, stream: &str, position: &str) -> Result<(), String> {
+        match self.cursors.advance(&self.owner, stream, position, None) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(CURSOR_LOST.into()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    /// Resyncs `stream` to `position`, recording what it skipped and why.
+    pub fn resync(&self, stream: &str, position: &str, reason: &str) -> Result<(), String> {
+        match self.cursors.resync(&self.owner, stream, position, reason) {
+            Ok(true) => {
+                eprintln!("[{}] {stream} resynced: {reason}", self.owner);
+                Ok(())
+            }
+            Ok(false) => Err(CURSOR_LOST.into()),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
 fn prepared_packet(
     body: serde_json::Value,
     surface: &str,

@@ -346,16 +346,25 @@ async fn the_telegram_bridge_sends_the_edited_workbook_back() {
             .unwrap();
     });
 
+    let home_dir = tempfile::tempdir().unwrap();
     let bridge = vak_server::surfaces::telegram::TelegramBridge {
         token_env: String::new(),
-        locks_dir: None,
+        cursor: {
+            let cursors = vak_session::cursors::Cursors::at(
+                home_dir.path().join("cursors"),
+                home_dir.path().join("tenant"),
+            );
+            let cursor = vak_server::surfaces::PollCursor::at(cursors, "telegram", None);
+            cursor.hold().unwrap();
+            cursor
+        },
         api_base: format!("http://{telegram_addr}"),
         bot_token: "bottok".into(),
         gateway_url: format!("http://{gateway_addr}"),
         gateway_token: "vk_test".into(),
         bot_id: None,
     };
-    assert_eq!(bridge.tick(0).await.unwrap(), 901);
+    assert_eq!(bridge.tick().await.unwrap(), 901);
 
     let sent = sent.lock().unwrap();
     assert_eq!(sent.len(), 2, "{sent:?}");

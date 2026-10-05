@@ -32,6 +32,14 @@ pub struct SlackBridge {
     pub poll_secs: u64,
     /// See `TelegramBridge::bot_id`.
     pub bot_id: Option<String>,
+    /// Where each channel's poll resumes, held by one poller per bot.
+    pub cursor: super::PollCursor,
+}
+
+/// When a Slack message was posted: its `ts` is Unix seconds.
+fn ts_time(ts: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let seconds: f64 = ts.parse().ok()?;
+    chrono::DateTime::from_timestamp(seconds as i64, 0)
 }
 
 impl InboundChannel for SlackBridge {
@@ -146,22 +154,47 @@ impl SlackBridge {
             gateway_url: gateway_url.trim_end_matches('/').to_string(),
             gateway_token,
             poll_secs: 3,
+            cursor: super::PollCursor::for_bot("slack", bot_id.as_deref()),
             bot_id,
         }
     }
 
-    pub async fn tick(
-        &self,
-        cursors: &mut std::collections::HashMap<String, String>,
-    ) -> Result<(), String> {
+    /// One poll pass over every watched channel, resuming each after its
+    /// cursor (see `DiscordBridge::tick`). Slack answers with the newest
+    /// page after the cursor, so when more arrived than one page holds the
+    /// older ones were never read: the cursor resyncs past them and the
+    /// skipped range is recorded as a gap.
+    pub async fn tick(&self) -> Result<(), String> {
         for channel_id in &self.channel_ids {
-            let messages = self.fetch(channel_id, cursors.get(channel_id)).await?;
-            for message in messages {
-                let cold_start = !cursors.contains_key(channel_id);
-                cursors.insert(channel_id.clone(), message.ts.clone());
-                if cold_start {
-                    continue;
+            let position = self.cursor.position(channel_id)?;
+            let stale = position
+                .as_deref()
+                .and_then(ts_time)
+                .is_some_and(|at| chrono::Utc::now() - at > super::RESUME_BOUND);
+            if position.is_none() || stale {
+                if let Some(newest) = self.fetch(channel_id, None).await?.0.pop() {
+                    if stale {
+                        self.cursor.resync(
+                            channel_id,
+                            &newest.ts,
+                            "the bridge was stopped longer than the resume bound",
+                        )?;
+                    } else {
+                        self.cursor.advance(channel_id, &newest.ts)?;
+                    }
                 }
+                continue;
+            }
+            let (messages, more) = self.fetch(channel_id, position.as_ref()).await?;
+            if more && let Some(first) = messages.first() {
+                self.cursor.resync(
+                    channel_id,
+                    &first.ts,
+                    "more messages arrived between polls than one poll reads",
+                )?;
+            }
+            for message in messages {
+                self.cursor.advance(channel_id, &message.ts)?;
                 let reply = self.process(&message).await;
                 if let Err(e) = self.send_message(channel_id, &reply).await {
                     eprintln!("[slack] send to {channel_id} failed: {e}");
@@ -186,7 +219,7 @@ impl SlackBridge {
         &self,
         channel_id: &str,
         oldest: Option<&String>,
-    ) -> Result<Vec<SlackMessage>, String> {
+    ) -> Result<(Vec<SlackMessage>, bool), String> {
         let mut query: Vec<(&str, String)> = vec![
             ("channel", channel_id.to_string()),
             (
@@ -225,7 +258,9 @@ impl SlackBridge {
                 body["error"].as_str().unwrap_or("?")
             ));
         }
-        Ok(parse_history(channel_id, &body))
+        // A full page after the cursor means older messages were left out.
+        let more = oldest.is_some() && body["has_more"].as_bool() == Some(true);
+        Ok((parse_history(channel_id, &body), more))
     }
 
     async fn process(&self, message: &SlackMessage) -> GatewayReply {
@@ -431,14 +466,15 @@ impl SlackBridge {
                     .into(),
             );
         }
-        let mut cursors = std::collections::HashMap::new();
+        self.cursor.hold()?;
         let mut failures: u32 = 0;
         loop {
-            match self.tick(&mut cursors).await {
+            match self.tick().await {
                 Ok(()) => {
                     failures = 0;
                     tokio::time::sleep(std::time::Duration::from_secs(self.poll_secs)).await;
                 }
+                Err(e) if e == super::CURSOR_LOST => return Err(e),
                 Err(e) => {
                     failures += 1;
                     if failures == 1 || failures.is_multiple_of(10) {
@@ -522,6 +558,15 @@ mod tests {
             gateway_token: "g".into(),
             poll_secs: 1,
             bot_id: None,
+            // Never read by these tests.
+            cursor: crate::surfaces::PollCursor::at(
+                vak_session::cursors::Cursors::at(
+                    std::env::temp_dir().join("vak-unread-cursors"),
+                    std::env::temp_dir().join("vak-unread-tenant"),
+                ),
+                "slack",
+                None,
+            ),
         }
     }
 

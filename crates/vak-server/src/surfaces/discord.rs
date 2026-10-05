@@ -38,6 +38,15 @@ pub struct DiscordBridge {
     pub poll_secs: u64,
     /// See `TelegramBridge::bot_id`.
     pub bot_id: Option<String>,
+    /// Where each channel's poll resumes, held by one poller per bot.
+    pub cursor: super::PollCursor,
+}
+
+/// When a Discord message was created: a snowflake's top 42 bits are
+/// milliseconds since the Discord epoch.
+fn snowflake_time(id: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let id: u64 = id.parse().ok()?;
+    chrono::DateTime::from_timestamp_millis(i64::try_from((id >> 22) + 1_420_070_400_000).ok()?)
 }
 
 impl InboundChannel for DiscordBridge {
@@ -147,27 +156,40 @@ impl DiscordBridge {
             gateway_url: gateway_url.trim_end_matches('/').to_string(),
             gateway_token,
             poll_secs: 3,
+            cursor: super::PollCursor::for_bot("discord", bot_id.as_deref()),
             bot_id,
         }
     }
 
-    /// One poll pass over every watched channel. `cursors` maps channel id
-    /// to the last message id already routed, so a restart never replays
-    /// and a transient failure never skips.
-    pub async fn tick(
-        &self,
-        cursors: &mut std::collections::HashMap<String, String>,
-    ) -> Result<(), String> {
+    /// One poll pass over every watched channel. Each channel resumes
+    /// after its cursor, which moves before a message is routed, so a
+    /// restart never replays and a transient failure never skips. A channel
+    /// with no cursor starts at its newest message without replaying it; one
+    /// whose cursor is older than [`super::RESUME_BOUND`] resyncs to the
+    /// newest and records the gap.
+    pub async fn tick(&self) -> Result<(), String> {
         for channel_id in &self.channel_ids {
-            let messages = self.fetch(channel_id, cursors.get(channel_id)).await?;
-            for message in messages {
-                // First sight of a channel: adopt the cursor without
-                // replaying its backlog into the agent.
-                let cold_start = !cursors.contains_key(channel_id);
-                cursors.insert(channel_id.clone(), message.id.clone());
-                if cold_start {
-                    continue;
+            let position = self.cursor.position(channel_id)?;
+            let stale = position
+                .as_deref()
+                .and_then(snowflake_time)
+                .is_some_and(|at| chrono::Utc::now() - at > super::RESUME_BOUND);
+            if position.is_none() || stale {
+                if let Some(newest) = self.fetch(channel_id, None).await?.pop() {
+                    if stale {
+                        self.cursor.resync(
+                            channel_id,
+                            &newest.id,
+                            "the bridge was stopped longer than the resume bound",
+                        )?;
+                    } else {
+                        self.cursor.advance(channel_id, &newest.id)?;
+                    }
                 }
+                continue;
+            }
+            for message in self.fetch(channel_id, position.as_ref()).await? {
+                self.cursor.advance(channel_id, &message.id)?;
                 let reply = self.process(&message).await;
                 if let Err(e) = self.send_message(channel_id, &reply).await {
                     eprintln!("[discord] send to {channel_id} failed: {e}");
@@ -395,14 +417,17 @@ impl DiscordBridge {
                     .into(),
             );
         }
-        let mut cursors = std::collections::HashMap::new();
+        // One poller per bot: another live one keeps reading, this one
+        // stops.
+        self.cursor.hold()?;
         let mut failures: u32 = 0;
         loop {
-            match self.tick(&mut cursors).await {
+            match self.tick().await {
                 Ok(()) => {
                     failures = 0;
                     tokio::time::sleep(std::time::Duration::from_secs(self.poll_secs)).await;
                 }
+                Err(e) if e == super::CURSOR_LOST => return Err(e),
                 Err(e) => {
                     failures += 1;
                     if failures == 1 || failures.is_multiple_of(10) {
@@ -485,6 +510,15 @@ mod tests {
             gateway_token: "g".into(),
             poll_secs: 1,
             bot_id: None,
+            // Never read by these tests.
+            cursor: crate::surfaces::PollCursor::at(
+                vak_session::cursors::Cursors::at(
+                    std::env::temp_dir().join("vak-unread-cursors"),
+                    std::env::temp_dir().join("vak-unread-tenant"),
+                ),
+                "discord",
+                None,
+            ),
         }
     }
 

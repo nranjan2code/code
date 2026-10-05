@@ -6,6 +6,7 @@
 //! entry, never a deletion.
 
 pub mod chain;
+pub mod cursors;
 pub mod documents;
 pub mod effects;
 pub mod fence;

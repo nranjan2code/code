@@ -298,7 +298,14 @@ carries no content. Its dispatch claim is the single-use claim; the vault's
 encrypted action receipts and `begin_action` are gone, and Review reads a
 candidate's state from its effect. These kinds are never sent again by
 themselves or by Send again, and one left unsent when its five-minute
-approval lapses is failed. No session starts a later step unasked.
+approval lapses is failed. M4.7a is done (2026-10-05): a channel
+bridge holds its bot's cursors (`vak_session::cursors`, refs
+`cur/bot/<surface>/<bot>/…`), moves a position by CAS before it routes
+a message, and records every range it resyncs past as a gap row in the
+`cursors/` chain, listed in the Operations Center; a second poller of a
+bot stands by while the holder is alive, and Telegram's per-token lock
+file is gone. M4.7b (the mail vault's cursors and backlog onto cursor
+refs) is next. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -449,6 +456,10 @@ approval lapses is failed. No session starts a later step unasked.
   prepare it before anything is sent, send only what `begin_dispatch`
   hands this process, and record the provider's answer. Never build a
   second queue, retry loop or single-use claim for an outbound action.
+- Keep a position in an external stream as a cursor
+  (`vak_session::cursors`): hold the owner, move the position by CAS,
+  and record a resync as a gap. Never keep one in memory, in a file of
+  your own, or behind a lock file.
 - Write durable state only through the fenced paths (`SessionLog`,
   `RecordChain`, `documents`, tenant objects, refs under
   `TenantObjects::writer_epoch`), or call `vak_session::fence::check()`
@@ -1453,6 +1464,7 @@ crates/vak-session   append-only ledger trees on record segments, tenant
                      objects (objects.rs), fencing (fence.rs), run records
                      and trigger claims (runs.rs), effect records and
                      their dispatch refs (effects.rs, invariant 41),
+                     stream cursors and their gap rows (cursors.rs),
                      frozen contract, projection,
                      receipt, presentation and turn-card entries (audit-only,
                      projection-neutral), TurnIndex and fidelity projections

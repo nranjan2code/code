@@ -627,8 +627,9 @@ the running bridge reads.
 
 **Bridges run per bot, not per surface.** `vak telegram/discord/slack
 --bot-id <id>` (`vak/src/cli.rs`, `vak/src/main.rs`) resolves its token from
-that specific bot's `token_env` instead of the fixed legacy slot. Because
-`TelegramBridge`'s `InstanceLock` was already keyed by token (not global), a
+that specific bot's `token_env` instead of the fixed legacy slot. Because each
+bridge holds its own bot's cursors (`cur/bot/<surface>/<bot id>`, not one
+per surface), a
 second `vak telegram --bot-id telegram-sales --server ...` process runs
 concurrently with the first and receives that bot's messages independently.
 Outbound delivery (`AdapterRegistry::built_in`, `vak-server/src/delivery.rs`)

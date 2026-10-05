@@ -18,11 +18,20 @@ Telegram permits exactly ONE getUpdates poller per bot token; a second
 consumer gets `409 Conflict` for as long as both run. The bridge treats
 ownership as first-class state:
 
-- **Local mutual exclusion** — an O_EXCL marker at
-  `$VAK_HOME/locks/telegram-<fnv(token)>.lock` records holder
-  host+pid. A second bridge on the same machine fails fast naming the
-  holder; a stale marker (crashed process) is detected via pid liveness
-  and taken over.
+- **One poller per bot on a data home** — the bridge holds its bot's
+  cursors (`vak_session::cursors`, data-architecture plan M4.7): the ref
+  `cur/bot/telegram/<bot>/holder` names the process polling it, and the
+  update offset is the ref `cur/bot/telegram/<bot>/updates`, moved by CAS
+  under the writer epoch before each update is routed, so a restart
+  resumes exactly where it stopped. A second bridge for the same bot fails
+  fast naming the holder while the holder is alive, and takes over once
+  its liveness lapses; a holder that lost its bot stops. An update offset
+  Telegram expired (it keeps unread updates 24 hours) resyncs and records
+  the skipped range as a gap row in the `cursors/` chain. Discord and Slack
+  bridges hold one cursor per channel the same way; a cursor older than 24
+  hours resyncs to the newest message rather than replaying, and a Slack
+  poll that could not read everything records the range it skipped. The
+  Operations Center lists recent gaps.
 - **Hot-standby takeover** — if a rival on ANOTHER machine owns the
   long-poll, the local bridge does not hammer 409s: it probes quietly
   (1s→30s capped backoff, one log line per ~10 probes) and takes over
@@ -31,7 +40,7 @@ ownership as first-class state:
   so outbound delivery is unaffected during contention.
 
 Operational rule: run at most one bridge per bot token across your fleet;
-the lock + standby make violations safe instead of silent.
+the cursor hold + standby make violations safe instead of silent.
 
 ## Thesis
 

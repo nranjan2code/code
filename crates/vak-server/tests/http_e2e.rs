@@ -345,6 +345,7 @@ async fn operations_center_is_a_real_evidence_projection() {
     assert!(body["pool"]["entries"].is_array());
     assert!(body["runs"].is_array());
     assert!(body["effects"]["records"].is_array());
+    assert!(body["cursor_gaps"]["records"].is_array());
     assert!(body["incidents"].is_array());
 }
 

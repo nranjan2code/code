@@ -161,9 +161,10 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
             .unwrap();
     });
 
+    let cursor_home = tempfile::tempdir().unwrap();
     let bridge = TelegramBridge {
         token_env: String::new(),
-        locks_dir: None,
+        cursor: held_cursor(&cursor_home),
         api_base: tg_base,
         bot_token: "bottok".into(),
         gateway_url: format!("http://{gw_addr}"),
@@ -171,7 +172,7 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
         bot_id: None,
     };
 
-    let next = bridge.tick(0).await.unwrap();
+    let next = bridge.tick().await.unwrap();
     assert_eq!(next, 778, "offset advances past the handled update");
 
     {
@@ -182,7 +183,7 @@ async fn telegram_bridge_routes_message_and_delivers_reply() {
     }
 
     // A quiet poll delivers nothing new.
-    bridge.tick(next).await.unwrap();
+    bridge.tick().await.unwrap();
     assert_eq!(sent.lock().unwrap().len(), 1);
     assert!(
         get_calls.load(Ordering::SeqCst) >= 2,
@@ -279,9 +280,10 @@ async fn bridge_survives_outage_window_and_resumes_cursor() {
             .unwrap();
     });
 
+    let cursor_home = tempfile::tempdir().unwrap();
     let bridge = TelegramBridge {
         token_env: String::new(),
-        locks_dir: None,
+        cursor: held_cursor(&cursor_home),
         api_base: format!("http://{addr}"),
         bot_token: "bottok".into(),
         gateway_url: format!("http://{gw_addr}"),
@@ -313,4 +315,15 @@ async fn bridge_survives_outage_window_and_resumes_cursor() {
         !handle.is_finished(),
         "run() must not exit on transients (old give-up-after-10 behavior)"
     );
+}
+
+/// This bot's cursor in a scratch data home, held by this process.
+fn held_cursor(home: &tempfile::TempDir) -> vak_server::surfaces::PollCursor {
+    let cursor = vak_server::surfaces::PollCursor::at(
+        vak_session::cursors::Cursors::at(home.path().join("cursors"), home.path().join("tenant")),
+        "telegram",
+        None,
+    );
+    cursor.hold().unwrap();
+    cursor
 }

@@ -1720,12 +1720,31 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
         "runs": runs,
         "tasks": operation_tasks(&state),
         "effects": effects,
+        "cursor_gaps": cursor_gaps(&state),
         "bus": state.hub.bus_status(),
         "security": security,
         "incidents": incidents,
         "actions": operations::recent_actions(&vak_config::scope::SharedScope::new(state.core.scope().root()), 50),
         "ops_port": ops_port,
     }))
+}
+
+/// The newest 50 ranges a channel bridge resynced past (plan M4.7), or the
+/// read error: what a bridge could not read is evidence, never silence.
+fn cursor_gaps(state: &AppState) -> serde_json::Value {
+    let data = state.core.shared_scope().into_root();
+    let cursors = vak_session::cursors::Cursors::at(
+        vak_config::scope::SharedScope::new(&data).cursors(),
+        vak_config::paths::tenant_home_at(&data, vak_config::paths::LOCAL_TENANT),
+    );
+    match cursors.gaps() {
+        Ok(mut gaps) => {
+            gaps.reverse();
+            gaps.truncate(50);
+            serde_json::json!({ "records": gaps, "error": null })
+        }
+        Err(error) => serde_json::json!({ "records": [], "error": error.to_string() }),
+    }
 }
 
 async fn operations_actions(State(state): State<AppState>) -> Json<serde_json::Value> {
