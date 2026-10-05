@@ -243,8 +243,9 @@ state, drafts, Agent workspaces and run environments live outside the
 project tree. Slice 5 is done (2026-10-04): every space-keyed store keys
 by a `spc_` id from the tenant space registry (`vak_config::spaces`),
 never a path hash. Slice 6 is done (2026-10-05), so M3b is done; its
-release waits on the maintainer's version decision. No session starts a
-later step unasked.
+release waits on the maintainer's version decision. M4's design was
+agreed on 2026-10-05 (plan §M4, "M4 design": shapes and steps M4.1–M4.8);
+none of it is built. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;

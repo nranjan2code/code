@@ -447,7 +447,7 @@ entry here before the first screen that needs it.
 | Model term | Everyday word | Settled |
 |---|---|---|
 | Space | **Project**: the thing a conversation's files and history belong to. "Folder" stays the word for its location on one machine, so a project can have a folder here, on another machine, or none ("No folder on this machine"). | 2026-10-05, by the maintainer, for M3b's Configure › Projects |
-| Run, trigger, effect | to settle before M4's screens | |
+| Run, trigger, effect | **Run**; **Automation** for a trigger with what it does (not "routine": later kinds are events, webhooks and watches); **Action** for an effect, named by its kind ("Sent to Telegram"), with the statuses Sending · Sent · Didn't send · Not sure it was sent. "Trigger" and "effect" stay under Technical details. | 2026-10-05, in M4's design pass (plan §M4) |
 | Trash, delete permanently, "Why is this gone?" | to settle before M7a's screens | |
 
 ## 8. Everyday by default, technical on request

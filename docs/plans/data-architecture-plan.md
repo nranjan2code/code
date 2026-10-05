@@ -774,6 +774,236 @@ proposals bring the rest.
 - `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`,
   `restore_fences_old_writer`, `cursor_resync_records_gap`.
 
+#### M4 design (agreed 2026-10-05; not started)
+
+The maintainer asked for the design that serves the later kinds best, since
+there are no users to keep. Implementation starts in a later session, one
+step at a time, in the order below.
+
+**What the tree has today** (re-scanned at `bd326e08e`; the blast-radius
+counts were taken at `438cfcd5`):
+- Ids are already minted (M1): `RunId`, `TriggerId` (`trg_`) and `EffectId`
+  (`eff_`) exist, and `SessionHeader` already carries `run` and `cause`. So
+  "the ledger names its cause" is done. M4 adds the Run *record*.
+- `TaskDef` (`vak-core/src/tasks.rs`) is still a plain JSON array in
+  `tasks.json` under the shared scope, not a Document. Since the blast-radius
+  scan it has gained `space` (a `spc_` key), `timezone`, `due_at` (once),
+  `agent_revision`, `mail_calendar_scope` and `mail_calendar_last_check_at`,
+  beside nine `last_*` fields. 14 files name `TaskDef`. `next_fire` is in 6
+  files. In the server it is the in-memory marker map, used only by cron
+  without a timezone; zoned cron anchors on `last_run_at`.
+- The scheduler is about 1,100 lines of `vak-server/src/lib.rs`, from
+  `run_task_now` at about :19672 to `start_scheduler`. Tick, catch-up and
+  run-now are three paths. Nothing stops two processes on one space from
+  firing the same slot. Busy and refused tasks keep their slot and retry
+  every tick (M0's `cron_slot_not_lost_on_failure`).
+- The only cross-process guard is the mail/calendar routine's OS file lock
+  (`vak-mail-calendar/src/vault.rs` `try_acquire_routine_lease`). Session
+  ledgers are guarded by an OS `try_lock` (`vak-session/src/log.rs`). Neither
+  holds an epoch.
+- The tenant store (`vak-session/src/objects.rs`, a `LocalStore`) already
+  has refs with a generation and a writer epoch, and `Store::epoch` and
+  `Store::restore`. No code outside `vak-storage` writes a ref yet, so M4 is
+  their first consumer.
+- The outbox has been a `RecordChain` since M3b slice 3. It carries `trace`
+  and `actor`, with states `Pending | Delivered | DeadLetter`. It has no
+  idempotency key and no receipt.
+- Channel cursors are not durable at all. Discord and Slack keep an
+  in-memory map and adopt the newest message on cold start. Telegram keeps
+  its offset in the loop. Mail/calendar cursors live in the encrypted vault
+  and advance atomically with the backlog.
+- The model-facing tool is called `tasks` (`vak-core/src/tools_tasks.rs`).
+  Flows keep their own `flow-runs/` directories and the
+  `/flows/{name}/runs` routes. Best-of-N starts at about lib.rs:18431. The
+  admin console links `#/operations/work/runs/` in 6 places.
+- `EnvironmentBackend` exists (`vak-sandbox/src/lib.rs:59`). A non-git space
+  is still refused, at about lib.rs:20099.
+
+**Words** (doc 75 §7, L11). Everyday screens say **Automation** (a trigger
+plus what it does), **Run** and **Action** (an effect, named by its kind:
+"Sent to Telegram", "Calendar event changed"). An action's status reads
+Sending · Sent · Didn't send · Not sure it was sent. "Trigger" and "effect"
+appear only under Technical details. "Routine" goes from user-facing strings
+(`taskWords.ts` and the Canvas), because later kinds (event, webhook, watch)
+are not routines.
+
+**Names.** In code, the API and the CLI the type is `Trigger`, as docs 73,
+76, 80 and 81 already say. The model-facing tool `tasks` becomes
+`automations`, the word the person and the model share. The CLI commands
+are `vak triggers`, `vak runs` and `vak effects`.
+
+**Fencing and where the epochs live.**
+- There is one writer epoch per tenant store. It is `Store::epoch()`, held
+  in the store's refs table and bumped only by `Store::restore()` (and later
+  by a host handoff, doc 79, §11).
+- `Core` reads the epoch once at open into a `WriterEpoch`. It passes that
+  epoch to every ref CAS, which `refs::decide` refuses when the epoch is
+  stale. The same check runs before every append to `runs/` or `effects/`,
+  at `SessionLog` open and at `begin_turn`.
+- Live processes on one store share the epoch, and CAS generations keep
+  them apart. The epoch fences a restored or superseded copy.
+- A fenced process stops its scheduler, pollers and dispatch, refuses new
+  turns, and reports `fenced` in `/health`.
+- Each server process mints a `ProcessId` (`prc_`, UUIDv7) at start. It
+  renews a liveness ref `proc/<prc>` (`alive_until`) on every scheduler
+  tick, and leases are judged by it. There is no lease per run.
+
+**RunRecord.** A `runs/` record chain in the shared scope, declared in
+`REGISTRY`. Its rows are events folded into a projection:
+
+```
+RunEvent { run: RunId, at, step: RunStep }
+RunStep::Opened  { trace: TraceKey, cause: Cause, trigger: Option<TriggerId>,
+                   slot: Option<Slot>, attempt: u32, holder: ProcessId }
+RunStep::Skipped { reason }            // slot or event decided without starting
+RunStep::Coalesced { into: RunId }     // missed slots folded into one run
+RunStep::Session { session_id }        // each ledger the run writes or spawns
+RunStep::Settled { outcome: Completed | Failed{reason} | Cancelled,
+                   result_id, effects: Vec<EffectId>, cost }
+RunStep::Abandoned { holder, noticed_by: ProcessId }
+Slot = At(DateTime<Utc>) | Event(EventId)
+```
+
+`RunRecord` is the fold. Its status is Running, Completed, Failed,
+Cancelled, Abandoned or Skipped.
+- Every cause writes `Opened` before any side effect: user turn, channel,
+  schedule, manual, delegation, revision, heartbeat, flow, best-of-N and
+  export. If that append fails, admission fails.
+- A refusal (no provider, a lease held elsewhere, the previous run still
+  going) is a `Skipped` or `Failed` record, never an `eprintln!`.
+- The `RoutineFailed` inbox note stays as the notification and names the
+  run.
+- On startup, and on each tick, an open run whose holder's liveness has
+  expired gets `Abandoned`.
+- A reader fails on a row it cannot decode.
+
+**Trigger** (replaces `TaskDef` and `tasks.json`). Desired state is a
+versioned Document `triggers/<trg>` in the tenant store:
+
+```
+Trigger { id: TriggerId, name, agent: AgentId, agent_revision: Option<u64>,
+          space: SpaceId, enabled, kind: TriggerKind, action: TriggerAction,
+          deliver_to: Option<String>, on_crash: OnCrash,
+          scope: Option<RoutineScope>, created_at, created_by: PrincipalId }
+TriggerKind  = Schedule(Schedule) | Manual
+               // event, webhook, on_open, watch, source_poll arrive with
+               // their consumers on this same shape
+Schedule     = Cron { expr, timezone }      // zone resolved and stored at create
+             | Interval { every_secs, anchor }
+             | Once { at }
+TriggerAction = Prompt { text, model_pin: Option<String> } | Script { path }
+OnCrash      = Skip (default) | RetryOnce
+```
+
+- `agent` is required.
+- Every `last_*` field and `mail_calendar_last_check_at` go. "Last run" is a
+  query over `runs/`. The mail check position becomes a cursor (below).
+- An interval's slots are `anchor + k·every`, so every kind has
+  deterministic slots that can be claimed.
+
+**Claims, and one `due(now)`.**
+- Each trigger has a ref `trg/<id>/claim` whose target is
+  `{ high_water: Option<Slot>, active: Option<{ run, holder, attempt }> }`.
+- `due(trigger, claim, now)` is a pure function. It serves the tick,
+  startup catch-up and run-now, and `next_fire`, `advance_marker` and the
+  separate catch-up path go.
+  - The newest slot after `high_water` fires.
+  - Earlier missed slots are `Coalesced` into it, or `Skipped{missed}` when
+    `[automation] catch_up_missed = false`.
+  - Run-now is `Slot::Event` with a fresh id.
+- A start CASes the claim (new `high_water`, `active` = this run) under the
+  writer epoch, then writes `Opened`, then does the work. Settling clears
+  `active` by CAS.
+- If `active` names a live holder, the slot is recorded
+  `Skipped{previous_run_running}` and spent. If the holder is dead, the old
+  run is recorded `Abandoned` first, and `on_crash = RetryOnce` re-runs that
+  slot once as attempt 2.
+- A refused slot is spent, with a `Failed` record and the inbox note. "Never
+  silently lost" now means "never unrecorded", so M0's
+  `cron_slot_not_lost_on_failure` is rewritten as `skipped_slot_is_a_record`.
+- The mail/calendar routine's OS lease is removed. The claim is the one
+  lease.
+
+**EffectRecord.** An `effects/` record chain in the shared scope:
+
+```
+EffectEvent { effect: EffectId, at, step: EffectStep }
+EffectStep::Prepared   { kind: EffectKind, run: RunId, trace: TraceKey,
+                         idempotency_key, payload_digest, target,
+                         payload: ObjectRef, hold: Option<reason> }
+EffectStep::Dispatched { attempt, holder: ProcessId }
+EffectStep::Accepted   { receipt }   // the provider took it
+EffectStep::Confirmed  { receipt }   // the provider proved it landed
+EffectStep::Failed     { reason, proven_not_sent: bool }
+EffectStep::Unknown    { reason }
+EffectStep::Reconciled { outcome: Sent | NotSent, receipt: Option<Receipt>,
+                         by: PrincipalId }
+EffectStep::Superseded { by: EffectId }   // the owner chose Send again
+Receipt = { provider, provider_id, at }
+EffectKind = Delivery { surface, bot, chat }
+           | MailSend | CalendarCreate | CalendarUpdate | CalendarRsvp
+```
+
+- `idempotency_key` = hash(run, kind, target, payload_digest, ordinal). It
+  is stable when a job is rebuilt.
+- The process that wins the CAS of the ref `eff/<key>` from absent to
+  dispatched, under the writer epoch, is the only one that calls the
+  provider.
+- After a restart, a restore or a handoff:
+  - A `Prepared` effect may be dispatched.
+  - A `Dispatched` effect with no outcome becomes `Unknown` and is never
+    sent again.
+  - A `Failed` effect is retried only when `proven_not_sent`.
+- An unknown outcome settles in one of two ways:
+  - Where the provider drops duplicates itself (Discord `nonce` with
+    `enforce_nonce`, the key as nonce), a resend is safe and reconciles it.
+  - Anywhere else, the owner sees "Not sure it was sent" and chooses Send
+    again (a new linked effect) or marks it sent or not sent.
+- Mail and calendar's single-use action claims become effects of their
+  kinds. The claim *is* the dispatch CAS.
+- `Outbox`, `OutboxRecord` and `DeadLetter` go. Delivery replay reads
+  `Prepared` effects. A held digest is a `Prepared` with a `hold`.
+
+**Cursors.** A cursor is a ref `cur/<owner>/<stream>` whose target is
+`{ position, backlog: Option<ObjectRef>, resynced_from }`. It advances by
+CAS under the writer epoch, so position and backlog move together.
+- An expired position (Gmail history 404, Graph delta 410, a Slack or
+  Discord gap) resyncs within a bound and appends a `gap` row to a
+  `cursors/` chain. It never refetches everything.
+- The Telegram, Discord and Slack pollers hold their cursor. A second
+  poller of the same bot loses the CAS and stops.
+- The mail vault's cursors and backlog move onto cursor refs, with the
+  backlog stored as an encrypted tenant object.
+
+**API and screens.**
+- `/tasks…` go. Their replacements:
+  - Triggers: `GET|POST /triggers`, `GET|PUT|DELETE /triggers/{id}`,
+    `POST /triggers/{id}/run`, `GET /triggers/{id}/slots`.
+  - Runs: `GET /runs?agent=&trigger=&cause=&flow=` and `GET /runs/{id}`.
+  - Effects: `GET /effects?run=&state=`, `GET /effects/{id}`,
+    `POST /effects/{id}/resend` and `POST /effects/{id}/reconcile`.
+- `/tasks/{id}/retry-delivery` becomes `/effects/{id}/resend`.
+- `/flows/{name}/runs` becomes `/runs?flow=`, and a flow's state directory
+  is named by its `RunId`.
+- Admin `#/operations/work/runs/<session>` becomes `#/runs/<run_id>`.
+- New screens: Runs (A4) and Run detail (A4b), Automations (A5, moved from
+  Configure), and the client Runs panel (C6), which replaces the last-run
+  fields in `TasksModal`.
+
+**Steps.** Each step ships whole (code, tests, docs and its screens,
+invariant 30) and is committed green before the next starts.
+
+| Step | What | Exit tests |
+|---|---|---|
+| M4.1 | Fencing groundwork: `WriterEpoch` read at open; epoch on ref CAS, session open, `begin_turn` and chain appends; `ProcessId` and liveness ref; fenced state in `/health` | `restore_fences_old_writer`, `fenced_process_stops_background_work` |
+| M4.2 | `runs/` chain and `RunRecord`, written for every cause; abandoned sweep; `/runs`; `vak runs`; flows keyed by `RunId`; admin Runs and Run detail; `#/runs/<id>` | `every_cause_writes_run`, `abandoned_run_is_recorded`, `run_open_failure_refuses_admission` |
+| M4.3 | `Trigger` replaces `TaskDef`: Document store, kinds, `on_crash`, no `last_*`; `/triggers`; `vak triggers`; the `automations` tool; Automations screen and client Runs panel; the new words; `scheduled_runs.rs` and `scheduler_personal_os.rs` rewritten | `last_run_is_a_query`, `trigger_round_trips_as_document` |
+| M4.4 | Claims and the one `due(now)`; `next_fire` and the mail OS lease go; skipped and coalesced records; `on_crash` | `schedule_slot_at_most_once_under_restart` (property test over crash points), `two_processes_do_not_double_start`, `skipped_slot_is_a_record`, `retry_once_retries_once` |
+| M4.5 | `effects/` chain; delivery as the first kind; the outbox goes; unknown outcomes and reconcile; `/effects`; Discord nonce; AGENTS.md's new effects invariant | `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`, `discord_resend_reuses_nonce` |
+| M4.6 | Mail and calendar send, create, update and RSVP become effects; their single-use claims go | `mail_send_is_one_effect`, `unknown_mail_send_never_resent` |
+| M4.7 | Cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` |
+| M4.8 | `CopyEnvironment`; the non-git refusal goes; AGENTS.md invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 cite the shipped shapes | `non_git_space_routine_runs_in_copy_environment` |
+
 ### M5 — Telemetry (M, after M1, in parallel)
 
 - Pinned `tracing`/`tracing-subscriber` (json, env-filter); optional

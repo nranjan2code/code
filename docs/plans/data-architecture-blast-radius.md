@@ -365,6 +365,9 @@ Then release 7.0.0.
 
 ## M4 — runs, triggers, effects, fencing
 
+Re-scanned at `bd326e08e` for the M4 design pass. What changed since
+`438cfcd5` and the agreed shapes are in the plan's "M4 design" section.
+
 **Code**
 - New record chains `runs/` and `effects/`, plus `RunRecord` and
   `EffectRecord` in `vak-session` or `vak-core`.
