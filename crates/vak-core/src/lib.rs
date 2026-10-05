@@ -3227,6 +3227,20 @@ impl Core {
         Ok(self.inner.objects.get_or_init(|| opened).clone())
     }
 
+    /// Opens the tenant store, if this process has not yet, and moves this
+    /// process's liveness ref to `alive_for` from now (plan M4.1): a lease
+    /// is judged by it. Refused with `Fenced` once the store was restored
+    /// after this process opened it.
+    pub fn renew_liveness(&self, alive_for: chrono::Duration) -> Result<(), CoreError> {
+        self.objects()?;
+        let tenant = vak_config::paths::tenant_home_at(
+            &self.inner.sessions_home,
+            vak_config::paths::LOCAL_TENANT,
+        );
+        vak_session::fence::renew_liveness(&tenant, chrono::Utc::now() + alive_for)?;
+        Ok(())
+    }
+
     /// Reopens an existing session ledger for resumed runs.
     pub async fn open_session(&self, session_id: &str) -> Result<SessionLog, CoreError> {
         self.refuse_trashed(session_id)?;
@@ -6428,7 +6442,7 @@ impl Core {
         // commitments keyed by them, the directive's own entry id and every
         // record of the turn name it (docs/design/85-turn-graph.md, G0).
         let turn_id = uuid_like();
-        session.begin_turn(&turn_id);
+        session.begin_turn(&turn_id)?;
         // The run's identity, minted once here and carried by value from now
         // on (docs/design/73 §4). It names its turn, so every side-ledger row
         // written under it joins back to the turn.

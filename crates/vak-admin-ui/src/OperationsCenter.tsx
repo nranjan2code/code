@@ -69,7 +69,7 @@ const time = (value: string | null | undefined) => {
 const tone = (value: string) => {
   if (["healthy", "running", "delivered", "pass"].includes(value)) return "good";
   if (["degraded", "pending", "waiting_approval", "warning", "stopped"].includes(value)) return "warn";
-  if (["critical", "dead_letter", "fail", "not installed"].includes(value)) return "bad";
+  if (["critical", "dead_letter", "fail", "not installed", "fenced"].includes(value)) return "bad";
   return "neutral";
 };
 
@@ -559,7 +559,7 @@ export function OperationsCenter(props: { section?: Section }) {
         <Show when={scopedSnapshot()}>{(data) => <>
           <OperationsContextBar data={data()} workspace={workspace()} timeWindow={timeWindow()} onAskDoctor={() => void askDoctor()} />
           <Show when={path() !== "#/operations" && !hasDetail()}><Breadcrumbs path={path()} /></Show>
-          <div class="operations-metric-grid operations-hero-metrics"><Metric label="Posture" value={data().server.posture} detail={`vak ${data().server.version}`} tone={tone(data().server.posture)} /><Metric label="Uptime" value={duration(data().server.uptime_secs)} detail={`PID ${data().server.pid}`} /><Metric label="Live work" value={data().runs.length} detail={`${data().gateway.approvals.pending} approval gates`} /><Metric label="Delivery" value={data().outbox.pending} detail={`${data().outbox.dead_letter} dead-lettered`} tone={data().outbox.dead_letter ? "bad" : undefined} /><Metric label="Voice sessions" value={data().health.voice ? `${data().health.voice?.active_sessions ?? 0}/${data().health.voice?.max_concurrent ?? 0}` : "—"} detail={data().health.voice ? `${data().health.voice?.capacity_remaining ?? 0} capacity remaining` : "Unavailable"} tone={data().health.voice?.capacity_remaining === 0 ? "warn" : undefined} /></div>
+          <Show when={data().server.posture === "fenced"}><p class="ops-fenced-note">The data was restored after this server started, so it has stopped its scheduled work and deliveries and takes no new conversations. Restart it to continue.</p></Show><div class="operations-metric-grid operations-hero-metrics"><Metric label="Posture" value={data().server.posture} detail={`vak ${data().server.version}`} tone={tone(data().server.posture)} /><Metric label="Uptime" value={duration(data().server.uptime_secs)} detail={`PID ${data().server.pid}`} /><Metric label="Live work" value={data().runs.length} detail={`${data().gateway.approvals.pending} approval gates`} /><Metric label="Delivery" value={data().outbox.pending} detail={`${data().outbox.dead_letter} dead-lettered`} tone={data().outbox.dead_letter ? "bad" : undefined} /><Metric label="Voice sessions" value={data().health.voice ? `${data().health.voice?.active_sessions ?? 0}/${data().health.voice?.max_concurrent ?? 0}` : "—"} detail={data().health.voice ? `${data().health.voice?.capacity_remaining ?? 0} capacity remaining` : "Unavailable"} tone={data().health.voice?.capacity_remaining === 0 ? "warn" : undefined} /></div>
           <Show when={data().health.voice && !data().health.voice?.historical?.available}><div class="panel error-state" role="status"><strong>Historical voice telemetry unavailable</strong><p>{data().health.voice?.historical?.reason ?? "No persisted voice aggregates are available."}</p></div></Show>
           <Show when={detailSession()}><RunDetail data={data()} sessionId={detailSession()!} /></Show>
           <Show when={detailBinding()}><BindingDetail data={data()} target={detailBinding()!} /></Show>

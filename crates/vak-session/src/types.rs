@@ -1157,6 +1157,12 @@ pub enum SessionError {
     /// (`vak_config::spaces::require_bound`).
     #[error("{0}")]
     Unbound(String),
+    /// The tenant store was restored or handed to another host after this
+    /// process opened it (`vak_session::fence`); it writes nothing more.
+    #[error(
+        "this process is fenced: the data was restored after it started (writer epoch {held}, store epoch {current}); restart it"
+    )]
+    Fenced { held: u64, current: u64 },
 }
 
 #[cfg(test)]

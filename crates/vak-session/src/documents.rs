@@ -12,11 +12,9 @@ use vak_storage::documents::Documents;
 /// Attempts at a contended `update` before it gives up.
 const RETRIES: usize = 16;
 
-fn tenant_store() -> Result<Arc<dyn vak_storage::store::Store>, String> {
+fn tenant() -> Result<Arc<crate::objects::TenantObjects>, String> {
     let tenant = vak_config::paths::local_tenant_home();
-    crate::objects::TenantObjects::for_tenant(&tenant)
-        .map(|objects| objects.store())
-        .map_err(|error| error.to_string())
+    crate::objects::TenantObjects::for_tenant(&tenant).map_err(|error| error.to_string())
 }
 
 /// The Document name for `path`, and the scope its versions are granted to.
@@ -35,10 +33,15 @@ fn name_and_scope(path: &Path) -> (String, String) {
     (name, scope)
 }
 
+/// Documents in `scope`, written under the epoch this process read at
+/// open, so a restore since then refuses every save.
 fn documents(scope: &str) -> Result<Documents, String> {
-    let store = tenant_store()?;
-    let epoch = store.epoch().map_err(|error| error.to_string())?;
-    Ok(Documents::new(store, scope, epoch))
+    let tenant = tenant()?;
+    Ok(Documents::new(
+        tenant.store(),
+        scope,
+        tenant.writer_epoch().0,
+    ))
 }
 
 /// The current content of the Document at `path`, `None` if it was never
@@ -62,6 +65,7 @@ pub fn update<T>(
     mut change: impl FnMut(Option<&str>) -> Result<Option<(String, T)>, String>,
 ) -> Result<Option<T>, String> {
     vak_config::spaces::require_bound(path)?;
+    crate::fence::check().map_err(|error| error.to_string())?;
     let (name, scope) = name_and_scope(path);
     let docs = documents(&scope)?;
     for _ in 0..RETRIES {
@@ -113,6 +117,7 @@ pub fn under(dir: &Path) -> Vec<PathBuf> {
 /// there, so two writers can never both believe they created it.
 pub fn create(path: &Path, content: &str) -> Result<(), String> {
     vak_config::spaces::require_bound(path)?;
+    crate::fence::check().map_err(|error| error.to_string())?;
     let (name, scope) = name_and_scope(path);
     documents(&scope)?
         .save(&name, content.as_bytes(), None)
@@ -123,6 +128,7 @@ pub fn create(path: &Path, content: &str) -> Result<(), String> {
 /// Forgets the Document at `path`: it reads as absent and its versions'
 /// objects are released for collection. Returns whether it existed.
 pub fn forget(path: &Path) -> Result<bool, String> {
+    crate::fence::check().map_err(|error| error.to_string())?;
     let (name, scope) = name_and_scope(path);
     let docs = documents(&scope)?;
     match docs.current(&name) {

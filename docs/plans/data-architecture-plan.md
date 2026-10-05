@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is in progress; M3a is done (2026-10-03) and M3b is in progress (slices 1, 2 and 3 done). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is in progress; M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is in progress (M4.1 done 2026-10-05). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -774,7 +774,7 @@ proposals bring the rest.
 - `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`,
   `restore_fences_old_writer`, `cursor_resync_records_gap`.
 
-#### M4 design (agreed 2026-10-05; not started)
+#### M4 design (agreed 2026-10-05; M4.1 done)
 
 The maintainer asked for the design that serves the later kinds best, since
 there are no users to keep. Implementation starts in a later session, one
@@ -995,7 +995,7 @@ invariant 30) and is committed green before the next starts.
 
 | Step | What | Exit tests |
 |---|---|---|
-| M4.1 | Fencing groundwork: `WriterEpoch` read at open; epoch on ref CAS, session open, `begin_turn` and chain appends; `ProcessId` and liveness ref; fenced state in `/health` | `restore_fences_old_writer`, `fenced_process_stops_background_work` |
+| M4.1 | **Done 2026-10-05.** Fencing groundwork: `WriterEpoch` read at open; epoch on ref CAS, session open, `begin_turn` and chain appends; `ProcessId` and liveness ref; fenced state in `/health` | `restore_fences_old_writer`, `fenced_process_stops_background_work` |
 | M4.2 | `runs/` chain and `RunRecord`, written for every cause; abandoned sweep; `/runs`; `vak runs`; flows keyed by `RunId`; admin Runs and Run detail; `#/runs/<id>` | `every_cause_writes_run`, `abandoned_run_is_recorded`, `run_open_failure_refuses_admission` |
 | M4.3 | `Trigger` replaces `TaskDef`: Document store, kinds, `on_crash`, no `last_*`; `/triggers`; `vak triggers`; the `automations` tool; Automations screen and client Runs panel; the new words; `scheduled_runs.rs` and `scheduler_personal_os.rs` rewritten | `last_run_is_a_query`, `trigger_round_trips_as_document` |
 | M4.4 | Claims and the one `due(now)`; `next_fire` and the mail OS lease go; skipped and coalesced records; `on_crash` | `schedule_slot_at_most_once_under_restart` (property test over crash points), `two_processes_do_not_double_start`, `skipped_slot_is_a_record`, `retry_once_retries_once` |

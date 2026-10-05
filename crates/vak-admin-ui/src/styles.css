@@ -1694,6 +1694,7 @@ a.tab-btn {
 .operations-header-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
 .operations-metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .operations-hero-metrics { margin-bottom: 14px; }
+.ops-fenced-note { margin: 0 0 14px; padding: 10px 14px; border: 1px solid var(--red); border-radius: 8px; background: var(--red-soft); color: var(--text); font-size: 14px; }
 .ops-metric { min-width: 0; padding: 13px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); display: grid; gap: 4px; }
 .ops-metric strong { font-size: 20px; letter-spacing: -0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ops-metric .dim { font-size: 12px; }

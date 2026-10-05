@@ -173,11 +173,23 @@ recipient process.
 | Desktop | Settings ▸ Services (5 s poll) and Learning pages |
 | HTTP | `GET /ops/status`, `GET /ops/diagnostics`, `GET /ops/center`, `GET /ops/incidents`, `GET /ops/actions`, `GET /ops/outbox`, `POST /ops/{gateway\|telegram}/{action}`, `POST /ops/outbox/{job_id}/replay` |
 
+### Fencing
+
+A server reads the tenant store's writer epoch when it opens the store. If
+the store is restored while it runs (plan M4.1), the epoch moves past the
+one it holds and the process is fenced for good: its scheduler, heartbeat,
+commitment upkeep and outbox replay stop, it opens no conversation and
+begins no turn, and `/health` reports `status = "fenced"`, `fenced = true`
+and `posture = "fenced"`, which the Operations Center shows with the remedy
+(restart). Each process has a `prc_` id, shown in `/health` as `process`,
+and renews a `proc/<prc>` liveness ref in the store every scheduler tick
+for 60 seconds; a fenced process cannot renew, so its leases lapse.
+
 ### Operations Center projection
 
 `GET /ops/center` is the read-only control-plane snapshot used by the admin
 console. It combines the doctor report (including a separate `posture` signal
-so the legacy `/health` `status = ok` contract remains intact), platform
+beside `/health`'s readiness `status`), platform
 service state, gateway bindings and approval count, warm CorePool entries,
 live session handles, scheduled tasks and next-fire markers, security events,
 and the durable delivery outbox. Incidents are derived only from those

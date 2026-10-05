@@ -4034,13 +4034,17 @@ fn health_projection(state: &AppState) -> serde_json::Value {
         .scheduler_last_tick_at
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let fenced = vak_session::fence::is_fenced();
+    let posture = if fenced { "fenced" } else { posture };
     serde_json::json!({
-        // `status = ok` is retained for existing health clients; posture is
-        // the truthful operational signal and is what the Operations Center
-        // renders. This keeps the compatibility contract without hiding
-        // failed doctor checks.
-        "status": "ok",
+        // `status` is readiness, the one field a public probe sees: a
+        // fenced server is not ready, since the restored store's writer owns
+        // the data now. Posture is the fuller operational signal the
+        // Operations Center renders.
+        "status": if fenced { "fenced" } else { "ok" },
         "posture": posture,
+        "fenced": fenced,
+        "process": vak_session::fence::process().to_string(),
         "provider": route.provider,
         "model": route.model,
         "provider_source": route.provider_source,
@@ -20674,7 +20678,7 @@ fn advance_marker(state: &AppState, id: &str) {
 /// missed while the process was down — fire it once immediately. Interval
 /// tasks keep their self-healing `>= interval` behavior and need nothing.
 async fn catch_up_missed_tasks(state: &AppState) {
-    if !state.core.config().automation.catch_up_missed {
+    if vak_session::fence::is_fenced() || !state.core.config().automation.catch_up_missed {
         return;
     }
     let now_utc = chrono::Utc::now();
@@ -20703,10 +20707,42 @@ async fn catch_up_missed_tasks(state: &AppState) {
     }
 }
 
+/// How long a liveness renewal holds: three scheduler ticks, so one slow
+/// tick does not make a live process look gone.
+const LIVENESS_HOLD_SECS: i64 = 60;
+
+/// Renews this process's liveness and says whether background work may
+/// run (plan M4.1). A fenced process stops its scheduler, pollers and
+/// dispatch for good: the store was restored after it started.
+fn background_work_allowed(state: &AppState) -> bool {
+    match state
+        .core
+        .renew_liveness(chrono::Duration::seconds(LIVENESS_HOLD_SECS))
+    {
+        Ok(()) => true,
+        Err(vak_core::CoreError::Session(vak_session::SessionError::Fenced { .. })) => {
+            static REPORTED: std::sync::Once = std::sync::Once::new();
+            REPORTED.call_once(|| {
+                eprintln!(
+                    "[fence] the data was restored after this server started; background work stopped, restart the server"
+                );
+            });
+            false
+        }
+        Err(error) => {
+            eprintln!("[fence] liveness not renewed: {error}");
+            !vak_session::fence::is_fenced()
+        }
+    }
+}
+
 /// Background loop: evaluates due tasks every 20 seconds. Holds only weak
 /// state via `state` clones living inside the router — when the server
 /// shuts down the loop dies with the runtime.
 pub fn start_scheduler(state: &AppState) {
+    // Holds the writer epoch from start, so a restore while this server
+    // runs fences it.
+    background_work_allowed(state);
     load_tasks(state);
     let st = state.clone();
     tokio::spawn(async move { catch_up_missed_tasks(&st).await });
@@ -20716,7 +20752,9 @@ pub fn start_scheduler(state: &AppState) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            scheduler_tick(&st).await;
+            if background_work_allowed(&st) {
+                scheduler_tick(&st).await;
+            }
         }
     });
     // Proactive heartbeat (docs/design/29-personal-os.md P7): its own
@@ -20730,7 +20768,9 @@ pub fn start_scheduler(state: &AppState) {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
-                heartbeat::heartbeat_tick(&st).await;
+                if !vak_session::fence::is_fenced() {
+                    heartbeat::heartbeat_tick(&st).await;
+                }
             }
         });
     }
@@ -20749,6 +20789,9 @@ pub fn start_scheduler(state: &AppState) {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
+                if vak_session::fence::is_fenced() {
+                    continue;
+                }
                 let report =
                     vak_core::commitments::maintain_all(&st.core.shared_scope().into_root()).await;
                 if report.is_empty() {

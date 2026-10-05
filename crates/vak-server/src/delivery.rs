@@ -533,6 +533,7 @@ pub(crate) async fn deliver(
     kind: DeliveryKind,
     content: DeliveryContent,
 ) -> Result<DeliveryPacket, String> {
+    vak_session::fence::check().map_err(|error| error.to_string())?;
     let runtime = runtime(core);
     let _serial = runtime.serial.lock().await;
     let (adapter, _) = runtime.adapters.resolve(target)?;
@@ -699,6 +700,11 @@ pub(crate) fn start_replay(core: &Core) {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             interval.tick().await;
+            // A fenced process dispatches nothing: the restored store's
+            // writer owns the outbox now.
+            if vak_session::fence::is_fenced() {
+                continue;
+            }
             let _serial = runtime.serial.lock().await;
             let records = match runtime.outbox.pending() {
                 Ok(records) => records,

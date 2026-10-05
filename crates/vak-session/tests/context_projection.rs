@@ -161,7 +161,7 @@ fn a_cancelled_turn_does_not_take_the_next_turns_reading() {
             strand_commitments: Default::default(),
         }
     };
-    log.begin_turn(&uuid::Uuid::now_v7().to_string());
+    log.begin_turn(&uuid::Uuid::now_v7().to_string()).unwrap();
     log.append_intent(intent("one")).unwrap();
     let t1 = log
         .append_message(rec(Message::user_text("first task")))
@@ -178,7 +178,7 @@ fn a_cancelled_turn_does_not_take_the_next_turns_reading() {
         content: vec![ContentBlock::tool_result("a", "x")],
     }))
     .unwrap();
-    log.begin_turn(&uuid::Uuid::now_v7().to_string());
+    log.begin_turn(&uuid::Uuid::now_v7().to_string()).unwrap();
     log.append_intent(intent("two")).unwrap();
     let t2 = log
         .append_message(rec(Message::user_text("second task")))

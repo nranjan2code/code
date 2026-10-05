@@ -39,7 +39,7 @@ pub fn conversation_scope(session_id: &str) -> String {
     format!("conversation:{session_id}")
 }
 
-fn objects_error(error: vak_storage::StorageError) -> SessionError {
+pub(crate) fn objects_error(error: vak_storage::StorageError) -> SessionError {
     SessionError::Objects(error.to_string())
 }
 
@@ -58,18 +58,33 @@ impl KekVault for CredentialVault {
 /// The tenant's store at `<tenant>/store` (objects and refs), its keys in
 /// the credential store and its revocations in `<tenant>/keys/revoked`.
 /// One per tenant per process (`TenantObjects::for_tenant`), shared by
-/// ledgers and Documents.
+/// ledgers and Documents. The store's writer epoch is read once, at open:
+/// it is what this process presents to every ref it moves, so a restore
+/// after it started fences it (`crate::fence`).
 pub struct TenantObjects {
     store: Arc<LocalStore>,
+    writer_epoch: crate::fence::WriterEpoch,
+}
+
+type OpenTenants = Mutex<HashMap<PathBuf, Arc<TenantObjects>>>;
+
+fn open_tenants() -> &'static OpenTenants {
+    static OPEN: std::sync::OnceLock<OpenTenants> = std::sync::OnceLock::new();
+    OPEN.get_or_init(Default::default)
+}
+
+/// Every tenant store this process has opened.
+pub(crate) fn opened() -> Vec<Arc<TenantObjects>> {
+    open_tenants()
+        .lock()
+        .map(|open| open.values().cloned().collect())
+        .unwrap_or_default()
 }
 
 impl TenantObjects {
     /// The process's handle on the tenant at `tenant_home`, opened once.
     pub fn for_tenant(tenant_home: &Path) -> Result<Arc<Self>, SessionError> {
-        static OPEN: std::sync::OnceLock<Mutex<HashMap<PathBuf, Arc<TenantObjects>>>> =
-            std::sync::OnceLock::new();
-        let mut open = OPEN
-            .get_or_init(Default::default)
+        let mut open = open_tenants()
             .lock()
             .map_err(|_| SessionError::Objects("tenant stores poisoned".into()))?;
         if let Some(found) = open.get(tenant_home) {
@@ -94,8 +109,10 @@ impl TenantObjects {
         let _ = lock.unlock();
         let store = LocalStore::open(&tenant_home.join("store"), id_key, Arc::new(authority))
             .map_err(objects_error)?;
+        let writer_epoch = crate::fence::WriterEpoch(store.epoch().map_err(objects_error)?);
         Ok(Self {
             store: Arc::new(store),
+            writer_epoch,
         })
     }
 
@@ -103,10 +120,16 @@ impl TenantObjects {
     pub fn store(&self) -> Arc<dyn Store> {
         self.store.clone()
     }
+
+    /// The epoch this process read when it opened the store.
+    pub fn writer_epoch(&self) -> crate::fence::WriterEpoch {
+        self.writer_epoch
+    }
 }
 
 impl Objects for TenantObjects {
     fn put(&self, bytes: &[u8], scope: &str) -> Result<ObjectRef, SessionError> {
+        crate::fence::check()?;
         let id = self.store.put_object(bytes, scope).map_err(objects_error)?;
         Ok(ObjectRef {
             id: id.0,

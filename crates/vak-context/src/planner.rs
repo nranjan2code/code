@@ -736,7 +736,7 @@ mod tests {
 
     fn open_linked_turn(log: &mut SessionLog, spec: &LinkedTurn) -> String {
         let turn_id = uuid::Uuid::now_v7().to_string();
-        log.begin_turn(&turn_id);
+        log.begin_turn(&turn_id).unwrap();
         if let Some((thread, continues)) = spec.thread {
             log.append_intent(vak_session::types::IntentRecord {
                 reading: vak_intent::Reading::general(),

@@ -68,6 +68,7 @@ impl RecordChain {
         }
         std::fs::create_dir_all(&self.dir)?;
         let lock = self.lock()?;
+        crate::fence::check()?;
         let segments = vak_storage::segments::SegmentSet::open(&self.dir).map_err(storage_error)?;
         segments.recover().map_err(storage_error)?;
         let active = match crate::log::segment_numbers(&self.dir).last() {

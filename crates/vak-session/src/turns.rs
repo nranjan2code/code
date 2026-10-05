@@ -2048,7 +2048,7 @@ mod tests {
         let mut log = open_log(dir.path());
         log.append_message(user_text("old spreadsheet")).unwrap();
         log.append_message(assistant_text("created")).unwrap();
-        log.begin_turn(&uuid::Uuid::now_v7().to_string());
+        log.begin_turn(&uuid::Uuid::now_v7().to_string()).unwrap();
         log.append_intent(IntentRecord {
             reading: vak_intent::Reading::general(),
             engagement: vak_intent::Engagement::general(),
@@ -2085,7 +2085,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut log = open_log(dir.path());
         let turn_id = uuid::Uuid::now_v7().to_string();
-        log.begin_turn(&turn_id);
+        log.begin_turn(&turn_id).unwrap();
         let intent = log.append_intent(general_intent()).unwrap();
         let directive = log.append_message(user_text("weather")).unwrap();
         assert_eq!(directive.id, turn_id, "the directive takes the reserved id");
@@ -2103,7 +2103,7 @@ mod tests {
         let first = log.append_message(user_text("one")).unwrap();
         log.append_message(assistant_text("a")).unwrap();
         let second_id = uuid::Uuid::now_v7().to_string();
-        log.begin_turn(&second_id);
+        log.begin_turn(&second_id).unwrap();
         log.append_intent(general_intent()).unwrap();
         log.append_message(user_text("two")).unwrap();
         log.append_message(assistant_text("b")).unwrap();
@@ -2179,7 +2179,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut log = open_log(dir.path());
         let first = log.append_message(user_text("one")).unwrap();
-        log.begin_turn(&first.id);
+        log.begin_turn(&first.id).unwrap();
         assert!(log.append_message(user_text("two")).is_err());
     }
 

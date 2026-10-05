@@ -244,8 +244,14 @@ project tree. Slice 5 is done (2026-10-04): every space-keyed store keys
 by a `spc_` id from the tenant space registry (`vak_config::spaces`),
 never a path hash. Slice 6 is done (2026-10-05), so M3b is done; its
 release waits on the maintainer's version decision. M4's design was
-agreed on 2026-10-05 (plan §M4, "M4 design": shapes and steps M4.1–M4.8);
-none of it is built. No session starts a later step unasked.
+agreed on 2026-10-05 (plan §M4, "M4 design": shapes and steps M4.1–M4.8).
+M4.1 is done (2026-10-05): a process reads the tenant store's writer
+epoch when it opens it, and once a restore moves the epoch past it the
+process is fenced (`vak_session::fence`): it opens no ledger for writing,
+begins no turn, appends no record and moves no ref, its scheduler,
+heartbeat, commitment upkeep and outbox replay stop, and `/health` says
+`fenced`. Each process has a `prc_` id and renews a `proc/<prc>` liveness
+ref every scheduler tick. No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -382,6 +388,12 @@ none of it is built. No session starts a later step unasked.
   environment is `env-<run>`, never a space.
 - A reader that decides something from a record chain (a status, whether a
   grant is revoked) fails on a row it cannot decode; it never skips one.
+- Write durable state only through the fenced paths (`SessionLog`,
+  `RecordChain`, `documents`, tenant objects, refs under
+  `TenantObjects::writer_epoch`), or call `vak_session::fence::check()`
+  first; a new background loop skips its work while
+  `vak_session::fence::is_fenced()`. Never move a ref with the store's
+  current epoch: that is the epoch a fenced process must not have.
 
 ### Pending: the visual refresh (V1, V2, V3 and V4.4 done; V4 in progress)
 

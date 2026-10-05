@@ -145,6 +145,7 @@ impl SessionLog {
     }
     pub fn create(path: PathBuf, header: SessionHeader) -> Result<Self, SessionError> {
         vak_config::spaces::require_bound(&path).map_err(SessionError::Unbound)?;
+        crate::fence::check()?;
         std::fs::create_dir_all(&path)?;
         // Cross-process safety: an exclusive lock for the lifetime of the
         // handle keeps two processes from interleaving appends.
@@ -287,6 +288,7 @@ impl SessionLog {
     }
 
     pub fn open(path: PathBuf) -> Result<Self, SessionError> {
+        crate::fence::check()?;
         let lock = LedgerDir::lock(&path)?;
         let segments = vak_storage::segments::SegmentSet::open(&path).map_err(storage_error)?;
         let numbers = segment_numbers(&path);
@@ -1498,9 +1500,13 @@ impl SessionLog {
     /// written with `turn_id` as its entry id, so the records admission
     /// writes first (the intent and its strands) and the turn the context
     /// engine indexes are one id (docs/design/85-turn-graph.md, G0).
-    pub fn begin_turn(&mut self, turn_id: &str) {
+    /// Refused once this process is fenced (`crate::fence`): a restored
+    /// store takes no new turn from the writer it replaced.
+    pub fn begin_turn(&mut self, turn_id: &str) -> Result<(), SessionError> {
+        crate::fence::check()?;
         self.reserved_turn = Some(turn_id.to_string());
         self.current_turn = Some(turn_id.to_string());
+        Ok(())
     }
 
     /// The turn later appends belong to.

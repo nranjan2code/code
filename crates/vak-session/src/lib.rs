@@ -7,6 +7,7 @@
 
 pub mod chain;
 pub mod documents;
+pub mod fence;
 pub mod ids;
 mod index;
 pub mod log;

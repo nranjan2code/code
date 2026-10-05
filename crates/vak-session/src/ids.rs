@@ -143,6 +143,11 @@ typed_id!(
 typed_id!(ConnectionId, "con");
 typed_id!(SourceId, "src");
 typed_id!(DeliveryId, "dlv");
+typed_id!(
+    /// One server or CLI process, minted at start; leases are judged by its
+    /// liveness ref (`vak_session::fence`).
+    ProcessId, "prc"
+);
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
