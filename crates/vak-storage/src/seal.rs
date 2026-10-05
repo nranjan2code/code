@@ -54,11 +54,39 @@ pub fn compress(data: &[u8]) -> Result<Vec<u8>> {
     zstd::bulk::compress(data, 3).map_err(|e| StorageError::Compression(e.to_string()))
 }
 
+/// Decompresses into a buffer sized to the frame's declared content (never
+/// above `MAX_PLAINTEXT`), so a reader holds, and a zeroizing reader wipes,
+/// the object's bytes rather than the whole bound.
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
-    zstd::bulk::decompress(data, MAX_PLAINTEXT)
-        .map_err(|e| StorageError::Compression(e.to_string()))
+    let capacity = zstd::zstd_safe::get_frame_content_size(data)
+        .ok()
+        .flatten()
+        .and_then(|size| usize::try_from(size).ok())
+        .filter(|size| *size <= MAX_PLAINTEXT)
+        .unwrap_or(MAX_PLAINTEXT);
+    let mut plain = zstd::bulk::decompress(data, capacity)
+        .map_err(|e| StorageError::Compression(e.to_string()))?;
+    plain.shrink_to_fit();
+    Ok(plain)
 }
 
 pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decompressed_bytes_are_held_in_a_buffer_their_own_size() {
+        let plain = b"a small object".repeat(10);
+        let back = decompress(&compress(&plain).unwrap()).unwrap();
+        assert_eq!(back, plain);
+        assert!(
+            back.capacity() < 4096,
+            "a reader must not hold, or a zeroizing reader wipe, the whole {MAX_PLAINTEXT}-byte bound"
+        );
+    }
 }

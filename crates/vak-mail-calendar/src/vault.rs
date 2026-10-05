@@ -18,7 +18,7 @@ const MAX_PRINCIPAL_BYTES: usize = 512;
 const WORK_AREA_KEY: &str = "vak_mail_calendar_work_area";
 const MAX_WORK_AREA_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WORK_AREA_CANDIDATES: usize = 32;
-const ROUTINE_CURSOR_KEY: &str = "vak_mail_calendar_routine_cursors";
+const ROUTINES_STREAM: &str = "routines";
 const ROUTINE_HISTORY_KEY: &str = "vak_mail_calendar_routine_history";
 const MAX_ROUTINE_HISTORY: usize = 256;
 const MAX_ROUTINE_HISTORY_BYTES: usize = 256 * 1024;
@@ -27,6 +27,15 @@ const MAX_ROUTINE_SEEN_IDS: usize = 512;
 const MAX_ROUTINE_PENDING_IDS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
 const MAX_PROVIDER_CURSOR_BYTES: usize = 8192;
 const MAX_ROUTINE_CURSOR_BYTES: usize = 512 * 1024;
+
+/// The cursors of this data home, where routine cursors live.
+fn routine_cursor_store() -> vak_session::cursors::Cursors {
+    let data = vak_config::paths::data_home();
+    vak_session::cursors::Cursors::at(
+        vak_config::scope::SharedScope::new(&data).cursors(),
+        vak_config::paths::tenant_home_at(&data, vak_config::paths::LOCAL_TENANT),
+    )
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
@@ -252,7 +261,7 @@ struct VaultPayload {
     app_password: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RoutineCursor {
     routine_id: String,
@@ -445,7 +454,7 @@ impl AccountVault {
         }) {
             return Err(VaultError::InvalidReference);
         }
-        self.with_routine_cursors(|mut cursors| {
+        self.with_routine_cursors(|cursors| {
             let index = match cursors
                 .iter()
                 .position(|cursor| cursor.routine_id == routine_id)
@@ -495,7 +504,6 @@ impl AccountVault {
                 cursor.pending_ids.push(item_id.clone());
             }
             let has_pending = !cursor.pending_ids.is_empty();
-            self.write_routine_cursors(&cursors)?;
             Ok(has_pending)
         })
     }
@@ -578,7 +586,7 @@ impl AccountVault {
     ) -> Result<(), VaultError> {
         validate_account_id(account_id)?;
         validate_account_id(routine_id)?;
-        self.with_routine_cursors(|mut cursors| {
+        self.with_routine_cursors(|cursors| {
             if cursors
                 .iter()
                 .find(|cursor| cursor.routine_id == routine_id)
@@ -587,7 +595,7 @@ impl AccountVault {
                 return Err(VaultError::InvalidReference);
             }
             cursors.retain(|cursor| cursor.routine_id != routine_id);
-            self.write_routine_cursors(&cursors)
+            Ok(())
         })
     }
 
@@ -601,7 +609,7 @@ impl AccountVault {
         item_ids: &[String],
     ) -> Result<(), VaultError> {
         validate_routine_mail_ids(routine_id, account_id, item_ids)?;
-        self.with_routine_cursors(|mut cursors| {
+        self.with_routine_cursors(|cursors| {
             let Some(index) = cursors
                 .iter()
                 .position(|cursor| cursor.routine_id == routine_id)
@@ -628,7 +636,7 @@ impl AccountVault {
                     cursor.delivered_ids.push(item_id.clone());
                 }
             }
-            self.write_routine_cursors(&cursors)
+            Ok(())
         })
     }
 
@@ -643,7 +651,7 @@ impl AccountVault {
     ) -> Result<(), VaultError> {
         validate_account_id(account_id)?;
         validate_account_id(routine_id)?;
-        self.with_routine_cursors(|mut cursors| {
+        self.with_routine_cursors(|cursors| {
             let Some(index) = cursors
                 .iter()
                 .position(|cursor| cursor.routine_id == routine_id)
@@ -673,7 +681,7 @@ impl AccountVault {
                 }
                 cursor.pending_ids = pending;
             }
-            self.write_routine_cursors(&cursors)
+            Ok(())
         })
     }
 
@@ -687,7 +695,7 @@ impl AccountVault {
         occurrence_keys: &[String],
     ) -> Result<bool, VaultError> {
         validate_calendar_occurrence_keys(routine_id, account_id, occurrence_keys)?;
-        self.with_routine_cursors(|mut cursors| {
+        self.with_routine_cursors(|cursors| {
             let index = match cursors
                 .iter()
                 .position(|cursor| cursor.routine_id == routine_id)
@@ -733,7 +741,6 @@ impl AccountVault {
                 cursor.pending_calendar_occurrences.push(key.clone());
             }
             let has_pending = !cursor.pending_calendar_occurrences.is_empty();
-            self.write_routine_cursors(&cursors)?;
             Ok(has_pending)
         })
     }
@@ -749,7 +756,7 @@ impl AccountVault {
         observed_keys: &[String],
     ) -> Result<bool, VaultError> {
         validate_calendar_occurrence_keys(routine_id, account_id, observed_keys)?;
-        self.with_routine_cursors(|mut cursors| {
+        self.with_routine_cursors(|cursors| {
             let index = match cursors
                 .iter()
                 .position(|cursor| cursor.routine_id == routine_id)
@@ -794,7 +801,6 @@ impl AccountVault {
             }
             cursor.pending_calendar_occurrences = pending;
             let has_pending = !cursor.pending_calendar_occurrences.is_empty();
-            self.write_routine_cursors(&cursors)?;
             Ok(has_pending)
         })
     }
@@ -856,7 +862,7 @@ impl AccountVault {
         occurrence_keys: &[String],
     ) -> Result<(), VaultError> {
         validate_calendar_occurrence_keys(routine_id, account_id, occurrence_keys)?;
-        self.with_routine_cursors(|mut cursors| {
+        self.with_routine_cursors(|cursors| {
             let Some(index) = cursors
                 .iter()
                 .position(|cursor| cursor.routine_id == routine_id)
@@ -881,7 +887,7 @@ impl AccountVault {
                     cursor.delivered_calendar_occurrences.push(key.clone());
                 }
             }
-            self.write_routine_cursors(&cursors)
+            Ok(())
         })
     }
 
@@ -892,7 +898,7 @@ impl AccountVault {
         run_succeeded: bool,
     ) -> Result<(), VaultError> {
         validate_routine_mail_ids(routine_id, account_id, &[])?;
-        self.with_routine_cursors(|mut cursors| {
+        self.with_routine_cursors(|cursors| {
             let Some(index) = cursors
                 .iter()
                 .position(|cursor| cursor.routine_id == routine_id)
@@ -922,7 +928,7 @@ impl AccountVault {
                 }
                 cursor.pending_calendar_occurrences = pending;
             }
-            self.write_routine_cursors(&cursors)
+            Ok(())
         })
     }
 
@@ -1006,177 +1012,194 @@ impl AccountVault {
     }
 
     fn remove_routine_cursors_for_account(&self, account_id: &str) -> Result<(), VaultError> {
-        self.with_routine_cursors(|mut cursors| {
-            let before = cursors.len();
+        self.with_routine_cursors(|cursors| {
             cursors.retain(|cursor| cursor.account_id != account_id);
-            if cursors.len() != before {
-                self.write_routine_cursors(&cursors)?;
-            }
             Ok(())
         })
     }
 
+    /// Runs `operation` over this Agent's routine cursors and writes back
+    /// what it changed (plan M4.7): the list is one cursor
+    /// `cur/agent/<agent>/mail-calendar/routines` whose backlog is an
+    /// encrypted tenant object, moved by CAS under the writer epoch, so a
+    /// routine's provider position and its backlog move together. A writer
+    /// that read a cursor another process moved first runs `operation`
+    /// again on the newer one.
     fn with_routine_cursors<T>(
         &self,
-        operation: impl FnOnce(Vec<RoutineCursor>) -> Result<T, VaultError>,
+        mut operation: impl FnMut(&mut Vec<RoutineCursor>) -> Result<T, VaultError>,
     ) -> Result<T, VaultError> {
-        let agent_home = self
-            .scope_hint
-            .parent()
-            .ok_or(VaultError::InvalidReference)?;
-        let work_dir = agent_home.join("mail-calendar");
-        ensure_agent_directory(&work_dir, true)?;
-        let lock_path = work_dir.join(".routine-cursors.lock");
-        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
-            && (metadata.file_type().is_symlink() || !metadata.is_file())
-        {
-            return Err(VaultError::InvalidReference);
-        }
-        let mut options = OpenOptions::new();
-        options.create(true).truncate(false).read(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-        }
-        let lock = options.open(&lock_path).map_err(VaultError::Store)?;
-        lock.lock_exclusive().map_err(VaultError::Store)?;
-        let result =
-            (|| {
-                let Some(encoded) =
-                    vak_config::read_env_file_var(&self.scope_hint, ROUTINE_CURSOR_KEY)
-                else {
-                    return operation(Vec::new());
-                };
-                let encoded = Zeroizing::new(encoded);
-                if encoded.len() > MAX_ROUTINE_CURSOR_BYTES {
-                    return Err(VaultError::TooLarge);
+        let cursors = routine_cursor_store();
+        let owner = format!("agent/{}/mail-calendar", self.agent_id);
+        for _ in 0..8 {
+            let current = cursors
+                .get(&owner, ROUTINES_STREAM)
+                .map_err(|_| VaultError::Unavailable)?;
+            let mut list: Vec<RoutineCursor> = match &current {
+                Some(cursor) => {
+                    let bytes = Zeroizing::new(
+                        cursors
+                            .backlog(&owner, cursor)
+                            .map_err(|_| VaultError::Unavailable)?
+                            .unwrap_or_default(),
+                    );
+                    if bytes.len() > MAX_ROUTINE_CURSOR_BYTES {
+                        return Err(VaultError::TooLarge);
+                    }
+                    serde_json::from_slice(&bytes).map_err(|_| VaultError::Unavailable)?
                 }
-                let cursors: Vec<RoutineCursor> =
-                    serde_json::from_str(&encoded).map_err(|_| VaultError::Unavailable)?;
-                if cursors.len() > MAX_ROUTINE_CURSORS
-                    || cursors.iter().any(|cursor| {
-                        validate_account_id(&cursor.account_id).is_err()
-                            || validate_account_id(&cursor.routine_id).is_err()
-                            || cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS
-                            || cursor.pending_ids.len() > MAX_ROUTINE_PENDING_IDS
-                            || cursor.delivered_ids.len() > MAX_ROUTINE_PENDING_IDS
-                            || cursor.seen_calendar_occurrences.len() > MAX_ROUTINE_SEEN_IDS
-                            || cursor.pending_calendar_occurrences.len() > MAX_ROUTINE_PENDING_IDS
-                            || cursor.delivered_calendar_occurrences.len() > MAX_ROUTINE_PENDING_IDS
-                            || cursor.provider_cursor.as_ref().is_some_and(|value| {
-                                value.is_empty()
-                                    || value.len() > MAX_PROVIDER_CURSOR_BYTES
-                                    || value.chars().any(char::is_control)
-                            })
-                            || cursor.pending_ids.len() + cursor.delivered_ids.len()
-                                > MAX_ROUTINE_PENDING_IDS
-                            || cursor.seen_ids.iter().any(|id| {
-                                id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
-                            })
-                            || cursor
-                                .pending_calendar_occurrences
-                                .iter()
-                                .any(|key| !valid_calendar_occurrence_key(key))
-                            || cursor
-                                .delivered_calendar_occurrences
-                                .iter()
-                                .any(|key| !valid_calendar_occurrence_key(key))
-                            || cursor
+                None => Vec::new(),
+            };
+            let cursors_read = &list;
+            if cursors_read.len() > MAX_ROUTINE_CURSORS
+                || cursors_read.iter().any(|cursor| {
+                    validate_account_id(&cursor.account_id).is_err()
+                        || validate_account_id(&cursor.routine_id).is_err()
+                        || cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS
+                        || cursor.pending_ids.len() > MAX_ROUTINE_PENDING_IDS
+                        || cursor.delivered_ids.len() > MAX_ROUTINE_PENDING_IDS
+                        || cursor.seen_calendar_occurrences.len() > MAX_ROUTINE_SEEN_IDS
+                        || cursor.pending_calendar_occurrences.len() > MAX_ROUTINE_PENDING_IDS
+                        || cursor.delivered_calendar_occurrences.len() > MAX_ROUTINE_PENDING_IDS
+                        || cursor.provider_cursor.as_ref().is_some_and(|value| {
+                            value.is_empty()
+                                || value.len() > MAX_PROVIDER_CURSOR_BYTES
+                                || value.chars().any(char::is_control)
+                        })
+                        || cursor.pending_ids.len() + cursor.delivered_ids.len()
+                            > MAX_ROUTINE_PENDING_IDS
+                        || cursor.seen_ids.iter().any(|id| {
+                            id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
+                        })
+                        || cursor
+                            .pending_calendar_occurrences
+                            .iter()
+                            .any(|key| !valid_calendar_occurrence_key(key))
+                        || cursor
+                            .delivered_calendar_occurrences
+                            .iter()
+                            .any(|key| !valid_calendar_occurrence_key(key))
+                        || cursor
+                            .seen_calendar_occurrences
+                            .iter()
+                            .any(|key| !valid_calendar_occurrence_key(key))
+                        || cursor.pending_calendar_occurrences.len()
+                            + cursor.delivered_calendar_occurrences.len()
+                            > MAX_ROUTINE_PENDING_IDS
+                        || cursor.pending_calendar_occurrences.iter().any(|pending| {
+                            cursor
                                 .seen_calendar_occurrences
                                 .iter()
-                                .any(|key| !valid_calendar_occurrence_key(key))
-                            || cursor.pending_calendar_occurrences.len()
-                                + cursor.delivered_calendar_occurrences.len()
-                                > MAX_ROUTINE_PENDING_IDS
-                            || cursor.pending_calendar_occurrences.iter().any(|pending| {
+                                .any(|seen| seen == pending)
+                        })
+                        || cursor
+                            .delivered_calendar_occurrences
+                            .iter()
+                            .any(|delivered| {
                                 cursor
                                     .seen_calendar_occurrences
                                     .iter()
-                                    .any(|seen| seen == pending)
-                            })
-                            || cursor
-                                .delivered_calendar_occurrences
-                                .iter()
-                                .any(|delivered| {
-                                    cursor
-                                        .seen_calendar_occurrences
-                                        .iter()
-                                        .any(|seen| seen == delivered)
-                                        || cursor
-                                            .pending_calendar_occurrences
-                                            .iter()
-                                            .any(|pending| pending == delivered)
-                                })
-                            || cursor.pending_calendar_occurrences.iter().enumerate().any(
-                                |(i, key)| {
-                                    cursor.pending_calendar_occurrences[i + 1..]
-                                        .iter()
-                                        .any(|next| next == key)
-                                },
-                            )
-                            || cursor
-                                .delivered_calendar_occurrences
-                                .iter()
-                                .enumerate()
-                                .any(|(i, key)| {
-                                    cursor.delivered_calendar_occurrences[i + 1..]
-                                        .iter()
-                                        .any(|next| next == key)
-                                })
-                            || cursor.seen_calendar_occurrences.iter().enumerate().any(
-                                |(i, key)| {
-                                    cursor.seen_calendar_occurrences[i + 1..]
-                                        .iter()
-                                        .any(|next| next == key)
-                                },
-                            )
-                            || cursor.pending_ids.iter().any(|id| {
-                                id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
-                            })
-                            || cursor
-                                .pending_ids
-                                .iter()
-                                .any(|pending| cursor.seen_ids.iter().any(|seen| seen == pending))
-                            || cursor.delivered_ids.iter().any(|delivered| {
-                                cursor.seen_ids.iter().any(|seen| seen == delivered)
+                                    .any(|seen| seen == delivered)
                                     || cursor
-                                        .pending_ids
+                                        .pending_calendar_occurrences
                                         .iter()
                                         .any(|pending| pending == delivered)
                             })
-                            || cursor
-                                .pending_ids
-                                .iter()
-                                .enumerate()
-                                .any(|(index, pending)| {
-                                    cursor.pending_ids[index + 1..]
-                                        .iter()
-                                        .any(|next| next == pending)
-                                })
-                            || cursor
-                                .delivered_ids
-                                .iter()
-                                .enumerate()
-                                .any(|(index, delivered)| {
-                                    cursor.delivered_ids[index + 1..]
-                                        .iter()
-                                        .any(|next| next == delivered)
-                                })
-                    })
-                    || cursors.iter().enumerate().any(|(index, cursor)| {
-                        cursors[index + 1..]
+                        || cursor
+                            .pending_calendar_occurrences
                             .iter()
-                            .any(|next| next.routine_id == cursor.routine_id)
-                    })
-                {
-                    return Err(VaultError::InvalidReference);
-                }
-                operation(cursors)
-            })();
-        let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
-        unlock_result?;
-        result
+                            .enumerate()
+                            .any(|(i, key)| {
+                                cursor.pending_calendar_occurrences[i + 1..]
+                                    .iter()
+                                    .any(|next| next == key)
+                            })
+                        || cursor
+                            .delivered_calendar_occurrences
+                            .iter()
+                            .enumerate()
+                            .any(|(i, key)| {
+                                cursor.delivered_calendar_occurrences[i + 1..]
+                                    .iter()
+                                    .any(|next| next == key)
+                            })
+                        || cursor
+                            .seen_calendar_occurrences
+                            .iter()
+                            .enumerate()
+                            .any(|(i, key)| {
+                                cursor.seen_calendar_occurrences[i + 1..]
+                                    .iter()
+                                    .any(|next| next == key)
+                            })
+                        || cursor.pending_ids.iter().any(|id| {
+                            id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
+                        })
+                        || cursor
+                            .pending_ids
+                            .iter()
+                            .any(|pending| cursor.seen_ids.iter().any(|seen| seen == pending))
+                        || cursor.delivered_ids.iter().any(|delivered| {
+                            cursor.seen_ids.iter().any(|seen| seen == delivered)
+                                || cursor
+                                    .pending_ids
+                                    .iter()
+                                    .any(|pending| pending == delivered)
+                        })
+                        || cursor
+                            .pending_ids
+                            .iter()
+                            .enumerate()
+                            .any(|(index, pending)| {
+                                cursor.pending_ids[index + 1..]
+                                    .iter()
+                                    .any(|next| next == pending)
+                            })
+                        || cursor
+                            .delivered_ids
+                            .iter()
+                            .enumerate()
+                            .any(|(index, delivered)| {
+                                cursor.delivered_ids[index + 1..]
+                                    .iter()
+                                    .any(|next| next == delivered)
+                            })
+                })
+                || cursors_read.iter().enumerate().any(|(index, cursor)| {
+                    cursors_read[index + 1..]
+                        .iter()
+                        .any(|next| next.routine_id == cursor.routine_id)
+                })
+            {
+                return Err(VaultError::InvalidReference);
+            }
+            let before = list.clone();
+            let value = operation(&mut list)?;
+            if list == before {
+                return Ok(value);
+            }
+            let encoded =
+                Zeroizing::new(serde_json::to_vec(&list).map_err(|_| VaultError::Unavailable)?);
+            if encoded.len() > MAX_ROUTINE_CURSOR_BYTES {
+                return Err(VaultError::TooLarge);
+            }
+            let backlog = cursors
+                .put_backlog(&owner, &encoded)
+                .map_err(|_| VaultError::Unavailable)?;
+            let next = vak_session::cursors::Cursor {
+                position: format!("{} routines", list.len()),
+                backlog: Some(backlog),
+                resynced_from: None,
+                at: chrono::Utc::now(),
+            };
+            if cursors
+                .swap_if(&owner, ROUTINES_STREAM, current.as_ref(), &next)
+                .map_err(|_| VaultError::Unavailable)?
+            {
+                return Ok(value);
+            }
+        }
+        Err(VaultError::Conflict)
     }
 
     fn with_routine_history<T>(
@@ -1249,16 +1272,6 @@ impl AccountVault {
             return Err(VaultError::TooLarge);
         }
         vak_config::upsert_env_file(&self.scope_hint, ROUTINE_HISTORY_KEY, &encoded)
-            .map_err(VaultError::Store)
-    }
-
-    fn write_routine_cursors(&self, cursors: &[RoutineCursor]) -> Result<(), VaultError> {
-        let encoded =
-            Zeroizing::new(serde_json::to_string(cursors).map_err(|_| VaultError::Unavailable)?);
-        if encoded.len() > MAX_ROUTINE_CURSOR_BYTES {
-            return Err(VaultError::TooLarge);
-        }
-        vak_config::upsert_env_file(&self.scope_hint, ROUTINE_CURSOR_KEY, &encoded)
             .map_err(VaultError::Store)
     }
 
@@ -1747,8 +1760,9 @@ fn validate_calendar_occurrence_keys(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountSecretMaterial, AccountVault, MAX_ROUTINE_PENDING_IDS, RoutineRunRecord,
-        RoutineRunStatus, RoutineRunTrigger, Uuid, VaultError,
+        AccountSecretMaterial, AccountVault, MAX_ROUTINE_PENDING_IDS, ROUTINES_STREAM,
+        RoutineRunRecord, RoutineRunStatus, RoutineRunTrigger, Uuid, VaultError,
+        routine_cursor_store,
     };
     use crate::{ActionCandidate, MailAddress, MailDraft, ProposedAction, SourceRef};
 
@@ -2091,6 +2105,52 @@ mod tests {
                 .queue_unseen_mail_ids(&routine_id, &other_account_id, &ids(&["m4"]))
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn routine_cursors_live_in_a_cursor_ref_with_an_encrypted_backlog() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-cursor-ref-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let routine_id = Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let ids = vec!["message-1".to_string()];
+        assert!(
+            vault
+                .queue_mail_ids_with_cursor(&routine_id, &account_id, &ids, Some("history-7"))
+                .unwrap()
+        );
+        let owner = format!("agent/{agent_id}/mail-calendar");
+        let cursor = routine_cursor_store()
+            .get(&owner, ROUTINES_STREAM)
+            .unwrap()
+            .expect("the routine cursors are a cursor ref");
+        let backlog = routine_cursor_store()
+            .backlog(&owner, &cursor)
+            .unwrap()
+            .expect("with a backlog object");
+        let backlog = String::from_utf8(backlog).unwrap();
+        assert!(backlog.contains("history-7") && backlog.contains("message-1"));
+        // The position and the queued ids moved together, and nothing is
+        // kept in the credential store any more.
+        assert!(
+            vak_config::read_env_file_var(&vault.scope_hint, "vak_mail_calendar_routine_cursors")
+                .is_none()
+        );
+        // Disconnecting the account removes its routine cursors from the ref.
+        vault.remove(&account_id).unwrap();
+        let after = routine_cursor_store()
+            .get(&owner, ROUTINES_STREAM)
+            .unwrap()
+            .unwrap();
+        let after = String::from_utf8(
+            routine_cursor_store()
+                .backlog(&owner, &after)
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(!after.contains("history-7"));
     }
 
     #[test]

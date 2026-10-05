@@ -81,6 +81,10 @@ fn cursor_ref(owner: &str, stream: &str) -> String {
     format!("cur/{owner}/{stream}")
 }
 
+fn backlog_scope(owner: &str) -> String {
+    format!("cursor:{owner}")
+}
+
 fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8], what: &str) -> Result<T, SessionError> {
     serde_json::from_slice(bytes).map_err(|error| SessionError::Objects(format!("{what}: {error}")))
 }
@@ -235,6 +239,62 @@ impl Cursors {
         self.write(owner, stream, position, None, from)
     }
 
+    /// Stores `bytes` as an encrypted tenant object for `owner`'s cursor
+    /// backlog.
+    pub fn put_backlog(&self, owner: &str, bytes: &[u8]) -> Result<ObjectRef, SessionError> {
+        use crate::objects::Objects;
+        crate::objects::TenantObjects::for_tenant(&self.tenant_home)?
+            .put(bytes, &backlog_scope(owner))
+    }
+
+    /// The backlog `cursor` names, if it names one.
+    pub fn backlog(&self, owner: &str, cursor: &Cursor) -> Result<Option<Vec<u8>>, SessionError> {
+        use crate::objects::Objects;
+        cursor
+            .backlog
+            .as_ref()
+            .map(|backlog| {
+                crate::objects::TenantObjects::for_tenant(&self.tenant_home)?
+                    .get(backlog, &backlog_scope(owner))
+            })
+            .transpose()
+    }
+
+    /// Moves `stream`'s cursor to `next` only if it is still `expected`
+    /// (absent when `None`), whoever holds the owner: for a cursor whose
+    /// writers are already serialized by another claim (a trigger's), so
+    /// that a writer that read a stale cursor re-reads instead of
+    /// overwriting. Returns whether it moved; the backlog it replaced is
+    /// released.
+    pub fn swap_if(
+        &self,
+        owner: &str,
+        stream: &str,
+        expected: Option<&Cursor>,
+        next: &Cursor,
+    ) -> Result<bool, SessionError> {
+        let bytes = encode(next)?;
+        let mut stale = false;
+        crate::fence::swap_ref(&self.tenant_home, &cursor_ref(owner, stream), |target| {
+            let current: Option<Cursor> =
+                target.map(|bytes| decode(bytes, "cursor")).transpose()?;
+            stale = current.as_ref() != expected;
+            Ok((!stale).then(|| bytes.clone()))
+        })?;
+        if stale {
+            return Ok(false);
+        }
+        if let Some(old) = expected
+            .and_then(|cursor| cursor.backlog.as_ref())
+            .filter(|old| next.backlog.as_ref() != Some(*old))
+        {
+            use crate::objects::Objects;
+            crate::objects::TenantObjects::for_tenant(&self.tenant_home)?
+                .release(old, &backlog_scope(owner))?;
+        }
+        Ok(true)
+    }
+
     /// Every gap row, oldest first. A row that is not a gap is an error.
     pub fn gaps(&self) -> Result<Vec<CursorGap>, SessionError> {
         self.chain
@@ -296,6 +356,48 @@ mod tests {
         assert!(second.advance("bot/a", "chan", "3", None).unwrap());
         assert!(!first.advance("bot/a", "chan", "4", None).unwrap());
         assert_eq!(cursors.get("bot/a", "chan").unwrap().unwrap().position, "3");
+    }
+
+    #[test]
+    fn a_swap_moves_only_the_cursor_it_read() {
+        let (_dir, cursors) = home();
+        let backlog = cursors.put_backlog("agent/a", b"one").unwrap();
+        let first = Cursor {
+            position: "1".into(),
+            backlog: Some(backlog),
+            resynced_from: None,
+            at: Utc::now(),
+        };
+        assert!(
+            cursors
+                .swap_if("agent/a", "routines", None, &first)
+                .unwrap()
+        );
+        let read = cursors.get("agent/a", "routines").unwrap().unwrap();
+        assert_eq!(cursors.backlog("agent/a", &read).unwrap().unwrap(), b"one");
+        // A writer that read nothing (stale) does not overwrite.
+        let other = Cursor {
+            position: "2".into(),
+            ..first.clone()
+        };
+        assert!(
+            !cursors
+                .swap_if("agent/a", "routines", None, &other)
+                .unwrap()
+        );
+        let second = Cursor {
+            position: "2".into(),
+            backlog: Some(cursors.put_backlog("agent/a", b"two").unwrap()),
+            resynced_from: None,
+            at: Utc::now(),
+        };
+        assert!(
+            cursors
+                .swap_if("agent/a", "routines", Some(&read), &second)
+                .unwrap()
+        );
+        let now = cursors.get("agent/a", "routines").unwrap().unwrap();
+        assert_eq!(cursors.backlog("agent/a", &now).unwrap().unwrap(), b"two");
     }
 
     #[test]

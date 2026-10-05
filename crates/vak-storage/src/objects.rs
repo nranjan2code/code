@@ -67,8 +67,9 @@ impl LocalObjectStore {
         self.grant_dir(id).join(seal::hex(scope.as_bytes()))
     }
 
-    /// Write-then-rename, so a reader never sees a partial file.
-    fn write_atomic(&self, dest: &Path, bytes: &[u8]) -> Result<()> {
+    /// A synced temporary file holding `bytes`, and `dest`'s directory
+    /// created.
+    fn stage(&self, dest: &Path, bytes: &[u8]) -> Result<PathBuf> {
         // Process-wide: two stores over one root in one process must never
         // share a temporary name.
         static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -83,13 +84,43 @@ impl LocalObjectStore {
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::rename(&tmp, dest)?;
+        Ok(tmp)
+    }
+
+    fn sync_parent(dest: &Path) {
         if let Some(parent) = dest.parent()
             && let Ok(d) = fs::File::open(parent)
         {
             let _ = d.sync_all();
         }
+    }
+
+    /// Write-then-rename, so a reader never sees a partial file.
+    fn write_atomic(&self, dest: &Path, bytes: &[u8]) -> Result<()> {
+        let tmp = self.stage(dest, bytes)?;
+        fs::rename(&tmp, dest)?;
+        Self::sync_parent(dest);
         Ok(())
+    }
+
+    /// Writes `dest` only if it does not exist yet (a hard link of the
+    /// staged file, which fails rather than replaces). Returns whether this
+    /// call created it.
+    fn create_atomic(&self, dest: &Path, bytes: &[u8]) -> Result<bool> {
+        let tmp = self.stage(dest, bytes)?;
+        let created = match fs::hard_link(&tmp, dest) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => {
+                let _ = fs::remove_file(&tmp);
+                return Err(error.into());
+            }
+        };
+        let _ = fs::remove_file(&tmp);
+        if created {
+            Self::sync_parent(dest);
+        }
+        Ok(created)
     }
 
     fn seal_body(&self, id: &ObjectId, key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
@@ -106,14 +137,20 @@ impl LocalObjectStore {
         self.authority.unwrap(&w)
     }
 
-    /// Any key that still unwraps from an existing grant of this object.
+    /// A key from an existing grant of this object that opens its body:
+    /// a grant whose key does not (left by a writer that lost a race to
+    /// create the body) is passed over.
     fn recover_key(&self, id: &ObjectId) -> Result<Option<Vec<u8>>> {
+        let Ok(body) = fs::read(self.object_path(id)) else {
+            return Ok(None);
+        };
         let Ok(rd) = fs::read_dir(self.grant_dir(id)) else {
             return Ok(None);
         };
         for e in rd {
             match self.read_grant_key(&e?.path()) {
-                Ok(k) => return Ok(Some(k)),
+                Ok(k) if seal::open(&k, id.0.as_bytes(), &body).is_ok() => return Ok(Some(k)),
+                Ok(_) => continue,
                 Err(StorageError::AuthorityUnavailable(m)) => {
                     return Err(StorageError::AuthorityUnavailable(m));
                 }
@@ -144,8 +181,21 @@ impl LocalObjectStore {
         }
         let key: [u8; KEY_LEN] = seal::random()?;
         let body = self.seal_body(&id, &key, plaintext)?;
+        // The grant first, then the body only if no other writer created
+        // it: a writer that lost that race takes the winner's key, which
+        // its grant was written before its body, so it is always there.
         self.write_grant(&id, scope, &key)?;
-        self.write_atomic(&path, &body)?;
+        if !self.create_atomic(&path, &body)? {
+            match self.recover_key(&id)? {
+                Some(winner) if winner.as_slice() != key.as_slice() => {
+                    self.write_grant(&id, scope, &winner)?;
+                }
+                Some(_) => {}
+                // A body no grant opens (every grant was removed before it
+                // was collected): replace it under this key.
+                None => self.write_atomic(&path, &body)?,
+            }
+        }
         Ok(id)
     }
 
@@ -281,6 +331,34 @@ mod tests {
         for writer in writers {
             let (id, body) = writer.join().unwrap();
             assert_eq!(first.get(&id, "c").unwrap(), body.as_bytes());
+        }
+    }
+
+    #[test]
+    fn the_same_bytes_put_at_once_by_many_scopes_stay_readable_by_each() {
+        for round in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let a = Arc::new(MemoryKeyAuthority::new().unwrap());
+            let shared = Arc::new(store(dir.path(), [9; 32], &a));
+            let barrier = Arc::new(std::sync::Barrier::new(8));
+            let writers: Vec<_> = (0..8)
+                .map(|i| {
+                    let (s, barrier) = (shared.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        let scope = format!("scope-{i}");
+                        (s.put(b"[]", &scope).unwrap(), scope)
+                    })
+                })
+                .collect();
+            for writer in writers {
+                let (id, scope) = writer.join().unwrap();
+                assert_eq!(
+                    shared.get(&id, &scope).unwrap(),
+                    b"[]",
+                    "round {round}: {scope} lost its key to a racing writer"
+                );
+            }
         }
     }
 

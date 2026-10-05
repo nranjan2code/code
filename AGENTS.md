@@ -112,7 +112,8 @@ Read before changing behaviour in these areas:
   provider IDs and skips model dispatch when unchanged. The trigger's claim
   (plan M4.4) prevents duplicate runs of one routine across server
   processes through child completion. Apple UID, Gmail history, and Microsoft Graph
-  per-folder delta cursors now advance atomically with the encrypted backlog;
+  per-folder delta cursors now advance atomically with the encrypted backlog
+  in one cursor ref per Agent (data-architecture plan M4.7b);
   multi-host fencing remains outstanding. Startup catch-up now evaluates cron slots in the task's
   configured IANA timezone and compares absolute instants across DST changes.
   Disconnect removes credentials and unsent
@@ -305,7 +306,15 @@ a message, and records every range it resyncs past as a gap row in the
 `cursors/` chain, listed in the Operations Center; a second poller of a
 bot stands by while the holder is alive, and Telegram's per-token lock
 file is gone. M4.7b (the mail vault's cursors and backlog onto cursor
-refs) is next. No session starts a later step unasked.
+refs) is done too (2026-10-05): the vault's routine cursors and backlog
+are the cursor `cur/agent/<agent>/mail-calendar/routines`, its backlog
+an encrypted tenant object moved by CAS with the provider positions, in
+place of a credential-store blob behind a lock file; a reader holds a
+decompressed object in a buffer its own size, and identical bytes put
+by two scopes at once stay readable by both. The vault keeps its
+private routine run history (account binding and item counts, removed
+on disconnect) until M7a can erase run records. No session starts a
+later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;

@@ -54,10 +54,10 @@ Known slow tests (each over 60 s, not failures):
 | 4 | M4.4 claims, one `due(now)`, `on_crash` | `schedule_slot_at_most_once_under_restart`, `two_processes_do_not_double_start`, `skipped_slot_is_a_record`, `retry_once_retries_once` | Done, 7b3a0ceaf |
 | 5 | M4.5 `effects/` chain; delivery is its first kind; the outbox goes; `/effects`; Discord nonce; the new effects invariant in AGENTS.md | `effect_unknown_until_reconciled`, `effect_not_replayed_after_restart`, `discord_resend_reuses_nonce` | Done, 94b826ed6 |
 | 6 | M4.6 mail and calendar send, create, update and RSVP become effects; their single-use claims go | `mail_send_is_one_effect`, `unknown_mail_send_never_resent` | Done, 9eb561d78 |
-| 7 | M4.7 cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` | In progress |
+| 7 | M4.7 cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` | Done (7a, 7b) |
 | 7a | M4.7a cursor primitive, gap chain, Telegram/Discord/Slack pollers on cursors | `cursor_resync_records_gap`, `second_poller_is_fenced` | Done, 6a03aab5f |
-| 7b | M4.7b mail vault cursors and backlog onto cursor refs (backlog an encrypted tenant object); fold or justify the vault's routine run history | (M4.7 exit tests over the vault) | Next |
-| 8 | M4.8 `CopyEnvironment`; the non-git refusal goes; invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 restated against the shipped shapes | `non_git_space_routine_runs_in_copy_environment` | |
+| 7b | M4.7b mail vault cursors and backlog onto cursor refs (backlog an encrypted tenant object); fold or justify the vault's routine run history | `routine_cursors_live_in_a_cursor_ref_with_an_encrypted_backlog` | Done, COMMIT |
+| 8 | M4.8 `CopyEnvironment`; the non-git refusal goes; invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 restated against the shipped shapes | `non_git_space_routine_runs_in_copy_environment` | Next |
 | 9 | M2 remainder: credential-store `KeyAuthority`, torn-write seal test, fuzz corpus, flock single-writer lock, blob streaming | plan §M2 | |
 | 10 | M5 telemetry (may run beside M4) | `library_crates_have_no_eprintln`, `one_run_one_trace_id`, `log_lines_are_json_with_trace_fields`, `telemetry_carries_no_content` | |
 | 11 | M6 data catalog, search, lineage | `lineage_from_any_artifact_to_cause`, `search_respects_audience`, `catalog_rebuild_equals_incremental`, `turn_path_reads_flat`, `catalog_query_p95_under_50ms_at_1m_nodes` | |
@@ -76,9 +76,9 @@ when you split one, and finish every part before you mark it done.
 
 - A deleted trigger's claim ref (`trg/<id>/claim`) is left behind,
   because refs have no delete. M7a's reconciler should remove it.
-- The mail vault keeps its own private routine run history beside the run
-  records. Fold it into runs, or justify keeping it, at M4.7 (it moves
-  with the vault's cursors).
+- The mail vault keeps its private routine run history beside the run
+  records (justified at M4.7b: it binds runs to an account and is removed
+  on disconnect). Fold it into runs once M7a can erase run records.
 - Still open from M3b:
   - remeasure write-path growth on a used 7.0 home;
   - a backup policy for the Workspace data class;
