@@ -23210,6 +23210,70 @@ mod sandbox_promotion_tests {
         .unwrap()
     }
 
+    /// A runtime nudge (here the stop guard's "Do it now…") is scaffolding
+    /// for the model and never reaches a person: `/transcript` omits it,
+    /// while the user-role message that carries a tool's result, the
+    /// person's words and the answers stay.
+    #[test]
+    fn a_stop_guard_nudge_never_reaches_the_transcript() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let mut log = seed_session_at(&core, "nudged", dir.path());
+        let nudge =
+            "Do it now with the tools you have; if you cannot, say plainly what is missing.";
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::user_text("Remember that my favourite colour is teal."),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text("Hello.")]),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord::control(
+            vak_intent::control::ControlKind::StopGuard,
+            nudge,
+        ))
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::ToolUse {
+                id: "call-1".into(),
+                name: "remember".into(),
+                input: serde_json::json!({"text": "favourite colour is teal"}),
+            }]),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message {
+                role: vak_llm::Role::User,
+                content: vec![vak_llm::ContentBlock::tool_result("call-1", "remembered")],
+            },
+            meta: None,
+        })
+        .unwrap();
+
+        let json = transcript_json(&log);
+        let shown = json["messages"].to_string();
+        assert!(
+            !shown.contains(nudge),
+            "a nudge reached the transcript: {shown}"
+        );
+        let messages = json["messages"].as_array().unwrap();
+        assert_eq!(
+            messages.len(),
+            4,
+            "words, answer, tool call and its result: {shown}"
+        );
+        assert!(shown.contains("favourite colour is teal"));
+        assert!(
+            shown.contains("tool_result"),
+            "a tool result is not a nudge"
+        );
+    }
+
     async fn read_status(
         state: &AppState,
         path: &str,

@@ -122,7 +122,14 @@ pub(crate) async fn list_sessions_admin(
                     }
                 })
                 .collect();
-            Json(serde_json::json!({ "sessions": items, "total": total })).into_response()
+            Json(serde_json::json!({
+                "sessions": items,
+                "total": total,
+                // The project this server opened, so the console can tell its
+                // sessions from other projects'.
+                "workspace_space_id": vak_config::spaces::key(state.core.cwd()),
+            }))
+            .into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

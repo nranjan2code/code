@@ -242,7 +242,9 @@ Documents in the tenant store. Slice 4 is done (2026-10-04): execution
 state, drafts, Agent workspaces and run environments live outside the
 project tree. Slice 5 is done (2026-10-04): every space-keyed store keys
 by a `spc_` id from the tenant space registry (`vak_config::spaces`),
-never a path hash. No session starts a later step unasked.
+never a path hash. Slice 6 is done (2026-10-05), so M3b is done; its
+release waits on the maintainer's version decision. No session starts a
+later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;

@@ -9,7 +9,7 @@ import { api, type Project } from "./api";
 import { pushToast } from "./store";
 
 function lastOpened(seconds: number | null): string {
-  return seconds ? new Date(seconds * 1000).toLocaleString() : "never opened here";
+  return seconds ? ` · last opened ${new Date(seconds * 1000).toLocaleString()}` : "";
 }
 
 export default function Projects() {
@@ -58,7 +58,6 @@ export default function Projects() {
                       {project.folder_here ? project.folder : "No folder on this machine"}
                       {" · "}
                       {project.trusted ? "Trusted" : "Not trusted"}
-                      {" · "}
                       {lastOpened(project.last_opened)}
                       {project.hidden ? " · Hidden" : ""}
                     </span>

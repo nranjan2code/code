@@ -667,7 +667,7 @@ Each item is keyed by space id in this slice:
 - `/workspaces`, the desktop trust gate
 - `[server] workspace_roots`
 
-**Slice 6 — docs, site, scripts, services** — in progress (2026-10-05).
+**Slice 6 — docs, site, scripts, services** — done 2026-10-05.
 - Every item in blast-radius M3b slice 6. Then release 7.0.0.
 
 Done so far: the everyday word for a Space is **Project** (doc 75 §7,
@@ -696,8 +696,15 @@ two data homes in one OS keychain. Credential scopes are now named by
 explicit owner (`home-<id>`, `home-<id>-agent-<a>`,
 `home-<id>-tenant-<t>-keys`, a folder in the data home by its relative
 path, never bound; `space-<spc>` for a project), and the unreadable dev
-home was moved to the Trash with the maintainer's agreement. Left: the live
-dev run, then the release (7.0.0, or a relabel the maintainer is weighing).
+home was moved to the Trash with the maintainer's agreement. The live dev
+run on a fresh 7.0 home (local Ollama, a turn that saved a memory note,
+Configure › Projects, a rename, the session view by project) then passed,
+after fixing what it found: the search index (`store.db`, derived) kept a
+file from before the `space_id` rename and failed every sessions query, so
+the index now stamps its schema version and is dropped and rebuilt on a
+mismatch (`an_index_from_another_schema_is_rebuilt_not_misread`); the
+sessions list now carries the server's own project id. **M3b is done**; the
+release is held until the maintainer decides the version.
 
 **Screens**
 - Admin: Spaces (A13), with the word settled in doc 75 (L11).

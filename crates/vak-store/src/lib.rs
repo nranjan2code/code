@@ -21,7 +21,9 @@ pub mod query;
 pub const DB_NAME: &str = "store.db";
 
 /// Version tag stored in the `meta` table; bump when the schema changes.
-const SCHEMA_VERSION: u32 = 1;
+/// Bumped whenever a table's shape changes; an index stamped with another
+/// version is dropped and rebuilt, never adapted (it is derived data).
+const SCHEMA_VERSION: u32 = 2;
 
 /// A derived locator, not an authorization decision. A caller must verify
 /// the canonical session's scope/lifecycle before loading this byte range.
@@ -298,8 +300,16 @@ pub struct ImportStats {
 
 impl Store {
     fn ensure_schema(conn: &Connection) -> Result<(), StoreError> {
-        // A warm reader must not contend for a write transaction on every open.
-        if conn
+        let stamped = conn
+            .query_row("SELECT value FROM meta WHERE key = 'schema'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .ok();
+        if stamped.as_deref() != Some(SCHEMA_VERSION.to_string().as_str()) {
+            Self::drop_all(conn)?;
+        } else if conn
+            // A warm reader must not contend for a write transaction on
+            // every open.
             .query_row(
                 "SELECT value FROM meta WHERE key = 'locator_version'",
                 [],
@@ -412,6 +422,10 @@ impl Store {
             INSERT OR REPLACE INTO meta(key, value) VALUES ('locator_version', '2');
             COMMIT;",
         )?;
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', ?1)",
+            [SCHEMA_VERSION.to_string()],
+        )?;
         Ok(())
     }
 }
@@ -422,6 +436,35 @@ impl Store {
 
 impl Store {
     /// Extract search metadata from a single JSONL entry.
+    /// Drop every table of an index written under another schema. The index
+    /// is derived from the ledgers, so it is rebuilt rather than adapted.
+    fn drop_all(conn: &Connection) -> Result<(), StoreError> {
+        let tables: Vec<String> = {
+            let mut statement = conn.prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for table in tables {
+            if conn
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [&table],
+                    |_| Ok(()),
+                )
+                .is_ok()
+            {
+                conn.execute_batch(&format!(
+                    "DROP TABLE IF EXISTS \"{}\";",
+                    table.replace('"', "\"\"")
+                ))?;
+            }
+        }
+        Ok(())
+    }
+
     fn extract_meta(&self, session_id: &str, entry: &vak_session::Entry) -> Option<IndexedEntry> {
         use vak_session::EntryPayload;
 
@@ -1160,6 +1203,34 @@ mod tests {
                 .import_session_chunk(dir.path(), &path, 4096)
                 .is_err()
         );
+    }
+
+    /// An index file from another schema (here, the column a session's
+    /// space had before it was renamed) is dropped and rebuilt on open,
+    /// never queried against a column it does not have.
+    #[test]
+    fn an_index_from_another_schema_is_rebuilt_not_misread() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let conn = Connection::open(dir.path().join(DB_NAME)).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta VALUES ('locator_version', '2');
+                 CREATE TABLE entries (entry_id TEXT PRIMARY KEY, session_id TEXT, project_hash TEXT, ts TEXT);",
+            )
+            .unwrap();
+        }
+        let store = Store::open(dir.path()).unwrap();
+        let conn = store.conn();
+        let columns: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('entries')")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|c| c == "space_id"), "{columns:?}");
+        assert!(!columns.iter().any(|c| c == "project_hash"));
     }
 
     #[test]
