@@ -1,6 +1,7 @@
 //! Storage substrate: no vak dependencies, primitives from `ring` only.
 //! Design: docs/design/73-data-architecture-and-lifecycle.md §5-§7.3.
 
+pub mod blobs;
 pub mod documents;
 pub mod keys;
 pub mod objects;

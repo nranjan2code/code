@@ -348,10 +348,9 @@ mod tests {
     fn write_session(home: &Path, cwd: &Path, id: &str, msgs: &[MessageRecord]) {
         let path = SessionPath::new_session_file(home, cwd, id);
         let _ = std::fs::remove_dir_all(&path);
-        let mut w = vak_storage::segments::SegmentSet::open(&path)
-            .unwrap()
-            .writer(1)
-            .unwrap();
+        let w_set = vak_storage::segments::SegmentSet::open(&path).unwrap();
+        let w_lock = w_set.lock().unwrap();
+        let mut w = w_set.writer(1, &w_lock).unwrap();
         let header = Entry::new(None, EntryPayload::Header(test_header(id)));
         w.append(&serde_json::to_vec(&header).unwrap(), None)
             .unwrap();

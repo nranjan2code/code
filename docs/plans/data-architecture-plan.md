@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is in progress; M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -374,7 +374,7 @@ E1's, not an M1 gate, because there is no account to key yet.
   `derived_writes_record_provenance`, `records_reference_is_current`,
   `root_work_account_keyed_by_run_id`.
 
-### M2 — Storage substrate `vak-storage` (L, in parallel with M1) — in progress
+### M2 — Storage substrate `vak-storage` (L, in parallel with M1) — done 2026-10-06
 
 Landed (main, 2026-10-01): slices 1 and 2 in `crates/vak-storage` (key
 authority trait with an in-memory implementation, writer-epoch refs in
@@ -382,10 +382,18 @@ memory and SQLite, keyed sealed objects, hash-chained records, the verified
 seal with crash recovery, persistent scope keys with shred and hold, the
 Documents helper, the `Store` trait with commit generation and a
 pre-acknowledgement hook, the `Remote` trait declared, a fuzz skeleton).
-Remaining: the credential-store `KeyAuthority` (outside this crate, because
-it depends on `vak-config`), a byte-level torn-write test of the seal, a
-fuzz run and corpus, a flock single-writer lock, streaming for large blobs,
-and the workspace pins for `async-nats` and `webauthn-rs`.
+The rest landed by 2026-10-06: the credential-store `KeyAuthority`
+(`VaultKeyAuthority` over `vak_config::credentials`, in `vak-session`,
+since M3b); the single-writer flock in the substrate (`SegmentSet::lock`
+and `try_lock` return a `WriterLock` that `writer`, `seal` and `recover`
+require, replacing the two locks `vak-session` kept); a byte-level
+torn-write test (`a_write_torn_at_any_byte_leaves_the_entries_before_it`);
+a committed seed corpus in `fuzz/corpus/` with a stable gate of 20,000
+deterministic mutations per reader (`tests/fuzz_corpus.rs`; a libFuzzer
+run needs nightly and is not part of the suite); streaming blobs
+(`vak_storage::blobs`: chunks of at most 8 MiB as ordinary objects plus a
+manifest object); and exact workspace pins for `async-nats`,
+`webauthn-rs` and `webauthn-authenticator-rs`.
 
 A library only, with no behaviour change elsewhere. It absorbs doc 79's
 requirements now, because they are cheap before the substrate exists and

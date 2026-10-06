@@ -46,7 +46,7 @@ chrono = { workspace = true }
 walkdir = { workspace = true }
 toml = { workspace = true }
 sha2 = { workspace = true }
-webauthn-rs = "0.5.5"
+webauthn-rs = { workspace = true }
 url = "2"
 getrandom = "0.3"
 fs2 = "0.4"
@@ -73,7 +73,7 @@ tempfile = { workspace = true }
 libc = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
-webauthn-authenticator-rs = { version = "0.5.5", features = ["softpasskey"] }
+webauthn-authenticator-rs = { workspace = true }
 
 [lints]
 workspace = true

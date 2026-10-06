@@ -18,6 +18,22 @@ use std::path::{Path, PathBuf};
 
 const MAGIC: &[u8; 8] = b"VAKSEG01";
 
+/// Held while this process is the one writer of a segment set. Released by
+/// an explicit unlock when dropped: closing alone would leave the lock held
+/// by any child spawned meanwhile, which holds a duplicate of the
+/// descriptor until it execs.
+#[derive(Debug)]
+pub struct WriterLock {
+    file: File,
+    dir: PathBuf,
+}
+
+impl Drop for WriterLock {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SealStep {
     Copied,
@@ -120,6 +136,39 @@ impl SegmentSet {
         })
     }
 
+    /// Takes the single-writer lock of this segment set: an exclusive
+    /// flock on `<dir>/LOCK`, waiting for another holder to release it.
+    pub fn lock(&self) -> Result<WriterLock> {
+        let file = self.lock_file()?;
+        file.lock()?;
+        Ok(WriterLock {
+            file,
+            dir: self.dir.clone(),
+        })
+    }
+
+    /// Takes the single-writer lock if no one else holds it; `None` if
+    /// another writer (in this or another process) does.
+    pub fn try_lock(&self) -> Result<Option<WriterLock>> {
+        let file = self.lock_file()?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(WriterLock {
+                file,
+                dir: self.dir.clone(),
+            })),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(error)) => Err(error.into()),
+        }
+    }
+
+    fn lock_file(&self) -> Result<File> {
+        Ok(fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(self.dir.join("LOCK"))?)
+    }
+
     pub fn log_path(&self, n: u64) -> PathBuf {
         self.dir.join(format!("seg-{n:08}.log"))
     }
@@ -164,7 +213,10 @@ impl SegmentSet {
     }
 
     /// A writer for the active segment `n` (which must chain from sealed `n-1`).
-    pub fn writer(&self, n: u64) -> Result<RecordWriter> {
+    /// The writer of segment `n`, for the holder of this set's `lock`: a
+    /// segment has one writer at a time, across processes.
+    pub fn writer(&self, n: u64, lock: &WriterLock) -> Result<RecordWriter> {
+        self.held(lock)?;
         if self.sealed_path(n).exists() {
             return Err(StorageError::Malformed("segment is sealed"));
         }
@@ -194,12 +246,29 @@ impl SegmentSet {
         records::entries_from_bytes(&data, prev, key)
     }
 
-    pub fn seal(&self, n: u64) -> Result<SealEntry> {
-        self.seal_until(n, None)
+    /// Seals segment `n` for the holder of this set's `lock`.
+    pub fn seal(&self, n: u64, lock: &WriterLock) -> Result<SealEntry> {
+        self.seal_until(n, None, lock)
+    }
+
+    fn held(&self, lock: &WriterLock) -> Result<()> {
+        if lock.dir == self.dir {
+            Ok(())
+        } else {
+            Err(StorageError::Malformed(
+                "writer lock of another segment set",
+            ))
+        }
     }
 
     /// Seals segment `n`, optionally stopping after `stop` to simulate a crash.
-    pub fn seal_until(&self, n: u64, stop: Option<SealStep>) -> Result<SealEntry> {
+    pub fn seal_until(
+        &self,
+        n: u64,
+        stop: Option<SealStep>,
+        lock: &WriterLock,
+    ) -> Result<SealEntry> {
+        self.held(lock)?;
         let halt = |s: SealStep| -> Result<()> {
             if stop == Some(s) {
                 Err(StorageError::Interrupted(s.name()))
@@ -265,7 +334,9 @@ impl SegmentSet {
     }
 
     /// Finishes or discards any seal a crash interrupted. Idempotent.
-    pub fn recover(&self) -> Result<()> {
+    /// Finishes or discards an interrupted seal, for the holder of `lock`.
+    pub fn recover(&self, lock: &WriterLock) -> Result<()> {
+        self.held(lock)?;
         let mut nums = Vec::new();
         for e in fs::read_dir(&self.dir)? {
             let name = e?.file_name().to_string_lossy().into_owned();
@@ -321,10 +392,40 @@ mod tests {
     use crate::seal::KEY_LEN;
 
     fn fill(set: &SegmentSet, n: u64, items: &[&[u8]], k: Option<&ScopeKey>) {
-        let mut w = set.writer(n).unwrap();
+        let lock = set.lock().unwrap();
+        let mut w = set.writer(n, &lock).unwrap();
         for i in items {
             w.append(i, k).unwrap();
         }
+    }
+
+    #[test]
+    fn a_segment_set_has_one_writer_at_a_time() {
+        let d = tempfile::tempdir().unwrap();
+        let set = SegmentSet::open(d.path()).unwrap();
+        let held = set
+            .try_lock()
+            .unwrap()
+            .expect("the first writer takes the lock");
+        assert!(
+            set.try_lock().unwrap().is_none(),
+            "a second writer is refused"
+        );
+        let other = tempfile::tempdir().unwrap();
+        let other_lock = SegmentSet::open(other.path()).unwrap().lock().unwrap();
+        assert!(
+            set.writer(1, &other_lock).is_err(),
+            "another set's lock opens nothing here"
+        );
+        // A child being spawned holds a duplicate of every open descriptor
+        // until it execs; the duplicate here stands in for one.
+        let duplicate = held.file.try_clone().unwrap();
+        drop(held);
+        assert!(
+            set.try_lock().unwrap().is_some(),
+            "released when the holder drops it, whatever duplicates exist"
+        );
+        drop(duplicate);
     }
 
     #[test]
@@ -334,7 +435,7 @@ mod tests {
         let big = vec![b'z'; 50_000];
         fill(&set, 1, &[&big, b"two"], None);
         let before = set.read(1, None).unwrap();
-        let e = set.seal(1).unwrap();
+        let e = set.seal(1, &set.lock().unwrap()).unwrap();
         assert!(e.compressed);
         assert!(!set.log_path(1).exists());
         assert!(fs::metadata(set.sealed_path(1)).unwrap().len() < 1_000);
@@ -342,7 +443,7 @@ mod tests {
         fill(&set, 2, &[b"three"], None);
         assert_eq!(set.read(2, None).unwrap(), vec![b"three".to_vec()]);
         assert_eq!(set.prev_head(2).unwrap(), e.head);
-        assert!(set.writer(1).is_err());
+        assert!(set.writer(1, &set.lock().unwrap()).is_err());
     }
 
     #[test]
@@ -351,7 +452,7 @@ mod tests {
         let set = SegmentSet::open(d.path()).unwrap();
         let k = ScopeKey([4; KEY_LEN]);
         fill(&set, 1, &[b"secret one", b"secret two"], Some(&k));
-        let e = set.seal(1).unwrap();
+        let e = set.seal(1, &set.lock().unwrap()).unwrap();
         assert!(!e.compressed);
         assert_eq!(set.read(1, Some(&k)).unwrap().len(), 2);
         assert!(matches!(
@@ -366,7 +467,7 @@ mod tests {
         let set = SegmentSet::open(d.path()).unwrap();
         let k = ScopeKey([4; KEY_LEN]);
         fill(&set, 1, &[b"a", b"b"], Some(&k));
-        set.seal(1).unwrap();
+        set.seal(1, &set.lock().unwrap()).unwrap();
         let p = set.sealed_path(1);
         let mut b = fs::read(&p).unwrap();
         let n = b.len() - 40;
@@ -394,15 +495,15 @@ mod tests {
                 fill(&set, 1, &[b"a", b"b", b"c"], key);
                 let want = set.read(1, key).unwrap();
                 assert!(matches!(
-                    set.seal_until(1, Some(stop)),
+                    set.seal_until(1, Some(stop), &set.lock().unwrap()),
                     Err(StorageError::Interrupted(_))
                 ));
                 assert_eq!(set.read(1, key).unwrap(), want, "readable at {stop:?}");
-                set.recover().unwrap();
+                set.recover(&set.lock().unwrap()).unwrap();
                 assert_eq!(set.read(1, key).unwrap(), want, "recovered at {stop:?}");
                 if matches!(stop, SealStep::Copied | SealStep::Verified) {
                     assert!(set.log_path(1).exists());
-                    set.seal(1).unwrap();
+                    set.seal(1, &set.lock().unwrap()).unwrap();
                 }
                 assert_eq!(set.seals().unwrap().len(), 1);
                 assert_eq!(set.read(1, key).unwrap(), want);
@@ -419,9 +520,9 @@ mod tests {
         let want = set.read(1, None).unwrap();
         fs::write(set.tmp_path(1), b"VAKSEG01\x01garbage").unwrap();
         assert_eq!(set.read(1, None).unwrap(), want);
-        set.recover().unwrap();
+        set.recover(&set.lock().unwrap()).unwrap();
         assert!(!set.tmp_path(1).exists());
-        set.seal(1).unwrap();
+        set.seal(1, &set.lock().unwrap()).unwrap();
         assert_eq!(set.read(1, None).unwrap(), want);
     }
 
@@ -431,9 +532,9 @@ mod tests {
         let set = SegmentSet::open(d.path()).unwrap();
         fill(&set, 1, &[b"a", b"b"], None);
         let want = set.read(1, None).unwrap();
-        let _ = set.seal_until(1, Some(SealStep::Swapped));
+        let _ = set.seal_until(1, Some(SealStep::Swapped), &set.lock().unwrap());
         fs::write(set.sealed_path(1), b"VAKSEG01\x00junk").unwrap();
-        set.recover().unwrap();
+        set.recover(&set.lock().unwrap()).unwrap();
         assert!(!set.sealed_path(1).exists());
         assert_eq!(set.read(1, None).unwrap(), want);
     }
@@ -447,7 +548,10 @@ mod tests {
         let mut b = fs::read(&p).unwrap();
         b.truncate(b.len() - 3);
         fs::write(&p, b).unwrap();
-        assert!(matches!(set.seal(1), Err(StorageError::TornTail(_))));
+        assert!(matches!(
+            set.seal(1, &set.lock().unwrap()),
+            Err(StorageError::TornTail(_))
+        ));
         assert!(set.log_path(1).exists());
     }
 
@@ -456,12 +560,12 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let set = SegmentSet::open(d.path()).unwrap();
         fill(&set, 1, &[b"a"], None);
-        set.seal(1).unwrap();
+        set.seal(1, &set.lock().unwrap()).unwrap();
         fill(&set, 2, &[b"b"], None);
         let other = tempfile::tempdir().unwrap();
         let o = SegmentSet::open(other.path()).unwrap();
         fill(&o, 1, &[b"x"], None);
-        o.seal(1).unwrap();
+        o.seal(1, &o.lock().unwrap()).unwrap();
         fill(&o, 2, &[b"b"], None);
         fs::copy(o.log_path(2), set.log_path(2)).unwrap();
         assert!(matches!(

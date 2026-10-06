@@ -11,7 +11,6 @@
 use crate::types::SessionError;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 /// A segment this large is sealed and the next one opened.
@@ -67,10 +66,10 @@ impl RecordChain {
             return Ok(());
         }
         std::fs::create_dir_all(&self.dir)?;
-        let lock = self.lock()?;
-        crate::fence::check()?;
         let segments = vak_storage::segments::SegmentSet::open(&self.dir).map_err(storage_error)?;
-        segments.recover().map_err(storage_error)?;
+        let lock = segments.lock().map_err(storage_error)?;
+        crate::fence::check()?;
+        segments.recover(&lock).map_err(storage_error)?;
         let active = match crate::log::segment_numbers(&self.dir).last() {
             Some((number, true)) => *number,
             Some((number, false)) => number + 1,
@@ -86,7 +85,7 @@ impl RecordChain {
                     .map_err(storage_error)?;
             }
         }
-        let mut writer = segments.writer(active).map_err(storage_error)?;
+        let mut writer = segments.writer(active, &lock).map_err(storage_error)?;
         for row in rows {
             let bytes = serde_json::to_vec(row).map_err(|error| SessionError::Corrupt {
                 line: 0,
@@ -104,7 +103,7 @@ impl RecordChain {
         }
         let full = std::fs::metadata(&log_path).map(|meta| meta.len())? >= ROTATE_BYTES;
         if full {
-            segments.seal(active).map_err(storage_error)?;
+            segments.seal(active, &lock).map_err(storage_error)?;
         }
         drop(lock);
         Ok(())
@@ -147,28 +146,6 @@ impl RecordChain {
                 }
             }
         }
-    }
-
-    fn lock(&self) -> Result<ChainLock, SessionError> {
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(self.dir.join("LOCK"))?;
-        file.lock()?;
-        Ok(ChainLock(file))
-    }
-}
-
-/// Held for one append. Released by an explicit unlock on every path,
-/// including errors: closing alone would leave the lock held by any child
-/// spawned meanwhile, which holds a duplicate of the descriptor until it
-/// execs.
-struct ChainLock(File);
-
-impl Drop for ChainLock {
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
     }
 }
 

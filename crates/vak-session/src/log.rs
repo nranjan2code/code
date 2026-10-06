@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use vak_llm::Message;
@@ -39,27 +38,28 @@ pub struct TailSections {
 struct LedgerDir {
     segments: vak_storage::segments::SegmentSet,
     writer: Option<(u64, vak_storage::records::RecordWriter)>,
-    lock: Option<File>,
+    /// The segment set's single-writer lock, held for the handle's life.
+    lock: Option<vak_storage::segments::WriterLock>,
 }
 
 impl LedgerDir {
-    fn lock(dir: &Path) -> Result<File, SessionError> {
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(dir.join("LOCK"))?;
-        file.try_lock()
-            .map_err(|_| SessionError::Locked(dir.to_path_buf()))?;
-        Ok(file)
-    }
-}
-
-impl Drop for LedgerDir {
-    fn drop(&mut self) {
-        if let Some(lock) = &self.lock {
-            let _ = lock.unlock();
-        }
+    /// The ledger's segments and its writer lock, which no other handle
+    /// (in this or another process) holds while this one lives.
+    fn locked(
+        dir: &Path,
+    ) -> Result<
+        (
+            vak_storage::segments::SegmentSet,
+            vak_storage::segments::WriterLock,
+        ),
+        SessionError,
+    > {
+        let segments = vak_storage::segments::SegmentSet::open(dir).map_err(storage_error)?;
+        let lock = segments
+            .try_lock()
+            .map_err(storage_error)?
+            .ok_or_else(|| SessionError::Locked(dir.to_path_buf()))?;
+        Ok((segments, lock))
     }
 }
 
@@ -149,12 +149,11 @@ impl SessionLog {
         std::fs::create_dir_all(&path)?;
         // Cross-process safety: an exclusive lock for the lifetime of the
         // handle keeps two processes from interleaving appends.
-        let lock = LedgerDir::lock(&path)?;
+        let (segments, lock) = LedgerDir::locked(&path)?;
         if !segment_numbers(&path).is_empty() {
             return Err(SessionError::Exists(path));
         }
-        let segments = vak_storage::segments::SegmentSet::open(&path).map_err(storage_error)?;
-        let writer = segments.writer(1).map_err(storage_error)?;
+        let writer = segments.writer(1, &lock).map_err(storage_error)?;
         let mut log = SessionLog {
             path,
             ledger: LedgerDir {
@@ -289,8 +288,14 @@ impl SessionLog {
 
     pub fn open(path: PathBuf) -> Result<Self, SessionError> {
         crate::fence::check()?;
-        let lock = LedgerDir::lock(&path)?;
-        let segments = vak_storage::segments::SegmentSet::open(&path).map_err(storage_error)?;
+        // Opening never creates: a ledger that is not there is not found.
+        if !path.is_dir() {
+            return Err(SessionError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("no ledger at {}", path.display()),
+            )));
+        }
+        let (segments, lock) = LedgerDir::locked(&path)?;
         let numbers = segment_numbers(&path);
         // Append to the newest segment while it is open; after a seal, the
         // next one.
@@ -319,7 +324,7 @@ impl SessionLog {
                 path.display()
             ));
         }
-        let writer = segments.writer(active).map_err(storage_error)?;
+        let writer = segments.writer(active, &lock).map_err(storage_error)?;
         Ok(SessionLog {
             path,
             ledger: LedgerDir {
@@ -374,11 +379,17 @@ impl SessionLog {
         let mut writer = writer;
         writer.sync().map_err(storage_error)?;
         drop(writer);
-        self.ledger.segments.seal(number).map_err(storage_error)?;
+        let Some(lock) = self.ledger.lock.as_ref() else {
+            return Err(SessionError::Locked(self.path.clone()));
+        };
+        self.ledger
+            .segments
+            .seal(number, lock)
+            .map_err(storage_error)?;
         let next = self
             .ledger
             .segments
-            .writer(number + 1)
+            .writer(number + 1, lock)
             .map_err(storage_error)?;
         self.ledger.writer = Some((number + 1, next));
         Ok(())
@@ -2678,8 +2689,19 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
 
-    /// A child being spawned holds a duplicate of every open descriptor
-    /// until it execs; the duplicate here stands in for one.
+    /// The writer lock lives exactly as long as the handle (its release
+    /// with a duplicate descriptor outstanding is tested in vak-storage).
+    #[test]
+    fn opening_a_missing_ledger_fails_and_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("absent");
+        assert!(SessionLog::open(path.clone()).is_err());
+        assert!(
+            !path.exists(),
+            "an open never makes the ledger it did not find"
+        );
+    }
+
     #[test]
     fn the_lock_lasts_exactly_as_long_as_the_handle() {
         let dir = tempfile::tempdir().unwrap();
@@ -2692,9 +2714,7 @@ mod tests {
             Err(SessionError::Locked(_))
         ));
 
-        let duplicate = log.ledger.lock.as_ref().unwrap().try_clone().unwrap();
         drop(log);
-        SessionLog::open(path).expect("the dropped handle's lock stayed with a duplicate");
-        drop(duplicate);
+        SessionLog::open(path).expect("the dropped handle released its lock");
     }
 }

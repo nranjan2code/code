@@ -854,10 +854,9 @@ mod tests {
         let path = SessionPath::new_session_file(home, cwd, id);
         // A fixture replaces any ledger already at this path.
         let _ = std::fs::remove_dir_all(&path);
-        let mut w = vak_storage::segments::SegmentSet::open(&path)
-            .unwrap()
-            .writer(1)
-            .unwrap();
+        let w_set = vak_storage::segments::SegmentSet::open(&path).unwrap();
+        let w_lock = w_set.lock().unwrap();
+        let mut w = w_set.writer(1, &w_lock).unwrap();
         let header = Entry::new(None, EntryPayload::Header(test_header(id)));
         w.append(&serde_json::to_vec(&header).unwrap(), None)
             .unwrap();
@@ -1001,10 +1000,9 @@ mod tests {
                 },
             }),
         );
-        let mut file = vak_storage::segments::SegmentSet::open(&path)
-            .unwrap()
-            .writer(1)
-            .unwrap();
+        let file_set = vak_storage::segments::SegmentSet::open(&path).unwrap();
+        let file_lock = file_set.lock().unwrap();
+        let mut file = file_set.writer(1, &file_lock).unwrap();
         file.append(&serde_json::to_vec(&evidence).unwrap(), None)
             .unwrap();
         let store = Store::open(dir.path()).unwrap();
@@ -1102,10 +1100,9 @@ mod tests {
         let log = vak_session::SessionLog::open(path.clone()).unwrap();
         let mut parent = log.tail_id().cloned();
         drop(log);
-        let mut file = vak_storage::segments::SegmentSet::open(&path)
-            .unwrap()
-            .writer(1)
-            .unwrap();
+        let file_set = vak_storage::segments::SegmentSet::open(&path).unwrap();
+        let file_lock = file_set.lock().unwrap();
+        let mut file = file_set.writer(1, &file_lock).unwrap();
         let mut last_id = String::new();
         for number in 0..1000 {
             let entry = Entry::new(
@@ -1173,10 +1170,9 @@ mod tests {
             None,
             EntryPayload::Message(user_msg("uncommitted zanzibar")),
         );
-        let mut file = vak_storage::segments::SegmentSet::open(&path)
-            .unwrap()
-            .writer(1)
-            .unwrap();
+        let file_set = vak_storage::segments::SegmentSet::open(&path).unwrap();
+        let file_lock = file_set.lock().unwrap();
+        let mut file = file_set.writer(1, &file_lock).unwrap();
         file.append(&serde_json::to_vec(&addition).unwrap(), None)
             .unwrap();
         file.append(b"corrupt complete record", None).unwrap();
@@ -1255,10 +1251,9 @@ mod tests {
                     .join(" "),
             )),
         );
-        let mut file = vak_storage::segments::SegmentSet::open(&path)
-            .unwrap()
-            .writer(1)
-            .unwrap();
+        let file_set = vak_storage::segments::SegmentSet::open(&path).unwrap();
+        let file_lock = file_set.lock().unwrap();
+        let mut file = file_set.writer(1, &file_lock).unwrap();
         file.append(&serde_json::to_vec(&entry).unwrap(), None)
             .unwrap();
         assert!(
@@ -1287,10 +1282,9 @@ mod tests {
             None,
             EntryPayload::Message(user_msg("uncommitted addition")),
         );
-        let mut file = vak_storage::segments::SegmentSet::open(&path)
-            .unwrap()
-            .writer(1)
-            .unwrap();
+        let file_set = vak_storage::segments::SegmentSet::open(&path).unwrap();
+        let file_lock = file_set.lock().unwrap();
+        let mut file = file_set.writer(1, &file_lock).unwrap();
         file.append(&serde_json::to_vec(&entry).unwrap(), None)
             .unwrap();
         file.append(b"corrupt completed record", None).unwrap();

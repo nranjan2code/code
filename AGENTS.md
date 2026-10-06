@@ -231,7 +231,12 @@ L6–L12), and the two 5.x guards landed the same day. Plan revision 4
 (2026-10-03) ships 6.0.0 independently and defers the data baseline to 7.0.0.
 M1 is done (2026-10-02:
 the trace key is minted at admission, invariant 40, and every ledger row type
-names its actor); M2 slices 1 and 2 are on main (plan §4 lists what remains).
+names its actor); M2 is done (2026-10-06: the credential-store key
+authority, a segment set's single-writer flock (`SegmentSet::lock`,
+which every writer, seal and recovery requires), a byte-level torn-write
+test, a committed fuzz corpus with a stable mutation gate, streaming
+blobs (`vak_storage::blobs`), and exact workspace pins for `async-nats`
+and `webauthn-rs`).
 M3a is done (2026-10-03): `Core` exposes its homes only as typed scopes.
 M3b is in progress: slice 1 is done (2026-10-03; 7.0.0-dev, the 7.0
 baseline, tenant tree and runtime root, wholesale purge, the registry by
@@ -1506,7 +1511,11 @@ crates/vak-storage   the storage substrate, NO vak dependencies (docs/design/
                      grant/revoke/shred/hold), documents (versions as objects,
                      current as a CAS ref) and the Store trait (LocalStore,
                      MemoryStore, commit generation, pre-ack hook, restore
-                     epoch; Remote declared only); slices 1-2 of M2
+                     epoch; Remote declared only), the single-writer
+                     flock a segment writer requires (`SegmentSet::lock`),
+                     and streaming blobs (blobs.rs: chunks plus a manifest
+                     object); fuzz targets with a committed corpus and a
+                     stable mutation gate (tests/fuzz_corpus.rs)
 crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
                      delivery posture (cadence x urgency) deciding WHEN a
                      packet goes out and never what it says; an approval and

@@ -822,10 +822,9 @@ mod tests {
 
     fn write_ledger(path: &Path, msgs: &[MessageRecord]) {
         let _ = std::fs::remove_dir_all(path);
-        let mut w = vak_storage::segments::SegmentSet::open(path)
-            .unwrap()
-            .writer(1)
-            .unwrap();
+        let set = vak_storage::segments::SegmentSet::open(path).unwrap();
+        let lock = set.lock().unwrap();
+        let mut w = set.writer(1, &lock).unwrap();
         for m in msgs {
             let entry = Entry::new(None, EntryPayload::Message(m.clone()));
             w.append(&serde_json::to_vec(&entry).unwrap(), None)

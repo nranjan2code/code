@@ -128,6 +128,12 @@ ring = "=0.17.14"
 rusqlite = { version = "=0.32.1", features = ["bundled", "hooks"] }
 # zstd compresses every object and record frame before it is sealed (vak-storage).
 zstd = "=0.13.3"
+# The distributed bus's NATS Core and JetStream client (vak-bus).
+async-nats = "=0.50.0"
+# Owner passkeys for the browser surface (vak-server, docs/design/78).
+webauthn-rs = "=0.5.5"
+# A software passkey that drives webauthn-rs in the server's tests.
+webauthn-authenticator-rs = { version = "=0.5.5", features = ["softpasskey"] }
 hex = "0.4"
 # Cross-platform OS secret storage (macOS Keychain / Windows Credential
 # Manager / Linux Secret Service) for the credential store
