@@ -57,7 +57,7 @@ Known slow tests (each over 60 s, not failures):
 | 7 | M4.7 cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` | Done (7a, 7b) |
 | 7a | M4.7a cursor primitive, gap chain, Telegram/Discord/Slack pollers on cursors | `cursor_resync_records_gap`, `second_poller_is_fenced` | Done, 6a03aab5f |
 | 7b | M4.7b mail vault cursors and backlog onto cursor refs (backlog an encrypted tenant object); fold or justify the vault's routine run history | `routine_cursors_live_in_a_cursor_ref_with_an_encrypted_backlog` | Done, 4263f9af3 |
-| 8 | M4.8 `CopyEnvironment`; the non-git refusal goes; invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 restated against the shipped shapes | `non_git_space_routine_runs_in_copy_environment` | Done, COMMIT |
+| 8 | M4.8 `CopyEnvironment`; the non-git refusal goes; invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 restated against the shipped shapes | `non_git_space_routine_runs_in_copy_environment` | Done, 9c9780a5b |
 | 9 | M2 remainder: credential-store `KeyAuthority`, torn-write seal test, fuzz corpus, flock single-writer lock, blob streaming | plan §M2 | Next |
 | 10 | M5 telemetry (may run beside M4) | `library_crates_have_no_eprintln`, `one_run_one_trace_id`, `log_lines_are_json_with_trace_fields`, `telemetry_carries_no_content` | |
 | 11 | M6 data catalog, search, lineage | `lineage_from_any_artifact_to_cause`, `search_respects_audience`, `catalog_rebuild_equals_incremental`, `turn_path_reads_flat`, `catalog_query_p95_under_50ms_at_1m_nodes` | |
