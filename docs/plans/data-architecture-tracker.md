@@ -70,7 +70,7 @@ Known slow tests (each over 60 s, not failures):
 | 11b | M6.2 one search: `/search`, admin search, `session_search` and recall on the catalog; `vak-store`, `search_all`, recall cache and directory walks deleted; presentations as Documents | plan §M6 design; `trashed_session_absent_from_every_search`, the recall tests on the catalog | Done, df6e1fc86 |
 | 11c | M6.3 flat turn path: `req/<id>` ref, routing evidence and commitment rollups as Documents | `turn_path_reads_flat` | Done (`ba7ba293f`) |
 | 11d | M6.4 screens: search on `/search`, Lineage tab, catalog status and rebuild | browser run | Done (`ea1b01934`) |
-| 12 | M6.5 design (D1 widen `session_search`, D2 Rust connectors) | plan §M6.5 design | Done (commit follows) |
+| 12 | M6.5 design (D1 widen `session_search`, D2 Rust connectors) | plan §M6.5 design | Done (`a737ccaa8`) |
 | 12a | M6.5a sources, `source_poll`, Rust connectors, `intake/` chain, detection, catalog source, `/intake` API | `intake_item_has_trace_and_provenance` | Next |
 | 12b | M6.5b `session_search` over items, alerts into the Inbox, push intake | `quarantined_item_absent_from_agent_retrieval` | |
 | 12c | M6.5c screens on `/intake`, browser run, Python pipeline and `feeds.rs` deleted | `feed_pipeline_is_gone`, browser run | |
