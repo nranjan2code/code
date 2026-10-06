@@ -246,6 +246,10 @@ parent secret; a workspace `scripts/feeds` is never executed).
 
 ## 10. Open decisions (need the maintainer)
 
+Settled 2026-10-06 (plan §M6.5 design): D1 widens `session_search` (the
+existing in-session `recall` keeps its name and job); D2 is Rust for every
+connector.
+
 - **D1 — one recall tool or a named intake tool?** Widen `session_search` into
   a single `recall` over transcripts + memory + entities + intake, or add a
   distinct `knowledge_search`. Recommendation: **one `recall`** — fewer tools

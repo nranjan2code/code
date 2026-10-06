@@ -355,7 +355,7 @@ commitment state read through rollup Documents (`vak_session::rollup`),
 so no turn-path decision replays a chain. M6.4 is done (2026-10-06), and
 with it M6: conversation detail's Lineage tab traces anything a
 conversation holds to its run and cause, and the catalog's status sits
-beside Rebuild search. M6.5 (intake, doc 76), M8, and M7a → M7b follow. No session starts a later step
+beside Rebuild search. M6.5's design was agreed on 2026-10-06 (plan §M6.5 "M6.5 design": `session_search` widened to intake items, every connector in Rust, steps M6.5a–c); M6.5a is next, and M8 and M7a → M7b follow. No session starts a later step
 unasked.
 
 **What it is.** One architecture for everything Vak writes:

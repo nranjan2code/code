@@ -1261,6 +1261,74 @@ a rebuild took 77 records from 13 sources.
   deleted in the same change.
 - Doc 76's open decisions D1 and D2 are settled before it starts.
 
+**M6.5 design (agreed 2026-10-06).** The maintainer settled doc 76's
+decisions. **D1:** `session_search` is widened. Intake items become one
+more kind it searches, and `recall` stays the in-session lookup by turn,
+presentation or evidence id, so no new tool is added. **D2:** every
+connector is Rust. That covers RSS/Atom, YouTube's channel XML, Hacker
+News, Reddit and Lobsters JSON, and custom HTTP (JSON, RSS or text). No
+Python runtime remains.
+
+The shapes:
+- **Source.** A Document `sources/<src>` in the tenant store, owned by an
+  Agent. It holds `{id, name, agent, connector, tags, trust, enabled,
+  created_at, created_by}`, where `connector` is a closed enum (`rss {url}`,
+  `youtube {channel_id}`, `hacker_news {list}`, `reddit {subreddit, sort}`,
+  `lobsters {list}`, `http {url, format}`). Sources are written only
+  through the authenticated API. The `[feeds]` config key, `feeds.toml` and
+  its untrusted-layer stripping go: there is no config path left to
+  demote.
+- **Polling.** A source polls through one trigger of its own with
+  `TriggerAction::SourcePoll { source }` on an `interval` schedule. Every
+  poll is a run with cause Schedule, and Poll now uses Run now's claim.
+  The source's cursor `cur/agent/<agent>/intake/<src>` holds the ETag,
+  Last-Modified and a bounded set of recent item keys. A connector that
+  cannot resume records a gap.
+- **Fetch and parse.** The server fetches with webfetch's SSRF guard, which
+  is shared rather than copied: every redirect is re-checked, and bytes
+  and time are bounded. Connectors are closed host code, so no workspace
+  code runs and no secret is passed. The bytes are parsed by a
+  network-denied worker task, `IntakeParse { connector, data }`
+  (invariant 14), into normalised items. This follows the mail/calendar
+  precedent: fetch from the host, parse hostile bytes in a worker.
+- **Item.** The body (title, link, author, published, text) is a tenant
+  object, deduped by content. Each item is one row in the `intake/` record
+  chain: `Taken {item, source, key, object, trace, disposition, labels,
+  evidence}`, then `Released` or `Quarantined` rows as an operator acts.
+  The item id is `itm:<src>:<digest(key)>`, so a re-poll is idempotent. The
+  catalog tails the chain and the Sources Documents. Item and source
+  nodes carry `produced_by` the run and `derived_from` the source. The
+  text is title plus body, and the audience is the source's Agent.
+- **Detection labels, never drops.** The detector is ported from
+  `feed_security.py`. It gives a disposition of accepted, quarantined or
+  blocked, and never leaves the evidence empty. Its false-positive rate is
+  checked against a committed corpus of ordinary headlines. A quarantined
+  or blocked item is excluded from `session_search` and alerts until it is
+  released.
+- **Alerts.** An alert is a Document `alerts/<alr>` with keyword, tag and
+  source matches and a cooldown. Alerts are evaluated after each poll on
+  new accepted items. A match is an Inbox entry `Kind::IntakeMatch`, made
+  idempotent per (alert, item) by a ref. Channel delivery, when an alert
+  names a target, is a delivery effect.
+- **Push intake.** `save_to_inbox` records the saved file as an item of
+  the built-in `push` source, so a channel attachment is searchable like
+  any other item.
+- **Retention.** Each source's maximum item count and dedup window are
+  enforced by M7a's reconciler. Until then nothing prunes items. That is a
+  stated gap, not a feed cron.
+
+The steps:
+1. **M6.5a** sources, polling, connectors, items and detection: the
+   chain, the catalog source, `/intake/sources` and `/intake/items`. Exit
+   test `intake_item_has_trace_and_provenance`.
+2. **M6.5b** retrieval and alerts: `session_search` over items, alerts
+   into the Inbox, and push intake. Exit test
+   `quarantined_item_absent_from_agent_retrieval`.
+3. **M6.5c** screens and deletion: the admin Feeds section and the client
+   reader on `/intake`, a browser run, and the deletion of `scripts/feeds`,
+   `feeds.rs`, `FeedSettings`, the DuckDB store and the registry entries.
+   Exit test `feed_pipeline_is_gone`.
+
 **Exit tests**
 - `intake_item_has_trace_and_provenance`,
   `quarantined_item_absent_from_agent_retrieval`,
