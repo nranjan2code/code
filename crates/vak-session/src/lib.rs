@@ -16,6 +16,7 @@ pub mod log;
 pub mod objects;
 pub mod runs;
 pub mod search;
+pub mod tail;
 pub mod trace;
 pub mod turns;
 pub mod types;

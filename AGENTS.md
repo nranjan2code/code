@@ -340,8 +340,15 @@ the run's `trace_id`; the sandboxed tool worker captures its
 and `/runs/{id}/spans` read the logs for the admin System › Traces &
 logs screen (`#/diagnostics`) and Run detail's timeline; `vak-ops`
 reads each service's structured logs; the bus carries references only
-and its work streams have a `max_age`. M6 (the data catalog) is next.
-No session starts a later step unasked.
+and its work streams have a `max_age`. M6's design was agreed on
+2026-10-06 (plan §M6 "M6 design": a tailer-fed catalog, doc 73's text
+projections only, and refs and Documents for the turn path's decisions).
+M6.1 is done (2026-10-06): `crates/vak-catalog` builds nodes, lineage
+edges and full-text rows from session ledgers, runs, effects, triggers,
+memory and commitments, and rebuilds them identically; nothing calls it
+yet. M6.2 (one search, replacing `vak-store`, `search_all`, the recall
+cache and the directory walks) is next. No session starts a later step
+unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -1527,6 +1534,14 @@ crates/vak-telemetry content-free structured telemetry (plan M5): the
                      lines forwarded under their caller's span (`forward`),
                      and the source tests that keep `eprintln!` out of
                      library code and messages literal
+crates/vak-catalog   the data catalog (plan M6, docs/design/73 §9): one
+                     SQLite file per tenant of nodes (sessions, turns, calls,
+                     files, runs, effects, triggers, memory, commitments),
+                     lineage edges and FTS5 over doc 73's text projections,
+                     fed by a tailer with one cursor per source
+                     (`vak_session::tail`), rebuilt from the records alone;
+                     `search` filters by audience before ranking, `lineage`
+                     walks from anything to its run and cause
 crates/vak-store     SQLite FTS5 rebuildable index over session ledgers:
                      BM25 full-text search (all content blocks incl. tool
                      calls/results/thinking), structured metadata queries,

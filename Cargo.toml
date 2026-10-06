@@ -6,6 +6,7 @@ members = [
     "crates/vak-telemetry",
     "crates/vak-context",
     "crates/vak-store",
+    "crates/vak-catalog",
     "crates/vak-storage",
     "crates/vak-tools",
     "crates/vak-agent",
@@ -51,6 +52,7 @@ vak-session = { path = "crates/vak-session" }
 vak-storage = { path = "crates/vak-storage" }
 vak-context = { path = "crates/vak-context" }
 vak-store = { path = "crates/vak-store" }
+vak-catalog = { path = "crates/vak-catalog" }
 vak-tools = { path = "crates/vak-tools" }
 vak-agent = { path = "crates/vak-agent" }
 vak-config = { path = "crates/vak-config" }

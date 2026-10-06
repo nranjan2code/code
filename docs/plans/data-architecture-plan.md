@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is in progress (design agreed and M6.1 done 2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1192,6 +1192,14 @@ one step at a time, in the order below, each committed green.
 4. **M6.4** screens: admin and client search on `/search`, the Lineage tab
    in conversation detail, catalog status and rebuild in Integrity; a
    browser run of each.
+
+M6.1 (2026-10-06): `crates/vak-catalog` and `vak_session::tail` (a
+position in a segment directory, valid across seals). Calls are nodes
+`call:<session>:<tool use id>`, files `file:<space>:<path>`, memory notes
+`memory:<path>` and commitments `commitment:<id>`; sessions, turns, runs,
+effects and triggers keep their own ids. All six exit tests of the step
+pass, among them `catalog_query_p95_under_50ms_at_1m_nodes` on a million
+seeded nodes.
 
 ### M6.5 — Intake (L, after M6; doc 76)
 

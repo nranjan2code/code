@@ -7105,6 +7105,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "vak-catalog"
+version = "7.0.0-dev"
+dependencies = [
+ "chrono",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+ "vak-config",
+ "vak-llm",
+ "vak-session",
+ "vak-telemetry",
+]
+
+[[package]]
 name = "vak-commit"
 version = "7.0.0-dev"
 dependencies = [

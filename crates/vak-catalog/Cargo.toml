@@ -1,0 +1,26 @@
+[package]
+name = "vak-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The data catalog: nodes, lineage edges and full-text search over every record, rebuilt from the records alone"
+
+[dependencies]
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+vak-config = { workspace = true }
+vak-llm = { workspace = true }
+vak-session = { workspace = true }
+vak-telemetry = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true
