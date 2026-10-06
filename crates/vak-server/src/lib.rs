@@ -25072,11 +25072,11 @@ mod scheduler_state_tests {
         let dir = tempfile::tempdir().unwrap();
         let (ws, home) = (dir.path().join("ws"), dir.path().join("home"));
         std::fs::create_dir_all(&ws).unwrap();
-        let trigger = cron_trigger(&ws, "vak");
+        let trigger = cron_trigger(&ws, "no-such-agent");
         let state = state_with(&ws, &home, vec![trigger.clone()], None);
 
-        // Not a repository: the newest slot's run is refused and spent,
-        // and the earlier missed slot is recorded folded into it.
+        // An Agent that does not exist: the newest slot's run is refused
+        // and spent, and the earlier missed slot is recorded folded into it.
         scheduler_tick(&state).await;
         let runs = state.core.runs().of_trigger(&trigger.id).unwrap();
         let failed: Vec<_> = runs
@@ -25088,7 +25088,7 @@ mod scheduler_state_tests {
             failed[0]
                 .reason
                 .as_deref()
-                .is_some_and(|reason| reason.contains("not a git repository")),
+                .is_some_and(|reason| reason.contains("no-such-agent")),
             "{runs:#?}"
         );
         assert!(
@@ -25098,7 +25098,6 @@ mod scheduler_state_tests {
         );
 
         // Spent: the next tick before the next slot records nothing.
-        make_repo(&ws);
         scheduler_tick(&state).await;
         assert_eq!(
             state.core.runs().of_trigger(&trigger.id).unwrap().len(),

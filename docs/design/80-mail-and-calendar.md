@@ -47,10 +47,12 @@ Agent's encrypted vault. It records run, routine, account, optional session IDs,
 trigger, status, and timestamps. Run content remains in the Agent's append-only
 session; deleting an account or routine removes its matching vault history.
 
-Scheduled and one-minute continuous read-only routines use `TaskDef`, start
-paused for a one-off preview, and store a bounded encrypted mail backlog with
-provider cursors in the Agent vault. Event-relative triggers also use the
-existing `TaskDef` cadence: bounded provider polls queue opaque due-occurrence
+Scheduled and one-minute continuous read-only routines are automations
+(`vak_core::triggers::Trigger`), start paused for a one-off preview, and
+keep a bounded encrypted mail backlog with its provider positions in the
+Agent's routine cursor (`cur/agent/<agent>/mail-calendar/routines`, its
+backlog an encrypted tenant object, data-architecture plan M4.7b).
+Event-relative triggers also use the automation's cadence: bounded provider polls queue opaque due-occurrence
 keys in the Agent vault, and the scheduled run's brokered calendar read returns
 only events matching those keys. Provider scans retain continuation status
 and are independent of the run's smaller output budget: the broker reconciles
@@ -431,7 +433,7 @@ accounts; live-provider and sustained service recovery acceptance remain open.
 
 An automation definition names its trigger, connected account, selection
 rule, Agent, audience, cadence, allowed reads, possible outputs, expiry, and
-notification destination. It uses `TaskDef` for scheduled work and the
+notification destination. It uses an automation (`Trigger`) for scheduled work and the
 commitment kernel for obligations; it is not a second automation engine.
 Event-driven triggers, when later supported, enter the same admission path as
 a scheduled run and are deduplicated by provider event ID and account. A
@@ -606,7 +608,7 @@ A user may separately create a narrow, revocable standing grant for unattended
 work. It must constrain account, Agent, operation, audience/recipient or
 calendar, time window, rate, and expiry; it cannot grant bulk sending or
 arbitrary recipients through a vague natural-language phrase. Anything
-outside it waits for a person. A scheduled task uses the existing `TaskDef`
+outside it waits for a person. A scheduled task uses the one `Trigger` model
 and the same broker decision; no second scheduler is created.
 
 For daily routines, read and private summarization can run under a scoped
@@ -1201,7 +1203,7 @@ contract, and its stages are not claims of shipped behavior.
    provider acceptance, duplicate callbacks, retries, recurring-event scope,
    and changed attendee lists against a provider test double.
 5. **Daily routines and second provider.** Add scheduled morning briefing,
-   meeting preparation, and follow-up drafts through `TaskDef`, then narrow
+   meeting preparation, and follow-up drafts as automations (`Trigger`), then narrow
    unattended grants for selected effects and continuous bounded watchers.
    Run the same acceptance scenarios
    for all three adapters and for local, web, channel, task, and CLI paths. A

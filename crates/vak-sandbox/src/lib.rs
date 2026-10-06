@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 pub mod backend;
+pub mod copy;
 pub mod docker;
 #[cfg(target_os = "linux")]
 pub mod landlock;

@@ -179,11 +179,15 @@ full user messages, not flattened text).
 
 The desktop's routines daemon graduates into the platform scheduler:
 
-- `TaskDef` gains `deliver_to: Option<String>` (a routing key). Serde default
-  keeps existing `tasks.json` files valid.
-- On `RunFinished`, the watcher records `last_summary` as before and, when
-  `deliver_to` is set, pushes `"routine '<name>' finished:\n<text>"` to that
-  surface through the same outbound path used for chat replies.
+- An automation (`vak_core::triggers::Trigger`, a Document `triggers/<trg>`
+  in the tenant store, data-architecture plan M4.3) has `deliver_to:
+  Option<String>` (a routing key).
+- On `RunFinished`, the watcher settles the trigger's run and, when
+  `deliver_to` is set, delivers `"automation '<name>' finished:\n<text>"`
+  to that surface as an effect of the run (plan M4.5), through the same
+  outbound path used for chat replies. What the run did and delivered is a
+  query over its run and effect records, never written back onto the
+  automation.
 - Since G1, `last_summary` holds the run's **real final assistant text**
   (extracted from the restored ledger), not a status word — desktop task
   rows and deliveries both show the actual answer.
@@ -328,7 +332,8 @@ Security posture:
 2. Gateway **off by default**; enabling requires trusted config or CLI flag.
 3. Untrusted projects cannot enable the gateway via project config.
 4. Unattended turns auto-deny escalations; no silent yes.
-5. Bindings file lives under `<sessions_home>` next to tasks.json — same
+5. Bindings file lives under `<sessions_home>` beside the run and effect
+   records — same
    trust domain as session ledgers, no secrets inside (channel tokens belong
    in the credential store at the adapter layer, never here).
 6. Binding route overrides contain identifiers only, never credentials; model

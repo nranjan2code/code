@@ -44,7 +44,7 @@ phase: CLI/TUI, desktop SPA, and gateway channels where delivery applies.
 |---|---|---|---|
 | Memory profile + forget/amend/cleanup | `/memory`, `vak memory` | Admin/desktop Learning page: profile tier, effective policy status, cleanup artifacts, forget (confirm), inline amend | — |
 | Cross-project search | `/search --all`, CLI | Search page w/ global toggle | — |
-| Tasks/cron/watchdog/pinning | `/tasks`, `vak tasks` | TasksModal: schedule grammar field, script field, model pin, catch-up badge | watchdog + task summaries delivered via existing transports |
+| Automations (cron, interval, once, watchdog, pinning) | `/triggers`, `/runs`, `/effects`, `vak triggers`, `vak runs`, `vak effects` | Automations sheet with its Runs panel and Send again; admin `#/automations`, `#/runs` | summaries delivered as effects of their runs; a folder that is not a git repository runs in a copy environment whose changes come back for Review |
 | Budget alerts | TUI status strip marker | Budget card alert state | 80%/100% push once per window |
 | Doctor/health | `vak doctor`, `/doctor` | Services panel diagnostics section | — |
 | Backup export/import | `vak backup …` | Settings: folder picker → export/import buttons | — |

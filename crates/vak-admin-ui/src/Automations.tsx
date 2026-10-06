@@ -78,7 +78,7 @@ export default function Automations() {
       <header class="page-header">
         <div>
           <h1>Automations</h1>
-          <p class="dim">What Vakyartha starts on its own, with nobody watching. Each run uses the same permission mode as any other turn, so one that needs an approval waits for it. Asking Vakyartha needs a Git project; a script does not.</p>
+          <p class="dim">What Vakyartha starts on its own, with nobody watching. Each run uses the same permission mode as any other turn, so one that needs an approval waits for it. A run that asks Vakyartha works in a copy of its folder, and what it changes waits for your review.</p>
         </div>
       </header>
       <section class="panel automation-list">

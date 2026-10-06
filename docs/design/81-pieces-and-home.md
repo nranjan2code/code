@@ -285,9 +285,11 @@ admits WebAssembly or microVMs later without changing the description
 | `webhook:<route>` | an outside service called the piece's signed route (§7.2) |
 | `manual` | someone pressed Refresh, or asked in chat |
 
-Triggers resolve through the one trigger model: `TaskDef` grows into
-Triggers at data-architecture M4, and the kinds above are its kinds
-(§20.5, settled by plan revision 3, L7; doc 73 §8).
+Triggers resolve through the one trigger model, `vak_core::triggers::Trigger`
+(shipped at data-architecture M4.3, claimed per slot at M4.4), and the kinds
+above join its `TriggerKind` (§20.5, settled by plan revision 3, L7; doc 73
+§8). A piece's runs are run records, its outbound actions effects, and its
+source positions cursors, as M4 shipped them.
 
 ### 6.3 Resources and priority
 
@@ -623,8 +625,8 @@ Vak.
   already requires.
 - **Invariant 37 (agent ownership).** Pieces need an owner model (§20.6,
   resolved by `82-library.md`).
-- **Invariant 38 (scheduled work is a `TaskDef`).** Satisfied either way
-  §20.5 resolves, provided there is one schedule model.
+- **Invariant 38 (scheduled work is an automation, a `Trigger`).** Satisfied
+  provided pieces add trigger kinds rather than a second schedule model.
 - A new invariant would state Principles 1, 4 and 7: pieces run without a
   model unless they declare one; no piece reaches the network except through
   its gateway policy; widening a piece is always the owner's decision.
@@ -657,9 +659,9 @@ Vak.
 4. **Repair envelope.** Whether agent repairs that do not widen the
    description may auto-promote after passing checks, or always ask
    (recommended: ask, with an opt-in per piece).
-5. **Triggers and `TaskDef`.** Settled by data-architecture plan revision
-   3 (L7): `TaskDef` grows into one Trigger model at M4, and this
-   document's triggers are its kinds. One survives.
+5. **Triggers.** Settled by data-architecture plan revision 3 (L7) and
+   shipped at M4.3: `Trigger` replaced `TaskDef`, and this document's
+   triggers are its kinds. One survives.
 6. **Ownership.** Resolved by `82-library.md` §1 decision 4: owned by the
    Space with the authoring Agent recorded (from M3b, which these phases
    follow), so any Agent can refresh or repair.

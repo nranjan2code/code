@@ -313,8 +313,14 @@ place of a credential-store blob behind a lock file; a reader holds a
 decompressed object in a buffer its own size, and identical bytes put
 by two scopes at once stay readable by both. The vault keeps its
 private routine run history (account binding and item counts, removed
-on disconnect) until M7a can erase run records. No session starts a
-later step unasked.
+on disconnect) until M7a can erase run records. M4.8 is done
+(2026-10-06), and with it M4: a scheduled run on a folder that is not a
+git repository works in a copy environment
+(`vak_sandbox::copy::CopyEnvironment`, the run's
+`environments/<run>/`, copied within fixed ignore rules and size caps),
+and what it changed, added and deleted comes back as a candidate on the
+run's session for the one Review path; the refusal is gone. No session
+starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -380,7 +386,8 @@ later step unasked.
 - A routine that cannot run leaves a `routine_failed` inbox entry, run ids
   are full UUIDv7, a cron slot is spent only by a run that started, a run's
   handle is its ledger id, and a child run's home is not nested
-  (`fire_task_records_refusal`, `non_git_space_routine_is_refused_loudly`,
+  (`fire_task_records_refusal`, `non_git_space_routine_is_refused_loudly`
+  (a non-git space now runs in a copy environment, M4.8),
   `two_tasks_due_same_tick_both_fire`, `cron_slot_not_lost_on_failure`,
   `scheduled_run_resolves_after_restart`, `child_core_home_is_not_nested`).
 - An unchanged capability binding is written by reference
@@ -401,8 +408,6 @@ later step unasked.
   segment (`agent_home_subpaths_are_declared`).
 
 **Known gaps M0 leaves for later milestones:**
-- A non-git space's routine is refused, not run: running it needs M4's
-  copy environment.
 - The trash hides; it never erases. Erasure is M7a.
 - Server-side sandbox records, execution streams, Office rooms and coworking
   grants are written under the server Core's Agent home, whichever Agent
@@ -1122,9 +1127,11 @@ in progress, and the rest of V4 follows it.
       according to assigned roles.
     - **Scheduled work** is an automation (`vak_core::triggers::Trigger`),
       the one schedule model, owned by the Agent named in its `agent`, with
-      at most one start per slot or event (its claim). One that cannot run
-      says why in the inbox (`RoutineFailed`) and in a run record, never
-      silently.
+      at most one start per slot or event (its claim). It works in a copy
+      of its folder (a git worktree, or a copy environment for any other
+      folder, whose changes come back for Review), never in the folder
+      itself. One that cannot run says why in the inbox (`RoutineFailed`)
+      and in a run record, never silently.
 39. **Office documents are hostile, lossless, labelled and self-sufficient**
     (docs/design/72-openxml-documents.md, O1–O10; this invariant states the
     part the tree enforces and grows with each phase). Open XML packages are

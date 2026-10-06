@@ -214,7 +214,7 @@ Two roots hold an Agent's things, and they are different directories:
 │   │                                  # Documents (memory, entities, skill
 │   │                                  # proposals, Office rooms, presentations)
 │   ├── spaces.toml                    # space ids and this machine's folder bindings
-│   ├── environments/<run>/            # worktrees, task copies, staging trees
+│   ├── environments/<run>/            # worktrees, copy environments (M4.8), staging trees
 │   ├── workspaces/<space>/<agent_id>/ # a non-built-in Agent's workspace
 │   ├── keys/                          # revocations; the KEKs are in the credential store
 │   ├── auth/                          # the owner's passkeys and recovery digests
@@ -223,7 +223,8 @@ Two roots hold an Agent's things, and they are different directories:
 ├── operations/                        # incidents, actions (record chains)
 ├── cost-log/                          # the FinOps ledger (a record chain)
 ├── inbox/                             # a record chain
-├── tasks.json                         # scheduled work: vak_core::tasks::TaskDef
+├── runs/, effects/, cursors/          # run, effect and cursor-gap record chains (M4);
+│                                      # automations are Documents triggers/<trg> in the store
 ├── archive.json                       # archived sessions (hidden from the sidebar)
 └── deleted.json                       # the trash (vak_core::trash)
 <cache home>/store.db                  # the rebuildable FTS index over every ledger

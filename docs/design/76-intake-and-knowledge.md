@@ -186,8 +186,9 @@ An alert match becomes a durable **Inbox** entry (a new
 `vak_core::inbox::Kind`, e.g. `FeedMatch`), so nothing is silently dropped when
 no channel is configured — every other signal already lands there
 (`docs/design/29`). Channel delivery stays optional and goes through the
-one host delivery runtime (`vak-delivery`); intake code never writes an outbox
-record itself. Evaluation is idempotent per `(alert, item)` with a real
+one host delivery runtime (`vak-delivery`), as a delivery effect
+(`vak_session::effects`, data-architecture plan M4.5); intake code never
+writes an effect record itself. Evaluation is idempotent per `(alert, item)` with a real
 cooldown, fixing today's re-fire-every-tick and unbounded `alert_log`.
 
 ## 8. Lifecycle and sequencing

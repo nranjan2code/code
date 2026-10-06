@@ -598,32 +598,89 @@ async fn a_refused_run_is_recorded() {
     assert_eq!(server.dispatches.load(Ordering::SeqCst), 0);
 }
 
+/// A folder that is not a git repository runs in a copy of itself (plan
+/// M4.8): the work happens in the run's environment, what it changed comes
+/// back as a candidate for Review on the run's session, the folder itself is
+/// untouched until the owner promotes it, and the copy is removed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn non_git_space_routine_is_refused_loudly() {
-    let (_dir, ws, home, ids) = space(false, |ws| vec![prompt_trigger("plain-folder", ws, "vak")]);
+async fn non_git_space_routine_runs_in_copy_environment() {
+    let (_dir, ws, home, ids) = space(false, |ws| {
+        let mut trigger = prompt_trigger("plain-folder", ws, "vak");
+        trigger.enabled = false;
+        vec![trigger]
+    });
+    std::fs::write(ws.join("notes.txt"), "before\n").unwrap();
     let id = ids[0].as_str();
-    let server = serve(&ws, &home).await;
+    let core = Core::new_with_trust(ws.clone(), true).unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    core.set_provider_instance(Arc::new(GatedProvider {
+        capacity_key: crate::support::CapacityKey::default(),
+        calls: calls.clone(),
+        started: started_tx,
+        release: tokio::sync::Mutex::new(Some(release_rx)),
+    }));
+    let server = serve_core(core, calls.clone()).await;
+
+    assert_eq!(server.run_now(id).await, reqwest::StatusCode::ACCEPTED);
+    tokio::time::timeout(std::time::Duration::from_secs(20), started_rx.recv())
+        .await
+        .expect("the run started rather than being refused")
+        .expect("provider signaled run start");
+    let run = server.trigger(id).await["last_run"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let copy = vak_config::paths::environment_dir(&run);
+    assert_eq!(
+        std::fs::read_to_string(copy.join("notes.txt")).unwrap(),
+        "before\n",
+        "the run works in a copy of the folder"
+    );
+    assert!(!copy.join(".vak").exists(), "control state is not copied");
+    // What the work does to its copy.
+    std::fs::write(copy.join("notes.txt"), "after\n").unwrap();
+    std::fs::write(copy.join("new.txt"), "added\n").unwrap();
+    release_tx.send(()).expect("the run is waiting");
+
     assert!(
-        eventually(10, || async {
-            !routine_failures(&server.inbox().await, id).is_empty()
+        eventually(20, || async {
+            server.last_run_status(id).await == "completed"
         })
         .await,
-        "the scheduler's refusal reached the inbox"
+        "the run completed: {}",
+        server.trigger(id).await
     );
-    let failures = routine_failures(&server.inbox().await, id);
-    let body = failures[0]["body"].as_str().unwrap();
-    assert!(body.contains("is not a git repository"), "{body}");
-    assert!(body.contains("git init"), "the remedy is named: {body}");
+    let session = server.trigger(id).await["last_run"]["sessions"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let records = format!("/sessions/{session}/sandbox/records");
+    assert!(
+        eventually(20, || async {
+            server.get(&records).await.1.to_string().contains("new.txt")
+        })
+        .await,
+        "the changes came back as a candidate: {}",
+        server.get(&records).await.1
+    );
+    let candidate = server.get(&records).await.1.to_string();
+    assert!(candidate.contains("notes.txt"), "{candidate}");
     assert_eq!(
-        server.run_now(id).await,
-        reqwest::StatusCode::UNPROCESSABLE_ENTITY
+        std::fs::read_to_string(ws.join("notes.txt")).unwrap(),
+        "before\n",
+        "nothing reaches the folder before Review"
     );
-    assert_eq!(
-        routine_failures(&server.inbox().await, id).len(),
-        2,
-        "the spent slot is not retried; the run asked for is refused once"
+    assert!(!ws.join("new.txt").exists());
+    assert!(
+        !copy.exists(),
+        "the copy is removed once its changes are kept"
     );
-    assert_eq!(server.dispatches.load(Ordering::SeqCst), 0);
+    assert!(routine_failures(&server.inbox().await, id).is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

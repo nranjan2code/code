@@ -699,22 +699,38 @@ async fn fire(
             ));
         }
     };
-    // A generic scheduled run gets an isolated git worktree. A scoped mail /
-    // calendar routine has no workspace tools and runs read-only, so it
-    // needs no repository or writable copy.
+    // A generic scheduled run works in a copy of its folder: a git worktree
+    // of a repository, or a copy environment of any other folder, whose
+    // changes come back as a candidate for Review (plan M4.8). A scoped mail
+    // / calendar routine has no workspace tools and runs read-only, so it
+    // needs neither.
     let temporary_worktree = scope.is_none();
-    if temporary_worktree && !vak_core::worktree::is_git_repo(state.core.cwd()) {
-        return Err(refuse(
-            state,
-            &trigger,
-            &mut run,
-            format!(
-                "{} is not a git repository, and a scheduled run works in its own copy of one. Run `git init` there and commit, or move the automation to a folder that is a repository.",
-                state.core.cwd().display()
-            ),
-        ));
-    }
-    let wt = if temporary_worktree {
+    let copy_plan = (temporary_worktree && !vak_core::worktree::is_git_repo(state.core.cwd()))
+        .then(|| vak_sandbox::EnvironmentPlan {
+            id: run.id().to_string(),
+            outcome_revision: 0,
+            input_root: state.core.cwd().clone(),
+            task_root: vak_config::paths::environment_dir(&run.id().to_string()),
+            backend: "copy".into(),
+            image: None,
+            network_policy: "inherit".into(),
+            setup_recipe: Vec::new(),
+        });
+    let wt = if let Some(plan) = &copy_plan {
+        use vak_sandbox::EnvironmentBackend as _;
+        if let Err(error) = copy_environments().prepare(plan) {
+            return Err(refuse(
+                state,
+                &trigger,
+                &mut run,
+                format!("Its working copy could not be made: {error}."),
+            ));
+        }
+        vak_core::worktree::Worktree {
+            path: plan.task_root.clone(),
+            branch: String::new(),
+        }
+    } else if temporary_worktree {
         // Latest-only retention: the previous runs' worktrees go.
         let prefix = worktree_prefix(&trigger);
         let _ = vak_core::worktree::remove_runs_with_prefix(state.core.cwd(), &prefix);
@@ -770,7 +786,9 @@ async fn fire(
     .await
     .map_err(|error| {
         history_failed(vak_mail_calendar::vault::RoutineRunStatus::Failed);
-        if temporary_worktree {
+        if let Some(plan) = &copy_plan {
+            let _ = copy_environments().remove(&plan.id);
+        } else if temporary_worktree {
             let _ = vak_core::worktree::remove(state.core.cwd(), &wt);
         }
         refuse(
@@ -823,6 +841,7 @@ async fn fire(
         // The summary is an effect of this run.
         let run_trace = trace.clone();
         let mail_calendar_task = scope.is_some();
+        let copy_plan = copy_plan.clone();
         let routine_history_vault = routine_vault.clone();
         let routine_history_run = routine_run.clone();
         let routine_history_scope = scope.clone();
@@ -862,8 +881,11 @@ async fn fire(
                         } else {
                             RunOutcome::Completed
                         },
-                        answer,
+                        answer.clone(),
                     );
+                    if let Some(plan) = &copy_plan {
+                        record_copy_candidate(&st, &child_session, plan, answer, &run_trace).await;
+                    }
                     if let (Some(vault), Some(run), Some(scope)) = (
                         routine_history_vault.as_ref(),
                         routine_history_run.as_ref(),
@@ -1045,6 +1067,87 @@ async fn fire_script(
         .await;
     }
     crate::check_budget_alert(state, &id).await;
+}
+
+/// The copy environments of this process (plan M4.8).
+fn copy_environments() -> &'static vak_sandbox::copy::CopyEnvironment {
+    static COPIES: std::sync::OnceLock<vak_sandbox::copy::CopyEnvironment> =
+        std::sync::OnceLock::new();
+    COPIES.get_or_init(vak_sandbox::copy::CopyEnvironment::default)
+}
+
+/// Exports what a run in a copy environment changed as a candidate on its
+/// session, for the one Review path, then removes the copy. A run that
+/// changed nothing leaves no candidate. Nothing reaches the folder until
+/// the owner promotes it.
+async fn record_copy_candidate(
+    state: &AppState,
+    session_id: &str,
+    plan: &vak_sandbox::EnvironmentPlan,
+    result_id: Option<String>,
+    trace: &vak_session::trace::TraceKey,
+) {
+    use vak_sandbox::EnvironmentBackend as _;
+    let copies = copy_environments();
+    let recorded = async {
+        let exported = copies
+            .export_candidate(&plan.id)
+            .map_err(|e| e.to_string())?;
+        if exported.files.is_empty() {
+            return Ok(());
+        }
+        let root = crate::sandbox_candidates_root(state, session_id);
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        let frozen_root = root.join(&exported.candidate_id);
+        let mut candidate = vak_sandbox::copy::freeze_exported(&exported, &frozen_root)
+            .map_err(|e| e.to_string())?;
+        candidate.target_checks = vak_sandbox::default_target_verifiers().plan(&candidate);
+        candidate.workspace_checks = crate::planned_workspace_checks(&candidate);
+        let draft_checks = vak_tools::broker::verify_targets(
+            &state.core.tool_worker_exe(),
+            &candidate.source_root,
+            &candidate.target_checks,
+        )
+        .await;
+        let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
+            Ok(digest) => digest,
+            Err(error) => {
+                let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
+                return Err(error.to_string());
+            }
+        };
+        let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
+            trace: Some(trace.clone()),
+            actor: trace.actor,
+            record_id: format!("candidate-{}", exported.candidate_id),
+            session_id: session_id.to_string(),
+            turn_id: trace.turn.map(|turn| turn.to_string()).unwrap_or_default(),
+            result_id: result_id.unwrap_or_default(),
+            execution_id: plan.id.clone(),
+            environment_id: plan.task_root.to_string_lossy().into_owned(),
+            candidate_digest,
+            candidate,
+            verified: true,
+            draft_checks,
+            updated_at: Utc::now().to_rfc3339(),
+            parent_candidate_id: None,
+            revision_session_id: None,
+            narrowed: None,
+        });
+        crate::sandbox_records::append(&crate::sandbox_records_path(state, session_id), &record)
+            .map_err(|error| {
+                let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
+                error.to_string()
+            })
+    }
+    .await;
+    if let Err(error) = recorded {
+        eprintln!(
+            "[scheduler] changes of run {} not kept for review: {error}",
+            plan.id
+        );
+    }
+    let _ = copies.remove(&plan.id);
 }
 
 // ---- Scheduling ------------------------------------------------------------
