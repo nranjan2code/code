@@ -24,6 +24,7 @@ tempfile = { workspace = true }
 toml = { workspace = true }
 tokio-util = { workspace = true }
 vak-config = { workspace = true }
+vak-intake = { workspace = true }
 tracing = { workspace = true }
 vak-telemetry = { workspace = true }
 vak-llm = { workspace = true }

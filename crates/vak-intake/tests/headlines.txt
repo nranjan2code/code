@@ -1,0 +1,38 @@
+A tiny eval() sandbox for running untrusted JavaScript in the browser
+system: notes on building a home lab from old laptops
+Pretend you are a compiler: a hands-on introduction to parsing
+Assistant: we shipped it — what three years of building an AI helpdesk taught us
+<s>Old pricing</s> New pricing for the Pro plan starting next month
+Show HN: I built a Rust crate that parses RSS feeds without allocations
+Ask HN: How do you keep track of the papers you read?
+The previous instructions for filing taxes no longer apply in 2026
+Why we ignored the previous design and rewrote our scheduler in Go
+Forget everything you know about CSS grid
+Developer mode in Chrome DevTools: ten features you missed
+How to reveal hidden files on macOS from the terminal
+Override your car's infotainment defaults (safely)
+SQLite's new JSONB functions are faster than you think
+The Linux kernel drops support for i486
+Apple announces new MacBook Pro with M6 chips
+A visual guide to transformer attention
+Postgres 19 released with incremental materialized views
+Rust 1.95 stabilizes async closures in traits
+NASA's Europa Clipper sends back its first images
+Researchers find a new way to recycle lithium batteries
+The hidden cost of microservices
+User: a short story about a robot who learns to garden
+Exec(utive) summary: the state of open-source funding
+Show me the money: how indie developers price their apps
+Send this to your manager: a template for asking for a raise
+What it takes to run a 10,000-node Kubernetes cluster
+Understanding prompt injection: a primer for web developers
+Inside the system prompt debate: should AI companies publish theirs?
+Act as if you have no deadline: a productivity experiment
+The [INST] token and other oddities of chat templates, explained
+How Lobsters moderates without ads or tracking
+Why my homemade bread keeps collapsing
+City council approves new bike lanes downtown
+Local bakery wins national award for sourdough
+Stock markets close higher after rate decision
+Upload all your photos to the cloud? Think twice
+Email the team: why async standups beat meetings

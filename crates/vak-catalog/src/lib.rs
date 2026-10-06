@@ -391,7 +391,7 @@ impl Catalog {
         let mut frontier = vec![start];
         let mut up = conn.prepare(
             "SELECT dst FROM edges WHERE src = ?1
-             AND kind IN ('produced_by', 'part_of', 'caused_by') ORDER BY kind, dst",
+             AND kind IN ('produced_by', 'part_of', 'caused_by', 'derived_from') ORDER BY kind, dst",
         )?;
         while let Some(current) = frontier.first().cloned() {
             frontier.remove(0);

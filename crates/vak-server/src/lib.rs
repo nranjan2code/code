@@ -71,6 +71,7 @@ mod feeds;
 pub mod gateway;
 mod heartbeat;
 mod inbox;
+mod intake;
 mod mail_calendar;
 mod office_workspace;
 mod operations;
@@ -1306,6 +1307,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .merge(gateway::routes())
         .merge(feeds::routes())
+        .merge(intake::routes())
         .merge(admin::routes())
         // Compression is scoped to the three STATIC bundles and nowhere
         // else. These are the big, highly compressible responses — a site

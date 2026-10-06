@@ -355,7 +355,7 @@ commitment state read through rollup Documents (`vak_session::rollup`),
 so no turn-path decision replays a chain. M6.4 is done (2026-10-06), and
 with it M6: conversation detail's Lineage tab traces anything a
 conversation holds to its run and cause, and the catalog's status sits
-beside Rebuild search. M6.5's design was agreed on 2026-10-06 (plan §M6.5 "M6.5 design": `session_search` widened to intake items, every connector in Rust, steps M6.5a–c); M6.5a is next, and M8 and M7a → M7b follow. No session starts a later step
+beside Rebuild search. M6.5's design was agreed on 2026-10-06 (plan §M6.5 "M6.5 design": `session_search` widened to intake items, every connector in Rust, steps M6.5a–c). M6.5a is done (2026-10-06): a source is a Document `sources/<src>` polled by its own `source_poll` trigger (`vak_core::intake`, `/intake`), its connectors are Rust (`crates/vak-intake`), parsed in the network-denied worker, and every item it takes is a tenant object plus an `intake/` row with the poll run's trace key and a disposition, which the catalog traces to its run, trigger and source. M6.5b (`session_search` over items, alerts, push intake) is next; M8 and M7a → M7b follow. No session starts a later step
 unasked.
 
 **What it is.** One architecture for everything Vak writes:
@@ -495,6 +495,10 @@ unasked.
   directories, and search only through `Catalog::search` with the
   caller's `Audience` (invariant 37). A new kind of record that a person
   may search for or trace is a catalog source in the same change.
+- Take what an outside source returns only through `vak_core::intake`:
+  a closed `vak_intake::Connector`, fetched with webfetch's guard and
+  parsed in the worker. Never run a feed script, and never drop an item
+  detection holds; label it.
 - A decision on the turn path reads a ref or a rollup
   (`vak_session::rollup`), never a replay of a chain or a ledger: a new
   projection a turn needs is a rollup Document over its chain.
@@ -1561,6 +1565,14 @@ crates/vak-catalog   the data catalog (plan M6, docs/design/73 §9): one
                      turn records for the turn recall (history.rs). Every
                      search (`/search`, admin, `session_search`, recall)
                      and every "where is session X" goes through it
+crates/vak-intake    intake connectors (plan M6.5, docs/design/76): the
+                     closed set of source kinds (RSS/Atom, YouTube, Hacker
+                     News, Reddit, Lobsters, HTTP), the one URL each
+                     fetches, bounded parsers run only in the broker worker
+                     (`IntakeParse`), and detection that labels an item
+                     accepted, quarantined or blocked and never drops one;
+                     NO network and NO vak dependencies but vak-ooxml's
+                     bounded XML walk
 crates/vak-storage   the storage substrate, NO vak dependencies (docs/design/
                      73-data-architecture-and-lifecycle.md §5-§7.3): keys
                      (KeyAuthority, fail-closed wrap/unwrap/rotate/revoke),

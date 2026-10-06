@@ -26,6 +26,7 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 vak-agent = { workspace = true }
 vak-config = { workspace = true }
+vak-intake = { workspace = true }
 vak-delivery = { workspace = true }
 vak-flow = { workspace = true }
 vak-hooks = { workspace = true }

@@ -274,6 +274,12 @@ pub(crate) async fn create_trigger(
     if let Err(response) = check_deliver_to(draft.deliver_to.as_deref()) {
         return *response;
     }
+    if matches!(draft.action, triggers::TriggerAction::SourcePoll { .. }) {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A source's poll is made with the source (/intake/sources).",
+        );
+    }
     let id = TriggerId::new();
     let routine = draft.scope.is_some();
     let trigger = Trigger {
@@ -324,6 +330,17 @@ pub(crate) async fn put_trigger(
         Ok(trigger) => trigger,
         Err(response) => return *response,
     };
+    // A source's poll keeps polling that source; a draft may not turn it
+    // into other work or turn other work into a poll.
+    if (current.source().is_some()
+        || matches!(draft.action, triggers::TriggerAction::SourcePoll { .. }))
+        && draft.action != current.action
+    {
+        return error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "A source's poll is changed with the source (/intake/sources).",
+        );
+    }
     let agent = draft
         .agent
         .clone()
@@ -384,6 +401,10 @@ pub(crate) async fn delete_trigger(
         Ok(trigger) => trigger,
         Err(_) => return StatusCode::NOT_FOUND,
     };
+    // A source's poll goes with its source.
+    if trigger.source().is_some() {
+        return StatusCode::UNPROCESSABLE_ENTITY;
+    }
     // A run that holds the trigger's claim is still working.
     let runs = state.core.runs();
     let running = match runs.claim(&trigger.id) {
@@ -587,6 +608,10 @@ async fn fire(
     if let Some(script) = trigger.script().map(str::trim).filter(|s| !s.is_empty()) {
         let script = script.to_string();
         fire_script(state, &trigger, &script, run, trace).await;
+        return Ok(id);
+    }
+    if let Some(source) = trigger.source() {
+        crate::intake::fire_poll(state, &trigger, source, run, trace).await;
         return Ok(id);
     }
     let routine_vault = match scope.as_ref() {

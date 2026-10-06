@@ -190,6 +190,12 @@ SDKs to preflight a model.
 | `/catalog` | GET | Whether the catalog has taken every record, and its counts |
 | `/catalog/rebuild` | POST | Drop and rebuild the catalog from the records |
 | `/catalog/sessions/:id/nodes` | GET | What a session holds (turns, calls, files, effects, notes), oldest first, for the Lineage tab; 404 for a trashed session |
+| `/intake/sources` | GET, POST | Intake sources (plan M6.5): each with its connector, tags, trust and its poll's interval and state; POST makes the source and its `source_poll` trigger |
+| `/intake/sources/:id` | GET, PATCH, DELETE | One source; PATCH changes it and its poll's interval or whether it runs; DELETE removes both, and what it took stays |
+| `/intake/sources/:id/poll` | POST | Polls now through the trigger's claim |
+| `/intake/items` | GET | What the polls took, newest first (`?source=&status=&limit=`) |
+| `/intake/items/:id` | GET | One item with its body, labels and evidence |
+| `/intake/items/:id/release`, `/intake/items/:id/quarantine` | POST | A person lets a held item reach the Agent, or holds one back |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
 | `/config/global` | PATCH | User-level defaults inherited by project workspaces |
 | `/config/mcp/global` | GET, PUT | Shared user MCP registry; values never expose secrets |

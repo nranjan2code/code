@@ -1329,6 +1329,20 @@ The steps:
    `feeds.rs`, `FeedSettings`, the DuckDB store and the registry entries.
    Exit test `feed_pipeline_is_gone`.
 
+M6.5a (2026-10-06): `crates/vak-intake` (connectors, parsers, detection;
+a committed corpus of ordinary headlines holds none),
+`WorkerTask::IntakeParse` and `vak_tools::webfetch::guarded_get` (the
+one guarded fetch, now shared by webfetch and intake),
+`vak_core::intake` (sources as Documents, the `intake/` chain, `poll`),
+`TriggerAction::SourcePoll` (the generic automation endpoints and the
+model's `automations` tool refuse to make, retarget or remove one), the
+catalog's `source` and `item` nodes with `derived_from` in lineage, and
+`/intake/sources` and `/intake/items` with release and quarantine. Exit
+test `intake_item_has_trace_and_provenance`; `intake_api.rs` covers the
+endpoints. A live poll of the Rust blog, Hacker News and Lobsters took
+64 items, held none, took nothing new on a second poll, and traced an
+item through its source and run to its trigger.
+
 **Exit tests**
 - `intake_item_has_trace_and_provenance`,
   `quarantined_item_absent_from_agent_retrieval`,

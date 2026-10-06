@@ -294,6 +294,15 @@ impl vak_tools::Tool for AutomationsTool {
                     ));
                 }
                 if action == "remove" {
+                    if triggers::get(&self.shared, &id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|trigger| trigger.source().is_some())
+                    {
+                        return vak_tools::ToolOutput::error(format!(
+                            "automation {id} polls an intake source; remove the source instead"
+                        ));
+                    }
                     return match triggers::delete(&self.shared, &id) {
                         Ok(_) => vak_tools::ToolOutput::ok(format!("removed automation {id}")),
                         Err(e) => vak_tools::ToolOutput::error(e.to_string()),

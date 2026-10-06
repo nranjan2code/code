@@ -250,73 +250,109 @@ impl Tool for WebFetchTool {
     }
 }
 
-impl WebFetchTool {
-    async fn run(&self, raw: &str) -> ToolOutput {
-        let url = match parse_target(raw) {
-            Ok(u) => u,
-            Err(e) => return ToolOutput::error(e),
-        };
-        let Some(host) = url.host_str().map(str::to_string) else {
-            return ToolOutput::error("invalid url: missing host");
-        };
-        let screened = match tokio::task::spawn_blocking(move || ssrf_guard(&host)).await {
-            Ok(r) => r,
-            Err(e) => return ToolOutput::error(format!("address screening failed: {e}")),
-        };
-        if let Err(rejection) = screened {
-            return ToolOutput::error(rejection.to_string());
-        }
+/// What a guarded GET returned.
+#[derive(Debug, Clone)]
+pub struct Fetched {
+    pub status: u16,
+    pub final_url: String,
+    pub content_type: String,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    pub body: Vec<u8>,
+}
 
-        let client = match build_client() {
-            Ok(c) => c,
-            Err(e) => return ToolOutput::error(format!("client build failed: {e}")),
-        };
-
-        let resp = match client.get(url).send().await {
-            Ok(r) => r,
-            Err(e) => return ToolOutput::error(request_error_message(&e)),
-        };
-        let status = resp.status();
-        let final_url = resp.url().clone();
-        let content_type = resp
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
+/// One GET under webfetch's guard: http(s) only, every address the host
+/// and each redirect resolve to screened against loopback, private and
+/// link-local ranges, at most three redirects, a total timeout, no cookies
+/// or credentials, and at most `max_bytes` of body. `headers` are added as
+/// given (conditional-request headers, an `Accept`). A 304 comes back with
+/// an empty body; any other answer must be text, JSON or XML.
+pub async fn guarded_get(
+    raw: &str,
+    headers: &[(&str, String)],
+    max_bytes: usize,
+) -> Result<Fetched, String> {
+    let url = parse_target(raw)?;
+    let Some(host) = url.host_str().map(str::to_string) else {
+        return Err("invalid url: missing host".into());
+    };
+    tokio::task::spawn_blocking(move || ssrf_guard(&host))
+        .await
+        .map_err(|e| format!("address screening failed: {e}"))?
+        .map_err(|rejection| rejection.to_string())?;
+    let client = build_client().map_err(|e| format!("client build failed: {e}"))?;
+    let mut request = client.get(url);
+    for (name, value) in headers {
+        request = request.header(*name, value);
+    }
+    let mut resp = request
+        .send()
+        .await
+        .map_err(|e| request_error_message(&e))?;
+    let status = resp.status();
+    let header = |name: reqwest::header::HeaderName| {
+        resp.headers()
+            .get(name)
             .and_then(|v| v.to_str().ok())
             .map(str::trim)
-            .unwrap_or_default()
-            .to_owned();
-        if !content_type_allowed(content_type.as_str()) {
-            let shown = if content_type.is_empty() {
-                "missing"
-            } else {
-                content_type.as_str()
-            };
-            return ToolOutput::error(format!("unsupported content type: {shown}"));
+            .map(str::to_owned)
+    };
+    let content_type = header(reqwest::header::CONTENT_TYPE).unwrap_or_default();
+    let etag = header(reqwest::header::ETAG);
+    let last_modified = header(reqwest::header::LAST_MODIFIED);
+    let final_url = resp.url().to_string();
+    if status == reqwest::StatusCode::NOT_MODIFIED {
+        return Ok(Fetched {
+            status: status.as_u16(),
+            final_url,
+            content_type,
+            etag,
+            last_modified,
+            body: Vec::new(),
+        });
+    }
+    if !content_type_allowed(content_type.as_str()) {
+        let shown = if content_type.is_empty() {
+            "missing"
+        } else {
+            content_type.as_str()
+        };
+        return Err(format!("unsupported content type: {shown}"));
+    }
+    let mut body: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| request_error_message(&e))? {
+        if body.len() + chunk.len() > max_bytes {
+            return Err(format!("response body exceeds the {max_bytes} byte cap"));
         }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Fetched {
+        status: status.as_u16(),
+        final_url,
+        content_type,
+        etag,
+        last_modified,
+        body,
+    })
+}
 
-        let mut resp = resp;
-        let mut body: Vec<u8> = Vec::new();
-        loop {
-            match resp.chunk().await {
-                Ok(Some(chunk)) => {
-                    if body.len() + chunk.len() > MAX_BODY_BYTES {
-                        return ToolOutput::error(format!(
-                            "response body exceeds the {MAX_BODY_BYTES} byte cap"
-                        ));
-                    }
-                    body.extend_from_slice(&chunk);
-                }
-                Ok(None) => break,
-                Err(e) => return ToolOutput::error(request_error_message(&e)),
+impl WebFetchTool {
+    async fn run(&self, raw: &str) -> ToolOutput {
+        match guarded_get(raw, &[], MAX_BODY_BYTES).await {
+            Ok(fetched) => {
+                let text = String::from_utf8_lossy(&fetched.body);
+                let header = format!(
+                    "[webfetch] GET {} -> {} ({}, {} bytes)",
+                    fetched.final_url,
+                    reqwest::StatusCode::from_u16(fetched.status)
+                        .map_or_else(|_| fetched.status.to_string(), |status| status.to_string()),
+                    fetched.content_type,
+                    fetched.body.len()
+                );
+                ToolOutput::ok(format!("{header}\n{text}"))
             }
+            Err(error) => ToolOutput::error(error),
         }
-
-        let text = String::from_utf8_lossy(&body);
-        let header = format!(
-            "[webfetch] GET {final_url} -> {status} ({content_type}, {count} bytes)",
-            count = body.len()
-        );
-        ToolOutput::ok(format!("{header}\n{text}"))
     }
 }
 

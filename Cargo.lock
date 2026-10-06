@@ -7197,6 +7197,7 @@ dependencies = [
  "vak-delivery",
  "vak-flow",
  "vak-hooks",
+ "vak-intake",
  "vak-intent",
  "vak-llm",
  "vak-mail-calendar",
@@ -7318,6 +7319,21 @@ dependencies = [
  "tokio",
  "tokio-util",
  "vak-permission",
+]
+
+[[package]]
+name = "vak-intake"
+version = "7.0.0-dev"
+dependencies = [
+ "chrono",
+ "hex",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+ "url",
+ "vak-ooxml",
 ]
 
 [[package]]
@@ -7542,6 +7558,7 @@ dependencies = [
  "vak-delivery",
  "vak-flow",
  "vak-hooks",
+ "vak-intake",
  "vak-intent",
  "vak-llm",
  "vak-mail-calendar",
@@ -7649,6 +7666,7 @@ dependencies = [
  "toml 0.8.2",
  "tracing",
  "vak-config",
+ "vak-intake",
  "vak-llm",
  "vak-ooxml",
  "vak-pdf",

@@ -338,6 +338,7 @@ fn next_run(trigger: &Trigger, now: chrono::DateTime<chrono::Utc>) -> String {
 fn detail(trigger: &Trigger) -> String {
     let mut parts = vec![match &trigger.action {
         TriggerAction::Script { command } => format!("script: {command}"),
+        TriggerAction::SourcePoll { source } => format!("polls source {source}"),
         TriggerAction::Prompt { text, model_pin } => {
             let mut line = format!("prompt: {}", text.lines().next().unwrap_or_default());
             if let Some(model) = model_pin {

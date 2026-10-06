@@ -187,6 +187,26 @@ pub(crate) fn source(
                 frames: versions.max(from.frames),
             }
         }
+        Source::Intake { dir, tenant } => {
+            let objects = vak_session::objects::TenantObjects::for_tenant(tenant).ok();
+            walk(dir, &mut rows, &mut |_, bytes| {
+                intake_row(tx, objects.as_deref(), bytes)
+            })
+        }
+        Source::IntakeSource(path) => {
+            let versions = vak_session::documents::version_count(path) as u64;
+            if versions > from.frames {
+                match vak_session::documents::read(path) {
+                    Ok(Some(content)) => source_document(tx, path, &content)?,
+                    _ => forget_source(tx, path)?,
+                }
+                rows += 1;
+            }
+            Position {
+                segment: 0,
+                frames: versions.max(from.frames),
+            }
+        }
         Source::Memory { path, agent } | Source::Entity { path, agent } => {
             let memory = matches!(source, Source::Memory { .. });
             let versions = vak_session::documents::version_count(path) as u64;
@@ -852,5 +872,151 @@ fn forget_document(
     tx.execute("DELETE FROM texts WHERE node = ?1", [&node])?;
     tx.execute("DELETE FROM edges WHERE src = ?1 OR dst = ?1", [&node])?;
     tx.execute("DELETE FROM nodes WHERE id = ?1", [&node])?;
+    Ok(())
+}
+
+/// One row of the `intake/` chain (plan M6.5): a `taken` row makes the
+/// item's node, its lineage and its text (title and body, read from its
+/// object); a person's `released` or `quarantined` row moves its status.
+fn intake_row(
+    tx: &Transaction<'_>,
+    objects: Option<&vak_session::objects::TenantObjects>,
+    bytes: &[u8],
+) -> rusqlite::Result<()> {
+    use vak_session::objects::Objects;
+    let Ok(row) = serde_json::from_slice::<Value>(bytes) else {
+        return Ok(());
+    };
+    let Some(item) = row.get("item").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let text = |key: &str| row.get(key).and_then(Value::as_str).map(str::to_string);
+    match row.get("step").and_then(Value::as_str) {
+        Some("taken") => {
+            let trace = row.get("trace");
+            let field = |key: &str| {
+                trace
+                    .and_then(|trace| trace.get(key))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            };
+            let run = field("run");
+            let source = text("source");
+            let title = text("title").unwrap_or_default();
+            upsert(
+                tx,
+                Upsert {
+                    id: item,
+                    kind: "item",
+                    space: field("space"),
+                    agent: text("agent").as_deref().map(agent_id),
+                    agent_name: text("agent"),
+                    run: run.clone(),
+                    actor: text("actor"),
+                    cause: trace
+                        .and_then(|trace| trace.get("cause"))
+                        .and_then(|cause| cause.get("kind"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    title: Some(title.clone()),
+                    status: text("disposition"),
+                    created_at: text("published").or_else(|| text("at")),
+                    locator: text("link"),
+                    ..Default::default()
+                },
+            )?;
+            if let Some(run) = &run {
+                edge(tx, item, "produced_by", run)?;
+            }
+            if let Some(source) = &source {
+                edge(tx, item, "derived_from", source)?;
+            }
+            let body = row
+                .get("object")
+                .and_then(|object| serde_json::from_value(object.clone()).ok())
+                .zip(objects)
+                .zip(source.as_ref())
+                .and_then(|((object, objects), source)| {
+                    objects.get(&object, &format!("intake:{source}")).ok()
+                })
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|body| body.get("text").and_then(Value::as_str).map(str::to_string))
+                .unwrap_or_default();
+            set_text(tx, item, &format!("{title}\n{body}"))
+        }
+        Some(step @ ("released" | "quarantined")) => upsert(
+            tx,
+            Upsert {
+                id: item,
+                kind: "item",
+                status: Some(
+                    if step == "released" {
+                        "accepted"
+                    } else {
+                        "quarantined"
+                    }
+                    .into(),
+                ),
+                ..Default::default()
+            },
+        ),
+        _ => Ok(()),
+    }
+}
+
+/// An intake source Document.
+fn source_document(
+    tx: &Transaction<'_>,
+    path: &std::path::Path,
+    content: &str,
+) -> rusqlite::Result<()> {
+    let Ok(source) = serde_json::from_str::<Value>(content) else {
+        return Ok(());
+    };
+    let Some(id) = source.get("id").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let name = source
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let agent = source.get("agent").and_then(Value::as_str);
+    upsert(
+        tx,
+        Upsert {
+            id,
+            kind: "source",
+            agent: agent.map(agent_id),
+            agent_name: agent.map(str::to_string),
+            actor: source
+                .get("created_by")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            title: Some(name.to_string()),
+            created_at: source
+                .get("created_at")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            locator: Some(path.display().to_string()),
+            ..Default::default()
+        },
+    )?;
+    if let Some(trigger) = source.get("trigger").and_then(Value::as_str) {
+        edge(tx, trigger, "references", id)?;
+    }
+    set_text(tx, id, name)
+}
+
+/// A removed source leaves search; its items stay until erasure.
+fn forget_source(tx: &Transaction<'_>, path: &std::path::Path) -> rusqlite::Result<()> {
+    let locator = path.display().to_string();
+    tx.execute(
+        "DELETE FROM texts WHERE node IN (SELECT id FROM nodes WHERE kind = 'source' AND locator = ?1)",
+        [&locator],
+    )?;
+    tx.execute(
+        "DELETE FROM nodes WHERE kind = 'source' AND locator = ?1",
+        [&locator],
+    )?;
     Ok(())
 }

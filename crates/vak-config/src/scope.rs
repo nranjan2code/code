@@ -328,6 +328,18 @@ impl SharedScope {
         self.root.join("triggers")
     }
 
+    /// Where intake sources are named: the Documents `sources/<src>`
+    /// (plan M6.5).
+    pub fn sources(&self) -> PathBuf {
+        self.root.join("sources")
+    }
+
+    /// The intake records (plan M6.5): one chain of what every source took
+    /// and how each item is held.
+    pub fn intake(&self) -> PathBuf {
+        self.root.join("intake")
+    }
+
     /// The trash sidecar.
     pub fn deleted(&self) -> PathBuf {
         self.root.join("deleted.json")

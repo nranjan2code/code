@@ -65,6 +65,7 @@ vak-mail-calendar = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+vak-intake = { workspace = true }
 reqwest = { workspace = true }
 vak-mail-calendar = { workspace = true }
 vak-ooxml = { workspace = true, features = ["fixtures"] }

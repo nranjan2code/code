@@ -211,6 +211,9 @@ pub enum TriggerAction {
     },
     /// A watchdog shell one-liner, run brokered; empty stdout costs nothing.
     Script { command: String },
+    /// Polls an intake source (plan M6.5): fetch, parse in the worker, take
+    /// what is new. No model is involved.
+    SourcePoll { source: vak_session::ids::SourceId },
 }
 
 /// When a scheduled trigger's slots fall.
@@ -316,21 +319,29 @@ impl Trigger {
     pub fn prompt(&self) -> Option<&str> {
         match &self.action {
             TriggerAction::Prompt { text, .. } => Some(text),
-            TriggerAction::Script { .. } => None,
+            TriggerAction::Script { .. } | TriggerAction::SourcePoll { .. } => None,
         }
     }
 
     pub fn script(&self) -> Option<&str> {
         match &self.action {
             TriggerAction::Script { command } => Some(command),
-            TriggerAction::Prompt { .. } => None,
+            TriggerAction::Prompt { .. } | TriggerAction::SourcePoll { .. } => None,
+        }
+    }
+
+    /// The intake source a `source_poll` trigger polls.
+    pub fn source(&self) -> Option<vak_session::ids::SourceId> {
+        match &self.action {
+            TriggerAction::SourcePoll { source } => Some(*source),
+            TriggerAction::Prompt { .. } | TriggerAction::Script { .. } => None,
         }
     }
 
     pub fn model_pin(&self) -> Option<&str> {
         match &self.action {
             TriggerAction::Prompt { model_pin, .. } => model_pin.as_deref(),
-            TriggerAction::Script { .. } => None,
+            TriggerAction::Script { .. } | TriggerAction::SourcePoll { .. } => None,
         }
     }
 
@@ -352,6 +363,15 @@ impl Trigger {
             }
             TriggerAction::Script { command } if command.trim().is_empty() => {
                 return Err(invalid("the script is empty"));
+            }
+            // A poll delivers nothing itself: what it takes reaches people
+            // through intake's alerts.
+            TriggerAction::SourcePoll { .. }
+                if self.deliver_to.is_some() || self.scope.is_some() =>
+            {
+                return Err(invalid(
+                    "a source poll has no delivery target or mail scope",
+                ));
             }
             _ => {}
         }

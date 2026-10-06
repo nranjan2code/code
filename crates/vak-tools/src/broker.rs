@@ -82,6 +82,11 @@ enum WorkerTask {
     IcalendarParse {
         data: String,
     },
+    /// What an intake source's fetch returned (plan M6.5), as text.
+    IntakeParse {
+        connector: vak_intake::Connector,
+        data: String,
+    },
     IcalendarFreeBusyParse {
         data: String,
     },
@@ -679,6 +684,23 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::IntakeParse { connector, data } => {
+            let (content, is_error) = match vak_intake::parse(&connector, data.as_bytes()) {
+                Ok(items) => match serde_json::to_string(&items) {
+                    Ok(content) => (content, false),
+                    Err(error) => (error.to_string(), true),
+                },
+                Err(error) => (error.to_string(), true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+                telemetry: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::IcalendarFreeBusyParse { data } => {
             let (content, is_error) = match crate::mail_calendar::parse_freebusy_data(&data) {
                 Ok(content) => (content, false),
@@ -920,6 +942,35 @@ pub async fn parse_icalendar(worker_exe: &Path, data: &str) -> Result<Value, Str
         let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
         serde_json::from_str(&content)
             .map_err(|_| "calendar worker returned an invalid result".to_owned())
+    }
+}
+
+/// Parses what an intake source's fetch returned in the network-denied
+/// worker (plan M6.5, invariant 14): feeds are hostile bytes, so the server
+/// never parses one itself.
+pub async fn parse_intake(
+    worker_exe: &Path,
+    connector: &vak_intake::Connector,
+    data: &[u8],
+) -> Result<Vec<vak_intake::Item>, String> {
+    if data.len() > vak_intake::MAX_FETCH_BYTES {
+        return Err("the response exceeds the intake parser's input limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("intake parsing requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-intake-parse-")
+            .tempdir()
+            .map_err(|_| "the intake parser's workspace is unavailable".to_owned())?;
+        let task = WorkerTask::IntakeParse {
+            connector: connector.clone(),
+            data: String::from_utf8_lossy(data).into_owned(),
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content)
+            .map_err(|_| "the intake worker returned an invalid result".to_owned())
     }
 }
 

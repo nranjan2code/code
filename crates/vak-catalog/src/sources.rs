@@ -1,6 +1,7 @@
 //! The records the catalog reads, found under a data home: every session
 //! ledger, the shared `runs/` and `effects/` chains, each Agent's
-//! commitments chain, and the trigger and memory Documents.
+//! commitments chain, the trigger, memory and intake source Documents, and
+//! the `intake/` chain.
 
 use std::path::{Path, PathBuf};
 use vak_session::tail::{self, Position};
@@ -22,6 +23,10 @@ pub enum Source {
     Memory { path: PathBuf, agent: String },
     /// An entity Document of `agent`; its cursor counts versions.
     Entity { path: PathBuf, agent: String },
+    /// An intake source Document; its cursor counts versions.
+    IntakeSource(PathBuf),
+    /// The intake chain, with the tenant whose objects hold item bodies.
+    Intake { dir: PathBuf, tenant: PathBuf },
 }
 
 impl Source {
@@ -35,6 +40,8 @@ impl Source {
             Self::Trigger(path) => ("trigger", path),
             Self::Memory { path, .. } => ("memory", path),
             Self::Entity { path, .. } => ("entity", path),
+            Self::IntakeSource(path) => ("source", path),
+            Self::Intake { dir, .. } => ("intake", dir),
         };
         format!("{kind}:{}", path.display())
     }
@@ -43,8 +50,11 @@ impl Source {
     pub fn has_more(&self, from: Position) -> bool {
         match self {
             Self::Session(dir) | Self::Runs(dir) | Self::Effects(dir) => chain_has_more(dir, from),
-            Self::Commitments { dir, .. } => chain_has_more(dir, from),
-            Self::Trigger(path) | Self::Memory { path, .. } | Self::Entity { path, .. } => {
+            Self::Commitments { dir, .. } | Self::Intake { dir, .. } => chain_has_more(dir, from),
+            Self::Trigger(path)
+            | Self::IntakeSource(path)
+            | Self::Memory { path, .. }
+            | Self::Entity { path, .. } => {
                 vak_session::documents::version_count(path) as u64 > from.frames
             }
         }
@@ -94,6 +104,15 @@ pub fn discover(data: &Path) -> Vec<Source> {
     let mut triggers = vak_session::documents::under(&shared.triggers());
     triggers.sort();
     found.extend(triggers.into_iter().map(Source::Trigger));
+    let mut sources = vak_session::documents::under(&shared.sources());
+    sources.sort();
+    found.extend(sources.into_iter().map(Source::IntakeSource));
+    if shared.intake().is_dir() {
+        found.push(Source::Intake {
+            dir: shared.intake(),
+            tenant: vak_config::paths::tenant_home_at(data, vak_config::paths::LOCAL_TENANT),
+        });
+    }
     for (root, agent) in agent_roots(data) {
         let scope = vak_config::scope::AgentScope::new(&root);
         let mut ledgers: Vec<PathBuf> = std::fs::read_dir(scope.sessions_root())

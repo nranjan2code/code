@@ -227,6 +227,18 @@ Type `IncidentRecord` in `crates/vak-server/src/operations.rs`. Class: ledger. S
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 
+## intake_event
+
+Type `IntakeEvent` in `crates/vak-core/src/intake.rs`. Class: ledger. Stored in: `intake`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `item` | `String` | yes | The item's catalog id ([`item_id`]). |
+| `at` | `DateTime<Utc>` | yes |  |
+| `trace` | `Option<TraceKey>` | no | The poll's run key, on the row that takes the item. |
+| `actor` | `Option<PrincipalId>` | no | Who caused this step: the poll's actor, or the person who released |
+| `step` | `IntakeStep` | yes | (flattened into the row) |
+
 ## misread_row
 
 Type `MisreadRow` in `crates/vak-core/src/misread.rs`. Class: ledger. Stored in: `intent-evidence`. Version: 1.

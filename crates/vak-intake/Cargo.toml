@@ -1,0 +1,20 @@
+[package]
+name = "vak-intake"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Intake connectors: what each source kind fetches, bounded parsers for what comes back, and detection that labels and never drops"
+
+[dependencies]
+chrono = { workspace = true }
+hex = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+vak-ooxml = { workspace = true }
+
+[lints]
+workspace = true

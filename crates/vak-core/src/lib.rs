@@ -24,6 +24,7 @@ pub mod finops;
 pub mod health;
 pub mod inbox;
 pub mod install;
+pub mod intake;
 pub mod intent;
 pub mod learning;
 pub mod memory;
