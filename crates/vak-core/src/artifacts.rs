@@ -114,6 +114,24 @@ pub enum ArtifactStep {
     Saved {
         version: VersionId,
     },
+    /// A comment on a version, by the owner or through a share.
+    Commented {
+        version: VersionId,
+        /// Who wrote it: a principal id.
+        author: String,
+        author_name: String,
+        text: String,
+    },
+}
+
+/// A comment on one version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Comment {
+    pub version: VersionId,
+    pub author: String,
+    pub author_name: String,
+    pub text: String,
+    pub at: DateTime<Utc>,
 }
 
 /// One version as the rollup holds it.
@@ -156,6 +174,8 @@ pub struct Artifact {
     pub starred: bool,
     #[serde(default)]
     pub archived: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<Comment>,
 }
 
 impl Artifact {
@@ -261,6 +281,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 versions: Vec::new(),
                 starred: false,
                 archived: false,
+                comments: Vec::new(),
             });
     }
     let Some(artifact) = state.artifacts.get_mut(&key) else {
@@ -314,6 +335,18 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 found.saved = true;
             }
         }
+        ArtifactStep::Commented {
+            version,
+            author,
+            author_name,
+            text,
+        } => artifact.comments.push(Comment {
+            version,
+            author,
+            author_name,
+            text,
+            at: event.at,
+        }),
         ArtifactStep::Renamed { title } => artifact.title = Some(title),
         ArtifactStep::Starred { on } => artifact.starred = on,
         ArtifactStep::Archived { on } => artifact.archived = on,

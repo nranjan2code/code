@@ -239,6 +239,7 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
         Ok(Some(artifact)) => {
             let mut value = summary(&artifact);
             value["history"] = serde_json::json!(artifact.versions);
+            value["comments"] = serde_json::json!(artifact.comments);
             Json(value).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
@@ -375,13 +376,382 @@ fn record(state: &AppState, id: &str, step: ArtifactStep) -> Response {
     }
 }
 
+// ---- Sharing (plan M8.4a, docs/design/82-library.md §8) --------------------
+
+#[derive(serde::Deserialize)]
+struct ShareDraft {
+    name: String,
+    role: vak_core::grants::Role,
+    #[serde(default = "default_share_hours")]
+    expires_in_hours: u32,
+    /// Show earlier versions from this one on; absent shows only the
+    /// current version.
+    #[serde(default)]
+    history_from: Option<String>,
+}
+
+fn default_share_hours() -> u32 {
+    7 * 24
+}
+
+fn share_error(status: StatusCode, message: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": message }))).into_response()
+}
+
+/// `POST /library/{id}/shares`: a link that opens this artifact, and only
+/// it, to one person in one role. Sharing breaks inheritance, so the
+/// artifact's grants are then its whole audience besides its owner.
+async fn share(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(draft): Json<ShareDraft>,
+) -> Response {
+    let Some(artifact) = state.core.artifacts().get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let name = draft.name.trim();
+    if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
+        return share_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "name the person, in 1 to 80 characters",
+        );
+    }
+    if !(1..=30 * 24).contains(&draft.expires_in_hours) {
+        return share_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "a share lasts 1 hour to 30 days",
+        );
+    }
+    if let Some(from) = &draft.history_from
+        && !artifact
+            .versions
+            .iter()
+            .any(|version| version.id.to_string() == *from)
+    {
+        return share_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "that version is not one of this artifact's",
+        );
+    }
+    let token = crate::coworking::generate_token();
+    let now = chrono::Utc::now();
+    let mut capabilities = vec!["read".to_string()];
+    if draft.role >= vak_core::grants::Role::Commenter {
+        capabilities.push("comment".into());
+    }
+    if draft.role >= vak_core::grants::Role::Editor {
+        capabilities.push("edit".into());
+    }
+    let grant = vak_core::grants::Grant {
+        id: vak_session::ids::GrantId::new(),
+        principal: vak_session::ids::PrincipalId::new().to_string(),
+        display_name: name.to_string(),
+        object: vak_core::grants::GrantObject::Artifact(artifact.id),
+        role: draft.role,
+        audience_id: Some(format!("artifact:{}", artifact.id)),
+        capabilities,
+        token_hash: Some(vak_core::grants::token_hash(&token)),
+        created_at: now,
+        expires_at: Some(now + chrono::Duration::hours(i64::from(draft.expires_in_hours))),
+        history_from: draft.history_from,
+    };
+    let grants = crate::coworking::grants(&state);
+    let actor = Some(crate::request_actor(&state));
+    let object = grant.object.clone();
+    if let Err(error) = grants.grant(grant.clone(), actor, None) {
+        return share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
+    }
+    if grants.inherits(&object).unwrap_or(true)
+        && let Err(error) = grants.break_inheritance(object, actor)
+    {
+        return share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string());
+    }
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "share": share_summary(&grant, None, now), "token": token })),
+    )
+        .into_response()
+}
+
+fn share_summary(
+    grant: &vak_core::grants::Grant,
+    revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> serde_json::Value {
+    let held = vak_core::grants::Held {
+        grant: grant.clone(),
+        revoked_at,
+    };
+    serde_json::json!({
+        "id": grant.id,
+        "name": grant.display_name,
+        "role": grant.role,
+        "created_at": grant.created_at,
+        "expires_at": grant.expires_at,
+        "history_from": grant.history_from,
+        "status": held.status(now),
+    })
+}
+
+/// `GET /library/{id}/shares`: who it is shared with, never their tokens.
+async fn shares(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Ok(artifact) = vak_session::ids::ArtifactId::parse(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let now = chrono::Utc::now();
+    match crate::coworking::grants(&state).on(&vak_core::grants::GrantObject::Artifact(artifact)) {
+        Ok(held) => Json(serde_json::json!({
+            "shares": held
+                .iter()
+                .filter(|held| held.grant.token_hash.is_some())
+                .map(|held| share_summary(&held.grant, held.revoked_at, now))
+                .collect::<Vec<_>>(),
+        }))
+        .into_response(),
+        Err(error) => share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
+}
+
+/// `DELETE /library/{id}/shares/{grant}`: the link stops working at once.
+async fn unshare(
+    State(state): State<AppState>,
+    Path((id, grant)): Path<(String, String)>,
+) -> Response {
+    let (Ok(artifact), Ok(grant)) = (
+        vak_session::ids::ArtifactId::parse(&id),
+        vak_session::ids::GrantId::parse(&grant),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let grants = crate::coworking::grants(&state);
+    let ours = grants
+        .on(&vak_core::grants::GrantObject::Artifact(artifact))
+        .is_ok_and(|held| held.iter().any(|held| held.grant.id == grant));
+    if !ours {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match grants.revoke(grant, Some(crate::request_actor(&state))) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CommentDraft {
+    version: String,
+    text: String,
+}
+
+fn comment(
+    state: &AppState,
+    artifact: &vak_core::artifacts::Artifact,
+    draft: &CommentDraft,
+    author: String,
+    author_name: String,
+) -> Response {
+    let text = draft.text.trim();
+    if text.is_empty() || text.chars().count() > 4000 {
+        return share_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "a comment is 1 to 4000 characters",
+        );
+    }
+    let Some(version) = artifact
+        .versions
+        .iter()
+        .find(|version| version.id.to_string() == draft.version)
+        .map(|version| version.id)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match state.core.artifacts().record(
+        artifact.id,
+        ArtifactStep::Commented {
+            version,
+            author,
+            author_name,
+            text: text.to_string(),
+        },
+        None,
+        None,
+    ) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
+    }
+}
+
+/// `POST /library/{id}/comments`: the owner comments on a version.
+async fn owner_comment(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(draft): Json<CommentDraft>,
+) -> Response {
+    let Some(artifact) = state.core.artifacts().get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    comment(
+        &state,
+        &artifact,
+        &draft,
+        crate::request_actor(&state).to_string(),
+        "You".into(),
+    )
+}
+
+/// The grant a guest request carries, and its artifact while the grant
+/// holds.
+fn guest(
+    state: &AppState,
+    principal: &crate::AuthenticatedPrincipal,
+) -> Result<(vak_core::grants::Grant, vak_core::artifacts::Artifact), StatusCode> {
+    let crate::AuthenticatedPrincipal::ArtifactGuest(grant) = principal else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+    let vak_core::grants::GrantObject::Artifact(id) = &grant.object else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+    let artifact = state
+        .core
+        .artifacts()
+        .get(&id.to_string())
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok((*grant.clone(), artifact))
+}
+
+/// The versions a share shows: the current one, and earlier ones only
+/// from the version the owner chose.
+fn shown(
+    grant: &vak_core::grants::Grant,
+    artifact: &vak_core::artifacts::Artifact,
+) -> Vec<(usize, vak_core::artifacts::Version)> {
+    let head = artifact.head().map(|version| version.id);
+    let from = grant.history_from.as_ref().and_then(|from| {
+        artifact
+            .versions
+            .iter()
+            .position(|version| version.id.to_string() == *from)
+    });
+    artifact
+        .versions
+        .iter()
+        .enumerate()
+        .filter(|(index, version)| {
+            Some(version.id) == head || from.is_some_and(|from| *index >= from)
+        })
+        .map(|(index, version)| (index + 1, version.clone()))
+        .collect()
+}
+
+/// `GET /shared/artifact`: what the share shows. Never conversation text,
+/// conversation ids or the owner's comments.
+async fn shared_view(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+) -> Response {
+    let (grant, artifact) = match guest(&state, &principal) {
+        Ok(found) => found,
+        Err(status) => return status.into_response(),
+    };
+    let versions = shown(&grant, &artifact);
+    let ids: Vec<_> = versions.iter().map(|(_, version)| version.id).collect();
+    Json(serde_json::json!({
+        "name": artifact.name(),
+        "kind": artifact.kind,
+        "file_name": std::path::Path::new(&artifact.path).file_name().map(|name| name.to_string_lossy().into_owned()),
+        "role": grant.role,
+        "you": grant.display_name,
+        "versions": versions.iter().map(|(number, version)| serde_json::json!({
+            "id": version.id,
+            "number": number,
+            "by": if matches!(version.source, VersionSource::Person) { "the owner" } else { "Vakyartha" },
+            "at": version.at,
+            "size": version.size,
+        })).collect::<Vec<_>>(),
+        "comments": artifact.comments.iter()
+            .filter(|comment| ids.contains(&comment.version) && comment.author != crate::request_actor(&state).to_string())
+            .map(|comment| serde_json::json!({
+                "version": comment.version, "name": comment.author_name, "text": comment.text, "at": comment.at,
+            }))
+            .collect::<Vec<_>>(),
+    }))
+    .into_response()
+}
+
+/// `GET /shared/artifact/versions/{version}`: a shown version's bytes.
+async fn shared_bytes(
+    State(state): State<AppState>,
+    Path(version): Path<String>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+) -> Response {
+    let (grant, artifact) = match guest(&state, &principal) {
+        Ok(found) => found,
+        Err(status) => return status.into_response(),
+    };
+    let Some((_, found)) = shown(&grant, &artifact)
+        .into_iter()
+        .find(|(_, shown)| shown.id.to_string() == version)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match state.core.artifacts().bytes(&artifact, &found.id) {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, "application/octet-stream".to_string()),
+                (header::CONTENT_DISPOSITION, "attachment".to_string()),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// `POST /shared/artifact/comments`: a commenter or editor comments on a
+/// shown version.
+async fn shared_comment(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+    Json(draft): Json<CommentDraft>,
+) -> Response {
+    let (grant, artifact) = match guest(&state, &principal) {
+        Ok(found) => found,
+        Err(status) => return status.into_response(),
+    };
+    if grant.role < vak_core::grants::Role::Commenter {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !shown(&grant, &artifact)
+        .iter()
+        .any(|(_, version)| version.id.to_string() == draft.version)
+    {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    comment(
+        &state,
+        &artifact,
+        &draft,
+        grant.principal.clone(),
+        grant.display_name.clone(),
+    )
+}
+
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/library", get(list))
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route("/library/{id}/versions/{version}/save", post(save))
+        .route("/library/{id}/shares", get(shares).post(share))
+        .route(
+            "/library/{id}/shares/{grant}",
+            axum::routing::delete(unshare),
+        )
+        .route("/library/{id}/comments", post(owner_comment))
         .route("/library/{id}/{action}", post(change))
+        .route("/shared/artifact", get(shared_view))
+        .route("/shared/artifact/versions/{version}", get(shared_bytes))
+        .route("/shared/artifact/comments", post(shared_comment))
 }
 
 #[cfg(test)]

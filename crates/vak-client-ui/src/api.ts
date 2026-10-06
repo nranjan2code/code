@@ -2348,8 +2348,45 @@ export interface ArtifactVersion {
   saved: boolean;
 }
 
+export interface ArtifactComment {
+  version: string;
+  author: string;
+  author_name: string;
+  text: string;
+  at: string;
+}
+
 export interface ArtifactDetail extends ArtifactSummary {
   history: ArtifactVersion[];
+  comments?: ArtifactComment[];
+}
+
+export type ShareRole = "viewer" | "commenter" | "editor";
+
+export interface ArtifactShare {
+  id: string;
+  name: string;
+  role: ShareRole;
+  created_at: string;
+  expires_at?: string | null;
+  history_from?: string | null;
+  status: "active" | "expired" | "revoked";
+}
+
+export function libraryShares(id: string): Promise<{ shares: ArtifactShare[] }> {
+  return req(`/library/${encodeURIComponent(id)}/shares`);
+}
+
+export function libraryShare(id: string, draft: { name: string; role: ShareRole; expires_in_hours: number; history_from?: string }): Promise<{ share: ArtifactShare; token: string }> {
+  return req(`/library/${encodeURIComponent(id)}/shares`, { method: "POST", body: JSON.stringify(draft) });
+}
+
+export function libraryUnshare(id: string, share: string): Promise<void> {
+  return req(`/library/${encodeURIComponent(id)}/shares/${encodeURIComponent(share)}`, { method: "DELETE" });
+}
+
+export function libraryComment(id: string, version: string, text: string): Promise<void> {
+  return req(`/library/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ version, text }) });
 }
 
 export function library(): Promise<{ artifacts: ArtifactSummary[] }> {

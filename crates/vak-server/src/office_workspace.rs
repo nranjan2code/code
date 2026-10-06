@@ -185,6 +185,7 @@ fn authority(
 ) -> Result<(String, String, String), StatusCode> {
     match principal {
         AuthenticatedPrincipal::Operator => Ok(("operator".into(), "You".into(), "owner".into())),
+        AuthenticatedPrincipal::ArtifactGuest(_) => Err(StatusCode::FORBIDDEN),
         AuthenticatedPrincipal::Participant(p) => {
             let audience =
                 super::conversation_audience(state, session_id).ok_or(StatusCode::NOT_FOUND)?;

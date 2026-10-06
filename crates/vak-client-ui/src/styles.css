@@ -4204,6 +4204,15 @@ body.is-resizing .split-divider {
 .library-rename input { flex: 1; min-width: 0; }
 .library-preview { margin: 0 0 16px; max-height: 420px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-control); }
 .library-note { font-size: var(--fs-control); color: var(--text-soft); }
+.library-share { margin: 0 0 16px; padding: var(--space-3); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.library-share h3 { margin: 0; }
+.library-share-form { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.library-share-form input { flex: 1 1 180px; min-width: 0; }
+.library-share-made { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.library-share-made code { overflow-wrap: anywhere; user-select: all; }
+.library-shares, .library-comments { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.library-shares li { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.library-comments p { margin: 4px 0 0; overflow-wrap: anywhere; }
 .library-versions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .library-versions li { display: flex; align-items: center; gap: 8px; }
 .library-versions li.chosen .library-version { border-color: var(--accent); }

@@ -104,6 +104,7 @@ pub fn invite(grants: &Grants, grant: AudienceGrant) -> Result<(), GrantError> {
             token_hash: Some(grant.token_hash),
             created_at: grant.created_at,
             expires_at: Some(grant.expires_at),
+            history_from: None,
         },
         grant.actor,
         grant.trace.as_ref(),

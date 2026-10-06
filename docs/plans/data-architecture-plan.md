@@ -1601,6 +1601,25 @@ Live: Continue working on "Harbour poem" with gemma4 made version 2 from
 version 1. The model's edit was imperfect: it copied line numbers from a
 read result into two lines.
 
+M8.4 is split into three steps: a (sharing), b (editing and Put back) and
+c (the Artifact API moves and the acceptance run).
+
+M8.4a (2026-10-07): `POST /library/{id}/shares` makes an artifact grant
+with a token, a role, an expiry and an optional `history_from` version,
+and breaks the artifact's inheritance. `GET` lists the shares without
+tokens, and `DELETE` revokes one at once. The auth middleware turns an
+artifact share's token into `AuthenticatedPrincipal::ArtifactGuest`,
+which reaches only `/shared/artifact`. That view shows the current
+version, and earlier versions from the chosen one on, with no
+conversation text or ids. A guest downloads a shown version, and a
+commenter or editor comments on one. Comments are `Commented` rows in the
+`artifacts/` chain, and the owner sees them and comments too. The
+client's artifact page has Share (name, role, versions shown, expiry;
+the code is shown once) and Comments; `?shared=artifact` is the guest
+page. Test `library_sharing.rs`. Live run: a commenter share of "Harbour
+poem" showed version 2 only, the guest's comment reached the owner, and
+the revoked link answered 401.
+
 ### M9 — Cloud remote (L; the protocol and a reference backend)
 
 - **The `Remote` trait**, with `FileRemote` (tests and personal

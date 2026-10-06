@@ -3609,6 +3609,9 @@ pub(crate) struct AuthPolicy {
 pub(crate) enum AuthenticatedPrincipal {
     Operator,
     Participant(coworking::VerifiedPrincipal),
+    /// A person a Library artifact was shared with (plan M8.4a): they
+    /// reach only `/shared/artifact` and what their grant shows.
+    ArtifactGuest(Box<vak_core::grants::Grant>),
 }
 
 fn participant_read_route_allowed(
@@ -3845,11 +3848,19 @@ pub(crate) async fn require_bearer(
     } else if let Some(participant_token) = participant_token {
         // The middleware knows no session; a token is a random secret,
         // matched against the one grants chain.
-        match coworking::verify(
-            &vak_core::grants::Grants::at(&vak_config::scope::SharedScope::new(&shared)),
-            participant_token,
-            chrono::Utc::now(),
-        ) {
+        let grants = vak_core::grants::Grants::at(&vak_config::scope::SharedScope::new(&shared));
+        let now = chrono::Utc::now();
+        if let Ok(Some(grant)) = grants.verify_token(participant_token, now)
+            && matches!(grant.object, vak_core::grants::GrantObject::Artifact(_))
+        {
+            if !req.uri().path().starts_with("/shared/artifact") {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            req.extensions_mut()
+                .insert(AuthenticatedPrincipal::ArtifactGuest(Box::new(grant)));
+            return next.run(req).await;
+        }
+        match coworking::verify(&grants, participant_token, now) {
             Ok(Some(principal)) => {
                 if !participant_read_route_allowed(req.method(), req.uri().path(), &principal) {
                     return StatusCode::FORBIDDEN.into_response();
@@ -8214,7 +8225,9 @@ fn default_coworking_invitation_hours() -> u32 {
 fn operator_only(principal: &AuthenticatedPrincipal) -> Result<(), StatusCode> {
     match principal {
         AuthenticatedPrincipal::Operator => Ok(()),
-        AuthenticatedPrincipal::Participant(_) => Err(StatusCode::FORBIDDEN),
+        AuthenticatedPrincipal::Participant(_) | AuthenticatedPrincipal::ArtifactGuest(_) => {
+            Err(StatusCode::FORBIDDEN)
+        }
     }
 }
 
@@ -8252,6 +8265,7 @@ async fn coworking_me(
         "revision": agent.revision,
     });
     match principal {
+        AuthenticatedPrincipal::ArtifactGuest(_) => StatusCode::FORBIDDEN.into_response(),
         AuthenticatedPrincipal::Operator => {
             Json(serde_json::json!({ "principal_id": "operator", "display_name": "You", "capabilities": ["owner"], "agent": agent })).into_response()
         }
@@ -8609,6 +8623,7 @@ async fn coworking_presence(
         return StatusCode::NOT_FOUND.into_response();
     }
     match principal {
+        AuthenticatedPrincipal::ArtifactGuest(_) => return StatusCode::FORBIDDEN.into_response(),
         AuthenticatedPrincipal::Operator => {}
         AuthenticatedPrincipal::Participant(participant) => {
             if participant.conversation_id != conversation_id {
@@ -8639,6 +8654,7 @@ async fn coworking_updates(
         return StatusCode::NOT_FOUND.into_response();
     };
     let grant = match principal {
+        AuthenticatedPrincipal::ArtifactGuest(_) => return StatusCode::FORBIDDEN.into_response(),
         AuthenticatedPrincipal::Operator => None,
         AuthenticatedPrincipal::Participant(participant) => {
             if participant.conversation_id != conversation_id
@@ -13283,6 +13299,7 @@ async fn comment_on_sandbox_candidate(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("candidate-comment-{}", uuid::Uuid::now_v7()));
     let request_id = match &principal {
+        AuthenticatedPrincipal::ArtifactGuest(_) => return StatusCode::FORBIDDEN.into_response(),
         AuthenticatedPrincipal::Operator => request_id,
         AuthenticatedPrincipal::Participant(_) => {
             format!("candidate-comment-{}", uuid::Uuid::now_v7())
@@ -13291,6 +13308,7 @@ async fn comment_on_sandbox_candidate(
     let mut data = std::collections::BTreeMap::new();
     data.insert("request_id".into(), request_id.clone());
     match &principal {
+        AuthenticatedPrincipal::ArtifactGuest(_) => return StatusCode::FORBIDDEN.into_response(),
         AuthenticatedPrincipal::Operator => {
             data.insert("actor_id".into(), "operator".into());
             data.insert("actor_name".into(), "You".into());

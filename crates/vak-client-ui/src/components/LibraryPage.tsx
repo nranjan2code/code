@@ -1,6 +1,6 @@
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import * as api from "../api";
-import type { ArtifactDetail, ArtifactSummary, ArtifactVersion } from "../api";
+import type { ArtifactDetail, ArtifactShare, ArtifactSummary, ArtifactVersion, ShareRole } from "../api";
 import { host } from "../host";
 import { libraryFocus, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
 import { relAgo } from "../time";
@@ -23,6 +23,99 @@ const CHANGED: { value: string; label: string; days: number }[] = [
   { value: "month", label: "This month", days: 31 },
 ];
 
+const ROLE: Record<ShareRole, string> = {
+  viewer: "Can view",
+  commenter: "Can comment",
+  editor: "Can edit",
+};
+
+/** Who may open an artifact, and a new link for one person (doc 82 §8). */
+function SharePanel(props: { artifact: ArtifactDetail; onClose: () => void }) {
+  const [shares, { refetch }] = createResource(() => props.artifact.id, (id) => api.libraryShares(id).then((res) => res.shares));
+  const [name, setName] = createSignal("");
+  const [role, setRole] = createSignal<ShareRole>("viewer");
+  const [days, setDays] = createSignal(7);
+  const [historyFrom, setHistoryFrom] = createSignal("");
+  const [made, setMade] = createSignal<{ name: string; token: string } | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const link = () => `${window.location.origin}/app/?shared=artifact`;
+
+  const create = async () => {
+    setError(null);
+    try {
+      const res = await api.libraryShare(props.artifact.id, {
+        name: name().trim(),
+        role: role(),
+        expires_in_hours: days() * 24,
+        history_from: historyFrom() || undefined,
+      });
+      setMade({ name: res.share.name, token: res.token });
+      setName("");
+      await refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const stop = async (share: ArtifactShare) => {
+    setError(null);
+    try {
+      await api.libraryUnshare(props.artifact.id, share.id);
+      await refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <section class="library-share" aria-label="Share">
+      <div class="library-head">
+        <h3>Share</h3>
+        <button type="button" class="btn sm" onClick={props.onClose}>Done</button>
+      </div>
+      <p class="library-note">A link opens only this, never the conversations that made it. Earlier versions are shown only if you include them.</p>
+      <Show when={error()}><div class="worker-error" role="alert">{error()}</div></Show>
+      <form class="library-share-form" onSubmit={(e) => { e.preventDefault(); void create(); }}>
+        <input placeholder="Who is it for?" value={name()} onInput={(e) => setName(e.currentTarget.value)} aria-label="Who is it for" />
+        <select value={role()} onChange={(e) => setRole(e.currentTarget.value as ShareRole)} aria-label="What they can do">
+          <For each={Object.entries(ROLE)}>{([value, label]) => <option value={value}>{label}</option>}</For>
+        </select>
+        <select value={historyFrom()} onChange={(e) => setHistoryFrom(e.currentTarget.value)} aria-label="Versions shown">
+          <option value="">Only the current version</option>
+          <For each={props.artifact.history}>{(v, index) => <option value={v.id}>From version {index() + 1} on</option>}</For>
+        </select>
+        <select value={String(days())} onChange={(e) => setDays(Number(e.currentTarget.value))} aria-label="Lasts">
+          <option value="1">For a day</option>
+          <option value="7">For a week</option>
+          <option value="30">For 30 days</option>
+        </select>
+        <button class="btn sm primary" type="submit" disabled={!name().trim()}>Create link</button>
+      </form>
+      <Show when={made()}>
+        {(created) => (
+          <div class="library-share-made">
+            <p>Send {created().name} this address and code. The code is shown only now.</p>
+            <code>{link()}</code>
+            <code>{created().token}</code>
+          </div>
+        )}
+      </Show>
+      <ul class="library-shares">
+        <For each={shares() ?? []}>
+          {(share) => (
+            <li>
+              <span>{share.name} · {ROLE[share.role]}{share.status === "active" ? "" : ` · ${share.status === "revoked" ? "stopped" : "expired"}`}</span>
+              <Show when={share.status === "active"}>
+                <button class="btn sm" onClick={() => void stop(share)}>Stop sharing</button>
+              </Show>
+            </li>
+          )}
+        </For>
+      </ul>
+    </section>
+  );
+}
+
 /** Who made a version, read from its record (doc 82 §5). */
 function maker(version: ArtifactVersion): string {
   return version.from === "person" ? "You" : "Vakyartha";
@@ -39,6 +132,8 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
   const [detail, { refetch }] = createResource(() => props.id, (id) => api.libraryArtifact(id));
   const [chosen, setChosen] = createSignal<string | null>(null);
   const [renaming, setRenaming] = createSignal(false);
+  const [sharing, setSharing] = createSignal(false);
+  const [note, setNote] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
   const version = () => chosen() ?? detail()?.head ?? null;
   const [text] = createResource(
@@ -132,11 +227,16 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             <button class="btn sm" onClick={() => void act(() => api.libraryChange(found().id, "star", { on: !found().starred }))}>
               {found().starred ? "Unstar" : "Star"}
             </button>
+            <button class="btn sm" onClick={() => setSharing(true)}>Share</button>
             <button class="btn sm" onClick={() => setRenaming(true)}>Rename</button>
             <button class="btn sm" onClick={() => void act(() => api.libraryChange(found().id, "archive", { on: !found().archived }))}>
               {found().archived ? "Restore" : "Archive"}
             </button>
           </div>
+
+          <Show when={sharing()}>
+            <SharePanel artifact={found()} onClose={() => setSharing(false)} />
+          </Show>
 
           <Show when={isText(found())} fallback={<div class="library-preview dock-empty">Download to open this {KIND[found().kind].toLowerCase()}.</div>}>
             <pre class="library-preview">{text() ?? "Loading…"}</pre>
@@ -167,6 +267,41 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
               }}
             </For>
           </ol>
+
+          <h3>Comments</h3>
+          <Show when={(found().comments ?? []).length > 0} fallback={<p class="library-note">No comments yet.</p>}>
+            <ul class="library-comments">
+              <For each={found().comments ?? []}>
+                {(comment) => {
+                  const number = found().history.findIndex((v) => v.id === comment.version) + 1;
+                  return (
+                    <li>
+                      <strong>{comment.author_name}</strong>
+                      <span class="library-note"> on version {number} · {relAgo(comment.at)}</span>
+                      <p>{comment.text}</p>
+                    </li>
+                  );
+                }}
+              </For>
+            </ul>
+          </Show>
+          <Show when={version()}>
+            {(at) => (
+              <form
+                class="library-share-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const text = note().trim();
+                  if (!text) return;
+                  setNote("");
+                  void act(() => api.libraryComment(found().id, at(), text));
+                }}
+              >
+                <input placeholder="Add a comment on this version" value={note()} onInput={(e) => setNote(e.currentTarget.value)} aria-label="Comment" />
+                <button class="btn sm" type="submit" disabled={!note().trim()}>Comment</button>
+              </form>
+            )}
+          </Show>
         </div>
       )}
     </Show>

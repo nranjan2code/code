@@ -81,7 +81,9 @@ Known slow tests (each over 60 s, not failures):
 | 15b | M8.2 grants: `grants/` chain, coworking grants moved in, inheritance and breaks, catalog filtering | `share_inherits_and_breaks`, `revoked_grant_hides_from_search` | Done (`d09c0c450`) |
 | 15c-a | M8.3a client Library page and artifact page (versions, Star, Rename, Archive, Keep, Download, Open conversation), admin Library, `/library` changes | browser run | Done (`81394dd71`) |
 | 15c-b | M8.3b Continue working and Make another (doc 82 L2): the attachment rendered at admission, `recall`'s cross-conversation scope | live run | Done (`0d8d2a772`) |
-| 15d | M8.4 edit and Put back, saved cards, Share dialog, Canvas/Redline/Workbench/SharedConversation on the Artifact API, navigation | browser acceptance run | Next |
+| 15d-a | M8.4a sharing: artifact share links (role, expiry, history from a chosen version), guest view at `/shared/artifact`, comments, revoke | `library_sharing.rs`, live run | Done (commit follows) |
+| 15d-b | M8.4b edit in the app, Put back (upload as a sibling of the version downloaded), saved cards | browser run | Next |
+| 15d-c | M8.4c Canvas, Redline, Workbench and SharedConversation on the Artifact API; navigation reconciliation; acceptance run create → review → promote → share → comment → revise | browser acceptance run | |
 | 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | |
 
 Some large steps may need more than one commit, as M3b did. Add sub-rows

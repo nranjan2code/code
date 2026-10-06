@@ -200,6 +200,10 @@ SDKs to preflight a model.
 | `/library/:id` | GET | One artifact with its version history |
 | `/library/:id/versions/:ver` | GET | A version's bytes, as a download |
 | `/library/:id/star`, `/rename`, `/archive` | POST | A person stars, renames or archives an artifact (`{on}` or `{title}`) |
+| `/library/:id/shares` | GET, POST | Share links for an artifact (name, role, expiry, `history_from`); POST returns the code once and breaks inheritance |
+| `/library/:id/shares/:grant` | DELETE | Stop a share at once |
+| `/library/:id/comments` | POST | The owner comments on a version |
+| `/shared/artifact`, `/shared/artifact/versions/:ver`, `/shared/artifact/comments` | GET, GET, POST | What a share link opens: the shown versions and comments, never conversation text (an artifact guest reaches nothing else) |
 | `/library/:id/versions/:ver/save` | POST | A person keeps a version, so it outlives its conversation |
 | `/intake/alerts` | GET, POST | Intake alerts: keywords, tags or sources to match, a cooldown and an optional channel; a match is an `intake_match` inbox entry, each item once |
 | `/intake/alerts/:id` | PATCH, DELETE | Change or remove an alert |

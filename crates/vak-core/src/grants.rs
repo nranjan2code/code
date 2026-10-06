@@ -71,6 +71,11 @@ pub struct Grant {
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<DateTime<Utc>>,
+    /// An artifact share's history: earlier versions are shown only from
+    /// this one on (docs/design/82-library.md §8); `None` shows only the
+    /// current version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_from: Option<String>,
 }
 
 /// One row of the `grants/` chain.

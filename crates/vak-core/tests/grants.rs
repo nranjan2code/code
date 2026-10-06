@@ -29,6 +29,7 @@ fn grant(
         token_hash: None,
         created_at: Utc::now(),
         expires_at: expires,
+        history_from: None,
     }
 }
 
