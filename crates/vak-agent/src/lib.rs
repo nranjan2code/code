@@ -2617,9 +2617,17 @@ impl Agent {
                         .await
                         .append_message(MessageRecord::control(
                         vak_intent::control::ControlKind::EmptyStep,
-                        "[empty-step]: Your last response had no visible answer and no tool call. \
-                         Carry on with the request in the person's message that opened this turn; \
-                         this is not a new request. Make the tool call you planned, or write the \
+                        // A provider can drop a call whose arguments do not
+                        // parse (Ollama logs "tool call parsing failed" and
+                        // returns nothing), so "you made no call" was false
+                        // and the model planned again from scratch, once
+                        // reaching for webfetch instead of the card it had
+                        // written.
+                        "[empty-step]: Nothing arrived from your last response: no visible answer \
+                         and no tool call. A tool call whose arguments are not valid JSON can be \
+                         dropped before it reaches Vak, so if you made one, make the same call again \
+                         with valid JSON arguments that follow its schema. This is the request in \
+                         the person's message that opened this turn, not a new one. Or write the \
                          answer as text."
                             .to_string(),
                     )) {
@@ -8010,7 +8018,15 @@ async fn authorize(
                     "unattended surface: {reason}. No approver is configured to \
                      answer it, so this capability cannot be used on this turn"
                 )),
-                Some(_) => Err(format!("denied by user: {reason}")),
+                // The gate's reason is written for the person asked; echoed
+                // alone ("denied by user: 'webfetch' needs approval") it read
+                // as a step still to take, and the model asked again twenty
+                // times in one turn.
+                Some(_) => Err(format!(
+                    "The person declined this call ({reason}). Do not make it again \
+                     in this turn: answer with what you already have, or say what you \
+                     could not do without it."
+                )),
                 None => Err(format!("{reason} (no approver available)")),
             }
         }

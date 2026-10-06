@@ -1,7 +1,7 @@
 # 47 — The commitment kernel
 
 Status: **shipped**. The current deterministic reader is
-`vak_intent::RESOLVER_VERSION = 8`. The historical reviews below explain why
+`vak_intent::RESOLVER_VERSION = 11` (its history is on the constant; 11 reads "show" as a delivery verb, an answer, not a search). The historical reviews below explain why
 it changed; this document describes the current implementation. One known
 boundary remains: `full-access` bypasses the permission engine's approval
 gate, so the kernel's irreversible-work approval floor cannot force a prompt

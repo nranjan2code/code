@@ -90,6 +90,12 @@ enum WorkerTask {
     IcalendarFreeBusyParse {
         data: String,
     },
+    /// A web page `webfetch` or `browse` returned, read as text
+    /// (`vak_intake::html::readable`); `base` is the page's address.
+    HtmlRead {
+        data: String,
+        base: Option<String>,
+    },
     MailMimeParse {
         data: Vec<u8>,
     },
@@ -688,6 +694,24 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::HtmlRead { data, base } => {
+            let base = base
+                .as_deref()
+                .and_then(|base| reqwest::Url::parse(base).ok());
+            let page = vak_intake::html::readable(&data, base.as_ref());
+            let (content, is_error) = match serde_json::to_string(&page) {
+                Ok(content) => (content, false),
+                Err(error) => (error.to_string(), true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+                telemetry: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::IntakeParse { connector, data } => {
             let (content, is_error) = match vak_intake::parse(&connector, data.as_bytes()) {
                 Ok(items) => match serde_json::to_string(&items) {
@@ -975,6 +999,31 @@ pub async fn parse_intake(
         let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
         serde_json::from_str(&content)
             .map_err(|_| "the intake worker returned an invalid result".to_owned())
+    }
+}
+
+/// Reads a web page as text in the network-denied worker (invariant 14): a
+/// page is hostile markup, so the process that fetched it never parses it.
+pub async fn read_html(
+    worker_exe: &Path,
+    html: &str,
+    base: &str,
+) -> Result<vak_intake::html::Readable, String> {
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("reading a page requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-html-read-")
+            .tempdir()
+            .map_err(|_| "the page reader's workspace is unavailable".to_owned())?;
+        let task = WorkerTask::HtmlRead {
+            data: html.to_owned(),
+            base: Some(base.to_owned()),
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content)
+            .map_err(|_| "the page reader returned an invalid result".to_owned())
     }
 }
 

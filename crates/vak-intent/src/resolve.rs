@@ -65,10 +65,12 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// on its own. 9 — a strand that names a second open thread with at least
 /// `MERGE_MIN_OVERLAP` shared words merges it (`Lineage::Continues::merges`);
 /// the lexicon is unchanged. 10 — question words, auxiliaries and pronouns
-/// are not keywords, so sharing "what" no longer continues a thread. The test
+/// are not keywords, so sharing "what" no longer continues a thread. 11 —
+/// "show" is a delivery verb (Answer) like "give" and "present", not a
+/// search (Locate). The test
 /// `lexicon_digest_matches_resolver_version` pins the tables to this number
 /// so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 10;
+pub const RESOLVER_VERSION: u32 = 11;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1384,8 +1386,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            10,
-            "1c3149e2a620e896ddf606f725316261de379ff56c5ca088cf93d55fb4d30d0f",
+            11,
+            "ed7acfc30107a5a8ce7a9cb6389491d9e46457a15be0e86699ba4512b0ee57a7",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(

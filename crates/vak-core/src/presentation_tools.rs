@@ -179,6 +179,7 @@ fn table_payload_schema() -> Value {
             "title": {"type": "string"},
             "columns": {
                 "type": "array",
+                "description": "One entry per column; its key names that column's field in every row.",
                 "items": {
                     "type": "object",
                     "properties": {"key": {"type": "string"}, "label": {"type": "string"}, "isNumeric": {"type": "boolean"}},
@@ -187,6 +188,7 @@ fn table_payload_schema() -> Value {
             },
             "rows": {
                 "type": "array",
+                "description": "One object per row, mapping each column key to that row's value.",
                 "items": {"type": "object", "additionalProperties": true}
             }
         },

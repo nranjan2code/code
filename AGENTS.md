@@ -1579,6 +1579,9 @@ crates/vak-intake    intake connectors (plan M6.5, docs/design/76): the
                      fetches, bounded parsers run only in the broker worker
                      (`IntakeParse`), and detection that labels an item
                      accepted, quarantined or blocked and never drops one;
+                     and the HTML reader (html.rs) that turns a page
+                     webfetch or browse returns into readable text, run in
+                     the worker (`HtmlRead`);
                      NO network and NO vak dependencies but vak-ooxml's
                      bounded XML walk
 crates/vak-storage   the storage substrate, NO vak dependencies (docs/design/

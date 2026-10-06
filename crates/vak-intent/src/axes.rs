@@ -611,8 +611,9 @@ impl EpistemicStance {
                  do not force structured workflows or unprompted actions when simple dialogue is requested."
             }
             EpistemicStance::DirectAnswer => {
-                "Provide a clear, direct answer to the question. Avoid unnecessary meta-commentary, \
-                 unsolicited execution plans, or unwarranted tool calls when knowledge in context suffices."
+                "Provide a clear, direct answer to the question. Leave out meta-commentary and \
+                 unsolicited execution plans, and answer from what you already know rather than \
+                 looking it up when that suffices."
             }
             // Citation is demanded by the intent note when the request asks
             // for it, not by the stance: measured live, "cite sources for

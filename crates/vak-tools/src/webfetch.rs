@@ -10,6 +10,7 @@
 use std::error::Error as StdError;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -35,7 +36,17 @@ const USER_AGENT: &str = concat!(
 /// screened; no connection is made on it.
 const SCREEN_PORT: u16 = 80;
 
-pub struct WebFetchTool;
+/// Fetches a page; an HTML page is read as text in the tool worker at
+/// `worker_exe`.
+pub struct WebFetchTool {
+    worker_exe: PathBuf,
+}
+
+impl WebFetchTool {
+    pub fn new(worker_exe: PathBuf) -> Self {
+        Self { worker_exe }
+    }
+}
 
 /// Marker threaded into a redirect-policy rejection so the typed block reason
 /// survives inside the opaque `reqwest::Error` source chain.
@@ -218,14 +229,15 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. To locate current sources, discover an available search tool first. Blocks loopback/private/link-local targets, follows at most 3 redirects, caps the body at 512KiB, accepts only text/json/xml content types, and returns a status header line followed by the UTF-8 body. Never sends credentials."
+        "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. To locate current sources, discover an available search tool first. Blocks loopback/private/link-local targets, follows at most 3 redirects, downloads at most 8 MiB, accepts only text/json/xml content types, and never sends credentials. Returns a status line, then the body: an HTML page as its readable text (headings, paragraphs, lists, table rows; scripts, navigation and forms left out and counted), or with format \"links\" its links, or with \"source\" its HTML. Other content types come back as they are."
     }
 
     fn schema(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "Absolute http(s) URL to fetch"}
+                "url": {"type": "string", "description": "Absolute http(s) URL to fetch"},
+                "format": PageFormat::schema()
             },
             "required": ["url"]
         })
@@ -243,9 +255,13 @@ impl Tool for WebFetchTool {
         let Some(url) = args.get("url").and_then(|u| u.as_str()) else {
             return ToolOutput::error("missing required parameter: url");
         };
+        let format = match PageFormat::from_args(args) {
+            Ok(format) => format,
+            Err(error) => return ToolOutput::error(error),
+        };
         tokio::select! {
             _ = ctx.cancel.cancelled() => ToolOutput::error("fetch cancelled"),
-            out = self.run(url) => out,
+            out = self.run(url, format) => out,
         }
     }
 }
@@ -337,10 +353,18 @@ pub async fn guarded_get(
 }
 
 impl WebFetchTool {
-    async fn run(&self, raw: &str) -> ToolOutput {
+    async fn run(&self, raw: &str, format: PageFormat) -> ToolOutput {
         match guarded_get(raw, &[], MAX_BODY_BYTES).await {
             Ok(fetched) => {
-                let text = String::from_utf8_lossy(&fetched.body);
+                let body = String::from_utf8_lossy(&fetched.body);
+                let text = if is_html(&fetched.content_type) {
+                    match page(&self.worker_exe, &body, &fetched.final_url, format).await {
+                        Ok(text) => text,
+                        Err(error) => return ToolOutput::error(error),
+                    }
+                } else {
+                    body.into_owned()
+                };
                 let header = format!(
                     "[webfetch] GET {} -> {} ({}, {} bytes)",
                     fetched.final_url,
@@ -356,6 +380,121 @@ impl WebFetchTool {
     }
 }
 
+/// What a fetched or rendered HTML page comes back as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageFormat {
+    /// Its readable text, with what was left out counted.
+    Text,
+    /// Its links, one per line.
+    Links,
+    /// Its HTML, as the server sent it.
+    Source,
+}
+
+impl PageFormat {
+    pub fn schema() -> Value {
+        serde_json::json!({
+            "type": "string",
+            "enum": ["text", "links", "source"],
+            "description": "For an HTML page: \"text\" (default) its readable text, \"links\" its links, \"source\" its HTML"
+        })
+    }
+
+    pub fn from_args(args: &Value) -> Result<Self, String> {
+        match args.get("format").and_then(Value::as_str) {
+            None | Some("text") => Ok(Self::Text),
+            Some("links") => Ok(Self::Links),
+            Some("source") => Ok(Self::Source),
+            Some(other) => Err(format!(
+                "format must be \"text\", \"links\" or \"source\", not \"{other}\""
+            )),
+        }
+    }
+}
+
+fn is_html(content_type: &str) -> bool {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    mime == "text/html" || mime == "application/xhtml+xml"
+}
+
+/// An HTML page as `format` asks, read in the tool worker (invariant 14).
+/// Anything left out of the text is said in its first line.
+pub async fn page(
+    worker_exe: &Path,
+    html: &str,
+    base: &str,
+    format: PageFormat,
+) -> Result<String, String> {
+    if format == PageFormat::Source {
+        return Ok(html.to_owned());
+    }
+    let read = crate::broker::read_html(worker_exe, html, base)
+        .await
+        .map_err(|error| {
+            format!("the page could not be read as text ({error}); ask with format \"source\" for its HTML")
+        })?;
+    Ok(render_page(&read, format))
+}
+
+fn render_page(read: &vak_intake::html::Readable, format: PageFormat) -> String {
+    let named = match &read.title {
+        Some(title) => format!("\"{title}\""),
+        None => "The page".into(),
+    };
+    let region = match read.region.as_str() {
+        "main" => "its main content",
+        "article" => "its article",
+        "body" => "its body",
+        _ => "the document",
+    };
+    if format == PageFormat::Links {
+        let mut out = format!("[page] {named}: {} links in {region}.", read.links.len());
+        for link in &read.links {
+            if link.text.is_empty() {
+                out.push_str(&format!("\n- {}", link.url));
+            } else {
+                out.push_str(&format!("\n- {}: {}", link.text, link.url));
+            }
+        }
+        return out;
+    }
+    let mut left_out = Vec::new();
+    for (count, what) in [
+        (read.left_out.code, "scripts, styles and embedded media"),
+        (
+            read.left_out.navigation,
+            "navigation and other-language links",
+        ),
+        (read.left_out.forms, "forms and buttons"),
+        (read.left_out.hidden, "hidden elements"),
+    ] {
+        if count > 0 {
+            left_out.push(format!("{count} {what}"));
+        }
+    }
+    let mut head = format!(
+        "[page] {named}, the readable text of {region}: {} characters.",
+        read.text.chars().count()
+    );
+    if !left_out.is_empty() {
+        head.push_str(&format!(" Left out: {}.", left_out.join(", ")));
+    }
+    head.push_str(&format!(
+        " {} links: ask with format \"links\" for them, or \"source\" for the HTML.",
+        read.links.len()
+    ));
+    if read.text.is_empty() {
+        head.push_str(" The page has no readable text there; it may build its content with JavaScript, which browse renders.");
+        return head;
+    }
+    format!("{head}\n\n{}", read.text)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -363,6 +502,41 @@ mod tests {
     use super::*;
 
     use crate::context::shared_ctx;
+
+    fn tool() -> WebFetchTool {
+        WebFetchTool::new(PathBuf::from("/nonexistent/vak-tool-worker"))
+    }
+
+    #[test]
+    fn a_page_says_what_it_left_out() {
+        let read = vak_intake::html::readable(
+            "<title>T</title><body><nav>menu</nav><p>Hello <a href='https://a.example/x'>there</a></p></body>",
+            None,
+        );
+        assert_eq!(
+            render_page(&read, PageFormat::Text),
+            "[page] \"T\", the readable text of its body: 11 characters. Left out: 1 navigation and other-language links. 1 links: ask with format \"links\" for them, or \"source\" for the HTML.\n\nHello there"
+        );
+        assert_eq!(
+            render_page(&read, PageFormat::Links),
+            "[page] \"T\": 1 links in its body.\n- there: https://a.example/x"
+        );
+    }
+
+    #[test]
+    fn format_is_one_of_three() {
+        assert_eq!(
+            PageFormat::from_args(&serde_json::json!({})),
+            Ok(PageFormat::Text)
+        );
+        assert_eq!(
+            PageFormat::from_args(&serde_json::json!({"format": "source"})),
+            Ok(PageFormat::Source)
+        );
+        assert!(PageFormat::from_args(&serde_json::json!({"format": "html"})).is_err());
+        assert!(is_html("text/html; charset=UTF-8"));
+        assert!(!is_html("text/plain"));
+    }
 
     #[test]
     fn scheme_validation_matrix() {
@@ -392,7 +566,7 @@ mod tests {
     #[tokio::test]
     async fn missing_url_parameter_is_a_typed_error() {
         let ctx = shared_ctx(std::path::Path::new("."));
-        let out = WebFetchTool.execute(&serde_json::json!({}), &ctx).await;
+        let out = tool().execute(&serde_json::json!({}), &ctx).await;
         assert!(out.is_error);
         assert!(out.content.contains("missing required parameter"));
     }
@@ -400,7 +574,7 @@ mod tests {
     #[tokio::test]
     async fn unsupported_scheme_is_a_typed_error_before_any_connection() {
         let ctx = shared_ctx(std::path::Path::new("."));
-        let out = WebFetchTool
+        let out = tool()
             .execute(&serde_json::json!({"url": "ftp://example.com/x"}), &ctx)
             .await;
         assert!(out.is_error);
@@ -428,9 +602,7 @@ mod tests {
         ];
         let ctx = shared_ctx(std::path::Path::new("."));
         for (url, class) in cases {
-            let out = WebFetchTool
-                .execute(&serde_json::json!({"url": url}), &ctx)
-                .await;
+            let out = tool().execute(&serde_json::json!({"url": url}), &ctx).await;
             assert!(
                 out.is_error,
                 "expected {url} to be blocked, got: {}",
@@ -566,7 +738,7 @@ mod tests {
     #[ignore = "requires network access"]
     async fn live_fetch_returns_header_line_and_body() {
         let ctx = shared_ctx(std::path::Path::new("."));
-        let out = WebFetchTool
+        let out = tool()
             .execute(&serde_json::json!({"url": "https://example.com"}), &ctx)
             .await;
         assert!(!out.is_error, "live fetch failed: {}", out.content);

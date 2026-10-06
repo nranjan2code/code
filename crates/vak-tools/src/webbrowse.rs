@@ -35,7 +35,17 @@ const TOTAL_TIMEOUT_SECS: u64 = 20;
 const TOTAL_TIMEOUT: Duration = Duration::from_secs(TOTAL_TIMEOUT_SECS);
 const BROWSER_ENV: &str = "VAK_BROWSER";
 
-pub struct WebBrowseTool;
+/// Renders a page; its DOM is read as text in the tool worker at
+/// `worker_exe`.
+pub struct WebBrowseTool {
+    worker_exe: std::path::PathBuf,
+}
+
+impl WebBrowseTool {
+    pub fn new(worker_exe: std::path::PathBuf) -> Self {
+        Self { worker_exe }
+    }
+}
 
 #[cfg(target_os = "macos")]
 const MACOS_BUNDLES: &[&str] = &[
@@ -186,7 +196,7 @@ impl Tool for WebBrowseTool {
     }
 
     fn description(&self) -> &str {
-        "Render a URL in a locally installed headless Chromium-family browser and return the JavaScript-rendered DOM. Applies the same private-range blocklist as webfetch to the requested host, runs with a fresh throwaway profile (never sends credentials), caps runtime at 20s, and returns a header line followed by the DOM. In-browser redirects are not re-screened in v1."
+        "Render a URL in a locally installed headless Chromium-family browser, so content built by JavaScript is there. Applies the same private-range blocklist as webfetch to the requested host, runs with a fresh throwaway profile (never sends credentials), and caps runtime at 20s. Returns a header line, then the rendered page as its readable text, or with format \"links\" its links, or with \"source\" its DOM. In-browser redirects are not re-screened in v1."
     }
 
     fn schema(&self) -> Value {
@@ -194,7 +204,8 @@ impl Tool for WebBrowseTool {
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "Absolute http(s) URL to render"},
-                "wait_ms": {"type": "integer", "description": "Virtual-time budget in milliseconds (default 4000, capped at 10000; values <= 0 fall back to the default)"}
+                "wait_ms": {"type": "integer", "description": "Virtual-time budget in milliseconds (default 4000, capped at 10000; values <= 0 fall back to the default)"},
+                "format": crate::webfetch::PageFormat::schema()
             },
             "required": ["url"]
         })
@@ -211,6 +222,9 @@ impl Tool for WebBrowseTool {
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         if args.get("url").and_then(Value::as_str).is_none() {
             return ToolOutput::error("missing required parameter: url");
+        }
+        if let Err(error) = crate::webfetch::PageFormat::from_args(args) {
+            return ToolOutput::error(error);
         }
         tokio::select! {
             _ = ctx.cancel.cancelled() => ToolOutput::error("browse cancelled"),
@@ -350,7 +364,12 @@ impl WebBrowseTool {
                 format!("(no DOM captured)\nbrowser stderr: {tail}")
             }
         } else {
-            dom
+            let format = crate::webfetch::PageFormat::from_args(args)
+                .unwrap_or(crate::webfetch::PageFormat::Text);
+            match crate::webfetch::page(&self.worker_exe, &dom, url.as_str(), format).await {
+                Ok(page) => page,
+                Err(error) => return ToolOutput::error(format!("{header}: {error}")),
+            }
         };
         ToolOutput::ok(format!("{header}\n{body}"))
     }
@@ -477,7 +496,7 @@ mod tests {
         ];
         let ctx = shared_ctx(std::path::Path::new("."));
         for (url, class) in cases {
-            let out = WebBrowseTool
+            let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
                 .execute(&serde_json::json!({"url": url}), &ctx)
                 .await;
             assert!(out.is_error, "expected {url} to be blocked");
@@ -492,13 +511,15 @@ mod tests {
     #[tokio::test]
     async fn unsupported_scheme_rejected_before_any_spawn() {
         let ctx = shared_ctx(std::path::Path::new("."));
-        let out = WebBrowseTool
+        let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
             .execute(&serde_json::json!({"url": "file:///etc/passwd"}), &ctx)
             .await;
         assert!(out.is_error);
         assert!(out.content.contains("scheme"), "{}", out.content);
 
-        let out = WebBrowseTool.execute(&serde_json::json!({}), &ctx).await;
+        let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
+            .execute(&serde_json::json!({}), &ctx)
+            .await;
         assert!(out.is_error);
         assert!(out.content.contains("missing required parameter"));
     }
@@ -521,7 +542,7 @@ mod tests {
             return;
         }
         let ctx = shared_ctx(std::path::Path::new("."));
-        let out = WebBrowseTool
+        let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
             .execute(
                 &serde_json::json!({"url": "https://example.com/", "wait_ms": 2000}),
                 &ctx,

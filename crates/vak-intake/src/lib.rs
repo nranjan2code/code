@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 pub mod detect;
+pub mod html;
 mod parse;
 mod text;
 

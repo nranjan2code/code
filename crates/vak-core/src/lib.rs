@@ -3880,10 +3880,14 @@ impl Core {
             tools.push(Arc::new(emit_tool));
         }
         if self.effective_web_fetch() {
-            tools.push(Arc::new(vak_tools::WebFetchTool));
+            tools.push(Arc::new(vak_tools::WebFetchTool::new(
+                self.tool_worker_exe(),
+            )));
         }
         if self.effective_browse() {
-            tools.push(Arc::new(vak_tools::WebBrowseTool));
+            tools.push(Arc::new(vak_tools::WebBrowseTool::new(
+                self.tool_worker_exe(),
+            )));
         }
         // Inter-agent messaging, only while an operator has authorized this
         // workspace on the broker (docs/design/25-docker-sandbox.md). The

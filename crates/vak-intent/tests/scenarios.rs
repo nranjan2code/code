@@ -217,6 +217,8 @@ fn act_answer_scenarios() {
         "summarise what happened",
         "describe the output format",
         "describe the data flow",
+        "show me all the",
+        "show three famous lighthouses and their countries as a table card",
     ];
     let expected = Act::Answer;
     for text in cases {
@@ -256,7 +258,6 @@ fn act_locate_scenarios() {
         "search for matches",
         "where is the nearest",
         "list the available",
-        "show me all the",
         "find references to",
         "look up the definition",
         "search for occurrences",

@@ -523,8 +523,12 @@ mod retrieval_tests {
     /// Built-ins answer from their own `Tool::serves`, as the turn does.
     fn tool_serves(name: &str) -> Vec<String> {
         let mut tools = vak_tools::default_tools();
-        tools.push(std::sync::Arc::new(vak_tools::WebFetchTool));
-        tools.push(std::sync::Arc::new(vak_tools::WebBrowseTool));
+        tools.push(std::sync::Arc::new(vak_tools::WebFetchTool::new(
+            Default::default(),
+        )));
+        tools.push(std::sync::Arc::new(vak_tools::WebBrowseTool::new(
+            Default::default(),
+        )));
         tools
             .iter()
             .find(|tool| tool.name() == name)

@@ -1,52 +1,13 @@
-//! Markup to plain text: tags dropped (with what `script` and `style`
-//! hold), character references decoded, whitespace collapsed.
+//! Markup to plain text on one line: what `html::readable` reads, with
+//! whitespace collapsed; character references; bounding.
 
 pub(crate) fn strip_markup(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    let mut rest = raw;
-    while let Some(start) = rest.find('<') {
-        out.push_str(&rest[..start]);
-        let after = &rest[start..];
-        let opens_tag = after[1..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || matches!(c, '/' | '!' | '?'));
-        if !opens_tag {
-            out.push('<');
-            rest = &after[1..];
-            continue;
-        }
-        let Some(end) = after.find('>') else {
-            // A lone `<` is text.
-            out.push_str(after);
-            rest = "";
-            break;
-        };
-        let tag = after[1..end].trim_start_matches('/').to_ascii_lowercase();
-        let name: String = tag
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric())
-            .collect();
-        rest = &after[end + 1..];
-        if !after[1..].starts_with('/') && (name == "script" || name == "style") {
-            let close = format!("</{name}");
-            rest = match rest.to_ascii_lowercase().find(&close) {
-                Some(at) => rest[at..].find('>').map_or("", |gt| &rest[at + gt + 1..]),
-                None => "",
-            };
-        }
-        if matches!(
-            name.as_str(),
-            "p" | "br" | "div" | "li" | "tr" | "h1" | "h2" | "h3"
-        ) {
-            out.push(' ');
-        }
-    }
-    out.push_str(rest);
-    collapse(&decode_references(&out))
+    collapse(&crate::html::readable(raw, None).text)
 }
 
-fn decode_references(raw: &str) -> String {
+/// Character references decoded; one that is unknown or malformed is kept
+/// as written.
+pub(crate) fn decode_references(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
     while let Some(start) = rest.find('&') {
@@ -91,6 +52,20 @@ fn reference(name: &str) -> Option<char> {
         "rsquo" => '’',
         "ldquo" => '“',
         "rdquo" => '”',
+        "laquo" => '«',
+        "raquo" => '»',
+        "middot" => '·',
+        "bull" => '•',
+        "deg" => '°',
+        "copy" => '©',
+        "reg" => '®',
+        "trade" => '™',
+        "times" => '×',
+        "minus" => '−',
+        "euro" => '€',
+        "pound" => '£',
+        "thinsp" => '\u{2009}',
+        "shy" => '\u{00AD}',
         _ => return None,
     })
 }

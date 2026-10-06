@@ -95,7 +95,12 @@ Five bounded, system-authored checks run inside the loop, each with its own
   never a carried-over figure presented as current.
 - **`[empty-step]`**: the response carried neither text nor a tool call (a
   thinking-only completion). One redo, unless a card was already emitted
-  this run — a card-only turn is a complete answer.
+  this run — a card-only turn is a complete answer. A provider can drop a
+  call whose arguments do not parse (Ollama's gemma4 parser logs "tool call
+  parsing failed" and returns nothing), so the nudge says a call may have
+  been lost and asks for the same call again with valid JSON, rather than
+  telling the model it made none — told that, it planned afresh and once
+  fetched a web page instead of re-sending the card it had written.
 - **`[steering-drift]`**: a step ends with no tool call and its final text
   repeats a prior turn's `TurnCard` narration verbatim instead of addressing
   the current directive — domain no longer enters the check. The nudge

@@ -659,8 +659,8 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
 }
 
 /// Fixed clarifier appended once to a non-empty epistemic stance so the
-/// stance's own language (e.g. "avoid unwarranted tool calls") can never be
-/// read as overriding the capability contract's card instruction
+/// stance's own language (e.g. "answer from what you already know") can
+/// never be read as overriding the capability contract's card instruction
 /// (docs/design/68-context-engine.md §6).
 const CARD_STILL_APPLIES: &str =
     "Still call the matching `emit_*_card` tool when a card type fits the answer.";

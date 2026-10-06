@@ -242,6 +242,11 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     // edit receipt for an ordinary answer.
     ("give", Act::Answer, 0.8),
     ("present", Act::Answer, 0.7),
+    // "Show three lighthouses as a table" asks for an answer drawn on
+    // screen, like "present"; read as Locate it set the exploratory
+    // stance ("map the landscape") and the turn went to fetch web pages
+    // for facts it was only asked to show.
+    ("show", Act::Answer, 0.7),
     ("translate", Act::Answer, 0.7),
     ("define", Act::Answer, 0.7),
     ("clarify", Act::Answer, 0.6),
@@ -253,7 +258,6 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("list", Act::Locate, 0.7),
     ("grep", Act::Locate, 1.0),
     ("look", Act::Locate, 0.5),
-    ("show", Act::Locate, 0.7),
     // Browsing reads the web; it does not act on it.
     ("browse", Act::Locate, 0.6),
     // Analyze
