@@ -1,3 +1,5 @@
+// A test's output is for the person running it.
+#![allow(clippy::disallowed_macros)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::path::Path;

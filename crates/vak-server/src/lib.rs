@@ -296,7 +296,10 @@ impl AppState {
         // never user data — it lives under Library/Caches / XDG_CACHE_HOME.
         let store = vak_store::Store::open(&core.cache_home()).ok();
         if store.is_none() {
-            eprintln!("[warn] store open failed, search will use fallback");
+            tracing::warn!(
+                kind = "search_index",
+                "the search index did not open; search uses the fallback"
+            );
         }
         // Token selection lives here so every router flavor (plain,
         // gateway, secured) shares one identity for auth + login.
@@ -696,10 +699,12 @@ impl Approver for HttpApprover {
         let approved = match tokio::time::timeout(HTTP_APPROVAL_TIMEOUT, rx).await {
             Ok(answer) => answer.unwrap_or(false),
             Err(_) => {
-                eprintln!(
-                    "[approvals] gate {} for `{tool}` expired after {}s; denied",
-                    &id[..8.min(id.len())],
-                    HTTP_APPROVAL_TIMEOUT.as_secs()
+                tracing::info!(
+                    kind = "approval",
+                    tool = %tool,
+                    outcome = "timed_out",
+                    duration_ms = HTTP_APPROVAL_TIMEOUT.as_millis() as u64,
+                    "an approval expired; denied"
                 );
                 false
             }
@@ -3010,12 +3015,12 @@ fn secured_router_with_port_and_test_oauth_endpoint(
             .into_root()
             .join("agent-network/policies.json");
         if let Err(error) = broker.load_policies(&policy_file) {
-            eprintln!("[agent-network] policy load failed: {error}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the agent network policy did not load");
         }
         let socket = vak_core::agent_network::AgentNetworkBroker::socket_path();
         tokio::spawn(async move {
             if let Err(error) = broker.serve_unix(&socket).await {
-                eprintln!("[agent-network] broker stopped: {error}");
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the agent network broker stopped");
             }
         });
     }
@@ -3042,12 +3047,15 @@ fn secured_router_with_port_and_test_oauth_endpoint(
         let home = state.core.scope().into_root();
         tokio::spawn(async move {
             match store.rebuild(&home) {
-                Ok(s) if s.files_scanned > 0 => eprintln!(
-                    "[store] indexed {} files / {} entries",
-                    s.files_scanned, s.entries_indexed
+                Ok(s) if s.files_scanned > 0 => tracing::info!(
+                    kind = "search_index",
+                    count = s.entries_indexed,
+                    "the search index was rebuilt"
                 ),
                 Ok(_) => {}
-                Err(e) => eprintln!("[store] startup rebuild failed: {e}"),
+                Err(e) => {
+                    tracing::warn!(kind = "search_index", error_kind = %vak_telemetry::error_kind(&e), "the search index rebuild failed")
+                }
             }
         });
     }
@@ -3172,7 +3180,9 @@ pub async fn serve_with(
     // Initialize the distributed event bus (vak-bus, docs/design/53).
     // Falls back to InMemoryBus when NATS is absent or unreachable.
     init_server_bus(&core).await;
-    eprintln!("Vakyartha server listening on http://{actual_addr}");
+    say(&format!(
+        "Vakyartha server listening on http://{actual_addr}"
+    ));
     // Same source the real token-selection logic above (auth_token, in
     // AppState::new) already checks: `vak_config::get_var` also sees a
     // value that only reached the process through the credential store
@@ -3187,15 +3197,17 @@ pub async fn serve_with(
     // matters most for debugging a stale-cookie/token mismatch after a
     // restart.
     if vak_config::get_var("VAK_GATEWAY_TOKEN").is_some_and(|t| !t.trim().is_empty()) {
-        eprintln!("auth token: (pinned via VAK_GATEWAY_TOKEN)");
+        say("auth token: (pinned via VAK_GATEWAY_TOKEN)");
     } else if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
-        eprintln!("auth token: {token}");
-        eprintln!("clients must send 'Authorization: Bearer {token}' (or ?token=)");
+        say(&format!("auth token: {token}"));
+        say(&format!(
+            "clients must send 'Authorization: Bearer {token}' (or ?token=)"
+        ));
     } else {
-        eprintln!("auth token: generated for this process (suppressed in non-interactive output)");
+        say("auth token: generated for this process (suppressed in non-interactive output)");
     }
     if force_gateway {
-        eprintln!("gateway: ENABLED (--gateway overrides config)");
+        say("gateway: ENABLED (--gateway overrides config)");
     }
     let (draining_tx, draining_rx) = oneshot::channel();
     let server = std::future::IntoFuture::into_future(
@@ -3205,7 +3217,7 @@ pub async fn serve_with(
         )
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
-            eprintln!("\n[shutting down: draining connections]");
+            say("\n[shutting down: draining connections]");
             let _ = draining_tx.send(());
         }),
     );
@@ -3221,7 +3233,7 @@ pub async fn serve_with(
             match tokio::time::timeout(Duration::from_secs(5), &mut server).await {
                 Ok(result) => result,
                 Err(_) => {
-                    eprintln!("[shutdown: closing long-lived connections]");
+                    say("[shutdown: closing long-lived connections]");
                     Ok(())
                 }
             }
@@ -3269,7 +3281,7 @@ fn effective_presentation_library(
             continue;
         }
         if let Err(error) = effective.register(seed) {
-            eprintln!("[presentation] built-in pack {id} unavailable: {error}");
+            tracing::warn!(kind = %id, error_kind = %vak_telemetry::error_kind(&error), "a built-in presentation pack was unavailable");
             continue;
         }
         if accepts.iter().any(|semantic_type| {
@@ -3287,7 +3299,7 @@ fn effective_presentation_library(
             vak_presentation::LibraryScope::Workspace,
             workspace_owner,
         ) {
-            eprintln!("[presentation] built-in pack {id} could not activate: {error}");
+            tracing::warn!(kind = %id, error_kind = %vak_telemetry::error_kind(&error), "a built-in presentation pack did not activate");
         }
     }
     effective
@@ -4100,7 +4112,7 @@ pub(crate) fn register_handle(
     let durable_home = core.scope().into_root();
     let output_objects = core
         .objects()
-        .inspect_err(|error| eprintln!("[warn] execution output will not be persisted: {error}"))
+        .inspect_err(|error| tracing::warn!(error_kind = %vak_telemetry::error_kind(error), "execution output will not be persisted"))
         .ok();
     let latest_intent = session.chain_to_root().iter().rev().find_map(|entry| {
         if let vak_session::EntryPayload::Intent(record) = &entry.payload {
@@ -4778,9 +4790,17 @@ pub(crate) fn mpsc_to_broadcast(tx: events::EventBus) -> mpsc::Sender<AgentEvent
 ///
 /// A missing credential also carries `"kind": "no_ai_service"` (see
 /// `provider_error_body`).
+/// A line for the person who started this server, on its terminal (the
+/// address, the token, shutdown): their output, not telemetry, which never
+/// carries a token.
+fn say(line: &str) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{line}");
+}
+
 fn provider_unavailable(err: vak_core::CoreError) -> axum::response::Response {
     use axum::response::IntoResponse;
-    eprintln!("[run] refused: {err}");
+    tracing::warn!(error_kind = %vak_telemetry::error_kind(&err), "a run was refused: no provider is available");
     (
         StatusCode::SERVICE_UNAVAILABLE,
         axum::Json(provider_error_body(&err)),
@@ -5140,7 +5160,7 @@ async fn run_turn_chain<F, Fut>(
             if let Some(trace) = core.admitted_trace()
                 && let Err(error) = core.runs().settle(trace.run, outcome, None)
             {
-                eprintln!("[runs] {} did not settle: {error}", trace.run);
+                tracing::warn!(run = %trace.run, error_kind = %vak_telemetry::error_kind(&error), "a run did not settle");
             }
         };
         let (ledger, summary, is_error) = settle(&session_id, outcome).await;
@@ -14057,7 +14077,7 @@ fn record_promoted_files(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(session) = guard.as_mut() else {
-        eprintln!("[review] session {session_id} is running; promoted files not linked");
+        tracing::info!(session = %session_id, "a session is running; promoted files were not linked");
         return;
     };
     // The drafting call's turn, from the ledger entry that holds the call.
@@ -14090,7 +14110,7 @@ fn record_promoted_files(
         if let Err(error) =
             session.append_in_turn(vak_session::EntryPayload::CallEffect(record), turn.clone())
         {
-            eprintln!("[review] could not record a promoted file: {error}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a promoted file was not recorded");
         }
     }
 }
@@ -18515,7 +18535,7 @@ async fn settle_request_runs(
                     }
                 };
                 if let Err(error) = runs.settle(run, outcome, None) {
-                    eprintln!("[runs] {run} did not settle: {error}");
+                    tracing::warn!(run = %run, error_kind = %vak_telemetry::error_kind(&error), "a run did not settle");
                 }
             }
             response
@@ -18559,10 +18579,12 @@ pub(crate) fn request_trace_for(
             if !in_request
                 && let Err(error) = runs.settle(run, vak_session::runs::RunOutcome::Completed, None)
             {
-                eprintln!("[runs] {run} did not settle: {error}");
+                tracing::warn!(run = %run, error_kind = %vak_telemetry::error_kind(&error), "a run did not settle");
             }
         }
-        Err(error) => eprintln!("[runs] {} was not opened: {error}", trace.run),
+        Err(error) => {
+            tracing::warn!(run = %trace.run, error_kind = %vak_telemetry::error_kind(&error), "a run was not opened")
+        }
     }
     trace
 }
@@ -19170,14 +19192,15 @@ fn background_work_allowed(state: &AppState) -> bool {
         Err(vak_core::CoreError::Session(vak_session::SessionError::Fenced { .. })) => {
             static REPORTED: std::sync::Once = std::sync::Once::new();
             REPORTED.call_once(|| {
-                eprintln!(
-                    "[fence] the data was restored after this server started; background work stopped, restart the server"
+                tracing::error!(
+                    kind = "fenced",
+                    "the data was restored after this server started; background work stopped, restart the server"
                 );
             });
             false
         }
         Err(error) => {
-            eprintln!("[fence] liveness not renewed: {error}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "this process's liveness was not renewed");
             !vak_session::fence::is_fenced()
         }
     }
@@ -19191,10 +19214,12 @@ fn sweep_abandoned_runs(state: &AppState) {
         Ok(abandoned) => {
             automations::note_abandoned(state, &abandoned);
             for run in abandoned {
-                eprintln!("[runs] {run} was abandoned by a process that stopped");
+                tracing::warn!(run = %run, "a run was abandoned by a process that stopped");
             }
         }
-        Err(error) => eprintln!("[runs] abandoned-run sweep failed: {error}"),
+        Err(error) => {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the abandoned-run sweep failed")
+        }
     }
 }
 
@@ -19271,8 +19296,9 @@ pub fn start_scheduler(state: &AppState) {
                         None,
                     );
                 }
-                for id in report.resumed.iter().chain(report.satisfied.iter()) {
-                    eprintln!("[commit] {id} resumed");
+                let resumed = report.resumed.len() + report.satisfied.len();
+                if resumed > 0 {
+                    tracing::info!(kind = "commitment", count = resumed, "commitments resumed");
                 }
             }
         });
@@ -19315,7 +19341,7 @@ pub async fn check_budget_alert(state: &AppState, session_id: &str) {
         return; // this level already alerted inside the current day window
     }
     if let Err(e) = vak_core::finops::record_alert(&home, level, session_id) {
-        eprintln!("[finops] budget-alert ledger write failed: {e}");
+        tracing::warn!(error_kind = %vak_telemetry::error_kind(&e), "a budget alert was not recorded");
     }
     let text = format!(
         "budget alert [{}]: ${:.2} of ${:.2} daily cap",
@@ -23375,6 +23401,7 @@ mod sandbox_promotion_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[allow(clippy::disallowed_macros)]
     async fn human_feedback_produces_new_candidate_without_workspace_write() {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();

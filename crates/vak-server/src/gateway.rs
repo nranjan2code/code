@@ -2407,7 +2407,7 @@ impl vak_agent::Approver for GatewayApprover {
         if let Err(error) = delivered {
             // Nobody was told, so nobody will answer: end the worker's wait
             // now rather than leaving it blocked on a question no one saw.
-            eprintln!("[gateway] question announcement failed: {error}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a worker question was not announced");
             self.state.forget_question(&question.id);
             board.questions().close(&question.id);
         }
@@ -2461,7 +2461,7 @@ impl vak_agent::Approver for GatewayApprover {
         )
         .await
         {
-            eprintln!("[gateway] approval announcement failed: {e}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&e), "an approval was not announced; denied");
             let _ = self.state.resolve_gate(false, Some(&id));
             return false;
         }
@@ -2476,7 +2476,11 @@ impl vak_agent::Approver for GatewayApprover {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .remove(&id);
-                eprintln!("[gateway] approval {short} timed out; denied");
+                tracing::info!(
+                    kind = "approval",
+                    outcome = "timed_out",
+                    "a forwarded approval timed out; denied"
+                );
                 false
             }
         }
@@ -2632,7 +2636,11 @@ async fn gateway_inbound(
                 // A lighter, non-security-event log line: this is expected
                 // repeat traffic from an already-reviewable key, not a
                 // fresh incident to append to the audit trail each time.
-                eprintln!("[gateway] chat '{key}' still pending operator review");
+                tracing::info!(
+                    kind = "allowlist",
+                    status = "pending",
+                    "a chat is still pending the owner's review"
+                );
                 return (
                     StatusCode::FORBIDDEN,
                     Json(serde_json::json!({
@@ -3588,7 +3596,7 @@ async fn execute_turn_chain(
                 .runs()
                 .skip_open(trace.run, "joined the conversation's running turn")
         {
-            eprintln!("[runs] {} did not settle: {error}", trace.run);
+            tracing::warn!(run = %trace.run, error_kind = %vak_telemetry::error_kind(&error), "a run did not settle");
         }
         return;
     };
@@ -3616,14 +3624,11 @@ async fn execute_turn_chain(
                 )
                 .is_ok()
         {
-            eprintln!(
-                "vak gateway: WARNING approvals=\"forward\" is configured while the \
-                 effective permission_mode is FullAccess — bash/read/write resolve to \
-                 Allow, so no Ask gate is raised and the forward approver is never \
-                 invoked (the human-in-the-loop is silently bypassed for Allow-class \
-                 tools). Set [permissions] permission_mode = \"workspace-write\" on this \
-                 workspace to make forward mode effective, or drop the forward \
-                 approval configuration."
+            tracing::warn!(
+                kind = "approvals_forward",
+                "forwarded approvals are configured but FullAccess raises no Ask gate, \
+                 so the forward approver is never asked; set permission_mode = \
+                 workspace-write on this workspace, or drop the forward configuration"
             );
         }
         // Unattended policy: deny by default, forward to the approver
@@ -3676,7 +3681,11 @@ async fn execute_turn_chain(
                         .await;
                         match pass {
                             Ok(outcome) => log_gateway_reflection(outcome),
-                            Err(_) => eprintln!("[gateway] reflection skipped: timeout"),
+                            Err(_) => tracing::info!(
+                                kind = "reflection",
+                                outcome = "timed_out",
+                                "reflection was skipped"
+                            ),
                         }
                     }
                     (Some(log), short_summary(&text), err)
@@ -4022,14 +4031,25 @@ fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
             skills_proposed,
         } => {
             if notes_added > 0 || skills_proposed {
-                eprintln!(
-                    "[gateway] reflection: {notes_added} note(s) persisted, skill queued: {skills_proposed}"
+                tracing::info!(
+                    kind = "reflection",
+                    count = notes_added,
+                    outcome = if skills_proposed {
+                        "skill_queued"
+                    } else {
+                        "notes_only"
+                    },
+                    "reflection persisted notes"
                 );
             }
         }
         R::Skipped { reason } => match reason {
             "already-in-flight" | "reflection-disabled" | "memory-writes-disabled" => {}
-            other => eprintln!("[gateway] reflection skipped: {other}"),
+            other => tracing::info!(
+                kind = "reflection",
+                outcome = other,
+                "reflection was skipped"
+            ),
         },
     }
 }

@@ -1,0 +1,19 @@
+[package]
+name = "vak-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Content-free structured telemetry: JSON log lines with trace fields and an allowlist of field names"
+
+[dependencies]
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+vak-config = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

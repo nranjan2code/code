@@ -1,4 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// An app's terminal output is the person's.
+#![allow(clippy::disallowed_macros)]
 
 //! vak-desktop: native shell around the same HTTP+SSE contract every other
 //! surface (tui/exec/serve) speaks. The webview gets a loopback bearer token
@@ -1170,6 +1172,7 @@ fn main() {
     // the user environment synchronously so its service status and admin
     // links use a configured VAK_PORT from the first paint onward.
     vak_config::load_env_file(&vak_home().join(".env"));
+    vak_telemetry::init("desktop");
     let internal = std::env::args_os().nth(1);
     #[cfg(target_os = "linux")]
     {

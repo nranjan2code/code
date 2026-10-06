@@ -1,3 +1,5 @@
+// A build script talks to cargo on stdout.
+#![allow(clippy::disallowed_macros)]
 //! Keeps the build stamp honest, and composes the version string.
 //!
 //! Two jobs, both about the same fact — which commit this binary is.

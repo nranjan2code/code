@@ -272,7 +272,11 @@ pub async fn persistent_worker_main() -> i32 {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            eprintln!("preview spawn failed: {error}");
+            // This helper's stderr is the preview's log, read by a person.
+            let _ = std::io::Write::write_fmt(
+                &mut std::io::stderr(),
+                format_args!("preview spawn failed: {error}\n"),
+            );
             return 125;
         }
     };
@@ -283,7 +287,10 @@ pub async fn persistent_worker_main() -> i32 {
             .unwrap_or(125)
             .into(),
         Err(error) => {
-            eprintln!("preview wait failed: {error}");
+            let _ = std::io::Write::write_fmt(
+                &mut std::io::stderr(),
+                format_args!("preview wait failed: {error}\n"),
+            );
             125
         }
     }

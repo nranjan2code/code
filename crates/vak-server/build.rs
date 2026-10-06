@@ -1,3 +1,5 @@
+// A build script talks to cargo on stdout.
+#![allow(clippy::disallowed_macros)]
 //! Tells Cargo the embedded admin SPA is a build input, and refuses to
 //! compile against a bundle that no longer matches its own source.
 //!

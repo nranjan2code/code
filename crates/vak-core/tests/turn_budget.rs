@@ -1,3 +1,5 @@
+// A test's output is for the person running it.
+#![allow(clippy::disallowed_macros)]
 //! Exit tests of M3b slice 2 (docs/plans/data-architecture-plan.md):
 //! a turn grows its ledger by at most 20 KB mean and costs at most six
 //! record syncs for its ledger and side ledgers, plus the two its run

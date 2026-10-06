@@ -5,6 +5,8 @@
 //! real vak server over HTTP/SSE. Every rendered value — health, sessions,
 //! model routes, MCP inventory, approval state, telemetry — is fetched
 //! live from the server and kept fresh by background SSE watchers.
+// An app's terminal output is the person's.
+#![allow(clippy::disallowed_macros)]
 
 pub mod api;
 pub mod app;

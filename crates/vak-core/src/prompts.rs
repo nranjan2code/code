@@ -821,9 +821,9 @@ pub fn read_layer(dir: &Path) -> LayerContent {
         }
         match std::fs::read(&path) {
             Ok(bytes) => content.set_block(block, Some(&String::from_utf8_lossy(&bytes))),
-            Err(error) => eprintln!(
-                "warning: prompt file {} could not be read and was not applied: {error}",
-                path.display()
+            Err(error) => tracing::warn!(
+                error_kind = %vak_telemetry::error_kind(&error),
+                "a prompt file could not be read and was not applied"
             ),
         }
     }

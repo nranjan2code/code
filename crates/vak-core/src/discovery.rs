@@ -455,21 +455,21 @@ fn settle(
     result: Result<Vec<String>, vak_llm::LlmError>,
     now: Instant,
 ) {
-    let (provider, credential_id) = key;
-    let credential = credential_id.get(..8).unwrap_or(credential_id);
+    let provider = &key.0;
     match result {
         Ok(models) => {
             if catalogues.record_success(key, models, now) {
-                eprintln!("[discovery] {provider} ({credential}): listing models again");
+                tracing::info!(provider = %provider, "listing models again");
             }
         }
         Err(error) => {
             let (wait, started) = catalogues.record_failure(key, &error.to_string(), now);
             if started {
-                eprintln!(
-                    "[discovery] {provider} ({credential}): could not list models: {error}; \
-                     retrying in {}s",
-                    wait.as_secs()
+                tracing::warn!(
+                    provider = %provider,
+                    error_kind = %vak_telemetry::error_kind(&error),
+                    duration_ms = wait.as_millis() as u64,
+                    "could not list models; retrying"
                 );
             }
         }

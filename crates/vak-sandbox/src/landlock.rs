@@ -5,6 +5,8 @@
 //! and only then runs the command as a child, so restrictions are inherited.
 //! Fail-closed: unsupported kernels surface an error instead of silently
 //! running unrestricted.
+// This helper process's stderr is its parent's to read.
+#![allow(clippy::disallowed_macros)]
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

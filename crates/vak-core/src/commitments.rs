@@ -265,7 +265,7 @@ pub fn begin_episodes(
                 strand_id: Some(planned.strand_id.clone()),
             },
         )) {
-            eprintln!("[commit] could not start an episode: {error}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a commitment episode did not start");
             continue;
         }
         handles.push(EpisodeHandle {
@@ -316,7 +316,7 @@ fn open_for_strand(
     match ledger.open_commitment(spec) {
         Ok(id) => Some(id),
         Err(error) => {
-            eprintln!("[commit] could not open a commitment: {error}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a commitment did not open");
             None
         }
     }
@@ -477,7 +477,7 @@ pub fn end_episode(
             spend_usd,
         },
     )) {
-        eprintln!("[commit] could not close the episode: {error}");
+        tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a commitment episode did not close");
     }
 }
 

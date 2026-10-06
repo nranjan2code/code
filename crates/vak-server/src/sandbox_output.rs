@@ -103,7 +103,7 @@ impl OutputSpool {
                 .ok(),
             ),
             Err(error) => {
-                eprintln!("[warn] {execution_id} {stream} output not stored: {error}")
+                tracing::warn!(call = %execution_id, stream = %stream, error_kind = %vak_telemetry::error_kind(&error), "execution output was not stored")
             }
         }
     }

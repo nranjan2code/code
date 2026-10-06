@@ -448,7 +448,7 @@ pub(crate) async fn open_workspace(
     if body.trust == Some(true)
         && let Err(e) = vak_core::trust::record(&path)
     {
-        eprintln!("warning: could not record the trust decision: {e}");
+        tracing::warn!(error_kind = %vak_telemetry::error_kind(&e), "a trust decision was not recorded");
     }
     if let Err(e) = vak_config::ensure_project_config(&path) {
         return (
@@ -475,7 +475,7 @@ pub(crate) async fn open_workspace(
     // separate "restore" verb, because the action a person takes is to
     // open it again.
     if let Err(e) = vak_core::workspaces::remember(&path) {
-        eprintln!("warning: could not record the workspace: {e}");
+        tracing::warn!(error_kind = %vak_telemetry::error_kind(&e), "an opened workspace was not recorded");
     }
     *state
         .active_core

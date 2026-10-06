@@ -1373,10 +1373,9 @@ fn note_workspace_trust(state: &AppState, workspace: Option<&std::path::Path>) {
                 None,
             );
         }
-        Err(error) => eprintln!(
-            "[admin] could not record trust for {}: {error}",
-            workspace.display()
-        ),
+        Err(error) => {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a trust decision was not recorded")
+        }
     }
 }
 

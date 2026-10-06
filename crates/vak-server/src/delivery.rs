@@ -353,9 +353,10 @@ impl DeliveryRuntime {
             match worker.render(job).await {
                 Ok(packet) => return Ok(packet),
                 Err(error) => {
-                    eprintln!(
-                        "[delivery] isolated renderer unavailable for {}: {error}; using safe fallback",
-                        job.job_id
+                    tracing::warn!(
+                        effect = %job.job_id,
+                        error_kind = %vak_telemetry::error_kind(&error),
+                        "the isolated renderer was unavailable; used the safe fallback"
                     );
                 }
             }
@@ -388,7 +389,7 @@ impl DeliveryRuntime {
                     effects.accepted(id, receipt)
                 };
                 if let Err(error) = recorded {
-                    eprintln!("[delivery] effect {id} was sent but not recorded: {error}");
+                    tracing::error!(effect = %id, error_kind = %vak_telemetry::error_kind(&error), "an effect was sent but not recorded");
                 }
                 Ok(packet)
             }
@@ -399,7 +400,7 @@ impl DeliveryRuntime {
                     Landed::Unknown => effects.unknown(id, &failure.reason),
                 };
                 if let Err(error) = recorded {
-                    eprintln!("[delivery] effect {id} outcome not recorded: {error}");
+                    tracing::error!(effect = %id, error_kind = %vak_telemetry::error_kind(&error), "an effect's outcome was not recorded");
                 }
                 Err(failure.reason)
             }
@@ -569,7 +570,11 @@ fn apply_preferences(core: &Core, mut profile: DeliveryProfile) -> DeliveryProfi
         core.project_config_trusted(),
     );
     for warning in loaded.warnings {
-        eprintln!("[delivery] {warning}");
+        let _ = warning;
+        tracing::warn!(
+            kind = "output_preferences",
+            "an output preference was not applied"
+        );
     }
     if let Some(preference) = loaded.channels.get(&profile.surface) {
         apply_preference(&mut profile, preference, &loaded.registry);
@@ -859,24 +864,25 @@ pub(crate) fn start_replay(core: &Core) {
             let effects = core.effects();
             let now = chrono::Utc::now();
             if let Err(error) = effects.recover(now) {
-                eprintln!("[delivery] effect recovery failed: {error}");
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "effect recovery failed");
                 continue;
             }
             // A mail or calendar change is approved for five minutes; one
             // its request never sent is failed, not left waiting.
             if let Err(error) = effects.fail_unsent(now, chrono::Duration::minutes(5)) {
-                eprintln!("[delivery] unsent approved changes not settled: {error}");
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "unsent approved changes were not settled");
             }
             let waiting = match effects.dispatchable() {
                 Ok(waiting) => waiting,
                 Err(error) => {
-                    eprintln!("[delivery] effect scan failed: {error}");
+                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the effect scan failed");
                     continue;
                 }
             };
             for record in waiting.into_iter().take(100) {
                 if let Err(error) = runtime.dispatch(&core, record.id, Dispatch::Fresh).await {
-                    eprintln!("[delivery] effect {} not sent: {error}", record.id);
+                    let _ = error;
+                    tracing::warn!(effect = %record.id, "an effect was not sent");
                 }
             }
         }

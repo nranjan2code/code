@@ -146,7 +146,7 @@ impl EventHub {
                     .emit_traced(&event, session_id.as_deref(), trace.as_ref())
                     .await
                 {
-                    eprintln!("vak-server: ServerBus emit failed: {e}");
+                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&e), "a bus event was not emitted");
                 }
             });
         }

@@ -9,6 +9,7 @@ name = "vak"
 path = "src/main.rs"
 
 [dependencies]
+vak-telemetry = { workspace = true }
 percent-encoding = "2"
 vak-agent = { workspace = true }
 # `Approver` is an async trait; the terminal question prompt implements it.

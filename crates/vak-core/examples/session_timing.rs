@@ -1,4 +1,6 @@
 //! Content-free timing inspection through the trash-aware session reader.
+// A test's output is for the person running it.
+#![allow(clippy::disallowed_macros)]
 use vak_session::EntryPayload;
 
 #[tokio::main]

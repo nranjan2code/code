@@ -20,7 +20,8 @@
 //! (`ensure_gateway_token`, crates/vak/src/install/mod.rs) — see
 //! `open_admin_console` for why that has to be a query param and not a
 //! URL fragment.
-
+// An app's terminal output is the person's.
+#![allow(clippy::disallowed_macros)]
 // GUI bootstrap: every setup call here is infallible in practice, and a
 // controller that cannot start should be loud about it.
 #![allow(clippy::expect_used)]

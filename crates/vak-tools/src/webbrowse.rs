@@ -514,6 +514,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires a locally installed Chromium-family browser and network access"]
+    #[allow(clippy::disallowed_macros)]
     async fn live_browse_returns_header_line_and_dom() {
         if discover_browser().is_err() {
             eprintln!("skipping: no local browser found");

@@ -1,3 +1,5 @@
+// A build script talks to cargo on stdout.
+#![allow(clippy::disallowed_macros)]
 //! Tauri codegen, plus the same stale-bundle guard `vak-server` uses.
 //!
 //! The client lives in `crates/vak-client-ui` and builds twice — `dist/`

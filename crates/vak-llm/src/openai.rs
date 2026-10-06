@@ -469,18 +469,11 @@ impl Accumulator {
             return Ok(None);
         };
 
-        #[allow(clippy::dbg_macro)]
-        if std::env::var_os("VAK_LLM_DEBUG").is_some() {
-            eprintln!(
-                "[vak-llm] frame finish={:?} delta_keys={:?} content_len={}",
-                choice.get("finish_reason"),
-                choice.get("delta").map(|d| d
-                    .as_object()
-                    .map(|o| o.keys().cloned().collect::<Vec<_>>())
-                    .unwrap_or_default()),
-                self.message.content.len()
-            );
-        }
+        tracing::trace!(
+            outcome = ?choice.get("finish_reason").and_then(|f| f.as_str()),
+            count = self.message.content.len(),
+            "provider stream frame"
+        );
         if let Some(finish) = choice.get("finish_reason").and_then(|f| f.as_str()) {
             // Accumulated tool_use blocks are ground truth: some compat
             // endpoints close tool-call turns with finish reasons outside

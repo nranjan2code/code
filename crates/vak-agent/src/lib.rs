@@ -3574,7 +3574,7 @@ impl Agent {
                         effect,
                     })
                 {
-                    eprintln!("[agent] could not record a call effect: {error}");
+                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a call effect was not recorded");
                 }
             }
         }

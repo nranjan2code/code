@@ -186,7 +186,7 @@ impl Executor {
             FlowOutcome::Aborted => vak_session::runs::RunOutcome::Cancelled,
         };
         if let Err(error) = run.runs.settle(run.trace.run, settled, None) {
-            eprintln!("[runs] {} did not settle: {error}", run.trace.run);
+            tracing::warn!(run = %run.trace.run, error_kind = %vak_telemetry::error_kind(&error), "a flow run did not settle");
         }
         outcome
     }

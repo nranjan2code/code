@@ -324,8 +324,17 @@ git repository works in a copy environment
 (`vak_sandbox::copy::CopyEnvironment`, the run's
 `environments/<run>/`, copied within fixed ignore rules and size caps),
 and what it changed, added and deleted comes back as a candidate on the
-run's session for the one Review path; the refusal is gone. No session
-starts a later step unasked.
+run's session for the one Review path; the refusal is gone. M2 is done
+too (2026-10-06; see its paragraph above). M5a is done (2026-10-06):
+library code reports through `tracing`, never `eprintln!` (a root
+`clippy.toml` bans it, a source test checks it, and messages are
+literals); each process installs `vak_telemetry::init(<service>)`, which
+writes content-free JSON lines (allowlisted field names only, the run's
+`trace_id` lifted to the top, span closes with durations) to
+`<logs>/vak-<service>.jsonl`, rotated by size. M5b (the run › turn ›
+step span tree, the Traces & logs screen and Run waterfall, service log
+readers, bus stream ages) is next. No session starts a later step
+unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -440,7 +449,12 @@ starts a later step unasked.
   real kind.
 - Give new records full UUIDv7 ids, never clock-derived or truncated ones.
 - Record an actor where a contribution has one; never infer authorship.
-- Keep conversation content out of logs.
+- Keep conversation content out of logs: report through `tracing` with a
+  literal message and allowlisted fields (`vak_telemetry::ALLOWED_FIELDS`:
+  ids, kinds, sizes, digests, durations, outcomes), and an error as its
+  `error_kind`, never its text. Paths, URLs, file names, titles and
+  prompts are content. Only the CLI and the apps write to a person's
+  stderr.
 - Read a session for a person or the model through a path that honours the
   trash (`open_historical_session`, `Core::open_session`, or
   `vak_core::trash`), never by opening its ledger directly. A ledger is a
@@ -1493,6 +1507,12 @@ crates/vak-session   append-only ledger trees on record segments, tenant
                      dependency-free cross-session search w/ mtime-indexed
                      cache + cross-project search_all (docs/design/
                      23-memory.md)
+crates/vak-telemetry content-free structured telemetry (plan M5): the
+                     process subscriber (`init(<service>)`), JSON lines with
+                     allowlisted field names and the run's trace id, span
+                     closes with durations, size-rotated
+                     `<logs>/vak-<service>.jsonl`, and the source tests that
+                     keep `eprintln!` out of library code and messages literal
 crates/vak-store     SQLite FTS5 rebuildable index over session ledgers:
                      BM25 full-text search (all content blocks incl. tool
                      calls/results/thinking), structured metadata queries,

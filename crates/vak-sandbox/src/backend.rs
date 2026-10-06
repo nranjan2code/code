@@ -413,6 +413,7 @@ mod tests {
     /// to listen, the listening variant accepts, and neither can connect out.
     #[cfg(target_os = "macos")]
     #[test]
+    #[allow(clippy::disallowed_macros)]
     fn only_the_listening_variant_listens_and_neither_connects_out() {
         let python = |code: &str| format!("python3 -c '{code}'");
         let dir = tempfile::tempdir().expect("workspace");

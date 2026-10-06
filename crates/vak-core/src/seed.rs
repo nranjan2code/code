@@ -161,9 +161,9 @@ fn cleanup_retired_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>
     let store = vak_plugin::PluginStore::new(root);
     let flagged = store.retired_plugins()?;
     for (name, retired_tools) in &flagged {
-        eprintln!(
-            "removing retired plugin '{name}' (references retired tools: {})",
-            retired_tools.join(", ")
+        tracing::info!(
+            count = retired_tools.len(),
+            "removing a plugin that references retired tools"
         );
         store
             .remove(name)

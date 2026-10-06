@@ -79,6 +79,13 @@ fn telegram_http_error(operation: &str, error: &reqwest::Error) -> String {
     }
 }
 
+/// Exponential standby backoff while a rival owns the bot: doubling,
+/// capped at 30s. Pure so the schedule is testable.
+pub fn standby_backoff_secs(attempt: u32) -> u64 {
+    let exp = 1u64 << attempt.min(5);
+    exp.min(30)
+}
+
 pub struct TelegramBridge {
     /// Bot API base, e.g. `https://api.telegram.org`. Overridable for
     /// self-hosted relays and tests via `TELEGRAM_API_BASE`.
@@ -128,26 +135,6 @@ pub fn classify_poll_error(err: &str) -> PollBlock {
     } else {
         PollBlock::Transient
     }
-}
-
-/// Exponential standby backoff while a rival owns the bot: doubling,
-/// capped at 30s. Pure so the schedule is testable.
-pub fn standby_backoff_secs(attempt: u32) -> u64 {
-    let exp = 1u64 << attempt.min(5);
-    exp.min(30)
-}
-
-fn hostname_fallback() -> String {
-    std::process::Command::new("hostname")
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown-host".into())
-}
-
-fn identity() -> String {
-    format!("{}[pid {}]", hostname_fallback(), std::process::id())
 }
 
 /// The one stream a Telegram bot reads: its updates.
@@ -268,7 +255,7 @@ impl TelegramBridge {
             self.cursor.advance(UPDATES_STREAM, &next.to_string())?;
             if let Some(cb) = &u.callback {
                 if let Err(e) = self.handle_callback(cb).await {
-                    eprintln!("[telegram] callback handling failed: {e}");
+                    tracing::warn!(surface = "telegram", error_kind = %vak_telemetry::error_kind(&e), "a button tap was not handled");
                 }
                 continue;
             }
@@ -286,7 +273,9 @@ impl TelegramBridge {
                     Ok((mime, data)) => attachments.push(serde_json::json!({
                         "mime": mime, "data": data, "kind": "image"
                     })),
-                    Err(e) => eprintln!("[telegram] photo download failed: {e}"),
+                    Err(e) => {
+                        tracing::warn!(surface = "telegram", kind = "photo", error_kind = %vak_telemetry::error_kind(&e), "an attachment did not download")
+                    }
                 }
             }
             if let Some(doc) = &u.document {
@@ -305,7 +294,9 @@ impl TelegramBridge {
                             Self::DOCUMENT_MAX_BYTES / 1024
                         );
                     }
-                    Err(e) => eprintln!("[telegram] document download failed: {e}"),
+                    Err(e) => {
+                        tracing::warn!(surface = "telegram", kind = "document", error_kind = %vak_telemetry::error_kind(&e), "an attachment did not download")
+                    }
                 }
             }
             if let Some(voice) = &u.voice {
@@ -319,7 +310,9 @@ impl TelegramBridge {
                             "filename": voice.file_name,
                         }));
                     }
-                    Err(e) => eprintln!("[telegram] voice download failed: {e}"),
+                    Err(e) => {
+                        tracing::warn!(surface = "telegram", kind = "voice", error_kind = %vak_telemetry::error_kind(&e), "an attachment did not download")
+                    }
                 }
             }
             let reply = self
@@ -343,7 +336,7 @@ impl TelegramBridge {
                 .map_err(|error| format!("send to {}: {error}", u.chat_id))?;
             for file in &reply.files {
                 if let Err(error) = self.send_document(u.chat_id, file).await {
-                    eprintln!("[telegram] {} not sent: {error}", file.name);
+                    tracing::warn!(surface = "telegram", error_kind = %vak_telemetry::error_kind(&error), "a file was not sent back");
                     let notice = GatewayReply {
                         text: format!("{} could not be sent here: {error}", file.name),
                         delivery: None,
@@ -363,7 +356,7 @@ impl TelegramBridge {
                     .send_voice(u.chat_id, &reply.text, reply.session_id.as_deref())
                     .await
             {
-                eprintln!("[telegram] voice reply unavailable: {error}");
+                tracing::info!(surface = "telegram", error_kind = %vak_telemetry::error_kind(&error), "a voice reply was unavailable");
             }
         }
         Ok(next)
@@ -398,11 +391,15 @@ impl TelegramBridge {
                 }
             }
             Ok(r) => {
-                eprintln!("[telegram] callback resolve returned {}", r.status());
+                tracing::warn!(
+                    surface = "telegram",
+                    code = r.status().as_u16(),
+                    "a button tap was refused by the gateway"
+                );
                 "Could not resolve (see server logs)"
             }
             Err(e) => {
-                eprintln!("[telegram] callback resolve failed: {e}");
+                tracing::warn!(surface = "telegram", error_kind = %vak_telemetry::error_kind(&e), "a button tap did not reach the gateway");
                 "Could not reach gateway"
             }
         };
@@ -709,7 +706,11 @@ impl TelegramBridge {
                     // Converter edge-case guard: resend that chunk as plain
                     // text so a formatting bug degrades to ugly, not lost.
                     if parse_html && status.as_u16() == 400 {
-                        eprintln!("[telegram] HTML rejected ({status}); retrying as plain text");
+                        tracing::info!(
+                            surface = "telegram",
+                            code = status.as_u16(),
+                            "formatted text was refused; retrying as plain text"
+                        );
                         let fallback = serde_json::json!({
                             "chat_id": chat_id,
                             "text": crate::channels::strip_tags(&chunk),
@@ -928,9 +929,10 @@ impl TelegramBridge {
     /// Hot-standby: while a rival owns the bot, wait quietly and take over
     /// the moment it disappears. Logs entry once, then every 10th attempt.
     async fn await_ownership(&self) {
-        let id = identity();
-        eprintln!(
-            "[telegram] bot token is owned by ANOTHER getUpdates consumer;\n[telegram] {id} standing by as hot standby (auto-takeover on rival exit)"
+        tracing::warn!(
+            surface = "telegram",
+            process = %vak_session::fence::process(),
+            "another process reads this bot's updates; standing by to take over when it stops"
         );
         let mut attempt: u32 = 0;
         loop {
@@ -941,13 +943,15 @@ impl TelegramBridge {
             attempt += 1;
             match self.probe_ownership().await {
                 Ok(()) => {
-                    eprintln!("[telegram] {id} took over polling (rival gone)");
+                    tracing::info!(surface = "telegram", "took over reading this bot's updates");
                     return;
                 }
                 Err(PollBlock::Conflict) => {
                     if attempt.is_multiple_of(10) {
-                        eprintln!(
-                            "[telegram] still owned elsewhere ({attempt} probes); standing by"
+                        tracing::info!(
+                            surface = "telegram",
+                            count = attempt,
+                            "this bot's updates are still read elsewhere; standing by"
                         );
                     }
                 }
@@ -980,16 +984,16 @@ impl TelegramBridge {
                 match watch.check() {
                     super::CredentialState::Unchanged => {}
                     super::CredentialState::Rotated => {
-                        eprintln!(
-                            "[telegram] credential rotated; exiting so the service manager \
-                             restarts this bridge with the new one"
+                        tracing::warn!(
+                            surface = "telegram",
+                            "the bot's token changed; exiting so the service manager restarts this bridge with it"
                         );
                         return Ok(());
                     }
                     super::CredentialState::Revoked => {
-                        eprintln!(
-                            "[telegram] credential revoked; this bridge is stopping and will \
-                             not poll again until a token is set"
+                        tracing::warn!(
+                            surface = "telegram",
+                            "the bot's token was removed; this bridge stops until one is set"
                         );
                         return Ok(());
                     }
@@ -1004,10 +1008,7 @@ impl TelegramBridge {
                         PollBlock::Conflict => {
                             // A rival appeared mid-run: hand over gracefully
                             // and stand by for auto-takeover.
-                            eprintln!(
-                                "[telegram] lost ownership to another getUpdates consumer; entering hot standby ({})",
-                                identity()
-                            );
+                            tracing::warn!(surface = "telegram", process = %vak_session::fence::process(), "another process took over this bot's updates; standing by");
                             self.await_ownership().await;
                         }
                         PollBlock::Transient => {
@@ -1018,7 +1019,7 @@ impl TelegramBridge {
                             // resets on first success. The offset cursor
                             // makes every recovery gap-free.
                             if failures == 1 || failures.is_multiple_of(10) {
-                                eprintln!("[telegram] poll failed ({failures} consecutive): {e}");
+                                tracing::warn!(surface = "telegram", count = failures, error_kind = %vak_telemetry::error_kind(&e), "polling failed");
                             }
                             tokio::time::sleep(std::time::Duration::from_secs(
                                 standby_backoff_secs(failures),

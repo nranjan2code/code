@@ -89,7 +89,7 @@ impl PollCursor {
     pub fn resync(&self, stream: &str, position: &str, reason: &str) -> Result<(), String> {
         match self.cursors.resync(&self.owner, stream, position, reason) {
             Ok(true) => {
-                eprintln!("[{}] {stream} resynced: {reason}", self.owner);
+                tracing::warn!(owner = %self.owner, stream = %stream, "a cursor resynced past a gap");
                 Ok(())
             }
             Ok(false) => Err(CURSOR_LOST.into()),

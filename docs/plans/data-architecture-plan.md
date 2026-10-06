@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5a is done (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1013,7 +1013,24 @@ invariant 30) and is committed green before the next starts.
 | M4.7 | **M4.7a done 2026-10-05: `vak_session::cursors`; the Telegram, Discord and Slack pollers hold one owner per bot (`cur/bot/<surface>/<bot>/holder`) and one cursor per stream, and record gap rows; the 24-hour resume bound replaces replaying a stale backlog; Telegram's per-token lock file goes; the Operations Center lists gaps. M4.7b done 2026-10-05: the mail vault's routine cursors are one cursor per Agent (`cur/agent/<agent>/mail-calendar/routines`) whose backlog, an encrypted tenant object, holds each routine's provider position and queued ids, moved by `Cursors::swap_if`; the credential-store blob and its lock file go. The vault keeps its routine run history, because it binds a run to an account and its item count and is removed on disconnect, which append-only run records cannot be until M7a. `seal::decompress` sizes its buffer to the frame's content, and two writers putting the same bytes at once no longer leave one scope with a key that does not open the body (the body is created only if absent; the loser re-grants with the winner's verified key).** Cursors: channel pollers and the mail vault; gap records | `cursor_resync_records_gap`, `second_poller_is_fenced` |
 | M4.8 | **Done 2026-10-06. `vak_sandbox::copy::CopyEnvironment` is the first `EnvironmentBackend`: it copies the folder into `environments/<run>/`, skipping `.git`, `.vak`, `node_modules`, `target`, `.venv`, `__pycache__` and `.DS_Store` within 20,000 files and 512 MiB, and exports added, changed and deleted files (deletes as delete operations) frozen with `freeze_exported` as a candidate on the run's session; the copy is removed after. `skipped_slot_is_a_record` now refuses by an unknown Agent. A copy orphaned by a crash mid-run is left for M7a's reconciler.** `CopyEnvironment`; the non-git refusal goes; AGENTS.md invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 cite the shipped shapes | `non_git_space_routine_runs_in_copy_environment` |
 
-### M5 — Telemetry (M, after M1, in parallel)
+### M5 — Telemetry (M, after M1, in parallel) — M5a done 2026-10-06
+
+M5a (2026-10-06): `crates/vak-telemetry` (the subscriber, a content-free
+layer writing JSON lines with allowlisted field names and the run's
+`trace_id`, span-close lines with durations, `<logs>/vak-<service>.jsonl`
+rotated at 16 MiB keeping five), `tracing` and `tracing-subscriber` pinned
+(`std`, `registry`, `env-filter`; no `fmt` layer, so nothing bypasses the
+allowlist), every library `eprintln!` converted, a root `clippy.toml`
+banning `eprintln!`/`println!` with allows only where stderr is a
+person's, and the exit tests `library_crates_have_no_eprintln`,
+`log_lines_are_json_with_trace_fields` and `telemetry_carries_no_content`
+(canaries at the layer, plus `library_log_messages_are_literals`). The
+OTLP exporter is not built: nothing in the tree needs it yet, and the
+optional `[telemetry] otlp_endpoint` is not offered until it is. M5b: the
+span tree run › turn › step › (dispatch | tool_call › execution) ›
+delivery with the worker continuing its parent span, `one_run_one_trace_id`,
+the Traces & logs screen and Run waterfall, service log readers in
+`vak-ops`, and bus stream `max_age`.
 
 - Pinned `tracing`/`tracing-subscriber` (json, env-filter); optional
   `tracing-opentelemetry` + `opentelemetry-otlp` via

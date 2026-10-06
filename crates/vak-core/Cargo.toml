@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+tracing = { workspace = true }
+vak-telemetry = { workspace = true }
 vak-storage = { workspace = true }
 semver = { workspace = true }
 async-trait = { workspace = true }

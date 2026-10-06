@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/vak-llm",
     "crates/vak-session",
+    "crates/vak-telemetry",
     "crates/vak-context",
     "crates/vak-store",
     "crates/vak-storage",
@@ -45,6 +46,7 @@ vak-bus = { path = "crates/vak-bus" }
 vak-llm = { path = "crates/vak-llm" }
 vak-ops = { path = "crates/vak-ops" }
 vak-server = { path = "crates/vak-server" }
+vak-telemetry = { path = "crates/vak-telemetry" }
 vak-session = { path = "crates/vak-session" }
 vak-storage = { path = "crates/vak-storage" }
 vak-context = { path = "crates/vak-context" }
@@ -128,6 +130,10 @@ ring = "=0.17.14"
 rusqlite = { version = "=0.32.1", features = ["bundled", "hooks"] }
 # zstd compresses every object and record frame before it is sealed (vak-storage).
 zstd = "=0.13.3"
+# Leveled, structured events in place of eprintln (plan M5); vak-telemetry
+# writes them as content-free JSON lines.
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["std", "registry", "env-filter"] }
 # The distributed bus's NATS Core and JetStream client (vak-bus).
 async-nats = "=0.50.0"
 # Owner passkeys for the browser surface (vak-server, docs/design/78).

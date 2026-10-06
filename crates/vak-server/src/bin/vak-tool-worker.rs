@@ -3,6 +3,8 @@
 //! same subcommand); this tiny binary exists so tests can pin a REAL
 //! worker executable via `Core::set_tool_worker_exe` — a cargo test
 //! harness cannot speak the broker protocol.
+// This worker's stderr is its parent's to read.
+#![allow(clippy::disallowed_macros)]
 
 fn main() -> std::process::ExitCode {
     let invoked = std::env::args_os().nth(1);

@@ -8,6 +8,8 @@ license.workspace = true
 test-support = ["vak-mail-calendar/test-support"]
 
 [dependencies]
+tracing = { workspace = true }
+vak-telemetry = { workspace = true }
 base64 = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }

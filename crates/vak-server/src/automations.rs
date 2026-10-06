@@ -544,7 +544,7 @@ pub(crate) async fn claim_and_fire(
         Ok(triggers::Claimed::Spent) => Err(NotFired::Busy),
         Ok(triggers::Claimed::Started(started)) => fire(state, trigger, *started).await.map(Some),
         Err(error) => {
-            eprintln!("[scheduler] automation {} not claimed: {error}", trigger.id);
+            tracing::warn!(trigger = %trigger.id, error_kind = %vak_telemetry::error_kind(&error), "an automation's slot was not claimed");
             Err(NotFired::Refused)
         }
     }
@@ -826,7 +826,7 @@ async fn fire(
         t.enabled = false;
         Ok(())
     }) {
-        eprintln!("[scheduler] one-shot {id} not disabled: {error}");
+        tracing::warn!(trigger = %id, error_kind = %vak_telemetry::error_kind(&error), "a one-shot automation was not disabled");
     }
 
     // Watcher: deliver the run's final answer when it finishes. What the run
@@ -1048,7 +1048,7 @@ async fn fire_script(
             }
         }
     } else {
-        eprintln!("[scheduler] watchdog '{}' failed", trigger.name);
+        tracing::warn!(trigger = %trigger.id, "a watchdog script failed");
         let target = trigger
             .deliver_to
             .as_deref()
@@ -1142,10 +1142,8 @@ async fn record_copy_candidate(
     }
     .await;
     if let Err(error) = recorded {
-        eprintln!(
-            "[scheduler] changes of run {} not kept for review: {error}",
-            plan.id
-        );
+        let _ = error;
+        tracing::warn!(run = %plan.id, "a copy environment's changes were not kept for review");
     }
     let _ = copies.remove(&plan.id);
 }
@@ -1158,7 +1156,7 @@ pub(crate) async fn tick(state: &AppState) {
     let triggers = match of_this_space(state) {
         Ok(triggers) => triggers,
         Err(error) => {
-            eprintln!("[scheduler] automations unreadable: {error}");
+            tracing::error!(error_kind = %vak_telemetry::error_kind(&error), "the automations could not be read");
             return;
         }
     };
@@ -1217,12 +1215,12 @@ pub(crate) fn pause_account_routines(
             t.enabled = false;
             Ok(())
         }) {
-            eprintln!("[scheduler] routine {id} not paused: {error}");
+            tracing::warn!(trigger = %id, error_kind = %vak_telemetry::error_kind(&error), "a routine was not paused");
         }
         if let Some(reason) = reason
             && let Err(error) = state.core.runs().skip(Some(trigger.id), None, reason)
         {
-            eprintln!("[runs] routine {id} pause not recorded: {error}");
+            tracing::warn!(trigger = %id, error_kind = %vak_telemetry::error_kind(&error), "a routine's pause was not recorded");
         }
     }
 }

@@ -1077,6 +1077,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_macros)]
     fn incremental_capture_reads_only_changed_files() {
         let dir = tempfile::tempdir().unwrap();
         // A sibling temp dir, never nested inside `dir` — sessions_home is

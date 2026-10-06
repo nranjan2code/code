@@ -113,7 +113,8 @@ pub(crate) async fn heartbeat_tick(state: &AppState) {
     let result = heartbeat_cycle(state).await;
     state.heartbeat.inflight.store(false, Ordering::SeqCst);
     if let Err(e) = result {
-        eprintln!("[heartbeat] cycle failed: {e}");
+        let _ = e;
+        tracing::warn!(kind = "heartbeat", "a heartbeat cycle failed");
     }
 }
 
@@ -220,7 +221,10 @@ async fn run_heartbeat_turn(
     let outcome = match tokio::time::timeout(HEARTBEAT_TURN_TIMEOUT, fut.as_mut()).await {
         Ok(result) => Some(result),
         Err(_) => {
-            eprintln!("[heartbeat] turn exceeded its bound; cancelling");
+            tracing::warn!(
+                kind = "heartbeat",
+                "a heartbeat turn exceeded its bound; cancelling"
+            );
             cancel.cancel();
             // Abort preserves partial output: give the loop room to land
             // whatever it has before the cycle moves on.
@@ -322,7 +326,7 @@ async fn record_reply(state: &AppState, cfg: &vak_config::HeartbeatResolved, tex
         stripped, urgent, ..
     } = reply
     else {
-        eprintln!("[heartbeat] nothing to report");
+        tracing::debug!(kind = "heartbeat", "the heartbeat had nothing to report");
         return;
     };
     let n = stripped.len();

@@ -1257,14 +1257,10 @@ fn warn_retired_plugins(cwd: &Path, sessions_home: &Path, _config: &vak_config::
     ];
     for root in roots {
         if let Ok(store) = vak_plugin::PluginStore::new(&root).retired_plugins() {
-            for (plugin_name, retired) in &store {
-                eprintln!(
-                    "WARNING: plugin '{}' references retired tool(s): {}. \
-                     Run `vak setup seed` to remove it automatically, or \
-                     manually run `vak plugins remove {}`.",
-                    plugin_name,
-                    retired.join(", "),
-                    plugin_name
+            for (_, retired) in &store {
+                tracing::warn!(
+                    count = retired.len(),
+                    "a plugin references retired tools; run `vak setup seed` to remove it"
                 );
             }
         }
@@ -2371,7 +2367,10 @@ impl Core {
                     match interpolate_env_var_with(v, |key| self.mcp_secret(key)) {
                         Some(resolved) => env.push((k.clone(), resolved)),
                         None => {
-                            eprintln!("[mcp] server '{name}' skipped: unresolved environment variable in '{v}' (define it in .env)");
+                            tracing::warn!(
+                                kind = "mcp_env_unresolved",
+                                "an MCP server was skipped: an environment variable it names is not defined"
+                            );
                             return None;
                         }
                     }
@@ -6411,7 +6410,7 @@ impl Core {
                 ),
             };
             if let Err(error) = runs.settle(*run, outcome, result_id) {
-                eprintln!("[runs] {run} did not settle: {error}");
+                tracing::warn!(run = %run, error_kind = %vak_telemetry::error_kind(&error), "a run did not settle");
             }
         }
         result
@@ -7523,7 +7522,7 @@ impl Core {
         // text adds to it (docs/design/47, control plane).
         let goal_update = session.next_goal_update(&prompt.text_content());
         if let Err(error) = session.append_goal_update(goal_update) {
-            eprintln!("[goal] could not record this request relationship: {error}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a request relationship was not recorded");
         }
 
         // A request restated verbatim right after the previous turn is the

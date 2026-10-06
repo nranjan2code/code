@@ -1,3 +1,5 @@
+// A test's output is for the person running it.
+#![allow(clippy::disallowed_macros)]
 //! Integration tests for multi-bot-per-channel identity
 //! (docs/design/34 Phase 5 follow-up, AGENTS.md invariants 23-24).
 //!

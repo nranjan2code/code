@@ -1647,10 +1647,11 @@ fn log_turns_with_no_visible_answer(session_id: &str, timeline: &OutputTimeline)
             warned.clear();
         }
         warned.insert(fingerprint);
-        eprintln!(
-            "[projection] session={session_id} turn={turn_id} produced no visible answer ({} non-progress item(s): {}) — client renders a fallback notice for this turn",
-            non_progress.len(),
-            kinds.join(", ")
+        tracing::warn!(
+            session = %session_id,
+            turn = %turn_id,
+            count = non_progress.len(),
+            "a turn produced no visible answer; the client shows a fallback notice"
         );
     }
 }

@@ -1,3 +1,5 @@
+// The CLI's stdout and stderr are the person's.
+#![allow(clippy::disallowed_macros)]
 use std::io::Write as _;
 use std::path::PathBuf;
 
@@ -366,6 +368,21 @@ async fn main() {
     // first run.
     if let Some(env_path) = vak_config::user_env_path() {
         vak_config::load_env_file(&env_path);
+    }
+
+    // One subscriber per process: content-free JSON lines in the service's
+    // log (plan M5). The full-screen terminal draws its own screen, so it
+    // reports nothing on stderr.
+    let service = match &cli.command {
+        Some(Command::Serve { .. }) => Some("server"),
+        Some(Command::Telegram { .. }) => Some("telegram"),
+        Some(Command::Discord { .. }) => Some("discord"),
+        Some(Command::Slack { .. }) => Some("slack"),
+        Some(Command::Term { .. }) => None,
+        _ => Some("cli"),
+    };
+    if let Some(service) = service {
+        vak_telemetry::init(service);
     }
 
     let code = match cli.command {

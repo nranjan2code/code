@@ -1,0 +1,8 @@
+# Library code reports through `tracing`, written by vak-telemetry as
+# content-free JSON lines (data-architecture plan M5). A crate or file whose
+# stderr is a person's (the CLI, the terminal and desktop apps, the tray,
+# build scripts, examples, tests) allows these at its root.
+disallowed-macros = [
+    { path = "std::eprintln", reason = "report through tracing (vak-telemetry); only the CLI and apps own a person's stderr" },
+    { path = "std::println", reason = "report through tracing (vak-telemetry); only the CLI and apps own a person's stdout" },
+]

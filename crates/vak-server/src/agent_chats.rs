@@ -269,10 +269,7 @@ fn scan_candidates(
         let h = match header(&entry.path()) {
             Ok(h) => h,
             Err(e) => {
-                eprintln!(
-                    "[agents] skipping unreadable session ledger {}: {e}",
-                    entry.path().display()
-                );
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&e), "an unreadable session ledger was skipped");
                 continue;
             }
         };

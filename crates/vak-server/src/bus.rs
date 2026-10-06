@@ -133,9 +133,9 @@ impl ServerBus {
             match Self::distributed(&ws, config, credentials).await {
                 Ok(bus) => bus,
                 Err(e) => {
-                    eprintln!(
-                        "vak-server: NATS bus failed to connect ({e}); \
-                         falling back to local InMemoryBus"
+                    tracing::warn!(
+                        error_kind = %vak_telemetry::error_kind(&e),
+                        "the NATS bus did not connect; using the in-process bus"
                     );
                     Self::local(&ws)
                 }

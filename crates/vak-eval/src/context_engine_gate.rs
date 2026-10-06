@@ -620,7 +620,12 @@ pub fn run_context_engine_scorecard() -> Result<ContextScorecard, String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::disallowed_macros
+)]
 mod tests {
     use super::*;
 

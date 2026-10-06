@@ -197,7 +197,7 @@ impl SlackBridge {
                 self.cursor.advance(channel_id, &message.ts)?;
                 let reply = self.process(&message).await;
                 if let Err(e) = self.send_message(channel_id, &reply).await {
-                    eprintln!("[slack] send to {channel_id} failed: {e}");
+                    tracing::warn!(surface = "slack", error_kind = %vak_telemetry::error_kind(&e), "a reply was not sent");
                 }
                 if message.audio_url.is_some()
                     && let Err(e) = self
@@ -208,7 +208,7 @@ impl SlackBridge {
                         )
                         .await
                 {
-                    eprintln!("[slack] voice reply unavailable: {e}");
+                    tracing::info!(surface = "slack", error_kind = %vak_telemetry::error_kind(&e), "a voice reply was unavailable");
                 }
             }
         }
@@ -478,7 +478,7 @@ impl SlackBridge {
                 Err(e) => {
                     failures += 1;
                     if failures == 1 || failures.is_multiple_of(10) {
-                        eprintln!("[slack] poll failed ({failures} consecutive): {e}");
+                        tracing::warn!(surface = "slack", count = failures, error_kind = %vak_telemetry::error_kind(&e), "polling failed");
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(
                         crate::surfaces::discord::backoff_secs(failures),

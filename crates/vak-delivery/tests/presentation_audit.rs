@@ -1,3 +1,5 @@
+// A test's output is for the person running it.
+#![allow(clippy::disallowed_macros)]
 #![allow(
     unused_imports,
     unused_variables,

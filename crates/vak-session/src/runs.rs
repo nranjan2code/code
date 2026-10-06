@@ -829,16 +829,18 @@ impl Drop for OpenRun {
             ),
         };
         if let Err(error) = written {
-            eprintln!("[runs] {} did not settle: {error}", self.run);
+            tracing::warn!(run = %self.run, error_kind = %vak_telemetry::error_kind(&error), "a run did not settle");
         }
         // Settled first, then released: a claim never frees a slot whose
         // run still reads as running.
         if let Some(trigger) = self.claim.take()
             && let Err(error) = self.runs.release_claim(&trigger, self.run)
         {
-            eprintln!(
-                "[runs] {trigger} kept its claim after {}: {error}",
-                self.run
+            tracing::warn!(
+                run = %self.run,
+                trigger = %trigger,
+                error_kind = %vak_telemetry::error_kind(&error),
+                "a trigger kept its claim after its run"
             );
         }
     }

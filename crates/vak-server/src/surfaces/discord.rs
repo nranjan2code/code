@@ -192,7 +192,7 @@ impl DiscordBridge {
                 self.cursor.advance(channel_id, &message.id)?;
                 let reply = self.process(&message).await;
                 if let Err(e) = self.send_message(channel_id, &reply).await {
-                    eprintln!("[discord] send to {channel_id} failed: {e}");
+                    tracing::warn!(surface = "discord", error_kind = %vak_telemetry::error_kind(&e), "a reply was not sent");
                 }
                 if message.audio_url.is_some()
                     && let Err(e) = self
@@ -203,7 +203,7 @@ impl DiscordBridge {
                         )
                         .await
                 {
-                    eprintln!("[discord] voice reply unavailable: {e}");
+                    tracing::info!(surface = "discord", error_kind = %vak_telemetry::error_kind(&e), "a voice reply was unavailable");
                 }
             }
         }
@@ -431,7 +431,7 @@ impl DiscordBridge {
                 Err(e) => {
                     failures += 1;
                     if failures == 1 || failures.is_multiple_of(10) {
-                        eprintln!("[discord] poll failed ({failures} consecutive): {e}");
+                        tracing::warn!(surface = "discord", count = failures, error_kind = %vak_telemetry::error_kind(&e), "polling failed");
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(backoff_secs(failures)))
                         .await;

@@ -455,7 +455,7 @@ impl CoreSpendGate {
         if let Err(e) = self.ledger.append(&row) {
             // The session receipt carries usage independently; in-memory
             // caps were updated before this best-effort ledger write.
-            eprintln!("warning: cost ledger append failed: {e}");
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&e), "the cost ledger append failed");
         }
         let _ = ActivityLedger::new(
             self.ledger
