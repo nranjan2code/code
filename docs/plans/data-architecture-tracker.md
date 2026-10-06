@@ -78,7 +78,7 @@ Known slow tests (each over 60 s, not failures):
 | 14 | M7b lifecycle: governance (after M7a) | `label_on_any_node_resolves` and the remaining doc 74 §9 runs | |
 | 15 | M8 design (only declared deliverables, optional title, versions as an `artifacts/` chain with a rollup) | plan §M8 design | Done (`52c470d01`) |
 | 15a | M8.1 identity and versions: `artifacts/` chain + rollup, `Tool::artifact`, candidates/promotions/Office drafts as versions, catalog nodes, `/library` | `concurrent_edit_creates_sibling_versions`, `saved_version_survives_origin_erasure` | Done (`ce275405b`) |
-| 15b | M8.2 grants: `grants/` chain, coworking grants moved in, inheritance and breaks, catalog filtering | `share_inherits_and_breaks`, `revoked_grant_hides_from_search` | Done (commit follows) |
+| 15b | M8.2 grants: `grants/` chain, coworking grants moved in, inheritance and breaks, catalog filtering | `share_inherits_and_breaks`, `revoked_grant_hides_from_search` | Done (`d09c0c450`) |
 | 15c | M8.3 client and admin Library, artifact page, version history, Continue working (L2) | browser run | Next |
 | 15d | M8.4 edit and Put back, saved cards, Share dialog, Canvas/Redline/Workbench/SharedConversation on the Artifact API, navigation | browser acceptance run | |
 | 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | |
