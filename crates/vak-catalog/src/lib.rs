@@ -47,7 +47,7 @@ pub const FILE_NAME: &str = "catalog.db";
 
 /// The schema this build writes. A catalog stamped with another is dropped
 /// and rebuilt, never adapted: it is derived.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -115,6 +115,10 @@ pub struct Audience {
     pub audience: Option<String>,
     /// Sessions that must not appear (the trash), as their plain ids.
     pub exclude_sessions: HashSet<String>,
+    /// A principal outside the owner's own audience (an invited person,
+    /// plan M8.2): only what an active grant opens to them, a granted
+    /// conversation's turns and calls included, is returned.
+    pub principal: Option<String>,
     /// Whether intake items detection held (or a person quarantined) are
     /// returned. Only a person's own view sets it; an Agent's retrieval
     /// never does (plan M6.5, doc 76 §5), so the default is closed.
@@ -263,6 +267,8 @@ impl Catalog {
                 "entries",
                 "jumps",
                 "turn_records",
+                "grants",
+                "broken",
             ] {
                 tx.execute(&format!("DELETE FROM {table}"), [])?;
             }
@@ -455,6 +461,9 @@ impl Catalog {
              IFNULL(updated_at,'') || '|' || IFNULL(size,'') || '|' || IFNULL(agent_name,'') || '|' ||
              IFNULL(locator,'') FROM nodes",
             "SELECT 'edge|' || src || '|' || kind || '|' || dst FROM edges",
+            "SELECT 'grant|' || grant_id || '|' || node || '|' || principal || '|' || role || '|' ||
+                    IFNULL(expires,'') || '|' || revoked FROM grants",
+            "SELECT 'broken|' || node FROM broken",
             "SELECT 'text|' || node || '|' || body FROM texts",
             "SELECT 'entry|' || session || '|' || entry_id || '|' || segment || '|' || frame || '|' ||
              IFNULL(parent,'') || '|' || depth || '|' || IFNULL(reset,'') FROM entries",
@@ -508,6 +517,11 @@ fn connect(path: &Path) -> Result<Connection, CatalogError> {
              src TEXT NOT NULL, kind TEXT NOT NULL, dst TEXT NOT NULL,
              PRIMARY KEY (src, kind, dst));
          CREATE INDEX IF NOT EXISTS edges_dst ON edges (dst, kind);
+         CREATE TABLE IF NOT EXISTS grants (
+             grant_id TEXT PRIMARY KEY, node TEXT NOT NULL, principal TEXT NOT NULL,
+             role TEXT NOT NULL, expires TEXT, revoked INTEGER NOT NULL DEFAULT 0);
+         CREATE INDEX IF NOT EXISTS grants_principal ON grants (principal, node);
+         CREATE TABLE IF NOT EXISTS broken (node TEXT PRIMARY KEY);
          CREATE TABLE IF NOT EXISTS calls (
              node TEXT PRIMARY KEY, tool TEXT NOT NULL, input TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS texts (
@@ -631,6 +645,22 @@ fn audience_filter(audience: &Audience, first: usize) -> (String, Vec<rusqlite::
     }
     if !audience.held {
         clauses.push("(n.kind != 'item' OR n.status = 'accepted')".to_string());
+    }
+    // An Agent reads an artifact through its Space only while the artifact
+    // inherits; once a share breaks inheritance, a grant must name it.
+    if audience.agents.is_some() {
+        clauses.push("(n.kind != 'artifact' OR n.id NOT IN (SELECT node FROM broken))".to_string());
+    }
+    if let Some(principal) = &audience.principal {
+        clauses.push(format!(
+            "(n.id IN ({granted}) OR IFNULL(n.session, '') IN ({granted}))",
+            granted = format!(
+                "SELECT node FROM grants WHERE principal = ?{next} AND revoked = 0 \
+                 AND (expires IS NULL OR expires > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+            )
+        ));
+        args.push(principal.clone().into());
+        next += 1;
     }
     if !audience.exclude_sessions.is_empty() {
         let excluded: Vec<String> = audience

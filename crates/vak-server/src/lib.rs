@@ -3843,10 +3843,10 @@ pub(crate) async fn require_bearer(
             .insert(AuthenticatedPrincipal::Operator);
         next.run(req).await
     } else if let Some(participant_token) = participant_token {
-        // The middleware knows no session; a token is a random secret, so
-        // it is matched against every Agent's grants (doc 73 D25).
-        match coworking::verify_any(
-            &vak_config::scope::SharedScope::new(&shared),
+        // The middleware knows no session; a token is a random secret,
+        // matched against the one grants chain.
+        match coworking::verify(
+            &vak_core::grants::Grants::at(&vak_config::scope::SharedScope::new(&shared)),
             participant_token,
             chrono::Utc::now(),
         ) {
@@ -8452,8 +8452,11 @@ async fn delegate_coworking_approval(
     let Some(audience_id) = conversation_audience(&state, &conversation_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let path = coworking::store_path(&crate::session_agent_scope(&state, &conversation_id));
-    let Ok(grants) = coworking::list(&path, &conversation_id, chrono::Utc::now()) else {
+    let Ok(grants) = coworking::list(
+        &coworking::grants(&state),
+        &conversation_id,
+        chrono::Utc::now(),
+    ) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     let Some(grant) = grants.iter().find(|grant| {
@@ -8631,7 +8634,7 @@ async fn coworking_updates(
             ))
         }
     };
-    let grant_path = coworking::store_path(&crate::session_agent_scope(&state, &conversation_id));
+    let grant_store = coworking::grants(&state);
     let stream = futures::stream::unfold(
         (
             handle.events_tx.subscribe(),
@@ -8640,7 +8643,7 @@ async fn coworking_updates(
             true,
         ),
         move |(mut events, mut comments, mut tick, active)| {
-            let grant_path = grant_path.clone();
+            let grant_store = grant_store.clone();
             let grant = grant.clone();
             let state = state.clone();
             let conversation_id = conversation_id.clone();
@@ -8655,7 +8658,7 @@ async fn coworking_updates(
                 };
                 let valid = grant.as_ref().is_none_or(|(token, grant_id, _, _)| {
                     matches!(
-                        coworking::verify(&grant_path, token, chrono::Utc::now()),
+                        coworking::verify(&grant_store, token, chrono::Utc::now()),
                         Ok(Some(current)) if current.grant_id == *grant_id
                     )
                 });
@@ -8692,7 +8695,7 @@ async fn list_coworking_invitations(
         return StatusCode::NOT_FOUND.into_response();
     }
     match coworking::list(
-        &coworking::store_path(&crate::session_agent_scope(&state, &conversation_id)),
+        &coworking::grants(&state),
         &conversation_id,
         chrono::Utc::now(),
     ) {
@@ -8725,8 +8728,8 @@ async fn create_coworking_invitation(
     let now = chrono::Utc::now();
     let token = coworking::generate_token();
     let grant = coworking::AudienceGrant {
-        grant_id: uuid::Uuid::now_v7().to_string(),
-        principal_id: uuid::Uuid::now_v7().to_string(),
+        grant_id: vak_session::ids::GrantId::new(),
+        principal_id: vak_session::ids::PrincipalId::new().to_string(),
         display_name: display_name.to_string(),
         conversation_id: conversation_id.clone(),
         audience_id,
@@ -8744,15 +8747,12 @@ async fn create_coworking_invitation(
             capabilities
         },
         token_hash: coworking::token_hash(&token),
-        created_at: now.to_rfc3339(),
-        expires_at: (now + chrono::Duration::hours(i64::from(body.expires_in_hours))).to_rfc3339(),
+        created_at: now,
+        expires_at: now + chrono::Duration::hours(i64::from(body.expires_in_hours)),
         trace: Some(request_trace(&state, "coworking-grant")),
         actor: Some(request_actor(&state)),
     };
-    match coworking::invite(
-        &coworking::store_path(&crate::session_agent_scope(&state, &conversation_id)),
-        grant.clone(),
-    ) {
+    match coworking::invite(&coworking::grants(&state), grant.clone()) {
         Ok(()) => (
             StatusCode::CREATED,
             Json(serde_json::json!({
@@ -8763,8 +8763,8 @@ async fn create_coworking_invitation(
                     "conversation_id": grant.conversation_id,
                     "audience_id": grant.audience_id,
                     "capabilities": grant.capabilities,
-                    "created_at": grant.created_at,
-                    "expires_at": grant.expires_at,
+                    "created_at": grant.created_at.to_rfc3339(),
+                    "expires_at": grant.expires_at.to_rfc3339(),
                     "status": "active",
                 },
                 "token": token,
@@ -8784,8 +8784,8 @@ async fn revoke_coworking_invitation(
     if let Err(status) = operator_only(&principal) {
         return status.into_response();
     }
-    let path = coworking::store_path(&crate::session_agent_scope(&state, &conversation_id));
-    let invitations = match coworking::list(&path, &conversation_id, chrono::Utc::now()) {
+    let grants = coworking::grants(&state);
+    let invitations = match coworking::list(&grants, &conversation_id, chrono::Utc::now()) {
         Ok(invitations) => invitations,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
@@ -8793,7 +8793,7 @@ async fn revoke_coworking_invitation(
         return StatusCode::NOT_FOUND.into_response();
     };
     if invitation.status != coworking::GrantStatus::Revoked
-        && coworking::revoke(&path, &grant_id, "operator").is_err()
+        && coworking::revoke(&grants, &grant_id, Some(request_actor(&state))).is_err()
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
@@ -21415,7 +21415,6 @@ mod sandbox_promotion_tests {
             session_sandbox_events_path(&state, "s-writer"),
             writer.sandbox_executions("s-writer")
         );
-        assert_eq!(coworking::store_path(&owner), writer.coworking_grants());
         assert_eq!(
             owner.office_workspaces("s-writer"),
             writer.office_workspaces("s-writer")
@@ -24194,35 +24193,31 @@ mod sandbox_promotion_tests {
         let state = AppState::new(core);
         let token = "participant-secret";
         let grant = coworking::AudienceGrant {
-            grant_id: "grant-http".into(),
+            grant_id: coworking::test_grant_id("grant-http"),
             principal_id: "person-http".into(),
             display_name: "Asha".into(),
             conversation_id: "session-1".into(),
             audience_id: "local".into(),
             capabilities: vec!["read".into()],
             token_hash: coworking::token_hash(token),
-            created_at: chrono::Utc::now().to_rfc3339(),
-            expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             trace: None,
             actor: None,
         };
+        coworking::invite(&coworking::grants(&state), grant).unwrap();
         coworking::invite(
-            &coworking::store_path(&session_agent_scope(&state, "session-1")),
-            grant,
-        )
-        .unwrap();
-        coworking::invite(
-            &coworking::store_path(&session_agent_scope(&state, "session-1")),
+            &coworking::grants(&state),
             coworking::AudienceGrant {
-                grant_id: "grant-wrong-audience".into(),
+                grant_id: coworking::test_grant_id("grant-wrong-audience"),
                 principal_id: "person-wrong-audience".into(),
                 display_name: "Ravi".into(),
                 conversation_id: "session-1".into(),
                 audience_id: "conversation:someone-else".into(),
                 capabilities: vec!["read".into()],
                 token_hash: coworking::token_hash("participant-wrong-audience"),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 trace: None,
                 actor: None,
             },
@@ -24304,9 +24299,9 @@ mod sandbox_promotion_tests {
             StatusCode::FORBIDDEN
         );
         coworking::revoke(
-            &coworking::store_path(&session_agent_scope(&state, "session-1")),
-            "grant-http",
-            "operator",
+            &coworking::grants(&state),
+            &coworking::test_grant_id("grant-http").to_string(),
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -24347,17 +24342,17 @@ mod sandbox_promotion_tests {
         );
         let token = "participant-message-token";
         coworking::invite(
-            &coworking::store_path(&core.scope()),
+            &vak_core::grants::Grants::at(&core.shared_scope()),
             coworking::AudienceGrant {
-                grant_id: "grant-message".into(),
+                grant_id: coworking::test_grant_id("grant-message"),
                 principal_id: "person-message".into(),
                 display_name: "Asha".into(),
                 conversation_id: "session-message".into(),
                 audience_id: "local".into(),
                 capabilities: vec!["read".into(), "message".into()],
                 token_hash: coworking::token_hash(token),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 trace: None,
                 actor: None,
             },
@@ -24455,34 +24450,34 @@ mod sandbox_promotion_tests {
         );
         let token = "participant-approval-token";
         coworking::invite(
-            &coworking::store_path(&core.scope()),
+            &vak_core::grants::Grants::at(&core.shared_scope()),
             coworking::AudienceGrant {
-                grant_id: "grant-approval".into(),
+                grant_id: coworking::test_grant_id("grant-approval"),
                 principal_id: "person-approval".into(),
                 display_name: "Asha".into(),
                 conversation_id: "session-approval".into(),
                 audience_id: "local".into(),
                 capabilities: vec!["read".into()],
                 token_hash: coworking::token_hash(token),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 trace: None,
                 actor: None,
             },
         )
         .unwrap();
         coworking::invite(
-            &coworking::store_path(&core.scope()),
+            &vak_core::grants::Grants::at(&core.shared_scope()),
             coworking::AudienceGrant {
-                grant_id: "grant-other".into(),
+                grant_id: coworking::test_grant_id("grant-other"),
                 principal_id: "person-other".into(),
                 display_name: "Ravi".into(),
                 conversation_id: "session-approval".into(),
                 audience_id: "local".into(),
                 capabilities: vec!["read".into()],
                 token_hash: coworking::token_hash("participant-other-token"),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 trace: None,
                 actor: None,
             },
@@ -24539,7 +24534,10 @@ mod sandbox_promotion_tests {
             .uri("/sessions/session-approval/coworking/approvals/request-approval/delegate")
             .header(axum::http::header::AUTHORIZATION, "Bearer operator-secret")
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::from(r#"{"grant_id":"grant-approval"}"#))
+            .body(axum::body::Body::from(format!(
+                r#"{{"grant_id":"{}"}}"#,
+                coworking::test_grant_id("grant-approval")
+            )))
             .unwrap();
         assert_eq!(
             app.clone().oneshot(delegate).await.unwrap().status(),
@@ -24550,7 +24548,10 @@ mod sandbox_promotion_tests {
             .uri("/sessions/session-approval/coworking/approvals/request-approval/delegate")
             .header(axum::http::header::AUTHORIZATION, "Bearer operator-secret")
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::from(r#"{"grant_id":"grant-other"}"#))
+            .body(axum::body::Body::from(format!(
+                r#"{{"grant_id":"{}"}}"#,
+                coworking::test_grant_id("grant-other")
+            )))
             .unwrap();
         assert_eq!(
             app.clone().oneshot(reassign).await.unwrap().status(),
@@ -24658,19 +24659,19 @@ mod sandbox_promotion_tests {
         );
 
         let token = "participant-comment-token";
-        let grants = coworking::store_path(&core.scope());
+        let grants = vak_core::grants::Grants::at(&core.shared_scope());
         coworking::invite(
             &grants,
             coworking::AudienceGrant {
-                grant_id: "grant-comment".into(),
+                grant_id: coworking::test_grant_id("grant-comment"),
                 principal_id: "person-2".into(),
                 display_name: "Asha".into(),
                 conversation_id: "session-1".into(),
                 audience_id: "local".into(),
                 capabilities: vec!["read".into(), "comment".into()],
                 token_hash: coworking::token_hash(token),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 trace: None,
                 actor: None,
             },
@@ -24756,15 +24757,15 @@ mod sandbox_promotion_tests {
         coworking::invite(
             &grants,
             coworking::AudienceGrant {
-                grant_id: "grant-read-only".into(),
+                grant_id: coworking::test_grant_id("grant-read-only"),
                 principal_id: "person-3".into(),
                 display_name: "Ravi".into(),
                 conversation_id: "session-1".into(),
                 audience_id: "local".into(),
                 capabilities: vec!["read".into()],
                 token_hash: coworking::token_hash("read-only-token"),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                created_at: chrono::Utc::now(),
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
                 trace: None,
                 actor: None,
             },
@@ -24827,7 +24828,12 @@ mod sandbox_promotion_tests {
                 .unwrap()
                 .contains("event: refresh")
         );
-        coworking::revoke(&grants, "grant-comment", "operator").unwrap();
+        coworking::revoke(
+            &grants,
+            &coworking::test_grant_id("grant-comment").to_string(),
+            None,
+        )
+        .unwrap();
         let revoked = tokio::time::timeout(std::time::Duration::from_secs(3), events.next())
             .await
             .unwrap()

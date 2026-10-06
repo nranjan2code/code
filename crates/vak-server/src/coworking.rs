@@ -1,44 +1,33 @@
-//! Durable, append-only audience grants for shared Agent conversations.
+//! Coworking invitations for shared Agent conversations (doc 69), as
+//! conversation grants in the one `grants/` chain (`vak_core::grants`,
+//! plan M8.2). An invitation carries the hash of its token, never the
+//! token, an audience, capabilities and an expiry.
 //!
-//! This module owns capability data only. HTTP admission is wired separately
-//! so an invitation cannot become usable before every shared route enforces
-//! the same audience decision.
+//! This module owns the invitation shape only. HTTP admission is wired
+//! separately so an invitation cannot become usable before every shared
+//! route enforces the same audience decision.
 
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::path::{Path, PathBuf};
-use subtle::ConstantTimeEq;
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use vak_core::grants::{Grant, GrantError, GrantObject, Grants, Role};
+use vak_session::ids::GrantId;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub use vak_core::grants::{GrantStatus, token_hash};
+
+/// What an invitation is made from.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudienceGrant {
-    pub grant_id: String,
+    pub grant_id: GrantId,
     pub principal_id: String,
     pub display_name: String,
     pub conversation_id: String,
     pub audience_id: String,
     pub capabilities: Vec<String>,
     pub token_hash: String,
-    pub created_at: String,
-    pub expires_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
     pub trace: Option<vak_session::trace::TraceKey>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<vak_session::ids::PrincipalId>,
-}
-
-vak_session::impl_traced!(AudienceGrant, "audience_grant");
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "event", rename_all = "snake_case")]
-enum GrantEvent {
-    Invited {
-        grant: Box<AudienceGrant>,
-    },
-    Revoked {
-        grant_id: String,
-        revoked_at: String,
-        actor_id: String,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,28 +55,9 @@ pub struct GrantSummary {
     pub revoked_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum GrantStatus {
-    Active,
-    Expired,
-    Revoked,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("grant store error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("grant record is invalid: {0}")]
-    Invalid(String),
-}
-
-/// The coworking grant store of `session_agent`'s home (D25, as
-/// [`vak_config::scope::AgentScope::coworking_grants`]).
-/// Grants of the conversations of the Agent whose `scope` this is; pass
-/// the conversation's own Agent (`session_agent_scope`).
-pub fn store_path(scope: &vak_config::scope::AgentScope) -> PathBuf {
-    scope.coworking_grants()
+/// The grants of the server's data home.
+pub fn grants(state: &crate::AppState) -> Grants {
+    Grants::at(&state.core.shared_scope())
 }
 
 pub fn generate_token() -> String {
@@ -98,184 +68,111 @@ pub fn generate_token() -> String {
     )
 }
 
-pub fn token_hash(token: &str) -> String {
-    format!("sha256:{:x}", Sha256::digest(token.as_bytes()))
+/// The role a set of coworking capabilities amounts to.
+fn role_of(capabilities: &[String]) -> Role {
+    if capabilities.iter().any(|capability| capability == "edit") {
+        Role::Editor
+    } else if capabilities
+        .iter()
+        .any(|capability| capability == "comment")
+    {
+        Role::Commenter
+    } else {
+        Role::Viewer
+    }
 }
 
-/// Grant events are a record chain (`AgentScope::coworking_grants`), never a
-/// file appended to directly.
-fn append(path: &Path, event: &GrantEvent) -> Result<(), Error> {
-    vak_session::chain::RecordChain::at(path)
-        .append(event)
-        .map_err(|error| Error::Invalid(error.to_string()))
-}
-
-/// Every grant event, in order. A row that does not decode is an error,
-/// never skipped: a skipped revocation would leave a grant valid.
-fn load(path: &Path) -> Result<Vec<GrantEvent>, Error> {
-    vak_session::chain::RecordChain::at(path)
-        .read::<serde_json::Value>()
-        .into_iter()
-        .map(|row| serde_json::from_value(row).map_err(|error| Error::Invalid(error.to_string())))
-        .collect()
-}
-
-pub fn invite(path: &Path, grant: AudienceGrant) -> Result<(), Error> {
+pub fn invite(grants: &Grants, grant: AudienceGrant) -> Result<(), GrantError> {
     if grant.principal_id.trim().is_empty()
         || grant.conversation_id.trim().is_empty()
         || grant.audience_id.trim().is_empty()
         || grant.token_hash.trim().is_empty()
         || grant.capabilities.is_empty()
     {
-        return Err(Error::Invalid("grant fields must be explicit".into()));
+        return Err(GrantError::Invalid("grant fields must be explicit".into()));
     }
-    if load(path)?.iter().any(
-        |event| matches!(event, GrantEvent::Invited { grant: existing } if existing.grant_id == grant.grant_id),
-    ) {
-        return Err(Error::Invalid("grant id already exists".into()));
-    }
-    append(
-        path,
-        &GrantEvent::Invited {
-            grant: Box::new(grant),
+    let role = role_of(&grant.capabilities);
+    grants.grant(
+        Grant {
+            id: grant.grant_id,
+            principal: grant.principal_id,
+            display_name: grant.display_name,
+            object: GrantObject::Conversation(grant.conversation_id),
+            role,
+            audience_id: Some(grant.audience_id),
+            capabilities: grant.capabilities,
+            token_hash: Some(grant.token_hash),
+            created_at: grant.created_at,
+            expires_at: Some(grant.expires_at),
         },
+        grant.actor,
+        grant.trace.as_ref(),
     )
 }
 
-pub fn revoke(path: &Path, grant_id: &str, actor_id: &str) -> Result<(), Error> {
-    if grant_id.trim().is_empty() || actor_id.trim().is_empty() {
-        return Err(Error::Invalid("revocation identity is required".into()));
-    }
-    append(
-        path,
-        &GrantEvent::Revoked {
-            grant_id: grant_id.into(),
-            revoked_at: chrono::Utc::now().to_rfc3339(),
-            actor_id: actor_id.into(),
-        },
-    )
+pub fn revoke(
+    grants: &Grants,
+    grant_id: &str,
+    actor: Option<vak_session::ids::PrincipalId>,
+) -> Result<(), GrantError> {
+    let id = GrantId::parse(grant_id).map_err(|_| GrantError::NotFound(grant_id.into()))?;
+    grants.revoke(id, actor)
 }
 
-/// `verify` against the grants of every Agent under `shared`: the first
-/// grant that answers for the token wins; a store that cannot be read is
-/// an error only when no other store answered.
-pub fn verify_any(
-    shared: &vak_config::scope::SharedScope,
-    token: &str,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Result<Option<VerifiedPrincipal>, Error> {
-    let mut failure = None;
-    for agent in std::fs::read_dir(shared.agents_dir())
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        let path = store_path(&vak_config::scope::AgentScope::new(agent.path()));
-        match verify(&path, token, now) {
-            Ok(Some(principal)) => return Ok(Some(principal)),
-            Ok(None) => {}
-            Err(error) => failure = Some(error),
-        }
-    }
-    failure.map_or(Ok(None), Err)
-}
-
+/// The active invitation `token` proves, if any.
 pub fn verify(
-    path: &Path,
+    grants: &Grants,
     token: &str,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Result<Option<VerifiedPrincipal>, Error> {
-    let events = load(path)?;
-    let revoked: std::collections::HashSet<&str> = events
-        .iter()
-        .filter_map(|event| match event {
-            GrantEvent::Revoked { grant_id, .. } => Some(grant_id.as_str()),
-            _ => None,
-        })
-        .collect();
-    let supplied = token_hash(token);
-    for event in events.iter().rev() {
-        let GrantEvent::Invited { grant } = event else {
-            continue;
+    now: DateTime<Utc>,
+) -> Result<Option<VerifiedPrincipal>, GrantError> {
+    Ok(grants.verify_token(token, now)?.and_then(|grant| {
+        let GrantObject::Conversation(conversation_id) = grant.object else {
+            return None;
         };
-        if revoked.contains(grant.grant_id.as_str()) {
-            continue;
-        }
-        let matches: bool = supplied
-            .as_bytes()
-            .ct_eq(grant.token_hash.as_bytes())
-            .into();
-        if !matches {
-            continue;
-        }
-        let expires = chrono::DateTime::parse_from_rfc3339(&grant.expires_at)
-            .map_err(|error| Error::Invalid(error.to_string()))?
-            .with_timezone(&chrono::Utc);
-        if expires <= now {
-            return Ok(None);
-        }
-        return Ok(Some(VerifiedPrincipal {
-            grant_id: grant.grant_id.clone(),
-            principal_id: grant.principal_id.clone(),
-            display_name: grant.display_name.clone(),
-            conversation_id: grant.conversation_id.clone(),
-            audience_id: grant.audience_id.clone(),
-            capabilities: grant.capabilities.clone(),
-        }));
-    }
-    Ok(None)
+        Some(VerifiedPrincipal {
+            grant_id: grant.id.to_string(),
+            principal_id: grant.principal,
+            display_name: grant.display_name,
+            conversation_id,
+            audience_id: grant.audience_id.unwrap_or_default(),
+            capabilities: grant.capabilities,
+        })
+    }))
 }
 
+/// The invitations to `conversation_id`, newest first, without tokens.
 pub fn list(
-    path: &Path,
+    grants: &Grants,
     conversation_id: &str,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Result<Vec<GrantSummary>, Error> {
-    let events = load(path)?;
-    let revoked: std::collections::HashMap<&str, &str> = events
-        .iter()
-        .filter_map(|event| match event {
-            GrantEvent::Revoked {
-                grant_id,
-                revoked_at,
-                ..
-            } => Some((grant_id.as_str(), revoked_at.as_str())),
-            _ => None,
+    now: DateTime<Utc>,
+) -> Result<Vec<GrantSummary>, GrantError> {
+    Ok(grants
+        .on(&GrantObject::Conversation(conversation_id.to_string()))?
+        .into_iter()
+        .filter(|held| held.grant.token_hash.is_some())
+        .map(|held| GrantSummary {
+            status: held.status(now),
+            grant_id: held.grant.id.to_string(),
+            principal_id: held.grant.principal,
+            display_name: held.grant.display_name,
+            conversation_id: conversation_id.to_string(),
+            audience_id: held.grant.audience_id.unwrap_or_default(),
+            capabilities: held.grant.capabilities,
+            created_at: held.grant.created_at.to_rfc3339(),
+            expires_at: held
+                .grant
+                .expires_at
+                .map(|at| at.to_rfc3339())
+                .unwrap_or_default(),
+            revoked_at: held.revoked_at.map(|at| at.to_rfc3339()),
         })
-        .collect();
-    let mut summaries = Vec::new();
-    for event in &events {
-        let GrantEvent::Invited { grant } = event else {
-            continue;
-        };
-        if grant.conversation_id != conversation_id {
-            continue;
-        }
-        let expires = chrono::DateTime::parse_from_rfc3339(&grant.expires_at)
-            .map_err(|error| Error::Invalid(error.to_string()))?
-            .with_timezone(&chrono::Utc);
-        let revoked_at = revoked.get(grant.grant_id.as_str()).copied();
-        summaries.push(GrantSummary {
-            grant_id: grant.grant_id.clone(),
-            principal_id: grant.principal_id.clone(),
-            display_name: grant.display_name.clone(),
-            conversation_id: grant.conversation_id.clone(),
-            audience_id: grant.audience_id.clone(),
-            capabilities: grant.capabilities.clone(),
-            created_at: grant.created_at.clone(),
-            expires_at: grant.expires_at.clone(),
-            status: if revoked_at.is_some() {
-                GrantStatus::Revoked
-            } else if expires <= now {
-                GrantStatus::Expired
-            } else {
-                GrantStatus::Active
-            },
-            revoked_at: revoked_at.map(ToOwned::to_owned),
-        });
-    }
-    summaries.sort_by(|left, right| right.created_at.cmp(&left.created_at));
-    Ok(summaries)
+        .collect())
+}
+
+/// A stable grant id for a test fixture's name.
+#[cfg(test)]
+pub(crate) fn test_grant_id(name: &str) -> GrantId {
+    GrantId::derived(name)
 }
 
 #[cfg(test)]
@@ -283,97 +180,93 @@ pub fn list(
 mod tests {
     use super::*;
 
+    fn at(text: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(text).unwrap().into()
+    }
+
     fn grant(token: &str, expires_at: &str) -> AudienceGrant {
         AudienceGrant {
-            grant_id: "grant-1".into(),
+            grant_id: GrantId::new(),
             principal_id: "person-2".into(),
             display_name: "Asha".into(),
             conversation_id: "session-1".into(),
             audience_id: "conversation:session-1".into(),
             capabilities: vec!["read".into(), "comment".into()],
             token_hash: token_hash(token),
-            created_at: "2026-09-20T00:00:00Z".into(),
-            expires_at: expires_at.into(),
+            created_at: at("2026-09-20T00:00:00Z"),
+            expires_at: at(expires_at),
             trace: None,
             actor: None,
         }
     }
 
+    fn store() -> (tempfile::TempDir, Grants) {
+        let dir = tempfile::tempdir().unwrap();
+        let grants = Grants::at(&vak_config::scope::SharedScope::new(dir.path()));
+        (dir, grants)
+    }
+
     #[test]
     fn verifies_scope_without_storing_raw_token() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
+        let (_dir, grants) = store();
         let token = generate_token();
-        invite(&path, grant(&token, "2026-09-22T00:00:00Z")).unwrap();
-        let text = vak_session::chain::RecordChain::at(&path).text();
+        invite(&grants, grant(&token, "2026-09-22T00:00:00Z")).unwrap();
+        let text = vak_session::chain::RecordChain::at(grants.path()).text();
         assert!(!text.contains(&token));
-        let principal = verify(
-            &path,
-            &token,
-            chrono::DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
-                .unwrap()
-                .into(),
-        )
-        .unwrap()
-        .unwrap();
+        let principal = verify(&grants, &token, at("2026-09-21T00:00:00Z"))
+            .unwrap()
+            .unwrap();
         assert_eq!(principal.principal_id, "person-2");
         assert_eq!(principal.capabilities, vec!["read", "comment"]);
     }
 
     #[test]
     fn an_unreadable_grant_row_fails_closed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
+        let (_dir, grants) = store();
         let token = generate_token();
-        invite(&path, grant(&token, "2026-09-22T00:00:00Z")).unwrap();
-        vak_session::chain::RecordChain::at(&path)
+        invite(&grants, grant(&token, "2026-09-22T00:00:00Z")).unwrap();
+        vak_session::chain::RecordChain::at(grants.path())
             .append(&serde_json::json!({"not": "a grant event"}))
             .unwrap();
-        let now = chrono::DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
-            .unwrap()
-            .into();
         assert!(
-            verify(&path, &token, now).is_err(),
+            verify(&grants, &token, at("2026-09-21T00:00:00Z")).is_err(),
             "a row that may be a revocation is never skipped"
         );
     }
 
     #[test]
     fn expiry_and_revocation_fail_closed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
-        invite(&path, grant("expired", "2026-09-20T00:00:00Z")).unwrap();
-        let now = chrono::DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
-            .unwrap()
-            .into();
-        assert!(verify(&path, "expired", now).unwrap().is_none());
+        let (_dir, grants) = store();
+        invite(&grants, grant("expired", "2026-09-20T00:00:00Z")).unwrap();
+        let now = at("2026-09-21T00:00:00Z");
+        assert!(verify(&grants, "expired", now).unwrap().is_none());
 
-        let mut revoked = grant("revoked", "2026-09-22T00:00:00Z");
-        revoked.grant_id = "grant-2".into();
-        invite(&path, revoked).unwrap();
-        revoke(&path, "grant-2", "operator").unwrap();
-        assert!(verify(&path, "revoked", now).unwrap().is_none());
+        let revoked = grant("revoked", "2026-09-22T00:00:00Z");
+        let id = revoked.grant_id.to_string();
+        invite(&grants, revoked).unwrap();
+        revoke(&grants, &id, None).unwrap();
+        assert!(verify(&grants, "revoked", now).unwrap().is_none());
     }
 
     #[test]
     fn listing_omits_tokens_and_reports_lifecycle() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = store_path(&vak_config::scope::AgentScope::new(dir.path()));
-        invite(&path, grant("secret-token", "2026-09-22T00:00:00Z")).unwrap();
-        let duplicate = invite(&path, grant("replacement", "2026-09-23T00:00:00Z"));
-        assert!(duplicate.is_err());
-        let now = chrono::DateTime::parse_from_rfc3339("2026-09-21T00:00:00Z")
-            .unwrap()
-            .into();
-        let listed = list(&path, "session-1", now).unwrap();
+        let (_dir, grants) = store();
+        let first = grant("secret-token", "2026-09-22T00:00:00Z");
+        let id = first.grant_id;
+        invite(&grants, first.clone()).unwrap();
+        let mut duplicate = grant("replacement", "2026-09-23T00:00:00Z");
+        duplicate.grant_id = id;
+        assert!(invite(&grants, duplicate).is_err());
+        let now = at("2026-09-21T00:00:00Z");
+        let listed = list(&grants, "session-1", now).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].status, GrantStatus::Active);
         let serialized = serde_json::to_string(&listed).unwrap();
         assert!(!serialized.contains("token_hash"));
         assert!(!serialized.contains("secret-token"));
 
-        revoke(&path, "grant-1", "operator").unwrap();
-        let listed = list(&path, "session-1", now).unwrap();
+        revoke(&grants, &id.to_string(), None).unwrap();
+        let listed = list(&grants, "session-1", now).unwrap();
         assert_eq!(listed[0].status, GrantStatus::Revoked);
         assert!(listed[0].revoked_at.is_some());
     }

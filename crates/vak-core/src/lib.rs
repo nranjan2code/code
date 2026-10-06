@@ -22,6 +22,7 @@ pub mod entities;
 pub mod file_mentions;
 pub mod files;
 pub mod finops;
+pub mod grants;
 pub mod health;
 pub mod inbox;
 pub mod install;

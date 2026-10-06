@@ -197,15 +197,14 @@ fn records() -> Vec<Record> {
                 "verification": {"status": "s", "before": "b", "after": "a", "detail": "d"},
             }),
         ),
-        record::<crate::coworking::AudienceGrant>(
-            "AudienceGrant",
-            "crates/vak-server/src/coworking.rs",
+        record::<vak_core::grants::GrantEvent>(
+            "GrantEvent",
+            "crates/vak-core/src/grants.rs",
             "ledger",
-            "coworking/grants",
+            "grants",
             serde_json::json!({
-                "grant_id": "g", "principal_id": "p", "display_name": "d",
-                "conversation_id": "c", "audience_id": "a", "capabilities": [],
-                "token_hash": "h", "created_at": ts, "expires_at": ts,
+                "at": ts, "step": "revoked",
+                "grant": "gnt_01920000-0000-7000-8000-000000000001",
             }),
         ),
         record::<vak_sandbox::EnvironmentRecord>(

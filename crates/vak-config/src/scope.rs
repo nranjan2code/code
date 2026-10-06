@@ -250,11 +250,6 @@ impl AgentScope {
         self.sandbox_dir().join("executions").join(session_id)
     }
 
-    /// Coworking grants of this Agent's conversations.
-    pub fn coworking_grants(&self) -> PathBuf {
-        self.root.join("coworking").join("grants")
-    }
-
     /// Shared Office rooms of one of this Agent's sessions.
     pub fn office_workspaces(&self, session_id: &str) -> PathBuf {
         crate::paths::office_workspaces_at(&self.root, session_id)
@@ -326,6 +321,17 @@ impl SharedScope {
     /// Where triggers are named: the Documents `triggers/<trg>` (plan M4.3).
     pub fn triggers(&self) -> PathBuf {
         self.root.join("triggers")
+    }
+
+    /// The grant records (plan M8): who may reach which artifact or
+    /// conversation, including coworking invitations (doc 69).
+    pub fn grants(&self) -> PathBuf {
+        self.root.join("grants")
+    }
+
+    /// The rollup Document of [`SharedScope::grants`].
+    pub fn grants_rollup(&self) -> PathBuf {
+        self.root.join("grants-rollup")
     }
 
     /// The artifact records (plan M8): what each deliverable is and every
@@ -545,7 +551,6 @@ mod tests {
             s.sandbox_executions("s1"),
             home.join("sandbox/executions/s1")
         );
-        assert_eq!(s.coworking_grants(), home.join("coworking/grants"));
         assert_eq!(s.output_prefs(), home.join("output.toml"));
         assert_eq!(s.office_workspaces("s1"), home.join("office-workspaces/s1"));
     }

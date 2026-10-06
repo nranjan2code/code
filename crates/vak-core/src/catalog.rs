@@ -45,6 +45,7 @@ impl Core {
                 .conversation_context()
                 .map(|context| context.audience_id.clone()),
             exclude_sessions: crate::trash::trashed(&self.shared_scope()),
+            principal: None,
             held: false,
         }
     }

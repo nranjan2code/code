@@ -964,7 +964,7 @@ Also in the plan's history:
 | data `agents/<id>/flow-runs/` | vak-flow | Record (runs) |
 | data `agents/<id>/{routing-evidence,intent-evidence,security-events,activity-log}.jsonl` | vak-core | Record (with TraceKey) |
 | data `agents/<id>/commitments.jsonl` | vak-commit | Record; statement field keyed to its conversation |
-| data `agents/<server Core's id>/coworking/grants.jsonl` (D25) | vak-server | Record (grants, keyed by principal; M8's one grants table) |
+| data `grants/` (M8.2; replaced the per-Agent `coworking/grants` store, D25) | vak-core | Record (grants, keyed by principal; coworking invitations are conversation grants) |
 | data `agents/<server Core's id>/office-workspaces/<session>/<room>.json` (D25; rewritten on every edit) | vak-server | **Document** (each save a version; the head is a ref) in its session's Agent scope |
 | data `agents/<id>/canvas/<ses>.{json,lock}` (one per conversation, rewritten as its tabs change; doc 66 §0a) | vak-server | **Document** (the head is a ref) keyed to its conversation |
 | data `agents/<id>/agent-network/broker.sock` | vak-core | Ephemeral (runtime) |

@@ -146,6 +146,10 @@ typed_id!(
     EffectId, "eff"
 );
 typed_id!(ConnectionId, "con");
+typed_id!(
+    /// A grant: a principal's role on an artifact or a conversation (plan M8).
+    GrantId, "gnt"
+);
 typed_id!(SourceId, "src");
 typed_id!(
     /// An intake alert: which new items reach a person (plan M6.5).

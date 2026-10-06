@@ -29,6 +29,8 @@ pub enum Source {
     Intake { dir: PathBuf, tenant: PathBuf },
     /// The artifact records.
     Artifacts(PathBuf),
+    /// The grant records.
+    Grants(PathBuf),
 }
 
 impl Source {
@@ -45,6 +47,7 @@ impl Source {
             Self::IntakeSource(path) => ("source", path),
             Self::Intake { dir, .. } => ("intake", dir),
             Self::Artifacts(dir) => ("artifacts", dir),
+            Self::Grants(dir) => ("grants", dir),
         };
         format!("{kind}:{}", path.display())
     }
@@ -53,9 +56,10 @@ impl Source {
     pub fn has_more(&self, from: Position) -> bool {
         match self {
             Self::Session(dir) | Self::Runs(dir) | Self::Effects(dir) => chain_has_more(dir, from),
-            Self::Commitments { dir, .. } | Self::Intake { dir, .. } | Self::Artifacts(dir) => {
-                chain_has_more(dir, from)
-            }
+            Self::Commitments { dir, .. }
+            | Self::Intake { dir, .. }
+            | Self::Artifacts(dir)
+            | Self::Grants(dir) => chain_has_more(dir, from),
             Self::Trigger(path)
             | Self::IntakeSource(path)
             | Self::Memory { path, .. }
@@ -114,6 +118,9 @@ pub fn discover(data: &Path) -> Vec<Source> {
     found.extend(sources.into_iter().map(Source::IntakeSource));
     if shared.artifacts().is_dir() {
         found.push(Source::Artifacts(shared.artifacts()));
+    }
+    if shared.grants().is_dir() {
+        found.push(Source::Grants(shared.grants()));
     }
     if shared.intake().is_dir() {
         found.push(Source::Intake {

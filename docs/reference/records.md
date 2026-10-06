@@ -57,24 +57,6 @@ Type `ArtifactEvent` in `crates/vak-core/src/artifacts.rs`. Class: ledger. Store
 | `actor` | `Option<PrincipalId>` | no |  |
 | `step` | `ArtifactStep` | yes | (flattened into the row) |
 
-## audience_grant
-
-Type `AudienceGrant` in `crates/vak-server/src/coworking.rs`. Class: ledger. Stored in: `coworking/grants`. Version: 1.
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `grant_id` | `String` | yes |  |
-| `principal_id` | `String` | yes |  |
-| `display_name` | `String` | yes |  |
-| `conversation_id` | `String` | yes |  |
-| `audience_id` | `String` | yes |  |
-| `capabilities` | `Vec<String>` | yes |  |
-| `token_hash` | `String` | yes |  |
-| `created_at` | `String` | yes |  |
-| `expires_at` | `String` | yes |  |
-| `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
-| `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
-
 ## budget_alert_row
 
 Type `BudgetAlertRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in: `budget-alerts`. Version: 1.
@@ -197,6 +179,17 @@ Type `EvidenceRow` in `crates/vak-core/src/routing.rs`. Class: ledger. Stored in
 | `latency_ms` | `u64` | yes |  |
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
+
+## grant_event
+
+Type `GrantEvent` in `crates/vak-core/src/grants.rs`. Class: ledger. Stored in: `grants`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `at` | `DateTime<Utc>` | yes |  |
+| `trace` | `Option<TraceKey>` | no |  |
+| `actor` | `Option<PrincipalId>` | no | Who granted, revoked, broke or restored. |
+| `step` | `GrantStep` | yes | (flattened into the row) |
 
 ## inbox_entry
 

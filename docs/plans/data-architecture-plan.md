@@ -1553,6 +1553,21 @@ read-only. Exit tests `concurrent_edit_creates_sibling_versions` and
 endpoints. Live: a real model turn's titled `write` became an artifact,
 traced artifact → call → run → turn → session, cause user.
 
+M8.2 (2026-10-06): `vak_core::grants`, the `grants/` chain read through
+`grants-rollup`. A grant gives a principal a role (viewer, commenter or
+editor) on an artifact or a conversation. Breaking inheritance makes an
+object's grants its only audience besides its owner; restoring it brings
+the parent's audience back (`Grants::may`). A row that cannot be read
+fails every grant decision closed. Doc 69's coworking invitations are
+conversation grants in the same chain, and the per-Agent
+`coworking/grants` store and `AgentScope::coworking_grants` are gone.
+The catalog tails the chain into `grants` and `broken`. Its schema is
+version 2, so an older catalog rebuilds. `Audience::principal` returns
+only what an active, unexpired grant opens, and an Agent's read skips an
+artifact whose inheritance is broken. Exit tests
+`share_inherits_and_breaks` and `revoked_grant_hides_from_search`. The
+server's coworking tests run on the chain.
+
 ### M9 — Cloud remote (L; the protocol and a reference backend)
 
 - **The `Remote` trait**, with `FileRemote` (tests and personal

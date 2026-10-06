@@ -1,6 +1,6 @@
 # 69 — Shared conversation and draft coworking
 
-Status: **implemented; Office workspace collaboration added 2026-09-26, pending live visual and multi-client audit**. Scoped invitations, shared reading, attributed conversation messages, observed participant presence, saved-draft comments, live refresh, isolated Agent revision and exact one-time approval delegation are shipped. Office collaboration adds explicit edit grants, a full-screen shared Office view, a compare-and-swap shared draft, reviewable branches, and Agent candidate import through the existing review path.
+Status: **implemented; Office workspace collaboration added 2026-09-26, pending live visual and multi-client audit**. Scoped invitations, shared reading, attributed conversation messages, observed participant presence, saved-draft comments, live refresh, isolated Agent revision and exact one-time approval delegation are shipped. Office collaboration adds explicit edit grants, a full-screen shared Office view, a compare-and-swap shared draft, reviewable branches, and Agent candidate import through the existing review path. Since data-architecture M8.2 (2026-10-06) an invitation is a conversation grant in the one `grants/` chain (`vak_core::grants`), with its token hash, audience, capabilities and expiry; it is no longer a store in an Agent home.
 
 ## Product contract
 
