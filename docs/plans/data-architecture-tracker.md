@@ -80,7 +80,7 @@ Known slow tests (each over 60 s, not failures):
 | 15a | M8.1 identity and versions: `artifacts/` chain + rollup, `Tool::artifact`, candidates/promotions/Office drafts as versions, catalog nodes, `/library` | `concurrent_edit_creates_sibling_versions`, `saved_version_survives_origin_erasure` | Done (`ce275405b`) |
 | 15b | M8.2 grants: `grants/` chain, coworking grants moved in, inheritance and breaks, catalog filtering | `share_inherits_and_breaks`, `revoked_grant_hides_from_search` | Done (`d09c0c450`) |
 | 15c-a | M8.3a client Library page and artifact page (versions, Star, Rename, Archive, Keep, Download, Open conversation), admin Library, `/library` changes | browser run | Done (`81394dd71`) |
-| 15c-b | M8.3b Continue working and Make another (doc 82 L2): the attachment rendered at admission, `recall`'s cross-conversation scope | live run | Done (commit follows) |
+| 15c-b | M8.3b Continue working and Make another (doc 82 L2): the attachment rendered at admission, `recall`'s cross-conversation scope | live run | Done (`0d8d2a772`) |
 | 15d | M8.4 edit and Put back, saved cards, Share dialog, Canvas/Redline/Workbench/SharedConversation on the Artifact API, navigation | browser acceptance run | Next |
 | 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | |
 
