@@ -77,7 +77,7 @@ Known slow tests (each over 60 s, not failures):
 | 13 | M7a lifecycle: honest deletion (after M6) | see plan §M7a (reconciler, erasure, hold, quota and soak tests, doc 74 §9 browser runs) | |
 | 14 | M7b lifecycle: governance (after M7a) | `label_on_any_node_resolves` and the remaining doc 74 §9 runs | |
 | 15 | M8 design (only declared deliverables, optional title, versions as an `artifacts/` chain with a rollup) | plan §M8 design | Done (`52c470d01`) |
-| 15a | M8.1 identity and versions: `artifacts/` chain + rollup, `Tool::artifact`, candidates/promotions/Office drafts as versions, catalog nodes, `/library` | `concurrent_edit_creates_sibling_versions`, `saved_version_survives_origin_erasure` | Done (commit follows) |
+| 15a | M8.1 identity and versions: `artifacts/` chain + rollup, `Tool::artifact`, candidates/promotions/Office drafts as versions, catalog nodes, `/library` | `concurrent_edit_creates_sibling_versions`, `saved_version_survives_origin_erasure` | Done (`ce275405b`) |
 | 15b | M8.2 grants: `grants/` chain, coworking grants moved in, inheritance and breaks, catalog filtering | `share_inherits_and_breaks`, `revoked_grant_hides_from_search` | Next |
 | 15c | M8.3 client and admin Library, artifact page, version history, Continue working (L2) | browser run | |
 | 15d | M8.4 edit and Put back, saved cards, Share dialog, Canvas/Redline/Workbench/SharedConversation on the Artifact API, navigation | browser acceptance run | |
