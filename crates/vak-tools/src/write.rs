@@ -50,8 +50,8 @@ impl Tool for WriteTool {
             "properties": {
                 "path": {"type": "string", "description": "File path (relative to cwd or absolute)"},
                 "content": {"type": "string", "description": "Full file content to write"},
-                "title": {"type": "string", "description": "Names a deliverable for the user; omit for helper files"},
-                "summary": {"type": "string", "description": "One line on the deliverable"}
+                "title": {"type": "string", "description": "A name for the file when it is a deliverable the user asked for; it then appears in their Library. Leave out for supporting or scratch files."},
+                "summary": {"type": "string", "description": "One sentence on what the deliverable is"}
             },
             "required": ["path", "content"]
         })
