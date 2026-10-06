@@ -973,6 +973,12 @@ export const api = {
       handle(r),
     ),
 
+  library: (): Promise<{ artifacts: import("./types").LibraryArtifact[] }> =>
+    fetch("/library").then((r) => handle(r)),
+
+  libraryArtifact: (id: string): Promise<import("./types").LibraryArtifact & { history: import("./types").LibraryVersion[] }> =>
+    fetch(`/library/${encodeURIComponent(id)}`).then((r) => handle(r)),
+
   intakeSources: (): Promise<{ sources: import("./types").IntakeSource[] }> =>
     fetch("/intake/sources").then((r) => handle(r)),
 

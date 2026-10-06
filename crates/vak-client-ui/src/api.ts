@@ -2311,6 +2311,67 @@ export function intakePoll(source: string): Promise<void> {
   return req(`/intake/sources/${encodeURIComponent(source)}/poll`, { method: "POST", body: "{}" });
 }
 
+// ---- library (artifacts, plan M8) -----------------------------------------
+
+export interface ArtifactSummary {
+  id: string;
+  name: string;
+  path: string;
+  kind: "file" | "document" | "changeset" | "card";
+  agent: string;
+  space: string;
+  summary?: string | null;
+  starred: boolean;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+  versions: number;
+  /** More than one when edits made from one version await reconciling. */
+  siblings: number;
+  head?: string | null;
+  size?: number | null;
+}
+
+export interface ArtifactVersion {
+  id: string;
+  parent?: string | null;
+  digest: string;
+  size: number;
+  /** Where it came from: a call, a Review candidate, or a person. */
+  from: "call" | "candidate" | "person";
+  session?: string;
+  at: string;
+  promoted: boolean;
+  saved: boolean;
+}
+
+export interface ArtifactDetail extends ArtifactSummary {
+  history: ArtifactVersion[];
+}
+
+export function library(): Promise<{ artifacts: ArtifactSummary[] }> {
+  return req("/library");
+}
+
+export function libraryArtifact(id: string): Promise<ArtifactDetail> {
+  return req(`/library/${encodeURIComponent(id)}`);
+}
+
+export function libraryChange(id: string, action: "star" | "archive" | "rename", body: { on?: boolean; title?: string }): Promise<void> {
+  return req(`/library/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function librarySave(id: string, version: string): Promise<void> {
+  return req(`/library/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}/save`, { method: "POST", body: "{}" });
+}
+
+/** A version's bytes. */
+export async function libraryVersionBytes(id: string, version: string): Promise<Uint8Array<ArrayBuffer>> {
+  const response = await authFetch(`/library/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}`);
+  if (!response.ok) throw await rawRefusal(response);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
 import type { OnboardingState } from "./types";
 
 /// The derived setup projection. Shared with the web wizard and the CLI:

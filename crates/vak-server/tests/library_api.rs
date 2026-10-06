@@ -85,6 +85,74 @@ async fn library_lists_artifacts_and_their_versions() {
         .unwrap();
     assert_eq!(res.status(), 200);
     assert_eq!(res.bytes().await.unwrap().as_ref(), b"one");
+    // A person stars, renames, keeps and archives it, each as a record.
+    let post = |path: String, body: serde_json::Value| {
+        client
+            .post(format!("http://{addr}{path}"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+    };
+    for (path, body) in [
+        (
+            format!("/library/{id}/star"),
+            serde_json::json!({"on": true}),
+        ),
+        (
+            format!("/library/{id}/rename"),
+            serde_json::json!({"title": "Brief, final"}),
+        ),
+        (
+            format!("/library/{id}/versions/{first}/save"),
+            serde_json::json!({}),
+        ),
+        (
+            format!("/library/{id}/archive"),
+            serde_json::json!({"on": true}),
+        ),
+    ] {
+        assert_eq!(
+            post(path.clone(), body).await.unwrap().status(),
+            204,
+            "{path}"
+        );
+    }
+    let changed: serde_json::Value = get(format!("/library/{id}"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            changed["name"].clone(),
+            changed["starred"].clone(),
+            changed["archived"].clone()
+        ),
+        (
+            serde_json::json!("Brief, final"),
+            serde_json::json!(true),
+            serde_json::json!(true)
+        )
+    );
+    assert_eq!(changed["history"][0]["saved"], true);
+    assert_eq!(
+        post(
+            format!("/library/{id}/rename"),
+            serde_json::json!({"title": " "})
+        )
+        .await
+        .unwrap()
+        .status(),
+        422
+    );
+    assert_eq!(
+        post(format!("/library/{id}/delete"), serde_json::json!({}))
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
     assert_eq!(get("/library/art_nope".into()).await.unwrap().status(), 404);
     assert_eq!(
         get(format!("/library/{id}/versions/ver_nope"))

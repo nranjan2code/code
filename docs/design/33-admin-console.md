@@ -199,6 +199,8 @@ SDKs to preflight a model.
 | `/library` | GET | Every artifact (plan M8): name, path, kind, Agent, versions and siblings, newest change first |
 | `/library/:id` | GET | One artifact with its version history |
 | `/library/:id/versions/:ver` | GET | A version's bytes, as a download |
+| `/library/:id/star`, `/rename`, `/archive` | POST | A person stars, renames or archives an artifact (`{on}` or `{title}`) |
+| `/library/:id/versions/:ver/save` | POST | A person keeps a version, so it outlives its conversation |
 | `/intake/alerts` | GET, POST | Intake alerts: keywords, tags or sources to match, a cooldown and an optional channel; a match is an `intake_match` inbox entry, each item once |
 | `/intake/alerts/:id` | PATCH, DELETE | Change or remove an alert |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |

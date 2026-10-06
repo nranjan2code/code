@@ -1089,6 +1089,33 @@ export interface ActiveWorker {
   parent_session_id: string;
 }
 
+/** An artifact as `/library` lists it (plan M8). */
+export interface LibraryArtifact {
+  id: string;
+  name: string;
+  path: string;
+  kind: string;
+  agent: string;
+  summary?: string | null;
+  starred: boolean;
+  archived: boolean;
+  updated_at: string;
+  versions: number;
+  siblings: number;
+}
+
+export interface LibraryVersion {
+  id: string;
+  parent?: string | null;
+  digest: string;
+  size: number;
+  from: "call" | "candidate" | "person";
+  session?: string;
+  at: string;
+  promoted: boolean;
+  saved: boolean;
+}
+
 /** What an intake source fetches (plan M6.5): a closed set. */
 export type IntakeConnector =
   | { kind: "rss"; url: string }

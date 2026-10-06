@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
-import { activeAgentId, agentOpening, agentsEpoch, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, setNotice, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen } from "../store";
+import { activeAgentId, agentOpening, agentsEpoch, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, narrowViewport, setInboxOpen, setLibraryOpen, setNotice, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { host } from "../host";
@@ -77,6 +77,7 @@ export default function Sidebar() {
       </div>
 
       <button type="button" class="sb-search-row" onClick={() => setSearchOpen(true)}><Icon name="search" /><span>Search</span><kbd>⌘K</kbd></button>
+      <button type="button" class="sb-search-row" onClick={() => { setInboxOpen(false); setLibraryOpen(true); if (narrowViewport()) setSidebarOpen(false); }}><Icon name="layers" /><span>Library</span></button>
 
       <div class="sb-section-row"><span class="sb-section-title">Agents</span></div>
       <nav class="sb-agent-list" aria-label="Agents">

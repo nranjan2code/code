@@ -1568,6 +1568,18 @@ artifact whose inheritance is broken. Exit tests
 `share_inherits_and_breaks` and `revoked_grant_hides_from_search`. The
 server's coworking tests run on the chain.
 
+M8.3 is split in two. M8.3a (2026-10-06): the client's Library, a
+sidebar row under Search, is a full page like the Inbox. It shows cards
+filtered by kind, change time, Starred and Archived, with a name search.
+The artifact page shows a text preview for small text files, Download,
+Open conversation, Star, Rename, Archive, and the versions, each with
+who made it and when, side-by-side siblings, and Keep. The admin console
+has a Library tab beside Memory, Sources and Search. Changes are records
+credited to the person: `POST /library/{id}/{star|rename|archive}` and
+`/library/{id}/versions/{ver}/save`. A browser run covered the real
+model-made "Harbour poem" at 1440 × 900 and 390 × 844, in light and
+dark. M8.3b is Continue working and Make another (doc 82 L2).
+
 ### M9 — Cloud remote (L; the protocol and a reference backend)
 
 - **The `Remote` trait**, with `FileRemote` (tests and personal

@@ -69,6 +69,8 @@ import {
   setAgentPickerOpen,
   setAgentPickerTab,
   inboxOpen,
+  libraryOpen,
+  setLibraryOpen,
   setInboxOpen,
   transcriptViewId,
   setTranscriptViewId,
@@ -129,6 +131,7 @@ const Settings = lazy(() => import("./components/Settings"));
 import BudgetBanner from "./components/BudgetBanner";
 import SearchModal from "./components/SearchModal";
 const SourcesPanel = lazy(() => import("./components/SourcesPanel"));
+const LibraryPage = lazy(() => import("./components/LibraryPage"));
 import SetupBanner from "./components/SetupBanner";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
@@ -1237,6 +1240,7 @@ export default function App() {
           if (closeOpenMenus()) return;
           if (settingsOpen()) setSettingsOpen(false);
           else if (inboxOpen()) setInboxOpen(false);
+          else if (libraryOpen()) setLibraryOpen(false);
           else if (sideOpen()) setSideOpen(false);
           else if (canvasOpen()) {
             // A note or a reply being typed in the Canvas is never thrown
@@ -1426,7 +1430,7 @@ export default function App() {
           <div class="main">
             <WorkspaceHeader />
             <Show
-              when={inboxOpen()}
+              when={inboxOpen() || libraryOpen()}
               fallback={
                 <>
                   <Show
@@ -1446,7 +1450,9 @@ export default function App() {
                 </>
               }
             >
-              <InboxPage />
+              <Show when={libraryOpen() && !inboxOpen()} fallback={<InboxPage />}>
+                <LibraryPage />
+              </Show>
             </Show>
           </div>
           <Show when={dockTab()}>

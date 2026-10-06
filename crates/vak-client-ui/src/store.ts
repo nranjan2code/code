@@ -722,6 +722,8 @@ export const [searchOpen, setSearchOpen] = createSignal(false);
 // Inbox page (docs/design/29-personal-os.md P6) + live unread total shared by
 // the header bell and the sidebar badge.
 export const [inboxOpen, setInboxOpen] = createSignal(false);
+/** The Library page (plan M8): every deliverable, across conversations. */
+export const [libraryOpen, setLibraryOpen] = createSignal(false);
 export const [inboxUnread, setInboxUnread] = createSignal(0);
 // Feed pipeline modal.
 // Settings page to land on when the next open happens (budget banner link).

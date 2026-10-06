@@ -484,6 +484,7 @@ const EXTENSION_TABS = [
 const KNOWLEDGE_TABS = [
   { hash: "#/memory", label: "Memory" },
   { hash: "#/sources", label: "Sources" },
+  { hash: "#/library", label: "Library" },
   { hash: "#/search", label: "Search" },
 ] as const;
 
@@ -1817,7 +1818,7 @@ function noteAgeBucket(ts: string): "fresh" | "aging" | "stale" {
   return "stale";
 }
 
-function KnowledgeSubNav(props: { active: "#/memory" | "#/sources" | "#/search" }) {
+function KnowledgeSubNav(props: { active: "#/memory" | "#/sources" | "#/library" | "#/search" }) {
   return (
     <div class="knowledge-subnav">
       <a
@@ -1833,6 +1834,13 @@ function KnowledgeSubNav(props: { active: "#/memory" | "#/sources" | "#/search" 
         classList={{ active: props.active === "#/sources" }}
       >
         Sources
+      </a>
+      <a
+        href="#/library"
+        class="knowledge-tab-btn"
+        classList={{ active: props.active === "#/library" }}
+      >
+        Library
       </a>
       <a
         href="#/search"
@@ -7242,7 +7250,7 @@ const NAV: NavItem[] = [
 ];
 
 function routeScope(current: string): NavItem["scope"] {
-  if (current === "#/sources" || current.startsWith("#/sources/") || current === "#/search" || current.startsWith("#/search/")) {
+  if (current === "#/sources" || current.startsWith("#/sources/") || current === "#/library" || current === "#/search" || current.startsWith("#/search/")) {
     return "project";
   }
   if (current === "#/sessions" || current.startsWith("#/sessions/")) return "global";
@@ -7443,6 +7451,59 @@ function AlertForm(props: { sources: import("./types").IntakeSource[]; onClose: 
         <button class="ghost" onClick={props.onClose}>Cancel</button>
       </div>
     </section>
+  );
+}
+
+// ---- Library (artifacts, plan M8) -----------------------------------------
+
+function LibrarySection() {
+  const [artifacts, { refetch }] = createResource(() => api.library());
+  const [open, setOpen] = createSignal<string | null>(null);
+  const [detail] = createResource(open, (id) => api.libraryArtifact(id));
+  return (
+    <div class="view">
+      <KnowledgeSubNav active="#/library" />
+      <PageHeader
+        title="Library"
+        description="Every deliverable your Agents made, across conversations, with each version and where it came from."
+      />
+      <Show when={!artifacts.error} fallback={<LoadError message={`${artifacts.error}`} onRetry={() => refetch()} />}>
+        <Show when={(artifacts()?.artifacts ?? []).length > 0} fallback={<div class="empty">{artifacts.loading ? "Loading…" : "Nothing has been made yet."}</div>}>
+          <div class="intake-list">
+            <For each={artifacts()?.artifacts ?? []}>
+              {(artifact) => (
+                <article class="panel intake-row">
+                  <div class="intake-row-main">
+                    <button class="link-button" onClick={() => setOpen(open() === artifact.id ? null : artifact.id)}>{artifact.name}</button>
+                    <span class="dim">
+                      {artifact.kind} · {artifact.agent} · {artifact.versions} version{artifact.versions === 1 ? "" : "s"} · changed {timeAgo(artifact.updated_at)}
+                      {artifact.siblings > 1 ? " · edits await a choice" : ""}
+                      {artifact.archived ? " · archived" : ""}
+                    </span>
+                    <span class="dim intake-url">{artifact.path}</span>
+                  </div>
+                  <Show when={open() === artifact.id && detail()}>
+                    {(found) => (
+                      <ol class="intake-detail">
+                        <For each={found().history}>
+                          {(version, index) => (
+                            <li>
+                              Version {index() + 1} · {version.from === "person" ? "a person" : version.from === "candidate" ? "Vakyartha, for review" : "Vakyartha"} · {timeAgo(version.at)} · {version.size} bytes
+                              {version.promoted ? " · accepted" : ""}{version.saved ? " · kept" : ""}
+                              <span class="dim mono"> {version.digest.slice(0, 12)}</span>
+                            </li>
+                          )}
+                        </For>
+                      </ol>
+                    )}
+                  </Show>
+                </article>
+              )}
+            </For>
+          </div>
+        </Show>
+      </Show>
+    </div>
   );
 }
 
@@ -7690,7 +7751,7 @@ export default function App() {
     const r = route().split("?", 1)[0] || "#/overview";
     if (r === "#/setup") return "#/setup";
     if (r.startsWith("#/sessions/")) return "transcript";
-    if (r === "#/sources" || r.startsWith("#/sources/") || r === "#/search" || r.startsWith("#/search/")) return r;
+    if (r === "#/sources" || r.startsWith("#/sources/") || r === "#/library" || r === "#/search" || r.startsWith("#/search/")) return r;
     // Operations owns a real subtree. Resolve it before the generic
     // top-level prefix matcher so nested routes never fall through to a
     // different screen when the hash carries a query or detail segment.
@@ -7785,6 +7846,7 @@ export default function App() {
               <Match when={currentRoute() === "#/gateway"}><GatewaySection /></Match>
               <Match when={currentRoute() === "#/memory"}><MemoryView /></Match>
               <Match when={currentRoute() === "#/sources"}><IntakeSection /></Match>
+              <Match when={currentRoute() === "#/library"}><LibrarySection /></Match>
               <Match when={currentRoute() === "#/search"}><SearchView /></Match>
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>
               <Match when={currentRoute() === "#/finops"}><FinOpsView /></Match>

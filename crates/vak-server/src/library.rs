@@ -8,7 +8,7 @@ use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use vak_core::artifacts::{ArtifactStep, NewVersion, VersionSource};
 
 use crate::AppState;
@@ -171,9 +171,95 @@ async fn version_bytes(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct Change {
+    /// For star and archive.
+    #[serde(default)]
+    on: Option<bool>,
+    /// For rename.
+    #[serde(default)]
+    title: Option<String>,
+}
+
+/// `POST /library/{id}/{action}`: a person stars, renames or archives an
+/// artifact, as a record credited to them.
+async fn change(
+    State(state): State<AppState>,
+    Path((id, action)): Path<(String, String)>,
+    Json(body): Json<Change>,
+) -> Response {
+    let step = match action.as_str() {
+        "star" => ArtifactStep::Starred {
+            on: body.on.unwrap_or(true),
+        },
+        "archive" => ArtifactStep::Archived {
+            on: body.on.unwrap_or(true),
+        },
+        "rename" => match body.title.as_deref().map(str::trim) {
+            Some(title) if !title.is_empty() && title.chars().count() <= 200 => {
+                ArtifactStep::Renamed {
+                    title: title.to_string(),
+                }
+            }
+            _ => {
+                return (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    Json(serde_json::json!({ "error": "a name is 1 to 200 characters" })),
+                )
+                    .into_response();
+            }
+        },
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    record(&state, &id, step)
+}
+
+/// `POST /library/{id}/versions/{version}/save`: a person keeps a version,
+/// so it outlives the conversation that made it.
+async fn save(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+) -> Response {
+    let Ok(version) = vak_session::ids::VersionId::parse(&version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let known = state
+        .core
+        .artifacts()
+        .get(&id)
+        .is_some_and(|artifact| artifact.versions.iter().any(|known| known.id == version));
+    if !known {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    record(&state, &id, ArtifactStep::Saved { version })
+}
+
+fn record(state: &AppState, id: &str, step: ArtifactStep) -> Response {
+    let Ok(artifact) = vak_session::ids::ArtifactId::parse(id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match state
+        .core
+        .artifacts()
+        .record(artifact, step, None, Some(crate::request_actor(state)))
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(vak_core::artifacts::ArtifactError::NotFound(_)) => {
+            StatusCode::NOT_FOUND.into_response()
+        }
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/library", get(list))
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
+        .route("/library/{id}/versions/{version}/save", post(save))
+        .route("/library/{id}/{action}", post(change))
 }
