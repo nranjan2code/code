@@ -1,7 +1,10 @@
 # 82 — Library: one place for everything Vak makes
 
-Status: **proposal, 2026-10-01; revision 3 after a second review the same
-day. Nothing in this document is shipped.** Its product decisions (§1) are
+Status: **in progress. Proposal 2026-10-01, revision 3 after a second
+review the same day; data-architecture M8.1 shipped 2026-10-06:
+`Tool::artifact` and `ArtifactClaim` (§3), artifacts and versions as
+records, and the read-only `/library` API (§9). The screens, Continue
+working, editing and sharing follow at M8.2 to M8.4.** Its product decisions (§1) are
 taken: the maintainer delegated them, and in the second review chose
 decision 3 (work on an artifact continues in its Agent's own conversation).
 This document is the product specification for the Library: doc 74's client

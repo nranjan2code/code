@@ -1165,6 +1165,7 @@ async fn record_copy_candidate(
             narrowed: None,
         });
         crate::sandbox_records::append(&crate::sandbox_records_path(state, session_id), &record)
+            .map(|()| crate::library::note_review(state, &record))
             .map_err(|error| {
                 let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
                 error.to_string()

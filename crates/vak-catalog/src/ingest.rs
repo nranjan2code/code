@@ -193,6 +193,7 @@ pub(crate) fn source(
                 intake_row(tx, objects.as_deref(), bytes)
             })
         }
+        Source::Artifacts(dir) => walk(dir, &mut rows, &mut |_, bytes| artifact_row(tx, bytes)),
         Source::IntakeSource(path) => {
             let versions = vak_session::documents::version_count(path) as u64;
             if versions > from.frames {
@@ -1018,4 +1019,95 @@ fn forget_source(tx: &Transaction<'_>, path: &std::path::Path) -> rusqlite::Resu
         [&locator],
     )?;
     Ok(())
+}
+
+/// One row of the `artifacts/` chain (plan M8): a declaration makes the
+/// artifact's node and text; a version made by a call is produced by that
+/// call and its run; a rename or archive moves its title or status.
+fn artifact_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
+    let Ok(row) = serde_json::from_slice::<Value>(bytes) else {
+        return Ok(());
+    };
+    let Some(artifact) = row.get("artifact").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let text = |key: &str| row.get(key).and_then(Value::as_str).map(str::to_string);
+    let run = row
+        .pointer("/trace/run")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    match row.get("step").and_then(Value::as_str) {
+        Some("declared") => {
+            let path = text("path").unwrap_or_default();
+            let title = text("title");
+            upsert(
+                tx,
+                Upsert {
+                    id: artifact,
+                    kind: "artifact",
+                    space: text("space"),
+                    agent: text("agent").as_deref().map(agent_id),
+                    agent_name: text("agent"),
+                    run: run.clone(),
+                    actor: text("actor"),
+                    title: title.clone().or_else(|| Some(path.clone())),
+                    status: Some("active".into()),
+                    created_at: text("at"),
+                    locator: Some(path.clone()),
+                    ..Default::default()
+                },
+            )?;
+            let body = [
+                title.unwrap_or_default(),
+                text("summary").unwrap_or_default(),
+                path,
+            ];
+            append_text(tx, artifact, &body.join("\n"))
+        }
+        Some("versioned") => {
+            if let (Some("call"), Some(session), Some(call)) = (
+                row.get("from").and_then(Value::as_str),
+                row.get("session").and_then(Value::as_str),
+                row.get("call").and_then(Value::as_str),
+            ) && !session.is_empty()
+            {
+                edge(
+                    tx,
+                    artifact,
+                    "produced_by",
+                    &call_node(&session_node(session), call),
+                )?;
+            }
+            if let Some(run) = &run {
+                edge(tx, artifact, "produced_by", run)?;
+            }
+            Ok(())
+        }
+        Some("renamed") => upsert(
+            tx,
+            Upsert {
+                id: artifact,
+                kind: "artifact",
+                title: text("title"),
+                ..Default::default()
+            },
+        ),
+        Some("archived") => upsert(
+            tx,
+            Upsert {
+                id: artifact,
+                kind: "artifact",
+                status: Some(
+                    if row.get("on").and_then(Value::as_bool) == Some(true) {
+                        "archived"
+                    } else {
+                        "active"
+                    }
+                    .into(),
+                ),
+                ..Default::default()
+            },
+        ),
+        _ => Ok(()),
+    }
 }

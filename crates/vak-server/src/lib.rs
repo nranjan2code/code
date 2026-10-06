@@ -71,6 +71,7 @@ pub mod gateway;
 mod heartbeat;
 mod inbox;
 mod intake;
+mod library;
 mod mail_calendar;
 mod office_workspace;
 mod operations;
@@ -1306,6 +1307,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .merge(gateway::routes())
         .merge(intake::routes())
+        .merge(library::routes())
         .merge(admin::routes())
         // Compression is scoped to the three STATIC bundles and nowhere
         // else. These are the big, highly compressible responses — a site
@@ -2818,7 +2820,10 @@ async fn search_sessions(
                 Some("memory") => vec!["memory"],
                 Some("entity") => vec!["entity"],
                 Some("item") => vec!["item"],
-                _ => vec!["session", "turn", "call", "memory", "entity", "item"],
+                Some("artifact") => vec!["artifact"],
+                _ => vec![
+                    "session", "turn", "call", "memory", "entity", "item", "artifact",
+                ],
             }
             .into_iter()
             .map(str::to_string)
@@ -2868,6 +2873,7 @@ fn search_hit(hit: vak_catalog::Hit) -> serde_json::Value {
         "memory" => (format!("memory/{leaf}"), "memory"),
         "entity" => (format!("entity/{leaf}"), "entity"),
         "item" => (String::new(), "item"),
+        "artifact" => (String::new(), "artifact"),
         _ => (
             node.session
                 .as_deref()
@@ -12424,7 +12430,10 @@ async fn export_sandbox_candidate(
                 narrowed: None,
             });
             match crate::sandbox_records::append(&records_path, &record) {
-                Ok(()) => Json(record).into_response(),
+                Ok(()) => {
+                    library::note_review(&state, &record);
+                    Json(record).into_response()
+                }
                 Err(error) => {
                     let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
                     (
@@ -13015,7 +13024,10 @@ async fn narrow_sandbox_candidate_office(
         }),
     });
     match crate::sandbox_records::append(&sandbox_records_path(&state, &session_id), &record) {
-        Ok(()) => Json(record).into_response(),
+        Ok(()) => {
+            library::note_review(&state, &record);
+            Json(record).into_response()
+        }
         Err(error) => {
             let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
             refuse(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
@@ -13995,6 +14007,7 @@ async fn promote_sandbox_candidate(
         )
             .into_response();
     }
+    library::note_review(&state, &record);
     record_promoted_files(&state, &promoted_from, &workspace, &body.files);
     (StatusCode::OK, Json(record)).into_response()
 }

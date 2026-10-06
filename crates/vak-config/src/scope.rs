@@ -328,6 +328,18 @@ impl SharedScope {
         self.root.join("triggers")
     }
 
+    /// The artifact records (plan M8): what each deliverable is and every
+    /// version of it.
+    pub fn artifacts(&self) -> PathBuf {
+        self.root.join("artifacts")
+    }
+
+    /// The rollup Document of [`SharedScope::artifacts`]: each artifact's
+    /// current state.
+    pub fn artifacts_rollup(&self) -> PathBuf {
+        self.root.join("artifacts-rollup")
+    }
+
     /// Where intake sources are named: the Documents `sources/<src>`
     /// (plan M6.5).
     pub fn sources(&self) -> PathBuf {

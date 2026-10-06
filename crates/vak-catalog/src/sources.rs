@@ -27,6 +27,8 @@ pub enum Source {
     IntakeSource(PathBuf),
     /// The intake chain, with the tenant whose objects hold item bodies.
     Intake { dir: PathBuf, tenant: PathBuf },
+    /// The artifact records.
+    Artifacts(PathBuf),
 }
 
 impl Source {
@@ -42,6 +44,7 @@ impl Source {
             Self::Entity { path, .. } => ("entity", path),
             Self::IntakeSource(path) => ("source", path),
             Self::Intake { dir, .. } => ("intake", dir),
+            Self::Artifacts(dir) => ("artifacts", dir),
         };
         format!("{kind}:{}", path.display())
     }
@@ -50,7 +53,9 @@ impl Source {
     pub fn has_more(&self, from: Position) -> bool {
         match self {
             Self::Session(dir) | Self::Runs(dir) | Self::Effects(dir) => chain_has_more(dir, from),
-            Self::Commitments { dir, .. } | Self::Intake { dir, .. } => chain_has_more(dir, from),
+            Self::Commitments { dir, .. } | Self::Intake { dir, .. } | Self::Artifacts(dir) => {
+                chain_has_more(dir, from)
+            }
             Self::Trigger(path)
             | Self::IntakeSource(path)
             | Self::Memory { path, .. }
@@ -107,6 +112,9 @@ pub fn discover(data: &Path) -> Vec<Source> {
     let mut sources = vak_session::documents::under(&shared.sources());
     sources.sort();
     found.extend(sources.into_iter().map(Source::IntakeSource));
+    if shared.artifacts().is_dir() {
+        found.push(Source::Artifacts(shared.artifacts()));
+    }
     if shared.intake().is_dir() {
         found.push(Source::Intake {
             dir: shared.intake(),

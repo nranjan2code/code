@@ -386,6 +386,9 @@ pub struct AgentConfig {
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<RevocationCheck>,
     pub presentation_check: Option<PresentationCheck>,
+    /// Where a successful call's declared deliverable is recorded (plan
+    /// M8); `None` records nothing.
+    pub artifacts: Option<Arc<dyn vak_tools::ArtifactSink>>,
     pub retrieval_check: Option<RetrievalCheck>,
     /// What satisfies the freshness check: any call that observed current
     /// state this run. See `ObservationCheck`. Absent, only retrieval counts.
@@ -580,6 +583,7 @@ impl AgentConfig {
             hooks: None,
             revocation_check: None,
             presentation_check: None,
+            artifacts: None,
             retrieval_check: None,
             observation_check: None,
             envelope_check: None,
@@ -3421,12 +3425,28 @@ impl Agent {
                 match out {
                     ToolRunOutput::Ok(_) => {
                         receipts.successful_tool_calls += 1;
-                        if call_names
+                        if let Some(claim) = call_names
                             .get(id)
                             .zip(call_inputs.get(id))
-                            .is_some_and(|(name, input)| self.tool_produces_artifact(name, input))
+                            .and_then(|(name, input)| self.tool_artifact(name, input))
                         {
                             receipts.artifact_deliveries += 1;
+                            if claim.declared
+                                && let Some(sink) = &self.config.artifacts
+                            {
+                                let session = self
+                                    .session
+                                    .lock()
+                                    .await
+                                    .header()
+                                    .map(|header| header.session_id.clone());
+                                sink.declared(
+                                    &claim,
+                                    session.as_deref(),
+                                    id,
+                                    self.config.trace.as_ref(),
+                                );
+                            }
                         }
                         if inspection_ids.contains(id) {
                             receipts.successful_inspections += 1;
@@ -4850,14 +4870,14 @@ impl Agent {
             .any(|tool| tool.name() == name && tool.presents_cards())
     }
 
-    /// Whether this tool declares that a successful result produces the
-    /// artifact requested by an authoring outcome.
-    fn tool_produces_artifact(&self, name: &str, input: &Value) -> bool {
+    /// The file a successful call of this tool produces, and whether it is
+    /// a declared deliverable (`Tool::artifact`).
+    fn tool_artifact(&self, name: &str, input: &Value) -> Option<vak_tools::ArtifactClaim> {
         self.config
             .tools
             .iter()
             .find(|tool| tool.name() == name)
-            .is_some_and(|tool| tool.produces_artifact(input))
+            .and_then(|tool| tool.artifact(input))
     }
 
     /// Appends the model's response and returns its ledger entry id, so

@@ -361,8 +361,8 @@ impl Tool for BrokeredTool {
         self.inner.file_access(args)
     }
 
-    fn produces_artifact(&self, args: &Value) -> bool {
-        self.inner.produces_artifact(args)
+    fn artifact(&self, args: &Value) -> Option<crate::ArtifactClaim> {
+        self.inner.artifact(args)
     }
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {

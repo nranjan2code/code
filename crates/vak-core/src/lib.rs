@@ -7,6 +7,7 @@
 pub mod admission;
 pub mod agent_definitions;
 pub mod agent_network;
+pub mod artifacts;
 pub mod backup;
 pub mod baseline;
 pub mod capability;
@@ -6447,6 +6448,30 @@ impl Core {
         result
     }
 
+    /// The artifact records of this Core's data home (plan M8).
+    pub fn artifacts(&self) -> artifacts::Artifacts {
+        artifacts::Artifacts::at(
+            &self.shared_scope(),
+            vak_config::paths::tenant_home_at(
+                &self.inner.sessions_home,
+                vak_config::paths::LOCAL_TENANT,
+            ),
+        )
+    }
+
+    /// What records the deliverables this Core's turns declare.
+    pub fn artifact_sink(&self) -> artifacts::CallSink {
+        artifacts::CallSink {
+            artifacts: self.artifacts(),
+            cwd: self.inner.cwd.clone(),
+            executions: vak_config::scope::executions_root(&self.inner.cwd),
+            agent: self
+                .agent_identity()
+                .map(|agent| agent.id.clone())
+                .unwrap_or_else(|| "vak".into()),
+        }
+    }
+
     /// The effect records of this Core's data home (plan M4.5).
     pub fn effects(&self) -> vak_session::effects::Effects {
         vak_session::effects::Effects::at(
@@ -6674,6 +6699,7 @@ impl Core {
                 .map(|(name, _)| name.clone())
                 .collect();
             cfg.observation_check = Some(Arc::new(move |name, _input| observing.contains(name)));
+            cfg.artifacts = Some(Arc::new(self.artifact_sink()));
             cfg.retrieval_check = Some(Arc::new(move |name, input| {
                 let server = index
                     .lock()

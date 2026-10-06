@@ -534,7 +534,7 @@ export interface SearchHit {
   turn_id: string | null;
   node: string;
   kind: string;
-  role: "conversation" | "memory" | "profile" | "entity" | "item";
+  role: "conversation" | "memory" | "profile" | "entity" | "item" | "artifact";
   ts: string | null;
   score: number;
   snippet: string;

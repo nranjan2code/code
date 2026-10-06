@@ -21,8 +21,23 @@ impl Tool for WriteTool {
         &["documents"]
     }
 
-    fn produces_artifact(&self, _args: &Value) -> bool {
-        true
+    /// Every file written is claimed; one written with a `title` is
+    /// declared a deliverable.
+    fn artifact(&self, args: &Value) -> Option<crate::ArtifactClaim> {
+        let text = |key: &str| {
+            args.get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_string)
+        };
+        let title = text("title");
+        Some(crate::ArtifactClaim {
+            path: text("path")?,
+            declared: title.is_some(),
+            title,
+            summary: text("summary"),
+        })
     }
 
     fn description(&self) -> &str {
@@ -34,7 +49,9 @@ impl Tool for WriteTool {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "File path (relative to cwd or absolute)"},
-                "content": {"type": "string", "description": "Full file content to write"}
+                "content": {"type": "string", "description": "Full file content to write"},
+                "title": {"type": "string", "description": "Names a deliverable for the user; omit for helper files"},
+                "summary": {"type": "string", "description": "One line on the deliverable"}
             },
             "required": ["path", "content"]
         })

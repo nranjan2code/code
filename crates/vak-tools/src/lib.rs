@@ -236,6 +236,29 @@ impl ToolOutput {
 /// invariant 10 (docs/design/72, "File in").
 pub const INBOX_DIR: &str = "inbox";
 
+/// A file a call produces (docs/design/82-library.md §3): every claim is
+/// completion evidence, and a declared one is a Library entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactClaim {
+    pub path: String,
+    pub declared: bool,
+    pub title: Option<String>,
+    pub summary: Option<String>,
+}
+
+/// Where the agent loop reports a successful call's declared deliverable
+/// (plan M8): `vak_core::artifacts::CallSink` records it as an artifact and
+/// a version, under the run's trace key.
+pub trait ArtifactSink: Send + Sync {
+    fn declared(
+        &self,
+        claim: &ArtifactClaim,
+        session: Option<&str>,
+        call: &str,
+        trace: Option<&vak_session::trace::TraceKey>,
+    );
+}
+
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
@@ -292,11 +315,18 @@ pub trait Tool: Send + Sync {
         None
     }
 
-    /// Whether a successful call produces the requested user-facing
-    /// artifact. The runtime counts this only from the matching successful
-    /// result, so a proposal or failed write is never completion evidence.
-    fn produces_artifact(&self, args: &Value) -> bool {
-        self.delivered_file(args).is_some()
+    /// The workspace file a successful call with these arguments produces,
+    /// and whether the call declares it a deliverable for the person
+    /// (docs/design/82-library.md §3). The runtime reads this only from the
+    /// matching successful result, so a proposal or a failed write is
+    /// neither completion evidence nor a Library entry.
+    fn artifact(&self, args: &Value) -> Option<ArtifactClaim> {
+        self.delivered_file(args).map(|path| ArtifactClaim {
+            path,
+            declared: true,
+            title: None,
+            summary: None,
+        })
     }
 
     /// A reason this call cannot succeed, decided from its arguments alone

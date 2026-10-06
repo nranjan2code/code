@@ -44,6 +44,7 @@ fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
         "memory" => (format!("memory/{}", leaf()), "memory"),
         "entity" => (format!("entity/{}", leaf()), "entity"),
         "item" => (node.id.clone(), "from a source"),
+        "artifact" => (node.id.clone(), "deliverable"),
         _ => (
             node.session
                 .as_deref()
@@ -123,10 +124,12 @@ impl vak_tools::Tool for SessionSearchTool {
         let scope = vak_catalog::Scope {
             space: self.space.clone(),
             kinds: Some(
-                ["session", "turn", "call", "memory", "entity", "item"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
+                [
+                    "session", "turn", "call", "memory", "entity", "item", "artifact",
+                ]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             ),
         };
         let result = tokio::task::spawn_blocking(move || {

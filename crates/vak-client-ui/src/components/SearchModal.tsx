@@ -13,6 +13,7 @@ const HIT_WORDS: Record<SearchHit["role"], string> = {
   profile: "About you",
   entity: "Person or thing",
   item: "From your sources",
+  artifact: "Made for you",
 };
 
 const LIMITS = [8, 25, 50];

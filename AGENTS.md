@@ -355,7 +355,7 @@ commitment state read through rollup Documents (`vak_session::rollup`),
 so no turn-path decision replays a chain. M6.4 is done (2026-10-06), and
 with it M6: conversation detail's Lineage tab traces anything a
 conversation holds to its run and cause, and the catalog's status sits
-beside Rebuild search. M6.5's design was agreed on 2026-10-06 (plan §M6.5 "M6.5 design": `session_search` widened to intake items, every connector in Rust, steps M6.5a–c). M6.5a is done (2026-10-06): a source is a Document `sources/<src>` polled by its own `source_poll` trigger (`vak_core::intake`, `/intake`), its connectors are Rust (`crates/vak-intake`), parsed in the network-denied worker, and every item it takes is a tenant object plus an `intake/` row with the poll run's trace key and a disposition, which the catalog traces to its run, trigger and source. M6.5b is done (2026-10-06): `session_search` finds items, a held item reaches no Agent read until a person releases it (`Audience::held`), alerts (`vak_core::intake_alerts`) notify the Inbox once per item, and a file saved to the inbox is an item of the Agent's push source. M6.5c is done (2026-10-06), and with it M6.5: the admin console's Sources and the client's Sources panel read `/intake`, and the Python feed pipeline, `feeds.rs` and the `[feeds]` config are deleted. M8's design was agreed on 2026-10-06 (plan §M8 "M8 design": only declared deliverables, an optional `title`, versions as an `artifacts/` chain read through a rollup, grants as one `grants/` chain, steps M8.1–M8.4); M8.1 is next, and M7a → M7b follow. No session starts a later step
+beside Rebuild search. M6.5's design was agreed on 2026-10-06 (plan §M6.5 "M6.5 design": `session_search` widened to intake items, every connector in Rust, steps M6.5a–c). M6.5a is done (2026-10-06): a source is a Document `sources/<src>` polled by its own `source_poll` trigger (`vak_core::intake`, `/intake`), its connectors are Rust (`crates/vak-intake`), parsed in the network-denied worker, and every item it takes is a tenant object plus an `intake/` row with the poll run's trace key and a disposition, which the catalog traces to its run, trigger and source. M6.5b is done (2026-10-06): `session_search` finds items, a held item reaches no Agent read until a person releases it (`Audience::held`), alerts (`vak_core::intake_alerts`) notify the Inbox once per item, and a file saved to the inbox is an item of the Agent's push source. M6.5c is done (2026-10-06), and with it M6.5: the admin console's Sources and the client's Sources panel read `/intake`, and the Python feed pipeline, `feeds.rs` and the `[feeds]` config are deleted. M8's design was agreed on 2026-10-06 (plan §M8 "M8 design": only declared deliverables, an optional `title`, versions as an `artifacts/` chain read through a rollup, grants as one `grants/` chain, steps M8.1–M8.4). M8.1 is done (2026-10-06): a declared deliverable (`Tool::artifact`, an `ArtifactClaim` with `declared`) is an artifact in the `artifacts/` chain (`vak_core::artifacts`), each file one artifact, each version naming its parent, read through a rollup and `/library`. M8.2 (grants) is next, and M7a → M7b follow. No session starts a later step
 unasked.
 
 **What it is.** One architecture for everything Vak writes:
@@ -500,6 +500,10 @@ unasked.
   parsed in the worker. Never run a feed script, and never drop an item
   detection holds; label it. Only a person's own view sets
   `vak_catalog::Audience::held`; an Agent read never does.
+- Record a deliverable only through `vak_core::artifacts` (a tool's
+  `Tool::artifact` claim with `declared`, or a person's save), never a
+  list of files of your own; a new version names its parent, and nothing
+  overwrites a version.
 - A decision on the turn path reads a ref or a rollup
   (`vak_session::rollup`), never a replay of a chain or a ledger: a new
   projection a turn needs is a rollup Document over its chain.

@@ -7177,6 +7177,7 @@ dependencies = [
  "chrono-tz",
  "futures",
  "globset",
+ "hex",
  "iana-time-zone",
  "semver",
  "serde",

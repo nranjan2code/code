@@ -1536,6 +1536,23 @@ The steps:
    reconciliation. The browser acceptance run covers create → review →
    promote → share → comment → revise; erase waits for M7a.
 
+M8.1 (2026-10-06): `vak_core::artifacts` (the `artifacts/` chain, read
+through `artifacts-rollup`; ids derived from space and path, so one file
+is one artifact; a version names its parent, and the same bytes again are
+no new version). `Tool::artifact` and `vak_tools::ArtifactClaim` replace
+`produces_artifact`: every claim is completion evidence, and a declared
+one (an `office_apply` draft, or a `write` with a `title`) reaches
+`AgentConfig::artifacts`, Core's `CallSink`, which records the artifact
+and a version under the run's key. A Review candidate of a declared
+deliverable is a version of it, and its promotion is recorded on that
+version (`vak-server` `library::note_review`). The catalog has `artifact`
+nodes produced by their call and run, which `/search` and `session_search`
+find. `/library`, `/library/{id}` and `/library/{id}/versions/{ver}` are
+read-only. Exit tests `concurrent_edit_creates_sibling_versions` and
+`saved_version_survives_origin_erasure`; `library_api.rs` covers the
+endpoints. Live: a real model turn's titled `write` became an artifact,
+traced artifact → call → run → turn → session, cause user.
+
 ### M9 — Cloud remote (L; the protocol and a reference backend)
 
 - **The `Remote` trait**, with `FileRemote` (tests and personal

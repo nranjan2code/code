@@ -85,6 +85,16 @@ fn records() -> Vec<Record> {
                 "step": "unknown", "reason": "r",
             }),
         ),
+        record::<vak_core::artifacts::ArtifactEvent>(
+            "ArtifactEvent",
+            "crates/vak-core/src/artifacts.rs",
+            "ledger",
+            "artifacts",
+            serde_json::json!({
+                "artifact": "art_01920000-0000-7000-8000-000000000001", "at": ts,
+                "step": "starred", "on": true,
+            }),
+        ),
         record::<vak_core::intake::IntakeEvent>(
             "IntakeEvent",
             "crates/vak-core/src/intake.rs",
@@ -268,7 +278,7 @@ fn every_ledger_row_type_is_traced() {
     let total = names.len();
     names.dedup();
     assert_eq!(total, names.len(), "row type names are unique");
-    assert_eq!(total, 19);
+    assert_eq!(total, 20);
 
     let mut declared = 0;
     for entry in std::fs::read_dir(workspace_root().join("crates"))
@@ -308,7 +318,7 @@ fn every_ledger_row_type_is_traced() {
 /// and writes it out again (the assertion lives in `record`).
 #[test]
 fn every_ledger_row_type_names_its_actor() {
-    assert_eq!(records().len(), 19);
+    assert_eq!(records().len(), 20);
 }
 
 struct Field {

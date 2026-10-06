@@ -196,6 +196,9 @@ SDKs to preflight a model.
 | `/intake/items` | GET | What the polls took, newest first (`?source=&status=&limit=`) |
 | `/intake/items/:id` | GET | One item with its body, labels and evidence |
 | `/intake/items/:id/release`, `/intake/items/:id/quarantine` | POST | A person lets a held item reach the Agent, or holds one back; a release evaluates the Agent's alerts |
+| `/library` | GET | Every artifact (plan M8): name, path, kind, Agent, versions and siblings, newest change first |
+| `/library/:id` | GET | One artifact with its version history |
+| `/library/:id/versions/:ver` | GET | A version's bytes, as a download |
 | `/intake/alerts` | GET, POST | Intake alerts: keywords, tags or sources to match, a cooldown and an optional channel; a match is an `intake_match` inbox entry, each item once |
 | `/intake/alerts/:id` | PATCH, DELETE | Change or remove an alert |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |

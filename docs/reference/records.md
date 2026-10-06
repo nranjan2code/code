@@ -45,6 +45,18 @@ Type `ActivityRow` in `crates/vak-core/src/finops.rs`. Class: ledger. Stored in:
 | `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
 | `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
 
+## artifact_event
+
+Type `ArtifactEvent` in `crates/vak-core/src/artifacts.rs`. Class: ledger. Stored in: `artifacts`. Version: 1.
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `artifact` | `ArtifactId` | yes |  |
+| `at` | `DateTime<Utc>` | yes |  |
+| `trace` | `Option<TraceKey>` | no | The run behind the step; absent for a person's own step. |
+| `actor` | `Option<PrincipalId>` | no |  |
+| `step` | `ArtifactStep` | yes | (flattened into the row) |
+
 ## audience_grant
 
 Type `AudienceGrant` in `crates/vak-server/src/coworking.rs`. Class: ledger. Stored in: `coworking/grants`. Version: 1.
