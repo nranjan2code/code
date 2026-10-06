@@ -2829,27 +2829,40 @@ function FinOpsView() {
 
 // ---- Search ----------------------------------------------------------------
 
-function highlight(snippet: string): string {
-  // FTS snippets contain only <b> emphasis markers, but the surrounding text
-  // is still untrusted transcript content. Escape it before using innerHTML.
-  const escaped = snippet
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-  return escaped.replaceAll("&lt;b&gt;", "<mark>").replaceAll("&lt;/b&gt;", "</mark>");
+function highlight(snippet: string, query: string): string {
+  // The snippet is untrusted transcript text: escape it, then mark the
+  // words that were searched for.
+  const escape = (text: string) =>
+    text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const words = query
+    .split(/[^\p{L}\p{N}_]+/u)
+    .filter((word) => word.length > 1)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (words.length === 0) return escape(snippet);
+  // Split on the words first, so a mark never lands inside an escape.
+  return snippet
+    .split(new RegExp(`(${words.join("|")})`, "giu"))
+    .map((part, index) => (index % 2 === 1 ? `<mark>${escape(part)}</mark>` : escape(part)))
+    .join("");
 }
 
-const ROLE_FILTERS = [
-  { id: "", label: "All roles" },
-  { id: "user", label: "User" },
-  { id: "assistant", label: "Assistant" },
-  { id: "system", label: "System" },
-  { id: "tool", label: "Tool" },
+const KIND_FILTERS = [
+  { id: "", label: "Everything" },
+  { id: "conversation", label: "Conversations" },
+  { id: "memory", label: "Memory" },
+  { id: "entity", label: "People and things" },
 ];
+
+const HIT_WORDS: Record<SearchHit["role"], string> = {
+  conversation: "Conversation",
+  memory: "Memory",
+  profile: "About you",
+  entity: "Person or thing",
+};
 
 function SearchView() {
   const [q, setQ] = createSignal("");
-  const [role, setRole] = createSignal("");
+  const [kind, setKind] = createSignal("");
   const [hits, setHits] = createSignal<SearchHit[] | null>(null);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
@@ -2864,7 +2877,7 @@ function SearchView() {
     setBusy(true);
     timer = setTimeout(async () => {
       try {
-        const res = await api.search(query.trim(), { role: role() || undefined, limit: 50 });
+        const res = await api.search(query.trim(), { kind: kind() || undefined, limit: 50 });
         setHits(res.hits);
         setError("");
       } catch (err) {
@@ -2875,11 +2888,14 @@ function SearchView() {
       }
     }, 250);
   };
+  const open = (hit: SearchHit) => {
+    navigate(hit.role === "conversation" ? `#/sessions/${hit.session_id}` : "#/memory");
+  };
 
   return (
     <div class="view">
       <KnowledgeSubNav active="#/search" />
-      <PageHeader title="Search" description="Look through every conversation Vakyartha has had, and jump straight to where something was said." />
+      <PageHeader title="Search" description="Look through every conversation, memory note and entity, and jump straight to where something was said." />
       <div class="search-hero-deck">
         <div class="search-hero">
           <input
@@ -2891,19 +2907,19 @@ function SearchView() {
               runSearch(e.currentTarget.value);
             }}
           />
-          <select value={role()} onChange={(e) => { setRole(e.currentTarget.value); runSearch(q()); }}>
-            <For each={ROLE_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
+          <select value={kind()} onChange={(e) => { setKind(e.currentTarget.value); runSearch(q()); }}>
+            <For each={KIND_FILTERS}>{(f) => <option value={f.id}>{f.label}</option>}</For>
           </select>
         </div>
         <div class="search-role-pills">
-          <span class="dim small" style="margin-right: 4px;">Role filter:</span>
-          <For each={ROLE_FILTERS}>
+          <span class="dim small" style="margin-right: 4px;">Show:</span>
+          <For each={KIND_FILTERS}>
             {(f) => (
               <button
                 class="search-role-btn"
-                classList={{ active: role() === f.id }}
+                classList={{ active: kind() === f.id }}
                 onClick={() => {
-                  setRole(f.id);
+                  setKind(f.id);
                   runSearch(q());
                 }}
               >
@@ -2926,7 +2942,7 @@ function SearchView() {
           <div class="empty">Searching…</div>
         </Match>
         <Match when={hits() === null}>
-          <div class="empty">Start typing to search every conversation. Put a phrase in "quotes" to match it exactly, or end a word with * to match anything that starts with it.</div>
+          <div class="empty">Start typing to search. Every word you type must appear in a result.</div>
         </Match>
         <Match when={hits()?.length === 0}>
           <div class="empty">Nothing found.</div>
@@ -2935,15 +2951,13 @@ function SearchView() {
           <ul class="hit-list">
             <For each={hits() ?? []}>
               {(h) => (
-                <li onClick={() => navigate(`#/sessions/${h.session_id}`)}>
+                <li onClick={() => open(h)}>
                   <div class="hit-meta">
-                    <span class="mono">{shortId(h.session_id)}</span>
-                    <span class="chip chip-kind">{h.kind}</span>
-                    <Show when={h.role}><span class="chip chip-role">{h.role}</span></Show>
-                    <Show when={h.tool_name}><span class="chip chip-tool mono">{h.tool_name}</span></Show>
-                    <span class="when">{timeAgo(h.ts)}</span>
+                    <span class="chip chip-kind">{HIT_WORDS[h.role] ?? h.role}</span>
+                    <Show when={h.agent && h.agent !== "vak"}><span class="chip chip-role">{h.agent}</span></Show>
+                    <Show when={h.ts}><span class="when">{timeAgo(h.ts!)}</span></Show>
                   </div>
-                  <div class="hit-snippet" innerHTML={highlight(h.snippet)} />
+                  <div class="hit-snippet" innerHTML={highlight(h.snippet, q())} />
                 </li>
               )}
             </For>
@@ -6208,7 +6222,7 @@ export function Settings() {
     setRebuilding(true);
     try {
       const stats = await api.rebuild();
-      if (stats.ok) pushToast("info", `Reindexed ${stats.entries_indexed} entries from ${stats.files_scanned} files`);
+      if (stats.ok) pushToast("info", `Rebuilt the catalog: ${stats.rows ?? 0} records from ${stats.sources ?? 0} sources`);
       else pushToast("alert", `Rebuild failed: ${stats.error}`);
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -7039,7 +7053,7 @@ export function Settings() {
               <div class="panel-title-row">
                 <div>
                   <h2>Housekeeping & Diagnostics</h2>
-                  <p class="dim">Routine system integrity checks and search re-indexing.</p>
+                  <p class="dim">Routine system integrity checks, and rebuilding search from your records.</p>
                 </div>
               </div>
               <div class="row-gap">
@@ -7047,7 +7061,7 @@ export function Settings() {
                   {runningDoctor() ? "Checking…" : "Run Doctor Check"}
                 </button>
                 <button class="ghost" disabled={rebuilding()} onClick={() => void rebuild()}>
-                  {rebuilding() ? "Rebuilding…" : "Rebuild Search Index"}
+                  {rebuilding() ? "Rebuilding…" : "Rebuild search"}
                 </button>
               </div>
               <Show when={doctorReport()}>

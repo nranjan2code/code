@@ -52,7 +52,7 @@ Facts, read from the tree at `0ab1e4ffb`.
    ids a card was built from, within its own turn
    (`crates/vak-session/src/types.rs`).
 4. **Explicit retrieval.** `recall` reopens a turn, card or piece of evidence
-   by id (doc 68 §3). `session_search` and the `vak-store` FTS index search
+   by id (doc 68 §3). `session_search` and the data catalog search
    other sessions by keyword. Both run only when the model calls them.
 
 ### 2.2 Who reads what

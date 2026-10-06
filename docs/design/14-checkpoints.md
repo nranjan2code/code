@@ -20,8 +20,8 @@ invariant 29): never partially read, never migrated.
   (`files_observed`/`files_reused`/`files_read`) lets callers and tests
   observe the fast path directly.
 - **Scope**: every regular file under cwd, excluding `.git`, `target`,
-  `node_modules`, `.vak`, `dist`, and the rebuildable `vak-store` runtime
-  files (`store.db`/`-wal`/`-shm`); per-file cap 8MB, total cap 64MB. Capture
+  `node_modules`, `.vak`, `dist`, and the rebuildable data catalog's
+  files (`catalog.db`/`-wal`/`-shm`); per-file cap 8MB, total cap 64MB. Capture
   also skips secret paths (`.env*`, `*.pem`, `*.key`, `id_rsa*`,
   `id_ed25519*`, `credentials.json`) and honors a gitignore subset (root +
   nested `.gitignore`, dir-only rules, negation; last match wins).

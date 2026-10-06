@@ -31,7 +31,7 @@ the conversation that made it:
 | "This call made a user-facing file" | `Tool::produces_artifact` | `write` always, `office_apply` through `delivered_file`; completion evidence only |
 | Cards | presentation entries in each ledger | inside their chat |
 | Shared editing, sharing | Office rooms (one session, candidate and path), coworking (doc 69) | per conversation |
-| Search | `/search`, `SearchModal.tsx`, over `vak-store`, which records a tool call as its name and a shell `command` only | conversation text, not things |
+| Search | `/search`, `SearchModal.tsx`, over the data catalog (`vak-catalog`), which indexes message text and tool-result digests | conversation text, memory and entities, not things |
 | Navigation | `Sidebar.tsx` | Search and Agents; the Inbox opens only by its shortcut |
 
 Some provenance is recorded: `CandidateRecord` carries `session_id`,
@@ -341,7 +341,7 @@ Volume control is the design. The rules:
   for the board meeting"); time is the changed filter, never parsed from the
   query. L1 matches titles and summaries from the declaring calls through a
   derived table of declarations (§9), and the originating conversations'
-  text through the existing FTS index (`vak-store`); a conversation hit
+  text through the data catalog's full-text index (`vak-catalog`); a conversation hit
   lists that conversation's artifacts. M6 adds content and lineage through
   the catalog.
 - **Everyday words only**: no ids, paths, hashes or byte counts unless Show
@@ -504,14 +504,14 @@ what it is.
 
 | Phase | Rides on | Delivers |
 |---|---|---|
-| **L1 Read-only Library** | nothing in the data architecture | `Tool::artifact` replacing `produces_artifact`, forwarded by `BrokeredTool`; `title`/`summary` on `write` and `office_apply`; a derived table of declarations (one row per declaring call: Agent, workspace, session, turn, call, tool, path, title, summary, time) in the `vak-store` cache, fed by the incremental ingest that already runs after each turn and rebuilt when its generation changes; the Library screen and artifact page over declarations, drafts and promotions, filtered per session for trash and per Agent for audience; glimpses; Open conversation; Download; Open in Library from chat, Canvas and Workbench |
+| **L1 Read-only Library** | nothing in the data architecture | `Tool::artifact` replacing `produces_artifact`, forwarded by `BrokeredTool`; `title`/`summary` on `write` and `office_apply`; a derived table of declarations (one row per declaring call: Agent, workspace, session, turn, call, tool, path, title, summary, time) in the data catalog, fed by its tailer after each turn and rebuilt with it; the Library screen and artifact page over declarations, drafts and promotions, filtered per session for trash and per Agent for audience; glimpses; Open conversation; Download; Open in Library from chat, Canvas and Workbench |
 | **L2 Continue working** | L1 | `AttachedArtifact` and its server-rendered block; Continue working and Make another in the composer; the TurnCard naming the artifact; the cross-conversation `recall` scope with per-call trash and audience checks; the Make another write refusal; doc 68's section |
 | **L3 Search** | M6 | content and lineage search through the catalog; Sources and Related |
 | **L4 Identity and edits** | M4, M8 | `art_` ids; a routine's runs as versions of one artifact; sibling versions; rename, star, folders and tags, move, archive; edit in app; Put back; saved cards; draft fading as a retention label (M7a) |
 | **L5 Sharing and live** | M8, doc 81 P1 | artifact grants; Keep live hands an artifact to the piece platform |
 
 L1 touches the Tool trait and the broker, the agent loop's completion
-evidence, the `vak-store` ingest, the server projection (`DraftVersions`),
+evidence, the catalog's ingest, the server projection (`DraftVersions`),
 the sidebar and the Canvas. `docs/plans/data-architecture-blast-radius.md`
 lists what M6 and M8 remove of it, so the prototype is deleted rather than
 kept for compatibility (invariant 30).

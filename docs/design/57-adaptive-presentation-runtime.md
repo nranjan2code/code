@@ -23,7 +23,7 @@ function for constrained surfaces. It handles the closed primitive vocabulary
 without semantic/domain branches and returns the compiler's exact fallback for
 degraded presentations; the two adaptive projection tests cover both paths.
 
-`vak-store::presentation::PresentationStore` now persists the reusable library
+`vak_core::presentation_store::PresentationStore` persists the reusable library
 outside append-only session ledgers with atomic replacement and safe empty-store
 initialization. The delivery adapter can select and compile an active scoped
 definition while retaining the original fallback text.
@@ -74,7 +74,7 @@ validated specs only; plugin-authored code is never executed during inspection.
 library records carrying plugin and generation provenance; activation remains an
 explicit host operation.
 
-`vak-store::PresentationStore::register_pack` atomically registers inspected
+`vak_core::presentation_store::PresentationStore::register_pack` atomically registers inspected
 records, while `revoke_plugin` removes that plugin's current definitions and
 activations. Historical session selection receipts remain untouched.
 
@@ -167,7 +167,7 @@ select the exact current revision without requiring a schema change in older
 result envelopes.
 
 P1/P4 verification is green (`cargo test -p vak-presentation`, `cargo test
--p vak-store --lib`, workspace
+-p vak-core --lib presentation_store`, workspace
 check, and strict library Clippy). The complete workspace library suite is also
 green, including the existing voice, server, delivery, plugin, store, and
 session tests. The first P3-style generic scenario is also now

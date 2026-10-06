@@ -35,7 +35,7 @@ crates/vak-admin-ui     SolidJS + Vite + TS SPA (built dist committed)
 crates/vak-client-ui    the WORKSPACE client, served at /app by the same
                         process (docs/design/48-web-client.md); a separate
                         surface with a different job, sharing this auth
-crates/vak-store        rusqlite FTS5 rebuildable index (new crate)
+crates/vak-catalog      the data catalog: search, lineage, "where is it" (plan M6)
 crates/vak-server/src/events.rs    global hub (tokio::broadcast)
 crates/vak-server/src/admin.rs     /admin/api/* data plane
 crates/vak-server/src/admin_ui.rs  /admin static asset serving
@@ -100,19 +100,19 @@ filters to their values and rows, not only to the scope label. Settings show
 the shared default layer in the combined scope; choose a named agent to
 inspect or change that agent's effective configuration.
 
-### Store (FTS5 index)
+### The data catalog (plan M6)
 
-- One SQLite DB at `cache_home()/store.db`, WAL mode, schema-versioned.
-- `entries` table: entry_id, session_id, space_id, parent_id, ts,
-  kind (header/message/compaction/receipt/goal), role, provider, model,
-  tool_name, content_text, is_error.
-- `entries_fts`: FTS5 with `porter unicode61`; BM25 ranking + `snippet()`.
-- Indexes ALL content blocks — tool commands, tool results, thinking — not
-  just prose. This is the main recall win over the in-memory scanner.
-- Lifecycle: background full rebuild at server start; per-session import
-  after create and after each completed run; synchronous re-import when a
-  transcript is read with `refresh=true` (safe: reads never conflict with
-  the ledger writer's exclusive lock).
+- One SQLite file per tenant at `tenants/<tenant>/catalog/catalog.db`
+  (`crates/vak-catalog`, docs/design/73 §9), WAL mode, schema-versioned and
+  rebuilt from the records alone.
+- Nodes for sessions, turns, tool calls, files a call wrote, runs, effects,
+  triggers, memory notes, entities and commitments; lineage edges from each
+  up to its run and cause; FTS5 over doc 73's text projections (message
+  text and each tool result's digest, never thinking or raw output).
+- Lifecycle: a tailer with one cursor per source catches up at server
+  start, after each turn and on the scheduler tick. Admin reads (the
+  sessions list, search) catch up before answering; the forensics
+  transcript reads the ledger itself, without its writer's lock.
 
 ### Auth (cookie + bearer)
 
@@ -161,9 +161,8 @@ SDKs to preflight a model.
 
 | Endpoint | Verb | Purpose |
 |---|---|---|
-| `/sessions` | GET | Session catalog (GROUP BY over index) |
-| `/sessions/:id/transcript` | GET | Paginated entries; `refresh=true` re-imports first |
-| `/search?q=` | GET | FTS5 BM25 search w/ snippets, role/kind/project filters |
+| `/sessions` | GET | Every workspace's sessions, from the data catalog |
+| `/sessions/:id/transcript` | GET | Paginated ledger entries, read from the ledger |
 | `/approvals` | GET | Pending gates across all live sessions (oldest first) |
 | `/bestofn` | GET | Active candidate runs |
 | `/events` | GET | SSE stream of SystemEvents |
@@ -177,8 +176,11 @@ SDKs to preflight a model.
 | `/runs/:id/spans` | GET | One run's span closes in start order, each with `started_at`, for its waterfall (plan M5b) |
 | `/telemetry/services` | GET | The services that write a structured log |
 | `/telemetry/logs` | GET | Content-free log lines, newest first (`?service=&level=&trace=&spans=&limit=`) |
-| `/store/rebuild` | POST | Full index rebuild (mutation ⇒ POST) |
-| `/store/import/:id` | POST | Import one session's JSONL |
+| `/search` | GET | One search over the data catalog (`?q=&all=&kind=&agent=&limit=`), audience and trash filtered before ranking (plan M6; outside `/admin/api`) |
+| `/nodes/:id` | GET | One catalog node |
+| `/lineage/:id` | GET | A node's path up to its run, session, turn, Agent, space, actor and cause |
+| `/catalog` | GET | Whether the catalog has taken every record, and its counts |
+| `/catalog/rebuild` | POST | Drop and rebuild the catalog from the records |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
 | `/config/global` | PATCH | User-level defaults inherited by project workspaces |
 | `/config/mcp/global` | GET, PUT | Shared user MCP registry; values never expose secrets |

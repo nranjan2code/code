@@ -11,22 +11,17 @@ pub mod documents;
 pub mod effects;
 pub mod fence;
 pub mod ids;
-mod index;
 pub mod log;
 pub mod objects;
 pub mod runs;
-pub mod search;
 pub mod tail;
+pub mod text;
 pub mod trace;
 pub mod turns;
 pub mod types;
 pub mod work;
 
 pub use log::{SessionLog, SessionPath, TailSections};
-pub use search::{
-    DEFAULT_LIMIT, ExternalDoc, MEMORY_BONUS, ProjectHit, SearchError, SessionHit, search,
-    search_all, search_all_extended, search_extended,
-};
 pub use turns::{
     Answer, CONTEXT_PLAN_LABEL, CONTEXT_PLAN_POLICY_VERSION, Evidence, Fidelity, LinkKind, Packet,
     PresentationRef, ReadingKey, Step, TraceLine, Turn, TurnCard, TurnIndex, TurnLink,

@@ -113,6 +113,7 @@ async fn trashed_session_absent_from_every_search() {
     core.set_shared_scope(vak_config::scope::SharedScope::new(home.clone()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let catalog = core.catalog().ok();
     let (app, token) = vak_server::secured_router(core);
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -131,18 +132,16 @@ async fn trashed_session_absent_from_every_search() {
     };
 
     let res = client
-        .post(format!("{base}/admin/api/store/rebuild"))
+        .post(format!("{base}/catalog/rebuild"))
         .send()
         .await
         .unwrap();
     assert_eq!(res.status(), 200);
     let search_tool = vak_core::session_search::SessionSearchTool {
-        sessions_home: home.clone(),
-        trash_home: home.clone(),
-        cwd: cwd.clone(),
-        exclude_session_id: String::new(),
-        agent_id: None,
-        audience_id: None,
+        catalog,
+        audience: Default::default(),
+        space: Some(vak_session::trace::local::space(&cwd).to_string()),
+        trash: vak_config::scope::SharedScope::new(home.clone()),
     };
     let ctx = vak_tools::ToolContext {
         cwd: cwd.clone(),
@@ -168,7 +167,6 @@ async fn trashed_session_absent_from_every_search() {
         "/search?q=zanzibar".to_string(),
         "/search?q=zanzibar&all=true".to_string(),
         "/admin/api/sessions".to_string(),
-        "/admin/api/search?q=zanzibar".to_string(),
         "/digest".to_string(),
     ];
     for reader in &readers {

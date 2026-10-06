@@ -525,15 +525,20 @@ export function amendMemory(
 
 // ---- recall search -----------------------------------------------------------
 
+/** One `/search` hit (plan M6): a conversation's turn or tool call, a
+ * memory or profile note, or an entity. */
 export interface SearchHit {
+  /** The conversation's id, or `memory/<id>`, `profile/<id>`, `entity/<id>`. */
   session_id: string;
-  entry_id: string;
-  ts: string;
-  role: string;
+  turn_id: string | null;
+  node: string;
+  kind: string;
+  role: "conversation" | "memory" | "profile" | "entity";
+  ts: string | null;
   score: number;
   snippet: string;
-  /** Set only in global mode: hash of the project the hit came from. */
-  space_id?: string;
+  space_id: string | null;
+  agent: string | null;
 }
 
 export function searchSessions(

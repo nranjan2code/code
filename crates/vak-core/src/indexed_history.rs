@@ -1,10 +1,13 @@
 //! Bounded canonical history reads through Core's ownership/trash boundary.
-//! Locators accelerate address resolution; they never authorize access.
+//! The data catalog addresses and ranks (plan M6); it never authorizes:
+//! every entry it points at is loaded from the ledger and checked before
+//! anything reaches a model.
 
 use crate::{Core, CoreError};
-use vak_session::{Entry, EntryPayload, SessionError, SessionLog, SessionPath};
+use vak_session::{Entry, EntryPayload, SessionError, SessionPath};
 
 impl Core {
+    /// Takes the session's new entries into the catalog in the background.
     pub(crate) fn queue_history_index(&self, session_id: &str) {
         if session_id.is_empty()
             || session_id.contains(['/', '\\'])
@@ -12,72 +15,8 @@ impl Core {
         {
             return;
         }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            return;
-        };
         let path = SessionPath::existing_session_file(self.scope().root(), self.cwd(), session_id);
-        {
-            let mut pending = self
-                .inner
-                .history_indexing
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !pending.insert(path.clone()) {
-                return;
-            }
-        }
-        let core = self.clone();
-        let session_id = session_id.to_string();
-        runtime.spawn_blocking(move || {
-            let result = (|| -> Result<(), CoreError> {
-                core.refuse_trashed(&session_id)?;
-                let root = SessionPath::sessions_dir(core.scope().root(), core.cwd())
-                    .canonicalize()
-                    .map_err(SessionError::from)?;
-                let canonical = path.canonicalize().map_err(SessionError::from)?;
-                if !canonical.starts_with(root) {
-                    return Err(SessionError::Corrupt {
-                        line: 0,
-                        message: "history escapes its canonical workspace".into(),
-                    }
-                    .into());
-                }
-                let store = vak_store::Store::open(&core.cache_home())?;
-                loop {
-                    core.refuse_trashed(&session_id)?;
-                    let stats =
-                        store.import_session_chunk(core.scope().root(), &path, 4 * 1024 * 1024)?;
-                    if stats.committed_offset >= stats.observed_length || !stats.made_progress {
-                        break;
-                    }
-                    // Release the database write transaction between chunks.
-                    std::thread::yield_now();
-                }
-                Ok(())
-            })();
-            // Retain only content-free status; never log parse errors containing data.
-            let mut failed = core
-                .inner
-                .history_index_failures
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if result.is_err() {
-                if failed.len() >= 64
-                    && let Some(old) = failed.iter().next().cloned()
-                {
-                    failed.remove(&old);
-                }
-                failed.insert(path.clone());
-            } else {
-                failed.remove(&path);
-            }
-            drop(failed);
-            core.inner
-                .history_indexing
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .remove(&path);
-        });
+        self.queue_catalog(&path);
     }
 
     pub(crate) fn resolve_indexed_recall(
@@ -108,19 +47,19 @@ impl Core {
     }
 
     /// Load an indexed entry without decoding the session's entire history.
-    /// A missing/stale index is an explicit error, never a full-history scan.
-    /// Callers on async request paths should use a blocking task for this I/O.
+    /// An entry the catalog does not know is an explicit error, never a
+    /// full-history scan. Callers on async request paths should use a
+    /// blocking task for this I/O.
     pub fn read_session_entry(&self, session_id: &str, entry_id: &str) -> Result<Entry, CoreError> {
         let history = self.scoped_history(session_id)?;
-        let location = history
-            .store
-            .locate_entry(session_id, entry_id)?
-            .ok_or_else(|| CoreError::HistoryNotIndexed(entry_id.into()))?;
-        let entry = history.load(location)?;
+        let entry = history.load(session_id, entry_id)?;
         self.refuse_trashed(session_id)?;
         Ok(entry)
     }
 
+    /// The session's history through the catalog, once its header says it
+    /// is this Core's Agent's and audience's, and its ledger is where this
+    /// Core's workspace keeps it.
     fn scoped_history(&self, session_id: &str) -> Result<ScopedHistory, CoreError> {
         if session_id.is_empty()
             || session_id == "."
@@ -148,15 +87,15 @@ impl Core {
             }
             .into());
         }
-        let store = vak_store::Store::open(&self.cache_home())?;
-        let header_location = store
-            .locate_sequence(session_id, 0)?
-            .ok_or_else(|| CoreError::HistoryNotIndexed(session_id.into()))?;
+        let catalog = self.catalog()?;
         let history = ScopedHistory {
-            store,
+            catalog,
             path: expected,
         };
-        let header = history.load(header_location)?;
+        // Takes what the ledger appended since the catalog last looked:
+        // cheap when nothing did, and the address of a new entry is known.
+        history.catalog.catch_up_session(&history.path)?;
+        let header = history.load(session_id, &history.header_id(session_id)?)?;
         let EntryPayload::Header(header) = header.payload else {
             return Err(SessionError::Corrupt {
                 line: 0,
@@ -190,32 +129,57 @@ impl Core {
 }
 
 struct ScopedHistory {
-    store: vak_store::Store,
+    catalog: std::sync::Arc<vak_catalog::Catalog>,
     path: std::path::PathBuf,
 }
 
 impl ScopedHistory {
-    fn load(&self, location: vak_store::EntryLocator) -> Result<Entry, CoreError> {
-        // A locator names one segment file of this session's ledger; any
-        // other path is the wrong scope, whatever the index says.
-        if location.path.parent() != Some(self.path.as_path()) {
+    /// The id of the session's header entry: the first entry, which the
+    /// catalog takes before any other.
+    fn header_id(&self, session_id: &str) -> Result<String, CoreError> {
+        let bytes = vak_session::tail::read_at(&self.path, Default::default())
+            .ok_or_else(|| CoreError::HistoryNotIndexed(session_id.into()))?;
+        let entry: Entry =
+            serde_json::from_slice(&bytes).map_err(|error| SessionError::Corrupt {
+                line: 0,
+                message: error.to_string(),
+            })?;
+        Ok(entry.id)
+    }
+
+    /// Loads entry `entry_id` where the catalog says it is, refusing an
+    /// address outside this session's ledger or one that names a different
+    /// entry or parent.
+    fn load(&self, session_id: &str, entry_id: &str) -> Result<Entry, CoreError> {
+        let location = self
+            .catalog
+            .entry_location(session_id, entry_id)?
+            .ok_or_else(|| CoreError::HistoryNotIndexed(entry_id.into()))?;
+        // A location names this session's ledger; any other is the wrong
+        // scope, whatever the catalog says.
+        let canonical = location.dir.canonicalize().map_err(SessionError::from)?;
+        if canonical != self.path {
             return Err(SessionError::Corrupt {
                 line: 0,
                 message: "history locator has the wrong scope".into(),
             }
             .into());
         }
-        let entry = SessionLog::read_record_at(
-            &location.path,
-            location.offset,
-            location.length,
-            &location.entry_id,
-            &location.digest,
-        )?;
-        if entry.parent_id != location.parent_id {
+        let bytes = vak_session::tail::read_at(&self.path, location.at).ok_or_else(|| {
+            SessionError::Corrupt {
+                line: 0,
+                message: "indexed record is outside the ledger".into(),
+            }
+        })?;
+        let entry: Entry =
+            serde_json::from_slice(&bytes).map_err(|error| SessionError::Corrupt {
+                line: 0,
+                message: error.to_string(),
+            })?;
+        if entry.id != entry_id || entry.parent_id != location.parent {
             return Err(SessionError::Corrupt {
                 line: 0,
-                message: "history locator has the wrong parent".into(),
+                message: "indexed record changed; rebuild the catalog".into(),
             }
             .into());
         }
@@ -224,8 +188,8 @@ impl ScopedHistory {
 }
 
 impl Core {
-    /// Refresh only a bounded append, then search compact branch-scoped records.
-    /// A cold/stale cache is explicitly unavailable until background replay finishes.
+    /// Takes the session's appended entries, then searches the compact
+    /// records of the settled turns on the branch ending at `leaf`.
     pub fn search_session_turns(
         &self,
         session_id: &str,
@@ -233,48 +197,40 @@ impl Core {
         query: &str,
         limit: usize,
         cancel: tokio_util::sync::CancellationToken,
-    ) -> Result<vak_store::history::TurnSearchResult, CoreError> {
+    ) -> Result<vak_catalog::TurnSearchResult, CoreError> {
         let history = self.scoped_history(session_id)?;
-        history.store.import_session_bounded(
-            self.scope().root(),
-            &history.path,
-            2 * 1024 * 1024,
-        )?;
         history
-            .store
-            .locate_entry(session_id, leaf)?
+            .catalog
+            .entry_location(session_id, leaf)?
             .ok_or_else(|| CoreError::HistoryNotIndexed(leaf.into()))?;
-        let mut hits =
-            history
-                .store
-                .search_turns(session_id, leaf, query, limit, cancel.clone())?;
-        // The cache ranks and addresses; canonical records supply model-visible prose.
+        let stop = {
+            let cancel = cancel.clone();
+            move || cancel.is_cancelled()
+        };
+        if stop() {
+            return Err(CoreError::HistoryNotIndexed(
+                "history lookup cancelled".into(),
+            ));
+        }
+        let mut hits = history
+            .catalog
+            .search_turns(session_id, leaf, query, limit, &stop)?;
+        // The catalog ranks and addresses; canonical records supply the prose.
         let started = std::time::Instant::now();
-        let mut bytes = 0u64;
         for hit in &mut hits.matches {
             if cancel.is_cancelled() || started.elapsed() > std::time::Duration::from_millis(250) {
                 return Err(CoreError::HistoryNotIndexed(
                     "history verification exceeded its budget".into(),
                 ));
             }
-            let location = history
-                .store
-                .locate_entry(session_id, &hit.record_id)?
-                .ok_or_else(|| CoreError::HistoryNotIndexed(hit.record_id.clone()))?;
-            bytes = bytes.saturating_add(location.length);
-            if bytes > 8 * 1024 * 1024 {
-                return Err(CoreError::HistoryNotIndexed(
-                    "history verification exceeds its byte budget".into(),
-                ));
-            }
-            let entry = history.load(location)?;
+            let entry = history.load(session_id, &hit.record_id)?;
             let EntryPayload::TurnCard(record) = entry.payload else {
                 return Err(CoreError::HistoryNotIndexed(hit.record_id.clone()));
             };
             if record.turn_id != hit.turn_id {
                 return Err(CoreError::HistoryNotIndexed(hit.turn_id.clone()));
             }
-            hit.record = vak_store::history::compact_turn_record(&record);
+            hit.record = vak_catalog::compact_turn_record(&record);
             hit.recorded_at = entry.ts.to_rfc3339();
         }
         self.refuse_trashed(session_id)?;
@@ -291,18 +247,13 @@ impl Core {
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<vak_session::Turn, CoreError> {
         let history = self.scoped_history(session_id)?;
-        history.store.import_session_bounded(
-            self.scope().root(),
-            &history.path,
-            2 * 1024 * 1024,
-        )?;
         let record_id = history
-            .store
+            .catalog
             .locate_turn_record(session_id, turn_id, leaf)?
             .ok_or_else(|| CoreError::HistoryNotIndexed(turn_id.into()))?;
         let mut cursor = Some(record_id);
         let mut entries = Vec::new();
-        let mut bytes = 0u64;
+        let mut bytes = 0usize;
         let started = std::time::Instant::now();
         let mut found = false;
         while let Some(id) = cursor {
@@ -316,15 +267,11 @@ impl Core {
                 }
                 .into());
             }
-            let location = history
-                .store
-                .locate_entry(session_id, &id)?
-                .ok_or_else(|| CoreError::HistoryNotIndexed(id.clone()))?;
-            bytes = bytes.saturating_add(location.length);
+            let entry = history.load(session_id, &id)?;
+            bytes = bytes.saturating_add(serde_json::to_vec(&entry).map_or(0, |b| b.len()));
             if bytes > 8 * 1024 * 1024 {
                 return Err(SessionError::Corrupt { line: 0, message: "selected history exceeds its byte budget; use a narrower evidence reference".into() }.into());
             }
-            let entry = history.load(location)?;
             if entries.is_empty()
                 && !matches!(&entry.payload, EntryPayload::TurnCard(record) if record.turn_id == turn_id)
             {
@@ -361,7 +308,7 @@ impl Core {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use vak_session::{FrozenContract, MessageRecord, SessionHeader};
+    use vak_session::{FrozenContract, MessageRecord, SessionHeader, SessionLog};
 
     fn fixture() -> (tempfile::TempDir, Core, String, String) {
         vak_config::paths::isolate_home_for_tests();
@@ -408,8 +355,7 @@ mod tests {
             })
             .unwrap();
         drop(log);
-        let store = vak_store::Store::open(&core.cache_home()).unwrap();
-        store.import_session(core.scope().root(), &path).unwrap();
+        core.catalog().unwrap().catch_up_session(&path).unwrap();
         (dir, core, session_id, entry.id)
     }
 
@@ -594,13 +540,16 @@ mod tests {
         assert!(
             matches!(entry.payload, EntryPayload::Message(record) if record.message.text_content() == "selected bounded record")
         );
-        let store = vak_store::Store::open(&core.cache_home()).unwrap();
-        let location = store.locate_entry(&session_id, &entry_id).unwrap().unwrap();
-        assert!(location.length < 1024);
-        assert!(location.offset > 0);
+        let catalog = core.catalog().unwrap();
+        let location = catalog
+            .entry_location(&session_id, &entry_id)
+            .unwrap()
+            .unwrap();
+        // The header and the large message lie before it.
+        assert!(location.at.frames >= 2 || location.at.segment > 1);
         assert!(
-            store
-                .locate_entry("different-session", &entry_id)
+            catalog
+                .entry_location("different-session", &entry_id)
                 .unwrap()
                 .is_none()
         );

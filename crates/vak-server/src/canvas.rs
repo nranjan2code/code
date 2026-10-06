@@ -116,7 +116,7 @@ fn canvas_path(state: &AppState, session: &str) -> Option<std::path::PathBuf> {
     if vak_core::trash::is_trashed(&vak_config::scope::SharedScope::new(shared.root()), session) {
         return None;
     }
-    let header = crate::read_historical_header(state, session, None)?;
+    let header = crate::read_historical_header(state, session)?;
     let agent = header
         .agent
         .map(|agent| agent.id)

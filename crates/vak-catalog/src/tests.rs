@@ -274,7 +274,7 @@ fn search_respects_audience() {
     catalog.catch_up().unwrap();
     let sessions = |audience: &Audience| -> HashSet<String> {
         catalog
-            .search("zephyr", audience, 50)
+            .search("zephyr", audience, &Scope::default(), 50)
             .unwrap()
             .into_iter()
             .filter_map(|hit| hit.node.session)
@@ -306,7 +306,9 @@ fn search_respects_audience() {
     };
     assert!(!sessions(&local_vak).contains(&format!("ses_{theirs}")));
     // Raw tool output is not indexed; its digest is, and no thinking is.
-    let hits = catalog.search("report", &owner, 50).unwrap();
+    let hits = catalog
+        .search("report", &owner, &Scope::default(), 50)
+        .unwrap();
     assert!(
         hits.iter()
             .any(|hit| hit.node.kind == "call" || hit.node.kind == "turn")
@@ -455,7 +457,7 @@ fn documents_and_commitments_are_searchable_and_follow_new_versions() {
     catalog.catch_up().unwrap();
     let kinds = |word: &str| -> Vec<String> {
         catalog
-            .search(word, &Audience::default(), 10)
+            .search(word, &Audience::default(), &Scope::default(), 10)
             .unwrap()
             .into_iter()
             .map(|hit| hit.node.kind)
@@ -470,7 +472,12 @@ fn documents_and_commitments_are_searchable_and_follow_new_versions() {
         audience: Some("telegram:42".into()),
         ..Default::default()
     };
-    assert!(catalog.search("marmalade", &chat, 10).unwrap().is_empty());
+    assert!(
+        catalog
+            .search("marmalade", &chat, &Scope::default(), 10)
+            .unwrap()
+            .is_empty()
+    );
     // A new version replaces what was indexed.
     vak_session::documents::update(&notes, |_| Ok(Some(("Now: apricot jam.".to_string(), ()))))
         .unwrap();

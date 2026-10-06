@@ -222,7 +222,7 @@ legacy migration only.
 | **Logs** | `~/Library/Logs/vak` |
 | **User secrets** | Shared secret scope (macOS Keychain, or the encrypted-file fallback under `<data_home>` when Keychain is unreachable) |
 | **Config state** | `<data_home>/` (sessions, memory, tasks, inbox) |
-| **Store DB** | `<cache>/store.db` (rebuildable from JSONL) |
+| **Data catalog** | `<data>/tenants/<tenant>/catalog/catalog.db` (rebuildable from the records) |
 | **Binary bundle** | `/Applications/vak.app/Contents/MacOS/` |
 
 ### Linux (default)

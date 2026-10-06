@@ -227,7 +227,7 @@ Two roots hold an Agent's things, and they are different directories:
 │                                      # automations are Documents triggers/<trg> in the store
 ├── archive.json                       # archived sessions (hidden from the sidebar)
 └── deleted.json                       # the trash (vak_core::trash)
-<cache home>/store.db                  # the rebuildable FTS index over every ledger
+<data home>/tenants/<tenant>/catalog/  # the data catalog, rebuilt from the records
 
 <workspace>/
 ├── .vak/config.toml                   # the project layer

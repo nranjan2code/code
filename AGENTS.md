@@ -345,9 +345,12 @@ and its work streams have a `max_age`. M6's design was agreed on
 projections only, and refs and Documents for the turn path's decisions).
 M6.1 is done (2026-10-06): `crates/vak-catalog` builds nodes, lineage
 edges and full-text rows from session ledgers, runs, effects, triggers,
-memory and commitments, and rebuilds them identically; nothing calls it
-yet. M6.2 (one search, replacing `vak-store`, `search_all`, the recall
-cache and the directory walks) is next. No session starts a later step
+memory, entities and commitments, and rebuilds them identically. M6.2 is
+done (2026-10-06): every search (`/search`, the admin console,
+`session_search`) and the turn recall read the catalog, and "where is
+session X" is one catalog lookup; `vak-store`, `vak_session::search`, its
+ledger cache and the directory walks are gone. M6.3 (the turn path's
+decisions on refs and Documents) is next. No session starts a later step
 unasked.
 
 **What it is.** One architecture for everything Vak writes:
@@ -482,6 +485,11 @@ unasked.
   store attached.
 - Write a side ledger only through `vak_session::chain::RecordChain`;
   never open a JSONL file to append to, and never compact one.
+- Find a session, a run or anything else by id through the data catalog
+  (`Core::catalog`, `open_node`, `session_dir`), never by walking
+  directories, and search only through `Catalog::search` with the
+  caller's `Audience` (invariant 37). A new kind of record that a person
+  may search for or trace is a catalog source in the same change.
 - Put a record about a session in that session's Agent home
   (`session_agent_scope` in vak-server), never the serving Core's.
 - Keep Agent-authored state as Documents (`vak_session::documents`), never
@@ -1522,10 +1530,9 @@ crates/vak-session   append-only ledger trees on record segments, tenant
                      frozen contract, projection,
                      receipt, presentation and turn-card entries (audit-only,
                      projection-neutral), TurnIndex and fidelity projections
-                     (docs/design/68-context-engine.md),
-                     dependency-free cross-session search w/ mtime-indexed
-                     cache + cross-project search_all (docs/design/
-                     23-memory.md)
+                     (docs/design/68-context-engine.md), the tail reader
+                     a derived index catches up with (tail.rs), and the
+                     text matching in-session recall ranks by (text.rs)
 crates/vak-telemetry content-free structured telemetry (plan M5): the
                      process subscriber (`init(<service>)`), JSON lines with
                      allowlisted field names and the run's trace id, span
@@ -1541,12 +1548,11 @@ crates/vak-catalog   the data catalog (plan M6, docs/design/73 §9): one
                      fed by a tailer with one cursor per source
                      (`vak_session::tail`), rebuilt from the records alone;
                      `search` filters by audience before ranking, `lineage`
-                     walks from anything to its run and cause
-crates/vak-store     SQLite FTS5 rebuildable index over session ledgers:
-                     BM25 full-text search (all content blocks incl. tool
-                     calls/results/thinking), structured metadata queries,
-                     idempotent import, WAL mode — docs/design/23 +
-                     33 (the ledger stays source of truth)
+                     walks from anything to its run and cause; it also
+                     holds each session's entry locations, branch jumps and
+                     turn records for the turn recall (history.rs). Every
+                     search (`/search`, admin, `session_search`, recall)
+                     and every "where is session X" goes through it
 crates/vak-storage   the storage substrate, NO vak dependencies (docs/design/
                      73-data-architecture-and-lifecycle.md §5-§7.3): keys
                      (KeyAuthority, fail-closed wrap/unwrap/rotate/revoke),

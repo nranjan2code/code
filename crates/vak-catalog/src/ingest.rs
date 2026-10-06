@@ -47,6 +47,7 @@ struct Upsert<'a> {
     kind: &'a str,
     space: Option<String>,
     agent: Option<String>,
+    agent_name: Option<String>,
     session: Option<String>,
     turn: Option<String>,
     run: Option<String>,
@@ -62,11 +63,12 @@ struct Upsert<'a> {
 fn upsert(tx: &Transaction<'_>, node: Upsert<'_>) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO nodes (id, kind, space, agent, session, turn, run, actor, cause, audience,
-                            title, status, created_at, locator)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                            title, status, created_at, locator, agent_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT(id) DO UPDATE SET
             space = IFNULL(excluded.space, space),
             agent = IFNULL(excluded.agent, agent),
+            agent_name = IFNULL(excluded.agent_name, agent_name),
             session = IFNULL(excluded.session, session),
             turn = IFNULL(excluded.turn, turn),
             run = IFNULL(excluded.run, run),
@@ -91,7 +93,8 @@ fn upsert(tx: &Transaction<'_>, node: Upsert<'_>) -> rusqlite::Result<()> {
             node.title,
             node.status,
             node.created_at,
-            node.locator
+            node.locator,
+            node.agent_name
         ],
     )?;
     Ok(())
@@ -138,30 +141,37 @@ pub(crate) fn source(
 ) -> Result<(Position, usize), CatalogError> {
     let mut rows = 0;
     let mut failed: Option<rusqlite::Error> = None;
-    let mut walk = |dir: &std::path::Path,
-                    rows: &mut usize,
-                    ingest: &mut dyn FnMut(&[u8]) -> rusqlite::Result<()>| {
-        tail::tail(dir, from, |_, bytes| match ingest(bytes) {
-            Ok(()) => {
-                *rows += 1;
-                true
-            }
-            Err(error) => {
-                failed = Some(error);
-                false
-            }
-        })
-    };
+    let mut walk =
+        |dir: &std::path::Path,
+         rows: &mut usize,
+         ingest: &mut dyn FnMut(Position, &[u8]) -> rusqlite::Result<()>| {
+            tail::tail(dir, from, |after, bytes| {
+                let at = Position {
+                    segment: after.segment,
+                    frames: after.frames.saturating_sub(1),
+                };
+                match ingest(at, bytes) {
+                    Ok(()) => {
+                        *rows += 1;
+                        true
+                    }
+                    Err(error) => {
+                        failed = Some(error);
+                        false
+                    }
+                }
+            })
+        };
     let to = match source {
         Source::Session(dir) => {
             let mut session = SessionContext::load(tx, dir)?;
-            walk(dir, &mut rows, &mut |bytes| {
-                session_entry(tx, &mut session, dir, bytes)
+            walk(dir, &mut rows, &mut |at, bytes| {
+                session_entry(tx, &mut session, dir, at, bytes)
             })
         }
-        Source::Runs(dir) => walk(dir, &mut rows, &mut |bytes| run_row(tx, bytes)),
-        Source::Effects(dir) => walk(dir, &mut rows, &mut |bytes| effect_row(tx, bytes)),
-        Source::Commitments { dir, agent } => walk(dir, &mut rows, &mut |bytes| {
+        Source::Runs(dir) => walk(dir, &mut rows, &mut |_, bytes| run_row(tx, bytes)),
+        Source::Effects(dir) => walk(dir, &mut rows, &mut |_, bytes| effect_row(tx, bytes)),
+        Source::Commitments { dir, agent } => walk(dir, &mut rows, &mut |_, bytes| {
             commitment_row(tx, agent, bytes)
         }),
         Source::Trigger(path) => {
@@ -177,11 +187,15 @@ pub(crate) fn source(
                 frames: versions.max(from.frames),
             }
         }
-        Source::Memory { path, agent } => {
+        Source::Memory { path, agent } | Source::Entity { path, agent } => {
+            let memory = matches!(source, Source::Memory { .. });
             let versions = vak_session::documents::version_count(path) as u64;
             if versions > from.frames {
-                if let Ok(Some(content)) = vak_session::documents::read(path) {
-                    memory_document(tx, path, agent, &content)?;
+                match vak_session::documents::read(path) {
+                    Ok(Some(content)) if memory => memory_document(tx, path, agent, &content)?,
+                    Ok(Some(content)) => entity_document(tx, path, agent, &content)?,
+                    // Forgotten: it leaves search.
+                    _ => forget_document(tx, path, memory)?,
                 }
                 rows += 1;
             }
@@ -238,6 +252,7 @@ fn session_entry(
     tx: &Transaction<'_>,
     session: &mut SessionContext,
     dir: &std::path::Path,
+    at: Position,
     bytes: &[u8],
 ) -> rusqlite::Result<()> {
     let Ok(entry) = serde_json::from_slice::<Entry>(bytes) else {
@@ -247,14 +262,25 @@ fn session_entry(
         return Ok(());
     };
     let created = entry.ts.to_rfc3339();
+    crate::history::index_entry(tx, &session_id, at, &entry)?;
+    tx.execute(
+        "UPDATE nodes SET size = IFNULL(size, 0) + 1, updated_at = ?2 WHERE id = ?1",
+        params![session_id, created],
+    )?;
     if let EntryPayload::Header(header) = &entry.payload {
-        let agent = agent_id(
-            header
-                .agent
-                .as_ref()
-                .map_or("vak", |agent| agent.id.as_str()),
-        );
-        let space = header.space.map(|space| space.to_string());
+        let name = header
+            .agent
+            .as_ref()
+            .map_or("vak", |agent| agent.id.as_str())
+            .to_string();
+        let agent = agent_id(&name);
+        // A ledger lives at `sessions/<space>/<session>`: its directory
+        // names the space when the header does not.
+        let space = header.space.map(|space| space.to_string()).or_else(|| {
+            dir.parent()
+                .and_then(|parent| parent.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+        });
         let audience = header
             .conversation
             .as_ref()
@@ -266,6 +292,7 @@ fn session_entry(
                 kind: "session",
                 space: space.clone(),
                 agent: Some(agent.clone()),
+                agent_name: Some(name),
                 session: Some(session_id.clone()),
                 run: header.run.map(|run| run.to_string()),
                 cause: header
@@ -273,10 +300,14 @@ fn session_entry(
                     .as_ref()
                     .map(|cause| vak_session::runs::cause_kind(cause).to_string()),
                 audience: audience.clone(),
-                created_at: Some(created),
+                created_at: Some(created.clone()),
                 locator: Some(dir.display().to_string()),
                 ..Default::default()
             },
+        )?;
+        tx.execute(
+            "UPDATE nodes SET size = 1, updated_at = ?2 WHERE id = ?1",
+            params![session_id, created],
         )?;
         if let Some(run) = header.run {
             edge(tx, &session_id, "caused_by", &run.to_string())?;
@@ -290,6 +321,16 @@ fn session_entry(
         return Ok(());
     }
     let Some(turn) = entry.at_turn.as_deref().map(turn_node) else {
+        // Text written outside any turn belongs to the session itself.
+        if let EntryPayload::Message(record) = &entry.payload
+            && record.control_kind().is_none()
+        {
+            for block in &record.message.content {
+                if let vak_llm::types::ContentBlock::Text { text } = block {
+                    append_text(tx, &session_id, text)?;
+                }
+            }
+        }
         return Ok(());
     };
     upsert(
@@ -657,6 +698,9 @@ fn trigger_document(
     set_text(tx, id, name)
 }
 
+/// A memory note: one Document, `## <time> [<kind>] tag=… session=…
+/// turn=…` and then its text. Notes in the profile tier (`user/`) belong to
+/// the owner's local audience; workspace notes to their Agent.
 fn memory_document(
     tx: &Transaction<'_>,
     path: &std::path::Path,
@@ -664,19 +708,149 @@ fn memory_document(
     content: &str,
 ) -> rusqlite::Result<()> {
     let node = format!("memory:{}", path.display());
+    let (header, text) = content.split_once('\n').unwrap_or(("", content));
+    let header = header.trim_start_matches("## ");
+    let created = header.split_whitespace().next().map(str::to_string);
+    let mut kind = "note".to_string();
+    let mut tag = String::new();
+    let mut session = None;
+    let mut turn = None;
+    for word in header.split_whitespace().skip(1) {
+        if let Some(inner) = word.strip_prefix('[').and_then(|w| w.strip_suffix(']')) {
+            kind = inner.to_string();
+        } else if let Some(value) = word.strip_prefix("tag=") {
+            tag = value.to_string();
+        } else if let Some(id) = word.strip_prefix("session=") {
+            session = Some(session_node(id));
+        } else if let Some(id) = word.strip_prefix("turn=") {
+            turn = Some(turn_node(id));
+        }
+    }
+    // `…/memory/<space or user>/<tier>/<note id>`.
+    let parts: Vec<String> = path
+        .iter()
+        .rev()
+        .take(3)
+        .map(|part| part.to_string_lossy().into_owned())
+        .collect();
+    let profile = parts.get(2).is_some_and(|tier| tier == "user");
+    // A workspace note stays in the audience of the conversation it came
+    // from; a profile note is the owner's, read locally.
+    let audience: Option<String> = if profile {
+        Some("local".into())
+    } else {
+        match &session {
+            Some(session) => tx
+                .query_row(
+                    "SELECT audience FROM nodes WHERE id = ?1",
+                    [session],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten(),
+            None => None,
+        }
+    };
     upsert(
         tx,
         Upsert {
             id: &node,
             kind: "memory",
+            space: if profile { None } else { parts.get(2).cloned() },
             agent: Some(agent_id(agent)),
-            title: path
-                .file_name()
-                .and_then(|name| name.to_str())
+            agent_name: Some(agent.to_string()),
+            session: session.clone(),
+            turn: turn.clone(),
+            audience,
+            title: parts.first().cloned(),
+            status: Some(if profile { "profile" } else { "workspace" }.into()),
+            created_at: created,
+            locator: Some(path.display().to_string()),
+            ..Default::default()
+        },
+    )?;
+    if let Some(turn) = turn {
+        edge(tx, &node, "produced_by", &turn)?;
+    } else if let Some(session) = session {
+        edge(tx, &node, "produced_by", &session)?;
+    }
+    let label = if tag.is_empty() {
+        kind
+    } else {
+        format!("{kind} {tag}")
+    };
+    set_text(tx, &node, &format!("[{label}] {}", text.trim()))
+}
+
+/// An entity: one Document of JSON with its name, type and summary.
+fn entity_document(
+    tx: &Transaction<'_>,
+    path: &std::path::Path,
+    agent: &str,
+    content: &str,
+) -> rusqlite::Result<()> {
+    let Ok(entity) = serde_json::from_str::<Value>(content) else {
+        return Ok(());
+    };
+    let node = format!("entity:{}", path.display());
+    let field = |name: &str| entity.get(name).and_then(Value::as_str).unwrap_or_default();
+    let attributes = entity
+        .get("attributes")
+        .and_then(Value::as_object)
+        .map(|map| {
+            map.iter()
+                .map(|(key, value)| format!("{key}: {}", value.as_str().unwrap_or_default()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    // `…/entities/<space or global>/ENTITIES.jsonl/<id>`.
+    let space = path
+        .iter()
+        .rev()
+        .nth(2)
+        .map(|part| part.to_string_lossy().into_owned())
+        .filter(|space| space != "global");
+    upsert(
+        tx,
+        Upsert {
+            id: &node,
+            kind: "entity",
+            space,
+            agent: Some(agent_id(agent)),
+            agent_name: Some(agent.to_string()),
+            title: Some(field("name").to_string()),
+            status: Some(field("entity_type").to_string()),
+            created_at: entity
+                .get("updated_at")
+                .and_then(Value::as_str)
                 .map(str::to_string),
             locator: Some(path.display().to_string()),
             ..Default::default()
         },
     )?;
-    set_text(tx, &node, content)
+    set_text(
+        tx,
+        &node,
+        &format!(
+            "[entity:{}] {} — {} {attributes}",
+            field("entity_type"),
+            field("name"),
+            field("summary")
+        ),
+    )
+}
+
+/// A forgotten memory note or entity leaves search and the catalog.
+fn forget_document(
+    tx: &Transaction<'_>,
+    path: &std::path::Path,
+    memory: bool,
+) -> rusqlite::Result<()> {
+    let kind = if memory { "memory" } else { "entity" };
+    let node = format!("{kind}:{}", path.display());
+    tx.execute("DELETE FROM texts WHERE node = ?1", [&node])?;
+    tx.execute("DELETE FROM edges WHERE src = ?1 OR dst = ?1", [&node])?;
+    tx.execute("DELETE FROM nodes WHERE id = ?1", [&node])?;
+    Ok(())
 }

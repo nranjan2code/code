@@ -726,7 +726,7 @@ impl TurnIndex {
     /// not topical relevance. Highest score first; ties break by turn id.
     pub fn search(&self, query: &str) -> Vec<(String, f64)> {
         let terms = history_query_terms(query);
-        let phrase = crate::search::normalize_impl(query);
+        let phrase = crate::text::normalize_impl(query);
         if terms.is_empty() || phrase.is_empty() {
             return Vec::new();
         }
@@ -756,7 +756,7 @@ impl TurnIndex {
                     return None;
                 }
                 let mut score: f64 = matched.iter().map(|term| idf(term)).sum();
-                if crate::search::normalize_impl(text).contains(&phrase) {
+                if crate::text::normalize_impl(text).contains(&phrase) {
                     score += 1.0;
                 }
                 (score > 0.0).then(|| (turn.id.clone(), score))

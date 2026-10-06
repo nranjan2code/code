@@ -873,6 +873,9 @@ fn git_seed(cwd: &std::path::Path) {
         );
     };
     run(&["init", "-q"]);
+    // These tests keep the data home inside the workspace; a real
+    // workspace never holds it, and its catalog changes while git reads.
+    std::fs::write(cwd.join(".gitignore"), "home/\n").unwrap();
     std::fs::write(cwd.join("README.md"), "seed\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-q", "-m", "seed"]);
@@ -1056,6 +1059,9 @@ fn git_seed_main(cwd: &std::path::Path) {
         assert!(out.status.success(), "git {args:?} failed");
     };
     run(&["init", "-q", "-b", "main"]);
+    // These tests keep the data home inside the workspace; a real
+    // workspace never holds it, and its catalog changes while git reads.
+    std::fs::write(cwd.join(".gitignore"), "home/\n").unwrap();
     std::fs::write(cwd.join("README.md"), "seed\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-q", "-m", "seed"]);

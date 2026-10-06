@@ -57,6 +57,7 @@ mod auth_identity;
 mod automations;
 mod bus;
 mod canvas;
+mod catalog_api;
 mod channels;
 mod client_events;
 mod client_ui;
@@ -241,8 +242,6 @@ pub struct AppState {
     pub(crate) heartbeat: Arc<heartbeat::HeartbeatRuntime>,
     /// Global event hub for admin console SSE streaming.
     pub(crate) hub: events::EventHub,
-    /// SQLite FTS5 session index (rebuildable from JSONL).
-    pub(crate) store: Option<vak_store::Store>,
     /// Expected auth token (login endpoint compares against it).
     pub(crate) auth_token: Arc<String>,
     /// Short-lived, revocable browser handles. The gateway bearer never
@@ -293,15 +292,6 @@ impl AppState {
     pub fn new(core: Core) -> Self {
         let gateway = Arc::new(gateway::GatewayState::load(&core, false));
         let hub = events::init_global();
-        // Canonical layout (doc 32): the FTS index is a rebuildable cache,
-        // never user data — it lives under Library/Caches / XDG_CACHE_HOME.
-        let store = vak_store::Store::open(&core.cache_home()).ok();
-        if store.is_none() {
-            tracing::warn!(
-                kind = "search_index",
-                "the search index did not open; search uses the fallback"
-            );
-        }
         // Token selection lives here so every router flavor (plain,
         // gateway, secured) shares one identity for auth + login.
         let auth_token = Arc::new(
@@ -332,7 +322,6 @@ impl AppState {
             gateway,
             heartbeat: Arc::new(heartbeat::HeartbeatRuntime::new()),
             hub,
-            store,
             auth_token,
             browser_sessions: web::BrowserSessions::default(),
             owner_auth,
@@ -853,6 +842,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/runs/{id}/spans", get(telemetry::run_spans))
         .route("/telemetry/services", get(telemetry::list_services))
         .route("/telemetry/logs", get(telemetry::logs))
+        .route("/nodes/{id}", get(catalog_api::node))
+        .route("/lineage/{id}", get(catalog_api::lineage))
+        .route("/catalog", get(catalog_api::status))
+        .route("/catalog/rebuild", post(catalog_api::rebuild))
         .route("/flows/{name}/runs/{run}/graph", get(flow_run_graph))
         .route("/sessions/{id}/checkpoints", get(list_checkpoints))
         .route(
@@ -2793,6 +2786,10 @@ struct SearchQuery {
     /// sessions home (docs/design/29-personal-os.md P1), not just this cwd.
     #[serde(default)]
     all: bool,
+    /// What to look through: `conversation`, `memory` or `entity`; all
+    /// three when absent.
+    #[serde(default)]
+    kind: Option<String>,
     /// The Agent whose ledgers and memory are searched (default `vak`).
     /// Each Agent's memory is private (AGENTS.md invariant 37), so a search
     /// resolves one Agent the way `/memory` does and reads only its home.
@@ -2806,78 +2803,39 @@ async fn search_sessions(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, q.agent.as_deref());
-    let home = core.scope().into_root();
-    let cwd = core.cwd().clone();
-    let query = q.q.clone();
-    let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
-    let excluded = vak_core::trash::search_exclusions(&core.shared_scope(), q.exclude.as_deref());
+    let limit = q.limit.unwrap_or(8).clamp(1, 50);
     let all = q.all;
-    let mut extras = Vec::new();
-    let mut workspace_notes = vak_core::memory::list_notes(&home, &cwd);
-    if all {
-        workspace_notes.clear();
-        for path in
-            vak_session::documents::under(&vak_config::scope::AgentScope::new(&home).memory_root())
-        {
-            let in_workspace_tier = path
-                .parent()
-                .and_then(|tier| tier.file_name())
-                .is_some_and(|name| name == "MEMORY.md");
-            if in_workspace_tier && let Ok(Some(raw)) = vak_session::documents::read(&path) {
-                workspace_notes.extend(vak_core::memory::parse_blocks(&raw));
+    let mut audience = core.catalog_audience();
+    audience.exclude_sessions.extend(q.exclude.clone());
+    let scope = vak_catalog::Scope {
+        space: (!all).then(|| vak_session::trace::local::space(core.cwd()).to_string()),
+        kinds: Some(
+            match q.kind.as_deref() {
+                Some("conversation") => vec!["session", "turn", "call"],
+                Some("memory") => vec!["memory"],
+                Some("entity") => vec!["entity"],
+                _ => vec!["session", "turn", "call", "memory", "entity"],
             }
-        }
-    }
-    for note in workspace_notes {
-        let id = if note.tag.is_empty() {
-            note.id.clone()
-        } else {
-            note.tag.clone()
-        };
-        extras.push(vak_session::ExternalDoc {
-            id,
-            text: format!("[{}] {}", note.kind, note.text),
-            ts: Some(note.ts),
-            role: Some("memory".into()),
-        });
-    }
-    for note in vak_core::memory::list_profile_notes(&home) {
-        let id = format!(
-            "profile/{}",
-            if note.tag.is_empty() {
-                note.id.clone()
-            } else {
-                note.tag.clone()
-            }
-        );
-        extras.push(vak_session::ExternalDoc {
-            id,
-            text: format!("[{}] {}", note.kind, note.text),
-            ts: Some(note.ts),
-            role: Some("profile".into()),
-        });
-    }
-    match tokio::task::spawn_blocking(move || {
-        // Both hit shapes are Serialize; the workspace path keeps its flat
-        // SessionHit wire shape, cross-project adds the space_id wrapper.
-        let searched = if all {
-            vak_session::search_all_extended(&home, &query, limit, &excluded, &extras)
-                .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
-        } else {
-            vak_session::search_extended(&home, &cwd, &query, limit, &excluded, &extras)
-                .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
-        };
-        match searched {
-            Ok(inner) => inner,
-            Err(e) => Err(e.to_string()),
-        }
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        ),
+    };
+    let query = q.q.clone();
+    let searched = tokio::task::spawn_blocking(move || {
+        let catalog = core.catalog()?;
+        catalog.catch_up()?;
+        Ok::<_, vak_core::CoreError>(catalog.search(&query, &audience, &scope, limit)?)
     })
-    .await
-    {
-        Ok(Ok(hits)) => Json(serde_json::json!({ "all": all, "hits": hits })).into_response(),
+    .await;
+    match searched {
+        Ok(Ok(hits)) => {
+            let hits: Vec<serde_json::Value> = hits.into_iter().map(search_hit).collect();
+            Json(serde_json::json!({ "all": all, "hits": hits })).into_response()
+        }
         Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e })),
+            Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
         Err(e) => (
@@ -2886,6 +2844,46 @@ async fn search_sessions(
         )
             .into_response(),
     }
+}
+
+/// One search hit as clients read it: the conversation (or memory note,
+/// profile note or entity) it names, its date, kind and snippet, and the
+/// catalog node behind it for lineage.
+fn search_hit(hit: vak_catalog::Hit) -> serde_json::Value {
+    let node = hit.node;
+    let leaf = node
+        .locator
+        .as_deref()
+        .and_then(|path| std::path::Path::new(path).file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (session_id, role) = match node.kind.as_str() {
+        "memory" if node.status.as_deref() == Some("profile") => {
+            (format!("profile/{leaf}"), "profile")
+        }
+        "memory" => (format!("memory/{leaf}"), "memory"),
+        "entity" => (format!("entity/{leaf}"), "entity"),
+        _ => (
+            node.session
+                .as_deref()
+                .unwrap_or_default()
+                .trim_start_matches("ses_")
+                .to_string(),
+            "conversation",
+        ),
+    };
+    serde_json::json!({
+        "session_id": session_id,
+        "turn_id": node.turn.as_deref().map(|turn| turn.trim_start_matches("trn_")),
+        "node": node.id,
+        "kind": node.kind,
+        "role": role,
+        "ts": node.created_at,
+        "score": hit.score,
+        "snippet": hit.snippet,
+        "space_id": node.space,
+        "agent": node.agent_name,
+    })
 }
 
 /// The bearer token lives for the life of the process; embedders (desktop
@@ -3047,18 +3045,23 @@ fn secured_router_with_port_and_test_oauth_endpoint(
     // server, or the desktop app.
     // Background index sync: keeps the admin console populated from the
     // very first boot. Idempotent; never blocks request handling.
-    if let Some(store) = state.store.clone() {
-        let home = state.core.scope().into_root();
-        tokio::spawn(async move {
-            match store.rebuild(&home) {
-                Ok(s) if s.files_scanned > 0 => tracing::info!(
-                    kind = "search_index",
-                    count = s.entries_indexed,
-                    "the search index was rebuilt"
+    // The catalog catches up with whatever was written while no server
+    // ran; it never blocks request handling.
+    {
+        let core = state.core.clone();
+        tokio::task::spawn_blocking(move || {
+            match core.catalog().map(|catalog| catalog.catch_up()) {
+                Ok(Ok(taken)) if taken.rows > 0 => tracing::info!(
+                    kind = "catalog",
+                    count = taken.rows as u64,
+                    "the catalog caught up"
                 ),
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(kind = "search_index", error_kind = %vak_telemetry::error_kind(&e), "the search index rebuild failed")
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(kind = "catalog", error_kind = %vak_telemetry::error_kind(&error), "the catalog did not catch up")
+                }
+                Err(error) => {
+                    tracing::warn!(kind = "catalog", error_kind = %vak_telemetry::error_kind(&error), "the catalog did not open")
                 }
             }
         });
@@ -3246,7 +3249,7 @@ pub async fn serve_with(
 }
 
 fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
-    let store = vak_store::presentation::PresentationStore::new(core.scope().presentations());
+    let store = vak_core::presentation_store::PresentationStore::new(core.scope().presentations());
     let mut library = store.load().map_err(|error| error.to_string())?;
     let before = library.definitions().count();
     let mut changed = false;
@@ -3343,8 +3346,9 @@ mod built_in_presentation_tests {
         );
         assert!(effective.select_preferred("table", "user", owner).is_some());
         let dir = tempfile::tempdir().expect("tempdir");
-        let store =
-            vak_store::presentation::PresentationStore::new(dir.path().join("presentations.json"));
+        let store = vak_core::presentation_store::PresentationStore::new(
+            dir.path().join("presentations.json"),
+        );
         store.save(&library).expect("save suppression");
         library = store.load().expect("reload suppression");
         assert!(
@@ -4065,7 +4069,7 @@ fn live_presentation_snapshot(
 ) -> vak_delivery::OutputTimeline {
     let planner = delivery::merged_presentation_planner(core);
     let adaptive_store =
-        vak_store::presentation::PresentationStore::new(core.scope().presentations());
+        vak_core::presentation_store::PresentationStore::new(core.scope().presentations());
     let mut timeline = match adaptive_store.load() {
         Ok(library) => {
             let effective = effective_presentation_library(&library, &core.cwd().to_string_lossy());
@@ -4292,6 +4296,7 @@ async fn create_session(State(state): State<AppState>) -> axum::response::Respon
         .header()
         .map(|h| h.session_id.clone())
         .unwrap_or_default();
+    let ledger = session.path().to_path_buf();
     register_handle(
         &state,
         id.clone(),
@@ -4301,68 +4306,30 @@ async fn create_session(State(state): State<AppState>) -> axum::response::Respon
     );
 
     state.hub.emit_session_created(&id, "");
-    index_session_later(
-        state.store.clone(),
-        state.core.scope().into_root(),
-        id.clone(),
-    );
+    catalog_session_later(&core, &ledger);
 
     Json(serde_json::json!({ "session_id": id })).into_response()
 }
 
-/// Re-index one session's JSONL in the background. Reading does not
-/// conflict with the live handle's exclusive write lock.
-pub(crate) fn index_session_later(
-    store: Option<vak_store::Store>,
-    home: std::path::PathBuf,
-    session_id: String,
-) {
-    let Some(store) = store else {
-        return;
-    };
-    tokio::spawn(async move {
-        import_session_sync(&store, &home, &session_id);
+/// Takes a session ledger's appended entries into the data catalog in the
+/// background (plan M6). A missed one costs latency only: the next
+/// catch-up takes them.
+pub(crate) fn catalog_session_later(core: &Core, ledger: &std::path::Path) {
+    let core = core.clone();
+    let ledger = ledger.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let caught = core
+            .catalog()
+            .map_err(|error| vak_telemetry::error_kind(&error))
+            .and_then(|catalog| {
+                catalog
+                    .catch_up_session(&ledger)
+                    .map_err(|error| vak_telemetry::error_kind(&error))
+            });
+        if let Err(error_kind) = caught {
+            tracing::warn!(kind = "catalog", error_kind = %error_kind, "a session was not taken into the catalog");
+        }
     });
-}
-
-/// Locate `<home>/sessions/<space id>/<session>/` and import it into the
-/// index synchronously. Idempotent; cheap when nothing changed.
-pub(crate) fn import_session_sync(
-    store: &vak_store::Store,
-    home: &std::path::Path,
-    session_id: &str,
-) -> bool {
-    let dir = home.join("sessions");
-    if let Ok(read) = std::fs::read_dir(&dir) {
-        for project in read.flatten() {
-            let candidate = vak_config::scope::session_ledger(&project.path(), session_id);
-            if candidate.exists() && store.import_session(home, &candidate).is_ok() {
-                return true;
-            }
-        }
-    }
-    let shared = if home.join("agents").is_dir() {
-        home.to_path_buf()
-    } else if let Some(parent) = home.parent().and_then(|p| p.parent()) {
-        parent.to_path_buf()
-    } else {
-        home.to_path_buf()
-    };
-    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
-        for agent in agents.flatten() {
-            let agent_home = agent.path();
-            let agent_sessions = agent_home.join("sessions");
-            if let Ok(projects) = std::fs::read_dir(&agent_sessions) {
-                for project in projects.flatten() {
-                    let candidate = vak_config::scope::session_ledger(&project.path(), session_id);
-                    if candidate.exists() && store.import_session(&agent_home, &candidate).is_ok() {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
 }
 
 #[derive(serde::Deserialize)]
@@ -5198,8 +5165,6 @@ async fn run_turn_chain<F, Fut>(
 async fn http_settle(
     handle: Arc<SessionHandle>,
     hub: events::EventHub,
-    admin_store: Option<vak_store::Store>,
-    sessions_home: std::path::PathBuf,
     run_id: String,
     outcome: Result<(vak_agent::TurnOutcome, SessionLog), vak_core::CoreError>,
 ) -> SettleResult {
@@ -5252,7 +5217,7 @@ async fn http_settle(
                 .unwrap_or_else(std::sync::PoisonError::into_inner) =
                 live_presentation_snapshot(&handle.core, &run_id, &session_log);
             hub.emit_agent_summary(&summary, Some(run_id.clone()));
-            index_session_later(admin_store, sessions_home, run_id.clone());
+            catalog_session_later(&handle.core, session_log.path());
             // Background reflection seam (docs/design/29 P1): after the
             // summary is recorded and while this leg still owns the ledger
             // (a second in-process handle cannot take the file lock).
@@ -5300,8 +5265,6 @@ fn spawn_http_turn_chain(
     shows_questions: bool,
 ) {
     let hub = state.hub.clone();
-    let admin_store = state.store.clone();
-    let sessions_home = state.core.scope().into_root();
     let chain_handle = handle;
     tokio::spawn(async move {
         let approver_handle = chain_handle.clone();
@@ -5326,12 +5289,8 @@ fn spawn_http_turn_chain(
             move |leg_session_id: &str, outcome| {
                 let handle = settle_handle.clone();
                 let hub = hub.clone();
-                let admin_store = admin_store.clone();
-                let sessions_home = sessions_home.clone();
                 let run_id = leg_session_id.to_string();
-                async move {
-                    http_settle(handle, hub, admin_store, sessions_home, run_id, outcome).await
-                }
+                async move { http_settle(handle, hub, run_id, outcome).await }
             },
         )
         .await;
@@ -7706,7 +7665,7 @@ async fn select_presentation_for_session(
             current
                 .activate(&spec_id, revision, scope, owner)
                 .map_err(|error| {
-                    vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+                    vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
                 })?;
             store.save(&current)
         });
@@ -8219,7 +8178,7 @@ fn conversation_exists(state: &AppState, id: &str) -> bool {
 }
 
 fn conversation_audience(state: &AppState, id: &str) -> Option<String> {
-    read_historical_header(state, id, None)?
+    read_historical_header(state, id)?
         .conversation
         .map(|context| context.audience_id)
 }
@@ -8231,7 +8190,7 @@ async fn coworking_me(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let Some(agent) =
-        read_historical_header(&state, &conversation_id, None).and_then(|header| header.agent)
+        read_historical_header(&state, &conversation_id).and_then(|header| header.agent)
     else {
         return (
             StatusCode::CONFLICT,
@@ -8848,35 +8807,47 @@ fn markdown_response(md: String) -> axum::response::Response {
         .into_response()
 }
 
-/// Find a session log on disk across current sessions_home and all agent directories.
+/// The catalog's node for session `id`, caught up once when it does not
+/// know the session yet (plan M6): one lookup, never a directory walk.
+fn session_node(core: &Core, id: &str) -> Option<vak_catalog::Node> {
+    if id.is_empty() || id == "." || id == ".." || id.contains(['/', '\\']) {
+        return None;
+    }
+    let catalog = core.catalog().ok()?;
+    let found = |catalog: &vak_catalog::Catalog| {
+        catalog
+            .open_node(id)
+            .ok()
+            .flatten()
+            .filter(|node| node.kind == "session")
+    };
+    if let Some(node) = found(&catalog) {
+        return Some(node);
+    }
+    catalog.catch_up().ok()?;
+    found(&catalog)
+}
+
+/// Where session `id`'s ledger is.
+pub(crate) fn locate_session(core: &Core, id: &str) -> Option<std::path::PathBuf> {
+    session_node(core, id)
+        .and_then(|node| node.locator)
+        .map(std::path::PathBuf::from)
+}
+
+/// [`locate_session`] off the request's thread.
+pub(crate) async fn session_ledger_dir(state: &AppState, id: &str) -> Option<std::path::PathBuf> {
+    let core = state.core.clone();
+    let id = id.to_string();
+    tokio::task::spawn_blocking(move || locate_session(&core, &id))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Session `id`'s ledger, read-only, wherever its Agent keeps it.
 fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog> {
-    let home = core.scope().into_root();
-    let path = core.scope().session_file(core.cwd(), id);
-    if let Ok(s) = vak_session::SessionLog::open_read_only(path) {
-        return Some(s);
-    }
-    if let Ok(entries) = std::fs::read_dir(home.join("sessions")) {
-        for entry in entries.flatten() {
-            let candidate = vak_config::scope::session_ledger(&entry.path(), id);
-            if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
-                return Some(s);
-            }
-        }
-    }
-    let shared = core.shared_scope().into_root();
-    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
-        for agent in agents.flatten() {
-            if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
-                for project in projects.flatten() {
-                    let candidate = vak_config::scope::session_ledger(&project.path(), id);
-                    if let Ok(s) = vak_session::SessionLog::open_read_only(candidate) {
-                        return Some(s);
-                    }
-                }
-            }
-        }
-    }
-    None
+    vak_session::SessionLog::open_read_only(locate_session(core, id)?).ok()
 }
 
 /// Historical sessions live on disk but not in the in-memory handle map
@@ -8896,40 +8867,8 @@ fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::Se
 pub(crate) fn read_historical_header(
     state: &AppState,
     id: &str,
-    workspace: Option<&std::path::Path>,
 ) -> Option<vak_session::types::SessionHeader> {
-    fn read(path: &std::path::Path) -> Option<vak_session::types::SessionHeader> {
-        vak_session::SessionLog::read_header(path).ok()
-    }
-
-    if let Some(workspace) = workspace {
-        let path = state.core.scope().session_file(workspace, id);
-        if let Some(header) = read(&path) {
-            return Some(header);
-        }
-    }
-    if let Ok(entries) = std::fs::read_dir(state.core.scope().sessions_root()) {
-        for project in entries.flatten().filter(|entry| entry.path().is_dir()) {
-            let path = vak_config::scope::session_ledger(&project.path(), id);
-            if let Some(header) = read(&path) {
-                return Some(header);
-            }
-        }
-    }
-    let shared = state.core.shared_scope().into_root();
-    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
-        for agent in agents.flatten().filter(|entry| entry.path().is_dir()) {
-            if let Ok(projects) = std::fs::read_dir(agent.path().join("sessions")) {
-                for project in projects.flatten().filter(|entry| entry.path().is_dir()) {
-                    let path = vak_config::scope::session_ledger(&project.path(), id);
-                    if let Some(header) = read(&path) {
-                        return Some(header);
-                    }
-                }
-            }
-        }
-    }
-    None
+    vak_session::SessionLog::read_header(&locate_session(&state.core, id)?).ok()
 }
 
 /// Reopen a session whose in-memory handle was consumed by a turn that
@@ -9167,13 +9106,10 @@ async fn onboarding_first_task(State(state): State<AppState>) -> axum::response:
         .header()
         .map(|h| h.session_id.clone())
         .unwrap_or_default();
+    let ledger = session.path().to_path_buf();
     register_handle(&state, id.clone(), session, workspace, capped.clone());
     state.hub.emit_session_created(&id, "");
-    index_session_later(
-        state.store.clone(),
-        state.core.scope().into_root(),
-        id.clone(),
-    );
+    catalog_session_later(&capped, &ledger);
 
     Json(serde_json::json!({
         "session_id": id,
@@ -9905,24 +9841,11 @@ fn write_archive(core: &Core, map: &HashMap<String, bool>) {
     }
 }
 
+/// Whether session `id` belongs to this Core's workspace, whichever Agent
+/// holds it.
 fn find_session_in_cwd(core: &Core, id: &str) -> bool {
-    let direct = core.scope().session_file(core.cwd(), id);
-    if direct.exists() {
-        return true;
-    }
-    let shared = core.shared_scope().into_root();
-    if let Ok(agents) = std::fs::read_dir(shared.join("agents")) {
-        for agent in agents.flatten() {
-            let candidate = vak_config::scope::session_ledger(
-                &vak_session::SessionPath::sessions_dir(&agent.path(), core.cwd()),
-                id,
-            );
-            if candidate.exists() {
-                return true;
-            }
-        }
-    }
-    false
+    let space = vak_session::trace::local::space(core.cwd()).to_string();
+    session_node(core, id).is_some_and(|node| node.space.as_deref() == Some(space.as_str()))
 }
 
 #[derive(serde::Deserialize)]
@@ -10262,8 +10185,8 @@ fn requested_plugin_scopes(scope: Option<InstallScope>) -> Vec<InstallScope> {
 // Presentations are process-default-workspace scoped today, unlike the
 // plugin store itself; out of scope for this per-Agent isolation pass
 // (not one of the audited endpoints) and left untouched deliberately.
-fn presentation_store(state: &AppState) -> vak_store::presentation::PresentationStore {
-    vak_store::presentation::PresentationStore::new(state.core.scope().presentations())
+fn presentation_store(state: &AppState) -> vak_core::presentation_store::PresentationStore {
+    vak_core::presentation_store::PresentationStore::new(state.core.scope().presentations())
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -10290,7 +10213,7 @@ async fn list_presentations(State(state): State<AppState>) -> axum::response::Re
                 changed = true;
             }
             library.register(seed).map_err(|error| {
-                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+                vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
             })?;
         }
         if changed || library.definitions().count() != before {
@@ -10353,7 +10276,7 @@ async fn import_presentations(
             definition.origin.owner = "user".into();
             definition.origin.plugin_id = None;
             library.register(definition).map_err(|error| {
-                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+                vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
             })?;
         }
         store.save(&library)
@@ -10423,7 +10346,7 @@ async fn propose_presentation_revision(
         let revision = library
             .register_revision(body.request, body.proposed, body.origin)
             .map_err(|error| {
-                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+                vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
             })?;
         store.save(&library)?;
         Ok(revision)
@@ -10492,7 +10415,7 @@ async fn propose_session_presentation_revision(
         let revision = library
             .register_revision(body.request, body.proposed, body.origin)
             .map_err(|error| {
-                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+                vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
             })?;
         store.save(&library)?;
         Ok(revision)
@@ -10554,7 +10477,7 @@ async fn activate_presentation(
         let activation = library
             .activate(&id, revision, body.scope, &body.owner)
             .map_err(|error| {
-                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+                vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
             })?;
         store.save(&library)?;
         Ok(activation)
@@ -10603,7 +10526,7 @@ async fn activate_all_presentations(
     let result = store.load().and_then(|mut library| {
         for seed in vak_presentation::seeds::built_in_seed_pack() {
             library.register(seed).map_err(|error| {
-                vak_store::presentation::PresentationStoreError::Invalid(error.to_string())
+                vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
             })?;
         }
         let mut latest_by_id: std::collections::BTreeMap<String, u64> =
@@ -11969,7 +11892,7 @@ pub(crate) fn session_agent_scope(
         .get(session_id)
         .and_then(|handle| handle.core.agent_identity().map(|agent| agent.id.clone()))
         .or_else(|| {
-            read_historical_header(state, session_id, None)
+            read_historical_header(state, session_id)
                 .and_then(|header| header.agent)
                 .map(|agent| agent.id)
         })
@@ -19178,6 +19101,24 @@ async fn scheduler_tick(state: &AppState) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(chrono::Utc::now());
     feeds::scheduled_ingestion(state).await;
     automations::tick(state).await;
+    catch_up_catalog(state).await;
+}
+
+/// Takes into the data catalog whatever any process wrote since the last
+/// tick (plan M6): the level-triggered half of keeping it current, so a
+/// missed hint after a turn costs one tick, never a result.
+async fn catch_up_catalog(state: &AppState) {
+    let core = state.core.clone();
+    let caught = tokio::task::spawn_blocking(move || {
+        core.catalog()
+            .map_err(|error| vak_telemetry::error_kind(&error))?
+            .catch_up()
+            .map_err(|error| vak_telemetry::error_kind(&error))
+    })
+    .await;
+    if let Ok(Err(error_kind)) = caught {
+        tracing::warn!(kind = "catalog", error_kind = %error_kind, "the catalog did not catch up");
+    }
 }
 
 /// How long a liveness renewal holds: three scheduler ticks, so one slow
@@ -24908,8 +24849,9 @@ mod sandbox_promotion_tests {
     #[tokio::test]
     async fn activate_all_and_deactivate_all_presentations() {
         let dir = tempfile::tempdir().unwrap();
-        let store =
-            vak_store::presentation::PresentationStore::new(dir.path().join("presentations.json"));
+        let store = vak_core::presentation_store::PresentationStore::new(
+            dir.path().join("presentations.json"),
+        );
         let mut library = vak_presentation::PresentationLibrary::default();
         for seed in vak_presentation::seeds::built_in_seed_pack() {
             library.register(seed).unwrap();

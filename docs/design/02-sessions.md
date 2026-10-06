@@ -642,7 +642,8 @@ algorithm is designed to resume from its last recorded point.
 | Entry schemas, ids, hashes, typed payloads | `crates/vak-session/src/types.rs` |
 | File lifecycle, locks, append, recovery, branching, projection | `crates/vak-session/src/log.rs` |
 | Turn reconstruction, evidence digests, turn cards | `crates/vak-session/src/turns.rs` |
-| Session search and cross-home traversal | `crates/vak-session/src/search.rs` |
+| Reading a ledger from a position (what the catalog tails) | `crates/vak-session/src/tail.rs` |
+| Cross-session search, lineage and "where is session X" | `crates/vak-catalog` (plan M6) |
 | Context capacity, working-set planning, request assembly | `docs/design/68-context-engine.md` and `vak-context` |
 | Provider attempts and route provenance | `docs/design/15-reliability.md` and `docs/design/42-managed-work-contracts.md` |
 | Durable work and goal projection | `crates/vak-session/src/work.rs`, `docs/design/42-managed-work-contracts.md` |

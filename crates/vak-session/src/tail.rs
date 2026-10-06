@@ -70,6 +70,17 @@ pub fn tail(
     at
 }
 
+/// The frame just after `at`: what an index that recorded `at` for an entry
+/// reads to load it again. `None` when no frame is there.
+pub fn read_at(dir: &Path, at: Position) -> Option<Vec<u8>> {
+    let mut found = None;
+    tail(dir, at, |_, bytes| {
+        found = Some(bytes.to_vec());
+        false
+    });
+    found
+}
+
 /// The position after the last frame: where a reader that has taken
 /// everything stands. Reads only the newest segment.
 pub fn head(dir: &Path) -> Position {

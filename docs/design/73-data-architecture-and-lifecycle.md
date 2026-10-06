@@ -433,7 +433,7 @@ Five rules follow:
 
 ```
 <data>/tenants/<ten>/
-  catalog.db                          Derived   (§9) — the data catalog, rebuildable
+  catalog/catalog.db                  Derived   (§9) — the data catalog, rebuildable
   objects/ab/cdef…                    Object    keyed-hash id, compressed then sealed, per-object key
   keys/                               key grants (wrapped); conversation/contributor/space/artifact keys
   records/

@@ -2622,8 +2622,8 @@ impl SessionLog {
             return Vec::new();
         }
 
-        let terms: Vec<String> = crate::search::tokenize_impl(query);
-        let phrase = crate::search::normalize_impl(query);
+        let terms: Vec<String> = crate::text::tokenize_impl(query);
+        let phrase = crate::text::normalize_impl(query);
         if terms.is_empty() || phrase.is_empty() {
             return Vec::new();
         }
@@ -2644,9 +2644,9 @@ impl SessionLog {
         let mut scored: Vec<(f32, &String, &vak_llm::Message)> = Vec::new();
         for (id, msg, _, _) in &candidates {
             let text = msg.text_content();
-            let entities = crate::search::extract_entities(&text);
-            let normalized = crate::search::normalize_impl(&text);
-            let score = crate::search::score_normalized(&normalized, &terms, &phrase, &entities);
+            let entities = crate::text::extract_entities(&text);
+            let normalized = crate::text::normalize_impl(&text);
+            let score = crate::text::score_normalized(&normalized, &terms, &phrase, &entities);
             if score > 0.0 {
                 scored.push((score, id, msg));
             }

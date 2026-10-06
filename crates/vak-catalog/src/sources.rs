@@ -20,6 +20,8 @@ pub enum Source {
     Trigger(PathBuf),
     /// A memory Document of `agent`; its cursor counts versions.
     Memory { path: PathBuf, agent: String },
+    /// An entity Document of `agent`; its cursor counts versions.
+    Entity { path: PathBuf, agent: String },
 }
 
 impl Source {
@@ -32,6 +34,7 @@ impl Source {
             Self::Commitments { dir, .. } => ("commitments", dir),
             Self::Trigger(path) => ("trigger", path),
             Self::Memory { path, .. } => ("memory", path),
+            Self::Entity { path, .. } => ("entity", path),
         };
         format!("{kind}:{}", path.display())
     }
@@ -41,7 +44,7 @@ impl Source {
         match self {
             Self::Session(dir) | Self::Runs(dir) | Self::Effects(dir) => chain_has_more(dir, from),
             Self::Commitments { dir, .. } => chain_has_more(dir, from),
-            Self::Trigger(path) | Self::Memory { path, .. } => {
+            Self::Trigger(path) | Self::Memory { path, .. } | Self::Entity { path, .. } => {
                 vak_session::documents::version_count(path) as u64 > from.frames
             }
         }
@@ -119,6 +122,12 @@ pub fn discover(data: &Path) -> Vec<Source> {
         let mut memory = vak_session::documents::under(&scope.memory_root());
         memory.sort();
         found.extend(memory.into_iter().map(|path| Source::Memory {
+            path,
+            agent: agent.clone(),
+        }));
+        let mut entities = vak_session::documents::under(&root.join("entities"));
+        entities.sort();
+        found.extend(entities.into_iter().map(|path| Source::Entity {
             path,
             agent: agent.clone(),
         }));

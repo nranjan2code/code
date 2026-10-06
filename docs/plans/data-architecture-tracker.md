@@ -67,8 +67,8 @@ Known slow tests (each over 60 s, not failures):
 | 10b3 | M5b3 bus payloads carry references only; JetStream streams get `max_age` | `bus_payload_carries_references_only`, `work_streams_have_a_max_age` | Done, 08abe9410 |
 | 11 | M6 data catalog, search, lineage | `lineage_from_any_artifact_to_cause`, `search_respects_audience`, `catalog_rebuild_equals_incremental`, `turn_path_reads_flat`, `catalog_query_p95_under_50ms_at_1m_nodes` | In progress (design agreed; 11a–11d) |
 | 11a | M6.1 `vak-catalog`: schema, tailer cursors, ingest of ledgers, runs, effects, triggers, memory, commitments; search, lineage, open, stale, rebuild | `catalog_rebuild_equals_incremental`, `search_respects_audience`, `lineage_from_any_artifact_to_cause`, `catalog_query_p95_under_50ms_at_1m_nodes` | Done, b2f2e5d2d |
-| 11b | M6.2 one search: `/search`, admin search, `session_search` and recall on the catalog; `vak-store`, `search_all`, recall cache and directory walks deleted; presentations as Documents | plan §M6 design | Next |
-| 11c | M6.3 flat turn path: `req/<id>` ref, routing evidence and commitment rollups as Documents | `turn_path_reads_flat` | |
+| 11b | M6.2 one search: `/search`, admin search, `session_search` and recall on the catalog; `vak-store`, `search_all`, recall cache and directory walks deleted; presentations as Documents | plan §M6 design; `trashed_session_absent_from_every_search`, the recall tests on the catalog | Done (commit follows) |
+| 11c | M6.3 flat turn path: `req/<id>` ref, routing evidence and commitment rollups as Documents | `turn_path_reads_flat` | Next |
 | 11d | M6.4 screens: search on `/search`, Lineage tab, catalog status and rebuild | browser run | |
 | 12 | M6.5 intake (doc 76) | `intake_item_has_trace_and_provenance`, `quarantined_item_absent_from_agent_retrieval`, `feed_pipeline_is_gone` | |
 | 13 | M7a lifecycle: honest deletion (after M6) | see plan §M7a (reconciler, erasure, hold, quota and soak tests, doc 74 §9 browser runs) | |

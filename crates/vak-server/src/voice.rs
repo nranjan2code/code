@@ -546,7 +546,7 @@ fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Result<Speaker, Respon
             .and_then(|key| state.gateway.resolve_persona(key))
     })
     .or_else(|| {
-        let header = crate::read_historical_header(state, body.session_id.as_deref()?, None)?;
+        let header = crate::read_historical_header(state, body.session_id.as_deref()?)?;
         let agent = header.agent?;
         let style = match agent.voice.as_str() {
             "calm" => "Speak calmly, warmly, and at an unhurried pace.",

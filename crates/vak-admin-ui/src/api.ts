@@ -267,15 +267,15 @@ export const api = {
       method: "POST",
     }).then(handleVoid),
 
+  /** Searches every workspace's conversations, memory and entities. */
   search: (
     q: string,
-    filters: { role?: string; kind?: string; limit?: number } = {},
-  ): Promise<{ hits: SearchHit[]; total: number }> => {
-    const p = new URLSearchParams({ q });
-    if (filters.role) p.set("role", filters.role);
+    filters: { kind?: string; limit?: number } = {},
+  ): Promise<{ hits: SearchHit[] }> => {
+    const p = new URLSearchParams({ q, all: "true" });
     if (filters.kind) p.set("kind", filters.kind);
     if (filters.limit != null) p.set("limit", String(filters.limit));
-    return fetch(`/admin/api/search?${p}`).then((r) => handle(r));
+    return fetch(`/search?${p}`).then((r) => handle(r));
   },
 
   security: (limit = 200, kind?: string): Promise<{ events: SecurityEvent[]; total: number }> => {
@@ -285,7 +285,7 @@ export const api = {
   },
 
   rebuild: (): Promise<RebuildStats> =>
-    fetch("/admin/api/store/rebuild", { method: "POST" }).then((r) => handle(r)),
+    fetch("/catalog/rebuild", { method: "POST" }).then((r) => handle(r)),
 
   config: (agent?: string) => fetch(withAgent("/admin/api/config", agent)).then((r) => handle<ConfigInfo>(r)),
 

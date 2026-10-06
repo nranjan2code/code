@@ -10,7 +10,6 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tokio_stream::StreamExt;
 
 use crate::AppState;
@@ -44,99 +43,78 @@ pub(crate) struct SessionListItem {
     pub agent_id: Option<String>,
 }
 
-fn map_session_agents(shared: &std::path::Path) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    if let Ok(agents) = std::fs::read_dir(vak_config::scope::SharedScope::new(shared).agents_dir())
-    {
-        for agent in agents.flatten() {
-            let agent_id = agent.file_name().to_string_lossy().into_owned();
-            let agent_sessions = vak_config::scope::AgentScope::new(agent.path()).sessions_root();
-            if agent_sessions.exists() {
-                for e in walkdir::WalkDir::new(&agent_sessions)
-                    .min_depth(2)
-                    .max_depth(2)
-                    .into_iter()
-                    .flatten()
-                {
-                    if let Some(id) = vak_config::scope::ledger_session_id(e.path()) {
-                        map.insert(id, agent_id.clone());
-                    }
-                }
-            }
-        }
-    }
-    map
-}
-
 pub(crate) async fn list_sessions_admin(
     State(state): State<AppState>,
     Query(q): Query<SessionListQuery>,
 ) -> Response {
-    let Some(store) = &state.store else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "store not available" })),
-        )
-            .into_response();
-    };
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    // Both maps live under the shared vak home (`sessions_home`), not a
-    // per-workspace directory, so they apply across every project this
-    // store indexes — unlike archive/delete *mutation*, which only reaches
-    // a ledger file under this process's own workspace (see
-    // `workspace_space_id` on `/admin/api/config`).
+    // The archive is keyed by session id across every project; the trash
+    // hides a session everywhere (`vak_core::trash`).
     let archive_map = crate::read_archive(&state.core);
-    let shared = state.core.shared_scope().into_root();
-    let trashed = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&shared));
-    let agent_map = map_session_agents(&shared);
-
-    match store.list_sessions() {
-        Ok(all) => {
-            let visible = all.into_iter().filter(|s| {
-                let s_agent = agent_map
-                    .get(&s.session_id)
-                    .map(String::as_str)
-                    .unwrap_or("vak");
-                q.space.as_ref().is_none_or(|p| &s.space_id == p)
-                    && q.agent.as_ref().is_none_or(|a| a == "all" || s_agent == a)
-                    && !trashed.contains(&s.session_id)
-            });
-            let visible: Vec<_> = visible.collect();
-            let total = visible.len();
-            let items: Vec<SessionListItem> = visible
-                .into_iter()
-                .take(limit)
-                .map(|s| {
-                    let agent_id = agent_map
-                        .get(&s.session_id)
-                        .cloned()
-                        .or_else(|| Some("vak".to_string()));
-                    SessionListItem {
-                        archived: archive_map.get(&s.session_id).copied().unwrap_or(false),
-                        session_id: s.session_id,
-                        space_id: s.space_id,
-                        entry_count: s.entry_count,
-                        first_ts: s.first_ts,
-                        last_ts: s.last_ts,
-                        agent_id,
-                    }
-                })
-                .collect();
-            Json(serde_json::json!({
-                "sessions": items,
-                "total": total,
-                // The project this server opened, so the console can tell its
-                // sessions from other projects'.
-                "workspace_space_id": vak_config::spaces::key(state.core.cwd()),
-            }))
-            .into_response()
+    let core = state.core.clone();
+    let listed = tokio::task::spawn_blocking(move || {
+        let catalog = core.catalog()?;
+        catalog.catch_up()?;
+        let audience = vak_catalog::Audience {
+            exclude_sessions: vak_core::trash::trashed(&core.shared_scope()),
+            ..Default::default()
+        };
+        Ok::<_, vak_core::CoreError>(catalog.list("session", &audience, 10_000)?)
+    })
+    .await;
+    let sessions = match listed {
+        Ok(Ok(sessions)) => sessions,
+        Ok(Err(e)) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    let mut visible: Vec<vak_catalog::Node> = sessions
+        .into_iter()
+        .filter(|node| {
+            let agent = node.agent_name.as_deref().unwrap_or("vak");
+            q.space
+                .as_ref()
+                .is_none_or(|space| node.space.as_ref() == Some(space))
+                && q.agent.as_ref().is_none_or(|a| a == "all" || agent == a)
+        })
+        .collect();
+    visible.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    let total = visible.len();
+    let items: Vec<SessionListItem> = visible
+        .into_iter()
+        .take(limit)
+        .map(|node| {
+            let session_id = node.id.trim_start_matches("ses_").to_string();
+            SessionListItem {
+                archived: archive_map.get(&session_id).copied().unwrap_or(false),
+                session_id,
+                space_id: node.space.unwrap_or_default(),
+                entry_count: node.size.unwrap_or_default().max(0) as usize,
+                first_ts: node.created_at.unwrap_or_default(),
+                last_ts: node.updated_at.unwrap_or_default(),
+                agent_id: Some(node.agent_name.unwrap_or_else(|| "vak".into())),
+            }
+        })
+        .collect();
+    Json(serde_json::json!({
+        "sessions": items,
+        "total": total,
+        // The project this server opened, so the console can tell its
+        // sessions from other projects'.
+        "workspace_space_id": vak_config::spaces::key(state.core.cwd()),
+    }))
+    .into_response()
 }
 
 // ---- GET /admin/api/approvals ----------------------------------------------
@@ -226,9 +204,6 @@ pub(crate) struct TranscriptQuery {
     pub offset: Option<usize>,
     pub kind: Option<String>,
     pub role: Option<String>,
-    /// Re-import this session's JSONL into the index before reading, so
-    /// entries appended by an active run become visible immediately.
-    pub refresh: Option<bool>,
 }
 
 /// Byte-safe truncation: never splits a multi-byte UTF-8 sequence.
@@ -275,113 +250,205 @@ pub(crate) async fn session_transcript_admin(
     Path(session_id): Path<String>,
     Query(q): Query<TranscriptQuery>,
 ) -> Json<serde_json::Value> {
-    let Some(store) = &state.store else {
-        return Json(serde_json::json!({ "error": "store not available" }));
-    };
     if vak_core::trash::is_trashed(&state.core.shared_scope(), &session_id) {
         return Json(serde_json::json!({ "error": "session is in the trash" }));
     }
-    // Fetch offset+limit so we can report whether more pages exist.
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let offset = q.offset.unwrap_or(0);
-    if q.refresh == Some(true) {
-        crate::import_session_sync(store, &state.core.scope().into_root(), &session_id);
-    }
-    let filter = vak_store::query::SearchFilter {
-        session_id: Some(session_id.clone()),
-        kind: q.kind,
-        role: q.role,
-        ..Default::default()
+    let Some(ledger) = crate::session_ledger_dir(&state, &session_id).await else {
+        return Json(serde_json::json!({ "error": "no such session" }));
     };
-    match store.query_page(&filter, limit, offset, true) {
-        Ok((entries, total)) => {
-            let has_more = offset.saturating_add(entries.len()) < total;
-            // The search index stores text only, so it cannot say which user
-            // rows the runtime authored. The ledger can: tag each row from it.
-            let controls = control_kinds_by_entry(&state, &session_id);
-            let page: Vec<serde_json::Value> = entries
-                .iter()
-                .map(|e| {
-                    serde_json::json!({
-                        "entry_id": e.entry_id,
-                        "ts": e.ts,
-                        "kind": e.kind.as_str(),
-                        "role": e.role,
-                        "tool_name": e.tool_name,
-                        "is_error": e.is_error,
-                        "content": truncate_chars(&e.content_text, 16000),
-                        "control": controls.get(&e.entry_id),
-                    })
-                })
-                .collect();
-            let contract = state
-                .get(&session_id)
-                .and_then(|handle| {
-                    handle
-                        .session
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .as_ref()
-                        .and_then(|session| session.header().map(|header| header.contract.clone()))
-                })
-                .or_else(|| {
-                    crate::open_historical_session(&state, &session_id)
-                        .and_then(|session| session.header().map(|header| header.contract.clone()))
-                });
-            let configuration_mismatch = false; // Per-turn routing: contract snapshot != mismatch
-            Json(serde_json::json!({
-                "session_id": session_id,
-                "entries": page,
-                "offset": offset,
-                "total": total,
-                "has_more": has_more,
-                "contract": contract,
-                "configuration_mismatch": configuration_mismatch,
-            }))
-        }
-        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
-    }
-}
-
-// ---- GET /admin/api/search -------------------------------------------------
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct SearchQuery {
-    pub q: String,
-    pub limit: Option<usize>,
-    pub space: Option<String>,
-    pub role: Option<String>,
-    pub kind: Option<String>,
-    pub exclude_session: Option<String>,
-}
-
-pub(crate) async fn search_admin(
-    State(state): State<AppState>,
-    Query(q): Query<SearchQuery>,
-) -> Json<serde_json::Value> {
-    let Some(store) = &state.store else {
-        return Json(serde_json::json!({ "error": "store not available" }));
-    };
-    let limit = q.limit.unwrap_or(20).clamp(1, 100);
-    let filter = vak_store::query::SearchFilter {
-        space_id: q.space,
-        role: q.role,
-        kind: q.kind,
-        excluded_sessions: vak_core::trash::search_exclusions(
-            &state.core.shared_scope(),
-            q.exclude_session.as_deref(),
-        )
+    // The ledger is read as it is on disk, without its writer's lock, so a
+    // conversation another process is serving can still be inspected.
+    let (kind, role) = (q.kind.clone(), q.role.clone());
+    let rows = tokio::task::spawn_blocking(move || {
+        let mut rows = Vec::new();
+        let mut calls = std::collections::HashMap::new();
+        vak_session::SessionLog::scan(&ledger, |entry| {
+            if let Some(row) = entry.and_then(|entry| forensics_row(entry, &mut calls))
+                && kind.as_deref().is_none_or(|kind| row.kind == kind)
+                && role
+                    .as_deref()
+                    .is_none_or(|role| row.role.as_deref() == Some(role))
+            {
+                rows.push(row);
+            }
+            true
+        });
+        rows
+    })
+    .await
+    .unwrap_or_default();
+    let total = rows.len();
+    let has_more = offset.saturating_add(limit) < total;
+    // A runtime-authored row is tagged from the ledger's own typed marker.
+    let controls = control_kinds_by_entry(&state, &session_id);
+    let page: Vec<serde_json::Value> = rows
         .into_iter()
-        .collect(),
-        ..Default::default()
+        .skip(offset)
+        .take(limit)
+        .map(|row| {
+            serde_json::json!({
+                "control": controls.get(&row.entry_id),
+                "entry_id": row.entry_id,
+                "ts": row.ts,
+                "kind": row.kind,
+                "role": row.role,
+                "tool_name": row.tool_name,
+                "is_error": row.is_error,
+                "content": truncate_chars(&row.content, 16000),
+            })
+        })
+        .collect();
+    let contract = state
+        .get(&session_id)
+        .and_then(|handle| {
+            handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+                .and_then(|session| session.header().map(|header| header.contract.clone()))
+        })
+        .or_else(|| {
+            crate::open_historical_session(&state, &session_id)
+                .and_then(|session| session.header().map(|header| header.contract.clone()))
+        });
+    Json(serde_json::json!({
+        "session_id": session_id,
+        "entries": page,
+        "offset": offset,
+        "total": total,
+        "has_more": has_more,
+        "contract": contract,
+        // Per-turn routing: a contract snapshot is never a mismatch.
+        "configuration_mismatch": false,
+    }))
+}
+
+/// One ledger entry as the forensics transcript lists it.
+struct ForensicsRow {
+    entry_id: String,
+    ts: String,
+    kind: &'static str,
+    role: Option<String>,
+    tool_name: Option<String>,
+    content: String,
+    is_error: bool,
+}
+
+/// What the forensics transcript shows of `entry`, or `None` for entries
+/// it does not list (capability bindings, evidence bodies, presentations,
+/// call effects). `calls` remembers each call's tool, so a result row
+/// names the tool that produced it.
+fn forensics_row(
+    entry: &vak_session::Entry,
+    calls: &mut std::collections::HashMap<String, String>,
+) -> Option<ForensicsRow> {
+    use vak_session::EntryPayload;
+    let row = |kind: &'static str, role: Option<&str>, content: String| ForensicsRow {
+        entry_id: entry.id.clone(),
+        ts: entry.ts.to_rfc3339(),
+        kind,
+        role: role.map(str::to_string),
+        tool_name: None,
+        content,
+        is_error: false,
     };
-    match store.search(&q.q, limit, &filter) {
-        Ok(result) => Json(serde_json::json!({
-            "hits": result.entries,
-            "total": result.total,
-        })),
-        Err(e) => Json(serde_json::json!({ "error": e.to_string() })),
-    }
+    Some(match &entry.payload {
+        EntryPayload::Header(_) => row("header", None, String::new()),
+        EntryPayload::Message(record) => {
+            // A runtime-authored nudge is listed under its own role so it
+            // is never read as something the user said.
+            let role = match record.message.role {
+                _ if record.control_kind().is_some() => "control",
+                vak_llm::Role::User => "user",
+                vak_llm::Role::Assistant => "assistant",
+            };
+            let mut parts = Vec::new();
+            let mut tool_name = None;
+            let mut is_error = false;
+            for block in &record.message.content {
+                match block {
+                    vak_llm::ContentBlock::Text { text } => parts.push(text.clone()),
+                    vak_llm::ContentBlock::Thinking { text, .. } => {
+                        parts.push(format!("[thinking] {text}"))
+                    }
+                    vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                        calls.insert(id.clone(), name.clone());
+                        tool_name = Some(name.clone());
+                        match input.get("command").and_then(|value| value.as_str()) {
+                            Some(command) => parts.push(format!("[tool:{name}] {command}")),
+                            None => parts.push(format!("[tool:{name}]")),
+                        }
+                    }
+                    vak_llm::ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                        is_error: error,
+                    } => {
+                        is_error = *error;
+                        if let Some(name) = calls.get(tool_use_id) {
+                            tool_name = Some(name.clone());
+                        }
+                        if !content.trim().is_empty() {
+                            parts.push(format!("[result] {content}"));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ForensicsRow {
+                tool_name,
+                is_error,
+                ..row("message", Some(role), parts.join("\n"))
+            }
+        }
+        EntryPayload::Compaction(compaction) => row("compaction", None, compaction.summary.clone()),
+        EntryPayload::Receipt(_) => row("receipt", None, String::new()),
+        EntryPayload::Goal(goal) => row(
+            "goal",
+            None,
+            format!("{} {}", goal.objective, goal.criteria.join(" ")),
+        ),
+        EntryPayload::GoalUpdate(update) => row(
+            "goal",
+            Some("system"),
+            format!("{:?} {}", update.relation, update.request),
+        ),
+        EntryPayload::Activity(activity) => ForensicsRow {
+            tool_name: activity.data.get("tool").cloned(),
+            is_error: matches!(
+                activity.status,
+                vak_session::ActivityStatus::Failed | vak_session::ActivityStatus::Denied
+            ),
+            ..row(
+                "activity",
+                Some("system"),
+                format!(
+                    "{} {}",
+                    activity.label,
+                    activity.detail.as_deref().unwrap_or_default()
+                ),
+            )
+        },
+        EntryPayload::Work(work) => row(
+            "work",
+            Some("system"),
+            serde_json::to_string(&work.kind).unwrap_or_default(),
+        ),
+        EntryPayload::TurnCard(record) => row(
+            "turn_card",
+            Some("turn"),
+            format!("{} {}", record.card.asked, record.card.answered.narration),
+        ),
+        EntryPayload::Intent(record) => row(
+            "intent",
+            Some("system"),
+            record.model_visible.clone().unwrap_or_default(),
+        ),
+        _ => return None,
+    })
 }
 
 // ---- GET /admin/api/events (SSE) ------------------------------------------
@@ -459,79 +526,6 @@ pub(crate) async fn list_security_events(
         "events": filtered,
         "total": filtered.len(),
     }))
-}
-
-// ---- POST /admin/api/store/rebuild ----------------------------------------
-
-pub(crate) async fn rebuild_store(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let Some(store) = &state.store else {
-        return Json(serde_json::json!({ "ok": false, "error": "store not available" }));
-    };
-    let home = state.core.scope().into_root();
-    match store.rebuild(&home) {
-        Ok(stats) => Json(serde_json::json!({
-            "ok": true,
-            "files_scanned": stats.files_scanned,
-            "entries_indexed": stats.entries_indexed,
-            "fts_rows": stats.fts_rows,
-        })),
-        Err(e) => Json(serde_json::json!({
-            "ok": false,
-            "error": e.to_string(),
-        })),
-    }
-}
-
-// ---- GET /admin/api/store/import/:session_id -------------------------------
-
-pub(crate) async fn import_session_store(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-) -> Json<serde_json::Value> {
-    let Some(store) = &state.store else {
-        return Json(serde_json::json!({ "ok": false, "error": "store not available" }));
-    };
-    let home = state.core.scope().into_root();
-    let shared = state.core.shared_scope().into_root();
-
-    let mut candidate: Option<(std::path::PathBuf, std::path::PathBuf)>;
-
-    let find = |root: &std::path::Path| {
-        std::fs::read_dir(vak_config::scope::AgentScope::new(root).sessions_root())
-            .ok()?
-            .flatten()
-            .map(|hash| hash.path().join(&session_id))
-            .find(|path| vak_config::scope::ledger_session_id(path).is_some())
-    };
-    candidate = find(&home).map(|path| (home.clone(), path));
-    if candidate.is_none()
-        && let Ok(agents) =
-            std::fs::read_dir(vak_config::scope::SharedScope::new(&shared).agents_dir())
-    {
-        candidate = agents
-            .flatten()
-            .find_map(|agent| find(&agent.path()).map(|path| (agent.path(), path)));
-    }
-
-    if let Some((agent_home, path)) = candidate {
-        match store.import_session(&agent_home, &path) {
-            Ok(stats) => {
-                return Json(serde_json::json!({
-                    "ok": true,
-                    "entries_indexed": stats.entries_indexed,
-                    "fts_rows": stats.fts_rows,
-                    "skipped": stats.skipped,
-                }));
-            }
-            Err(e) => {
-                return Json(serde_json::json!({
-                    "ok": false,
-                    "error": e.to_string(),
-                }));
-            }
-        }
-    }
-    Json(serde_json::json!({ "error": format!("session {session_id} not found") }))
 }
 
 // ---- GET /admin/api/bestofn ------------------------------------------------
@@ -705,13 +699,7 @@ pub(crate) async fn gateway_status_admin(State(state): State<AppState>) -> Json<
                         .as_ref()
                         .and_then(|session| session.header().cloned())
                 })
-                .or_else(|| {
-                    let folder = binding
-                        .space
-                        .as_deref()
-                        .and_then(crate::gateway::space_folder);
-                    crate::read_historical_header(&state, session_id, folder.as_deref())
-                })
+                .or_else(|| crate::read_historical_header(&state, session_id))
         });
         let stale_reasons = contract
             .as_ref()
@@ -1700,15 +1688,9 @@ pub(crate) fn routes() -> axum::Router<AppState> {
         .route("/admin/api/approvals", get(list_pending_approvals))
         .route("/admin/api/questions", get(list_pending_questions))
         .route("/admin/api/bestofn", get(list_bestofn))
-        .route("/admin/api/search", get(search_admin))
         .route("/admin/api/events", get(admin_events_sse))
         .route("/admin/api/security", get(list_security_events))
         // Mutations are POST: crawlers/prefetchers only ever issue GETs.
-        .route("/admin/api/store/rebuild", post(rebuild_store))
-        .route(
-            "/admin/api/store/import/{session_id}",
-            post(import_session_store),
-        )
         .route("/admin/api/config", get(get_config_admin))
         .route("/admin/api/gateway/status", get(gateway_status_admin))
         .route("/admin/api/traffic", get(admin_traffic_status))
@@ -1812,14 +1794,14 @@ mod tests {
         let token = (*state.auth_token).clone();
         let app = authed_app(&state);
         let req = Request::builder()
-            .uri("/admin/api/search?q=hello")
+            .uri("/search?q=hello&all=true")
             .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp).await;
-        assert!(json.get("total").is_some());
+        assert!(json["hits"].is_array());
     }
 
     #[tokio::test]
@@ -1837,13 +1819,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn store_rebuild_returns_ok() {
+    async fn catalog_rebuild_returns_ok() {
         let state = test_state();
         let token = (*state.auth_token).clone();
         let app = authed_app(&state);
         let req = Request::builder()
             .method("POST")
-            .uri("/admin/api/store/rebuild")
+            .uri("/catalog/rebuild")
             .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
@@ -1859,7 +1841,7 @@ mod tests {
         let token = (*state.auth_token).clone();
         let app = authed_app(&state);
         let req = Request::builder()
-            .uri("/admin/api/store/rebuild")
+            .uri("/catalog/rebuild")
             .header("authorization", format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();

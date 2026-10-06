@@ -1,11 +1,13 @@
 # 23 — Memory & cross-session recall
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; search runs on the data catalog since
+plan M6 (2026-10-06)
 
 The memory home passed to `vak-core::memory` is the owning Agent's private
 home (doc 64). Workspace notes live at
 `<agent home>/memory/<hash_cwd>/MEMORY.md`; profile notes live at
-`<agent home>/memory/user/USER.md`. Session search also reads JSONL ledgers
-and returns their hits through the same search interface. This document
+`<agent home>/memory/user/USER.md`. Session search reads the data catalog
+(`crates/vak-catalog`), which holds conversations, memory notes and
+entities in one ranking. This document
 describes the shipped recall and note store; doc 26 describes learning and
 skill review.
 
@@ -20,21 +22,24 @@ new dependencies because our session store is already structured JSONL.
 ```
 model calls session_search {query, limit?}
         │
-vak_session::search::search(home, cwd, query, limit, exclude)
-        │  scans workspace JSONL ledgers through an mtime-keyed cache
-        │  ranks message text alongside curated memory/profile blocks
+Catalog::search(query, audience, scope, limit)
+        │  the catalog caught up with every ledger and Document first
+        │  FTS5 over message text, tool-result digests, memory notes,
+        │  profile notes and entities, filtered by Agent, audience,
+        │  space and the trash before ranking
         ▼
 top-N hits: {session, ts, role, score, snippet}
         │
 returned as an ordinary tool result → appended to the ledger
 ```
 
-`search_extended` and `search_all_extended` accept parsed memory blocks as
-`ExternalDoc`s. A workspace search excludes the current session and the
-trash; cross-project search traverses session directories and annotates
-hits with the project hash. The model sees a search answer only through a
-logged `tool_result`, preserving invariant 1. The cache accelerates reads;
-the JSONL ledgers remain authoritative.
+A workspace search covers the workspace's space and anything of no space
+(the profile); `/search?all=true` covers every space. The current session
+and the trash are excluded. A memory note derived from a conversation keeps
+that conversation's audience; profile notes belong to the owner's local
+audience. The model sees a search answer only through a logged
+`tool_result`, preserving invariant 1. The catalog is Derived; the ledgers
+and Documents remain authoritative.
 
 ```mermaid
 flowchart LR

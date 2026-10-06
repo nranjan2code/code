@@ -42,11 +42,11 @@ const IGNORED_DIRS: [&str; 5] = [
     "dist",
 ];
 
-/// Rebuildable runtime artifacts (the vak-store SQLite index and its WAL
-/// sidecars). Never meaningful workspace content: capturing them into a
-/// checkpoint would snapshot a derived cache, and restoring a stale one
-/// would corrupt the live index.
-const IGNORED_RUNTIME_FILES: [&str; 3] = ["store.db", "store.db-wal", "store.db-shm"];
+/// Rebuildable runtime artifacts (the data catalog and its WAL sidecars).
+/// Never meaningful workspace content: capturing them into a checkpoint
+/// would snapshot a derived file, and restoring a stale one would corrupt
+/// the live catalog.
+const IGNORED_RUNTIME_FILES: [&str; 3] = ["catalog.db", "catalog.db-wal", "catalog.db-shm"];
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
 /// Checkpoints accumulate once per turn; keep only the newest N per session.

@@ -111,18 +111,20 @@ export interface TranscriptEntry {
   control?: string | null;
 }
 
+/** One `/search` hit (plan M6): a conversation's turn or tool call, a
+ * memory or profile note, or an entity, with the catalog node behind it. */
 export interface SearchHit {
-  entry_id: string;
+  /** The conversation's id, or `memory/<id>`, `profile/<id>`, `entity/<id>`. */
   session_id: string;
-  space_id: string;
-  ts: string;
+  turn_id: string | null;
+  node: string;
   kind: string;
-  role: string | null;
-  provider: string | null;
-  model: string | null;
-  tool_name: string | null;
+  role: "conversation" | "memory" | "profile" | "entity";
+  ts: string | null;
   score: number;
   snippet: string;
+  space_id: string | null;
+  agent: string | null;
 }
 
 export interface SecurityEvent {
@@ -466,11 +468,12 @@ export interface BestOfNRun {
   prompt?: string;
 }
 
+/** What `POST /catalog/rebuild` took back in from the records. */
 export interface RebuildStats {
   ok: boolean;
-  files_scanned?: number;
-  entries_indexed?: number;
-  fts_rows?: number;
+  sources?: number;
+  rows?: number;
+  counts?: Record<string, number>;
   error?: string;
 }
 

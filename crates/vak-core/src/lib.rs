@@ -34,8 +34,10 @@ pub mod presentation_tools;
 /// `(allow, ask, deny)`.
 pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
 
+mod catalog;
 mod indexed_history;
 pub mod mail_calendar;
+pub mod presentation_store;
 pub mod prompts;
 pub mod reach;
 pub mod reflection;
@@ -338,8 +340,8 @@ pub struct RemovedKey {
 pub enum CoreError {
     #[error("no AI provider is selected; choose a provider and model in settings")]
     RouteNotConfigured,
-    #[error("history index error: {0}")]
-    HistoryIndex(#[from] vak_store::StoreError),
+    #[error("data catalog: {0}")]
+    Catalog(#[from] vak_catalog::CatalogError),
     #[error("history is not indexed: {0}")]
     HistoryNotIndexed(String),
     #[error("provider auth missing: set {env} for provider '{provider}'")]
@@ -465,8 +467,8 @@ struct CoreInner {
     unreachable_reported: std::sync::Mutex<std::collections::HashSet<String>>,
     /// The tenant's object store, opened on first use (`Core::objects`).
     objects: std::sync::OnceLock<Arc<dyn vak_session::objects::Objects>>,
-    history_indexing: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
-    history_index_failures: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    /// Session ledgers a catalog catch-up is already running for.
+    catalog_pending: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     config: vak_config::Config,
     cwd: PathBuf,
     sessions_home: PathBuf,
@@ -1317,8 +1319,7 @@ impl Core {
         Ok(Core::from_inner(Arc::new(CoreInner {
             unreachable_reported: Default::default(),
             objects: std::sync::OnceLock::new(),
-            history_indexing: std::sync::Mutex::new(std::collections::HashSet::new()),
-            history_index_failures: std::sync::Mutex::new(std::collections::HashSet::new()),
+            catalog_pending: std::sync::Mutex::new(std::collections::HashSet::new()),
             config,
             cwd,
             sessions_home,
@@ -3349,20 +3350,6 @@ impl Core {
         vak_config::scope::WorkspaceScope::new(self.inner.cwd.clone())
     }
 
-    /// Rebuildable-artifact directory (SQLite FTS index + WAL sidecars).
-    /// Canonical layout (doc 32): Library/Caches on macOS, XDG cache on
-    /// Linux — deleting it must always be safe.
-    pub fn cache_home(&self) -> PathBuf {
-        // Overridden homes are self-contained sandboxes, so the cache
-        // lives inside them. Resolved from the cloned override rather
-        // than by calling `agent_root()` under the guard, which
-        // re-locked the same non-reentrant mutex and hung the thread.
-        match Self::read_override(&self.inner.sessions_home_override) {
-            Some(home) => home.join("cache"),
-            None => vak_config::paths::cache_home(),
-        }
-    }
-
     pub fn system_prompt(&self) -> String {
         self.system_prompt_for_capabilities(&self.capability_descriptors())
     }
@@ -3828,13 +3815,18 @@ impl Core {
             }));
         }
         if self.effective_memory_search_enabled() {
+            let mut audience = self.catalog_audience();
+            audience.agents = scope
+                .agent_id
+                .as_deref()
+                .map(|agent| vec![vak_session::trace::local::agent(agent).to_string()]);
+            audience.audience = scope.audience_id.clone();
+            audience.exclude_sessions.insert(scope.session_id.clone());
             tools.push(Arc::new(session_search::SessionSearchTool {
-                sessions_home: self.scope().into_root(),
-                trash_home: self.shared_scope().into_root(),
-                cwd: self.inner.cwd.clone(),
-                exclude_session_id: scope.session_id.clone(),
-                agent_id: scope.agent_id.clone(),
-                audience_id: scope.audience_id.clone(),
+                catalog: self.catalog().ok(),
+                audience,
+                space: Some(vak_session::trace::local::space(&self.inner.cwd).to_string()),
+                trash: self.shared_scope(),
             }));
         }
         // Provider reads stay broker-owned: the model receives only a narrow
@@ -11010,25 +11002,6 @@ mod override_deadlock {
     }
 
     #[test]
-    fn cache_home_returns_while_the_sessions_home_override_is_set() {
-        let (dir, core) = core_with_override();
-        let expected = dir.path().join("home").join("cache");
-        let got = within("cache_home", move || core.cache_home());
-        assert_eq!(
-            got, expected,
-            "an overridden home is a self-contained sandbox"
-        );
-    }
-
-    #[test]
-    fn cache_home_falls_back_to_the_platform_directory_without_an_override() {
-        let dir = tempfile::tempdir().unwrap();
-        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        let got = within("cache_home (no override)", move || core.cache_home());
-        assert_eq!(got, vak_config::paths::cache_home());
-    }
-
-    #[test]
     fn every_override_backed_accessor_terminates() {
         // Breadth matters more than depth here: the hazard is the
         // locking idiom, so each accessor that reads an override is
@@ -11045,12 +11018,6 @@ mod override_deadlock {
                 "sessions_home",
                 Box::new(|c: Arc<Core>| {
                     c.scope().into_root();
-                }),
-            ),
-            (
-                "cache_home",
-                Box::new(|c: Arc<Core>| {
-                    c.cache_home();
                 }),
             ),
             (

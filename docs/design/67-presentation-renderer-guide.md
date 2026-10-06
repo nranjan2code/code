@@ -58,7 +58,7 @@ do not need a variant.
 A pack is data: `PresentationSpec` records wrapped in `StoredPresentation`,
 carrying a `PresentationOrigin` (`LibraryScope::User`/`Workspace`, owner,
 optional `plugin_id`, generation). Packs are registered, previewed, and
-activated at runtime through `PresentationLibrary` / `vak-store`'s
+activated at runtime through `PresentationLibrary` / `vak-core`'s
 `PresentationStore`, and revoked per plugin generation via `revoke_plugin`.
 
 A pack **composes existing primitives** and needs no recompilation. This is

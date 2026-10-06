@@ -5,7 +5,6 @@ members = [
     "crates/vak-session",
     "crates/vak-telemetry",
     "crates/vak-context",
-    "crates/vak-store",
     "crates/vak-catalog",
     "crates/vak-storage",
     "crates/vak-tools",
@@ -51,7 +50,6 @@ vak-telemetry = { path = "crates/vak-telemetry" }
 vak-session = { path = "crates/vak-session" }
 vak-storage = { path = "crates/vak-storage" }
 vak-context = { path = "crates/vak-context" }
-vak-store = { path = "crates/vak-store" }
 vak-catalog = { path = "crates/vak-catalog" }
 vak-tools = { path = "crates/vak-tools" }
 vak-agent = { path = "crates/vak-agent" }
@@ -128,7 +126,7 @@ semver = "1"
 sha2 = "0.10"
 # Ed25519 verification for signed plugin/catalog evidence; no signing or key generation.
 ring = "=0.17.14"
-# Storage substrate (vak-storage): bundled SQLite for CAS refs, moved here from vak-store.
+# Bundled SQLite: the CAS refs (vak-storage) and the data catalog (vak-catalog).
 rusqlite = { version = "=0.32.1", features = ["bundled", "hooks"] }
 # zstd compresses every object and record frame before it is sealed (vak-storage).
 zstd = "=0.13.3"

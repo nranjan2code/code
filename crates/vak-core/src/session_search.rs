@@ -1,87 +1,55 @@
 //! `session_search` — model-visible cross-session recall
-//! (docs/design/23-memory.md). Injected by `Core::run_turn_with` next to
-//! the task and MCP tools; results are ordinary tool results, so invariant
-//! 1 (model-visible ⇒ logged) holds by construction.
+//! (docs/design/23-memory.md) over the data catalog (plan M6): past
+//! conversations, memory notes, the owner's profile and entities, in one
+//! ranking, filtered to the caller's Agent and audience before ranking
+//! (invariant 37). Results are ordinary tool results, so invariant 1
+//! (model-visible ⇒ logged) holds by construction.
 
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde_json::Value;
 
-use vak_session::{DEFAULT_LIMIT, ExternalDoc, search_extended};
+/// Hits returned when the call names no limit.
+pub const DEFAULT_LIMIT: usize = 8;
 
 pub struct SessionSearchTool {
-    pub sessions_home: PathBuf,
-    /// The shared data home, where the trash is kept: a session in the
-    /// trash is never a hit.
-    pub trash_home: PathBuf,
-    pub cwd: PathBuf,
-    /// Usually the running session: its content is already in context.
-    pub exclude_session_id: String,
-    /// Optional audience scope. When set, transcript hits must carry the same
-    /// frozen Agent and conversation audience in their header; an unscoped or
-    /// legacy ledger is rejected rather than treated as shared data.
-    pub agent_id: Option<String>,
-    pub audience_id: Option<String>,
+    /// The catalog of this data home; `None` when it could not be opened,
+    /// which makes every call fail closed.
+    pub catalog: Option<Arc<vak_catalog::Catalog>>,
+    /// Who is asking: the Agent and conversation audience, and the sessions
+    /// never shown (the trash, and the running session, whose content is
+    /// already in context).
+    pub audience: vak_catalog::Audience,
+    /// The workspace's space: its conversations and notes, and anything of
+    /// no space (the profile).
+    pub space: Option<String>,
+    /// Where the trash is kept: read at every call, so a session trashed
+    /// mid-turn is gone from the next search.
+    pub trash: vak_config::scope::SharedScope,
 }
 
-fn session_in_scope(
-    home: &std::path::Path,
-    cwd: &std::path::Path,
-    session_id: &str,
-    agent_id: Option<&str>,
-    audience_id: Option<&str>,
-) -> bool {
-    if agent_id.is_none() && audience_id.is_none() {
-        return true;
-    }
-    let mut path = vak_session::SessionPath::existing_session_file(home, cwd, session_id);
-    if !path.exists() {
-        if let Some(parent) = home.parent().and_then(|p| p.parent()) {
-            let p = vak_session::SessionPath::existing_session_file(parent, cwd, session_id);
-            if p.exists() {
-                path = p;
-            }
-        }
-        if !path.exists() {
-            let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
-            if let Ok(entries) = std::fs::read_dir(&agents_dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_dir() {
-                        let candidate =
-                            vak_session::SessionPath::existing_session_file(&p, cwd, session_id);
-                        if candidate.exists() {
-                            path = candidate;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let Ok(header) = vak_session::SessionLog::read_header(&path) else {
-        return false;
+/// How a hit is named to the model: the id `forget_memory` and recall take.
+fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
+    let leaf = || {
+        node.locator
+            .as_deref()
+            .and_then(|path| std::path::Path::new(path).file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
     };
-    let agent_matches = agent_id.is_none_or(|wanted| {
-        header
-            .agent
-            .as_ref()
-            .is_some_and(|agent| agent.id == wanted)
-    });
-    let audience_matches = audience_id.is_none_or(|wanted| {
-        header
-            .conversation
-            .as_ref()
-            .is_some_and(|context| context.audience_id == wanted)
-    });
-    agent_matches && audience_matches
-}
-
-fn tag_suffix(tag: &str) -> String {
-    if tag.is_empty() {
-        String::new()
-    } else {
-        format!(" {tag}")
+    match node.kind.as_str() {
+        "memory" if node.status.as_deref() == Some("profile") => {
+            (format!("profile/{}", leaf()), "profile")
+        }
+        "memory" => (format!("memory/{}", leaf()), "memory"),
+        "entity" => (format!("entity/{}", leaf()), "entity"),
+        _ => (
+            node.session
+                .as_deref()
+                .map(|session| session.trim_start_matches("ses_").to_string())
+                .unwrap_or_default(),
+            "conversation",
+        ),
     }
 }
 
@@ -134,149 +102,56 @@ impl vak_tools::Tool for SessionSearchTool {
         if query.trim().is_empty() {
             return vak_tools::ToolOutput::error("'query' must not be empty");
         }
+        let Some(catalog) = self.catalog.clone() else {
+            return vak_tools::ToolOutput::error(
+                "session search is unavailable: the catalog could not be opened",
+            );
+        };
         let limit = args
             .get("limit")
             .and_then(Value::as_u64)
             .map(|l| l as usize)
-            .unwrap_or(DEFAULT_LIMIT);
-
-        let home = self.sessions_home.clone();
-        let cwd = self.cwd.clone();
+            .unwrap_or(DEFAULT_LIMIT)
+            .clamp(1, 50);
         let query = query.to_string();
-        let exclude = self.exclude_session_id.clone();
-        let trash_home = self.trash_home.clone();
-        let agent_id = self.agent_id.clone();
-        let audience_id = self.audience_id.clone();
-        // Curated memory participates in recall and outranks transcripts
-        // (docs/design/26-learning.md). The global profile tier joins the
-        // same extras ranking so user-level memories follow them across
-        // projects (docs/design/29-personal-os.md P1).
-        let notes = crate::memory::list_notes(&home, &cwd)
-            .into_iter()
-            .filter(|note| {
-                session_in_scope(
-                    &home,
-                    &cwd,
-                    &note.session_id,
-                    agent_id.as_deref(),
-                    audience_id.as_deref(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut extras: Vec<ExternalDoc> = notes
-            .iter()
-            .map(|n| ExternalDoc {
-                id: format!("memory/{}", n.id),
-                text: format!("[{}{}] {}", n.kind, tag_suffix(&n.tag), n.text),
-                ts: Some(n.ts),
-                role: Some("memory".into()),
-            })
-            .collect();
-        // A remote audience does not inherit the local user's global profile
-        // merely because it selected the same Agent. Account linking must
-        // explicitly grant that scope; local sessions (including the new
-        // explicit `audience_id = "local"` admission) may receive these entries.
-        let profile_note_ids: std::collections::HashSet<String> = if audience_id
-            .as_deref()
-            .is_none_or(|audience| audience == "local")
-        {
-            crate::memory::list_profile_notes(&home)
-                .iter()
-                .map(|n| {
-                    let id = format!("profile/{}", n.id);
-                    extras.push(ExternalDoc {
-                        id: id.clone(),
-                        text: format!("[{}{}] {}", n.kind, tag_suffix(&n.tag), n.text),
-                        ts: Some(n.ts),
-                        role: Some("profile".into()),
-                    });
-                    id
-                })
-                .collect()
-        } else {
-            std::collections::HashSet::new()
+        let mut audience = self.audience.clone();
+        audience
+            .exclude_sessions
+            .extend(crate::trash::trashed(&self.trash));
+        let scope = vak_catalog::Scope {
+            space: self.space.clone(),
+            kinds: Some(
+                ["session", "turn", "call", "memory", "entity"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            ),
         };
-        for entity in crate::entities::list_entities(&home, Some(&cwd)) {
-            extras.push(ExternalDoc {
-                id: format!("entity/{}", entity.id),
-                text: format!(
-                    "[entity:{}] {} — {}{}",
-                    entity.entity_type,
-                    entity.name,
-                    entity.summary,
-                    if entity.attributes.is_empty() {
-                        String::new()
-                    } else {
-                        format!(
-                            " ({})",
-                            entity
-                                .attributes
-                                .iter()
-                                .map(|(k, v)| format!("{k}: {v}"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    }
-                ),
-                ts: Some(entity.updated_at),
-                role: Some("entity".into()),
-            });
-        }
         let result = tokio::task::spawn_blocking(move || {
-            let mut hits = search_extended(
-                &home,
-                &cwd,
-                &query,
-                // Filter after a larger ranked window so an unrelated Agent's
-                // hits cannot consume the caller's small result limit.
-                limit.clamp(DEFAULT_LIMIT, 50).saturating_mul(2).min(50),
-                &crate::trash::search_exclusions(
-                    &vak_config::scope::SharedScope::new(&trash_home),
-                    Some(&exclude),
-                ),
-                &extras,
-            )?;
-            if agent_id.is_some() || audience_id.is_some() {
-                hits.retain(|hit| {
-                    hit.entry_id.is_empty()
-                        || session_in_scope(
-                            &home,
-                            &cwd,
-                            &hit.session_id,
-                            agent_id.as_deref(),
-                            audience_id.as_deref(),
-                        )
-                });
-                hits.truncate(limit.clamp(1, 50));
-            }
-            Ok::<Vec<vak_session::SessionHit>, vak_session::SearchError>(hits)
+            catalog.catch_up()?;
+            catalog.search(&query, &audience, &scope, limit)
         })
         .await;
-
         match result {
             Ok(Ok(hits)) if hits.is_empty() => {
                 vak_tools::ToolOutput::ok("No past session matches that query.".to_string())
             }
-            Ok(Ok(mut hits)) => {
-                // search_extended labels every curated extra "memory";
-                // re-tag the profile-tier subset so surfaces can tell
-                // global profile recall apart from workspace memory.
-                for h in &mut hits {
-                    if profile_note_ids.contains(&h.session_id) {
-                        h.role = "profile".into();
-                    }
-                }
+            Ok(Ok(hits)) => {
                 let mut out = String::with_capacity(256 * hits.len());
                 out.push_str(&format!("{} hit(s), most relevant first:\n", hits.len()));
-                for (i, h) in hits.iter().enumerate() {
+                for (i, hit) in hits.iter().enumerate() {
+                    let (id, role) = hit_label(&hit.node);
+                    let date = hit
+                        .node
+                        .created_at
+                        .as_deref()
+                        .and_then(|at| at.get(..10))
+                        .unwrap_or_default();
                     out.push_str(&format!(
-                        "\n[{}] {} · {} · {} (score {:.2})\n  \"{}\"\n",
+                        "\n[{}] {id} · {date} · {role} (score {:.2})\n  \"{}\"\n",
                         i + 1,
-                        h.session_id,
-                        h.ts.format("%Y-%m-%d"),
-                        h.role,
-                        h.score,
-                        h.snippet
+                        hit.score,
+                        hit.snippet
                     ));
                 }
                 vak_tools::ToolOutput::ok(out)
@@ -300,6 +175,27 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use vak_tools::Tool;
+
+    /// The tool over a catalog of the data home `home`, as Core builds it.
+    fn tool_over(
+        home: &std::path::Path,
+        cwd: &std::path::Path,
+        agent: Option<&str>,
+        audience: Option<&str>,
+    ) -> SessionSearchTool {
+        let catalog = vak_catalog::Catalog::open(&home.join("catalog.db"), home).unwrap();
+        SessionSearchTool {
+            catalog: Some(Arc::new(catalog)),
+            audience: vak_catalog::Audience {
+                agents: agent
+                    .map(|agent| vec![vak_session::trace::local::agent(agent).to_string()]),
+                audience: audience.map(str::to_string),
+                ..Default::default()
+            },
+            space: Some(vak_session::trace::local::space(cwd).to_string()),
+            trash: vak_config::scope::SharedScope::new(home),
+        }
+    }
 
     #[tokio::test]
     async fn profile_tier_recalled_as_profile_role_alongside_memory() {
@@ -327,14 +223,7 @@ mod tests {
         )
         .unwrap();
 
-        let tool = SessionSearchTool {
-            sessions_home: home.to_path_buf(),
-            trash_home: home.to_path_buf(),
-            cwd: cwd.clone(),
-            exclude_session_id: "current".into(),
-            agent_id: None,
-            audience_id: None,
-        };
+        let tool = tool_over(home, &cwd, None, None);
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: tokio_util::sync::CancellationToken::new(),
@@ -369,14 +258,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().join("ws");
         std::fs::create_dir_all(&cwd).unwrap();
-        let tool = SessionSearchTool {
-            sessions_home: dir.path().to_path_buf(),
-            trash_home: dir.path().to_path_buf(),
-            cwd: cwd.clone(),
-            exclude_session_id: String::new(),
-            agent_id: None,
-            audience_id: None,
-        };
+        let tool = tool_over(dir.path(), &cwd, None, None);
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: tokio_util::sync::CancellationToken::new(),
@@ -453,14 +335,7 @@ mod tests {
             })
             .unwrap();
         }
-        let tool = SessionSearchTool {
-            sessions_home: home.clone(),
-            trash_home: home,
-            cwd,
-            exclude_session_id: String::new(),
-            agent_id: Some("researcher".into()),
-            audience_id: Some("telegram:one".into()),
-        };
+        let tool = tool_over(&home, &cwd, Some("researcher"), Some("telegram:one"));
         let ctx = vak_tools::ToolContext {
             cwd: dir.path().join("workspace"),
             cancel: tokio_util::sync::CancellationToken::new(),
@@ -508,14 +383,7 @@ mod tests {
         )
         .unwrap();
 
-        let tool = SessionSearchTool {
-            sessions_home: home.clone(),
-            trash_home: home,
-            cwd: cwd.clone(),
-            exclude_session_id: String::new(),
-            agent_id: None,
-            audience_id: None,
-        };
+        let tool = tool_over(&home, &cwd, None, None);
         let ctx = vak_tools::ToolContext {
             cwd,
             cancel: tokio_util::sync::CancellationToken::new(),

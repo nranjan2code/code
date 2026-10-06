@@ -6,6 +6,14 @@ import type { SearchHit } from "../api";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
 
+/** What a hit is, in words. */
+const HIT_WORDS: Record<SearchHit["role"], string> = {
+  conversation: "Conversation",
+  memory: "Memory",
+  profile: "About you",
+  entity: "Person or thing",
+};
+
 const LIMITS = [8, 25, 50];
 
 /**
@@ -91,21 +99,14 @@ export default function SearchModal() {
           <div class="search-results">
             <For each={hits()} fallback={<Show when={searched() && !error()}><div class="dock-empty">No matches.</div></Show>}>
               {(hit) => (
-            <button type="button" class="search-hit" disabled={hit.role === "memory" || hit.role === "profile"} onClick={() => { setSearchOpen(false); if (hit.role !== "memory" && hit.role !== "profile") void activate(hit.session_id); }}>
-                  <span class="badge">{hit.role}</span>
+            <button type="button" class="search-hit" disabled={hit.role !== "conversation"} onClick={() => { setSearchOpen(false); if (hit.role === "conversation") void activate(hit.session_id); }}>
+                  <span class="badge">{HIT_WORDS[hit.role] ?? hit.role}</span>
                   <span class="search-hit-body">
                     <span class="search-hit-snippet">{hit.snippet}</span>
-                    <span class="search-hit-meta">
-                      {hit.session_id.slice(0, 8)} · {new Date(hit.ts).toLocaleString()} · score {hit.score.toFixed(2)}
-                    </span>
+                    <Show when={hit.ts}>
+                      {(ts) => <span class="search-hit-meta">{new Date(ts()).toLocaleString()}</span>}
+                    </Show>
                   </span>
-                  <Show when={hit.space_id} keyed>
-                    {(hash) => (
-                      <span class="badge search-hit-project" title={`Project ${hash}`}>
-                        {hash.slice(0, 8)}
-                      </span>
-                    )}
-                  </Show>
                   <Icon name="chevron" size={13} />
                 </button>
               )}
@@ -113,7 +114,7 @@ export default function SearchModal() {
           </div>
 
           <div class="bo-foot" style="margin-top:10px">
-            <span class="hint">memory notes outrank transcript lines · global adds project chips</span>
+            <span class="hint">Global also looks through your other workspaces</span>
           </div>
       </Sheet>
     </Show>

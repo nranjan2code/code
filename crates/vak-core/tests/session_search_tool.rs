@@ -162,16 +162,6 @@ async fn session_search_tool_is_available_and_logged() {
     }));
     std::mem::forget(dir);
 
-    // Direct probe of the search function on identical inputs.
-    let probe = vak_session::search(&home, &cwd, "deploy script", 8, &Default::default()).unwrap();
-    eprintln!("PROBE hits={}", probe.len());
-    for h in &probe {
-        eprintln!(
-            "  -> {} score={} snippet={}",
-            h.session_id, h.score, h.snippet
-        );
-    }
-
     let live = core.start_session().await.unwrap();
     let live_id = live.header().unwrap().session_id.clone();
     let (events_tx, _events_rx) = tokio::sync::mpsc::channel(256);

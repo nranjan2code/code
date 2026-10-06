@@ -290,6 +290,16 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
+        path: "tenants/{tenant}/catalog",
+        root: Root::Data,
+        owner: "vak-catalog",
+        schema: None,
+        // The data catalog (plan M6) and its SQLite sidecars: rebuilt from
+        // the records alone, so losing it costs a rebuild, never data.
+        class: Class::Derived,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
         path: "tenants/{tenant}/keys",
         root: Root::Data,
         owner: "vak-session",
@@ -721,7 +731,7 @@ pub const REGISTRY: &[StateEntry] = &[
     StateEntry {
         path: "",
         root: Root::Cache,
-        owner: "vak-store",
+        owner: "vak-core",
         schema: None,
         class: Class::Derived,
         on_purge: OnPurge::Remove,

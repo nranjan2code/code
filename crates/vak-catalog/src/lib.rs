@@ -32,12 +32,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use vak_session::tail::{self, Position};
 
+mod history;
 mod ingest;
 mod sources;
 
+pub use history::{EntryLocation, TurnSearchHit, TurnSearchResult, compact_turn_record};
 pub use sources::Source;
 
-/// The catalog's file name in a tenant home (doc 73 §6).
+/// The catalog's directory in a tenant home (doc 73 §6), holding the
+/// SQLite file and its sidecars.
+pub const DIR_NAME: &str = "catalog";
+/// The catalog's file name in that directory.
 pub const FILE_NAME: &str = "catalog.db";
 
 /// The schema this build writes. A catalog stamped with another is dropped
@@ -50,6 +55,8 @@ pub enum CatalogError {
     Sql(#[from] rusqlite::Error),
     #[error("catalog file: {0}")]
     Io(#[from] std::io::Error),
+    #[error("the lookup was cancelled or ran out of time")]
+    Interrupted,
 }
 
 /// One addressable thing the catalog knows.
@@ -61,6 +68,10 @@ pub struct Node {
     pub space: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    /// The Agent's id as people and configuration name it (`vak`,
+    /// `scout`), where the record says it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,6 +90,12 @@ pub struct Node {
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
+    /// When anything was last added to it (a session's newest entry).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    /// How many entries a session holds; a file's bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<i64>,
     /// Where its bytes live: a ledger directory, a chain, a Document.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locator: Option<String>,
@@ -92,11 +109,20 @@ pub struct Audience {
     /// every Agent.
     pub agents: Option<Vec<String>>,
     /// The conversation audience a result must belong to; `None` is any.
-    /// Something with no audience (a memory note, a trigger) is returned
-    /// only when this is `None`.
+    /// Something with no audience of its own (an Agent's memory note, its
+    /// entities) belongs to its Agent: it is returned to an audience only
+    /// when `agents` names that Agent.
     pub audience: Option<String>,
     /// Sessions that must not appear (the trash), as their plain ids.
     pub exclude_sessions: HashSet<String>,
+}
+
+/// What a search looks through, beside who is asking: a space (things of
+/// no space, such as profile notes, are always in), and kinds.
+#[derive(Debug, Clone, Default)]
+pub struct Scope {
+    pub space: Option<String>,
+    pub kinds: Option<Vec<String>>,
 }
 
 /// One search result.
@@ -224,7 +250,16 @@ impl Catalog {
         {
             let mut conn = self.conn();
             let tx = conn.transaction()?;
-            for table in ["nodes", "edges", "texts", "calls", "cursors"] {
+            for table in [
+                "nodes",
+                "edges",
+                "texts",
+                "calls",
+                "cursors",
+                "entries",
+                "jumps",
+                "turn_records",
+            ] {
                 tx.execute(&format!("DELETE FROM {table}"), [])?;
             }
             tx.commit()?;
@@ -280,15 +315,32 @@ impl Catalog {
         &self,
         query: &str,
         audience: &Audience,
+        scope: &Scope,
         limit: usize,
     ) -> Result<Vec<Hit>, CatalogError> {
         let Some(matched) = fts_query(query) else {
             return Ok(Vec::new());
         };
         let conn = self.conn();
-        let (filter, args) = audience_filter(audience, 2);
+        let (mut filter, mut args) = audience_filter(audience, 2);
+        let mut next = 2 + args.len();
+        if let Some(space) = &scope.space {
+            filter.push_str(&format!(" AND (n.space = ?{next} OR n.space IS NULL)"));
+            args.push(space.clone().into());
+            next += 1;
+        }
+        if let Some(kinds) = &scope.kinds {
+            filter.push_str(&format!(
+                " AND n.kind IN (SELECT value FROM json_each(?{next}))"
+            ));
+            args.push(
+                serde_json::to_string(kinds)
+                    .unwrap_or_else(|_| "[]".into())
+                    .into(),
+            );
+        }
         let sql = format!(
-            "SELECT {NODE_COLUMNS}, snippet(texts_fts, 0, '[', ']', '…', 16), bm25(texts_fts)
+            "SELECT {NODE_COLUMNS}, snippet(texts_fts, 0, '', '', '…', 16), bm25(texts_fts)
              FROM texts_fts
              JOIN texts t ON t.id = texts_fts.rowid
              JOIN nodes n ON n.id = t.node
@@ -382,9 +434,14 @@ impl Catalog {
              IFNULL(session,'') || '|' || IFNULL(turn,'') || '|' || IFNULL(run,'') || '|' ||
              IFNULL(actor,'') || '|' || IFNULL(cause,'') || '|' || IFNULL(audience,'') || '|' ||
              IFNULL(title,'') || '|' || IFNULL(status,'') || '|' || IFNULL(created_at,'') || '|' ||
+             IFNULL(updated_at,'') || '|' || IFNULL(size,'') || '|' || IFNULL(agent_name,'') || '|' ||
              IFNULL(locator,'') FROM nodes",
             "SELECT 'edge|' || src || '|' || kind || '|' || dst FROM edges",
             "SELECT 'text|' || node || '|' || body FROM texts",
+            "SELECT 'entry|' || session || '|' || entry_id || '|' || segment || '|' || frame || '|' ||
+             IFNULL(parent,'') || '|' || depth || '|' || IFNULL(reset,'') FROM entries",
+            "SELECT 'jump|' || session || '|' || entry_id || '|' || level || '|' || ancestor FROM jumps",
+            "SELECT 'turn|' || session || '|' || entry_id || '|' || turn_id || '|' || record FROM turn_records",
         ] {
             let mut statement = conn.prepare(sql)?;
             out.extend(
@@ -423,9 +480,10 @@ fn connect(path: &Path) -> Result<Connection, CatalogError> {
          CREATE TABLE IF NOT EXISTS cursors (
              source TEXT PRIMARY KEY, segment INTEGER NOT NULL, frames INTEGER NOT NULL);
          CREATE TABLE IF NOT EXISTS nodes (
-             id TEXT PRIMARY KEY, kind TEXT NOT NULL, space TEXT, agent TEXT, session TEXT,
-             turn TEXT, run TEXT, actor TEXT, cause TEXT, audience TEXT, title TEXT,
-             status TEXT, created_at TEXT, locator TEXT);
+             id TEXT PRIMARY KEY, kind TEXT NOT NULL, space TEXT, agent TEXT, agent_name TEXT,
+             session TEXT, turn TEXT, run TEXT, actor TEXT, cause TEXT, audience TEXT,
+             title TEXT, status TEXT, created_at TEXT, updated_at TEXT, size INTEGER,
+             locator TEXT);
          CREATE INDEX IF NOT EXISTS nodes_kind ON nodes (kind, created_at);
          CREATE INDEX IF NOT EXISTS nodes_session ON nodes (session);
          CREATE TABLE IF NOT EXISTS edges (
@@ -444,7 +502,26 @@ fn connect(path: &Path) -> Result<Connection, CatalogError> {
              INSERT INTO texts_fts (texts_fts, rowid, body) VALUES ('delete', old.id, old.body); END;
          CREATE TRIGGER IF NOT EXISTS texts_au AFTER UPDATE ON texts BEGIN
              INSERT INTO texts_fts (texts_fts, rowid, body) VALUES ('delete', old.id, old.body);
-             INSERT INTO texts_fts (rowid, body) VALUES (new.id, new.body); END;"
+             INSERT INTO texts_fts (rowid, body) VALUES (new.id, new.body); END;
+         CREATE TABLE IF NOT EXISTS entries (
+             session TEXT NOT NULL, entry_id TEXT NOT NULL, segment INTEGER NOT NULL,
+             frame INTEGER NOT NULL, parent TEXT, depth INTEGER NOT NULL, reset TEXT,
+             PRIMARY KEY (session, entry_id));
+         CREATE TABLE IF NOT EXISTS jumps (
+             session TEXT NOT NULL, entry_id TEXT NOT NULL, level INTEGER NOT NULL,
+             ancestor TEXT NOT NULL, PRIMARY KEY (session, entry_id, level));
+         CREATE TABLE IF NOT EXISTS turn_records (
+             session TEXT NOT NULL, entry_id TEXT NOT NULL, turn_id TEXT NOT NULL,
+             record TEXT NOT NULL, recorded_at TEXT NOT NULL,
+             PRIMARY KEY (session, entry_id));
+         CREATE INDEX IF NOT EXISTS turn_records_turn ON turn_records (session, turn_id);
+         CREATE VIRTUAL TABLE IF NOT EXISTS turn_records_fts USING fts5(
+             record, content='turn_records', content_rowid='rowid', tokenize='unicode61');
+         CREATE TRIGGER IF NOT EXISTS turn_records_ai AFTER INSERT ON turn_records BEGIN
+             INSERT INTO turn_records_fts (rowid, record) VALUES (new.rowid, new.record); END;
+         CREATE TRIGGER IF NOT EXISTS turn_records_ad AFTER DELETE ON turn_records BEGIN
+             INSERT INTO turn_records_fts (turn_records_fts, rowid, record)
+             VALUES ('delete', old.rowid, old.record); END;"
     ))?;
     Ok(conn)
 }
@@ -473,9 +550,10 @@ fn cursor(conn: &Connection, source: &str) -> Result<Position, CatalogError> {
         .unwrap_or_default())
 }
 
-const NODE_COLUMNS: &str = "n.id, n.kind, n.space, n.agent, n.session, n.turn, n.run, n.actor, \
-     n.cause, n.audience, n.title, n.status, n.created_at, n.locator";
-const NODE_COLUMN_COUNT: usize = 14;
+const NODE_COLUMNS: &str = "n.id, n.kind, n.space, n.agent, n.agent_name, n.session, n.turn, \
+     n.run, n.actor, n.cause, n.audience, n.title, n.status, n.created_at, n.updated_at, n.size, \
+     n.locator";
+const NODE_COLUMN_COUNT: usize = 17;
 
 fn row_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<Node> {
     Ok(Node {
@@ -483,16 +561,19 @@ fn row_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<Node> {
         kind: row.get(1)?,
         space: row.get(2)?,
         agent: row.get(3)?,
-        session: row.get(4)?,
-        turn: row.get(5)?,
-        run: row.get(6)?,
-        actor: row.get(7)?,
-        cause: row.get(8)?,
-        audience: row.get(9)?,
-        title: row.get(10)?,
-        status: row.get(11)?,
-        created_at: row.get(12)?,
-        locator: row.get(13)?,
+        agent_name: row.get(4)?,
+        session: row.get(5)?,
+        turn: row.get(6)?,
+        run: row.get(7)?,
+        actor: row.get(8)?,
+        cause: row.get(9)?,
+        audience: row.get(10)?,
+        title: row.get(11)?,
+        status: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        size: row.get(15)?,
+        locator: row.get(16)?,
     })
 }
 
@@ -522,7 +603,11 @@ fn audience_filter(audience: &Audience, first: usize) -> (String, Vec<rusqlite::
         next += 1;
     }
     if let Some(wanted) = &audience.audience {
-        clauses.push(format!("n.audience = ?{next}"));
+        if audience.agents.is_some() {
+            clauses.push(format!("(n.audience = ?{next} OR n.audience IS NULL)"));
+        } else {
+            clauses.push(format!("n.audience = ?{next}"));
+        }
         args.push(wanted.clone().into());
         next += 1;
     }

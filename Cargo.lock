@@ -7190,6 +7190,7 @@ dependencies = [
  "tracing",
  "uuid",
  "vak-agent",
+ "vak-catalog",
  "vak-commit",
  "vak-config",
  "vak-context",
@@ -7202,10 +7203,10 @@ dependencies = [
  "vak-mcp",
  "vak-permission",
  "vak-plugin",
+ "vak-presentation",
  "vak-sandbox",
  "vak-session",
  "vak-storage",
- "vak-store",
  "vak-telemetry",
  "vak-tools",
  "vak-voice",
@@ -7534,6 +7535,7 @@ dependencies = [
  "uuid",
  "vak-agent",
  "vak-bus",
+ "vak-catalog",
  "vak-commit",
  "vak-config",
  "vak-core",
@@ -7551,7 +7553,6 @@ dependencies = [
  "vak-presentation",
  "vak-sandbox",
  "vak-session",
- "vak-store",
  "vak-telemetry",
  "vak-tools",
  "vak-voice",
@@ -7590,28 +7591,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "zstd",
-]
-
-[[package]]
-name = "vak-store"
-version = "7.0.0-dev"
-dependencies = [
- "chrono",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "uuid",
- "vak-config",
- "vak-llm",
- "vak-presentation",
- "vak-session",
- "vak-storage",
- "walkdir",
 ]
 
 [[package]]

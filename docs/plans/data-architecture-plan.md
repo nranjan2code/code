@@ -1201,6 +1201,27 @@ effects and triggers keep their own ids. All six exit tests of the step
 pass, among them `catalog_query_p95_under_50ms_at_1m_nodes` on a million
 seeded nodes.
 
+M6.2 (2026-10-06): one search. `vak-store` and `vak_session`'s `search`
+module and its mtime ledger cache are deleted; `Core::catalog()` opens
+the tenant's catalog (`tenants/<ten>/catalog/catalog.db`, a directory so
+its SQLite sidecars are declared with it) once per process. `/search`
+(with `all` and `kind`), the model's `session_search` and the admin
+console read it; `/admin/api/search` and the store endpoints are gone,
+replaced by `/catalog`, `POST /catalog/rebuild`, `/nodes/{id}` and
+`/lineage/{id}`. The turn recall (`indexed_history.rs`) reads entry
+locations, branch jumps and turn records from the catalog
+(`vak-catalog/src/history.rs`, ported from `vak-store`). The three
+directory walks are one catalog lookup (`locate_session`). The admin
+sessions list reads session nodes; its transcript pages the ledger
+itself. The catalog now also holds entities, splits memory notes per
+Document with their tag and source turn, gives a note its source
+conversation's audience and the profile tier the local one, indexes text
+written outside any turn on its session, and takes a session's space
+from its ledger's directory when the header names none. It catches up at
+server start, after each turn and on the scheduler tick.
+`PresentationStore` moved to `vak_core::presentation_store` (already a
+Document).
+
 ### M6.5 — Intake (L, after M6; doc 76)
 
 - Sources are Desired, polled through M4's `source_poll` triggers with
