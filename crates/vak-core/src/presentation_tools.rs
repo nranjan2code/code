@@ -701,6 +701,10 @@ impl Tool for EmitCardTool {
         true
     }
 
+    fn canonical_input(&self, input: &Value) -> Option<Value> {
+        canonical_card_input(self.shape, input)
+    }
+
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match validate_call(self.shape, args, &vak_delivery::built_in_skill_registry()) {
             Ok(output) => ToolOutput::ok(format!(
@@ -715,6 +719,105 @@ impl Tool for EmitCardTool {
             )),
         }
     }
+}
+
+/// The type a card tool's own name already settles, when it settles one:
+/// `emit_table_card` without a type is a table. A shape whose name covers
+/// unlike things (a map or a calendar; an image or a video) has none.
+fn default_semantic_type(shape: &CardShape) -> Option<&'static str> {
+    if let [only] = shape.semantic_types {
+        return Some(only);
+    }
+    let generic = match shape.name {
+        "emit_table_card" => "table",
+        "emit_timeline_card" => "timeline",
+        "emit_recipe_card" => "recipe",
+        "emit_chart_card" => "chart",
+        "emit_metric_card" => "metric",
+        "emit_research_card" => "research.synthesis",
+        _ => return None,
+    };
+    shape.semantic_types.contains(&generic).then_some(generic)
+}
+
+/// A card call written in an unambiguous variant of the tool's shape, in
+/// its canonical `{semantic_type, payload}` form (measured live: a model's
+/// first call to `emit_table_card` was a correct flat `{columns, rows}`
+/// with column names and list rows, and the envelope refused it three
+/// times). The payload's fields at the top level move into `payload`; a
+/// `semantic_type` inside the payload moves out; a missing type is the one
+/// the tool's name settles; a table's column names and list rows become
+/// keyed columns and rows. `None` when nothing needed changing.
+fn canonical_card_input(shape: &CardShape, input: &Value) -> Option<Value> {
+    let object = input.as_object()?;
+    let mut semantic_type = object.get("semantic_type").cloned();
+    let mut payload = match object.get("payload") {
+        Some(payload) => payload.clone(),
+        None => {
+            let rest: serde_json::Map<String, Value> = object
+                .iter()
+                .filter(|(key, _)| key.as_str() != "semantic_type")
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            if rest.is_empty() {
+                return None;
+            }
+            Value::Object(rest)
+        }
+    };
+    if let Some(inner) = payload.as_object_mut()
+        && let Some(found) = inner.remove("semantic_type")
+        && semantic_type.is_none()
+    {
+        semantic_type = Some(found);
+    }
+    let semantic_type = semantic_type
+        .or_else(|| default_semantic_type(shape).map(|found| Value::String(found.into())))?;
+    if shape.name == "emit_table_card" {
+        canonical_table(&mut payload);
+    }
+    let canonical = serde_json::json!({ "semantic_type": semantic_type, "payload": payload });
+    (canonical != *input).then_some(canonical)
+}
+
+/// Column names become `{key, label}` columns, and a row written as a list
+/// becomes an object keyed by those columns, in order.
+fn canonical_table(payload: &mut Value) {
+    let Some(columns) = payload.get("columns").and_then(Value::as_array).cloned() else {
+        return;
+    };
+    let columns: Vec<Value> = columns
+        .into_iter()
+        .map(|column| match column {
+            Value::String(name) => serde_json::json!({ "key": name, "label": name }),
+            other => other,
+        })
+        .collect();
+    let keys: Vec<String> = columns
+        .iter()
+        .filter_map(|column| {
+            column
+                .get("key")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    if let Some(rows) = payload.get("rows").and_then(Value::as_array).cloned() {
+        let rows: Vec<Value> = rows
+            .into_iter()
+            .map(|row| match row {
+                Value::Array(cells) if cells.len() <= keys.len() => Value::Object(
+                    keys.iter()
+                        .cloned()
+                        .zip(cells)
+                        .collect::<serde_json::Map<String, Value>>(),
+                ),
+                other => other,
+            })
+            .collect();
+        payload["rows"] = Value::Array(rows);
+    }
+    payload["columns"] = Value::Array(columns);
 }
 
 fn validate_call(
@@ -1072,6 +1175,48 @@ pub fn identity_digest(semantic_type: &str, payload: &Value) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    /// The three calls a model made live, each refused before: a flat
+    /// table with column names and list rows; the payload with the type
+    /// inside it; and a keyed payload with the type inside it. Each now
+    /// becomes the canonical envelope and validates.
+    #[test]
+    fn unambiguous_card_calls_become_canonical() {
+        let shape = SHAPES
+            .iter()
+            .find(|shape| shape.name == "emit_table_card")
+            .unwrap();
+        let skills = vak_delivery::built_in_skill_registry();
+        let calls = [
+            serde_json::json!({"columns": ["Harbour", "Country"], "rows": [["Port of Singapore", "Singapore"], ["Sydney Harbour", "Australia"]]}),
+            serde_json::json!({"payload": {"columns": ["Harbour", "Country"], "rows": [["Sydney Harbour", "Australia"]], "semantic_type": "table"}}),
+            serde_json::json!({"payload": {"columns": [{"key": "Harbour", "label": "Harbour"}, {"key": "Country", "label": "Country"}], "rows": [{"Country": "Spain", "Harbour": "Barcelona"}], "semantic_type": "table"}}),
+        ];
+        for call in calls {
+            let canonical = canonical_card_input(shape, &call).expect("rewritten");
+            assert_eq!(canonical["semantic_type"], "table", "{canonical}");
+            assert!(
+                validate_call(shape, &canonical, &skills).is_ok(),
+                "{canonical}"
+            );
+        }
+        let flat = canonical_card_input(shape, &calls_first()).unwrap();
+        assert_eq!(flat["payload"]["rows"][0]["Country"], "Singapore");
+        assert_eq!(flat["payload"]["columns"][0]["label"], "Harbour");
+        // A canonical call is left alone; a shape whose name settles no type
+        // still needs one.
+        let canonical = canonical_card_input(shape, &calls_first()).unwrap();
+        assert!(canonical_card_input(shape, &canonical).is_none());
+        let universal = SHAPES
+            .iter()
+            .find(|shape| shape.name == "emit_universal_card")
+            .unwrap();
+        assert!(canonical_card_input(universal, &serde_json::json!({"title": "x"})).is_none());
+    }
+
+    fn calls_first() -> serde_json::Value {
+        serde_json::json!({"columns": ["Harbour", "Country"], "rows": [["Port of Singapore", "Singapore"]]})
+    }
+
     use super::*;
 
     /// Real trigger: "Vak wants to use emit_metric_card — this needs your

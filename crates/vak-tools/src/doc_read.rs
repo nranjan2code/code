@@ -1204,11 +1204,14 @@ fn extract_text_lines(content: &str, offset: usize, limit: usize) -> String {
     let numbered: Vec<String> = lines[start..end]
         .iter()
         .enumerate()
-        .map(|(idx, line)| format!("{:4}: {}", start + idx + 1, line))
+        .map(|(idx, line)| format!("{:4}\u{2502} {}", start + idx + 1, line))
         .collect();
 
+    // A number and `:` before each line read as part of it: written back
+    // into the file and used as edit anchors (measured live). The gutter
+    // mark and this footer say plainly that they are not.
     format!(
-        "{}\n\n[Lines {}..{} of {} total lines]",
+        "{}\n\n[Lines {}..{} of {} total lines. The numbers and \u{2502} before each line are not part of the file; leave them out when you edit or write it.]",
         numbered.join("\n"),
         start + 1,
         end,
@@ -1315,8 +1318,9 @@ mod tests {
     fn test_extract_text_lines() {
         let text = "alpha\nbeta\ngamma\ndelta\nepsilon\n";
         let extracted = extract_text_lines(text, 2, 2);
-        assert!(extracted.contains("2: beta"));
-        assert!(extracted.contains("3: gamma"));
+        assert!(extracted.contains("2\u{2502} beta"));
+        assert!(extracted.contains("3\u{2502} gamma"));
+        assert!(extracted.contains("not part of the file"));
         assert!(!extracted.contains("alpha"));
         assert!(!extracted.contains("delta"));
     }

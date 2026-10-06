@@ -257,9 +257,14 @@ async fn version_bytes(
         return StatusCode::NOT_FOUND.into_response();
     };
     let artifacts = state.core.artifacts();
+    let actor = crate::request_actor(&state);
     let read = tokio::task::spawn_blocking(move || {
         let artifact = artifacts.get(&id)?;
         let bytes = artifacts.bytes(&artifact, &version).ok()?;
+        // What a later Put back was made from (doc 82 §7).
+        if let Err(error) = artifacts.record(artifact.id, ArtifactStep::Downloaded { version }, None, Some(actor)) {
+            tracing::warn!(kind = "artifact", error_kind = %vak_telemetry::error_kind(&error), "a download was not recorded");
+        }
         Some((artifact.name(), bytes))
     })
     .await;
@@ -373,6 +378,214 @@ fn record(state: &AppState, id: &str, step: ArtifactStep) -> Response {
             Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response(),
+    }
+}
+
+// ---- Editing and Put back (plan M8.4b, docs/design/82-library.md §7) --------
+
+#[derive(serde::Deserialize)]
+struct PersonVersion {
+    /// The version it was made from: absent, the one this person last
+    /// downloaded, else the current one.
+    #[serde(default)]
+    parent: Option<String>,
+    /// The new content as text (an edit in the app) ...
+    #[serde(default)]
+    text: Option<String>,
+    /// ... or as base64 bytes (a file put back).
+    #[serde(default)]
+    data: Option<String>,
+}
+
+/// `POST /library/{id}/versions`: a version made by the person, from the
+/// version they edited or downloaded. Made from an older version, it is a
+/// sibling of the versions made since, never an overwrite; made from the
+/// current one, it also becomes the file in the workspace, so the Agent
+/// builds on it.
+async fn person_version(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PersonVersion>,
+) -> Response {
+    use base64::Engine as _;
+    let Some(artifact) = state.core.artifacts().get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let bytes = match (body.text, body.data) {
+        (Some(text), None) => text.into_bytes(),
+        (None, Some(data)) => match base64::engine::general_purpose::STANDARD.decode(data.trim()) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return share_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "the file could not be read",
+                );
+            }
+        },
+        _ => {
+            return share_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "send the new content as text or as a file",
+            );
+        }
+    };
+    let parent = match body.parent {
+        Some(parent) => match artifact
+            .versions
+            .iter()
+            .find(|version| version.id.to_string() == parent)
+        {
+            Some(version) => Some(version.id),
+            None => {
+                return share_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "that version is not one of this artifact's",
+                );
+            }
+        },
+        None => artifact
+            .last_download
+            .or_else(|| artifact.head().map(|head| head.id)),
+    };
+    let artifacts = state.core.artifacts();
+    let version = match artifacts.version(
+        artifact.id,
+        NewVersion {
+            parent,
+            bytes: &bytes,
+            source: VersionSource::Person,
+        },
+        None,
+        Some(crate::request_actor(&state)),
+    ) {
+        Ok(version) => version,
+        Err(error) => return share_error(StatusCode::UNPROCESSABLE_ENTITY, &error.to_string()),
+    };
+    let Some(after) = artifacts.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let sibling = after.heads().len() > 1;
+    let written = !sibling
+        && after.head().is_some_and(|head| head.id == version)
+        && write_back(&state, &after, &bytes);
+    Json(serde_json::json!({ "version": version, "sibling": sibling, "written": written }))
+        .into_response()
+}
+
+/// Writes the current version to the artifact's file, when the artifact is
+/// a plain file of this workspace. Documents change only through Review.
+fn write_back(state: &AppState, artifact: &vak_core::artifacts::Artifact, bytes: &[u8]) -> bool {
+    if artifact.kind != vak_core::artifacts::ArtifactKind::File
+        || artifact.space != vak_session::trace::local::space(state.core.cwd()).to_string()
+        || artifact
+            .path
+            .split('/')
+            .any(|part| part == ".." || part.is_empty())
+    {
+        return false;
+    }
+    let Ok(root) = state.core.cwd().canonicalize() else {
+        return false;
+    };
+    let target = root.join(&artifact.path);
+    let inside = target
+        .parent()
+        .and_then(|parent| parent.canonicalize().ok())
+        .is_some_and(|parent| parent.starts_with(&root));
+    let not_a_link =
+        std::fs::symlink_metadata(&target).map_or(true, |meta| !meta.file_type().is_symlink());
+    inside && not_a_link && std::fs::write(&target, bytes).is_ok()
+}
+
+#[derive(serde::Deserialize)]
+struct CardSave {
+    session: String,
+    presentation: String,
+}
+
+/// `POST /library/cards`: a card a person keeps out of its conversation
+/// (doc 82 §3: a card stays in its chat unless saved). Its payload becomes
+/// the artifact's first version.
+async fn save_card(State(state): State<AppState>, Json(body): Json<CardSave>) -> Response {
+    let Some(log) = crate::open_historical_session(&state, &body.session) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some((_, record)) = log
+        .presentations()
+        .into_iter()
+        .find(|(id, _)| *id == body.presentation)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // A card with no title is named from what it shows (its columns),
+    // never just its type: "table" names nothing a person would recall.
+    let columns: Vec<String> = record
+        .payload
+        .get("columns")
+        .and_then(serde_json::Value::as_array)
+        .map(|columns| {
+            columns
+                .iter()
+                .filter_map(|column| {
+                    column
+                        .get("label")
+                        .and_then(serde_json::Value::as_str)
+                        .or_else(|| column.as_str())
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let title = if !record.title.trim().is_empty() {
+        record.title.clone()
+    } else if !columns.is_empty() {
+        format!("{} table", columns.join(", "))
+    } else {
+        format!(
+            "Saved {}",
+            record.semantic_type.replace(['_', '-', '.'], " ")
+        )
+    };
+    let bytes = serde_json::to_vec_pretty(&record.payload).unwrap_or_default();
+    let space = vak_session::trace::local::space(state.core.cwd()).to_string();
+    let agent = state
+        .core
+        .agent_identity()
+        .map(|agent| agent.id.clone())
+        .unwrap_or_else(|| "vak".into());
+    let artifacts = state.core.artifacts();
+    let actor = Some(crate::request_actor(&state));
+    let saved = artifacts
+        .declare(
+            &space,
+            &agent,
+            &format!("cards/{}.json", body.presentation),
+            vak_core::artifacts::ArtifactKind::Card,
+            Some(title),
+            None,
+            None,
+            actor,
+        )
+        .and_then(|id| {
+            let version = artifacts.version(
+                id,
+                NewVersion {
+                    parent: None,
+                    bytes: &bytes,
+                    source: VersionSource::Call {
+                        session: body.session.clone(),
+                        call: body.presentation.clone(),
+                    },
+                },
+                None,
+                actor,
+            )?;
+            artifacts.record(id, ArtifactStep::Saved { version }, None, actor)?;
+            Ok(id)
+        });
+    match saved {
+        Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response(),
+        Err(error) => share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
 }
 
@@ -742,6 +955,8 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route("/library/{id}/versions/{version}/save", post(save))
+        .route("/library/cards", post(save_card))
+        .route("/library/{id}/versions", post(person_version))
         .route("/library/{id}/shares", get(shares).post(share))
         .route(
             "/library/{id}/shares/{grant}",

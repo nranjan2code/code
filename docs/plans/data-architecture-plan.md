@@ -1585,9 +1585,7 @@ M8.3b (2026-10-06): a run request names Library artifacts
 artifact's records at admission (`library::attach`), refusing another
 Agent's or another workspace's. The message records it as a typed
 `AttachedArtifact`, which the chat draws as a card in the block's place.
-The block names the tool for the artifact's kind and carries no digest:
-live, a small model read a shown digest as an `office_apply` base digest
-and kept failing. A write of a file that is already an artifact is a new
+The block names the tool for the artifact's kind and carries no digest. A write of a file that is already an artifact is a new
 version even without a `title`; a supporting file never becomes one. Make
 another sets `AgentConfig::protected_paths`, and the loop refuses a
 write, edit or `office_apply` to the source. `recall` with `conversation`
@@ -1597,9 +1595,16 @@ conversation with the artifact in the composer. Tests:
 `make_another_keeps_its_source`,
 `recall_reaches_only_conversations_attached_artifacts_name`,
 `library::tests`, and the extended `saved_version_survives_origin_erasure`.
-Live: Continue working on "Harbour poem" with gemma4 made version 2 from
-version 1. The model's edit was imperfect: it copied line numbers from a
-read result into two lines.
+Live: Continue working on "Harbour poem" made version 2 from version 1.
+The first attempt went wrong, and M8.4b found three causes in Vak, not
+the model:
+- `office_apply` answered a Markdown path with "pass the sha256 doc_read
+  prints as base_digest", a digest `doc_read` never prints for text, so
+  the call looped;
+- `doc_read`'s `   1: ` line prefixes read as part of the text and were
+  written back into the file;
+- intent and the goal read the server-written artifact block as part of
+  the request.
 
 M8.4 is split into three steps: a (sharing), b (editing and Put back) and
 c (the Artifact API moves and the acceptance run).
@@ -1619,6 +1624,46 @@ the code is shown once) and Comments; `?shared=artifact` is the guest
 page. Test `library_sharing.rs`. Live run: a commenter share of "Harbour
 poem" showed version 2 only, the guest's comment reached the owner, and
 the revoked link answered 401.
+
+M8.4b (2026-10-07): Download is recorded as a `Downloaded` row, and the
+rollup keeps the last downloaded version. `POST /library/{id}/versions`
+takes an edit (`text`) or a file put back (`data`) as a version credited
+to the person, made from `parent`, the last download, or the head. Made
+from an older version, it is a sibling of what changed since. Made from
+the current one, it also becomes the workspace file, for a plain file of
+this workspace with no symlink or `..` (documents change only through
+Review), so the Agent builds on it. `POST /library/cards` keeps a chat
+card: its payload is the first version of a `card` artifact, and that
+version is kept. The client's artifact page has Edit for text files and
+Put back for any, and a card's action row has Save to Library. Tests
+`library_editing.rs` (edit, a late Put back becoming a sibling, a saved
+card). Live: an edit of "Harbour poem" became version 3, credited to the
+person, and the workspace file matches it; a table card saved from a
+chat appears in the Library.
+
+Investigating the live failures of M8.3b and M8.4b found faults in
+Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):
+- `emit_table_card` refused a correct flat `{columns, rows}` table
+  because of its `{semantic_type, payload}` envelope. `Tool::canonical_input`
+  now rewrites an unambiguous variant into the canonical form before
+  validation. For a card that means a payload's fields at the top level, a
+  type inside the payload, a type the tool's name already settles, and a
+  table's column names and list rows.
+- A card's result was replaced by a bare `{"ok": true}`, which dropped
+  the tool's "it is on screen; finish" and led to repeat calls. The
+  result now keeps that text, in plain words, with the presentation id.
+- Save to Library sat behind Show technical details, and cards in a
+  turn's result never had it. It is now on every recorded card, and an
+  untitled card is named from its columns.
+- `office_apply` now refuses a non-Office path first, naming `edit` and
+  `write`.
+- `doc_read` marks its line numbers as a gutter (`   1│`) and says they
+  are not part of the file.
+- Intent, the goal and the outcome read only the person's words, never
+  a block the runtime wrote about an attachment.
+
+`webfetch` returning a whole page's raw HTML is a separate fault, filed
+on its own.
 
 ### M9 — Cloud remote (L; the protocol and a reference backend)
 

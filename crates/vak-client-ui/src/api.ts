@@ -2385,6 +2385,17 @@ export function libraryUnshare(id: string, share: string): Promise<void> {
   return req(`/library/${encodeURIComponent(id)}/shares/${encodeURIComponent(share)}`, { method: "DELETE" });
 }
 
+/** A version made by the person: an edit (`text`) or a file put back
+ *  (`data`, base64), made from `parent` (default: what they last downloaded). */
+export function libraryPersonVersion(id: string, body: { text?: string; data?: string; parent?: string }): Promise<{ version: string; sibling: boolean; written: boolean }> {
+  return req(`/library/${encodeURIComponent(id)}/versions`, { method: "POST", body: JSON.stringify(body) });
+}
+
+/** Keeps a chat card in the Library. */
+export function librarySaveCard(session: string, presentation: string): Promise<{ id: string }> {
+  return req("/library/cards", { method: "POST", body: JSON.stringify({ session, presentation }) });
+}
+
 export function libraryComment(id: string, version: string, text: string): Promise<void> {
   return req(`/library/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ version, text }) });
 }

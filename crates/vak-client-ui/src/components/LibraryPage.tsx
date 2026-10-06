@@ -133,6 +133,9 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
   const [chosen, setChosen] = createSignal<string | null>(null);
   const [renaming, setRenaming] = createSignal(false);
   const [sharing, setSharing] = createSignal(false);
+  const [editing, setEditing] = createSignal<string | null>(null);
+  const [notice, setNotice] = createSignal<string | null>(null);
+  let putBackInput!: HTMLInputElement;
   const [note, setNote] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
   const version = () => chosen() ?? detail()?.head ?? null;
@@ -227,6 +230,30 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             <button class="btn sm" onClick={() => void act(() => api.libraryChange(found().id, "star", { on: !found().starred }))}>
               {found().starred ? "Unstar" : "Star"}
             </button>
+            <Show when={isText(found()) && text() !== undefined}>
+              <button class="btn sm" onClick={() => setEditing(text() ?? "")}>Edit</button>
+            </Show>
+            <button class="btn sm" onClick={() => putBackInput.click()}>Put back</button>
+            <input
+              ref={putBackInput}
+              type="file"
+              hidden
+              onChange={async (e) => {
+                const file = e.currentTarget.files?.[0];
+                e.currentTarget.value = "";
+                if (!file) return;
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                let binary = "";
+                for (const byte of bytes) binary += String.fromCharCode(byte);
+                await act(async () => {
+                  const made = await api.libraryPersonVersion(found().id, { data: btoa(binary) });
+                  setNotice(made.sibling
+                    ? "Saved as your version beside the changes made since you downloaded it."
+                    : "Saved as your version, and the file in the folder now matches it.");
+                  setChosen(made.version);
+                });
+              }}
+            />
             <button class="btn sm" onClick={() => setSharing(true)}>Share</button>
             <button class="btn sm" onClick={() => setRenaming(true)}>Rename</button>
             <button class="btn sm" onClick={() => void act(() => api.libraryChange(found().id, "archive", { on: !found().archived }))}>
@@ -238,8 +265,35 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             <SharePanel artifact={found()} onClose={() => setSharing(false)} />
           </Show>
 
+          <Show when={notice()}><p class="library-note" role="status">{notice()}</p></Show>
+          <Show when={editing() !== null}>
+            <form
+              class="library-edit"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const content = editing() ?? "";
+                const parent = version() ?? undefined;
+                setEditing(null);
+                void act(async () => {
+                  const made = await api.libraryPersonVersion(found().id, { text: content, parent });
+                  setNotice(made.sibling
+                    ? "Saved as your version beside the other changes; choose between them when you are ready."
+                    : "Saved as your version.");
+                  setChosen(made.version);
+                });
+              }}
+            >
+              <textarea value={editing() ?? ""} onInput={(e) => setEditing(e.currentTarget.value)} aria-label="Edit" />
+              <div class="library-actions">
+                <button class="btn sm primary" type="submit">Save</button>
+                <button class="btn sm" type="button" onClick={() => setEditing(null)}>Cancel</button>
+              </div>
+            </form>
+          </Show>
+          <Show when={editing() === null}>
           <Show when={isText(found())} fallback={<div class="library-preview dock-empty">Download to open this {KIND[found().kind].toLowerCase()}.</div>}>
             <pre class="library-preview">{text() ?? "Loading…"}</pre>
+          </Show>
           </Show>
 
           <h3>Versions</h3>

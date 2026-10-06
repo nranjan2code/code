@@ -6517,7 +6517,33 @@ impl Core {
             message: prompt,
             meta: prompt_meta,
         } = prompt;
-        let prompt_text = prompt.text_content();
+        // What the person asked, without the blocks the runtime wrote about
+        // their attachments: intent, the goal and the outcome read this, and
+        // the model still gets the whole message. (Measured live: an
+        // attached artifact's block was read as "part 2" of the request.)
+        let request = {
+            let written: std::collections::HashSet<usize> = prompt_meta
+                .as_ref()
+                .map(|meta| {
+                    meta.attachments
+                        .iter()
+                        .map(|file| file.block)
+                        .chain(meta.artifacts.iter().map(|artifact| artifact.block))
+                        .collect()
+                })
+                .unwrap_or_default();
+            vak_llm::Message {
+                role: prompt.role,
+                content: prompt
+                    .content
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| !written.contains(index))
+                    .map(|(_, block)| block.clone())
+                    .collect(),
+            }
+        };
+        let prompt_text = request.text_content();
         let admitted_agent = session.header().and_then(|header| header.agent.clone());
         self.refuse_inactive_agent(admitted_agent.as_ref())?;
         self.agent_identity = admitted_agent.map(|admitted| self.live_agent_identity(admitted));
@@ -6622,7 +6648,7 @@ impl Core {
         // and return something no wider, so a misread can make this turn more
         // cautious and never less.
         let resolved_intent = self
-            .resolve_turn_intent_with_escalation(&mut session, &prompt, &turn_id, &cancel)
+            .resolve_turn_intent_with_escalation(&mut session, &request, &turn_id, &cancel)
             .await;
         // Which commitments this turn works on is decided now, before any
         // knob is read, because a grant on one of them narrows the strands
@@ -7591,7 +7617,7 @@ impl Core {
 
         // Only an explicit command corrects or replaces the goal; ordinary
         // text adds to it (docs/design/47, control plane).
-        let goal_update = session.next_goal_update(&prompt.text_content());
+        let goal_update = session.next_goal_update(&request.text_content());
         if let Err(error) = session.append_goal_update(goal_update) {
             tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a request relationship was not recorded");
         }

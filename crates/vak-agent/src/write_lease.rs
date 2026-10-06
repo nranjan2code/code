@@ -179,6 +179,10 @@ impl Tool for ScopedWriteTool {
         self.inner.artifact(args)
     }
 
+    fn canonical_input(&self, input: &Value) -> Option<Value> {
+        self.inner.canonical_input(input)
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         if let Some(reason) = self.outside(args, &ctx.cwd) {
             return ToolOutput::error(reason);

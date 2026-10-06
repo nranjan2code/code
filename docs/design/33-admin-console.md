@@ -203,6 +203,8 @@ SDKs to preflight a model.
 | `/library/:id/shares` | GET, POST | Share links for an artifact (name, role, expiry, `history_from`); POST returns the code once and breaks inheritance |
 | `/library/:id/shares/:grant` | DELETE | Stop a share at once |
 | `/library/:id/comments` | POST | The owner comments on a version |
+| `/library/:id/versions` | POST | A version by the person: an edit (`text`) or a file put back (`data`, base64), made from `parent` (default: what they last downloaded); a sibling when the artifact moved on, else also written to the workspace file |
+| `/library/cards` | POST | Keep a chat card (`{session, presentation}`) as a `card` artifact |
 | `/shared/artifact`, `/shared/artifact/versions/:ver`, `/shared/artifact/comments` | GET, GET, POST | What a share link opens: the shown versions and comments, never conversation text (an artifact guest reaches nothing else) |
 | `/library/:id/versions/:ver/save` | POST | A person keeps a version, so it outlives its conversation |
 | `/intake/alerts` | GET, POST | Intake alerts: keywords, tags or sources to match, a cooldown and an optional channel; a match is an `intake_match` inbox entry, each item once |

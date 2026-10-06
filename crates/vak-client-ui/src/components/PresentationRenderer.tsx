@@ -1027,6 +1027,37 @@ function AnswerCard(props: { item: OutputItem; document: PresentationDocument })
   );
 }
 
+/** The Save to Library control for a card the ledger recorded. */
+function saveCard(sessionId: string | undefined, item: OutputItem): JSX.Element {
+  const presentation = item.provenance?.presentation_id;
+  return sessionId && presentation ? <SaveCardToLibrary sessionId={sessionId} presentationId={presentation} /> : null;
+}
+
+/** Keeps a card in the Library (plan M8.4b): an everyday action, shown on
+ *  every recorded card, never behind technical details. */
+function SaveCardToLibrary(props: { sessionId: string; presentationId: string }) {
+  const [status, setStatus] = createSignal("");
+  return <div class="presentation-save">
+    <button
+      type="button"
+      class="btn sm"
+      disabled={status() === "Saving…" || status() === "Saved to Library"}
+      onClick={async () => {
+        setStatus("Saving…");
+        try {
+          await api.librarySaveCard(props.sessionId, props.presentationId);
+          setStatus("Saved to Library");
+        } catch {
+          setStatus("Could not save");
+        }
+      }}
+    >
+      {status() === "Saved to Library" ? "Saved to Library" : "Save to Library"}
+    </button>
+    <Show when={status() === "Could not save"}><small role="status">{status()}</small></Show>
+  </div>;
+}
+
 function PresentationFeedback(props: { sessionId: string; semanticType: string; presentationId?: string }) {
   const [status, setStatus] = createSignal("");
   const [expanded, setExpanded] = createSignal(false);
@@ -1056,6 +1087,7 @@ function PresentationFeedback(props: { sessionId: string; semanticType: string; 
       <button type="button" onClick={() => void send("Use this layout")}>Use this</button>
       <button type="button" onClick={() => void send("Keep original")}>Keep original</button>
       <button type="button" onClick={() => setExpanded(!expanded())}>Suggest a change</button>
+
       <Show when={status()}><small role="status">{status()}</small></Show>
     </div>
     <Show when={expanded()}>
@@ -1089,6 +1121,9 @@ export function StructuredView(props: { output: import("../types").StructuredOut
               <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
             </PresentationInteractionContext.Provider>
           </PresentationSessionContext.Provider>
+          <Show when={props.sessionId && props.presentationId}>
+            <SaveCardToLibrary sessionId={props.sessionId!} presentationId={props.presentationId!} />
+          </Show>
           <Show when={showOperatorChrome() && props.sessionId}>
             <PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} presentationId={props.presentationId} />
           </Show>
@@ -1481,7 +1516,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       out.push(<AssistantMessage sessionId={props.sessionId}>
         <article class="primary-result" data-result-id={anchor?.outcome?.result_id} aria-label="Agent result">
           <Show when={anchor && anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-          <Show when={cards.length > 0}><div class="primary-result-material">{cards.map((entry) => entry.node)}</div></Show>
+          <Show when={cards.length > 0}><div class="primary-result-material">{cards.map((entry) => <>{entry.node}{saveCard(props.sessionId, entry.item)}</>)}</div></Show>
           <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} />
           <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item().outcome?.result_id ?? uniqueResultId() ?? item().id} /></>}</Show>
         </article>
@@ -1585,7 +1620,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               <Show when={item.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
               <Show when={material.some((entry) => entry.item.kind !== "artifact")}>
                 <div class="primary-result-material" aria-label="Result material">
-                  {material.filter((entry) => entry.item.kind !== "artifact").map((entry) => entry.node)}
+                  {material.filter((entry) => entry.item.kind !== "artifact").map((entry) => <>{entry.node}{saveCard(props.sessionId, entry.item)}</>)}
                 </div>
               </Show>
               <Show when={hasCard}

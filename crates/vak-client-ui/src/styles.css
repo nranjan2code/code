@@ -4204,6 +4204,9 @@ body.is-resizing .split-divider {
 .library-rename input { flex: 1; min-width: 0; }
 .library-preview { margin: 0 0 16px; max-height: 420px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-control); }
 .library-note { font-size: var(--fs-control); color: var(--text-soft); }
+.presentation-save { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.library-edit { margin: 0 0 16px; }
+.library-edit textarea { width: 100%; min-height: 240px; box-sizing: border-box; padding: var(--space-3); border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-family: var(--mono); font-size: var(--fs-control); }
 .library-share { margin: 0 0 16px; padding: var(--space-3); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
 .library-share h3 { margin: 0; }
 .library-share-form { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }

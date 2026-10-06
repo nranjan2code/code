@@ -365,6 +365,10 @@ impl Tool for BrokeredTool {
         self.inner.artifact(args)
     }
 
+    fn canonical_input(&self, input: &Value) -> Option<Value> {
+        self.inner.canonical_input(input)
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         execute(
             self.name(),

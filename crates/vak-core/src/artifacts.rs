@@ -114,6 +114,11 @@ pub enum ArtifactStep {
     Saved {
         version: VersionId,
     },
+    /// A person downloaded this version: what a later Put back was made
+    /// from (docs/design/82-library.md §7).
+    Downloaded {
+        version: VersionId,
+    },
     /// A comment on a version, by the owner or through a share.
     Commented {
         version: VersionId,
@@ -176,6 +181,9 @@ pub struct Artifact {
     pub archived: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<Comment>,
+    /// The version a person last downloaded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_download: Option<VersionId>,
 }
 
 impl Artifact {
@@ -282,6 +290,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 starred: false,
                 archived: false,
                 comments: Vec::new(),
+                last_download: None,
             });
     }
     let Some(artifact) = state.artifacts.get_mut(&key) else {
@@ -335,6 +344,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 found.saved = true;
             }
         }
+        ArtifactStep::Downloaded { version } => artifact.last_download = Some(version),
         ArtifactStep::Commented {
             version,
             author,

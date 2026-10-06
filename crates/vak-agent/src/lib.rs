@@ -3426,13 +3426,22 @@ impl Agent {
                             title: info.title,
                             identity_digest: info.identity_digest,
                         };
+                        // The tool's own text (the card is on screen; finish)
+                        // stays, with the id after it: replaced by a bare
+                        // `ok`, the model never learned the card was shown
+                        // and sent it again (measured live).
                         if let Ok(entry) = session.append_presentation(record)
                             && let Some(slot) = results.iter_mut().find(|(rid, _)| rid == id)
                         {
-                            slot.1 = ToolRunOutput::Ok(
-                                serde_json::json!({"presentation": entry.id, "ok": true})
-                                    .to_string(),
-                            );
+                            // Plain text: wrapped in JSON, the same words
+                            // read to the model as a placeholder it should
+                            // not trust (measured live).
+                            let shown = match &slot.1 {
+                                ToolRunOutput::Ok(text) => text.clone(),
+                                ToolRunOutput::Err(_) => String::new(),
+                            };
+                            slot.1 =
+                                ToolRunOutput::Ok(format!("{shown}\n(presentation {})", entry.id));
                         }
                     }
                 }
@@ -7153,6 +7162,9 @@ fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) 
     let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) else {
         return call;
     };
+    if let Some(input) = tool.canonical_input(&call.input) {
+        call.input = input;
+    }
     let schema = tool.schema();
     if let Some(input) = unwrapped_schema_input(&schema, &call.input) {
         call.input = input;

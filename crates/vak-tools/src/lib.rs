@@ -316,6 +316,15 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// The canonical form of an input the model wrote in an unambiguous
+    /// variant of this tool's shape (a payload's fields at the top level,
+    /// a table's rows as lists). The loop applies it before validating, so
+    /// an obvious call is not refused for its spelling; the canonical value
+    /// is what is validated, authorized and run. `None` keeps the input.
+    fn canonical_input(&self, _input: &Value) -> Option<Value> {
+        None
+    }
+
     /// The workspace file a successful call with these arguments produces,
     /// and whether the call declares it a deliverable for the person
     /// (docs/design/82-library.md §3). The runtime reads this only from the

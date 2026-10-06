@@ -151,6 +151,18 @@ impl Tool for OfficeApplyTool {
             return ToolOutput::error("missing required parameter: ops");
         };
         let pdf = vak_pdf::is_pdf_path(path);
+        // Checked first: a text file sent here once got "pass the sha256
+        // doc_read prints as base_digest", a digest doc_read never prints
+        // for text, and the call looped on it (measured live).
+        let target = std::path::Path::new(path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(vak_ooxml::Format::from_extension);
+        if target.is_none() && !pdf {
+            return ToolOutput::error(format!(
+                "{path} is not a Word, Excel, PowerPoint or PDF file (.docx, .xlsx, .pptx and their variants, or .pdf), so office_apply cannot change it. Change a text file such as Markdown, code or data with edit, or rewrite it whole with write."
+            ));
+        }
         if let Some(error) = validate_chart_shapes(raw_ops, pdf) {
             return ToolOutput::error(error);
         }
@@ -210,15 +222,6 @@ impl Tool for OfficeApplyTool {
                 }
             }
         };
-        let target = destination
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .and_then(vak_ooxml::Format::from_extension);
-        if target.is_none() && !pdf {
-            return ToolOutput::error(format!(
-                "{path} is not named as a Word, Excel, PowerPoint or PDF file (.docx, .xlsx, .pptx and their variants, or .pdf)"
-            ));
-        }
         let root = match canonical_root(&ctx.cwd) {
             Ok(root) => root,
             Err(error) => return ToolOutput::error(error),
@@ -1325,7 +1328,7 @@ mod tests {
             ),
             (
                 serde_json::json!({"path": "memo.txt", "source": "memo.docx", "base_digest": digest, "ops": []}),
-                "not named as a Word",
+                "with edit, or rewrite it whole with write",
             ),
         ] {
             let output = run(dir.path(), args).await;
