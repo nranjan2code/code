@@ -25,6 +25,7 @@ pub mod health;
 pub mod inbox;
 pub mod install;
 pub mod intake;
+pub mod intake_alerts;
 pub mod intent;
 pub mod learning;
 pub mod memory;

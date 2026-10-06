@@ -34,7 +34,8 @@ impl Core {
 
     /// What this Core may read through the catalog: its Agent's things in
     /// its conversation audience when it serves one, everything otherwise,
-    /// and never a session in the trash (invariant 37).
+    /// and never a session in the trash (invariant 37) or an intake item
+    /// held back from the Agent (plan M6.5).
     pub fn catalog_audience(&self) -> Audience {
         Audience {
             agents: self
@@ -44,6 +45,7 @@ impl Core {
                 .conversation_context()
                 .map(|context| context.audience_id.clone()),
             exclude_sessions: crate::trash::trashed(&self.shared_scope()),
+            held: false,
         }
     }
 

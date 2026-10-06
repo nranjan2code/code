@@ -43,6 +43,7 @@ fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
         }
         "memory" => (format!("memory/{}", leaf()), "memory"),
         "entity" => (format!("entity/{}", leaf()), "entity"),
+        "item" => (node.id.clone(), "from a source"),
         _ => (
             node.session
                 .as_deref()
@@ -68,8 +69,9 @@ impl vak_tools::Tool for SessionSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search past conversations and sessions (user requests and assistant answers) \
-         plus your durable memory notes and the user profile. Memory hits include \
+        "Search past conversations and sessions (user requests and assistant answers), \
+         your durable memory notes, the user profile, and items from the sources you \
+         follow (feeds, news, saved attachments). Memory hits include \
          an exact memory/<id> or profile/<id> source identifier for forget_memory. \
          Use when the user \
          references earlier work ('that script we wrote', 'the bug from Tuesday') or when \
@@ -121,7 +123,7 @@ impl vak_tools::Tool for SessionSearchTool {
         let scope = vak_catalog::Scope {
             space: self.space.clone(),
             kinds: Some(
-                ["session", "turn", "call", "memory", "entity"]
+                ["session", "turn", "call", "memory", "entity", "item"]
                     .into_iter()
                     .map(str::to_string)
                     .collect(),
@@ -153,6 +155,12 @@ impl vak_tools::Tool for SessionSearchTool {
                         hit.score,
                         hit.snippet
                     ));
+                    // An item names where it came from, so the answer can cite it.
+                    if hit.node.kind == "item"
+                        && let Some(link) = hit.node.locator.as_deref()
+                    {
+                        out.push_str(&format!("  {link}\n"));
+                    }
                 }
                 vak_tools::ToolOutput::ok(out)
             }

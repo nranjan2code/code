@@ -102,7 +102,7 @@ pub struct Node {
 }
 
 /// Who is asking, and so what a query may return (invariant 37). The
-/// default reads everything, as the owner does.
+/// default reads everything the owner may, held intake items aside.
 #[derive(Debug, Clone, Default)]
 pub struct Audience {
     /// The Agents whose things may be returned (as `AgentId`s); `None` is
@@ -115,6 +115,10 @@ pub struct Audience {
     pub audience: Option<String>,
     /// Sessions that must not appear (the trash), as their plain ids.
     pub exclude_sessions: HashSet<String>,
+    /// Whether intake items detection held (or a person quarantined) are
+    /// returned. Only a person's own view sets it; an Agent's retrieval
+    /// never does (plan M6.5, doc 76 §5), so the default is closed.
+    pub held: bool,
 }
 
 /// What a search looks through, beside who is asking: a space (things of
@@ -624,6 +628,9 @@ fn audience_filter(audience: &Audience, first: usize) -> (String, Vec<rusqlite::
         }
         args.push(wanted.clone().into());
         next += 1;
+    }
+    if !audience.held {
+        clauses.push("(n.kind != 'item' OR n.status = 'accepted')".to_string());
     }
     if !audience.exclude_sessions.is_empty() {
         let excluded: Vec<String> = audience

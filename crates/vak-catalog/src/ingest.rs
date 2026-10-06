@@ -908,7 +908,6 @@ fn intake_row(
                 Upsert {
                     id: item,
                     kind: "item",
-                    space: field("space"),
                     agent: text("agent").as_deref().map(agent_id),
                     agent_name: text("agent"),
                     run: run.clone(),

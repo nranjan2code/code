@@ -2810,6 +2810,8 @@ async fn search_sessions(
     let all = q.all;
     let mut audience = core.catalog_audience();
     audience.exclude_sessions.extend(q.exclude.clone());
+    // A person searching sees what intake holds back, labelled by status.
+    audience.held = true;
     let scope = vak_catalog::Scope {
         space: (!all).then(|| vak_session::trace::local::space(core.cwd()).to_string()),
         kinds: Some(
@@ -2817,7 +2819,8 @@ async fn search_sessions(
                 Some("conversation") => vec!["session", "turn", "call"],
                 Some("memory") => vec!["memory"],
                 Some("entity") => vec!["entity"],
-                _ => vec!["session", "turn", "call", "memory", "entity"],
+                Some("item") => vec!["item"],
+                _ => vec!["session", "turn", "call", "memory", "entity", "item"],
             }
             .into_iter()
             .map(str::to_string)
@@ -2866,6 +2869,7 @@ fn search_hit(hit: vak_catalog::Hit) -> serde_json::Value {
         }
         "memory" => (format!("memory/{leaf}"), "memory"),
         "entity" => (format!("entity/{leaf}"), "entity"),
+        "item" => (String::new(), "item"),
         _ => (
             node.session
                 .as_deref()
@@ -2886,6 +2890,9 @@ fn search_hit(hit: vak_catalog::Hit) -> serde_json::Value {
         "snippet": hit.snippet,
         "space_id": node.space,
         "agent": node.agent_name,
+        "title": node.title,
+        "status": node.status,
+        "link": (node.kind == "item").then_some(node.locator.as_deref()).flatten(),
     })
 }
 
@@ -11612,11 +11619,15 @@ async fn upload_to_inbox(
         )
             .into_response();
     }
-    let workspace = state.active_core().cwd().to_path_buf();
+    let core = state.active_core();
+    let workspace = core.cwd().to_path_buf();
+    let push = intake::PushTake::for_core(&core, None, Some(request_actor(&state)));
     let name = q.name.clone();
     let saved = tokio::task::spawn_blocking(move || {
-        inbox::save_to_inbox(&workspace, &name, &body)
-            .and_then(|saved| inbox::attached(&workspace, &saved))
+        inbox::save_to_inbox(&workspace, &name, &body).and_then(|saved| {
+            push.take(&saved, &name, &body);
+            inbox::attached(&workspace, &saved)
+        })
     })
     .await;
     match saved {

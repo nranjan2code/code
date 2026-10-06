@@ -2263,6 +2263,7 @@ fn compose_prompt(
     text: &str,
     attachments: &[InboundAttachment],
     workspace: &std::path::Path,
+    push: Option<&crate::intake::PushTake>,
 ) -> vak_llm::Message {
     let mut blocks = Vec::new();
     if !text.is_empty() {
@@ -2273,7 +2274,9 @@ fn compose_prompt(
             continue;
         }
         if a.kind == "document" {
-            blocks.push(vak_llm::ContentBlock::text(document_block(a, workspace)));
+            blocks.push(vak_llm::ContentBlock::text(document_block(
+                a, workspace, push,
+            )));
             continue;
         }
         // A voice note reaches the model as its transcript (or the reason
@@ -2292,7 +2295,11 @@ fn compose_prompt(
     }
 }
 
-fn document_block(attachment: &InboundAttachment, workspace: &std::path::Path) -> String {
+fn document_block(
+    attachment: &InboundAttachment,
+    workspace: &std::path::Path,
+    push: Option<&crate::intake::PushTake>,
+) -> String {
     use base64::Engine as _;
     let filename = attachment.filename.as_deref().unwrap_or("file");
     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(attachment.data.trim()) else {
@@ -2314,7 +2321,12 @@ fn document_block(attachment: &InboundAttachment, workspace: &std::path::Path) -
         return format!("Attached file `{filename}`:\n```\n{content}\n```");
     }
     match save_to_inbox(workspace, filename, &bytes) {
-        Ok(saved) => inbox::note(filename, &saved, &bytes),
+        Ok(saved) => {
+            if let Some(push) = push {
+                push.take(&saved, filename, &bytes);
+            }
+            inbox::note(filename, &saved, &bytes)
+        }
         Err(error) => {
             format!("[attached file '{filename}' could not be saved ({error}); not included]")
         }
@@ -2322,7 +2334,7 @@ fn document_block(attachment: &InboundAttachment, workspace: &std::path::Path) -
 }
 
 pub(crate) fn compose_voice_prompt(text: &str) -> vak_llm::Message {
-    compose_prompt(text, &[], std::path::Path::new("."))
+    compose_prompt(text, &[], std::path::Path::new("."), None)
 }
 
 // ---- Approval forwarding (G2) ----------------------------------------------
@@ -2938,7 +2950,7 @@ async fn gateway_inbound(
     let preview: String = expanded_text.chars().take(80).collect();
     state
         .hub
-        .emit_gateway_inbound(&body.surface, who, &preview, Some(admitted));
+        .emit_gateway_inbound(&body.surface, who, &preview, Some(admitted.clone()));
     // Only an explicit command is control; everything else a person types
     // while the run is busy is steering text (docs/design/47, control
     // plane). "Stop using semicolons" steers; "/stop" or a bare "stop"
@@ -3054,10 +3066,12 @@ async fn gateway_inbound(
             Some(who) if !who.is_empty() => format!("[from {who}] {expanded_text}"),
             _ => expanded_text.clone(),
         };
+        let push = crate::intake::PushTake::for_core(&core, Some(admitted.clone()), admitted.actor);
         handle.steering.push_steering_message(compose_prompt(
             &attributed,
             &body.attachments,
             core.cwd(),
+            Some(&push),
         ));
         open_run.end_with(vak_session::runs::RunEnd::Skipped(
             "joined the conversation's running turn".into(),
@@ -3092,7 +3106,8 @@ async fn gateway_inbound(
         Some(who) if !who.is_empty() => format!("[from {who}] {expanded_text}"),
         _ => expanded_text,
     };
-    let prompt = compose_prompt(&attributed, &body.attachments, core.cwd());
+    let push = crate::intake::PushTake::for_core(&core, Some(admitted.clone()), admitted.actor);
+    let prompt = compose_prompt(&attributed, &body.attachments, core.cwd(), Some(&push));
     // Each heard voice note is a durable transcript activity on the
     // append-only ledger, the same evidence the web voice socket records.
     for note in &voice_notes {
@@ -4171,6 +4186,7 @@ mod tests {
                 error: None,
             }],
             std::path::Path::new("."),
+            None,
         );
         assert_eq!(prompt.content.len(), 1);
         assert!(matches!(
@@ -4362,6 +4378,7 @@ mod tests {
             "check this",
             &[document("notes.py", b"print('hi')")],
             workspace.path(),
+            None,
         );
         let text = note(&msg);
         assert!(text.contains("Attached file `notes.py`"));
@@ -4380,6 +4397,7 @@ mod tests {
             "check this",
             &[document("notes.py", huge.as_bytes())],
             workspace.path(),
+            None,
         );
         let text = note(&msg);
         assert!(
@@ -4402,6 +4420,7 @@ mod tests {
             "summarise",
             &[document("Q3 report.docx", &bytes)],
             workspace.path(),
+            None,
         );
         let text = note(&msg);
         assert!(text.contains("Read it with doc_read"), "{text}");
@@ -4421,6 +4440,7 @@ mod tests {
             "again",
             &[document("Q3 report.docx", &bytes)],
             workspace.path(),
+            None,
         );
         assert_eq!(
             note(&again).replace("again", ""),
@@ -4436,6 +4456,7 @@ mod tests {
             "look",
             &[document("photo.heic", b"\x00\x00\x00\x18ftypheic\xff\xfe")],
             workspace.path(),
+            None,
         );
         let text = note(&msg);
         assert!(text.contains("not a text, PDF or Open XML file"), "{text}");
@@ -4449,6 +4470,7 @@ mod tests {
             "look",
             &[document("scan.pdf", b"%PDF-1.7\x00\xff\xfe binary")],
             workspace.path(),
+            None,
         );
         let text = note(&msg);
         assert!(text.contains("Read it with doc_read"), "{text}");
@@ -4465,7 +4487,12 @@ mod tests {
             "a/b/.hidden",
             "sub\x00dir",
         ] {
-            let msg = compose_prompt("x", &[document(name, b"\x00binary")], workspace.path());
+            let msg = compose_prompt(
+                "x",
+                &[document(name, b"\x00binary")],
+                workspace.path(),
+                None,
+            );
             let text = note(&msg);
             let saved = saved_path(text).unwrap_or_else(|| panic!("{name}: {text}"));
             assert!(
@@ -4485,7 +4512,7 @@ mod tests {
         let workspace = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(outside.path(), workspace.path().join(INBOX_DIR)).unwrap();
-        let msg = compose_prompt("x", &[document("a.bin", b"\x00")], workspace.path());
+        let msg = compose_prompt("x", &[document("a.bin", b"\x00")], workspace.path(), None);
         assert!(note(&msg).contains("could not be saved"), "{}", note(&msg));
         assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
     }
@@ -4494,7 +4521,7 @@ mod tests {
     fn a_document_over_the_channel_cap_is_not_received() {
         let workspace = tempfile::tempdir().unwrap();
         let big = vec![0u8; INBOUND_DOCUMENT_MAX_BYTES + 1];
-        let msg = compose_prompt("x", &[document("big.bin", &big)], workspace.path());
+        let msg = compose_prompt("x", &[document("big.bin", &big)], workspace.path(), None);
         assert!(note(&msg).contains("channel limit; not received"));
         assert!(!workspace.path().join(INBOX_DIR).exists());
     }
@@ -4511,6 +4538,7 @@ mod tests {
                 error: None,
             }],
             std::path::Path::new("."),
+            None,
         );
         assert!(matches!(
             msg.content[1],

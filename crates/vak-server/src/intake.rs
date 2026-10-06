@@ -11,7 +11,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use chrono::Utc;
 use vak_core::intake::{self, Connector, Intake, IntakeError, IntakeStep, Source, Trust};
+use vak_core::intake_alerts::{self, Alert};
 use vak_core::triggers::{self, Schedule, Trigger, TriggerAction, TriggerKind};
+use vak_session::ids::AlertId;
 use vak_session::ids::{SourceId, TriggerId};
 use vak_session::runs::{OpenRun, RunOutcome};
 
@@ -103,6 +105,16 @@ pub(crate) async fn fire_poll(
                 outcome = if polled.unchanged { "unchanged" } else { "taken" },
                 "a source was polled"
             );
+            let candidates: Vec<intake_alerts::Candidate<'_>> = polled
+                .reached
+                .iter()
+                .map(|(item_id, item)| intake_alerts::Candidate {
+                    source: &found,
+                    item_id: item_id.clone(),
+                    item,
+                })
+                .collect();
+            notify(state, &candidates, Some(&trace)).await;
             run.settle_with(RunOutcome::Completed, None);
         }
         Err(error) => {
@@ -117,6 +129,103 @@ pub(crate) async fn fire_poll(
                 },
                 None,
             );
+        }
+    }
+}
+
+/// Sends what alerts owe for `candidates` (and what waited out a
+/// cooldown): an inbox entry each, and the alert's channel when it names
+/// one. A notice that cannot be evaluated is reported, never retried
+/// blindly: the next poll evaluates again.
+async fn notify(
+    state: &AppState,
+    candidates: &[intake_alerts::Candidate<'_>],
+    trace: Option<&vak_session::trace::TraceKey>,
+) {
+    let dues = match intake_alerts::evaluate(&shared(state), candidates, Utc::now()) {
+        Ok(dues) => dues,
+        Err(error) => {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "intake alerts were not evaluated");
+            return;
+        }
+    };
+    for due in dues {
+        let (title, body) = intake_alerts::notice(&due);
+        let alert = due.alert.id.to_string();
+        match due.alert.deliver_to.as_deref() {
+            Some(target) => {
+                let _ = crate::gateway::deliver_and_record_with_result(
+                    &state.core,
+                    trace,
+                    target,
+                    &body,
+                    vak_core::inbox::Kind::IntakeMatch,
+                    title,
+                    None,
+                    Some(&alert),
+                    None,
+                )
+                .await;
+            }
+            None => {
+                if let Err(error) = vak_core::inbox::record(
+                    &state.core.shared_scope().as_agent(),
+                    vak_core::inbox::Kind::IntakeMatch,
+                    &title,
+                    &body,
+                    None,
+                    Some(&alert),
+                    trace,
+                ) {
+                    tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "an intake notice was not recorded");
+                }
+            }
+        }
+    }
+}
+
+/// Push intake (plan M6.5): a file saved to an Agent's inbox becomes an
+/// item of its push source, with the run that received it.
+pub(crate) struct PushTake {
+    intake: Intake,
+    agent: String,
+    trace: Option<vak_session::trace::TraceKey>,
+    actor: Option<vak_session::ids::PrincipalId>,
+}
+
+impl PushTake {
+    pub(crate) fn for_core(
+        core: &vak_core::Core,
+        trace: Option<vak_session::trace::TraceKey>,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Self {
+        let data = core.shared_scope().into_root();
+        Self {
+            intake: Intake::at(
+                &vak_config::scope::SharedScope::new(&data),
+                vak_config::paths::tenant_home_at(&data, vak_config::paths::LOCAL_TENANT),
+            ),
+            agent: core
+                .agent_identity()
+                .map(|agent| agent.id.clone())
+                .unwrap_or_else(|| "vak".into()),
+            trace,
+            actor,
+        }
+    }
+
+    /// Takes the file saved at `saved`; a failure is reported, never fatal
+    /// to the message that carried it.
+    pub(crate) fn take(&self, saved: &str, filename: &str, bytes: &[u8]) {
+        if let Err(error) = self.intake.take_push(
+            &self.agent,
+            saved,
+            filename,
+            bytes,
+            self.trace.as_ref(),
+            self.actor,
+        ) {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a saved file was not taken into intake");
         }
     }
 }
@@ -373,7 +482,11 @@ async fn list_items(State(state): State<AppState>, Query(query): Query<ItemsQuer
         catalog.catch_up()?;
         Ok::<_, vak_core::CoreError>(catalog.list(
             "item",
-            &vak_catalog::Audience::default(),
+            // A person's own view: held items included.
+            &vak_catalog::Audience {
+                held: true,
+                ..Default::default()
+            },
             10_000,
         )?)
     })
@@ -461,9 +574,126 @@ async fn decide(state: &AppState, id: &str, step: IntakeStep) -> Response {
     }
 }
 
-/// `POST /intake/items/{id}/release`: lets a held item reach the Agent.
+/// `POST /intake/items/{id}/release`: lets a held item reach the Agent,
+/// and so its alerts.
 async fn release_item(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    decide(&state, &id, IntakeStep::Released).await
+    let response = decide(&state, &id, IntakeStep::Released).await;
+    if response.status() != StatusCode::NO_CONTENT {
+        return response;
+    }
+    let intake = intake_of(&state);
+    let released = intake.taken(&id).and_then(|row| match row.step {
+        IntakeStep::Taken { source, object, .. } => {
+            let found = intake::get(&shared(&state), &source.to_string())
+                .ok()
+                .flatten()?;
+            let body = intake.body(&source, &object).ok()?;
+            Some((found, body))
+        }
+        _ => None,
+    });
+    if let Some((found, body)) = released {
+        let candidate = intake_alerts::Candidate {
+            source: &found,
+            item_id: id.clone(),
+            item: &body,
+        };
+        notify(&state, &[candidate], None).await;
+    }
+    response
+}
+
+#[derive(serde::Deserialize)]
+struct AlertDraft {
+    name: String,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    keywords: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    sources: Vec<vak_session::ids::SourceId>,
+    #[serde(default)]
+    cooldown_minutes: u64,
+    #[serde(default)]
+    deliver_to: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+/// `GET /intake/alerts`
+async fn list_alerts(State(state): State<AppState>) -> Response {
+    match intake_alerts::list(&shared(&state)) {
+        Ok(alerts) => Json(serde_json::json!({ "alerts": alerts })).into_response(),
+        Err(error) => intake_error(error),
+    }
+}
+
+/// `POST /intake/alerts`
+async fn create_alert(State(state): State<AppState>, Json(draft): Json<AlertDraft>) -> Response {
+    let alert = Alert {
+        id: AlertId::new(),
+        name: draft.name.trim().to_string(),
+        agent: draft
+            .agent
+            .filter(|agent| !agent.trim().is_empty())
+            .unwrap_or_else(|| "vak".into()),
+        keywords: draft.keywords,
+        tags: draft.tags,
+        sources: draft.sources,
+        cooldown_minutes: draft.cooldown_minutes,
+        deliver_to: draft.deliver_to.filter(|target| !target.trim().is_empty()),
+        enabled: draft.enabled.unwrap_or(true),
+        created_at: Utc::now(),
+        created_by: Some(crate::request_actor(&state)),
+    };
+    match intake_alerts::create(&shared(&state), &alert) {
+        Ok(()) => (StatusCode::CREATED, Json(serde_json::json!(alert))).into_response(),
+        Err(error) => intake_error(error),
+    }
+}
+
+/// `PATCH /intake/alerts/{id}`: replaces the editable fields it names.
+async fn update_alert(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(patch): Json<serde_json::Value>,
+) -> Response {
+    let updated = intake_alerts::update(&shared(&state), &id, |alert| {
+        let Ok(mut value) = serde_json::to_value(&*alert) else {
+            return;
+        };
+        for key in [
+            "name",
+            "keywords",
+            "tags",
+            "sources",
+            "cooldown_minutes",
+            "deliver_to",
+            "enabled",
+        ] {
+            if let Some(next) = patch.get(key) {
+                value[key] = next.clone();
+            }
+        }
+        if let Ok(next) = serde_json::from_value::<Alert>(value) {
+            *alert = next;
+        }
+    });
+    match updated {
+        Ok(alert) => Json(serde_json::json!(alert)).into_response(),
+        Err(error) => intake_error(error),
+    }
+}
+
+/// `DELETE /intake/alerts/{id}`
+async fn delete_alert(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match intake_alerts::delete(&shared(&state), &id) {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => intake_error(error),
+    }
 }
 
 /// `POST /intake/items/{id}/quarantine`: holds an item back from the Agent.
@@ -490,4 +720,9 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/intake/items/{id}", get(get_item))
         .route("/intake/items/{id}/release", post(release_item))
         .route("/intake/items/{id}/quarantine", post(quarantine_item))
+        .route("/intake/alerts", get(list_alerts).post(create_alert))
+        .route(
+            "/intake/alerts/{id}",
+            axum::routing::patch(update_alert).delete(delete_alert),
+        )
 }

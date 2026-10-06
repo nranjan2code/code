@@ -1343,6 +1343,24 @@ endpoints. A live poll of the Rust blog, Hacker News and Lobsters took
 64 items, held none, took nothing new on a second poll, and traced an
 item through its source and run to its trigger.
 
+M6.5b (2026-10-06): `session_search` and `/search` cover items
+(`kind=item`); `vak_catalog::Audience::held` is false by default, so a
+held or quarantined item reaches no Agent read until a person releases
+it, and only a person's views (`/search`, `/intake/items`) set it. Items
+belong to their Agent, not a space. Alerts are Documents `alerts/<alr>`
+(`vak_core::intake_alerts`) with their matches in `alert-state/<alr>`,
+moved by CAS: each item matches an alert once, a cooldown keeps matches
+waiting rather than dropping them (they go at the next evaluation after
+it, which every poll runs), and a notice is an `intake_match` inbox entry
+or, with `deliver_to`, a delivery effect. A release evaluates alerts
+too. Push intake: a file saved to the inbox, from a channel or a drop in
+the client, is an item of the Agent's push source (`intake::push_source`,
+`Intake::take_push`) with the receiving run's key; alerts do not watch
+push items, which are the person's own. Exit test
+`quarantined_item_absent_from_agent_retrieval`; `intake_api.rs` covers
+alerts. A live Lobsters poll fired one alert notice for its one Rust
+story, and the client's search sheet opens an item at its link.
+
 **Exit tests**
 - `intake_item_has_trace_and_provenance`,
   `quarantined_item_absent_from_agent_retrieval`,

@@ -184,7 +184,7 @@ SDKs to preflight a model.
 | `/runs/:id/spans` | GET | One run's span closes in start order, each with `started_at`, for its waterfall (plan M5b) |
 | `/telemetry/services` | GET | The services that write a structured log |
 | `/telemetry/logs` | GET | Content-free log lines, newest first (`?service=&level=&trace=&spans=&limit=`) |
-| `/search` | GET | One search over the data catalog (`?q=&all=&kind=&agent=&limit=`), audience and trash filtered before ranking (plan M6; outside `/admin/api`) |
+| `/search` | GET | One search over the data catalog (`?q=&all=&kind=&agent=&limit=`; `kind=item` for intake items), audience and trash filtered before ranking (plan M6; outside `/admin/api`); a person's search includes held items with their status |
 | `/nodes/:id` | GET | One catalog node |
 | `/lineage/:id` | GET | A node's path up to its run, session, turn, Agent, space, actor and cause |
 | `/catalog` | GET | Whether the catalog has taken every record, and its counts |
@@ -195,7 +195,9 @@ SDKs to preflight a model.
 | `/intake/sources/:id/poll` | POST | Polls now through the trigger's claim |
 | `/intake/items` | GET | What the polls took, newest first (`?source=&status=&limit=`) |
 | `/intake/items/:id` | GET | One item with its body, labels and evidence |
-| `/intake/items/:id/release`, `/intake/items/:id/quarantine` | POST | A person lets a held item reach the Agent, or holds one back |
+| `/intake/items/:id/release`, `/intake/items/:id/quarantine` | POST | A person lets a held item reach the Agent, or holds one back; a release evaluates the Agent's alerts |
+| `/intake/alerts` | GET, POST | Intake alerts: keywords, tags or sources to match, a cooldown and an optional channel; a match is an `intake_match` inbox entry, each item once |
+| `/intake/alerts/:id` | PATCH, DELETE | Change or remove an alert |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
 | `/config/global` | PATCH | User-level defaults inherited by project workspaces |
 | `/config/mcp/global` | GET, PUT | Shared user MCP registry; values never expose secrets |

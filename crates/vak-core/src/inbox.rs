@@ -41,6 +41,8 @@ pub enum Kind {
     /// A scheduled task was due and could not start; the body says why and
     /// what to do about it.
     RoutineFailed,
+    /// New intake items matched one of the Agent's alerts (plan M6.5).
+    IntakeMatch,
 }
 
 impl Kind {

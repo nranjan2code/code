@@ -12,6 +12,7 @@ const HIT_WORDS: Record<SearchHit["role"], string> = {
   memory: "Memory",
   profile: "About you",
   entity: "Person or thing",
+  item: "From your sources",
 };
 
 const LIMITS = [8, 25, 50];
@@ -98,18 +99,36 @@ export default function SearchModal() {
 
           <div class="search-results">
             <For each={hits()} fallback={<Show when={searched() && !error()}><div class="dock-empty">No matches.</div></Show>}>
-              {(hit) => (
-            <button type="button" class="search-hit" disabled={hit.role !== "conversation"} onClick={() => { setSearchOpen(false); if (hit.role === "conversation") void activate(hit.session_id); }}>
-                  <span class="badge">{HIT_WORDS[hit.role] ?? hit.role}</span>
-                  <span class="search-hit-body">
-                    <span class="search-hit-snippet">{hit.snippet}</span>
-                    <Show when={hit.ts}>
-                      {(ts) => <span class="search-hit-meta">{new Date(ts()).toLocaleString()}</span>}
-                    </Show>
-                  </span>
-                  <Icon name="chevron" size={13} />
-                </button>
-              )}
+              {(hit) => {
+                const body = (
+                  <>
+                    <span class="badge">{HIT_WORDS[hit.role] ?? hit.role}</span>
+                    <span class="search-hit-body">
+                      <span class="search-hit-snippet">{hit.snippet}</span>
+                      <Show when={hit.ts}>
+                        {(ts) => <span class="search-hit-meta">{new Date(ts()).toLocaleString()}</span>}
+                      </Show>
+                    </span>
+                    <Icon name="chevron" size={13} />
+                  </>
+                );
+                return (
+                  <Show
+                    when={hit.role === "item" && hit.link}
+                    fallback={
+                      <button type="button" class="search-hit" disabled={hit.role !== "conversation"} onClick={() => { setSearchOpen(false); if (hit.role === "conversation") void activate(hit.session_id); }}>
+                        {body}
+                      </button>
+                    }
+                  >
+                    {(link) => (
+                      <a class="search-hit" href={link()} target="_blank" rel="noreferrer noopener">
+                        {body}
+                      </a>
+                    )}
+                  </Show>
+                );
+              }}
             </For>
           </div>
 

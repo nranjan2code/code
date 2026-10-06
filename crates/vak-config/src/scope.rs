@@ -334,6 +334,17 @@ impl SharedScope {
         self.root.join("sources")
     }
 
+    /// Where intake alerts are named: the Documents `alerts/<alr>`.
+    pub fn alerts(&self) -> PathBuf {
+        self.root.join("alerts")
+    }
+
+    /// What each intake alert has matched and not yet sent: the Documents
+    /// `alert-state/<alr>`.
+    pub fn alert_state(&self) -> PathBuf {
+        self.root.join("alert-state")
+    }
+
     /// The intake records (plan M6.5): one chain of what every source took
     /// and how each item is held.
     pub fn intake(&self) -> PathBuf {

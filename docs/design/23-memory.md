@@ -25,8 +25,8 @@ model calls session_search {query, limit?}
 Catalog::search(query, audience, scope, limit)
         │  the catalog caught up with every ledger and Document first
         │  FTS5 over message text, tool-result digests, memory notes,
-        │  profile notes and entities, filtered by Agent, audience,
-        │  space and the trash before ranking
+        │  profile notes, entities and intake items, filtered by Agent,
+        │  audience, space, the trash and intake's holds before ranking
         ▼
 top-N hits: {session, ts, role, score, snippet}
         │
@@ -34,7 +34,11 @@ returned as an ordinary tool result → appended to the ledger
 ```
 
 A workspace search covers the workspace's space and anything of no space
-(the profile); `/search?all=true` covers every space. The current session
+(the profile, and items from the Agent's sources and saved files: intake,
+plan M6.5); `/search?all=true` covers every space. An intake item that
+detection held, or a person quarantined, never reaches the model's
+search: only a person's own view (`/search`, the intake reader) sets
+`Audience::held`, so every Agent read is closed by default. The current session
 and the trash are excluded. A memory note derived from a conversation keeps
 that conversation's audience; profile notes belong to the owner's local
 audience. The model sees a search answer only through a logged

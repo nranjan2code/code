@@ -106,6 +106,13 @@ impl Source {
     }
 }
 
+/// The built-in source a file arrives through when a person drops it or a
+/// channel attaches it (push intake, doc 76 §1): one per Agent, never a
+/// Document, never polled.
+pub fn push_source(agent: &str) -> SourceId {
+    SourceId::derived(&format!("push/{agent}"))
+}
+
 /// The grant scope of a source's item objects.
 pub fn object_scope(source: &SourceId) -> String {
     format!("intake:{source}")
@@ -332,6 +339,68 @@ impl Intake {
         Ok(rows)
     }
 
+    /// Takes a file saved to `agent`'s inbox at `saved` (its
+    /// workspace-relative path, unique per content) as an item of the
+    /// Agent's push source: named by `filename`, with its text when it is
+    /// text, labelled by detection like any other item. Taking the same
+    /// saved file again returns its first row.
+    pub fn take_push(
+        &self,
+        agent: &str,
+        saved: &str,
+        filename: &str,
+        bytes: &[u8],
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<IntakeEvent, IntakeError> {
+        let source = push_source(agent);
+        let text: String = std::str::from_utf8(bytes)
+            .ok()
+            .filter(|text| !text.contains('\0'))
+            .map(|text| text.chars().take(vak_intake::MAX_TEXT_CHARS).collect())
+            .unwrap_or_default();
+        let item = Item {
+            key: saved.to_string(),
+            title: filename.chars().take(500).collect(),
+            link: None,
+            author: None,
+            published: None,
+            text,
+        };
+        let id = item_id(&source, &item);
+        if let Some(row) = self.taken(&id) {
+            return Ok(row);
+        }
+        let body =
+            serde_json::to_vec(&item).map_err(|error| IntakeError::Store(error.to_string()))?;
+        let object = TenantObjects::for_tenant(&self.tenant_home)
+            .and_then(|objects| objects.put(&body, &object_scope(&source)))
+            .map_err(|error| IntakeError::Store(error.to_string()))?;
+        let detection = vak_intake::detect(&item);
+        let row = IntakeEvent {
+            item: id,
+            at: Utc::now(),
+            trace: trace.cloned(),
+            actor: actor.or_else(|| trace.and_then(|trace| trace.actor)),
+            step: IntakeStep::Taken {
+                source,
+                agent: agent.to_string(),
+                key: item.key.clone(),
+                object,
+                title: item.title.clone(),
+                link: None,
+                published: None,
+                disposition: detection.disposition,
+                labels: detection.labels,
+                evidence: detection.evidence,
+            },
+        };
+        self.chain
+            .append(&row)
+            .map_err(|error| IntakeError::Store(error.to_string()))?;
+        Ok(row)
+    }
+
     /// Records that `actor` released or held `item`.
     pub fn decide(
         &self,
@@ -401,6 +470,10 @@ pub struct Polled {
     pub taken: usize,
     /// Of those taken, how many detection held back.
     pub held: usize,
+    /// The items taken that reach the Agent, with their ids: what alerts
+    /// match.
+    #[serde(skip)]
+    pub reached: Vec<(String, Item)>,
 }
 
 /// Polls `source` under the run `trace`: holds its cursor, fetches with a
@@ -469,10 +542,23 @@ pub async fn poll(
     if !moved {
         return Err(IntakeError::Busy);
     }
+    let reached = items
+        .iter()
+        .filter_map(|item| {
+            let id = item_id(&source.id, item);
+            rows.iter()
+                .any(|row| {
+                    row.item == id
+                        && matches!(&row.step, IntakeStep::Taken { disposition, .. } if disposition.reaches_agent())
+                })
+                .then(|| (id, item.clone()))
+        })
+        .collect();
     Ok(Polled {
         unchanged: false,
         fetched: items.len(),
         taken: rows.len(),
+        reached,
         held: rows
             .iter()
             .filter(|row| {

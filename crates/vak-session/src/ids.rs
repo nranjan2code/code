@@ -147,6 +147,10 @@ typed_id!(
 );
 typed_id!(ConnectionId, "con");
 typed_id!(SourceId, "src");
+typed_id!(
+    /// An intake alert: which new items reach a person (plan M6.5).
+    AlertId, "alr"
+);
 typed_id!(DeliveryId, "dlv");
 typed_id!(
     /// One server or CLI process, minted at start; leases are judged by its

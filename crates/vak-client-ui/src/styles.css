@@ -4028,6 +4028,7 @@ body.is-resizing .split-divider {
   background: var(--surface);
   color: var(--text-soft);
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
 }
 .search-hit:hover { background: var(--surface-hover); color: var(--text); }
