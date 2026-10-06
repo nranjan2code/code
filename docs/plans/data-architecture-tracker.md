@@ -60,7 +60,7 @@ Known slow tests (each over 60 s, not failures):
 | 8 | M4.8 `CopyEnvironment`; the non-git refusal goes; invariant 38 restated; docs 22, 29, 64, 76, 80 and 81 restated against the shipped shapes | `non_git_space_routine_runs_in_copy_environment` | Done, 9c9780a5b |
 | 9 | M2 remainder: credential-store `KeyAuthority`, torn-write seal test, fuzz corpus, flock single-writer lock, blob streaming | plan §M2 | Done, f22e9406e |
 | 10 | M5 telemetry (may run beside M4) | `library_crates_have_no_eprintln`, `one_run_one_trace_id`, `log_lines_are_json_with_trace_fields`, `telemetry_carries_no_content` | In progress |
-| 10a | M5a vak-telemetry, content-free JSON lines, library `eprintln!` converted, clippy ban | `library_crates_have_no_eprintln`, `log_lines_are_json_with_trace_fields`, `telemetry_carries_no_content` | Done, COMMIT |
+| 10a | M5a vak-telemetry, content-free JSON lines, library `eprintln!` converted, clippy ban | `library_crates_have_no_eprintln`, `log_lines_are_json_with_trace_fields`, `telemetry_carries_no_content` | Done, 0e343e9cc |
 | 10b | M5b span tree run › turn › step › dispatch/tool_call › delivery; worker continues the span; Traces & logs screen and Run waterfall; vak-ops log readers; bus `max_age` | `one_run_one_trace_id` | Next |
 | 11 | M6 data catalog, search, lineage | `lineage_from_any_artifact_to_cause`, `search_respects_audience`, `catalog_rebuild_equals_incremental`, `turn_path_reads_flat`, `catalog_query_p95_under_50ms_at_1m_nodes` | |
 | 12 | M6.5 intake (doc 76) | `intake_item_has_trace_and_provenance`, `quarantined_item_absent_from_agent_retrieval`, `feed_pipeline_is_gone` | |
