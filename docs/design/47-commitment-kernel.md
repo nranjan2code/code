@@ -505,7 +505,11 @@ strength its `evidence` axis demands, and the ledger refuses the event at
 append time. A ledger that can record a lie is not an audit trail — so the
 strength a closure records is recomputed from the criteria at append time,
 whatever the caller claimed, and the check-and-append runs under an OS file
-lock that a crashed writer releases with its process.
+lock that a crashed writer releases with its process. The state it checks
+comes from the `commitments-rollup` Document (every commitment's projection
+and the chain position it covers) with only the events appended since
+folded in, so neither a check nor a turn's read replays the ledger
+(data-architecture plan M6.3, `vak_session::rollup`).
 
 The model may **propose** criteria; it may never **mark one passed**. Same
 separation of powers as permission-before-dispatch. A failed or undetermined

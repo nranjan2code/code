@@ -2847,7 +2847,7 @@ async fn gateway_inbound(
             .and_then(|guard| {
                 guard
                     .as_ref()
-                    .map(|log| log.has_request_admission(&request_id))
+                    .map(|log| !matches!(log.has_request_admission(&request_id), Ok(false)))
             })
             .unwrap_or(false);
     if already_admitted {

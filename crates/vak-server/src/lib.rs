@@ -5530,7 +5530,9 @@ async fn run_prompt(
         }
     }
     if let Some(request_id) = request_id.as_deref()
-        && taken.has_request_admission(request_id)
+        // A ref that cannot be read is treated as admitted: a retried
+        // request is never run twice.
+        && !matches!(taken.has_request_admission(request_id), Ok(false))
     {
         *handle
             .session
@@ -5778,7 +5780,7 @@ async fn send_steering(
             .and_then(|guard| {
                 guard
                     .as_ref()
-                    .map(|log| log.has_request_admission(&request_id))
+                    .map(|log| !matches!(log.has_request_admission(&request_id), Ok(false)))
             })
             .unwrap_or(false);
     if already_admitted {
@@ -23342,6 +23344,7 @@ mod sandbox_promotion_tests {
             !SessionLog::open_read_only(session_path)
                 .unwrap()
                 .has_request_admission("revision-from-comment-from-asha")
+                .unwrap()
         );
     }
 

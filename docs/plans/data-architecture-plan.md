@@ -1222,6 +1222,22 @@ server start, after each turn and on the scheduler tick.
 `PresentationStore` moved to `vak_core::presentation_store` (already a
 Document).
 
+M6.3 (2026-10-06): the flat turn path. `vak_session::rollup` keeps a
+chain's projection as a Document with the chain position it covers; a
+read folds only what was appended since, saves when it folded anything,
+never moves the Document back past a later save, and rebuilds when the
+chain is behind it (a cut unsynced tail). Routing evidence
+(`routing-evidence-rollup`, day buckets per leg) and commitment state
+(`commitments-rollup`, every commitment's projection; `project` split
+into `start` and `apply`) read through it. A request's admission is the
+ref `req/<session>/<request digest>`, moved by `SessionLog::append` after
+the admission activity is synced and read by `has_request_admission` /
+`request_admitted` without opening the ledger; an unreadable ref counts
+as admitted. The in-process in-flight set stays: it guards concurrent
+requests in one process and is released on failure, which the durable ref
+is not. `turn_path_reads_flat` passes with every sealed segment of each
+chain made unreadable.
+
 ### M6.5 — Intake (L, after M6; doc 76)
 
 - Sources are Desired, polled through M4's `source_poll` triggers with

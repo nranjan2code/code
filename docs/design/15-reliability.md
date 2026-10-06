@@ -264,7 +264,11 @@ turn in that session read the frozen values unconditionally, which caused:
    operator selection, never the session header's initial snapshot.
 2. Calls `Core::plan_route_ladder(turn_primary_leg, Some(engagement.posture.demand))`
    after intent resolution to assemble a fresh ladder using:
-   - Current evidence ledger (the `routing-evidence` chain, 30-day TTL)
+   - Current evidence ledger (the `routing-evidence` chain, 30-day TTL in
+     whole UTC days), read through its rollup Document
+     (`routing-evidence-rollup`: per day, per leg, counts and up to 512
+     latencies) with only the rows appended since folded in, so a turn
+     never replays the chain (data-architecture plan M6.3)
    - Session belief state (domain-weighted doubt, clears on success)
    - Warm discovery: the last successful model catalogue per credential,
      kept fresh in the background (see [How discovery stays

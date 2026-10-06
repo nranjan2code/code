@@ -349,8 +349,11 @@ memory, entities and commitments, and rebuilds them identically. M6.2 is
 done (2026-10-06): every search (`/search`, the admin console,
 `session_search`) and the turn recall read the catalog, and "where is
 session X" is one catalog lookup; `vak-store`, `vak_session::search`, its
-ledger cache and the directory walks are gone. M6.3 (the turn path's
-decisions on refs and Documents) is next. No session starts a later step
+ledger cache and the directory walks are gone. M6.3 is done
+(2026-10-06): request admission is a `req/` ref, and routing evidence and
+commitment state read through rollup Documents (`vak_session::rollup`),
+so no turn-path decision replays a chain. M6.4 (the Lineage tab and the
+catalog's status and rebuild screens) is next. No session starts a later step
 unasked.
 
 **What it is.** One architecture for everything Vak writes:
@@ -490,6 +493,9 @@ unasked.
   directories, and search only through `Catalog::search` with the
   caller's `Audience` (invariant 37). A new kind of record that a person
   may search for or trace is a catalog source in the same change.
+- A decision on the turn path reads a ref or a rollup
+  (`vak_session::rollup`), never a replay of a chain or a ledger: a new
+  projection a turn needs is a rollup Document over its chain.
 - Put a record about a session in that session's Agent home
   (`session_agent_scope` in vak-server), never the serving Core's.
 - Keep Agent-authored state as Documents (`vak_session::documents`), never

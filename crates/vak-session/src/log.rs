@@ -134,14 +134,35 @@ pub struct SessionLog {
     fetched: std::sync::Mutex<HashMap<String, String>>,
 }
 
+/// The ref recording that session `session_id` admitted request
+/// `request_id`: the request id is client text, so it is named by digest.
+fn admission_ref(session_id: &str, request_id: &str) -> String {
+    format!("req/{session_id}/{}", crate::types::line_digest(request_id))
+}
+
+/// Whether session `session_id` admitted the client request `request_id`:
+/// its `req/` ref, read without opening the ledger (plan M6.3).
+pub fn request_admitted(session_id: &str, request_id: &str) -> Result<bool, SessionError> {
+    let tenant =
+        crate::objects::TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())?;
+    Ok(tenant
+        .store()
+        .get_ref(&admission_ref(session_id, request_id))
+        .map_err(crate::objects::objects_error)?
+        .is_some())
+}
+
 impl SessionLog {
-    /// Returns whether this append-only ledger already recorded admission for
-    /// a client request. This is used to make network retries idempotent.
-    pub fn has_request_admission(&self, request_id: &str) -> bool {
-        self.entries.iter().any(|entry| {
-            matches!(&entry.payload, EntryPayload::Activity(activity)
-                if activity.data.get("request_id").map(String::as_str) == Some(request_id))
-        })
+    /// Whether this session already admitted the client request
+    /// `request_id`: one ref lookup (`req/<session>/<request>`, plan M6.3),
+    /// never a scan of the ledger. The ref is moved when the admission's
+    /// activity is appended (`append`). It makes network retries
+    /// idempotent; an error reading it is the caller's to refuse on.
+    pub fn has_request_admission(&self, request_id: &str) -> Result<bool, SessionError> {
+        match self.header() {
+            Some(header) => request_admitted(&header.session_id, request_id),
+            None => Ok(false),
+        }
     }
     pub fn create(path: PathBuf, header: SessionHeader) -> Result<Self, SessionError> {
         vak_config::spaces::require_bound(&path).map_err(SessionError::Unbound)?;
@@ -544,8 +565,21 @@ impl SessionLog {
         writer
             .append_unsynced(line.as_bytes(), None)
             .map_err(storage_error)?;
-        if commits(&entry) {
+        // A request's admission is durable before its ref says so, so the
+        // ref never names an admission a crash could lose.
+        let admitted = match &entry.payload {
+            EntryPayload::Activity(activity) => activity.data.get("request_id").cloned(),
+            _ => None,
+        };
+        if commits(&entry) || admitted.is_some() {
             writer.sync().map_err(storage_error)?;
+        }
+        if let (Some(request_id), Some(header)) = (admitted, self.header()) {
+            let name = admission_ref(&header.session_id, &request_id);
+            let entry_id = entry.id.clone();
+            crate::fence::swap_ref(&vak_config::paths::local_tenant_home(), &name, |current| {
+                Ok(current.is_none().then(|| entry_id.clone().into_bytes()))
+            })?;
         }
         self.by_id.insert(entry.id.clone(), self.entries.len());
         self.tail_id = Some(entry.id.clone());

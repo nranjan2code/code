@@ -169,13 +169,17 @@ struct LedgerLock {
 /// conversation content, and it must survive any individual session.
 pub struct CommitmentLedger {
     path: PathBuf,
+    /// The Document rolling the chain up (plan M6.3).
+    rollup: PathBuf,
     trace: Option<vak_session::trace::TraceKey>,
 }
 
 impl CommitmentLedger {
     pub fn new(sessions_home: &Path) -> Self {
+        let scope = vak_config::scope::AgentScope::new(sessions_home);
         CommitmentLedger {
-            path: vak_config::scope::AgentScope::new(sessions_home).commitments(),
+            path: scope.commitments(),
+            rollup: scope.commitments_rollup(),
             trace: None,
         }
     }
@@ -272,26 +276,24 @@ impl CommitmentLedger {
             .collect()
     }
 
-    /// Project one commitment's current state.
+    /// Every commitment's state, read from the rollup with only the events
+    /// appended since folded in: a turn's read never replays the chain.
+    fn projection(&self) -> Projection {
+        self.rollup().read(Projection::fold)
+    }
+
+    fn rollup(&self) -> vak_session::rollup::Rollup {
+        vak_session::rollup::Rollup::new(&self.path, &self.rollup)
+    }
+
+    /// One commitment's current state.
     pub fn get(&self, commitment_id: &str) -> Result<Option<Commitment>, LedgerError> {
-        let events = self.events_for(commitment_id);
-        Ok(project(&events))
+        Ok(self.projection().commitments.remove(commitment_id))
     }
 
     /// Every commitment, most recently updated first.
     pub fn all(&self) -> Vec<Commitment> {
-        let mut by_id: std::collections::BTreeMap<String, Vec<Event>> =
-            std::collections::BTreeMap::new();
-        for event in self.events() {
-            by_id
-                .entry(event.commitment_id.clone())
-                .or_default()
-                .push(event);
-        }
-        let mut out: Vec<Commitment> = by_id
-            .values()
-            .filter_map(|events| project(events))
-            .collect();
+        let mut out: Vec<Commitment> = self.projection().commitments.into_values().collect();
         out.sort_by_key(|commitment| std::cmp::Reverse(commitment.updated_at));
         out
     }
@@ -323,7 +325,16 @@ impl CommitmentLedger {
 /// truncated or partially-corrupt ledger declines to invent a commitment
 /// rather than projecting a plausible-looking fiction.
 pub fn project(events: &[Event]) -> Option<Commitment> {
-    let first = events.first()?;
+    let mut commitment = start(events.first()?)?;
+    for event in events.iter().skip(1) {
+        apply(&mut commitment, event);
+    }
+    Some(commitment)
+}
+
+/// A commitment's state from its first event, or `None` when that event is
+/// not an `Opened`.
+fn start(first: &Event) -> Option<Commitment> {
     let EventKind::Opened { spec } = &first.kind else {
         return None;
     };
@@ -341,7 +352,7 @@ pub fn project(events: &[Event]) -> Option<Commitment> {
         })
         .collect();
 
-    let mut commitment = Commitment {
+    Some(Commitment {
         commitment_id: first.commitment_id.clone(),
         opened_at: first.ts,
         spec,
@@ -357,149 +368,184 @@ pub fn project(events: &[Event]) -> Option<Commitment> {
         consecutive_stalls: 0,
         drift: Vec::new(),
         updated_at: first.ts,
-    };
+    })
+}
 
-    for event in events.iter().skip(1) {
-        commitment.updated_at = event.ts;
-        match &event.kind {
-            EventKind::Opened { .. } => {
-                // A second open for the same id is a ledger fault, not a
-                // reset. Ignore it rather than losing the accumulated history.
+/// Folds one later event into a commitment's state.
+fn apply(commitment: &mut Commitment, event: &Event) {
+    commitment.updated_at = event.ts;
+    match &event.kind {
+        EventKind::Opened { .. } => {
+            // A second open for the same id is a ledger fault, not a
+            // reset. Ignore it rather than losing the accumulated history.
+        }
+        EventKind::Readmitted { drift, reading } => {
+            commitment.drift = drift.clone();
+            commitment.spec.reading = (**reading).clone();
+        }
+        EventKind::EpisodeStarted {
+            episode_id,
+            session_id,
+            strand_id,
+        } => {
+            // A new episode is someone working it again: whatever
+            // blocked or suspended the last one is no longer the state.
+            commitment.phase = Phase::Active;
+            commitment.suspension = None;
+            commitment.blocker = None;
+            commitment.episodes.push(Episode {
+                episode_id: episode_id.clone(),
+                session_id: session_id.clone(),
+                strand_id: strand_id.clone(),
+                started_at: event.ts,
+                ended_at: None,
+                advancement: None,
+                spend_usd: 0.0,
+            });
+        }
+        EventKind::EpisodeEnded {
+            episode_id,
+            advancement,
+            spend_usd,
+        } => {
+            if let Some(episode) = commitment
+                .episodes
+                .iter_mut()
+                .find(|episode| episode.episode_id == *episode_id)
+            {
+                episode.ended_at = Some(event.ts);
+                episode.advancement = Some(advancement.clone());
+                episode.spend_usd = *spend_usd;
             }
-            EventKind::Readmitted { drift, reading } => {
-                commitment.drift = drift.clone();
-                commitment.spec.reading = (**reading).clone();
+            commitment.spend_usd += spend_usd;
+            if advancement.is_stall() {
+                commitment.consecutive_stalls += 1;
+            } else {
+                // Any real advancement — including `Learned` — clears the
+                // streak. Exploration is not stalling.
+                commitment.consecutive_stalls = 0;
             }
-            EventKind::EpisodeStarted {
-                episode_id,
-                session_id,
-                strand_id,
-            } => {
-                // A new episode is someone working it again: whatever
-                // blocked or suspended the last one is no longer the state.
-                commitment.phase = Phase::Active;
-                commitment.suspension = None;
-                commitment.blocker = None;
-                commitment.episodes.push(Episode {
-                    episode_id: episode_id.clone(),
-                    session_id: session_id.clone(),
-                    strand_id: strand_id.clone(),
-                    started_at: event.ts,
-                    ended_at: None,
-                    advancement: None,
-                    spend_usd: 0.0,
-                });
-            }
-            EventKind::EpisodeEnded {
-                episode_id,
-                advancement,
-                spend_usd,
-            } => {
-                if let Some(episode) = commitment
-                    .episodes
-                    .iter_mut()
-                    .find(|episode| episode.episode_id == *episode_id)
-                {
-                    episode.ended_at = Some(event.ts);
-                    episode.advancement = Some(advancement.clone());
-                    episode.spend_usd = *spend_usd;
-                }
-                commitment.spend_usd += spend_usd;
-                if advancement.is_stall() {
-                    commitment.consecutive_stalls += 1;
-                } else {
-                    // Any real advancement — including `Learned` — clears the
-                    // streak. Exploration is not stalling.
-                    commitment.consecutive_stalls = 0;
-                }
-                if let Advancement::Blocked { blocker } = advancement {
-                    commitment.phase = Phase::Blocked;
-                    commitment.blocker = Some(blocker.clone());
-                }
-            }
-            EventKind::Suspended { suspension } => {
-                commitment.phase = Phase::Suspended;
-                commitment.suspension = Some(suspension.clone());
-            }
-            EventKind::Resumed { .. } => {
-                commitment.phase = Phase::Active;
-                commitment.suspension = None;
-            }
-            EventKind::Blocked { blocker } => {
+            if let Advancement::Blocked { blocker } = advancement {
                 commitment.phase = Phase::Blocked;
                 commitment.blocker = Some(blocker.clone());
             }
-            EventKind::Unblocked { .. } => {
-                commitment.phase = Phase::Active;
-                commitment.blocker = None;
+        }
+        EventKind::Suspended { suspension } => {
+            commitment.phase = Phase::Suspended;
+            commitment.suspension = Some(suspension.clone());
+        }
+        EventKind::Resumed { .. } => {
+            commitment.phase = Phase::Active;
+            commitment.suspension = None;
+        }
+        EventKind::Blocked { blocker } => {
+            commitment.phase = Phase::Blocked;
+            commitment.blocker = Some(blocker.clone());
+        }
+        EventKind::Unblocked { .. } => {
+            commitment.phase = Phase::Active;
+            commitment.blocker = None;
+        }
+        EventKind::CriterionEvaluated {
+            criterion_id,
+            result,
+            strength,
+        } => {
+            if let Some(criterion) = commitment
+                .criteria
+                .iter_mut()
+                .find(|criterion| criterion.criterion_id == *criterion_id)
+            {
+                criterion.result = Some(result.clone());
+                criterion.strength = Some(*strength);
+                criterion.evaluated_at = Some(event.ts);
             }
-            EventKind::CriterionEvaluated {
-                criterion_id,
-                result,
-                strength,
-            } => {
-                if let Some(criterion) = commitment
-                    .criteria
-                    .iter_mut()
-                    .find(|criterion| criterion.criterion_id == *criterion_id)
-                {
-                    criterion.result = Some(result.clone());
-                    criterion.strength = Some(*strength);
-                    criterion.evaluated_at = Some(event.ts);
-                }
-                if commitment.phase == Phase::Active {
-                    commitment.phase = Phase::Satisfying;
-                }
-            }
-            EventKind::EnvelopeGranted { envelope } => {
-                commitment.envelope = Some((**envelope).clone());
-            }
-            EventKind::EnvelopeRevoked { envelope_id, .. } => {
-                if let Some(envelope) = commitment.envelope.as_mut()
-                    && envelope.envelope_id == *envelope_id
-                {
-                    envelope.revoked_at = Some(event.ts);
-                }
-            }
-            EventKind::QuestionAnswered { question_id, .. } => {
-                let answered = matches!(
-                    &commitment.suspension,
-                    Some(Suspension::Human { question_id: id, .. }) if id == question_id
-                );
-                if answered {
-                    commitment.phase = Phase::Active;
-                    commitment.suspension = None;
-                }
-            }
-            EventKind::Superseded { by, reason } => {
-                commitment.superseded_by = Some(by.clone());
-                commitment.phase = Phase::Closed;
-                commitment.closure = Some(Closure {
-                    verdict: Verdict::Superseded,
-                    strength: commitment.achieved_strength(),
-                    closed_at: event.ts,
-                    evidence: Vec::new(),
-                    note: reason.clone(),
-                });
-            }
-            EventKind::Closed {
-                verdict,
-                strength,
-                evidence,
-                note,
-            } => {
-                commitment.phase = Phase::Closed;
-                commitment.closure = Some(Closure {
-                    verdict: *verdict,
-                    strength: *strength,
-                    closed_at: event.ts,
-                    evidence: evidence.clone(),
-                    note: note.clone(),
-                });
+            if commitment.phase == Phase::Active {
+                commitment.phase = Phase::Satisfying;
             }
         }
+        EventKind::EnvelopeGranted { envelope } => {
+            commitment.envelope = Some((**envelope).clone());
+        }
+        EventKind::EnvelopeRevoked { envelope_id, .. } => {
+            if let Some(envelope) = commitment.envelope.as_mut()
+                && envelope.envelope_id == *envelope_id
+            {
+                envelope.revoked_at = Some(event.ts);
+            }
+        }
+        EventKind::QuestionAnswered { question_id, .. } => {
+            let answered = matches!(
+                &commitment.suspension,
+                Some(Suspension::Human { question_id: id, .. }) if id == question_id
+            );
+            if answered {
+                commitment.phase = Phase::Active;
+                commitment.suspension = None;
+            }
+        }
+        EventKind::Superseded { by, reason } => {
+            commitment.superseded_by = Some(by.clone());
+            commitment.phase = Phase::Closed;
+            commitment.closure = Some(Closure {
+                verdict: Verdict::Superseded,
+                strength: commitment.achieved_strength(),
+                closed_at: event.ts,
+                evidence: Vec::new(),
+                note: reason.clone(),
+            });
+        }
+        EventKind::Closed {
+            verdict,
+            strength,
+            evidence,
+            note,
+        } => {
+            commitment.phase = Phase::Closed;
+            commitment.closure = Some(Closure {
+                verdict: *verdict,
+                strength: *strength,
+                closed_at: event.ts,
+                evidence: evidence.clone(),
+                note: note.clone(),
+            });
+        }
     }
-    Some(commitment)
+}
+
+/// Every commitment's state, as the rollup keeps it (plan M6.3): each
+/// opened commitment projected so far, and the ids whose first event was not
+/// an `Opened`, which never become a commitment.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Projection {
+    commitments: std::collections::BTreeMap<String, Commitment>,
+    #[serde(default)]
+    refused: std::collections::BTreeSet<String>,
+}
+
+impl Projection {
+    /// Folds one row; a row that is not an event is skipped rather than
+    /// trusted, as `events` does.
+    fn fold(&mut self, bytes: &[u8]) {
+        let Ok(event) = serde_json::from_slice::<Event>(bytes) else {
+            return;
+        };
+        if self.refused.contains(&event.commitment_id) {
+            return;
+        }
+        match self.commitments.get_mut(&event.commitment_id) {
+            Some(commitment) => apply(commitment, &event),
+            None => match start(&event) {
+                Some(commitment) => {
+                    self.commitments
+                        .insert(event.commitment_id.clone(), commitment);
+                }
+                None => {
+                    self.refused.insert(event.commitment_id);
+                }
+            },
+        }
+    }
 }
 
 /// Build a spec from a resolved reading.

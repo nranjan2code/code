@@ -13,6 +13,7 @@ pub mod fence;
 pub mod ids;
 pub mod log;
 pub mod objects;
+pub mod rollup;
 pub mod runs;
 pub mod tail;
 pub mod text;

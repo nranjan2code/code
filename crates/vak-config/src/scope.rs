@@ -192,6 +192,18 @@ impl AgentScope {
         self.root.join("commitments")
     }
 
+    /// The Document rolling up `commitments()` so a turn reads each
+    /// commitment's state without replaying the chain (plan M6.3).
+    pub fn commitments_rollup(&self) -> PathBuf {
+        self.root.join("commitments-rollup")
+    }
+
+    /// The Document rolling up `routing_evidence()` for the route ladder
+    /// (plan M6.3).
+    pub fn routing_evidence_rollup(&self) -> PathBuf {
+        self.root.join("routing-evidence-rollup")
+    }
+
     pub fn inbox(&self) -> PathBuf {
         self.root.join("inbox")
     }

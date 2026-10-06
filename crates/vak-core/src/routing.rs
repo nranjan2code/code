@@ -43,14 +43,70 @@ fn p50(samples: &mut [u64]) -> Option<u64> {
     Some(samples[(samples.len() - 1) / 2])
 }
 
+/// Latencies kept per leg per day: enough for an exact median at the
+/// volumes one person's use produces, and a bounded Document beyond it.
+const LATENCY_SAMPLES_PER_DAY: usize = 512;
+
+/// One leg's evidence on one day.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct DayEvidence {
+    success: u64,
+    failure: u64,
+    unknown: u64,
+    latencies: Vec<u64>,
+}
+
+/// The evidence rollup (plan M6.3): per UTC day, per `provider` and
+/// `model`. Days past the TTL are dropped as rows are folded in.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct EvidenceDays {
+    days: std::collections::BTreeMap<chrono::NaiveDate, HashMap<String, DayEvidence>>,
+}
+
+/// The rollup's key for one leg.
+fn leg_key(provider: &str, model: &str) -> String {
+    format!("{provider}\u{1f}{model}")
+}
+
+impl EvidenceDays {
+    /// Folds one row; a row that does not decode is skipped rather than
+    /// trusted, never misranked.
+    fn fold(&mut self, bytes: &[u8]) {
+        let Ok(row) = serde_json::from_slice::<EvidenceRow>(bytes) else {
+            return;
+        };
+        let day = self
+            .days
+            .entry(row.ts.date_naive())
+            .or_default()
+            .entry(leg_key(&row.provider, &row.model))
+            .or_default();
+        match row.outcome.as_str() {
+            "success" => {
+                day.success += 1;
+                if day.latencies.len() < LATENCY_SAMPLES_PER_DAY {
+                    day.latencies.push(row.latency_ms);
+                }
+            }
+            "failure" => day.failure += 1,
+            _ => day.unknown += 1,
+        }
+        let oldest = (row.ts - chrono::Duration::days(EVIDENCE_TTL_DAYS as i64)).date_naive();
+        self.days.retain(|day, _| *day >= oldest);
+    }
+}
+
 pub struct EvidenceLedger {
     path: PathBuf,
+    rollup: PathBuf,
 }
 
 impl EvidenceLedger {
     pub fn new(sessions_home: &Path) -> Self {
+        let scope = vak_config::scope::AgentScope::new(sessions_home);
         EvidenceLedger {
-            path: vak_config::scope::AgentScope::new(sessions_home).routing_evidence(),
+            path: scope.routing_evidence(),
+            rollup: scope.routing_evidence_rollup(),
         }
     }
 
@@ -60,26 +116,32 @@ impl EvidenceLedger {
             .map_err(std::io::Error::other)
     }
 
-    /// TTL-filtered snapshot for the ordering function. Corrupt lines are
-    /// skipped rather than trusted -- never misranked. Latency is a true
-    /// p50 over each leg's samples, not first-seen.
+    /// TTL-filtered snapshot for the ordering function, read from the
+    /// rollup with only the rows appended since folded in: a turn never
+    /// replays the chain (plan M6.3). The window is whole UTC days. Corrupt
+    /// rows are skipped rather than trusted -- never misranked. Latency is
+    /// the p50 over each leg's samples.
     pub fn snapshot(&self) -> EvidenceSnapshot {
-        let cutoff = chrono::Utc::now() - chrono::Duration::days(EVIDENCE_TTL_DAYS as i64);
+        let rollup = vak_session::rollup::Rollup::new(&self.path, &self.rollup);
+        let evidence: EvidenceDays = rollup.read(EvidenceDays::fold);
+        let oldest =
+            (chrono::Utc::now() - chrono::Duration::days(EVIDENCE_TTL_DAYS as i64)).date_naive();
         let mut by_key: HashMap<(String, String), ModelEvidence> = HashMap::new();
         let mut latencies: HashMap<(String, String), Vec<u64>> = HashMap::new();
-        for row in vak_session::chain::RecordChain::at(&self.path).read::<EvidenceRow>() {
-            if row.ts < cutoff {
-                continue;
-            }
-            let key = (row.provider.clone(), row.model.clone());
-            let e = by_key.entry(key.clone()).or_default();
-            match row.outcome.as_str() {
-                "success" => {
-                    e.success += 1;
-                    latencies.entry(key).or_default().push(row.latency_ms);
-                }
-                "failure" => e.failure += 1,
-                _ => e.unknown += 1,
+        for (_, legs) in evidence.days.range(oldest..) {
+            for (key, day) in legs {
+                let Some((provider, model)) = key.split_once('\u{1f}') else {
+                    continue;
+                };
+                let key = (provider.to_string(), model.to_string());
+                let e = by_key.entry(key.clone()).or_default();
+                e.success += day.success;
+                e.failure += day.failure;
+                e.unknown += day.unknown;
+                latencies
+                    .entry(key)
+                    .or_default()
+                    .extend(day.latencies.iter().copied());
             }
         }
         for (key, e) in by_key.iter_mut() {
