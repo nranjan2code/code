@@ -149,6 +149,29 @@ fn saved_version_survives_origin_erasure() {
         ("plan.md", "The plan".to_string())
     );
     let version = artifact.head().unwrap().clone();
+
+    // A supporting file written without a title is no entry; a later
+    // write of the deliverable without one is a new version of it.
+    std::fs::write(cwd.path().join("helper.py"), "print(1)").unwrap();
+    let helper = vak_tools::ArtifactClaim {
+        path: "helper.py".into(),
+        declared: false,
+        title: None,
+        summary: None,
+    };
+    sink.declared(&helper, None, "toolu_2", None);
+    assert!(artifacts.list().iter().all(|a| a.path != "helper.py"));
+    std::fs::write(cwd.path().join("plan.md"), "the plan, revised").unwrap();
+    let revision = vak_tools::ArtifactClaim {
+        path: "plan.md".into(),
+        declared: false,
+        title: None,
+        summary: None,
+    };
+    sink.declared(&revision, None, "toolu_3", None);
+    let revised = artifacts.get(&artifact.id.to_string()).unwrap();
+    assert_eq!(revised.versions.len(), 2);
+    assert_eq!(revised.versions[1].parent, Some(version.id));
     assert!(matches!(&version.source, VersionSource::Call { call, .. } if call == "toolu_1"));
 
     // The conversation that made it keeps its own copy under its own
@@ -174,7 +197,14 @@ fn saved_version_survives_origin_erasure() {
 
     // The saved version is the artifact's own: it still reads.
     let artifact = artifacts.get(&artifact.id.to_string()).unwrap();
-    assert!(artifact.head().unwrap().saved);
+    assert!(
+        artifact
+            .versions
+            .iter()
+            .find(|v| v.id == version.id)
+            .unwrap()
+            .saved
+    );
     assert_eq!(
         artifacts.bytes(&artifact, &version.id).unwrap(),
         b"the plan"

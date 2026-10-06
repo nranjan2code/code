@@ -6701,6 +6701,17 @@ impl Core {
                 .collect();
             cfg.observation_check = Some(Arc::new(move |name, _input| observing.contains(name)));
             cfg.artifacts = Some(Arc::new(self.artifact_sink()));
+            // Make another (plan M8.3b): the source of a new one stays as it is.
+            cfg.protected_paths = prompt_meta
+                .as_ref()
+                .map(|meta| {
+                    meta.artifacts
+                        .iter()
+                        .filter(|artifact| artifact.mode == vak_session::ArtifactMode::Another)
+                        .map(|artifact| artifact.path.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
             cfg.retrieval_check = Some(Arc::new(move |name, input| {
                 let server = index
                     .lock()

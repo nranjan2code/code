@@ -246,9 +246,10 @@ pub struct ArtifactClaim {
     pub summary: Option<String>,
 }
 
-/// Where the agent loop reports a successful call's declared deliverable
-/// (plan M8): `vak_core::artifacts::CallSink` records it as an artifact and
-/// a version, under the run's trace key.
+/// Where the agent loop reports every successful call's claim (plan M8):
+/// `vak_core::artifacts::CallSink` records a declared one as an artifact
+/// and a version, and an undeclared one as a version only of a file that
+/// is already an artifact, under the run's trace key.
 pub trait ArtifactSink: Send + Sync {
     fn declared(
         &self,

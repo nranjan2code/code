@@ -389,6 +389,10 @@ pub struct AgentConfig {
     /// Where a successful call's declared deliverable is recorded (plan
     /// M8); `None` records nothing.
     pub artifacts: Option<Arc<dyn vak_tools::ArtifactSink>>,
+    /// Workspace paths this run must not change: the source of a "Make
+    /// another" request (plan M8.3b). A write, edit or `office_apply` that
+    /// targets one is refused with a message the model can act on.
+    pub protected_paths: Vec<String>,
     pub retrieval_check: Option<RetrievalCheck>,
     /// What satisfies the freshness check: any call that observed current
     /// state this run. See `ObservationCheck`. Absent, only retrieval counts.
@@ -584,6 +588,7 @@ impl AgentConfig {
             revocation_check: None,
             presentation_check: None,
             artifacts: None,
+            protected_paths: Vec::new(),
             retrieval_check: None,
             observation_check: None,
             envelope_check: None,
@@ -675,6 +680,17 @@ struct RunDeliveries {
     /// Card calls withheld because they preview a delivered path; their
     /// presentation is never recorded.
     withheld_cards: std::collections::HashSet<String>,
+}
+
+/// A path as an artifact names it: a draft's `.vak/scratch/<agent>/<run>/`
+/// prefix removed, so an `office_apply` draft names the file it changes.
+fn artifact_path(path: &str) -> String {
+    let path = path.trim().trim_start_matches("./").replace('\\', "/");
+    let scratch = format!("{}/", vak_config::scope::SCRATCH_DIR.trim_end_matches('/'));
+    match path.strip_prefix(&scratch) {
+        Some(rest) => rest.splitn(3, '/').nth(2).unwrap_or(rest).to_string(),
+        None => path,
+    }
 }
 
 fn same_workspace_path(a: &str, b: &str) -> bool {
@@ -3431,9 +3447,7 @@ impl Agent {
                             .and_then(|(name, input)| self.tool_artifact(name, input))
                         {
                             receipts.artifact_deliveries += 1;
-                            if claim.declared
-                                && let Some(sink) = &self.config.artifacts
-                            {
+                            if let Some(sink) = &self.config.artifacts {
                                 let session = self
                                     .session
                                     .lock()
@@ -4870,6 +4884,28 @@ impl Agent {
             .any(|tool| tool.name() == name && tool.presents_cards())
     }
 
+    /// The protected path (`AgentConfig::protected_paths`) this call would
+    /// change, if any: what its tool claims it writes, or what it reports
+    /// writing.
+    fn changes_protected_path(&self, name: &str, input: &Value) -> Option<String> {
+        if self.config.protected_paths.is_empty() {
+            return None;
+        }
+        let tool = self.config.tools.iter().find(|tool| tool.name() == name)?;
+        let written = tool
+            .artifact(input)
+            .map(|claim| artifact_path(&claim.path))
+            .or_else(|| match tool.file_access(input) {
+                Some((vak_tools::FileAccess::Write, path)) => Some(artifact_path(&path)),
+                _ => None,
+            })?;
+        self.config
+            .protected_paths
+            .iter()
+            .find(|protected| same_workspace_path(protected, &written))
+            .cloned()
+    }
+
     /// The file a successful call of this tool produces, and whether it is
     /// a declared deliverable (`Tool::artifact`).
     fn tool_artifact(&self, name: &str, input: &Value) -> Option<vak_tools::ArtifactClaim> {
@@ -5808,9 +5844,35 @@ impl Agent {
                 ));
             }
         };
+        // Another conversation is reachable only when an artifact attached
+        // in this one names it (plan M8.3b); Core re-checks its trash,
+        // Agent, audience and workspace on every call.
+        if let RecallRequest::Elsewhere { conversation, .. } = &request {
+            let named = self
+                .session
+                .lock()
+                .await
+                .chain_to_root()
+                .iter()
+                .filter_map(|entry| match &entry.payload {
+                    vak_session::EntryPayload::Message(record) => record.meta.as_ref(),
+                    _ => None,
+                })
+                .flat_map(|meta| meta.artifacts.iter())
+                .any(|artifact| artifact.conversations.contains(conversation));
+            if !named {
+                return ToolRunOutput::Err(
+                    serde_json::json!({"type": "invalid_arguments",
+                    "message": "that conversation is not one an artifact attached here came from"})
+                    .to_string(),
+                );
+            }
+        }
         if matches!(
             &request,
-            RecallRequest::Search { .. } | RecallRequest::TurnId(_)
+            RecallRequest::Search { .. }
+                | RecallRequest::TurnId(_)
+                | RecallRequest::Elsewhere { .. }
         ) && let Some(recall) = &self.config.history_recall
         {
             let leaf = self
@@ -5866,6 +5928,11 @@ impl Agent {
                     None => ToolRunOutput::Err(serde_json::json!({"type": "invalid_arguments", "message": "no matching turn in this conversation"}).to_string()),
                 }
             }
+            RecallRequest::Elsewhere { .. } => ToolRunOutput::Err(
+                serde_json::json!({"type": "history_unavailable",
+                    "message": "other conversations cannot be read in this run"})
+                .to_string(),
+            ),
             RecallRequest::Turn(n) => {
                 let index = TurnIndex::from_log(&session);
                 match index.turn_by_number(n as usize) {
@@ -5937,6 +6004,15 @@ impl Agent {
                     continue;
                 }
                 live_deliveries.insert(call.id.clone(), (delivery_key, path));
+            }
+            if let Some(protected) = self.changes_protected_path(&call.name, &call.input) {
+                answered.push((
+                    call.id.clone(),
+                    ToolRunOutput::Err(format!(
+                        "Not changed: {protected} is the one the person wants a new one like, so it stays as it is. Write the new one to a different file name."
+                    )),
+                ));
+                continue;
             }
             if vak_tools::canonical_tool_name(&call.name) == "bash"
                 && let Some(command) = call.input.get("command").and_then(Value::as_str)

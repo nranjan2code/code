@@ -31,6 +31,12 @@ pub enum RecallRequest {
     TurnId(String),
     /// Search compact records in the current conversation before reopening one.
     Search { query: String, limit: usize },
+    /// A search or a turn reopened in another conversation: one named by
+    /// an artifact attached in this conversation (plan M8.3b).
+    Elsewhere {
+        conversation: String,
+        request: Box<RecallRequest>,
+    },
     /// `{ presentation }`: a `Presentation` ledger-entry id.
     Presentation(String),
     /// `{ id, range? }`: an evidence id (tool_use_id), optionally sliced to
@@ -44,11 +50,35 @@ pub enum RecallRequest {
     },
 }
 
+/// The request a `recall` call's arguments name. `conversation` turns a
+/// search or a `turn_id` reopen into one of another conversation.
+pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
+    let request = parse_target(args)?;
+    let Some(conversation) = args
+        .get("conversation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(request);
+    };
+    if conversation.len() > 128 || conversation.contains(['/', '\\']) {
+        return Err("conversation is not a conversation id".into());
+    }
+    match request {
+        RecallRequest::Search { .. } | RecallRequest::TurnId(_) => Ok(RecallRequest::Elsewhere {
+            conversation: conversation.to_string(),
+            request: Box::new(request),
+        }),
+        _ => Err("conversation works with query or turn_id only".into()),
+    }
+}
+
 /// Validates a `recall` call's arguments: exactly one of `query`, `turn_id`,
 /// `turn`, `presentation`, or `id` must be present; `range` is only meaningful with
 /// `id` but is not rejected when present alongside another field (the
 /// resolver simply ignores it) — the one-of check is what actually matters.
-pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
+fn parse_target(args: &Value) -> Result<RecallRequest, String> {
     // Some providers materialize every optional schema property with an
     // empty default. Treat those placeholders as absent while retaining the
     // exactly-one-target rule for meaningful values.
@@ -222,6 +252,7 @@ impl Tool for RecallTool {
             "type": "object",
             "properties": {
                 "turn_id": {"type": "string", "description": "Stable turn_id from a search result or selected reference; reopens that turn even when display numbering changes."},
+                "conversation": {"type": "string", "description": "With query or turn_id: a conversation named by an attached Library artifact, to search or reopen its turns instead of this conversation's."},
                 "query": {"type": "string", "minLength": 1, "description": "Required only when searching history: give a non-empty natural-language subject, entity, or artifact from an earlier turn. Never send an empty string. Do not call recall for fresh or unrelated requests. Returns compact candidate references, not verified facts."},
                 "limit": {"type": "integer", "description": "Search result count, default 8, maximum 20."},
                 "turn": {

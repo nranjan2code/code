@@ -604,9 +604,15 @@ impl vak_tools::ArtifactSink for CallSink {
         } else {
             declaration.path.clone()
         };
-        let recorded = self
-            .artifacts
-            .declare(
+        // An undeclared claim versions only a file that is already an
+        // artifact: continuing one is a new version of it (doc 82 §6), and
+        // a supporting file never becomes an entry (§3).
+        let known = artifact_id(&space, &path);
+        if !declaration.declared && self.artifacts.get(&known.to_string()).is_none() {
+            return;
+        }
+        let artifact = if declaration.declared {
+            self.artifacts.declare(
                 &space,
                 &self.agent,
                 &path,
@@ -616,30 +622,33 @@ impl vak_tools::ArtifactSink for CallSink {
                 trace,
                 None,
             )
-            .and_then(|artifact| {
-                let file = self.file(&declaration.path).ok_or_else(|| {
-                    ArtifactError::Invalid("the declared file is not in the workspace".into())
-                })?;
-                if std::fs::metadata(&file).map_err(store_error)?.len() > MAX_VERSION_BYTES {
-                    return Err(ArtifactError::Invalid(
-                        "the file is larger than a version keeps".into(),
-                    ));
-                }
-                let bytes = std::fs::read(&file).map_err(store_error)?;
-                self.artifacts.version(
-                    artifact,
-                    NewVersion {
-                        parent: None,
-                        bytes: &bytes,
-                        source: VersionSource::Call {
-                            session: session.unwrap_or_default().to_string(),
-                            call: call.to_string(),
-                        },
+        } else {
+            Ok(known)
+        };
+        let recorded = artifact.and_then(|artifact| {
+            let file = self.file(&declaration.path).ok_or_else(|| {
+                ArtifactError::Invalid("the declared file is not in the workspace".into())
+            })?;
+            if std::fs::metadata(&file).map_err(store_error)?.len() > MAX_VERSION_BYTES {
+                return Err(ArtifactError::Invalid(
+                    "the file is larger than a version keeps".into(),
+                ));
+            }
+            let bytes = std::fs::read(&file).map_err(store_error)?;
+            self.artifacts.version(
+                artifact,
+                NewVersion {
+                    parent: None,
+                    bytes: &bytes,
+                    source: VersionSource::Call {
+                        session: session.unwrap_or_default().to_string(),
+                        call: call.to_string(),
                     },
-                    trace,
-                    None,
-                )
-            });
+                },
+                trace,
+                None,
+            )
+        });
         if let Err(error) = recorded {
             tracing::warn!(
                 kind = "artifact",

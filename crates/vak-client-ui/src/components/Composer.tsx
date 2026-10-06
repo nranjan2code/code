@@ -27,7 +27,7 @@ import {
 } from "../store";
 import { loadHealth, openAgentChat, refreshSessions, sendPrompt, sendSideQuestion, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
-import { ATTACH_FILES_EVENT } from "../attachFiles";
+import { ATTACH_ARTIFACT_EVENT, ATTACH_FILES_EVENT, type ArtifactChip } from "../attachFiles";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
 import StatusBar from "./StatusBar";
@@ -116,6 +116,8 @@ export default function Composer(props: { cwd: string }) {
   // Other files: saved to the workspace inbox as soon as they are added; the
   // message names them and the model reads them with its tools.
   const [inboxFiles, setInboxFiles] = createSignal<InboxChip[]>([]);
+  // Library artifacts attached for Continue working or Make another.
+  const [artifactChips, setArtifactChips] = createSignal<ArtifactChip[]>([]);
   const [composerError, setComposerError] = createSignal<string | null>(null);
   const [dragOver, setDragOver] = createSignal(false);
   const [historyIdx, setHistoryIdx] = createSignal(-1);
@@ -167,6 +169,13 @@ export default function Composer(props: { cwd: string }) {
     };
     window.addEventListener(ATTACH_FILES_EVENT, onAttachFiles);
     onCleanup(() => window.removeEventListener(ATTACH_FILES_EVENT, onAttachFiles));
+    const onAttachArtifact = (ev: Event) => {
+      const chip = (ev as CustomEvent<ArtifactChip>).detail;
+      if (chip?.id) setArtifactChips((current) => [...current.filter((c) => c.id !== chip.id), chip]);
+      queueMicrotask(() => ta?.focus());
+    };
+    window.addEventListener(ATTACH_ARTIFACT_EVENT, onAttachArtifact);
+    onCleanup(() => window.removeEventListener(ATTACH_ARTIFACT_EVENT, onAttachArtifact));
   });
 
 
@@ -480,9 +489,10 @@ export default function Composer(props: { cwd: string }) {
     const t = text().trim();
     const files = pendingFiles();
     const chips = inboxFiles();
+    const artifacts = artifactChips();
     // No active task is fine: sendPrompt creates one.
-    if (!t && files.length === 0 && chips.length === 0) return;
-    if ((files.length > 0 || chips.length > 0) && armedGoal()) {
+    if (!t && files.length === 0 && chips.length === 0 && artifacts.length === 0) return;
+    if ((files.length > 0 || chips.length > 0 || artifacts.length > 0) && armedGoal()) {
       setComposerError("goal runs cannot carry attachments — disarm the goal or remove them");
       return;
     }
@@ -494,7 +504,7 @@ export default function Composer(props: { cwd: string }) {
       setComposerError("remove the files that could not be saved");
       return;
     }
-    if (chips.length > 0 && isRunning(activeId())) {
+    if ((chips.length > 0 || artifacts.length > 0) && isRunning(activeId())) {
       setComposerError("files can be attached once this turn finishes");
       return;
     }
@@ -515,6 +525,7 @@ export default function Composer(props: { cwd: string }) {
     setMention(null);
     setPendingFiles([]);
     setInboxFiles([]);
+    setArtifactChips([]);
     setComposerError(null);
     queueMicrotask(grow);
     // No need to pass or clear the goal here: sendPrompt consumes
@@ -522,8 +533,9 @@ export default function Composer(props: { cwd: string }) {
     const attachments: api.Attachments = {
       images: files.map(({ mime, data }) => ({ mime, data })),
       files: chips.flatMap((chip) => chip.saved ? [chip.saved] : []),
+      artifacts: artifacts.map(({ id, mode }) => ({ id, mode })),
     };
-    void sendPrompt(t, undefined, files.length || chips.length ? attachments : undefined, target?.sessionId, target);
+    void sendPrompt(t, undefined, files.length || chips.length || artifacts.length ? attachments : undefined, target?.sessionId, target);
     setReplyTarget(null);
   };
 
@@ -727,6 +739,25 @@ export default function Composer(props: { cwd: string }) {
             </For>
           </div>
         </Show>
+        <Show when={artifactChips().length}>
+          <div class="composer-attachments" aria-label="From your Library">
+            <For each={artifactChips()}>
+              {(chip) => (
+                <span class="attachment-chip">
+                  <span class="attachment-name">{chip.mode === "another" ? "Like: " : ""}{chip.name}</span>
+                  <button
+                    class="attachment-remove"
+                    title={`Remove ${chip.name}`}
+                    aria-label={`Remove ${chip.name}`}
+                    onClick={() => setArtifactChips((cur) => cur.filter((c) => c.id !== chip.id))}
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
         <Show when={pendingFiles().length}>
           <div class="composer-attachments" aria-label="Attached images">
             <For each={pendingFiles()}>
@@ -830,7 +861,7 @@ export default function Composer(props: { cwd: string }) {
                   class="send-button"
                   title="Send prompt (Enter)"
                   aria-label="Send prompt"
-                  disabled={!text().trim() && pendingFiles().length === 0}
+                  disabled={!text().trim() && pendingFiles().length === 0 && artifactChips().length === 0}
                   onClick={submit}
                 >
                   <Icon name="send" size={15} />

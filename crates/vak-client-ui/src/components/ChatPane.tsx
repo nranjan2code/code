@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item } from "../store";
+import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, setLibraryFocus, setLibraryOpen, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -605,7 +605,7 @@ function deliverableItem(art: { name: string; path: string; execId?: string }, f
 function itemBody(item: Item, sessionId?: string | null): JSX.Element {
   if (item.kind === "user") {
     const text = stripControlScaffolding(item.text);
-    if (!text && !item.files?.length) return null;
+    if (!text && !item.files?.length && !item.artifacts?.length) return null;
     return (
       <div class="msg user">
         <div class="msg-bubble-wrap">
@@ -617,6 +617,18 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
           <Show when={item.files?.length}>
             <div class="msg-user-files" aria-label="Attached files">
               <For each={item.files}>{(file) => <Artifact item={attachedFileItem(file, sessionId)} />}</For>
+            </div>
+          </Show>
+          <Show when={item.artifacts?.length}>
+            <div class="msg-user-artifacts" aria-label="From your Library">
+              <For each={item.artifacts}>
+                {(artifact) => (
+                  <button type="button" class="msg-user-artifact" onClick={() => { setLibraryFocus(artifact.id); setLibraryOpen(true); }}>
+                    <span class="badge">{artifact.mode === "another" ? "Make another like" : "Continue working on"}</span>
+                    <span>{artifact.name}</span>
+                  </button>
+                )}
+              </For>
             </div>
           </Show>
           <Show when={text}>

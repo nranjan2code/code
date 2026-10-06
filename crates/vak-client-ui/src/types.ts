@@ -183,6 +183,9 @@ export interface TranscriptEntryMeta {
   /** Files attached to this message; `block` is the content block that
    *  names each to the model, which the chat draws as the file instead. */
   attachments?: { block: number; path: string; name: string; bytes: number }[];
+  /** Library artifacts attached to this message; `block` is the block the
+   *  server wrote about each, which the chat draws as the artifact. */
+  artifacts?: { block: number; artifact: string; name: string; mode: "continue" | "another" }[];
 }
 
 export interface OutputItem {

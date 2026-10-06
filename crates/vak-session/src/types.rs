@@ -314,6 +314,8 @@ pub struct TranscriptMessage {
     pub author_name: Option<String>,
     /// Files attached to this message (`MessageMeta::attachments`).
     pub attachments: Vec<AttachedFile>,
+    /// Artifacts attached to this message (`MessageMeta::artifacts`).
+    pub artifacts: Vec<AttachedArtifact>,
     /// What the person typed when the runtime rewrote it (`MessageMeta::typed`).
     pub typed: Option<String>,
 }
@@ -397,11 +399,48 @@ pub struct MessageMeta {
     /// draws the file there instead of that line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachedFile>,
+    /// Library artifacts the person attached (docs/design/82-library.md §6):
+    /// each names the text block the server wrote about it at admission.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<AttachedArtifact>,
     /// What the person typed, when the runtime rewrote it before the model
     /// saw it (a `/command` or `/skill:` expansion, an `@file` mention). The
     /// message holds what the model received; a client shows this instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed: Option<String>,
+}
+
+/// What the person asked of an attached artifact.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactMode {
+    /// Keep working on it: a change is a new version.
+    #[default]
+    Continue,
+    /// Make a new one like it; the source must not change.
+    Another,
+}
+
+/// An artifact attached to a user message (plan M8.3b). The server wrote
+/// the text block `block` from its own records; a client draws the
+/// artifact there instead of that block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachedArtifact {
+    pub block: usize,
+    /// The artifact's id (`art_…`).
+    pub artifact: String,
+    pub name: String,
+    /// Its path in its space.
+    pub path: String,
+    /// The version that was current when it was attached.
+    pub version: String,
+    pub digest: String,
+    #[serde(default)]
+    pub mode: ArtifactMode,
+    /// The conversations whose turns made its versions: what `recall` may
+    /// reach back into from this conversation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conversations: Vec<String>,
 }
 
 /// A file attached to a user message (docs/design/72, "File in"). Its bytes

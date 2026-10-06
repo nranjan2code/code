@@ -1580,6 +1580,27 @@ credited to the person: `POST /library/{id}/{star|rename|archive}` and
 model-made "Harbour poem" at 1440 × 900 and 390 × 844, in light and
 dark. M8.3b is Continue working and Make another (doc 82 L2).
 
+M8.3b (2026-10-06): a run request names Library artifacts
+(`artifacts: [{id, mode}]`). The server writes each one's block from the
+artifact's records at admission (`library::attach`), refusing another
+Agent's or another workspace's. The message records it as a typed
+`AttachedArtifact`, which the chat draws as a card in the block's place.
+The block names the tool for the artifact's kind and carries no digest:
+live, a small model read a shown digest as an `office_apply` base digest
+and kept failing. A write of a file that is already an artifact is a new
+version even without a `title`; a supporting file never becomes one. Make
+another sets `AgentConfig::protected_paths`, and the loop refuses a
+write, edit or `office_apply` to the source. `recall` with `conversation`
+reaches only conversations an attached artifact names (doc 68).
+The client's Continue working and Make another open the authoring Agent's
+conversation with the artifact in the composer. Tests:
+`make_another_keeps_its_source`,
+`recall_reaches_only_conversations_attached_artifacts_name`,
+`library::tests`, and the extended `saved_version_survives_origin_erasure`.
+Live: Continue working on "Harbour poem" with gemma4 made version 2 from
+version 1. The model's edit was imperfect: it copied line numbers from a
+read result into two lines.
+
 ### M9 — Cloud remote (L; the protocol and a reference backend)
 
 - **The `Remote` trait**, with `FileRemote` (tests and personal

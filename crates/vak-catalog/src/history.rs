@@ -187,6 +187,20 @@ impl Catalog {
     }
 
     /// Where entry `entry_id` of session `session` (plain or `ses_`) is.
+    /// The newest indexed entry of `session` (the deepest, then the last
+    /// written): where a read of another conversation's history starts.
+    pub fn newest_entry(&self, session: &str) -> Result<Option<String>, CatalogError> {
+        let conn = self.conn();
+        Ok(conn
+            .query_row(
+                "SELECT entry_id FROM entries WHERE session = ?1
+                 ORDER BY depth DESC, segment DESC, frame DESC LIMIT 1",
+                [ingest::session_node(session)],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     pub fn entry_location(
         &self,
         session: &str,

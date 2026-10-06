@@ -1006,6 +1006,8 @@ export interface InboxFile {
 export interface Attachments {
   images: { mime: string; data: string }[];
   files: InboxFile[];
+  /** Library artifacts, named by id; the server renders what they say. */
+  artifacts?: { id: string; mode: "continue" | "another" }[];
 }
 
 /** Saves a dropped or picked file to the workspace inbox. */
@@ -1044,6 +1046,7 @@ export function runPrompt(
       criteria: goal?.criteria,
       attachments: attachments?.images ?? [],
       files: attachments?.files.map((file) => file.path) ?? [],
+      artifacts: attachments?.artifacts ?? [],
     }),
   });
 }

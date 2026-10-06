@@ -2,9 +2,10 @@ import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import * as api from "../api";
 import type { ArtifactDetail, ArtifactSummary, ArtifactVersion } from "../api";
 import { host } from "../host";
-import { setLibraryOpen, technicalDetails } from "../store";
+import { libraryFocus, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
 import { relAgo } from "../time";
-import { activate } from "../App";
+import { activate, openAgentChat } from "../App";
+import { attachArtifact } from "../attachFiles";
 import Icon from "./Icon";
 
 /** Plain words for an artifact's kind (doc 75 §7). */
@@ -71,6 +72,18 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
     });
   };
 
+  /** Continue working and Make another (doc 82 §6): the authoring Agent's
+   *  own conversation, with the artifact attached in the composer. Nothing
+   *  is sent until the person sends. */
+  const workOn = async (found: ArtifactDetail, mode: "continue" | "another") => {
+    setLibraryOpen(false);
+    await openAgentChat(found.agent);
+    attachArtifact({ id: found.id, name: found.name, mode });
+    if (mode === "another") {
+      window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Make another one like ${found.name}, as a new file.` } }));
+    }
+  };
+
   const openConversation = (found: ArtifactDetail) => {
     const made = found.history.find((v) => v.id === version()) ?? found.history[found.history.length - 1];
     if (made?.session) {
@@ -110,7 +123,9 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
           <Show when={found().summary}><p>{found().summary}</p></Show>
           <Show when={error()}><div class="worker-error" role="alert">{error()}</div></Show>
           <div class="library-actions">
-            <Show when={version()}>{(at) => <button class="btn sm primary" onClick={() => void download(found(), at())}>Download</button>}</Show>
+            <button class="btn sm primary" onClick={() => void workOn(found(), "continue")}>Continue working</button>
+            <button class="btn sm" onClick={() => void workOn(found(), "another")}>Make another</button>
+            <Show when={version()}>{(at) => <button class="btn sm" onClick={() => void download(found(), at())}>Download</button>}</Show>
             <Show when={found().history.some((v) => v.session)}>
               <button class="btn sm" onClick={() => openConversation(found())}>Open conversation</button>
             </Show>
@@ -161,7 +176,8 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
 /** Every deliverable an Agent made, across conversations (docs/design/82-library.md §4). */
 export default function LibraryPage() {
   const [all, { refetch }] = createResource(() => api.library().then((res) => res.artifacts));
-  const [open, setOpen] = createSignal<string | null>(null);
+  const [open, setOpen] = createSignal<string | null>(libraryFocus());
+  setLibraryFocus(null);
   const [kind, setKind] = createSignal("all");
   const [changed, setChanged] = createSignal("any");
   const [starred, setStarred] = createSignal(false);

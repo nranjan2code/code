@@ -26,7 +26,7 @@ import type {
 } from "./types";
 
 export type Item =
-  | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string; files?: api.InboxFile[] }
+  | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string; files?: api.InboxFile[]; artifacts?: { id: string; name: string; mode: "continue" | "another" }[] }
   | { kind: "assistant"; key: string; text: string; streaming: boolean }
   | { kind: "thinking"; key: string; text: string; done: boolean }
   | {
@@ -724,6 +724,8 @@ export const [searchOpen, setSearchOpen] = createSignal(false);
 export const [inboxOpen, setInboxOpen] = createSignal(false);
 /** The Library page (plan M8): every deliverable, across conversations. */
 export const [libraryOpen, setLibraryOpen] = createSignal(false);
+/** The artifact the Library opens on, when something asked for one. */
+export const [libraryFocus, setLibraryFocus] = createSignal<string | null>(null);
 export const [inboxUnread, setInboxUnread] = createSignal(0);
 // Feed pipeline modal.
 // Settings page to land on when the next open happens (budget banner link).
@@ -1076,8 +1078,12 @@ export function transcriptToItems(
     if (m.role === "User" || m.role === "user" || (typeof m.role === "string" && m.role.toLowerCase() === "user")) {
       // A block that names an attached file to the model is drawn as that
       // file, not as its text (TranscriptEntryMeta.attachments).
-      const noteBlocks = new Set((meta?.attachments ?? []).map((file) => file.block));
+      const noteBlocks = new Set([
+        ...(meta?.attachments ?? []).map((file) => file.block),
+        ...(meta?.artifacts ?? []).map((artifact) => artifact.block),
+      ]);
       const files = (meta?.attachments ?? []).map(({ path, name, bytes }) => ({ path, name, bytes }));
+      const artifacts = (meta?.artifacts ?? []).map(({ artifact, name, mode }) => ({ id: artifact, name, mode }));
       const texts = m.content
         .filter((b, index): b is Extract<ContentBlock, { type: "text" }> => b.type === "text" && !noteBlocks.has(index))
         .map((b) => b.text);
@@ -1098,7 +1104,7 @@ export function transcriptToItems(
       const joined = stripControlScaffolding(texts.join("\n"));
       const authorPrefix = meta?.author_name ? `${meta.author_name}: ` : "";
       const displayText = authorPrefix && joined.startsWith(authorPrefix) ? joined.slice(authorPrefix.length) : joined;
-      if (displayText || files.length) next.push({ kind: "user", text: displayText, entryId: meta?.entry_id, authorId: meta?.author_id ?? undefined, authorName: meta?.author_name ?? undefined, files: files.length ? files : undefined });
+      if (displayText || files.length || artifacts.length) next.push({ kind: "user", text: displayText, entryId: meta?.entry_id, authorId: meta?.author_id ?? undefined, authorName: meta?.author_name ?? undefined, files: files.length ? files : undefined, artifacts: artifacts.length ? artifacts : undefined });
     } else {
       const baseKey = `${id}-h${assistantSeq++}`;
       const hasText = m.content.some(

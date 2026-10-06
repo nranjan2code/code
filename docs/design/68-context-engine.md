@@ -842,6 +842,20 @@ cheaper than doing the same client-side. The rule for using them:
   the ledger and rendered per provider; a fallback leg gets the same turns at
   the same fidelity.
 
+### Recall into another conversation (data-architecture plan M8.3b)
+
+`recall` with `conversation` searches or reopens the turns of another
+conversation, and only one named by a Library artifact attached in this
+conversation (`AttachedArtifact::conversations`, docs/design/82-library.md
+§6). The loop checks the name against the attachments in the ledger it
+already holds. Core then reads that conversation through the same scoped
+history as this one (`scoped_history`): its trash, Agent, audience and
+workspace are re-checked at every call, and the read starts from its
+newest indexed entry. Turns are addressed by `turn_id`, never by number,
+which collides across conversations. The result is an ordinary tool
+result in this conversation's ledger. Nothing is pasted wholesale, and
+an attached artifact's block carries no conversation text.
+
 ## Verification
 
 - **Probe harness** (`vak-eval`): for each configured model, print the

@@ -4718,6 +4718,10 @@ struct RunBody {
     /// saying where it is, never as its bytes (docs/design/72, F1).
     #[serde(default)]
     files: Vec<String>,
+    /// Library artifacts to attach (plan M8.3b): each reaches the model as
+    /// a block the server writes from the artifact's records.
+    #[serde(default)]
+    artifacts: Vec<library::ArtifactRef>,
     /// Goal mode (docs/design/42-managed-work-contracts.md): durable objective; completion
     /// is audited against `criteria`, never self-reported.
     #[serde(default)]
@@ -5399,7 +5403,9 @@ async fn run_prompt(
     }
     let managed = matches!(body.work_mode.as_deref(), Some("managed"));
     let automatic = matches!(body.work_mode.as_deref(), Some("auto"));
-    if (managed || automatic) && !(body.attachments.is_empty() && body.files.is_empty()) {
+    if (managed || automatic)
+        && !(body.attachments.is_empty() && body.files.is_empty() && body.artifacts.is_empty())
+    {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "managed work currently requires text-only input"})),
@@ -5410,6 +5416,19 @@ async fn run_prompt(
     for file in &body.files {
         match inbox::attached(handle.core.cwd(), file) {
             Ok(file) => attached.push(file),
+            Err(error) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": error })),
+                )
+                    .into_response();
+            }
+        }
+    }
+    let mut artifacts = Vec::new();
+    for reference in &body.artifacts {
+        match library::attach(&handle.core, reference) {
+            Ok(artifact) => artifacts.push(artifact),
             Err(error) => {
                 return (
                     StatusCode::BAD_REQUEST,
@@ -5434,7 +5453,7 @@ async fn run_prompt(
         TurnStart::Managed(expanded_prompt.clone())
     } else if automatic {
         TurnStart::Auto(expanded_prompt.clone())
-    } else if body.attachments.is_empty() && attached.is_empty() {
+    } else if body.attachments.is_empty() && attached.is_empty() && artifacts.is_empty() {
         TurnStart::message(vak_llm::Message::user_text(expanded_prompt.clone()))
     } else {
         let mut blocks = vec![vak_llm::ContentBlock::text(expanded_prompt.clone())];
@@ -5453,14 +5472,23 @@ async fn run_prompt(
             blocks.push(vak_llm::ContentBlock::text(note));
             attachments.push(file);
         }
+        let mut attached_artifacts = Vec::with_capacity(artifacts.len());
+        for (note, mut artifact) in artifacts {
+            artifact.block = blocks.len();
+            blocks.push(vak_llm::ContentBlock::text(note));
+            attached_artifacts.push(artifact);
+        }
         TurnStart::Message(Box::new(vak_session::MessageRecord {
             message: vak_llm::Message {
                 role: vak_llm::Role::User,
                 content: blocks,
             },
-            meta: (!attachments.is_empty()).then(|| vak_session::MessageMeta {
-                attachments,
-                ..Default::default()
+            meta: (!attachments.is_empty() || !attached_artifacts.is_empty()).then(|| {
+                vak_session::MessageMeta {
+                    attachments,
+                    artifacts: attached_artifacts,
+                    ..Default::default()
+                }
             }),
         }))
     };
@@ -8078,6 +8106,7 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
                 "author_id": item.author_id,
                 "author_name": item.author_name,
                 "attachments": item.attachments,
+                "artifacts": item.artifacts,
             })
         })
         .collect();

@@ -12,3 +12,17 @@ export function displayFileName(path: string): string {
   const name = path.split("/").pop() ?? path;
   return path.startsWith("inbox/") ? name.replace(/^[0-9a-f]{12}-/, "") : name;
 }
+
+/** Attaching a Library artifact (plan M8.3b): the composer shows it as a
+ *  chip and the request names it; the server writes what the model is told. */
+export const ATTACH_ARTIFACT_EVENT = "vak:attach-artifact";
+
+export interface ArtifactChip {
+  id: string;
+  name: string;
+  mode: "continue" | "another";
+}
+
+export function attachArtifact(chip: ArtifactChip): void {
+  window.dispatchEvent(new CustomEvent(ATTACH_ARTIFACT_EVENT, { detail: chip }));
+}

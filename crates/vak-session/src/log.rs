@@ -2308,6 +2308,11 @@ impl SessionLog {
                         .as_ref()
                         .map(|meta| meta.attachments.clone())
                         .unwrap_or_default(),
+                    artifacts: record
+                        .meta
+                        .as_ref()
+                        .map(|meta| meta.artifacts.clone())
+                        .unwrap_or_default(),
                     typed: record.meta.as_ref().and_then(|meta| meta.typed.clone()),
                 }),
                 EntryPayload::Compaction(c) => Some(TranscriptMessage {
@@ -2321,6 +2326,7 @@ impl SessionLog {
                     author_id: None,
                     author_name: None,
                     attachments: Vec::new(),
+                    artifacts: Vec::new(),
                     typed: None,
                 }),
                 _ => None,

@@ -76,6 +76,126 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
     }
 }
 
+/// What a turn request names to attach (plan M8.3b).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub(crate) struct ArtifactRef {
+    pub id: String,
+    #[serde(default)]
+    pub mode: vak_session::ArtifactMode,
+}
+
+/// The block that tells the model about an attached artifact, written from
+/// the artifact's own records, and the typed attachment that names it
+/// (docs/design/82-library.md §6). It carries the artifact's metadata and
+/// where its versions came from, never conversation text. Refused when the
+/// artifact is not this conversation's Agent's or not in its workspace:
+/// Continue working continues in the authoring Agent's own conversation.
+pub(crate) fn attach(
+    core: &vak_core::Core,
+    reference: &ArtifactRef,
+) -> Result<(String, vak_session::AttachedArtifact), String> {
+    let artifact = core
+        .artifacts()
+        .get(&reference.id)
+        .ok_or_else(|| format!("no artifact {}", reference.id))?;
+    let agent = core
+        .agent_identity()
+        .map(|agent| agent.id.clone())
+        .unwrap_or_else(|| "vak".into());
+    if artifact.agent != agent {
+        return Err(format!(
+            "{} was made by another Agent; continue it in that Agent's conversation",
+            artifact.name()
+        ));
+    }
+    let space = vak_session::trace::local::space(core.cwd()).to_string();
+    if artifact.space != space {
+        return Err(format!("{} belongs to another workspace", artifact.name()));
+    }
+    let head = artifact
+        .head()
+        .ok_or_else(|| format!("{} has no version yet", artifact.name()))?;
+    let mut conversations: Vec<String> = Vec::new();
+    let mut lines = Vec::new();
+    for (index, version) in artifact.versions.iter().enumerate() {
+        let (who, session) = match &version.source {
+            VersionSource::Call { session, .. } => ("Vakyartha", Some(session)),
+            VersionSource::Candidate { session, .. } => ("Vakyartha, for review", Some(session)),
+            VersionSource::Person => ("the person", None),
+        };
+        let from = session
+            .filter(|session| !session.is_empty())
+            .map(|session| {
+                if !conversations.contains(session) {
+                    conversations.push(session.clone());
+                }
+                format!(", in conversation {session}")
+            })
+            .unwrap_or_default();
+        lines.push(format!(
+            "- version {}: {who}, {}{from}",
+            index + 1,
+            version.at.format("%Y-%m-%d %H:%M UTC")
+        ));
+    }
+    let number = artifact
+        .versions
+        .iter()
+        .position(|version| version.id == head.id)
+        .map_or(0, |index| index + 1);
+    // Name the tool for its kind: a small model told only "change it"
+    // reached for office_apply on a text file (measured live).
+    let how = match artifact.kind {
+        vak_core::artifacts::ArtifactKind::Document => {
+            "with `office_apply` (the change is a draft the person reviews)"
+        }
+        _ => "with `edit`, or `write` the whole file",
+    };
+    let ask = match reference.mode {
+        vak_session::ArtifactMode::Continue => format!(
+            "The person wants to keep working on it: change {} {how}; each change becomes a new version.",
+            artifact.path
+        ),
+        vak_session::ArtifactMode::Another => format!(
+            "The person wants a new one like it: write a new file, and do not change {}.",
+            artifact.path
+        ),
+    };
+    let reach = if conversations.is_empty() {
+        String::new()
+    } else {
+        "\nThe conversations that made it can be read with `recall` and their id.".to_string()
+    };
+    let kind = match artifact.kind {
+        vak_core::artifacts::ArtifactKind::Document => "a document",
+        vak_core::artifacts::ArtifactKind::Changeset => "code changes",
+        vak_core::artifacts::ArtifactKind::Card => "a saved card",
+        vak_core::artifacts::ArtifactKind::File => "a file",
+    };
+    // The digest stays in the typed attachment: shown to the model, it read
+    // as an `office_apply` base digest.
+    let block = format!(
+        "[Library artifact] \"{}\": {kind} at {}, now at version {number} of {}.\nVersions:\n{}\n{ask}{reach}",
+        artifact.name(),
+        artifact.path,
+        artifact.versions.len(),
+        lines.join("\n"),
+    );
+    Ok((
+        block,
+        vak_session::AttachedArtifact {
+            block: 0,
+            artifact: artifact.id.to_string(),
+            name: artifact.name(),
+            path: artifact.path.clone(),
+            version: head.id.to_string(),
+            digest: head.digest.clone(),
+            mode: reference.mode,
+            conversations,
+        },
+    ))
+}
+
 /// An artifact as a list shows it: its name and current version, never
 /// its bytes.
 fn summary(artifact: &vak_core::artifacts::Artifact) -> serde_json::Value {
@@ -262,4 +382,118 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route("/library/{id}/versions/{version}/save", post(save))
         .route("/library/{id}/{action}", post(change))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use vak_core::artifacts::ArtifactKind;
+
+    #[test]
+    fn an_attached_artifact_is_told_from_its_records_and_only_in_its_place() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        vak_config::spaces::bind(dir.path()).unwrap();
+        let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+        let space = vak_session::trace::local::space(core.cwd()).to_string();
+        let artifacts = core.artifacts();
+        let id = artifacts
+            .declare(
+                &space,
+                "vak",
+                "notes/plan.md",
+                ArtifactKind::File,
+                Some("The plan".into()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        artifacts
+            .version(
+                id,
+                NewVersion {
+                    parent: None,
+                    bytes: b"secret conversation words stay out",
+                    source: VersionSource::Call {
+                        session: "01920000-0000-7000-8000-00000000aaaa".into(),
+                        call: "toolu_1".into(),
+                    },
+                },
+                None,
+                None,
+            )
+            .unwrap();
+
+        let (block, attached) = attach(
+            &core,
+            &ArtifactRef {
+                id: id.to_string(),
+                mode: vak_session::ArtifactMode::Continue,
+            },
+        )
+        .unwrap();
+        assert!(block.contains("\"The plan\""), "{block}");
+        assert!(block.contains("notes/plan.md"));
+        assert!(block.contains("version 1 of 1"));
+        assert!(block.contains("conversation 01920000-0000-7000-8000-00000000aaaa"));
+        assert!(
+            !block.contains("secret conversation words"),
+            "no content, only records"
+        );
+        assert_eq!(
+            attached.conversations,
+            vec!["01920000-0000-7000-8000-00000000aaaa".to_string()]
+        );
+        assert_eq!(attached.path, "notes/plan.md");
+
+        let (another, _) = attach(
+            &core,
+            &ArtifactRef {
+                id: id.to_string(),
+                mode: vak_session::ArtifactMode::Another,
+            },
+        )
+        .unwrap();
+        assert!(another.contains("do not change notes/plan.md"), "{another}");
+
+        // Another Agent's artifact, or another workspace's, is refused.
+        let theirs = artifacts
+            .declare(
+                &space,
+                "scout",
+                "theirs.md",
+                ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let elsewhere = artifacts
+            .declare(
+                "spc_elsewhere",
+                "vak",
+                "far.md",
+                ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        for refused in [theirs, elsewhere] {
+            assert!(
+                attach(
+                    &core,
+                    &ArtifactRef {
+                        id: refused.to_string(),
+                        mode: Default::default(),
+                    },
+                )
+                .is_err()
+            );
+        }
+    }
 }
