@@ -82,7 +82,7 @@ Known slow tests (each over 60 s, not failures):
 | 15c-a | M8.3a client Library page and artifact page (versions, Star, Rename, Archive, Keep, Download, Open conversation), admin Library, `/library` changes | browser run | Done (`81394dd71`) |
 | 15c-b | M8.3b Continue working and Make another (doc 82 L2): the attachment rendered at admission, `recall`'s cross-conversation scope | live run | Done (`0d8d2a772`) |
 | 15d-a | M8.4a sharing: artifact share links (role, expiry, history from a chosen version), guest view at `/shared/artifact`, comments, revoke | `library_sharing.rs`, live run | Done (`2e6526e8a`) |
-| 15d-b | M8.4b edit in the app, Put back (upload as a sibling of the version downloaded), saved cards | browser run | Done (commit follows) |
+| 15d-b | M8.4b edit in the app, Put back (upload as a sibling of the version downloaded), saved cards | browser run | Done (50b8d3bb3) |
 | 15d-c | M8.4c Canvas, Redline, Workbench and SharedConversation on the Artifact API; navigation reconciliation; acceptance run create → review → promote → share → comment → revise | browser acceptance run | Next |
 | 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | |
 
