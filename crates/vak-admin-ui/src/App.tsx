@@ -5943,6 +5943,7 @@ export function Settings() {
       : !/tts|image|embed|embedding/i.test(model));
   };
   const [rebuilding, setRebuilding] = createSignal(false);
+  const [catalogStatus, { refetch: refetchCatalogStatus }] = createResource(() => api.catalogStatus());
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
   const [runningDoctor, setRunningDoctor] = createSignal(false);
 
@@ -6224,6 +6225,7 @@ export function Settings() {
       const stats = await api.rebuild();
       if (stats.ok) pushToast("info", `Rebuilt the catalog: ${stats.rows ?? 0} records from ${stats.sources ?? 0} sources`);
       else pushToast("alert", `Rebuild failed: ${stats.error}`);
+      await refetchCatalogStatus();
     } catch (err) {
       pushToast("alert", `${err}`);
     } finally {
@@ -7063,6 +7065,29 @@ export function Settings() {
                 <button class="ghost" disabled={rebuilding()} onClick={() => void rebuild()}>
                   {rebuilding() ? "Rebuilding…" : "Rebuild search"}
                 </button>
+              </div>
+              <div class="catalog-status" style="margin-top:12px">
+                <Show
+                  when={catalogStatus()}
+                  fallback={
+                    <p class="dim">{catalogStatus.error ? `Search status unavailable: ${catalogStatus.error}` : "Reading search status…"}</p>
+                  }
+                >
+                  {(status) => (
+                    <>
+                      <p>
+                        <strong>Search</strong>{" "}
+                        {status().stale ? "is catching up with new records." : "has taken every record."}
+                      </p>
+                      <p class="dim">
+                        {Object.entries(status().counts)
+                          .sort(([a], [b]) => a.localeCompare(b))
+                          .map(([kind, count]) => `${count} ${kind}`)
+                          .join(" · ") || "Nothing recorded yet."}
+                      </p>
+                    </>
+                  )}
+                </Show>
               </div>
               <Show when={doctorReport()}>
                 <pre class="mono report-pre">{doctorReport()}</pre>

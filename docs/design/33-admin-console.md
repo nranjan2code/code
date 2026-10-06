@@ -113,6 +113,14 @@ inspect or change that agent's effective configuration.
   start, after each turn and on the scheduler tick. Admin reads (the
   sessions list, search) catch up before answering; the forensics
   transcript reads the ledger itself, without its writer's lock.
+- Screens (plan M6.4): Search (`#/search`) reads `/search` with kind
+  filters; conversation detail has a **Lineage** tab listing what the
+  catalog holds for the conversation (`/catalog/sessions/{id}/nodes`) and,
+  for the chosen item, its path up to its run with the cause, Agent and
+  actor (`/lineage/{id}`), linking to Run detail; Configuration's
+  Housekeeping panel says whether the catalog has taken every record and
+  how much of each kind it holds (`/catalog`), beside **Rebuild search**
+  (`POST /catalog/rebuild`).
 
 ### Auth (cookie + bearer)
 
@@ -181,6 +189,7 @@ SDKs to preflight a model.
 | `/lineage/:id` | GET | A node's path up to its run, session, turn, Agent, space, actor and cause |
 | `/catalog` | GET | Whether the catalog has taken every record, and its counts |
 | `/catalog/rebuild` | POST | Drop and rebuild the catalog from the records |
+| `/catalog/sessions/:id/nodes` | GET | What a session holds (turns, calls, files, effects, notes), oldest first, for the Lineage tab; 404 for a trashed session |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
 | `/config/global` | PATCH | User-level defaults inherited by project workspaces |
 | `/config/mcp/global` | GET, PUT | Shared user MCP registry; values never expose secrets |

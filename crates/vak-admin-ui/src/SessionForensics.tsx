@@ -33,6 +33,7 @@ import { api, AuthRequired } from "./api";
 import { PageHeader, confirmDestructive } from "./display";
 import { navigate, pushToast, selectedAgentId, setAuthed, setSelectedAgentId } from "./store";
 import { clock, timeAgo } from "./time";
+import { LineageTab } from "./Lineage";
 
 function shortId(id?: string | null, len: number = 8): string {
   if (!id) return "";
@@ -1427,7 +1428,7 @@ export function SessionsList() {
 
 export function SessionForensics(props: { sessionId: string }) {
   const [activeTab, setActiveTab] = createSignal<
-    "dag" | "log" | "drift" | "receipts" | "checkpoints"
+    "dag" | "log" | "drift" | "receipts" | "checkpoints" | "lineage"
   >("dag");
   const [selectedTurnIndex, setSelectedTurnIndex] = createSignal<number>(1);
   const [selectedNodeId, setSelectedNodeId] = createSignal<string>("ingress");
@@ -1818,7 +1819,7 @@ export function SessionForensics(props: { sessionId: string }) {
         </div>
       </section>
 
-      {/* 5 Segmented Forensics Tabs */}
+      {/* Segmented Forensics Tabs */}
       <div class="forensics-tabs-bar">
         <button
           type="button"
@@ -1859,6 +1860,14 @@ export function SessionForensics(props: { sessionId: string }) {
           onClick={() => setActiveTab("checkpoints")}
         >
           Checkpoints &amp; Diffs ({checkpointsData()?.checkpoints?.length ?? 0})
+        </button>
+        <button
+          type="button"
+          class="forensics-tab-btn"
+          classList={{ active: activeTab() === "lineage" }}
+          onClick={() => setActiveTab("lineage")}
+        >
+          Lineage
         </button>
       </div>
 
@@ -2409,6 +2418,10 @@ export function SessionForensics(props: { sessionId: string }) {
         </Match>
 
         {/* TAB 5: CHECKPOINTS & DIFFS */}
+        <Match when={activeTab() === "lineage"}>
+          <LineageTab sessionId={props.sessionId} />
+        </Match>
+
         <Match when={activeTab() === "checkpoints"}>
           <div class="checkpoints-tab-view">
             <div class="checkpoints-grid">

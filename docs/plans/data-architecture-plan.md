@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is in progress (design agreed and M6.1 done 2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1237,6 +1237,18 @@ as admitted. The in-process in-flight set stays: it guards concurrent
 requests in one process and is released on failure, which the durable ref
 is not. `turn_path_reads_flat` passes with every sealed segment of each
 chain made unreadable.
+
+M6.4 (2026-10-06): the screens. Search on `/search` landed with M6.2
+(the admin console's kind filters and the client's search sheet).
+Conversation detail has a Lineage tab: what the catalog holds for the
+conversation (`GET /catalog/sessions/{id}/nodes`, `Catalog::in_session`),
+filtered by kind, and for the chosen item its path up to its run with the
+cause, Agent and actor (`/lineage/{id}`), linking to Run detail. The
+Housekeeping panel beside **Rebuild search** says whether the catalog has
+taken every record and its counts (`/catalog`). A trashed conversation's
+node, lineage and holdings answer 404 (`trash.rs`). Browser run against
+the live data home: a `glob` call traced to its run, caused by a person;
+a rebuild took 77 records from 13 sources.
 
 ### M6.5 — Intake (L, after M6; doc 76)
 

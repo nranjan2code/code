@@ -308,6 +308,20 @@ impl Catalog {
         Ok(rows.filter_map(Result::ok).collect())
     }
 
+    /// What a session holds (its turns, calls, files, effects, notes),
+    /// oldest first, without the session itself.
+    pub fn in_session(&self, session: &str, limit: usize) -> Result<Vec<Node>, CatalogError> {
+        let conn = self.conn();
+        let sql = format!(
+            "SELECT {NODE_COLUMNS} FROM nodes n WHERE n.session = ?1 AND n.id != ?1
+             ORDER BY n.created_at, n.id LIMIT {}",
+            limit.clamp(1, 10_000)
+        );
+        let mut statement = conn.prepare(&sql)?;
+        let rows = statement.query_map([ingest::session_node(session)], row_node)?;
+        Ok(rows.filter_map(Result::ok).collect())
+    }
+
     /// The things matching `query` that `audience` may see, best first.
     /// The audience filters before ranking, so a result the caller may not
     /// open never takes a place in the ranking (invariant 37).

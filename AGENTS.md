@@ -352,8 +352,10 @@ session X" is one catalog lookup; `vak-store`, `vak_session::search`, its
 ledger cache and the directory walks are gone. M6.3 is done
 (2026-10-06): request admission is a `req/` ref, and routing evidence and
 commitment state read through rollup Documents (`vak_session::rollup`),
-so no turn-path decision replays a chain. M6.4 (the Lineage tab and the
-catalog's status and rebuild screens) is next. No session starts a later step
+so no turn-path decision replays a chain. M6.4 is done (2026-10-06), and
+with it M6: conversation detail's Lineage tab traces anything a
+conversation holds to its run and cause, and the catalog's status sits
+beside Rebuild search. M6.5 (intake, doc 76), M8, and M7a → M7b follow. No session starts a later step
 unasked.
 
 **What it is.** One architecture for everything Vak writes:

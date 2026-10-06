@@ -44,6 +44,9 @@ import type {
   ProviderListResponse,
   VoiceProviderListResponse,
   RebuildStats,
+  CatalogStatus,
+  CatalogNode,
+  Lineage,
   SearchHit,
   SecurityEvent,
   SessionCheckpoint,
@@ -286,6 +289,14 @@ export const api = {
 
   rebuild: (): Promise<RebuildStats> =>
     fetch("/catalog/rebuild", { method: "POST" }).then((r) => handle(r)),
+
+  catalogStatus: (): Promise<CatalogStatus> => fetch("/catalog").then((r) => handle(r)),
+
+  sessionNodes: (id: string): Promise<{ nodes: CatalogNode[] }> =>
+    fetch(`/catalog/sessions/${encodeURIComponent(id)}/nodes`).then((r) => handle(r)),
+
+  lineage: (id: string): Promise<Lineage> =>
+    fetch(`/lineage/${encodeURIComponent(id)}`).then((r) => handle(r)),
 
   config: (agent?: string) => fetch(withAgent("/admin/api/config", agent)).then((r) => handle<ConfigInfo>(r)),
 

@@ -65,6 +65,29 @@ pub(crate) async fn lineage(State(state): State<AppState>, Path(id): Path<String
     }
 }
 
+/// `GET /catalog/sessions/{id}/nodes`: what a session holds, oldest first,
+/// for the Lineage tab to trace one of them.
+pub(crate) async fn session_nodes(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    if vak_core::trash::is_trashed(&state.core.shared_scope(), id.trim_start_matches("ses_")) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let core = state.core.clone();
+    let found = tokio::task::spawn_blocking(move || {
+        let catalog = core.catalog()?;
+        catalog.catch_up()?;
+        Ok::<_, vak_core::CoreError>(catalog.in_session(&id, 2_000)?)
+    })
+    .await;
+    match found {
+        Ok(Ok(nodes)) => Json(serde_json::json!({ "nodes": nodes })).into_response(),
+        Ok(Err(error)) => failed(error),
+        Err(error) => failed(error),
+    }
+}
+
 /// `GET /catalog`: whether the catalog has taken everything, and how much
 /// of each kind it holds.
 pub(crate) async fn status(State(state): State<AppState>) -> Response {

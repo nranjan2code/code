@@ -362,6 +362,18 @@ fn lineage_from_any_artifact_to_cause() {
         from_file.turn.map(|node| node.id),
         Some(format!("trn_{turn}"))
     );
+    // What the session holds is one query, from its plain or `ses_` id.
+    for id in [session.clone(), format!("ses_{session}")] {
+        let held: Vec<String> = catalog
+            .in_session(&id, 100)
+            .unwrap()
+            .into_iter()
+            .map(|node| node.id)
+            .collect();
+        assert!(held.contains(&call), "{held:?}");
+        assert!(held.contains(&format!("trn_{turn}")), "{held:?}");
+        assert!(!held.contains(&format!("ses_{session}")), "{held:?}");
+    }
     // Where the session's bytes are is one lookup, never a directory walk.
     let dir = catalog.session_dir(&session).unwrap().unwrap();
     assert_eq!(vak_config::scope::ledger_session_id(&dir), Some(session));

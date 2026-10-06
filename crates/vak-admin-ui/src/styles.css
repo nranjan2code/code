@@ -3523,7 +3523,7 @@ a.tab-btn {
 .prompt-kpi-val {
   font-size: 18px;
   font-weight: 600;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   color: var(--text);
   line-height: 1.2;
 }
@@ -3870,7 +3870,7 @@ a.tab-btn {
   max-height: 180px;
   overflow-y: auto;
   color: var(--text-soft);
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   margin: 0;
 }
 
@@ -4302,7 +4302,7 @@ a.tab-btn {
   color: var(--text-dim);
 }
 .sim-action-btn .sim-arg {
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
   font-size: 12px;
 }
 
@@ -4360,7 +4360,7 @@ a.tab-btn {
 .sim-trace-step .step-mark {
   width: 16px;
   text-align: center;
-  font-family: var(--mono, monospace);
+  font-family: var(--mono);
 }
 
 /* Rulebook Lists */
@@ -6050,6 +6050,87 @@ button.inbox-meta-tag:hover {
   color: var(--accent-bright, var(--accent));
   border-bottom-color: var(--accent);
   font-weight: 600;
+}
+
+/* Lineage tab: what the catalog holds for a conversation, and a chosen
+   thing's path to its run and cause (plan M6.4). */
+.lineage-tab-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.lineage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.lineage-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 560px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.lineage-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.lineage-item:hover {
+  background: var(--surface-hover);
+}
+.lineage-item.active {
+  background: var(--surface-active);
+}
+.lineage-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.lineage-steps {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lineage-steps li > * {
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.lineage-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.lineage-facts dt {
+  color: var(--text-soft);
+}
+.lineage-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .lineage-tab-view {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* 6. Standard Turn Workflow DAG Canvas */

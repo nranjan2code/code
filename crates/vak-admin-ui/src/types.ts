@@ -469,6 +469,42 @@ export interface BestOfNRun {
 }
 
 /** What `POST /catalog/rebuild` took back in from the records. */
+/** One thing the data catalog knows (plan M6). */
+export interface CatalogNode {
+  id: string;
+  kind: string;
+  space?: string;
+  agent?: string;
+  agent_name?: string;
+  session?: string;
+  turn?: string;
+  run?: string;
+  actor?: string;
+  cause?: string;
+  title?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  size?: number;
+}
+
+/** A node's path up to its run and cause, nearest first. */
+export interface Lineage {
+  path: CatalogNode[];
+  run?: CatalogNode | null;
+  session?: CatalogNode | null;
+  turn?: CatalogNode | null;
+  agent?: string | null;
+  space?: string | null;
+  actor?: string | null;
+  cause?: string | null;
+}
+
+export interface CatalogStatus {
+  stale: boolean;
+  counts: Record<string, number>;
+}
+
 export interface RebuildStats {
   ok: boolean;
   sources?: number;

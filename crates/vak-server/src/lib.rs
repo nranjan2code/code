@@ -846,6 +846,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/lineage/{id}", get(catalog_api::lineage))
         .route("/catalog", get(catalog_api::status))
         .route("/catalog/rebuild", post(catalog_api::rebuild))
+        .route("/catalog/sessions/{id}/nodes", get(catalog_api::session_nodes))
         .route("/flows/{name}/runs/{run}/graph", get(flow_run_graph))
         .route("/sessions/{id}/checkpoints", get(list_checkpoints))
         .route(

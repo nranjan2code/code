@@ -176,6 +176,14 @@ async fn trashed_session_absent_from_every_search() {
         assert!(mentions(&body, &kept), "{reader} before trash: {body}");
     }
     assert!(tool_search().await.contains(&gone));
+    for path in [
+        format!("/nodes/ses_{gone}"),
+        format!("/lineage/ses_{gone}"),
+        format!("/catalog/sessions/{gone}/nodes"),
+    ] {
+        let (status, body) = get(path.clone()).await;
+        assert_eq!(status, 200, "{path} before trash: {body}");
+    }
 
     // Only an archived session can go to the trash.
     let res = client
@@ -213,6 +221,9 @@ async fn trashed_session_absent_from_every_search() {
     for path in [
         format!("/sessions/{gone}/transcript"),
         format!("/sessions/{gone}/transcript.md"),
+        format!("/nodes/ses_{gone}"),
+        format!("/lineage/ses_{gone}"),
+        format!("/catalog/sessions/{gone}/nodes"),
     ] {
         let (status, _) = get(path.clone()).await;
         assert_eq!(status, 404, "{path}");
