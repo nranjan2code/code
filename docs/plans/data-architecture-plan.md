@@ -1082,7 +1082,7 @@ each work queue's stream with work-queue retention and a 24-hour
   URL, a prompt) in every error and tool path never appear in a log line,
   span or metric (doc 79 §9 scenario 4).
 
-### M6 — Data catalog, search, lineage (L)
+### M6 — Data catalog, search, lineage (L) — design agreed 2026-10-06
 
 - **`crates/vak-catalog` replaces `crates/vak-store`** (same change):
   `nodes`, `edges`, `text` (FTS5), optional vectors.
@@ -1105,6 +1105,93 @@ each work queue's stream with work-queue retention and a 24-hour
 - `lineage_from_any_artifact_to_cause`, `search_respects_audience`,
   `catalog_rebuild_equals_incremental`.
 - `turn_path_reads_flat`, `catalog_query_p95_under_50ms_at_1m_nodes`.
+
+#### M6 design (agreed 2026-10-06)
+
+The maintainer chose each option below on 2026-10-06. Implementation goes
+one step at a time, in the order below, each committed green.
+
+**What the tree has today** (scanned at `795e440c4`):
+- Three searches. `vak-store` (`store.db` in the cache home: entry
+  locators, lineage, turn descriptors and FTS5 over every content block,
+  thinking and raw tool output included) serves admin search and the
+  turn recall in `vak-core/src/indexed_history.rs`.
+  `vak_session::search_all_extended` scans ledgers with an mtime cache
+  for `/search` and the model's `session_search`. `vak-store` also holds
+  `PresentationStore`, a JSON file that is not an index at all.
+- Three directory walks in `vak-server/src/lib.rs` find a session by id
+  (`find_session_on_disk`, `read_historical_header`,
+  `find_session_in_cwd`; 22 call sites).
+- The turn path folds whole chains: `RouteEvidence::snapshot` reads every
+  evidence row on each turn, `SessionLog::has_request_admission` scans the
+  ledger's entries, and `vak_commit::Ledger::append` replays the
+  commitment's events to check closure.
+- Nothing ingests runs, effects, triggers, memory or commitments into an
+  index, so no query joins a file, a delivery or an effect back to its run.
+
+**Decisions.**
+- **Ingest is a tailer** (chosen over write-through hooks). The catalog
+  keeps one cursor per source, `(source, segment, frames read)`; sealed
+  segments never change, so a cursor resumes where it stopped. It catches
+  up after each turn, on the scheduler tick and before answering a query;
+  a writer sends only a hint. A missed hint costs latency, never
+  correctness (the invariant 31 pattern). Ingest is an idempotent upsert
+  keyed by `(source, seq)`, from any process (WAL, `busy_timeout`), so no
+  process owns it. `rebuild()` drops the file and replays every source
+  from its start.
+- **The text index holds doc 73's projections** (chosen over everything):
+  user and assistant message text, each tool result's digest (never raw
+  output), card text, memory notes and run summaries. No thinking. Admin
+  search no longer matches raw tool output; the turn's recall still
+  reaches it by evidence id through the ledger (invariant 36).
+- **The catalog decides nothing that must be right** (chosen over catalog
+  projections). Request admission is a ref `req/<request id>` moved by CAS
+  under the writer epoch; routing evidence and commitment state are
+  rollups kept current as Documents on each append, replayed only when
+  rebuilt. The catalog answers search, lineage and "where is it"; a stale
+  catalog can make a search miss, never admit a duplicate request or
+  close a commitment wrongly.
+
+**Shapes.**
+- `crates/vak-catalog` (replaces `crates/vak-store`), one SQLite file per
+  tenant at `<data>/tenants/<ten>/catalog.db` (doc 73 §6):
+  - `nodes(id, kind, tenant, space, agent, session, turn, run, actor,
+    cause, audience, created_at, sealed_at, size, locator)`: a session,
+    turn, run, effect, trigger, memory note, commitment, file the turn
+    wrote, candidate and delivery. `locator` is where its bytes live (a
+    ledger directory and position, a chain, a Document path), so "where
+    is session X" is one row.
+  - `edges(from, kind, to)`: `caused` (run → run, run → session),
+    `produced_by` (turn → run, file → turn), `delivered_as` (run → effect),
+    `derived_from`, `references`, `version_of`, `promoted_to`.
+  - `text` (FTS5 over the projections above), `cursors(source, segment,
+    frames)`, `meta(schema, digest)`. The digest is a hash over every
+    source's head (segment count and last frame); `stale()` compares it.
+- **One API**: `Catalog::search(query, &Audience) -> hits`,
+  `lineage(node) -> path to its cause`, `open(id) -> Node` (with its
+  locator), `stale()`, `rebuild()`. `Audience` is the caller's principal
+  and the Agents and conversation audiences it may read; every query
+  filters by it before ranking (invariant 37). Trash is applied there too.
+  HTTP: `/search`, `/lineage/{id}`, `/nodes/{id}`, `/catalog` (status) and
+  `POST /catalog/rebuild`; `/admin/api/search` is gone.
+
+**Steps.**
+1. **M6.1** `vak-catalog`: schema, sources and tailer cursors, ingest of
+   session ledgers, runs, effects, triggers, memory and commitments,
+   `search`/`lineage`/`open`/`stale`/`rebuild`. Exit tests
+   `catalog_rebuild_equals_incremental`, `search_respects_audience`,
+   `lineage_from_any_artifact_to_cause`,
+   `catalog_query_p95_under_50ms_at_1m_nodes`. Nothing calls it yet.
+2. **M6.2** one search: `/search`, admin search, `session_search` and the
+   turn recall call the catalog; `vak-store`, `search_all`, its mtime cache,
+   the recall ledger cache and the three directory walks are deleted;
+   `PresentationStore` becomes Documents (review R9); the server ingests
+   after each turn and on its tick.
+3. **M6.3** the flat turn path: the `req/<id>` ref, routing evidence and
+   commitment rollups as Documents. Exit test `turn_path_reads_flat`.
+4. **M6.4** screens: admin and client search on `/search`, the Lineage tab
+   in conversation detail, catalog status and rebuild in Integrity; a
+   browser run of each.
 
 ### M6.5 — Intake (L, after M6; doc 76)
 
