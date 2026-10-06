@@ -16,7 +16,6 @@ import os
 import pathlib
 import re
 import signal
-import site
 import subprocess
 import sys
 import tempfile
@@ -39,38 +38,6 @@ def global_skills(explicit: str | None = None) -> pathlib.Path:
         return pathlib.Path.home() / "Library" / "Application Support" / "vak" / "skills"
     data = pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local" / "share"))
     return data / "vak" / "skills"
-
-
-def python_dependency_paths(explicit: str | None) -> str:
-    """Keep installed dependencies visible after a case changes HOME.
-
-    The feed cases deliberately use a temporary HOME for database isolation.
-    Python consequently changes its user-site lookup and can hide the
-    operator's installed feed dependencies. Explicit PYTHONPATH entries make
-    isolation and dependency discovery independent concerns.
-    """
-    candidates = [pathlib.Path(ROOT / "scripts" / "feeds")]
-    if explicit:
-        candidates.append(pathlib.Path(explicit))
-    try:
-        candidates.extend(pathlib.Path(path) for path in site.getsitepackages())
-    except AttributeError:
-        pass
-    try:
-        candidates.append(pathlib.Path(site.getusersitepackages()))
-    except AttributeError:
-        pass
-    unique = dict.fromkeys(str(path) for path in candidates if path.is_dir())
-    return os.pathsep.join(unique)
-
-
-@dataclass
-class Result:
-    name: str
-    command: list[str]
-    elapsed: float
-    returncode: int
-    output: str
 
 
 def run(name: str, command: list[str], *, cwd: pathlib.Path = ROOT,
@@ -108,19 +75,12 @@ def assert_result(result: Result, needle: str | None = None) -> Result:
     return result
 
 
-def run_offline_matrix(results: list[Result], repeat: int, feed_site: str | None,
-                       skills_root: str | None) -> None:
+def run_offline_matrix(results: list[Result], repeat: int, skills_root: str | None) -> None:
     global_validation = [str(BIN), "skills", "validate", str(global_skills(skills_root)), "--json"]
     for index in range(repeat):
         results.append(assert_result(run(f"skills-validate-{index}", global_validation)))
 
     results.append(assert_result(run("deterministic-eval", [str(BIN), "eval"]), "passed"))
-    results.append(assert_result(run(
-        "feed-concurrency",
-        [sys.executable, str(ROOT / "scripts/feeds/verify_concurrency.py")],
-        env={**os.environ, "PYTHONPATH": python_dependency_paths(feed_site)},
-    ), "succeeded"))
-    results.append(feed_load_case(feed_site))
 
     for index in range(repeat):
         results.append(assert_result(run(f"agent-hooks-mcp-{index}", [
@@ -170,35 +130,6 @@ def memory_lifecycle() -> Result:
         assert_result(run("memory-list-after-forget", [str(BIN), "memory", "list"], cwd=root, env=env), "no memory notes in workspace")
         elapsed = add.elapsed + listed.elapsed + amended.elapsed + forgotten.elapsed
         return Result("memory-lifecycle", forgotten.command, elapsed, 0, "add/list/amend/forget preserved provenance")
-
-
-def feed_load_case(feed_site: str | None) -> Result:
-    with tempfile.TemporaryDirectory(prefix="vak-feed-load-") as directory:
-        root = pathlib.Path(directory)
-        env = {
-            **os.environ,
-            "HOME": str(root),
-            "PYTHONPATH": python_dependency_paths(feed_site),
-        }
-        seed_code = (
-            "import sys; sys.path.insert(0, %r); "
-            "from feed_utils import FeedSourceConfig, init_feed_system, store_feed, store_item; "
-            "init_feed_system(); fid=store_feed(FeedSourceConfig(id='load', name='Regression Load', source_type='custom')); "
-            "[store_item(fid, {'external_id': str(i), 'title': f'event {i} security release', 'url': f'https://example.com/{i}', 'summary': 'stable feed fixture', 'content': 'security and release evidence', 'tags': ['regression'], 'trust': 'high'}) for i in range(250)]"
-        ) % str(ROOT / "scripts/feeds")
-        seeded = assert_result(run(
-            "feed-load-seed", [sys.executable, "-c", seed_code], cwd=root, env=env, timeout=180
-        ))
-        stats = assert_result(run(
-            "feed-load-stats",
-            [sys.executable, str(ROOT / "scripts/feeds/feed_mcp.py")],
-            cwd=root,
-            env=env,
-            timeout=60,
-            input_text=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "feed_stats", "arguments": {}}}),
-        ), "250")
-        elapsed = seeded.elapsed + stats.elapsed
-        return Result("feed-load-250-items", stats.command, elapsed, 0, "250 synthetic items ingested and returned through feed MCP")
 
 
 def live_code_case(provider: str, model: str) -> Result:
@@ -258,7 +189,6 @@ def main() -> int:
     parser.add_argument("--live", action="store_true", help="run bounded real-model cases")
     parser.add_argument("--provider", default="ollama")
     parser.add_argument("--model", default="gemma4:e2b-mlx")
-    parser.add_argument("--feed-site", help="temporary site-packages directory containing scripts/feeds requirements")
     parser.add_argument("--skills-root", help="explicit directory containing global SKILL.md files")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -266,7 +196,7 @@ def main() -> int:
         raise SystemExit(f"missing built binary: {BIN}")
 
     results: list[Result] = []
-    run_offline_matrix(results, max(1, args.repeat), args.feed_site, args.skills_root)
+    run_offline_matrix(results, max(1, args.repeat), args.skills_root)
     if args.live:
         run_live_matrix(results, args.provider, args.model, max(1, args.repeat))
 

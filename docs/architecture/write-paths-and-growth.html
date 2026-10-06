@@ -515,10 +515,11 @@
       </div>
 
       <div class="store">
-        <div class="store-head"><span class="name">feeds.duckdb</span><span class="badge derived">sidecar</span></div>
+        <div class="store-head"><span class="name">intake/</span><span class="badge ledger">record chain</span></div>
         <div class="store-body">
-          <p>Written by the Python feed pipeline, not by Rust. Bounded by <code class="p">max_items_per_feed = 500</code> and a 90-day dedup window in <code class="p">feeds.toml</code>.</p>
+          <p>What intake sources took (plan M6.5): one <code class="p">taken</code> row per item with its run's trace key, item bodies as tenant objects. Grows with each new item; a source's maximum item count is enforced by M7a's reconciler. The Python feed pipeline and <code class="p">feeds.duckdb</code> are gone.</p>
         </div>
+      </div>
       </div>
 
       <div class="group-title">Config · additive-only across updates</div>

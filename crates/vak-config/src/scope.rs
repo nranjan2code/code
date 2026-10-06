@@ -469,10 +469,6 @@ impl WorkspaceScope {
         self.project_dir().join("output.toml")
     }
 
-    pub fn feeds_config(&self) -> PathBuf {
-        self.project_dir().join("feeds.toml")
-    }
-
     pub fn launch_file(&self) -> PathBuf {
         self.project_dir().join("launch.toml")
     }
@@ -578,7 +574,6 @@ mod tests {
         assert_eq!(s.prompts(), ws.join(".vak/prompts"));
         assert_eq!(s.agents_file(), ws.join(".vak/agents.json"));
         assert_eq!(s.output_prefs(), ws.join(".vak/output.toml"));
-        assert_eq!(s.feeds_config(), ws.join(".vak/feeds.toml"));
         assert_eq!(
             draft_location(
                 Path::new("/run/x"),

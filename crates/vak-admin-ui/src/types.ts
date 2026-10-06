@@ -483,6 +483,8 @@ export interface CatalogNode {
   cause?: string;
   title?: string;
   status?: string;
+  /** Where it is: a ledger, a Document, or an intake item's link. */
+  locator?: string;
   created_at?: string;
   updated_at?: string;
   size?: number;
@@ -1087,160 +1089,69 @@ export interface ActiveWorker {
   parent_session_id: string;
 }
 
-export interface FeedSourceType {
+/** What an intake source fetches (plan M6.5): a closed set. */
+export type IntakeConnector =
+  | { kind: "rss"; url: string }
+  | { kind: "youtube"; channel_id: string }
+  | { kind: "hacker_news"; list?: "front_page" | "newest" | "ask" | "show" }
+  | { kind: "reddit"; subreddit: string; sort?: "hot" | "new" | "top" | "rising" }
+  | { kind: "lobsters"; list?: "hottest" | "newest" }
+  | { kind: "http"; url: string; format?: "feed" | "json" | "text" };
+
+export interface IntakeSource {
   id: string;
   name: string;
-  icon: string;
-  description: string;
-  fetcher: string;
-  default_interval: string;
-}
-
-export interface FeedSource {
-  id?: string;
-  name: string;
-  type: string;
-  url?: string;
-  driver?: string;
-  channel_id?: string;
-  variant?: string;
+  agent: string;
+  connector: IntakeConnector;
   tags?: string[];
-  trust?: string;
-  enabled?: boolean;
-  interval?: string;
-  scope?: "global" | "workspace";
-}
-
-export interface FeedItem {
-  id: number;
-  feed_id: number;
-  title: string;
+  trust: "low" | "medium" | "high";
+  trigger: string;
+  created_at: string;
+  kind: IntakeConnector["kind"];
   url: string;
-  author?: string;
-  summary: string;
-  content?: string;
-  published_at?: string;
-  ingested_at?: string;
-  tags?: string[];
-  source_trust?: string;
-  word_count?: number;
-  source_name?: string;
-  source_type?: string;
-  source_id?: string;
-  scope?: string;
-  workspace_id?: string;
-  security_status?: string;
-  security_detail?: string;
-}
-
-export interface FeedSearchResult {
-  url: string;
-  title: string;
-  content: string;
-  score: number;
-  published_date?: string;
-  source_name?: string;
-  source_type?: string;
-  tags?: string[];
-  highlights?: string[];
-  evidence?: {
-    excerpts?: Array<{ text: string; relevance: number }>;
-    source_trust?: string;
-    freshness_hours?: number;
-    corroboration_count?: number;
-  };
-}
-
-export interface FeedSearchResponse {
-  query: string;
-  answer?: string;
-  follow_up_questions?: string[];
-  results: FeedSearchResult[];
-  meta: {
-    total_results: number;
-    returned_results: number;
-    search_time_ms: number;
-    sources_searched?: string[];
-    deduplicated?: number;
-  };
-}
-
-export interface FeedStats {
-  total_items: number;
-  total_feeds: number;
-  active_feeds: number;
-  total_alerts: number;
-  last_ingest?: string;
-  items_today: number;
-  quarantined_items?: number;
-  sources?: Array<{
-    name: string;
-    type: string;
-    item_count: number;
-    last_item?: string;
-  }>;
-}
-
-export interface ConfiguredFeedSource {
-  id: string;
-  name: string;
-  source_type: string;
-  url?: string;
-  trust: string;
   enabled: boolean;
-  check_interval?: string;
-  scope?: string;
-  workspace_id?: string;
-  security_status?: string;
-  last_started_at?: string;
-  next_due_at?: string;
-  last_status?: string;
-  last_error?: string;
+  every_minutes: number | null;
 }
 
-export interface FeedAlertRule {
-  id: number;
+export interface IntakeSourceDraft {
   name: string;
-  scope?: string;
-  match_config?: {
-    keywords?: string[];
-    tags?: string[];
-    sources?: string[];
-  };
-  action?: string;
-  deliver_to?: string;
-  hook_command?: string;
-  cooldown_minutes?: number;
+  agent?: string;
+  connector: IntakeConnector;
+  tags?: string[];
+  trust?: "low" | "medium" | "high";
+  every_minutes?: number;
   enabled?: boolean;
 }
 
-export interface FeedRun {
-  id: number;
-  run_key: string;
-  scope: string;
-  workspace_id: string;
-  source_id?: string;
-  status: string;
-  started_at: string;
-  finished_at?: string;
-  sources_seen: number;
-  sources_succeeded: number;
-  items_seen: number;
-  items_added: number;
-  items_quarantined: number;
-  error?: string;
+export interface IntakeItemDetail {
+  item: CatalogNode;
+  body: { key: string; title: string; link?: string; author?: string; published?: string; text?: string };
+  labels: string[];
+  evidence: string[];
 }
 
-export interface FeedQuarantineItem {
-  id: number;
-  title: string;
-  url: string;
-  security_status: string;
-  security_detail?: string;
-  ingested_at?: string;
-  source_name?: string;
-  scope?: string;
-  workspace_id?: string;
+export interface IntakeAlert {
+  id: string;
+  name: string;
+  agent: string;
+  keywords?: string[];
+  tags?: string[];
+  sources?: string[];
+  cooldown_minutes: number;
+  deliver_to?: string;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface IntakeAlertDraft {
+  name: string;
+  agent?: string;
+  keywords?: string[];
+  tags?: string[];
+  sources?: string[];
+  cooldown_minutes?: number;
+  deliver_to?: string;
+  enabled?: boolean;
 }
 
 /// The derived setup projection (`GET /onboarding`). Mirrors

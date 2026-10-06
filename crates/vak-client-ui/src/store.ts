@@ -145,9 +145,9 @@ export function setTechnicalDetails(value: boolean) {
   setTechnicalDetailsSignal(value);
   try { localStorage.setItem("vak.technicalDetails", value ? "1" : "0"); } catch { /* the choice still applies to this window */ }
 }
-export type DockTab = "workbench" | "preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments";
+export type DockTab = "workbench" | "preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "sources" | "commitments";
 const storedDockTab = localStorage.getItem("vak.dockTab") as DockTab | null;
-const validDockTab = storedDockTab && ["workbench", "preview", "diff", "terminal", "editor", "pr", "agents", "feeds", "commitments"].includes(storedDockTab)
+const validDockTab = storedDockTab && ["workbench", "preview", "diff", "terminal", "editor", "pr", "agents", "sources", "commitments"].includes(storedDockTab)
   ? storedDockTab
   : null;
 const [dockTab, setDockTabSignal] = createSignal<DockTab | null>(validDockTab);
@@ -724,7 +724,6 @@ export const [searchOpen, setSearchOpen] = createSignal(false);
 export const [inboxOpen, setInboxOpen] = createSignal(false);
 export const [inboxUnread, setInboxUnread] = createSignal(0);
 // Feed pipeline modal.
-export const [feedsOpen, setFeedsOpen] = createSignal(false);
 // Settings page to land on when the next open happens (budget banner link).
 export type SettingsPageId =
   | "general"

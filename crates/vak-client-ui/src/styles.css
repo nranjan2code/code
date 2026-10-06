@@ -3566,6 +3566,21 @@ html[data-reduce-motion="true"] *, html[data-reduce-motion="true"] *::before, ht
   flex-direction: column;
   gap: 10px;
 }
+/* What the Agent's sources brought in (plan M6.5). A held item is shown,
+   marked, and never a link. */
+.sources-panel {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.sources-filter {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.sources-filter select { width: 100%; }
+.sources-list { padding: var(--space-2) var(--space-3); }
+.sb-item.sb-item-held { border-color: var(--border-soft); cursor: default; }
+.sb-item.sb-item-held .sb-item-meta { color: var(--red); }
 .worker-empty {
   color: var(--dim);
   font-size: var(--fs-control);

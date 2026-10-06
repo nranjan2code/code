@@ -217,14 +217,15 @@ Two roots hold an Agent's things, and they are different directories:
 │   ├── environments/<run>/            # worktrees, copy environments (M4.8), staging trees
 │   ├── workspaces/<space>/<agent_id>/ # a non-built-in Agent's workspace
 │   ├── keys/                          # revocations; the KEKs are in the credential store
-│   ├── auth/                          # the owner's passkeys and recovery digests
-│   └── feeds/, feeds.toml
+│   └── auth/                          # the owner's passkeys and recovery digests
 ├── gateway/                           # allowlist.json, bots.json, bindings, deliveries
 ├── operations/                        # incidents, actions (record chains)
 ├── cost-log/                          # the FinOps ledger (a record chain)
 ├── inbox/                             # a record chain
 ├── runs/, effects/, cursors/          # run, effect and cursor-gap record chains (M4);
 │                                      # automations are Documents triggers/<trg> in the store
+├── intake/                            # what intake sources took (M6.5); sources/<src>,
+│                                      # alerts/<alr> and alert-state/<alr> are Documents
 ├── archive.json                       # archived sessions (hidden from the sidebar)
 └── deleted.json                       # the trash (vak_core::trash)
 <data home>/tenants/<tenant>/catalog/  # the data catalog, rebuilt from the records

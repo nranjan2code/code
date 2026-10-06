@@ -551,24 +551,6 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
-        path: "tenants/{tenant}/feeds",
-        root: Root::Data,
-        owner: "vak-server (scripts/feeds)",
-        schema: None,
-        // The feed store (DuckDB) and the feeds' security log, both at
-        // paths the server hands the Python pipeline.
-        class: Class::Record,
-        on_purge: OnPurge::Remove,
-    },
-    StateEntry {
-        path: "tenants/{tenant}/feeds.toml",
-        root: Root::Data,
-        owner: "vak-server",
-        schema: None,
-        class: Class::Desired,
-        on_purge: OnPurge::Remove,
-    },
-    StateEntry {
         path: "output.toml",
         root: Root::Data,
         owner: "vak-delivery",

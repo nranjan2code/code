@@ -282,40 +282,30 @@ fn untrusted_project_cannot_redirect_the_updater() {
     );
 }
 
-/// An untrusted project must not be able to switch on the feed pipeline: it is
-/// an unattended runner (the scheduler fetches every tick) executing code with
-/// network access, so a cloned repository that could set `feeds.enabled` would
-/// be handing itself an unattended runner (invariant 15).
+/// The feed pipeline is gone (plan M6.5c): intake sources are Documents
+/// written through the authenticated API, so no config layer can start an
+/// unattended fetcher. A leftover `[feeds]` section is an unknown key,
+/// ignored whether or not the workspace is trusted, and no longer a
+/// privileged one.
 #[test]
-fn untrusted_project_cannot_enable_the_feed_pipeline() {
+fn a_feeds_section_configures_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
-    std::fs::write(
-        project.join("config.toml"),
-        "[feeds]\nenabled = true\ndefault_check_interval = \"5m\"\n",
-    )
-    .unwrap();
-
-    let untrusted = load_with_trust(dir.path(), false).unwrap();
-    assert!(
-        !untrusted.feeds.enabled,
-        "an untrusted project must not enable feeds"
-    );
-    assert!(
-        untrusted
+    std::fs::write(project.join("config.toml"), "[feeds]\nenabled = true\n").unwrap();
+    for trusted in [false, true] {
+        let loaded = load_with_trust(dir.path(), trusted).unwrap();
+        let about_feeds: Vec<&String> = loaded
             .warnings
             .iter()
-            .any(|w| w.contains("not trusted") && w.contains("feeds")),
-        "the strip must be announced: {:?}",
-        untrusted.warnings
-    );
-
-    let trusted = load_with_trust(dir.path(), true).unwrap();
-    assert!(
-        trusted.feeds.enabled,
-        "a trusted workspace keeps its own choice"
-    );
+            .filter(|w| w.contains("feeds"))
+            .collect();
+        assert_eq!(about_feeds.len(), 1, "{:?}", loaded.warnings);
+        assert!(
+            about_feeds[0].contains("unknown config key 'feeds' (ignored)"),
+            "{about_feeds:?}"
+        );
+    }
 }
 
 /// `inherit_* = false` clears the corresponding lower layer during merge, so

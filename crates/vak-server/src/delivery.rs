@@ -1,7 +1,6 @@
 //! Durable channel delivery and the transport adapter boundary.
 
 use async_trait::async_trait;
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -792,56 +791,6 @@ fn enrich_provenance(core: &Core, mut content: DeliveryContent) -> DeliveryConte
         }
     }
     content
-}
-
-pub(crate) async fn deliver_feed_intents(
-    core: &Core,
-    intents: &[serde_json::Value],
-) -> Result<usize, String> {
-    let mut delivered = 0;
-    for intent in intents {
-        let target = intent
-            .get("deliver_to")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "feed alert delivery intent has no target".to_string())?;
-        let alert_name = intent
-            .get("alert_name")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("Feed alert");
-        let item = intent.get("item").cloned().unwrap_or_default();
-        let title = item.get("title").and_then(Value::as_str).unwrap_or("");
-        let source = item
-            .get("source_name")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let url = item.get("url").and_then(Value::as_str).unwrap_or("");
-        let reasons = intent
-            .get("match")
-            .and_then(|value| value.get("reasons"))
-            .and_then(Value::as_array)
-            .map(|values| {
-                values
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
-            .unwrap_or_default();
-        let markdown = format!(
-            "**Feed Alert: {alert_name}**\n\n**{title}**\nSource: {source}\nURL: {url}\nReasons: {reasons}"
-        );
-        deliver(
-            core,
-            core.admitted_trace(),
-            target,
-            DeliveryKind::Alert,
-            DeliveryContent::Text { markdown },
-        )
-        .await?;
-        delivered += 1;
-    }
-    Ok(delivered)
 }
 
 /// Sends what is waiting, every 30 seconds: first records as unknown

@@ -483,7 +483,7 @@ const EXTENSION_TABS = [
 
 const KNOWLEDGE_TABS = [
   { hash: "#/memory", label: "Memory" },
-  { hash: "#/feeds", label: "Feeds" },
+  { hash: "#/sources", label: "Sources" },
   { hash: "#/search", label: "Search" },
 ] as const;
 
@@ -1817,7 +1817,7 @@ function noteAgeBucket(ts: string): "fresh" | "aging" | "stale" {
   return "stale";
 }
 
-function KnowledgeSubNav(props: { active: "#/memory" | "#/feeds" | "#/search" }) {
+function KnowledgeSubNav(props: { active: "#/memory" | "#/sources" | "#/search" }) {
   return (
     <div class="knowledge-subnav">
       <a
@@ -1828,11 +1828,11 @@ function KnowledgeSubNav(props: { active: "#/memory" | "#/feeds" | "#/search" })
         Memory & Profile
       </a>
       <a
-        href="#/feeds"
+        href="#/sources"
         class="knowledge-tab-btn"
-        classList={{ active: props.active === "#/feeds" }}
+        classList={{ active: props.active === "#/sources" }}
       >
-        Scheduled Feeds
+        Sources
       </a>
       <a
         href="#/search"
@@ -7242,7 +7242,7 @@ const NAV: NavItem[] = [
 ];
 
 function routeScope(current: string): NavItem["scope"] {
-  if (current === "#/feeds" || current.startsWith("#/feeds/") || current === "#/search" || current.startsWith("#/search/")) {
+  if (current === "#/sources" || current.startsWith("#/sources/") || current === "#/search" || current.startsWith("#/search/")) {
     return "project";
   }
   if (current === "#/sessions" || current.startsWith("#/sessions/")) return "global";
@@ -7258,648 +7258,369 @@ const FEED_TYPE_LABELS: Record<string, string> = {
   custom_http: "Custom",
 };
 
-function FeedsSection() {
-  const [tab, setTab] = createSignal<"overview" | "sources" | "reader" | "alerts" | "workbench">("overview");
-  const [searchQuery, setSearchQuery] = createSignal("");
-  const [searchResults, setSearchResults] = createSignal<import("./types").FeedSearchResponse | null>(null);
-  const [searching, setSearching] = createSignal(false);
-  const [wizardOpen, setWizardOpen] = createSignal(false);
-  const [alertFormOpen, setAlertFormOpen] = createSignal(false);
-  const [editingSource, setEditingSource] = createSignal<string | null>(null);
-  const [editInterval, setEditInterval] = createSignal("");
-  const [editTrust, setEditTrust] = createSignal("");
+// ---- Sources (intake, plan M6.5) ----------------------------------------
 
-  // Errors are surfaced (via LoadError), not swallowed to an empty/null
-  // value — a script/MCP failure here used to render as an indefinite
-  // "Loading…" with no way to tell a slow fetch from a broken backend.
-  const [stats, { refetch: refetchStats }] = createResource(() => api.feedStats());
-  const [sourceTypes] = createResource(() => api.feedSourceTypes());
-  const [alerts, { refetch: refetchAlerts }] = createResource(() => api.feedAlerts());
-  const [configuredSources, { refetch: refetchConfigured }] = createResource(() =>
-    api.feedConfiguredSources(),
+const SOURCE_KINDS: { value: import("./types").IntakeConnector["kind"]; label: string }[] = [
+  { value: "rss", label: "Blog or news feed (RSS/Atom)" },
+  { value: "youtube", label: "YouTube channel" },
+  { value: "hacker_news", label: "Hacker News" },
+  { value: "reddit", label: "Reddit community" },
+  { value: "lobsters", label: "Lobsters" },
+  { value: "http", label: "Any web address" },
+];
+
+function sourceKindLabel(kind: string): string {
+  return SOURCE_KINDS.find((entry) => entry.value === kind)?.label ?? kind;
+}
+
+const ITEM_STATUS: Record<string, string> = {
+  accepted: "Available",
+  quarantined: "Held back",
+  blocked: "Blocked",
+};
+
+function SourceForm(props: { onClose: () => void; onAdded: () => void | Promise<void> }) {
+  const [name, setName] = createSignal("");
+  const [kind, setKind] = createSignal<import("./types").IntakeConnector["kind"]>("rss");
+  const [url, setUrl] = createSignal("");
+  const [channel, setChannel] = createSignal("");
+  const [subreddit, setSubreddit] = createSignal("");
+  const [list, setList] = createSignal("");
+  const [every, setEvery] = createSignal(60);
+  const [tags, setTags] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+
+  const connector = (): import("./types").IntakeConnector => {
+    switch (kind()) {
+      case "youtube":
+        return { kind: "youtube", channel_id: channel().trim() };
+      case "hacker_news":
+        return { kind: "hacker_news", list: (list() || "front_page") as "front_page" };
+      case "reddit":
+        return { kind: "reddit", subreddit: subreddit().trim() };
+      case "lobsters":
+        return { kind: "lobsters", list: (list() || "hottest") as "hottest" };
+      case "http":
+        return { kind: "http", url: url().trim() };
+      default:
+        return { kind: "rss", url: url().trim() };
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.intakeAddSource({
+        name: name().trim(),
+        connector: connector(),
+        every_minutes: every(),
+        tags: tags().split(",").map((tag) => tag.trim()).filter(Boolean),
+      });
+      pushToast("info", "Source added");
+      await props.onAdded();
+    } catch (error) {
+      pushToast("alert", `${error}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section class="panel">
+      <h3>Add a source</h3>
+      <div class="form-row"><label>Name<input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Rust blog" /></label></div>
+      <div class="form-row">
+        <label>
+          Kind
+          <select value={kind()} onChange={(e) => setKind(e.currentTarget.value as import("./types").IntakeConnector["kind"])}>
+            <For each={SOURCE_KINDS}>{(entry) => <option value={entry.value}>{entry.label}</option>}</For>
+          </select>
+        </label>
+      </div>
+      <Show when={kind() === "rss" || kind() === "http"}>
+        <div class="form-row"><label>Address<input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="https://example.com/feed.xml" /></label></div>
+      </Show>
+      <Show when={kind() === "youtube"}>
+        <div class="form-row"><label>Channel ID<input value={channel()} onInput={(e) => setChannel(e.currentTarget.value)} placeholder="UC…" /></label></div>
+      </Show>
+      <Show when={kind() === "reddit"}>
+        <div class="form-row"><label>Community<input value={subreddit()} onInput={(e) => setSubreddit(e.currentTarget.value)} placeholder="rust" /></label></div>
+      </Show>
+      <Show when={kind() === "hacker_news"}>
+        <div class="form-row">
+          <label>
+            List
+            <select value={list() || "front_page"} onChange={(e) => setList(e.currentTarget.value)}>
+              <option value="front_page">Front page</option>
+              <option value="newest">Newest</option>
+              <option value="ask">Ask HN</option>
+              <option value="show">Show HN</option>
+            </select>
+          </label>
+        </div>
+      </Show>
+      <Show when={kind() === "lobsters"}>
+        <div class="form-row">
+          <label>
+            List
+            <select value={list() || "hottest"} onChange={(e) => setList(e.currentTarget.value)}>
+              <option value="hottest">Hottest</option>
+              <option value="newest">Newest</option>
+            </select>
+          </label>
+        </div>
+      </Show>
+      <div class="form-row">
+        <label>
+          Check every (minutes)
+          <input type="number" min="5" value={every()} onInput={(e) => setEvery(Number(e.currentTarget.value) || 60)} />
+        </label>
+      </div>
+      <div class="form-row"><label>Tags<input value={tags()} onInput={(e) => setTags(e.currentTarget.value)} placeholder="news, rust" /></label></div>
+      <div class="row-gap">
+        <button disabled={saving() || !name().trim()} onClick={() => void save()}>{saving() ? "Adding…" : "Add source"}</button>
+        <button class="ghost" onClick={props.onClose}>Cancel</button>
+      </div>
+    </section>
   );
-  const [runs, { refetch: refetchRuns }] = createResource(() => api.feedRuns());
-  const [quarantine, { refetch: refetchQuarantine }] = createResource(() => api.feedQuarantine());
+}
 
-  const refetchAll = async () => {
-    await Promise.all([refetchStats(), refetchConfigured(), refetchRuns(), refetchQuarantine()]);
-  };
+function AlertForm(props: { sources: import("./types").IntakeSource[]; onClose: () => void; onAdded: () => void | Promise<void> }) {
+  const [name, setName] = createSignal("");
+  const [keywords, setKeywords] = createSignal("");
+  const [tags, setTags] = createSignal("");
+  const [source, setSource] = createSignal("");
+  const [cooldown, setCooldown] = createSignal(0);
+  const [deliverTo, setDeliverTo] = createSignal("");
+  const [saving, setSaving] = createSignal(false);
+  const split = (text: string) => text.split(",").map((word) => word.trim()).filter(Boolean);
 
-  const doSearch = async () => {
-    const q = searchQuery().trim();
-    if (!q) return;
-    setSearching(true);
+  const save = async () => {
+    setSaving(true);
     try {
-      const res = await api.feedSearch({ q, limit: 10 });
-      setSearchResults(res);
-    } catch (e) {
-      pushToast("alert", `Search failed: ${e}`);
-    }
-    setSearching(false);
-  };
-
-  const toggleSource = async (src: import("./types").ConfiguredFeedSource) => {
-    try {
-      await api.feedUpdateSource(src.id, { enabled: !src.enabled }, src.scope);
-      await refetchConfigured();
-      pushToast("info", `${src.name} ${src.enabled ? "disabled" : "enabled"}`);
-    } catch (e) {
-      pushToast("alert", `Could not update "${src.name}": ${e}`);
-    }
-  };
-
-  const removeSource = async (source: import("./types").ConfiguredFeedSource) => {
-    const name = source.name;
-    if (!confirm(`Remove source "${name}"? This stops it from being checked, but keeps items already collected.`)) return;
-    try {
-      await api.feedDeleteSource(source.id, source.scope);
-      await refetchAll();
-      pushToast("info", `Source "${name}" removed`);
-    } catch (e) {
-      pushToast("alert", `Could not remove "${name}": ${e}`);
+      await api.intakeAddAlert({
+        name: name().trim(),
+        keywords: split(keywords()),
+        tags: split(tags()),
+        sources: source() ? [source()] : [],
+        cooldown_minutes: cooldown(),
+        deliver_to: deliverTo().trim() || undefined,
+      });
+      pushToast("info", "Alert added");
+      await props.onAdded();
+    } catch (error) {
+      pushToast("alert", `${error}`);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const startEditSource = (src: import("./types").ConfiguredFeedSource) => {
-    setEditingSource(src.id);
-    setEditInterval(src.check_interval || "1h");
-    setEditTrust(src.trust || "medium");
-  };
+  return (
+    <section class="panel">
+      <h3>Add an alert</h3>
+      <p class="dim">New items that match go to the inbox, each one once. Items held back are matched only after you release them.</p>
+      <div class="form-row"><label>Name<input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Security news" /></label></div>
+      <div class="form-row"><label>Words to look for<input value={keywords()} onInput={(e) => setKeywords(e.currentTarget.value)} placeholder="CVE, vulnerability" /></label></div>
+      <div class="form-row"><label>Sources tagged<input value={tags()} onInput={(e) => setTags(e.currentTarget.value)} placeholder="security" /></label></div>
+      <div class="form-row">
+        <label>
+          Only this source
+          <select value={source()} onChange={(e) => setSource(e.currentTarget.value)}>
+            <option value="">Any source</option>
+            <For each={props.sources}>{(entry) => <option value={entry.id}>{entry.name}</option>}</For>
+          </select>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>
+          Wait between notices (minutes)
+          <input type="number" min="0" value={cooldown()} onInput={(e) => setCooldown(Number(e.currentTarget.value) || 0)} />
+        </label>
+      </div>
+      <div class="form-row"><label>Also send to (optional)<input value={deliverTo()} onInput={(e) => setDeliverTo(e.currentTarget.value)} placeholder="telegram:123456" /></label></div>
+      <div class="row-gap">
+        <button disabled={saving() || !name().trim()} onClick={() => void save()}>{saving() ? "Adding…" : "Add alert"}</button>
+        <button class="ghost" onClick={props.onClose}>Cancel</button>
+      </div>
+    </section>
+  );
+}
 
-  const saveEditSource = async (source: import("./types").ConfiguredFeedSource) => {
-    const name = source.name;
-    try {
-      await api.feedUpdateSource(source.id, { interval: editInterval(), trust: editTrust() }, source.scope);
-      await refetchConfigured();
-      pushToast("info", `"${name}" updated`);
-      setEditingSource(null);
-    } catch (e) {
-      pushToast("alert", `Could not update "${name}": ${e}`);
-    }
-  };
+function IntakeSection() {
+  const [tab, setTab] = createSignal<"sources" | "items" | "alerts">("sources");
+  const [adding, setAdding] = createSignal(false);
+  const [alertForm, setAlertForm] = createSignal(false);
+  const [itemSource, setItemSource] = createSignal("");
+  const [heldOnly, setHeldOnly] = createSignal(false);
+  const [openItem, setOpenItem] = createSignal<string | null>(null);
 
-  const removeAlert = async (alert: import("./types").FeedAlertRule) => {
-    const name = alert.name;
-    if (!confirm(`Delete alert "${name}"?`)) return;
-    try {
-      await api.feedDeleteAlert(name, alert.scope);
-      await refetchAlerts();
-      pushToast("info", `Alert "${name}" deleted`);
-    } catch (e) {
-      pushToast("alert", `Could not delete alert "${name}": ${e}`);
-    }
-  };
+  const [sources, { refetch: refetchSources }] = createResource(() => api.intakeSources());
+  const [items, { refetch: refetchItems }] = createResource(
+    () => [itemSource(), heldOnly()] as const,
+    ([source, held]) => api.intakeItems({ source: source || undefined, status: held ? "quarantined" : undefined, limit: 200 }),
+  );
+  const [alerts, { refetch: refetchAlerts }] = createResource(() => api.intakeAlerts());
+  const [detail, { refetch: refetchDetail }] = createResource(openItem, (id) => api.intakeItem(id));
 
-  const triggerIngest = async () => {
+  const sourceName = (itemId: string) =>
+    sources()?.sources.find((source) => itemId.startsWith(`itm:${source.id}:`))?.name ?? "A removed source";
+
+  const act = async (work: () => Promise<unknown>, done: string, after: () => unknown) => {
     try {
-      const res = await api.feedIngest();
-      await refetchAll();
-      pushToast("info", `Found ${res.new_items} new item${res.new_items === 1 ? "" : "s"} across ${res.sources_ingested} source${res.sources_ingested === 1 ? "" : "s"}`);
-    } catch (e) {
-      pushToast("alert", `Could not check for new items: ${e}`);
+      await work();
+      pushToast("info", done);
+      await after();
+    } catch (error) {
+      pushToast("alert", `${error}`);
     }
   };
 
   return (
     <div class="view">
-      <KnowledgeSubNav active="#/feeds" />
+      <KnowledgeSubNav active="#/sources" />
       <PageHeader
-        title="Feeds"
-        description="Sources Vakyartha reads on a schedule — blogs, YouTube channels, Reddit, Hacker News — so it can answer from them."
-        actions={
-          <button class="small" onClick={triggerIngest}>Check for new items</button>
-        }
+        title="Sources"
+        description="Feeds and sites Vakyartha checks on a schedule. What they bring in is searchable by your Agents; anything that looks like an attempt to instruct them is held back until you release it."
+        actions={<button class="small" onClick={() => { setTab("sources"); setAdding(true); }}>Add a source</button>}
       />
       <div class="tab-bar">
-        <button class="tab-btn" classList={{ active: tab() === "overview" }} onClick={() => setTab("overview")}>Overview</button>
         <button class="tab-btn" classList={{ active: tab() === "sources" }} onClick={() => setTab("sources")}>Sources</button>
-        <button class="tab-btn" classList={{ active: tab() === "reader" }} onClick={() => setTab("reader")}>Reader</button>
+        <button class="tab-btn" classList={{ active: tab() === "items" }} onClick={() => setTab("items")}>Items</button>
         <button class="tab-btn" classList={{ active: tab() === "alerts" }} onClick={() => setTab("alerts")}>Alerts</button>
-        <button class="tab-btn" classList={{ active: tab() === "workbench" }} onClick={() => setTab("workbench")}>Workbench</button>
       </div>
 
-      <Show when={tab() === "overview"}>
-        <Show when={!stats.error} fallback={<LoadError message={`${stats.error}`} onRetry={() => refetchStats()} />}>
-        <Show when={stats()} fallback={<div class="empty">Loading…</div>}>
-          <div class="feed-stats-row">
-            <div class="feed-stat">
-              <div class="value">{stats()!.total_items}</div>
-              <div class="label">Items collected</div>
-            </div>
-            <div class="feed-stat">
-              <div class="value">{stats()!.total_feeds}</div>
-              <div class="label">Sources</div>
-            </div>
-            <div class="feed-stat">
-              <div class="value">{stats()!.items_today}</div>
-              <div class="label">New today</div>
-            </div>
-            <div class="feed-stat">
-              <div class="value">{stats()!.total_alerts}</div>
-              <div class="label">Alerts set up</div>
-            </div>
-            <div class="feed-stat">
-              <div class="value">{stats()!.quarantined_items ?? 0}</div>
-              <div class="label">Quarantined</div>
-            </div>
-          </div>
-          <Show when={stats()!.sources && stats()!.sources!.length > 0}>
-            <section class="panel">
-              <div class="panel-title-row"><div><h2>Sources</h2></div></div>
-              <For each={stats()!.sources}>
-                {(src) => (
-                  <div class="feed-source-card">
-                    <div class="icon">{src.type === "hacker_news" ? "🔥" : src.type === "youtube" ? "▶" : "📡"}</div>
-                    <div class="info">
-                      <div class="name">{src.name}</div>
-                      <div class="meta">{FEED_TYPE_LABELS[src.type] ?? src.type} · {src.item_count} items</div>
+      <Show when={tab() === "sources"}>
+        <Show when={adding()}>
+          <SourceForm onClose={() => setAdding(false)} onAdded={async () => { setAdding(false); await refetchSources(); }} />
+        </Show>
+        <Show when={!sources.error} fallback={<LoadError message={`${sources.error}`} onRetry={() => refetchSources()} />}>
+          <Show when={(sources()?.sources ?? []).length > 0} fallback={<div class="empty">{sources.loading ? "Loading…" : "No sources yet. Add one to start."}</div>}>
+            <div class="intake-list">
+              <For each={sources()?.sources ?? []}>
+                {(source) => (
+                  <article class="panel intake-row">
+                    <div class="intake-row-main">
+                      <strong>{source.name}</strong>
+                      <span class="dim">{sourceKindLabel(source.kind)} · every {source.every_minutes ?? "?"} min{source.enabled ? "" : " · paused"}</span>
+                      <Show when={source.kind === "rss" || source.kind === "http"}>
+                        <span class="dim intake-url">{source.url}</span>
+                      </Show>
                     </div>
-                  </div>
+                    <div class="row-gap">
+                      <button class="ghost small" onClick={() => void act(() => api.intakePoll(source.id), "Checking now", () => setTimeout(() => void refetchItems(), 3000))}>Check now</button>
+                      <button class="ghost small" onClick={() => void act(() => api.intakeUpdateSource(source.id, { enabled: !source.enabled }), source.enabled ? "Paused" : "Resumed", refetchSources)}>{source.enabled ? "Pause" : "Resume"}</button>
+                      <button class="ghost small" onClick={() => { setItemSource(source.id); setTab("items"); }}>Items</button>
+                      <button
+                        class="danger small"
+                        onClick={async () => {
+                          if (!(await confirmDestructive(`Remove ${source.name}? What it already brought in stays.`))) return;
+                          await act(() => api.intakeDeleteSource(source.id), "Source removed", refetchSources);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </article>
                 )}
               </For>
-            </section>
+            </div>
           </Show>
         </Show>
-        </Show>
-        <section class="panel">
-          <div class="panel-title-row"><div><h2>Search</h2></div></div>
-          <div class="toolbar">
-            <input
-              class="search-input"
-              placeholder="Search everything you follow…"
-              value={searchQuery()}
-              onInput={(e) => setSearchQuery(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && doSearch()}
-            />
-            <button onClick={doSearch} disabled={searching()}>{searching() ? "Searching…" : "Search"}</button>
-          </div>
-          <Show when={searchResults()}>
-            <Show when={searchResults()!.answer}>
-              <div class="feed-answer-box">{searchResults()!.answer}</div>
-            </Show>
-            <Show when={searchResults()!.follow_up_questions && searchResults()!.follow_up_questions!.length > 0}>
-              <div class="feed-follow-ups">
-                <For each={searchResults()!.follow_up_questions}>
-                  {(q) => (
-                    <span class="feed-follow-up" onClick={() => { setSearchQuery(q); doSearch(); }}>{q}</span>
-                  )}
-                </For>
-              </div>
-            </Show>
-            <For each={searchResults()!.results}>
-              {(item) => (
-                <div class="feed-search-result">
-                  <div class="score-bar"><div class="fill" style={{ width: `${Math.round(item.score * 100)}%` }} /></div>
-                  <div class="title"><a href={item.url} target="_blank">{item.title}</a></div>
-                  <Show when={item.content}>
-                    <div class="excerpt">{item.content.slice(0, 200)}</div>
-                  </Show>
-                  <div class="evidence">
-                    <Show when={item.source_name}><span>{item.source_name}</span></Show>
-                    <Show when={item.published_date}><span>{item.published_date}</span></Show>
-                    <Show when={item.evidence?.freshness_hours != null}><span>{item.evidence!.freshness_hours}h ago</span></Show>
-                  </div>
-                </div>
-              )}
-            </For>
-          </Show>
-        </section>
-        <section class="panel">
-          <div class="panel-title-row"><div><h2>Quarantine</h2><p class="dim">External content held from search and alerts until reviewed.</p></div></div>
-          <Show when={quarantine()} fallback={<div class="empty">No quarantined items.</div>}>
-            <For each={quarantine()!.items}>
-              {(item) => <div class="feed-source-card"><div class="info"><div class="name">{item.title}</div><div class="meta">{item.source_name} · {item.security_detail || "security review required"}</div></div><button type="button" class="small" onClick={async () => { try { await api.feedReleaseItem(item.id); await refetchQuarantine(); pushToast("info", "Item released"); } catch (e) { pushToast("alert", `Could not release item: ${e}`); } }}>Release</button></div>}
-            </For>
-          </Show>
-        </section>
       </Show>
 
-      <Show when={tab() === "sources"}>
-        <section class="panel">
-          <div class="panel-title-row">
-            <div><h2>Your sources</h2><p class="dim">What Vakyartha is currently checking, grouped by tag.</p></div>
-            <button class="small" onClick={() => setWizardOpen(true)}>Add a source</button>
-          </div>
-          <Show when={!configuredSources.error} fallback={<LoadError message={`${configuredSources.error}`} onRetry={() => refetchConfigured()} />}>
-          <Show
-            when={configuredSources() && configuredSources()!.sources.length > 0}
-            fallback={<div class="empty">No sources yet. Add one below to get started.</div>}
-          >
-            <For each={configuredSources()!.sources}>
-              {(src) => (
-                <div class="feed-source-card">
-                  <div class="icon">{src.source_type === "hacker_news" ? "🔥" : src.source_type === "youtube" ? "▶" : "📡"}</div>
-                  <div class="info">
-                    <div class="name">{src.name}</div>
-                    <Show
-                        when={editingSource() === src.id}
-                      fallback={
-                        <>
-                          <div class="meta">
-                            {FEED_TYPE_LABELS[src.source_type] ?? src.source_type}
-                            <Show when={src.check_interval}> · every {src.check_interval}</Show>
-                            <Show when={src.trust}> · {src.trust} trust</Show>
-                            <span> · {src.scope === "workspace" ? "workspace" : "global"}</span>
-                            <Show when={src.url}> · <a href={src.url} target="_blank" rel="noreferrer noopener">{src.url}</a></Show>
+      <Show when={tab() === "items"}>
+        <div class="row-gap intake-filters">
+          <select value={itemSource()} onChange={(e) => setItemSource(e.currentTarget.value)} aria-label="Source">
+            <option value="">All sources</option>
+            <For each={sources()?.sources ?? []}>{(source) => <option value={source.id}>{source.name}</option>}</For>
+          </select>
+          <label class="inherit-toggle">
+            <input type="checkbox" checked={heldOnly()} onChange={(e) => setHeldOnly(e.currentTarget.checked)} />
+            Held back only
+          </label>
+        </div>
+        <Show when={!items.error} fallback={<LoadError message={`${items.error}`} onRetry={() => refetchItems()} />}>
+          <Show when={(items()?.items ?? []).length > 0} fallback={<div class="empty">{items.loading ? "Loading…" : "Nothing here yet."}</div>}>
+            <div class="intake-list">
+              <For each={items()?.items ?? []}>
+                {(item) => (
+                  <article class="panel intake-row" classList={{ held: item.status !== "accepted" }}>
+                    <div class="intake-row-main">
+                      <button class="link-button" onClick={() => setOpenItem(openItem() === item.id ? null : item.id)}>
+                        {item.title || "(untitled)"}
+                      </button>
+                      <span class="dim">
+                        {sourceName(item.id)}
+                        <Show when={item.created_at}> · {timeAgo(item.created_at!)}</Show>
+                        <Show when={item.status !== "accepted"}> · <span class="chip chip-error">{ITEM_STATUS[item.status ?? ""] ?? item.status}</span></Show>
+                      </span>
+                    </div>
+                    <Show when={openItem() === item.id && detail()}>
+                      {(found) => (
+                        <div class="intake-detail">
+                          <Show when={found().body.link}>
+                            <a href={found().body.link} target="_blank" rel="noreferrer noopener">Open the original</a>
+                          </Show>
+                          <p>{found().body.text || "No text."}</p>
+                          <Show when={found().labels.length > 0}>
+                            <p class="dim">Why it was flagged: {found().labels.join(", ")}</p>
+                            <For each={found().evidence}>{(line) => <p class="mono dim">“{line}”</p>}</For>
+                          </Show>
+                          <div class="row-gap">
+                            <Show
+                              when={found().item.status === "accepted"}
+                              fallback={<button class="small" onClick={() => void act(() => api.intakeDecide(item.id, "release"), "Released to your Agents", async () => { await refetchItems(); await refetchDetail(); })}>Release</button>}
+                            >
+                              <button class="ghost small" onClick={() => void act(() => api.intakeDecide(item.id, "quarantine"), "Held back", async () => { await refetchItems(); await refetchDetail(); })}>Hold back</button>
+                            </Show>
                           </div>
-                          <Show when={src.next_due_at}>
-                            <div class="meta">Next check: {src.next_due_at!.slice(0, 19)}</div>
-                          </Show>
-                          <Show when={src.last_status && src.last_status !== "never_run"}>
-                            <div class="meta">Last check: {src.last_status}{src.last_error ? ` · ${src.last_error}` : ""}</div>
-                          </Show>
-                        </>
-                      }
-                    >
-                      <div class="toolbar" style={{ "margin-top": "6px" }}>
-                        <select value={editInterval()} onChange={(e) => setEditInterval(e.currentTarget.value)}>
-                          <option value="5m">Every 5 minutes</option>
-                          <option value="15m">Every 15 minutes</option>
-                          <option value="30m">Every 30 minutes</option>
-                          <option value="1h">Every hour</option>
-                          <option value="6h">Every 6 hours</option>
-                          <option value="1d">Daily</option>
-                        </select>
-                        <select value={editTrust()} onChange={(e) => setEditTrust(e.currentTarget.value)}>
-                          <option value="high">High trust</option>
-                          <option value="medium">Medium trust</option>
-                          <option value="low">Low trust</option>
-                        </select>
-                        <button class="small" onClick={() => saveEditSource(src)}>Save</button>
-                        <button class="ghost small" onClick={() => setEditingSource(null)}>Cancel</button>
-                      </div>
+                        </div>
+                      )}
                     </Show>
-                  </div>
-                  <div class="actions" style={{ display: "flex", gap: "6px", "align-items": "center" }}>
-                    <span class={`chip ${src.enabled ? "chip-tone-success" : "chip-tone-danger"}`}>
-                      {src.enabled ? "on" : "off"}
-                    </span>
-                    <button class="ghost small" onClick={() => startEditSource(src)}>Edit</button>
-                    <button class="ghost small" onClick={() => toggleSource(src)}>{src.enabled ? "Disable" : "Enable"}</button>
-                    <button class="ghost small" onClick={() => removeSource(src)}>Remove</button>
-                  </div>
-                </div>
-              )}
-            </For>
+                  </article>
+                )}
+              </For>
+            </div>
           </Show>
-          </Show>
-        </section>
-
-        <section class="panel">
-          <div class="panel-title-row">
-            <div><h2>What you can follow</h2><p class="dim">Pick any of these when adding a source.</p></div>
-          </div>
-          <Show when={sourceTypes()}>
-            <For each={sourceTypes()!.source_types}>
-              {(st) => (
-                <div class="feed-source-card">
-                  <div class="icon">{st.icon === "rss" ? "📡" : st.icon === "youtube" ? "▶" : st.icon === "fire" ? "🔥" : st.icon === "reddit" ? "📱" : "🌐"}</div>
-                  <div class="info">
-                    <div class="name">{st.name}</div>
-                    <div class="meta">{st.description} · checked every {st.default_interval} by default</div>
-                  </div>
-                </div>
-              )}
-            </For>
-          </Show>
-        </section>
-      </Show>
-
-      <Show when={tab() === "reader"}>
-        <section class="panel">
-          <div class="panel-title-row"><div><h2>Reader</h2><p class="dim">Everything collected so far, newest first.</p></div></div>
-          <FeedReader />
-        </section>
+        </Show>
       </Show>
 
       <Show when={tab() === "alerts"}>
-        <section class="panel">
-          <div class="panel-title-row">
-            <div><h2>Alerts</h2><p class="dim">Tell Vakyartha to flag an item when it mentions something you care about.</p></div>
-            <button class="small" onClick={() => setAlertFormOpen(true)}>New alert</button>
-          </div>
-          <Show when={alertFormOpen()}>
-            <AlertForm
-              onClose={() => setAlertFormOpen(false)}
-              onAdded={async () => { await refetchAlerts(); setAlertFormOpen(false); }}
-            />
-          </Show>
-          <Show when={!alerts.error} fallback={<LoadError message={`${alerts.error}`} onRetry={() => refetchAlerts()} />}>
-          <Show when={alerts.loading}>
-            <div class="empty">Loading…</div>
-          </Show>
-          <Show when={!alerts.loading && (alerts()?.alerts.length ?? 0) === 0}>
-            <div class="empty">No alerts set up yet.</div>
-          </Show>
-          <For each={alerts()?.alerts ?? []}>
-            {(alert) => (
-              <div class="feed-alert-card">
-                <div class="info">
-                  <div class="name">{alert.name}</div>
-                  <div class="match">
-                    <Show when={alert.match_config?.keywords?.length}>mentions {alert.match_config!.keywords!.join(", ")}</Show>
-                    <Show when={alert.match_config?.tags?.length}> · tagged {alert.match_config!.tags!.join(", ")}</Show>
-                    <Show when={alert.match_config?.sources?.length}> · from {alert.match_config!.sources!.join(", ")}</Show>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: "6px", "align-items": "center" }}>
-                  <span class={`chip ${alert.enabled ? "chip-tone-success" : "chip-tone-danger"}`}>
-                    {alert.enabled ? "on" : "off"}
-                  </span>
-                  <button class="ghost small" onClick={() => removeAlert(alert)}>Delete</button>
-                </div>
-              </div>
-            )}
-          </For>
-          </Show>
-        </section>
-      </Show>
-
-      <Show when={tab() === "workbench"}>
-        <section class="panel">
-          <div class="panel-title-row"><div><h2>Workbench</h2><p class="dim">Run a search and see the raw result Vakyartha works from — useful for checking why something did or didn’t come back.</p></div></div>
-          <div class="form-row">
-            <label>Try a search</label>
-            <div class="toolbar">
-              <input
-                class="search-big"
-                placeholder="Type a search to try…"
-                value={searchQuery()}
-                onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                onKeyDown={(e) => e.key === "Enter" && doSearch()}
-              />
-              <button onClick={doSearch} disabled={searching()}>Test</button>
-            </div>
-          </div>
-          <Show when={searchResults()}>
-            <pre style={{ "font-size": "12px", "max-height": "400px", overflow: "auto", "white-space": "pre-wrap" }}>
-              {JSON.stringify(searchResults(), null, 2)}
-            </pre>
-          </Show>
-        </section>
-        <section class="panel">
-          <div class="panel-title-row"><div><h2>Recent runs</h2><p class="dim">Durable ingestion receipts for this workspace.</p></div></div>
-          <Show when={runs.error} fallback={<Show when={runs()} fallback={<div class="empty">Loading…</div>}>
-            <For each={runs()!.runs}>
-              {(run) => <div class="feed-source-card"><div class="info"><div class="name">{run.status} · {run.started_at.slice(0, 19)}</div><div class="meta">{run.scope} · {run.sources_succeeded}/{run.sources_seen} sources · {run.items_added} new items</div><Show when={run.error}><div class="meta">{run.error}</div></Show></div></div>}
-            </For>
-          </Show>}>
-            <div class="empty">Could not load ingestion receipts.</div>
-          </Show>
-        </section>
-      </Show>
-
-      <Show when={wizardOpen()}>
-        <FeedWizard onClose={() => setWizardOpen(false)} onAdded={async () => { await refetchAll(); setWizardOpen(false); }} />
-      </Show>
-    </div>
-  );
-}
-
-function AlertForm(props: { onClose: () => void; onAdded: () => void | Promise<void> }) {
-  const [name, setName] = createSignal("");
-  const [keywords, setKeywords] = createSignal("");
-  const [tags, setTags] = createSignal("");
-  const [deliverTo, setDeliverTo] = createSignal("");
-  const [scope, setScope] = createSignal("workspace");
-  const [saving, setSaving] = createSignal(false);
-
-  const canSubmit = () => name().trim() && (keywords().trim() || tags().trim());
-
-  const submit = async () => {
-    setSaving(true);
-    try {
-      await api.feedAddAlert({
-        name: name().trim(),
-        scope: scope(),
-        keywords: keywords().trim() ? keywords().split(",").map((k) => k.trim()).filter(Boolean) : [],
-        tags: tags().trim() ? tags().split(",").map((t) => t.trim()).filter(Boolean) : [],
-        deliver_to: deliverTo().trim() || undefined,
-      });
-      pushToast("info", `Alert "${name()}" created`);
-      await props.onAdded();
-    } catch (e) {
-      pushToast("alert", `Could not create alert: ${e}`);
-    }
-    setSaving(false);
-  };
-
-  return (
-    <div class="panel" style={{ "margin-bottom": "12px", background: "var(--surface-raised)" }}>
-      <div class="form-row">
-        <label>Name</label>
-        <input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="Funding rounds" />
-      </div>
-      <div class="form-row">
-        <label>Keywords</label>
-        <input value={keywords()} onInput={(e) => setKeywords(e.currentTarget.value)} placeholder="series a, seed round — comma separated" />
-      </div>
-      <div class="form-row">
-        <label>Tags</label>
-        <input value={tags()} onInput={(e) => setTags(e.currentTarget.value)} placeholder="funding, startups — comma separated" />
-      </div>
-      <div class="form-row">
-        <label>Deliver to</label>
-        <input value={deliverTo()} onInput={(e) => setDeliverTo(e.currentTarget.value)} placeholder="Chat key, webhook, or leave blank" />
-      </div>
-      <div class="form-row">
-        <label>Availability</label>
-        <select value={scope()} onChange={(e) => setScope(e.currentTarget.value)}>
-          <option value="workspace">Workspace</option>
-          <option value="global">Global</option>
-        </select>
-      </div>
-      <div style={{ display: "flex", gap: "8px", "margin-top": "8px" }}>
-        <button type="button" class="ghost" onClick={props.onClose}>Cancel</button>
-        <button type="button" onClick={() => void submit()} disabled={!canSubmit() || saving()}>{saving() ? "Saving…" : "Create alert"}</button>
-      </div>
-    </div>
-  );
-}
-
-function FeedReader() {
-  const [items, setItems] = createSignal<import("./types").FeedItem[]>([]);
-  const [loading, setLoading] = createSignal(true);
-  const [error, setError] = createSignal<string | null>(null);
-
-  const loadItems = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.feedItems({ limit: 50 });
-      setItems(res.items || []);
-    } catch (e) {
-      setError(String(e));
-    }
-    setLoading(false);
-  };
-
-  createEffect(() => loadItems());
-
-  return (
-    <Show when={!loading()} fallback={<div class="empty">Loading…</div>}>
-      <Show when={!error()} fallback={<LoadError message={error()!} onRetry={loadItems} />}>
-      <Show when={items().length === 0}>
-        <div class="empty">Nothing collected yet. Add a source, then press “Check for new items”.</div>
-      </Show>
-      <For each={items()}>
-        {(item) => (
-          <div class="feed-item-card">
-            <div class="title"><a href={item.url} target="_blank">{item.title}</a></div>
-            <Show when={item.summary}>
-              <div class="summary">{item.summary!.slice(0, 200)}</div>
-            </Show>
-            <div class="meta">
-              <Show when={item.source_name}><span class="source">{item.source_name}</span></Show>
-              <Show when={item.published_at}><span class="date">{item.published_at!.slice(0, 10)}</span></Show>
-              <Show when={item.source_trust}><span class="trust">{item.source_trust}</span></Show>
-            </div>
-            <Show when={item.tags && item.tags.length > 0}>
-              <div class="tags">
-                <For each={item.tags!}>
-                  {(tag) => <span class="chip chip-tone-info">{tag}</span>}
-                </For>
-              </div>
-            </Show>
-          </div>
-        )}
-      </For>
-      </Show>
-    </Show>
-  );
-}
-
-function FeedWizard(props: { onClose: () => void; onAdded: () => void | Promise<void> }) {
-  const [step, setStep] = createSignal(1);
-  const [selectedType, setSelectedType] = createSignal<string | null>(null);
-  const [name, setName] = createSignal("");
-  const [url, setUrl] = createSignal("");
-  const [interval, setInterval] = createSignal("1h");
-  const [tags, setTags] = createSignal("");
-  const [trust, setTrust] = createSignal("medium");
-  const [scope, setScope] = createSignal<"workspace" | "global">("workspace");
-  const [sourceTypes] = createResource(() => api.feedSourceTypes());
-
-  const typeOptions = () => {
-    const types = sourceTypes();
-    if (!types || !types.source_types) {
-      return [
-        { id: "rss", label: "RSS / Atom", desc: "Any RSS or Atom feed URL" },
-        { id: "youtube", label: "YouTube", desc: "Follow a channel's uploads" },
-        { id: "hacker_news", label: "Hacker News", desc: "Top stories, best new, Ask HN" },
-        { id: "reddit", label: "Reddit", desc: "Follow subreddits" },
-        { id: "custom_http", label: "Something else", desc: "Any web address that returns data" },
-      ];
-    }
-    return types.source_types.map((t) => ({
-      id: t.id,
-      label: t.name || t.id.charAt(0).toUpperCase() + t.id.slice(1).replace(/_/g, " "),
-      desc: t.description || `Fetch from ${t.id}`,
-    }));
-  };
-
-  const needsUrl = () => {
-    const t = selectedType();
-    return t && (t === "rss" || t === "youtube" || t === "custom_http");
-  };
-
-  const canSubmit = () => name() && (!needsUrl() || url());
-
-  const submit = async () => {
-    const source: import("./types").FeedSource = {
-      name: name(),
-      type: selectedType()!,
-      url: url() || undefined,
-      interval: interval(),
-      tags: tags() ? tags().split(",").map((t) => t.trim()) : [],
-      trust: trust(),
-      scope: scope(),
-    };
-    try {
-      await api.feedAddSource(source);
-      await props.onAdded();
-      pushToast("info", `Source "${name()}" added`);
-    } catch (e) {
-      pushToast("alert", `Could not add the source: ${e}`);
-    }
-  };
-
-  return (
-      <div class="feed-wizard-overlay" onClick={props.onClose}>
-        <div class="feed-wizard" onClick={(e) => e.stopPropagation()}>
-        <div class="feed-wizard-header"><div><h2>Add a source</h2><p class="dim">Choose a source, then set how it should be checked.</p></div><button class="icon-button" aria-label="Close" onClick={props.onClose}>×</button></div>
-        <Show when={step() === 1}>
-          <div class="step">
-            <div class="step-label">What do you want to follow?</div>
-            <div class="type-grid">
-              <For each={typeOptions()}>
-                {(opt) => (
-                  <button
-                    type="button"
-                    class={`type-option ${selectedType() === opt.id ? "selected" : ""}`}
-                    onClick={() => { setSelectedType(opt.id); setStep(2); }}
-                  >
-                    <div class="label">{opt.label}</div>
-                    <div class="desc">{opt.desc}</div>
-                  </button>
+        <div class="row-gap" style="margin-bottom:12px">
+          <button class="small" onClick={() => setAlertForm(true)}>Add an alert</button>
+        </div>
+        <Show when={alertForm()}>
+          <AlertForm sources={sources()?.sources ?? []} onClose={() => setAlertForm(false)} onAdded={async () => { setAlertForm(false); await refetchAlerts(); }} />
+        </Show>
+        <Show when={!alerts.error} fallback={<LoadError message={`${alerts.error}`} onRetry={() => refetchAlerts()} />}>
+          <Show when={(alerts()?.alerts ?? []).length > 0} fallback={<div class="empty">{alerts.loading ? "Loading…" : "No alerts yet."}</div>}>
+            <div class="intake-list">
+              <For each={alerts()?.alerts ?? []}>
+                {(alert) => (
+                  <article class="panel intake-row">
+                    <div class="intake-row-main">
+                      <strong>{alert.name}</strong>
+                      <span class="dim">
+                        {[
+                          alert.keywords?.length ? `words: ${alert.keywords.join(", ")}` : "",
+                          alert.tags?.length ? `tags: ${alert.tags.join(", ")}` : "",
+                          alert.cooldown_minutes ? `waits ${alert.cooldown_minutes} min` : "",
+                          alert.deliver_to ? `also to ${alert.deliver_to}` : "",
+                          alert.enabled ? "" : "paused",
+                        ].filter(Boolean).join(" · ")}
+                      </span>
+                    </div>
+                    <div class="row-gap">
+                      <button class="ghost small" onClick={() => void act(() => api.intakeUpdateAlert(alert.id, { enabled: !alert.enabled }), alert.enabled ? "Paused" : "Resumed", refetchAlerts)}>{alert.enabled ? "Pause" : "Resume"}</button>
+                      <button class="danger small" onClick={() => void act(() => api.intakeDeleteAlert(alert.id), "Alert removed", refetchAlerts)}>Remove</button>
+                    </div>
+                  </article>
                 )}
               </For>
             </div>
-          </div>
+          </Show>
         </Show>
-        <Show when={step() === 2}>
-          <div class="step">
-            <div class="step-label">Details</div>
-            <div class="form-row">
-              <label>Name</label>
-              <input value={name()} onInput={(e) => setName(e.currentTarget.value)} placeholder="My Feed" />
-            </div>
-            <Show when={needsUrl()}>
-              <div class="form-row">
-                <label>URL</label>
-                <input value={url()} onInput={(e) => setUrl(e.currentTarget.value)} placeholder="https://example.com/feed.xml" />
-              </div>
-            </Show>
-            <div class="form-row">
-              <label>Availability</label>
-              <select value={scope()} onChange={(e) => setScope(e.currentTarget.value as "workspace" | "global")}>
-                <option value="workspace">Workspace</option>
-                <option value="global">Global</option>
-              </select>
-            </div>
-            <div class="form-row">
-              <label>Check for new items</label>
-              <select value={interval()} onChange={(e) => setInterval(e.currentTarget.value)}>
-                <option value="5m">Every 5 minutes</option>
-                <option value="15m">Every 15 minutes</option>
-                <option value="30m">Every 30 minutes</option>
-                <option value="1h">Every hour</option>
-                <option value="6h">Every 6 hours</option>
-                <option value="1d">Daily</option>
-              </select>
-            </div>
-            <div class="form-row">
-              <label>Tags</label>
-              <input value={tags()} onInput={(e) => setTags(e.currentTarget.value)} placeholder="tech, news — separate with commas" />
-            </div>
-            <div class="form-row">
-              <label>Trust level</label>
-              <select value={trust()} onChange={(e) => setTrust(e.currentTarget.value)}>
-                <option value="high">High — weighs in more on search/alerts</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low — noted but discounted</option>
-              </select>
-            </div>
-            <div style={{ "margin-top": "12px", display: "flex", gap: "8px" }}>
-              <button class="ghost" onClick={() => setStep(1)}>Back</button>
-              <button onClick={() => submit()} disabled={!canSubmit()}>Add source</button>
-            </div>
-          </div>
-        </Show>
-        <div style={{ "margin-top": "12px", "text-align": "right" }}>
-          <button class="ghost" onClick={props.onClose}>Cancel</button>
-        </div>
-      </div>
+      </Show>
     </div>
   );
 }
@@ -7969,7 +7690,7 @@ export default function App() {
     const r = route().split("?", 1)[0] || "#/overview";
     if (r === "#/setup") return "#/setup";
     if (r.startsWith("#/sessions/")) return "transcript";
-    if (r === "#/feeds" || r.startsWith("#/feeds/") || r === "#/search" || r.startsWith("#/search/")) return r;
+    if (r === "#/sources" || r.startsWith("#/sources/") || r === "#/search" || r.startsWith("#/search/")) return r;
     // Operations owns a real subtree. Resolve it before the generic
     // top-level prefix matcher so nested routes never fall through to a
     // different screen when the hash carries a query or detail segment.
@@ -7990,7 +7711,7 @@ export default function App() {
 
   const navItemActive = (item: NavItem) => {
     const current = currentRoute();
-    if (item.hash === "#/memory" && (current === "#/feeds" || current === "#/search")) return true;
+    if (item.hash === "#/memory" && (current === "#/sources" || current === "#/search")) return true;
     return current === item.hash;
   };
 
@@ -8063,7 +7784,7 @@ export default function App() {
               <Match when={currentRoute() === "#/integrations"}><ExtensionsSection /></Match>
               <Match when={currentRoute() === "#/gateway"}><GatewaySection /></Match>
               <Match when={currentRoute() === "#/memory"}><MemoryView /></Match>
-              <Match when={currentRoute() === "#/feeds"}><FeedsSection /></Match>
+              <Match when={currentRoute() === "#/sources"}><IntakeSection /></Match>
               <Match when={currentRoute() === "#/search"}><SearchView /></Match>
               <Match when={currentRoute() === "#/inbox"}><Inbox /></Match>
               <Match when={currentRoute() === "#/finops"}><FinOpsView /></Match>

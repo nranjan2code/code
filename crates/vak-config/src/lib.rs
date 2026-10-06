@@ -181,8 +181,6 @@ pub struct FileConfig {
     #[serde(default)]
     pub heartbeat: HeartbeatSettings,
     #[serde(default)]
-    pub feeds: FeedSettings,
-    #[serde(default)]
     pub server: ServerSettings,
     #[serde(default)]
     pub plugins: PluginSettings,
@@ -843,35 +841,6 @@ pub struct HeartbeatSettings {
     pub max_findings: Option<usize>,
 }
 
-/// Feed pipeline settings. Read-only and workspace-scoped.
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default)]
-pub struct FeedSettings {
-    /// Enable the feed pipeline. Default false.
-    pub enabled: Option<bool>,
-    /// Path to feeds.toml config file. None = auto-detect.
-    pub config_path: Option<String>,
-    /// Path to the DuckDB database file. None = auto-detect.
-    pub db_path: Option<String>,
-    /// Default check interval for sources (e.g. "30m", "1h").
-    pub default_check_interval: Option<String>,
-    /// Maximum items to keep per feed.
-    pub max_items_per_feed: Option<u32>,
-    /// Days to keep dedup hashes.
-    pub dedup_window_days: Option<u32>,
-}
-
-/// Resolved feed pipeline settings.
-#[derive(Debug, Clone)]
-pub struct FeedResolved {
-    pub enabled: bool,
-    pub config_path: Option<String>,
-    pub db_path: Option<String>,
-    pub default_check_interval: String,
-    pub max_items_per_feed: u32,
-    pub dedup_window_days: u32,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PriceEntry {
     pub input: f64,
@@ -1327,7 +1296,6 @@ pub struct Config {
     pub update: UpdateResolved,
     pub tools: ToolsResolved,
     pub heartbeat: HeartbeatResolved,
-    pub feeds: FeedResolved,
     pub server: ServerResolved,
     pub plugins: PluginResolved,
     pub voice: VoiceSettings,
@@ -1714,14 +1682,6 @@ impl Default for Config {
             sandbox: SandboxResolved {
                 backend: "auto".into(),
                 image: None,
-            },
-            feeds: FeedResolved {
-                enabled: false,
-                config_path: None,
-                db_path: None,
-                default_check_interval: "30m".into(),
-                max_items_per_feed: 500,
-                dedup_window_days: 90,
             },
             server: ServerResolved {
                 // Loopback, no trusted hosts, no terminal over the web: a
@@ -2786,7 +2746,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus, feeds";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2871,13 +2831,6 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             fc.server = ServerSettings::default();
             fc.plugins.network_allow = None;
             fc.plugins.allow = None;
-            // The feed pipeline is an unattended surface: `feeds.enabled`
-            // makes the scheduler fetch and run the pipeline every tick, and
-            // the pipeline is executable code with network access. A cloned
-            // repository that could switch it on would be handing itself an
-            // unattended runner (invariant 15). The whole section is
-            // privileged, like [server] and [gateway].
-            fc.feeds = FeedSettings::default();
             warnings.push(format!(
                 "project .vak/config.toml is not trusted for this workspace; \
                  ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \
@@ -3321,17 +3274,6 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         Some(n) => cfg.heartbeat.max_findings = n,
         None => cfg.heartbeat.max_findings = 3,
     }
-    let fs = &merged.feeds;
-    cfg.feeds.enabled = fs.enabled.unwrap_or(false);
-    cfg.feeds.config_path = fs.config_path.clone();
-    cfg.feeds.db_path = fs.db_path.clone();
-    cfg.feeds.default_check_interval = fs
-        .default_check_interval
-        .clone()
-        .unwrap_or_else(|| "30m".into());
-    cfg.feeds.max_items_per_feed = fs.max_items_per_feed.unwrap_or(500);
-    cfg.feeds.dedup_window_days = fs.dedup_window_days.unwrap_or(90);
-
     // ---- [server] (docs/design/48-web-client.md §4.2) --------------------
     //
     // Defaults reproduce the pre-web behaviour exactly: loopback only, no
@@ -4323,24 +4265,6 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);
-    }
-    if over.feeds.enabled.is_some() {
-        base.feeds.enabled = over.feeds.enabled;
-    }
-    if over.feeds.config_path.is_some() {
-        base.feeds.config_path = over.feeds.config_path;
-    }
-    if over.feeds.db_path.is_some() {
-        base.feeds.db_path = over.feeds.db_path;
-    }
-    if over.feeds.default_check_interval.is_some() {
-        base.feeds.default_check_interval = over.feeds.default_check_interval;
-    }
-    if over.feeds.max_items_per_feed.is_some() {
-        base.feeds.max_items_per_feed = over.feeds.max_items_per_feed;
-    }
-    if over.feeds.dedup_window_days.is_some() {
-        base.feeds.dedup_window_days = over.feeds.dedup_window_days;
     }
     for p in over.plugins.enabled {
         if !base.plugins.enabled.contains(&p) {

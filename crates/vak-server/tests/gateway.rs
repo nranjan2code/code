@@ -835,6 +835,9 @@ fn git_seed(cwd: &std::path::Path) {
     };
     run(&["init", "-q"]);
     std::fs::write(cwd.join("README.md"), "seed\n").unwrap();
+    // The data home sits in the folder; the server writes it while this
+    // runs (the catalog's WAL), so it stays out of the commit.
+    std::fs::write(cwd.join(".gitignore"), "home/\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-q", "-m", "seed"]);
 }

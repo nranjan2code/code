@@ -78,11 +78,16 @@ Read before changing behaviour in these areas:
   reference and implementation ledger; in progress),
   `58-admin-ia-and-ui-goal.md` (goal and guidance),
   `59-reference-ui-acceptance.md` (an acceptance backlog, not a description of
-  the build), `51-feed-system.md`, `51-retired-tools.md`.
+  the build), `51-retired-tools.md`.
+- **Intake** — `76-intake-and-knowledge.md` (sources, Rust connectors parsed
+  in the worker, detection that labels and never drops, retrieval through
+  `session_search`, alerts and push intake; shipped at data-architecture
+  M6.5).
 - **Superseded — read only for history** — `60-modern-presentation-system-2026.md`
   (by 61), `62-universal-delegation-experience.md` and
   `62-universal-delegation-prototype.md` (by 64),
-  `63-agent-first-conversations.md` (by 64).
+  `63-agent-first-conversations.md` (by 64), `51-feed-system.md` (by 76;
+  its pipeline is deleted).
 - **Office documents** — `72-openxml-documents.md` (the file-in, cite,
   redline, review, file-out loop is shipped; its ledger lists what is
   deferred and why).
@@ -173,11 +178,6 @@ Read before changing behaviour in these areas:
   `75-visual-refresh.md` (the pending visual refresh: readable type, plain
   words, technical detail on request and the Ink and Saffron brand; see
   "Pending: the visual refresh" below),
-  `76-intake-and-knowledge.md` (the pending redesign of the feed system into
-  one intake path feeding the catalog, agent-reachable, with shared
-  lifecycle; supersedes the target model of `51-feed-system.md` and depends on
-  the data-architecture catalog at M6.5. Its §9, a standalone security fix
-  for the shipped pipeline, shipped on 2026-09-27),
   `79-private-headless-fleet.md` (the proposed dedicated 24/7 customer VM
   fleet, operator-blind boundary, provisioning and disaster recovery; it
   extends 73/74 without starting a data milestone),
@@ -199,7 +199,7 @@ Read before changing behaviour in these areas:
   between turns, threads, evidence, cards, files and commitments, a link
   signal in the context planner, and cross-session recall over the
   data-architecture catalog at M6).
-  Docs 76, 79, 80, 81 and 82 use the data architecture's shared primitives
+  Docs 79, 80, 81 and 82, like the shipped 76, use the data architecture's shared primitives
   (triggers, cursors, effects, fencing, connections, principals) from plan
   revision 3 rather than building their own.
 
@@ -355,7 +355,7 @@ commitment state read through rollup Documents (`vak_session::rollup`),
 so no turn-path decision replays a chain. M6.4 is done (2026-10-06), and
 with it M6: conversation detail's Lineage tab traces anything a
 conversation holds to its run and cause, and the catalog's status sits
-beside Rebuild search. M6.5's design was agreed on 2026-10-06 (plan §M6.5 "M6.5 design": `session_search` widened to intake items, every connector in Rust, steps M6.5a–c). M6.5a is done (2026-10-06): a source is a Document `sources/<src>` polled by its own `source_poll` trigger (`vak_core::intake`, `/intake`), its connectors are Rust (`crates/vak-intake`), parsed in the network-denied worker, and every item it takes is a tenant object plus an `intake/` row with the poll run's trace key and a disposition, which the catalog traces to its run, trigger and source. M6.5b is done (2026-10-06): `session_search` finds items, a held item reaches no Agent read until a person releases it (`Audience::held`), alerts (`vak_core::intake_alerts`) notify the Inbox once per item, and a file saved to the inbox is an item of the Agent's push source. M6.5c (the screens, and deleting the Python feed pipeline) is next; M8 and M7a → M7b follow. No session starts a later step
+beside Rebuild search. M6.5's design was agreed on 2026-10-06 (plan §M6.5 "M6.5 design": `session_search` widened to intake items, every connector in Rust, steps M6.5a–c). M6.5a is done (2026-10-06): a source is a Document `sources/<src>` polled by its own `source_poll` trigger (`vak_core::intake`, `/intake`), its connectors are Rust (`crates/vak-intake`), parsed in the network-denied worker, and every item it takes is a tenant object plus an `intake/` row with the poll run's trace key and a disposition, which the catalog traces to its run, trigger and source. M6.5b is done (2026-10-06): `session_search` finds items, a held item reaches no Agent read until a person releases it (`Audience::held`), alerts (`vak_core::intake_alerts`) notify the Inbox once per item, and a file saved to the inbox is an item of the Agent's push source. M6.5c is done (2026-10-06), and with it M6.5: the admin console's Sources and the client's Sources panel read `/intake`, and the Python feed pipeline, `feeds.rs` and the `[feeds]` config are deleted. M8 and M7a → M7b are next. No session starts a later step
 unasked.
 
 **What it is.** One architecture for everything Vak writes:

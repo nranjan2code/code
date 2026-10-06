@@ -5,8 +5,11 @@ Status: **in progress. Proposal 2026-09-27; §9 shipped 2026-09-27
 worker parse, the `intake/` chain, detection labels and the catalog's
 item nodes (§1–§5); M6.5b shipped 2026-10-06: `session_search` over
 items with held items closed to every Agent read, alerts into the
-Inbox, and push intake (§1, §6, §7). The screens and the Python
-pipeline's deletion are M6.5c.** It is milestone M6.5 of the data
+Inbox, and push intake (§1, §6, §7); M6.5c shipped 2026-10-06: the
+admin console's Sources and the client's Sources panel read `/intake`,
+and the Python pipeline, `feeds.rs`, `[feeds]` config and the DuckDB
+store are deleted (§8). Intake is shipped; retention waits for M7a's
+reconciler.** It is milestone M6.5 of the data
 architecture plan (revision 3), and its Sources poll through that plan's
 Trigger model (`source_poll`) with cursors (doc 73 §8). It supersedes the
 feed system's target model in `docs/design/51-feed-system.md` (which stays the

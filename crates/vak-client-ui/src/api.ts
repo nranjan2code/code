@@ -2290,55 +2290,25 @@ export function providerTraffic(): Promise<TrafficSnapshot> {
   return req("/traffic");
 }
 
-// ---- feeds -----------------------------------------------------------
+// ---- sources (intake, plan M6.5) ----------------------------------------
 
-import type { FeedSourceType, FeedStats, FeedSearchResponse, FeedItem } from "./types";
+import type { IntakeSourceSummary, IntakeItemNode } from "./types";
 
-export function feedSourceTypes(): Promise<{ source_types: FeedSourceType[] }> {
-  return req("/feeds/sources");
+export function intakeSources(): Promise<{ sources: IntakeSourceSummary[] }> {
+  return req("/intake/sources");
 }
 
-export function feedStats(): Promise<FeedStats> {
-  return req("/feeds/stats");
-}
-
-export function feedSearch(params: {
-  q: string;
-  tags?: string;
-  since?: string;
-  limit?: number;
-  source?: string;
-}): Promise<FeedSearchResponse> {
-  const qs = new URLSearchParams({ q: params.q });
-  if (params.tags) qs.set("tags", params.tags);
-  if (params.since) qs.set("since", params.since);
-  if (params.limit) qs.set("limit", String(params.limit));
-  if (params.source) qs.set("source", params.source);
-  return req(`/feeds/search?${qs.toString()}`);
-}
-
-export function feedItems(params?: {
-  limit?: number;
-  source?: string;
-}): Promise<{ items: FeedItem[] }> {
+export function intakeItems(params?: { source?: string; status?: string; limit?: number }): Promise<{ items: IntakeItemNode[] }> {
   const qs = new URLSearchParams();
-  if (params?.limit) qs.set("limit", String(params.limit));
   if (params?.source) qs.set("source", params.source);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.limit) qs.set("limit", String(params.limit));
   const q = qs.toString();
-  return req(`/feeds/items${q ? `?${q}` : ""}`);
+  return req(`/intake/items${q ? `?${q}` : ""}`);
 }
 
-export function feedIngest(): Promise<{
-  sources_ingested: number;
-  new_items: number;
-  alerts_fired: number;
-  errors: number;
-}> {
-  return req("/feeds/ingest", { method: "POST", body: "{}" });
-}
-
-export function feedDeleteSource(name: string): Promise<{ status: string }> {
-  return req(`/feeds/sources/${encodeURIComponent(name)}`, { method: "DELETE" });
+export function intakePoll(source: string): Promise<void> {
+  return req(`/intake/sources/${encodeURIComponent(source)}/poll`, { method: "POST", body: "{}" });
 }
 
 import type { OnboardingState } from "./types";

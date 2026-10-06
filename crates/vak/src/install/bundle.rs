@@ -151,32 +151,6 @@ pub fn locate_icon() -> Option<std::path::PathBuf> {
     locate_repo_relative("crates/vak-desktop/icons/icon.icns")
 }
 
-/// Locate the feed runtime bundled beside a release binary or in the source
-/// checkout. The server executes these scripts as a subprocess, so an
-/// install must carry the complete runtime rather than relying on the user's
-/// workspace containing the repository's `scripts/feeds` tree.
-pub fn locate_feed_assets() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let bin_dir = exe.parent()?;
-    let mut candidates = vec![
-        bin_dir.join("feeds"),
-        bin_dir.join("..").join("Resources").join("feeds"),
-        bin_dir.join("..").join("share").join("vak").join("feeds"),
-        bin_dir
-            .join("..")
-            .join("..")
-            .join("share")
-            .join("vak")
-            .join("feeds"),
-    ];
-    if let Some(repo_assets) = locate_repo_relative("scripts/feeds") {
-        candidates.push(repo_assets);
-    }
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.join("feed_ingest.py").exists())
-}
-
 fn locate_repo_relative(rel: &str) -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let mut dir = exe.parent()?.to_path_buf();

@@ -73,7 +73,7 @@ Known slow tests (each over 60 s, not failures):
 | 12 | M6.5 design (D1 widen `session_search`, D2 Rust connectors) | plan §M6.5 design | Done (`a737ccaa8`) |
 | 12a | M6.5a sources, `source_poll`, Rust connectors, `intake/` chain, detection, catalog source, `/intake` API | `intake_item_has_trace_and_provenance` | Done (`f187fed3d`) |
 | 12b | M6.5b `session_search` over items, alerts into the Inbox, push intake | `quarantined_item_absent_from_agent_retrieval` | Done (`81bcf6385`) |
-| 12c | M6.5c screens on `/intake`, browser run, Python pipeline and `feeds.rs` deleted | `feed_pipeline_is_gone`, browser run | Next |
+| 12c | M6.5c screens on `/intake`, browser run, Python pipeline and `feeds.rs` deleted | `feed_pipeline_is_gone`, browser run | Done (commit follows) |
 | 13 | M7a lifecycle: honest deletion (after M6) | see plan §M7a (reconciler, erasure, hold, quota and soak tests, doc 74 §9 browser runs) | |
 | 14 | M7b lifecycle: governance (after M7a) | `label_on_any_node_resolves` and the remaining doc 74 §9 runs | |
 | 15 | M8 artifacts, sharing, information architecture (after M6, beside M7) | `concurrent_edit_creates_sibling_versions`, `share_inherits_and_breaks`, `revoked_grant_hides_from_search`, `saved_version_survives_origin_erasure`, browser run | |

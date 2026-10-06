@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1360,6 +1360,16 @@ push items, which are the person's own. Exit test
 `quarantined_item_absent_from_agent_retrieval`; `intake_api.rs` covers
 alerts. A live Lobsters poll fired one alert notice for its one Rust
 story, and the client's search sheet opens an item at its link.
+
+M6.5c (2026-10-06): the admin console's Sources (`#/sources`: sources,
+items with release and hold, alerts) and the client's Sources panel read
+`/intake`; the client's separate feeds search sheet is gone, since the
+search sheet finds items. Deleted: `scripts/feeds`, `vak-server`'s
+`feeds.rs` and its routes and scheduler step, `FeedSettings` and the
+`[feeds]` config section (a leftover section configures nothing), the
+feed registry entries, the install and release bundling of the feed
+runtime, and the feed cases of `scripts/compound_regression.py`. Exit
+test `feed_pipeline_is_gone`. With it M6.5 is done.
 
 **Exit tests**
 - `intake_item_has_trace_and_provenance`,

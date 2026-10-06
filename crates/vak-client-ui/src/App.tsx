@@ -128,8 +128,7 @@ import Toast from "./components/Toast";
 const Settings = lazy(() => import("./components/Settings"));
 import BudgetBanner from "./components/BudgetBanner";
 import SearchModal from "./components/SearchModal";
-const FeedsPanel = lazy(() => import("./components/FeedsPanel"));
-import FeedsModal from "./components/FeedsModal";
+const SourcesPanel = lazy(() => import("./components/SourcesPanel"));
 import SetupBanner from "./components/SetupBanner";
 import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
@@ -1476,7 +1475,7 @@ export default function App() {
                       </For>
                       <div class="menu-group-label">Work</div>
                       <For each={[
-                        ["agents", "Parallel work", "grid"], ["feeds", "Sources", "bell"],
+                        ["agents", "Parallel work", "grid"], ["sources", "Sources", "bell"],
                         ["commitments", "Open promises", "shield"],
                       ] as const}>
                         {([id, label, icon]) => <button type="button" class="dock-view-option" aria-current={tab() === id ? "page" : undefined} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
@@ -1522,8 +1521,8 @@ export default function App() {
                   <Show when={tab() === "agents"}>
                     <WorkersPanel sessionId={activeId()} />
                   </Show>
-                  <Show when={tab() === "feeds"}>
-                    <FeedsPanel />
+                  <Show when={tab() === "sources"}>
+                    <SourcesPanel />
                   </Show>
                   <Show when={tab() === "commitments"}>
                     <CommitmentsPanel />
@@ -1565,7 +1564,6 @@ export default function App() {
           />
           <Toast />
           <SearchModal />
-          <FeedsModal />
           <AgentPickerModal />
           <AgentCreateWizard />
           <ConnectSheet />
@@ -1599,7 +1597,7 @@ function dockLabel(tab: import("./store").DockTab): string {
     editor: "Editor",
     pr: "Pull request",
     agents: "Parallel work",
-    feeds: "Sources",
+    sources: "Sources",
     commitments: "Open promises",
   }[tab];
 }

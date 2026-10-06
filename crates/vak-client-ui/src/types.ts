@@ -614,90 +614,25 @@ export interface WorkProjection {
   criteria: Record<string, unknown>;
 }
 
-export interface FeedSourceType {
+/** An intake source as `/intake/sources` lists it (plan M6.5). */
+export interface IntakeSourceSummary {
   id: string;
   name: string;
-  icon: string;
-  description: string;
-  fetcher: string;
-  default_interval: string;
-}
-
-export interface FeedSource {
-  name: string;
-  type: string;
-  url?: string;
-  driver?: string;
-  channel_id?: string;
-  variant?: string;
-  tags?: string[];
-  trust?: string;
-  enabled?: boolean;
-  interval?: string;
-}
-
-export interface FeedItem {
-  id: number;
-  feed_id: number;
-  title: string;
+  kind: string;
   url: string;
-  author?: string;
-  summary: string;
-  content?: string;
-  published_at?: string;
-  ingested_at?: string;
-  tags?: string[];
-  source_trust?: string;
-  word_count?: number;
-  source_name?: string;
-  source_type?: string;
+  enabled: boolean;
+  every_minutes: number | null;
 }
 
-export interface FeedSearchResult {
-  url: string;
-  title: string;
-  content: string;
-  score: number;
-  published_date?: string;
-  source_name?: string;
-  source_type?: string;
-  tags?: string[];
-  highlights?: string[];
-  evidence?: {
-    excerpts?: Array<{ text: string; relevance: number }>;
-    source_trust?: string;
-    freshness_hours?: number;
-    corroboration_count?: number;
-  };
-}
-
-export interface FeedSearchResponse {
-  query: string;
-  answer?: string;
-  follow_up_questions?: string[];
-  results: FeedSearchResult[];
-  meta: {
-    total_results: number;
-    returned_results: number;
-    search_time_ms: number;
-    sources_searched?: string[];
-    deduplicated?: number;
-  };
-}
-
-export interface FeedStats {
-  total_items: number;
-  total_feeds: number;
-  active_feeds: number;
-  total_alerts: number;
-  last_ingest?: string;
-  items_today: number;
-  sources?: Array<{
-    name: string;
-    type: string;
-    item_count: number;
-    last_item?: string;
-  }>;
+/** An item a source brought in: a catalog node of kind `item`. */
+export interface IntakeItemNode {
+  id: string;
+  title?: string;
+  /** `accepted`, or `quarantined` / `blocked` while held back. */
+  status?: string;
+  created_at?: string;
+  /** Where the item came from. */
+  locator?: string;
 }
 
 /// The derived setup projection (`GET /onboarding`), mirroring

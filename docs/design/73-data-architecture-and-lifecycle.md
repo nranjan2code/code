@@ -977,8 +977,8 @@ Also in the plan's history:
 | data `cost-log.jsonl`, `budget-alerts.jsonl` | vak-core | Record (finops) as segment chains; retention drops sealed segments, no compaction rewrite (D19) |
 | data `inbox.jsonl`, `inbox.dedupe.lock` | vak-core | Record (body keyed to its conversation) + Ephemeral |
 | data `trusted/`, `workspaces.json`, `workspace-names.json` | vak-core / vak-server | Desired (space bindings) |
-| data `feeds/feeds.duckdb` (written by Python, D18) | scripts/feeds | removed by M6.5: items become Objects plus catalog nodes, Sources become Desired (doc 76) |
-| data `feeds.toml`, `output.toml`, `flows/` | various | Desired |
+| data `feeds/feeds.duckdb` (written by Python, D18) | the deleted feed pipeline | removed by M6.5c: items are Objects plus `intake/` rows and catalog nodes, Sources are Desired Documents (doc 76) |
+| data `output.toml`, `flows/` | various | Desired |
 | data `skills/` | vak-core | Document |
 | data `locks/`, `release/`, `update-check.json`, `install.json`, `desktop.json`, `tray.json` | various | Ephemeral / Desired |
 | data `credential_index.json` | vak-config | Secret (index) |

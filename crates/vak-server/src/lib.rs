@@ -67,7 +67,6 @@ mod delivery;
 mod effects;
 mod embedded_ui;
 mod events;
-mod feeds;
 pub mod gateway;
 mod heartbeat;
 mod inbox;
@@ -1306,7 +1305,6 @@ fn router_with_state(state: AppState) -> Router {
         .route("/skills/proposals/{id}/promote", post(promote_proposal))
         .route("/skills/proposals/{id}/reject", post(reject_proposal))
         .merge(gateway::routes())
-        .merge(feeds::routes())
         .merge(intake::routes())
         .merge(admin::routes())
         // Compression is scoped to the three STATIC bundles and nowhere
@@ -19115,7 +19113,6 @@ async fn scheduler_tick(state: &AppState) {
         .scheduler_last_tick_at
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(chrono::Utc::now());
-    feeds::scheduled_ingestion(state).await;
     automations::tick(state).await;
     catch_up_catalog(state).await;
 }

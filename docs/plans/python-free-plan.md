@@ -1,6 +1,10 @@
 # Python-free Vakyartha
 
-Status: **plan, 2026-10-02.** Nothing below is built. Decisions locked with the
+Status: **plan, 2026-10-02.** The feed runtime part is done another way:
+data-architecture M6.5 (2026-10-06) deleted `scripts/feeds/` and replaced it
+with Rust connectors in `crates/vak-intake` feeding the catalog, not the
+`crates/vak-feeds` and SQLite store sketched below. Nothing else below is
+built. Decisions locked with the
 maintainer: scope is runtime and dev tooling; the feed store becomes SQLite via
 `vak-store`; there are no users, so no migration and no compatibility code
 (invariants 29 and 30). Old DuckDB feed data is simply dropped.

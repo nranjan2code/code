@@ -1,8 +1,0 @@
-# Feed pipeline Python dependencies
-# Install: pip install -r requirements.txt
-
-feedparser>=6.0
-requests>=2.28
-nh3>=0.2
-pydantic>=2.0
-duckdb>=1.0

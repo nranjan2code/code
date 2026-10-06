@@ -654,7 +654,7 @@ and purge behaviour:
 | `data_home()/tenants/<tenant>/keys/`, `auth/` | key revocations; owner passkeys and recovery digests | Desired | remove |
 | `data_home()/tenants/<tenant>/spaces.toml` | each space's id, name and this machine's folder bindings | Desired | remove |
 | `data_home()/tenants/<tenant>/workspaces/`, `environments/` | non-built-in Agents' workspaces; run environments | Workspace | remove |
-| `data_home()/tenants/<tenant>/feeds/`, `feeds.toml` | feed state and configuration | Record/Desired | remove |
+| `data_home()/intake/` and the `sources/`, `alerts/`, `alert-state/` Documents | intake (data-architecture plan M6.5; the feed pipeline's store and `feeds.toml` are gone) | Record/Desired | remove |
 | `data_home()/agents/<agent>/…` | each Agent's session ledgers (record segments, by space id), checkpoints, activity, evidence and sandbox records, execution streams, coworking grants, one entry per subpath | Record | remove |
 | `data_home()/gateway/` | `allowlist.json`, `bindings.json`, `bots.json`, `default-workspace` (a space id), the deliveries chain | Desired/Record | remove |
 | `data_home()/operations/`, `security-events/`, `cost-log/`, `inbox/` | record chains | Record | remove |
@@ -829,7 +829,7 @@ Sorted into three tiers because they carry very different risk.
 | 4 | `.vak/SYSTEM.md` whole-prompt override | `crates/vak-core/src/lib.rs` | the layered prompt blocks (doc 45) are the only way to set identity and rules |
 | 5 | Install-time activation: `seed_shared_capabilities` + `bootstrap_default_workspace_if_fresh` | `crates/vak/src/install/mod.rs` | both become setup actions (D6) |
 | 6 | Legacy tray launch path | `crates/vak-tray/src/main.rs` | the `com.vak.desktop` unit is the only thing that puts a tray on screen |
-| 7 | `feeds.toml` caller-compatibility branch | `crates/vak-server/src/feeds.rs` | one feed-config shape |
+| 7 | `feeds.toml` caller-compatibility branch | the feed pipeline (deleted with it at data-architecture M6.5c) | intake sources are Documents written through `/intake` |
 | 8 | Dismissible `SetupCard` and trust-implying `ProjectGate` | `crates/vak-desktop/ui/src/components/` | the wizard (D7) |
 
 ### Tier 2 — Withdrawn: these are the contract, not legacy

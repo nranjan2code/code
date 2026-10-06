@@ -973,102 +973,66 @@ export const api = {
       handle(r),
     ),
 
-  feedSourceTypes: (): Promise<{ source_types: import("./types").FeedSourceType[] }> =>
-    fetch("/feeds/sources").then((r) => handle(r)),
+  intakeSources: (): Promise<{ sources: import("./types").IntakeSource[] }> =>
+    fetch("/intake/sources").then((r) => handle(r)),
 
-  feedStats: (): Promise<import("./types").FeedStats> =>
-    fetch("/feeds/stats").then((r) => handle(r)),
-
-  feedSearch: (params: {
-    q: string;
-    tags?: string;
-    since?: string;
-    limit?: number;
-    source?: string;
-  }): Promise<import("./types").FeedSearchResponse> => {
-    const qs = new URLSearchParams({ q: params.q });
-    if (params.tags) qs.set("tags", params.tags);
-    if (params.since) qs.set("since", params.since);
-    if (params.limit) qs.set("limit", String(params.limit));
-    if (params.source) qs.set("source", params.source);
-    return fetch(`/feeds/search?${qs}`).then((r) => handle(r));
-  },
-
-  feedItems: (params?: {
-    limit?: number;
-    source?: string;
-  }): Promise<{ items: import("./types").FeedItem[] }> => {
-    const qs = new URLSearchParams();
-    if (params?.limit) qs.set("limit", String(params.limit));
-    if (params?.source) qs.set("source", params.source);
-    const q = qs.toString();
-    return fetch(`/feeds/items${q ? `?${q}` : ""}`).then((r) => handle(r));
-  },
-
-  feedItem: (id: number): Promise<import("./types").FeedItem> =>
-    fetch(`/feeds/items/${id}`).then((r) => handle(r)),
-
-  feedAlerts: (): Promise<{ alerts: import("./types").FeedAlertRule[] }> =>
-    fetch("/feeds/alerts").then((r) => handle(r)),
-
-  feedRuns: (): Promise<{ runs: import("./types").FeedRun[]; total: number }> =>
-    fetch("/feeds/runs").then((r) => handle(r)),
-
-  feedQuarantine: (): Promise<{ items: import("./types").FeedQuarantineItem[] }> =>
-    fetch("/feeds/quarantine").then((r) => handle(r)),
-
-  feedReleaseItem: (id: number): Promise<{ status: string; id: number }> =>
-    fetch(`/feeds/quarantine/${id}/release`, { method: "POST" }).then((r) => handle(r)),
-
-  feedIngest: (): Promise<{ sources_ingested: number; new_items: number; alerts_fired: number; errors: number }> =>
-    fetch("/feeds/ingest", { method: "POST" }).then((r) => handle(r)),
-
-  feedAddSource: (source: import("./types").FeedSource): Promise<{ status: string }> =>
-    fetch("/feeds/sources", {
+  intakeAddSource: (draft: import("./types").IntakeSourceDraft): Promise<import("./types").IntakeSource> =>
+    fetch("/intake/sources", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(source),
+      body: JSON.stringify(draft),
     }).then((r) => handle(r)),
 
-  feedDeleteSource: (sourceId: string, scope?: string): Promise<{ status: string }> =>
-    fetch(`/feeds/sources/${encodeURIComponent(sourceId)}?scope=${encodeURIComponent(scope || "workspace")}`, {
-      method: "DELETE",
-    }).then((r) => handle(r)),
-
-  feedConfiguredSources: (): Promise<{ sources: import("./types").ConfiguredFeedSource[]; total: number }> =>
-    fetch("/feeds/sources/configured").then((r) => handle(r)),
-
-  feedUpdateSource: (
-    sourceId: string,
-    patch: { enabled?: boolean; interval?: string; trust?: string; tags?: string[] },
-    scope?: string,
-  ): Promise<{ status: string }> =>
-    fetch(`/feeds/sources/${encodeURIComponent(sourceId)}?scope=${encodeURIComponent(scope || "workspace")}`, {
+  intakeUpdateSource: (
+    id: string,
+    patch: Partial<import("./types").IntakeSourceDraft>,
+  ): Promise<import("./types").IntakeSource> =>
+    fetch(`/intake/sources/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
     }).then((r) => handle(r)),
 
-  feedAddAlert: (alert: {
-    name: string;
-    scope?: string;
-    keywords?: string[];
-    tags?: string[];
-    sources?: string[];
-    action?: string;
-    deliver_to?: string;
-    cooldown_minutes?: number;
-  }): Promise<{ status: string }> =>
-    fetch("/feeds/alerts", {
+  intakeDeleteSource: (id: string): Promise<void> =>
+    fetch(`/intake/sources/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => handleVoid(r)),
+
+  intakePoll: (id: string): Promise<void> =>
+    fetch(`/intake/sources/${encodeURIComponent(id)}/poll`, { method: "POST" }).then((r) => handleVoid(r)),
+
+  intakeItems: (params?: { source?: string; status?: string; limit?: number }): Promise<{ items: import("./types").CatalogNode[] }> => {
+    const qs = new URLSearchParams();
+    if (params?.source) qs.set("source", params.source);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return fetch(`/intake/items${q ? `?${q}` : ""}`).then((r) => handle(r));
+  },
+
+  intakeItem: (id: string): Promise<import("./types").IntakeItemDetail> =>
+    fetch(`/intake/items/${encodeURIComponent(id)}`).then((r) => handle(r)),
+
+  intakeDecide: (id: string, decision: "release" | "quarantine"): Promise<void> =>
+    fetch(`/intake/items/${encodeURIComponent(id)}/${decision}`, { method: "POST" }).then((r) => handleVoid(r)),
+
+  intakeAlerts: (): Promise<{ alerts: import("./types").IntakeAlert[] }> =>
+    fetch("/intake/alerts").then((r) => handle(r)),
+
+  intakeAddAlert: (draft: import("./types").IntakeAlertDraft): Promise<import("./types").IntakeAlert> =>
+    fetch("/intake/alerts", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(alert),
+      body: JSON.stringify(draft),
     }).then((r) => handle(r)),
 
-  feedDeleteAlert: (name: string, scope?: string): Promise<{ status: string }> =>
-    fetch(`/feeds/alerts/${encodeURIComponent(name)}?scope=${encodeURIComponent(scope || "workspace")}`, {
-      method: "DELETE",
+  intakeUpdateAlert: (id: string, patch: Partial<import("./types").IntakeAlertDraft>): Promise<import("./types").IntakeAlert> =>
+    fetch(`/intake/alerts/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
     }).then((r) => handle(r)),
+
+  intakeDeleteAlert: (id: string): Promise<void> =>
+    fetch(`/intake/alerts/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => handleVoid(r)),
 
   /// Synthesize speech via the Live API. Resolution order server-side is
   /// `voice_override` > the resolved chat/bot voice (by `bot_id`/`chat_key`)
