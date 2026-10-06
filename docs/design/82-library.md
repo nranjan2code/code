@@ -584,6 +584,10 @@ content.
 
 ## 10. Open questions
 
+Questions 1 and 2 were settled on 2026-10-06 (data-architecture plan §M8
+design) as recommended: only declared deliverables enter the Library, and
+`title` stays optional.
+
 1. **A turn that wrote files but declared none.** Recommended: nothing
    enters the Library, and the Workbench says the files exist; a person can
    save one, which is a declaration (M8). The alternative is one "Files from

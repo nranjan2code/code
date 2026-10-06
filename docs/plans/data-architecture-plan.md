@@ -1482,6 +1482,60 @@ test `feed_pipeline_is_gone`. With it M6.5 is done.
 - A browser acceptance run: create → review → promote → share → comment →
   revise → erase.
 
+**M8 design (agreed 2026-10-06).** M8 carries doc 82's L1 to L5. None of
+them was built before it, so `produces_artifact` and the derived drafts
+projection still stand, and M8 replaces them rather than building beside
+them (invariant 30). The maintainer chose:
+- **Only declared deliverables enter the Library** (doc 82 §10 question
+  1). A turn that writes files but declares none adds nothing; Workbench
+  still shows those files, and a person's Save is the declaration.
+- **`title` stays optional** on `write` and `office_apply` (doc 82 §10
+  question 2). The Library falls back to the file name, and the eval suite
+  measures how often small models omit it.
+- **Versions are records.**
+
+The shapes:
+- **Artifact.** An `art_` id, owned by its Space, with its authoring Agent
+  recorded.
+- **Versions.** The `artifacts/` record chain in the shared scope holds
+  `declared`, `versioned` (with the version's parent, so concurrent edits
+  are siblings), `renamed`, `starred`, `archived` and `saved` rows. Each
+  row carries the trace key of the run or the person behind it.
+- **Bytes and current state.** A version's bytes are a tenant object.
+  Current state (head version, siblings, title, star) is read through a
+  rollup Document over the chain (`vak_session::rollup`, M6.3); nothing
+  replays the chain to decide.
+- **Declarations.** `Tool::artifact` replaces `produces_artifact`: a call
+  that names its deliverable, forwarded by `BrokeredTool`.
+- **Reviewed work.** A Review candidate and its promotion, an Office
+  draft and a changeset are versions of the artifact they change.
+- **Catalog.** The chain is a catalog source: an `artifact` node with its
+  versions, lineage to the producing run and call, and `derived_from` for
+  a version made from another.
+- **Grants.** One `grants/` chain with a rollup: a principal, an object
+  (an artifact or a conversation), a role (viewer, commenter, editor) and
+  an inherit-or-break flag. Doc 69's coworking grants move into it. Search
+  and every read filter by grant before ranking, so a revoked grant hides
+  the object at once.
+
+The steps:
+1. **M8.1** identity and versions: the `artifacts/` chain and rollup,
+   `Tool::artifact`, candidates, promotions and Office drafts as versions,
+   catalog nodes, and the read-only `/library` API. Exit tests
+   `concurrent_edit_creates_sibling_versions` and
+   `saved_version_survives_origin_erasure`. Survival is shown by the saved
+   version's own grant and object, since erasure itself is M7a.
+2. **M8.2** grants: the `grants/` chain, coworking grants moved into it,
+   inheritance and breaks, and catalog filtering. Exit tests
+   `share_inherits_and_breaks` and `revoked_grant_hides_from_search`.
+3. **M8.3** the client and admin Library, the artifact page, version
+   history, and Continue working (doc 82 L2). Browser run.
+4. **M8.4** edit and Put back, saved cards, the Share dialog, and
+   `SharedConversation`, `ArtifactCanvas`, `OfficeRedline` and
+   `WorkbenchPanel` on the Artifact API, plus the navigation
+   reconciliation. The browser acceptance run covers create → review →
+   promote → share → comment → revise; erase waits for M7a.
+
 ### M9 — Cloud remote (L; the protocol and a reference backend)
 
 - **The `Remote` trait**, with `FileRemote` (tests and personal
