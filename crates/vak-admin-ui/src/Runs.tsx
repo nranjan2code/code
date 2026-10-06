@@ -2,7 +2,8 @@
 /// started it, and how it ended. A run is opened before its work and
 /// settled after it; one whose process stopped reads as interrupted. The
 /// detail shows each conversation the run wrote, through the same trail
-/// the Operations Center draws.
+/// the Operations Center draws, and its timeline: the spans it recorded,
+/// laid out as a waterfall (plan M5b).
 
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
@@ -10,6 +11,7 @@ import { navigate } from "./store";
 import type { RunRecord, RunStatus } from "./types";
 import { SessionTrail } from "./OperationsCenter";
 import { RunEffects } from "./Effects";
+import { RunWaterfall } from "./Diagnostics";
 
 const STATUS_WORDS: Record<RunStatus, string> = {
   running: "Running",
@@ -145,8 +147,10 @@ function RunDetail(props: { id: string }) {
                   <Show when={record().noticed_by}><div><dt>Noticed by</dt><dd class="mono">{record().noticed_by}</dd></div></Show>
                   <Show when={record().result_id}><div><dt>Answer entry</dt><dd class="mono">{record().result_id}</dd></div></Show>
                 </dl>
+                <button class="ghost small" onClick={() => navigate(`#/diagnostics?trace=${encodeURIComponent(record().id)}`)}>This run's log lines</button>
               </details>
             </section>
+            <RunWaterfall run={record().id} />
             <Show when={(record().sessions ?? []).length > 0} fallback={<section class="panel"><p class="dim">This run wrote no conversation.</p></section>}>
               <For each={record().sessions ?? []}>{(session) => <SessionTrail sessionId={session} />}</For>
             </Show>

@@ -2051,9 +2051,11 @@ async fn run_plan(
     }
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(256);
-    let runner = tokio::spawn(async move {
-        vak_flow::plan_and_run(std::sync::Arc::new(deps), &task, cancel, tx).await
-    });
+    let plan_span = vak_session::runs::span(&plan_trace);
+    let runner = tokio::spawn(tracing::Instrument::instrument(
+        async move { vak_flow::plan_and_run(std::sync::Arc::new(deps), &task, cancel, tx).await },
+        plan_span,
+    ));
 
     while let Some(line) = rx.recv().await {
         eprintln!("{line}");

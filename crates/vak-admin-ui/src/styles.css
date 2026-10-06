@@ -1326,7 +1326,7 @@ a.tab-btn {
 .panel p a:hover, .empty p a:hover { text-decoration-color: currentColor; }
 
 @media (max-width: 700px) {
-  .shell { grid-template-columns: 1fr; overflow: auto; }
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto 1fr; overflow: auto; }
   .sidebar { position: sticky; top: 0; z-index: 3; overflow: visible; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--border-soft); }
   .brand { min-height: 40px; padding: 4px 2px; }
   .brand-mark { width: 28px; height: 28px; }
@@ -1781,6 +1781,28 @@ a.tab-btn {
 .run-row-main { display: grid; gap: 2px; min-width: 0; }
 .run-row-reason { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-technical { margin-top: 12px; }
+.waterfall { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.waterfall-row { display: grid; grid-template-columns: minmax(12ch, 28ch) minmax(0, 1fr) 8ch; gap: 12px; align-items: center; min-height: 24px; }
+.waterfall-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.waterfall-track { position: relative; height: 12px; border-radius: var(--radius-sm); background: var(--surface-hover); }
+.waterfall-bar { position: absolute; top: 0; bottom: 0; border-radius: var(--radius-sm); background: var(--accent); }
+.waterfall-dispatch { background: var(--blue); }
+.waterfall-tool_call, .waterfall-execution { background: var(--green); }
+.waterfall-delivery { background: var(--yellow); }
+.waterfall-time { text-align: right; font-variant-numeric: tabular-nums; }
+.log-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 12px; }
+.log-filters label { display: grid; gap: 4px; }
+.log-filters .log-spans { display: flex; gap: 6px; align-items: center; }
+.log-lines { list-style: none; margin: 0; padding: 0; }
+.log-line { display: grid; grid-template-columns: 9ch auto 10ch minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--border-soft); }
+.log-message { display: grid; gap: 2px; min-width: 0; }
+.log-fields { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .waterfall-row { grid-template-columns: minmax(0, 1fr) 8ch; }
+  .waterfall-track { grid-column: 1 / -1; grid-row: 2; }
+  .log-line { grid-template-columns: auto auto minmax(0, 1fr); }
+  .log-line .log-message { grid-column: 1 / -1; }
+}
 .project-list { display: grid; gap: 10px; }
 .project-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-soft); }
 .project-row > div:first-child { display: grid; gap: 3px; min-width: 0; }

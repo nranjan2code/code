@@ -13,6 +13,14 @@
 //!
 //! Lines go to `<logs>/vak-<service>.jsonl`, rotated by size, and a short
 //! human form goes to stderr when it is a terminal.
+//!
+//! A run's span tree is `run › turn › step › (dispatch | tool_call ›
+//! execution) › delivery`. The tool worker runs sandboxed in its own
+//! process, so it captures its lines in memory ([`capture_as`]) under an
+//! `execution` span naming the run and its caller's span, and hands them
+//! back with its answer; the caller passes them to [`forward`], which
+//! checks them against the allowlist again and writes them under its own
+//! span path, so one run's lines share one `trace_id` across processes.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -37,6 +45,8 @@ pub const ALLOWED_FIELDS: &[&str] = &[
     "turn",
     "step",
     "span",
+    "span_id",
+    "parent_span",
     "session",
     "agent",
     "effect",
@@ -141,6 +151,89 @@ impl Visit for Fields {
     fn record_f64(&mut self, field: &Field, value: f64) {
         self.put(field, value.into());
     }
+}
+
+/// The one raw field of a forwarded line.
+#[derive(Default)]
+struct Raw(Option<String>);
+
+impl Visit for Raw {
+    fn record_debug(&mut self, _: &Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "line" {
+            self.0 = Some(value.to_string());
+        }
+    }
+}
+
+/// The target of a line another process wrote and this one forwards.
+pub const FORWARD_TARGET: &str = "vak_telemetry::forward";
+
+/// Keys a line carries besides its fields.
+const STRUCTURAL: &[&str] = &["ts", "level", "target", "service", "event", "message"];
+
+/// A forwarded line, checked again: structural keys stay as strings,
+/// fields outside the allowlist and any value that is not a scalar are
+/// withheld, and each span keeps its name and allowed fields.
+fn forwarded(line: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    fn scalar(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                serde_json::Value::String(WITHHELD.into())
+            }
+            scalar => scalar,
+        }
+    }
+    let serde_json::Value::Object(line) = serde_json::from_str(line).ok()? else {
+        return None;
+    };
+    let mut out = serde_json::Map::new();
+    for (key, value) in line {
+        if STRUCTURAL.contains(&key.as_str()) || key == "span" {
+            if let serde_json::Value::String(text) = value {
+                out.insert(key, text.into());
+            }
+        } else if key == "spans" {
+            let spans: Vec<serde_json::Value> = match value {
+                serde_json::Value::Array(spans) => spans
+                    .into_iter()
+                    .filter_map(|span| match span {
+                        serde_json::Value::Object(span) => Some(span),
+                        _ => None,
+                    })
+                    .map(|span| {
+                        let mut kept = serde_json::Map::new();
+                        for (key, value) in span {
+                            if key == "name" {
+                                if let serde_json::Value::String(name) = value {
+                                    kept.insert(key, name.into());
+                                }
+                            } else if allowed(&key) {
+                                kept.insert(key, scalar(value));
+                            } else {
+                                kept.insert(key, WITHHELD.into());
+                            }
+                        }
+                        serde_json::Value::Object(kept)
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            out.insert(key, spans.into());
+        } else if allowed(&key) {
+            out.insert(key, scalar(value));
+        } else {
+            out.insert(key, WITHHELD.into());
+        }
+    }
+    Some(out)
+}
+
+/// Writes `line`, a line another process captured, under the current span
+/// path. Its fields are checked against the allowlist again.
+pub fn forward(line: &str) {
+    tracing::info!(target: "vak_telemetry::forward", line, "forwarded");
 }
 
 /// What a span keeps: its fields and when it opened.
@@ -335,6 +428,32 @@ where
     }
 
     fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+        if event.metadata().target() == FORWARD_TARGET {
+            let mut raw = Raw::default();
+            event.record(&mut raw);
+            let scope = event
+                .parent()
+                .cloned()
+                .or_else(|| ctx.current_span().id().cloned());
+            if let Some(line) = raw.0.and_then(|line| forwarded(&line)) {
+                let (mut spans, trace) = self.spans(&ctx, scope);
+                let mut line = line;
+                if let Some(serde_json::Value::Array(own)) = line.remove("spans") {
+                    spans.extend(own);
+                }
+                if !line.contains_key("trace_id")
+                    && let Some(trace) = trace
+                {
+                    line.insert("trace_id".into(), trace);
+                }
+                if !spans.is_empty() {
+                    line.insert("spans".into(), spans.into());
+                }
+                self.sink
+                    .write_line(&serde_json::Value::Object(line).to_string());
+            }
+            return;
+        }
         let mut fields = Fields::default();
         event.record(&mut fields);
         let scope = event
@@ -438,7 +557,29 @@ pub fn init(service: &str) {
 
 /// A subscriber writing to `buffer`, for tests that read what was logged.
 pub fn capture(buffer: Arc<Mutex<Vec<u8>>>) -> impl Subscriber + Send + Sync {
-    tracing_subscriber::registry().with(ContentFree::new(Sink::Memory(buffer), "test", false))
+    capture_as(buffer, "test")
+}
+
+/// A subscriber writing `service`'s lines to `buffer`: a process with no
+/// log of its own (the tool worker) hands them to the one that has.
+pub fn capture_as(buffer: Arc<Mutex<Vec<u8>>>, service: &str) -> impl Subscriber + Send + Sync {
+    tracing_subscriber::registry().with(ContentFree::new(Sink::Memory(buffer), service, false))
+}
+
+/// The raw lines of a captured buffer, at most `limit` of them and
+/// `max_bytes` in all, oldest first.
+pub fn raw_lines(buffer: &Arc<Mutex<Vec<u8>>>, limit: usize, max_bytes: usize) -> Vec<String> {
+    let bytes = buffer.lock().map(|bytes| bytes.clone()).unwrap_or_default();
+    let mut total = 0;
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .take(limit)
+        .take_while(|line| {
+            total += line.len();
+            total <= max_bytes
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 /// The lines of a captured buffer, parsed.
@@ -481,6 +622,37 @@ pub fn read_lines(
         }
     }
     out
+}
+
+/// Up to `limit` of the newest lines `keep` accepts across `services`'
+/// logs, newest first by their time.
+pub fn read_services(
+    services: &[String],
+    limit: usize,
+    keep: impl Fn(&serde_json::Value) -> bool,
+) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = services
+        .iter()
+        .flat_map(|service| read_lines(service, limit, &keep))
+        .collect();
+    out.sort_by(|a, b| {
+        let at = |line: &serde_json::Value| line["ts"].as_str().unwrap_or_default().to_string();
+        at(b).cmp(&at(a))
+    });
+    out.truncate(limit);
+    out
+}
+
+/// How severe a level is, most severe first (`ERROR` is 0); an unknown
+/// level reads as `TRACE`.
+pub fn severity(level: &str) -> u8 {
+    match level.to_ascii_uppercase().as_str() {
+        "ERROR" => 0,
+        "WARN" => 1,
+        "INFO" => 2,
+        "DEBUG" => 3,
+        _ => 4,
+    }
 }
 
 /// The services that write a log here.

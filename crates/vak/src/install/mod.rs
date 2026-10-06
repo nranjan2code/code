@@ -678,6 +678,22 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
             drifted = true;
         }
     }
+    // The newest problem each service reported in its structured log.
+    for service in [vak_ops::Service::Gateway, vak_ops::Service::Bridges] {
+        if let Some(line) = vak_ops::recent_log_lines(service, "warn", 1).first() {
+            let kind = line["error_kind"]
+                .as_str()
+                .map(|kind| format!(" ({kind})"))
+                .unwrap_or_default();
+            println!(
+                "log       {} {} {}: {}{kind}",
+                line["service"].as_str().unwrap_or_default(),
+                line["ts"].as_str().unwrap_or_default(),
+                line["level"].as_str().unwrap_or_default().to_lowercase(),
+                line["message"].as_str().unwrap_or_default(),
+            );
+        }
+    }
 
     // Compare the manifest against the binary it describes, not against
     // whichever build happens to be running this command — otherwise a

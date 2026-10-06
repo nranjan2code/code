@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import Projects from "./Projects";
 import Runs from "./Runs";
+import Diagnostics from "./Diagnostics";
 import Automations from "./Automations";
 import { api, AuthRequired } from "./api";
 import { headlessAuth } from "./headlessAuth";
@@ -7198,6 +7199,7 @@ const NAV: NavItem[] = [
   },
   { group: "System", hash: "#/setup", label: "Setup", icon: ICONS.setup, scope: "project" },
   { group: "System", hash: "#/finops", label: "FinOps", icon: ICONS.finops, scope: "project" },
+  { group: "System", hash: "#/diagnostics", label: "Traces & logs", icon: ICONS.diagnostics, scope: "global" },
 ];
 
 function routeScope(current: string): NavItem["scope"] {
@@ -8031,6 +8033,7 @@ export default function App() {
               <Match when={currentRoute() === "#/runs"}>
                 <Runs id={route().split("?", 1)[0].startsWith("#/runs/") ? decodeURIComponent(route().split("?", 1)[0].slice("#/runs/".length)) : undefined} />
               </Match>
+              <Match when={currentRoute() === "#/diagnostics"}><Diagnostics /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
               <Match when={currentRoute() === "#/prompts"}><PromptsPage /></Match>
               <Match when={currentRoute() === "#/settings"}><Settings /></Match>

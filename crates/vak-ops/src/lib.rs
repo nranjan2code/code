@@ -15,7 +15,7 @@
 //! - Health checks are plain HTTP against the gateway's /health.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use std::sync::OnceLock;
@@ -339,6 +339,7 @@ fn parse_launchd_state(text: &str) -> State {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
+
     use super::{State, parse_launchd_state};
 
     #[test]
@@ -418,32 +419,60 @@ pub fn restart(service: Service, cfg: &OpsConfig) -> bool {
     start(service, cfg)
 }
 
+/// The structured logs a managed service writes, each
+/// `<logs>/vak-<name>.jsonl` (plan M5): the gateway is the server, and the
+/// bridges are one log per transport.
+pub fn telemetry_services(service: Service) -> &'static [&'static str] {
+    match service {
+        Service::Gateway => &["server"],
+        Service::Bridges => &["telegram", "discord", "slack"],
+    }
+}
+
+/// The newest `limit` lines of `service`'s structured logs at `level` or
+/// worse (`error`, `warn`, `info`, ...), newest first. Span timings are
+/// left out; they belong to a run's timeline.
+pub fn recent_log_lines(service: Service, level: &str, limit: usize) -> Vec<serde_json::Value> {
+    let names: Vec<String> = telemetry_services(service)
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    let floor = vak_telemetry::severity(level);
+    vak_telemetry::read_services(&names, limit, |line| {
+        line["event"] != "span.close"
+            && vak_telemetry::severity(line["level"].as_str().unwrap_or_default()) <= floor
+    })
+}
+
+/// Opens `service`'s structured log: the gateway's file, or the logs
+/// folder for the bridges, which write one file per transport.
 pub fn open_log(service: Service) {
+    let target = match service {
+        Service::Gateway => vak_telemetry::log_path("server"),
+        Service::Bridges => vak_config::paths::logs_dir(),
+    };
+    let folder = if target.extension().is_some() {
+        target.parent().map(Path::to_path_buf)
+    } else {
+        Some(target.clone())
+    };
+    if let Some(folder) = folder {
+        std::fs::create_dir_all(folder).ok();
+    }
+    if target.extension().is_some() && !target.exists() {
+        std::fs::write(&target, "").ok();
+    }
     #[cfg(target_os = "macos")]
     {
-        // Canonical logs home (doc 32): ~/Library/Logs/vak —
-        // Console.app-visible. Overridden homes keep self-contained logs.
-        let log = vak_config::paths::logs_dir().join(match service {
-            Service::Gateway => "gateway.log",
-            Service::Bridges => "bridges.log",
-        });
-        if let Some(parent) = log.parent() {
-            std::fs::create_dir_all(parent).ok();
+        let mut command = Command::new("open");
+        if target.extension().is_some() {
+            command.arg("-t");
         }
-        if !log.exists() {
-            std::fs::write(&log, "").ok();
-        }
-        run(Command::new("open").arg("-t").arg(&log));
+        run(command.arg(&target));
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let unit = match service {
-            Service::Gateway => "vak-gateway",
-            Service::Bridges => "vak-bridges",
-        };
-        run(Command::new("sh").arg("-c").arg(format!(
-            "journalctl --user -u {unit} -n 200 --no-pager 2>/dev/null || true"
-        )));
+        run(Command::new("xdg-open").arg(&target));
     }
 }
 
@@ -458,4 +487,28 @@ fn uid() -> String {
             .unwrap_or_else(|_| "501".into())
     })
     .clone()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod log_reader_tests {
+    use super::*;
+
+    #[test]
+    fn service_log_reader_reads_the_structured_log() {
+        vak_config::paths::isolate_home_for_tests();
+        let path = vak_telemetry::log_path("server");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let lines = [
+            r#"{"ts":"2026-10-06T10:00:00+00:00","level":"INFO","service":"server","message":"started"}"#,
+            r#"{"ts":"2026-10-06T10:00:01+00:00","level":"WARN","service":"server","message":"an effect was not sent","error_kind":"Io"}"#,
+            r#"{"ts":"2026-10-06T10:00:02+00:00","level":"TRACE","service":"server","event":"span.close","span":"run","duration_ms":3}"#,
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        let found = recent_log_lines(Service::Gateway, "warn", 5);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0]["error_kind"], "Io");
+        assert_eq!(recent_log_lines(Service::Gateway, "info", 5).len(), 2);
+        assert!(recent_log_lines(Service::Bridges, "trace", 5).is_empty());
+    }
 }

@@ -381,7 +381,8 @@ impl DeliveryRuntime {
             .begin_dispatch(id, how)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("effect {id} is not this server's to send now"))?;
-        match self.send(core, &record).await {
+        let span = vak_session::effects::delivery_span(&record);
+        match tracing::Instrument::instrument(self.send(core, &record), span).await {
             Ok((packet, receipt, confirmed)) => {
                 let recorded = if confirmed {
                     effects.confirmed(id, receipt)

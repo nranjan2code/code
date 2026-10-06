@@ -331,10 +331,17 @@ library code reports through `tracing`, never `eprintln!` (a root
 literals); each process installs `vak_telemetry::init(<service>)`, which
 writes content-free JSON lines (allowlisted field names only, the run's
 `trace_id` lifted to the top, span closes with durations) to
-`<logs>/vak-<service>.jsonl`, rotated by size. M5b (the run › turn ›
-step span tree, the Traces & logs screen and Run waterfall, service log
-readers, bus stream ages) is next. No session starts a later step
-unasked.
+`<logs>/vak-<service>.jsonl`, rotated by size. M5b is done
+(2026-10-06), and with it M5: a run's work runs in its span tree, run ›
+turn › step › (dispatch | tool_call › execution) › delivery, all under
+the run's `trace_id`; the sandboxed tool worker captures its
+`execution` lines and returns them for the caller to forward
+(`vak_telemetry::forward`); `/telemetry/logs`, `/telemetry/services`
+and `/runs/{id}/spans` read the logs for the admin System › Traces &
+logs screen (`#/diagnostics`) and Run detail's timeline; `vak-ops`
+reads each service's structured logs; the bus carries references only
+and its work streams have a `max_age`. M6 (the data catalog) is next.
+No session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -454,7 +461,10 @@ unasked.
   ids, kinds, sizes, digests, durations, outcomes), and an error as its
   `error_kind`, never its text. Paths, URLs, file names, titles and
   prompts are content. Only the CLI and the apps write to a person's
-  stderr.
+  stderr. Whoever opens a run does its work in `vak_session::runs::span`;
+  a new spawned task carries its span (`tracing::Instrument`), and a
+  process with no log of its own returns its captured lines for its
+  caller to `vak_telemetry::forward`.
 - Read a session for a person or the model through a path that honours the
   trash (`open_historical_session`, `Core::open_session`, or
   `vak_core::trash`), never by opening its ledger directly. A ledger is a
@@ -1378,6 +1388,8 @@ in progress, and the rest of V4 follows it.
   scripts re-verify it and fail the build naming the stale file. Never
   weaken that check to get a build through — regenerate the bundle.
 - Config keys unknown to this version are ignored with a warning, never fatal.
+- Telemetry is content-free and never read to decide anything: a log line
+  or span is for a person diagnosing, never an input to behaviour.
 
 ## Outcome-directed runtime contract
 
@@ -1511,8 +1523,10 @@ crates/vak-telemetry content-free structured telemetry (plan M5): the
                      process subscriber (`init(<service>)`), JSON lines with
                      allowlisted field names and the run's trace id, span
                      closes with durations, size-rotated
-                     `<logs>/vak-<service>.jsonl`, and the source tests that
-                     keep `eprintln!` out of library code and messages literal
+                     `<logs>/vak-<service>.jsonl`, the worker's captured
+                     lines forwarded under their caller's span (`forward`),
+                     and the source tests that keep `eprintln!` out of
+                     library code and messages literal
 crates/vak-store     SQLite FTS5 rebuildable index over session ledgers:
                      BM25 full-text search (all content blocks incl. tool
                      calls/results/thinking), structured metadata queries,
@@ -1911,7 +1925,8 @@ crates/vak-desktop   Tauri 2 SHELL over an embedded secured_router. The UI
                      picker (docs/design/38-voice-personality.md)
 crates/vak-ops       service-control layer over launchd/systemd — status,
                      start/stop/restart, install/uninstall shared by tray,
-                     CLI and desktop (docs/design/28-operations.md)
+                     CLI and desktop, and each service's structured log
+                     readers (docs/design/28-operations.md)
 crates/vak-tray      menu-bar controller: colour-coded service dot,
                      start/stop/restart/install/uninstall, logs, watchdog
                      with auto-restart + notifications

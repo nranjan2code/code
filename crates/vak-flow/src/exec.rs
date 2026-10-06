@@ -177,7 +177,11 @@ impl Executor {
         // The run's checkpoint exists from its start, even when a resume
         // finds nothing left to do.
         self.persist(state);
-        let outcome = self.run_nodes(flow, state, cancel, events).await;
+        let outcome = tracing::Instrument::instrument(
+            self.run_nodes(flow, state, cancel, events),
+            vak_session::runs::span(&run.trace),
+        )
+        .await;
         let settled = match &outcome {
             FlowOutcome::Completed { .. } => vak_session::runs::RunOutcome::Completed,
             FlowOutcome::Failed { node, reason, .. } => vak_session::runs::RunOutcome::Failed {

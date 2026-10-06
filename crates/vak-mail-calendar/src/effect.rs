@@ -1746,74 +1746,81 @@ pub async fn commit_candidate(
     };
     let marker = attempt_marker(&taken);
     let audience = candidate.audience_id.as_str();
-    let outcome = match &candidate.action {
-        ProposedAction::SendMail { draft } => {
-            client
-                .send_mail(account, vault, agent_id, audience, &marker, draft)
-                .await
-        }
-        ProposedAction::CreateEvent { draft } => {
-            client
-                .create_event(account, vault, agent_id, audience, &marker, draft)
-                .await
-        }
-        ProposedAction::UpdateEvent {
-            event_id,
-            source_version,
-            draft,
-        } => {
-            client
-                .update_event(
-                    account,
-                    vault,
-                    agent_id,
-                    audience,
-                    &marker,
+    let span = vak_session::effects::delivery_span(&taken);
+    let outcome = tracing::Instrument::instrument(
+        async {
+            match &candidate.action {
+                ProposedAction::SendMail { draft } => {
+                    client
+                        .send_mail(account, vault, agent_id, audience, &marker, draft)
+                        .await
+                }
+                ProposedAction::CreateEvent { draft } => {
+                    client
+                        .create_event(account, vault, agent_id, audience, &marker, draft)
+                        .await
+                }
+                ProposedAction::UpdateEvent {
                     event_id,
                     source_version,
                     draft,
-                )
-                .await
-        }
-        ProposedAction::CancelEvent {
-            event_id,
-            source_version,
-            occurrence_id,
-            whole_series,
-        } => {
-            client
-                .cancel_event(
-                    account,
-                    vault,
-                    agent_id,
-                    audience,
-                    &marker,
+                } => {
+                    client
+                        .update_event(
+                            account,
+                            vault,
+                            agent_id,
+                            audience,
+                            &marker,
+                            event_id,
+                            source_version,
+                            draft,
+                        )
+                        .await
+                }
+                ProposedAction::CancelEvent {
                     event_id,
                     source_version,
-                    occurrence_id.as_deref(),
-                    *whole_series,
-                )
-                .await
-        }
-        ProposedAction::RespondToEvent {
-            event_id,
-            source_version,
-            response,
-        } => {
-            client
-                .respond_to_event(
-                    account,
-                    vault,
-                    agent_id,
-                    audience,
-                    &marker,
+                    occurrence_id,
+                    whole_series,
+                } => {
+                    client
+                        .cancel_event(
+                            account,
+                            vault,
+                            agent_id,
+                            audience,
+                            &marker,
+                            event_id,
+                            source_version,
+                            occurrence_id.as_deref(),
+                            *whole_series,
+                        )
+                        .await
+                }
+                ProposedAction::RespondToEvent {
                     event_id,
                     source_version,
-                    *response,
-                )
-                .await
-        }
-    };
+                    response,
+                } => {
+                    client
+                        .respond_to_event(
+                            account,
+                            vault,
+                            agent_id,
+                            audience,
+                            &marker,
+                            event_id,
+                            source_version,
+                            *response,
+                        )
+                        .await
+                }
+            }
+        },
+        span,
+    )
+    .await;
     match &outcome {
         Ok(accepted) => effects.accepted(
             taken.id,

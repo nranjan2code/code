@@ -167,7 +167,7 @@ impl ServerBus {
         trace: Option<&vak_session::trace::TraceKey>,
     ) -> Result<(), vak_bus::BusError> {
         let subject = self.subject_for(event, session_id);
-        let payload = serde_json::to_vec(event).unwrap_or_else(|_| b"{}".to_vec());
+        let payload = serde_json::to_vec(&reference(event)).unwrap_or_else(|_| b"{}".to_vec());
 
         let mut chain = self.chain.lock().await;
         let seq = chain.0 + 1;
@@ -357,6 +357,73 @@ pub fn try_decrypt(
 
 // ---- tests ----
 
+/// What the bus carries for `event` (plan M5b, review R22): its kind and
+/// the ids a subscriber needs to fetch the rest through the authenticated
+/// API, never its text. A summary, preview, reason, label or error message
+/// stays in this process.
+pub(crate) fn reference(event: &SystemEvent) -> serde_json::Value {
+    use serde_json::json;
+    match event {
+        SystemEvent::Agent(_) => json!({ "type": "Agent" }),
+        SystemEvent::SessionCreated {
+            session_id,
+            space_id,
+        } => json!({ "type": "SessionCreated", "session_id": session_id, "space_id": space_id }),
+        SystemEvent::SessionEntryAppended {
+            session_id,
+            entry_id,
+            kind,
+        } => json!({
+            "type": "SessionEntryAppended",
+            "session_id": session_id,
+            "entry_id": entry_id,
+            "kind": kind,
+        }),
+        SystemEvent::ConfigChanged { .. } => json!({ "type": "ConfigChanged" }),
+        SystemEvent::GatewayInbound { surface, .. } => {
+            json!({ "type": "GatewayInbound", "surface": surface })
+        }
+        SystemEvent::ApprovalRequested {
+            id,
+            session_id,
+            tool,
+            ..
+        } => json!({
+            "type": "ApprovalRequested",
+            "id": id,
+            "session_id": session_id,
+            "tool": tool,
+        }),
+        SystemEvent::ApprovalGranted { id, tool } => {
+            json!({ "type": "ApprovalGranted", "id": id, "tool": tool })
+        }
+        SystemEvent::ApprovalDenied { id, tool } => {
+            json!({ "type": "ApprovalDenied", "id": id, "tool": tool })
+        }
+        SystemEvent::WorkerQuestion { id, session_id, .. } => {
+            json!({ "type": "WorkerQuestion", "id": id, "session_id": session_id })
+        }
+        SystemEvent::WorkerQuestionClosed { id, session_id } => {
+            json!({ "type": "WorkerQuestionClosed", "id": id, "session_id": session_id })
+        }
+        SystemEvent::SecurityEvent { kind, .. } => {
+            json!({ "type": "SecurityEvent", "kind": kind })
+        }
+        SystemEvent::ProviderError {
+            provider, model, ..
+        } => json!({ "type": "ProviderError", "provider": provider, "model": model }),
+        SystemEvent::RateLimit {
+            provider,
+            retry_after_secs,
+        } => json!({
+            "type": "RateLimit",
+            "provider": provider,
+            "retry_after_secs": retry_after_secs,
+        }),
+        SystemEvent::Heartbeat => json!({ "type": "Heartbeat" }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -388,6 +455,50 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_slice(&received.payload).expect("decode payload");
         assert_eq!(payload["type"], "Heartbeat");
+    }
+
+    /// The bus carries references only (review R22): no summary, preview,
+    /// reason, label or error text leaves the process on it.
+    #[tokio::test]
+    async fn bus_payload_carries_references_only() {
+        let bus = ServerBus::local("ws_refs");
+        let mut rx = bus.subscribe(">").await.expect("sub");
+        tokio::task::yield_now().await;
+        let events = [
+            SystemEvent::Agent(crate::events::AgentEventPayload {
+                summary: "CANARY summary".into(),
+                detail: Some("CANARY detail".into()),
+            }),
+            SystemEvent::GatewayInbound {
+                surface: "telegram".into(),
+                who: "CANARY sender".into(),
+                preview: "CANARY message".into(),
+            },
+            SystemEvent::ApprovalRequested {
+                id: "apr_1".into(),
+                session_id: "sess1".into(),
+                tool: "bash".into(),
+                reason: "CANARY reason /Users/someone/file".into(),
+            },
+            SystemEvent::ProviderError {
+                provider: "anthropic".into(),
+                model: "m".into(),
+                error: "CANARY https://example.test/key=1".into(),
+            },
+            SystemEvent::ConfigChanged {
+                label: "CANARY label".into(),
+                detail: "CANARY detail".into(),
+            },
+        ];
+        for event in &events {
+            bus.emit(event, Some("sess1")).await.expect("emit");
+            let env = tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+                .await
+                .expect("timeout")
+                .expect("recv");
+            let text = String::from_utf8_lossy(&env.payload).to_string();
+            assert!(!text.contains("CANARY"), "{text}");
+        }
     }
 
     #[tokio::test]

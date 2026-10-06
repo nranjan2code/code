@@ -174,6 +174,9 @@ SDKs to preflight a model.
 | `/effects` | GET | Effect records (`?run=&state=`), plan M4.5 |
 | `/effects/:id/resend` | POST | Send again: same effect where the provider drops repeats, else a superseding one |
 | `/effects/:id/reconcile` | POST | The owner says whether an unknown effect was sent |
+| `/runs/:id/spans` | GET | One run's span closes in start order, each with `started_at`, for its waterfall (plan M5b) |
+| `/telemetry/services` | GET | The services that write a structured log |
+| `/telemetry/logs` | GET | Content-free log lines, newest first (`?service=&level=&trace=&spans=&limit=`) |
 | `/store/rebuild` | POST | Full index rebuild (mutation ⇒ POST) |
 | `/store/import/:id` | POST | Import one session's JSONL |
 | `/config` | GET | Effective config snapshot, including provider/model provenance |
@@ -211,6 +214,13 @@ than duplicated under `/admin/api`; the Admin SPA uses the same authorization
 and workspace-scope enforcement as desktop and gateway clients.
 
 ## Console views
+
+- **Traces & logs** (System, `#/diagnostics`, plan M5b) — every service's
+  content-free log lines, newest first, filtered by service, level and run
+  (`?trace=<run>` opens it filtered). Lines carry ids, counts, durations
+  and outcomes only; a line's run opens its Run detail, whose **timeline**
+  draws the run's spans as a waterfall (run › turn › step › model call or
+  tool use › the tool worker › sending), each with how long it took.
 
 - **Home** — the operator's first screen, answering four questions in order
   and nothing else: is the system healthy, what is waiting on me, what is

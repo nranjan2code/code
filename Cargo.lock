@@ -7029,6 +7029,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
  "vak-agent",
  "vak-commit",
@@ -7357,6 +7358,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
  "url",
  "uuid",
  "vak-config",
@@ -7404,6 +7406,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "vak-config",
+ "vak-telemetry",
 ]
 
 [[package]]
@@ -7647,12 +7650,14 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml 0.8.2",
+ "tracing",
  "vak-config",
  "vak-llm",
  "vak-ooxml",
  "vak-pdf",
  "vak-sandbox",
  "vak-session",
+ "vak-telemetry",
  "walkdir",
 ]
 

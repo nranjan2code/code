@@ -1484,3 +1484,27 @@ export interface RunRecord {
   missed?: { from: string; through: string };
   noticed_by?: string;
 }
+
+/** One content-free telemetry line (plan M5): its time, level, service and
+ * literal message, the ids, kinds and counts it carries, the run's
+ * `trace_id`, and the spans around it, outermost first. */
+export interface TelemetryLine {
+  ts: string;
+  level: string;
+  service: string;
+  target?: string;
+  message?: string;
+  event?: string;
+  span?: string;
+  trace_id?: string;
+  duration_ms?: number;
+  spans?: Array<{ name: string } & Record<string, unknown>>;
+  [field: string]: unknown;
+}
+
+/** A span's close line, with when it started, for a run's waterfall. */
+export interface TelemetrySpan extends TelemetryLine {
+  span: string;
+  duration_ms: number;
+  started_at: string;
+}

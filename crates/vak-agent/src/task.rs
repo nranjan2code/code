@@ -1026,6 +1026,9 @@ impl TaskTool {
         cfg.approval_mode = self.deps.approval_mode;
         cfg.approver = self.deps.approver.clone();
         cfg.sandbox = self.deps.sandbox.clone();
+        let span = child_trace
+            .as_ref()
+            .map_or_else(tracing::Span::current, vak_session::runs::span);
         cfg.trace = child_trace;
 
         let agent = Agent::new(self.deps.provider.clone(), log, cfg);
@@ -1079,10 +1082,11 @@ impl TaskTool {
                 .flatten()
                 .map(|registry| (registry, self.deps.parent_session_id.clone())),
         };
+        // The child is its own run, and its work is that run's span tree.
         if !background {
-            return drive.run().await;
+            return tracing::Instrument::instrument(drive.run(), span).await;
         }
-        tokio::spawn(drive.run());
+        tokio::spawn(tracing::Instrument::instrument(drive.run(), span));
         ToolOutput::ok(format!(
             "worker '{session_id}' ({label}) started in the background. Use the workers tool to list it, check its status, message it, wait for it, or stop it. It is cancelled if you finish your turn without waiting for it."
         ))

@@ -83,6 +83,7 @@ mod site;
 mod social;
 mod stream;
 pub mod surfaces;
+mod telemetry;
 #[cfg(test)]
 mod traced_rows_tests;
 mod voice;
@@ -849,6 +850,9 @@ fn router_with_state(state: AppState) -> Router {
         .route("/flows", get(flows_list))
         .route("/runs", get(runs_list))
         .route("/runs/{id}", get(run_detail))
+        .route("/runs/{id}/spans", get(telemetry::run_spans))
+        .route("/telemetry/services", get(telemetry::list_services))
+        .route("/telemetry/logs", get(telemetry::logs))
         .route("/flows/{name}/runs/{run}/graph", get(flow_run_graph))
         .route("/sessions/{id}/checkpoints", get(list_checkpoints))
         .route(

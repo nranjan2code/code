@@ -47,6 +47,53 @@ fn log_lines_are_json_with_trace_fields() {
 }
 
 #[test]
+fn forwarded_lines_nest_under_the_caller_and_stay_content_free() {
+    // What the worker captured: an execution span's close and an event,
+    // one with a field a worker should never have written.
+    let worker = Arc::new(Mutex::new(Vec::new()));
+    tracing::subscriber::with_default(vak_telemetry::capture_as(worker.clone(), "worker"), || {
+        let span = tracing::info_span!("execution", trace_id = "run_f", tool = "bash");
+        let _span = span.enter();
+        tracing::info!(count = 1u64, "a command ran");
+    });
+    let mut raw = vak_telemetry::raw_lines(&worker, 64, 64 * 1024);
+    raw.push(
+        r#"{"level":"INFO","message":"x","path":"/Users/someone/CANARY","spans":[{"name":"execution","url":"https://canary.test"}],"bytes":{"nested":"CANARY"}}"#
+            .into(),
+    );
+    let lines = captured(|| {
+        let call = tracing::info_span!("tool_call", trace_id = "run_f", tool = "bash");
+        let _call = call.enter();
+        for line in &raw {
+            vak_telemetry::forward(line);
+        }
+    });
+    let text: String = lines.iter().map(|line| line.to_string()).collect();
+    assert!(!text.contains("CANARY"), "{text}");
+    assert!(!text.contains("canary.test"), "{text}");
+    let close = lines
+        .iter()
+        .find(|line| line["event"] == "span.close" && line["span"] == "execution")
+        .expect("the worker's span close is forwarded");
+    assert_eq!(close["service"], "worker");
+    assert_eq!(close["trace_id"], "run_f");
+    assert_eq!(close["spans"][0]["name"], "tool_call");
+    let event = lines
+        .iter()
+        .find(|line| line["message"] == "a command ran")
+        .expect("the worker's event is forwarded");
+    let names: Vec<_> = event["spans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|span| span["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["tool_call", "execution"]);
+    // The forwarding event itself is not a line.
+    assert!(lines.iter().all(|line| line["message"] != "forwarded"));
+}
+
+#[test]
 fn telemetry_carries_no_content() {
     let canaries = [
         "sk-ant-CANARY-SECRET",

@@ -771,6 +771,33 @@ pub enum RunEnd {
     Skipped(String),
 }
 
+/// The `run` span of `trace`'s run, the root of its span tree (plan M5b):
+/// whoever opens a run does its work in this span, so every line under it
+/// carries the run's `trace_id`.
+pub fn span(trace: &TraceKey) -> tracing::Span {
+    tracing::info_span!(
+        "run",
+        trace_id = %trace.run,
+        agent = %trace.agent,
+        cause = cause_kind(&trace.cause),
+    )
+}
+
+/// The kind of a cause, for telemetry: its name, never its fields.
+pub fn cause_kind(cause: &crate::trace::Cause) -> &'static str {
+    use crate::trace::Cause;
+    match cause {
+        Cause::User { .. } => "user",
+        Cause::Channel { .. } => "channel",
+        Cause::Schedule { .. } => "schedule",
+        Cause::Delegation { .. } => "delegation",
+        Cause::Revision { .. } => "revision",
+        Cause::Trigger { .. } => "trigger",
+        Cause::Heartbeat => "heartbeat",
+        Cause::System { .. } => "system",
+    }
+}
+
 /// A run opened by a surface that may end it along many paths. Dropped, it
 /// ends the run as told by [`OpenRun::end_with`], or as skipped because
 /// the request ended before any turn started; [`OpenRun::hand_off`] passes

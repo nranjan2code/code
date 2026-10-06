@@ -3554,7 +3554,18 @@ fn start_turn_chain(
 ) {
     let core = core.clone();
     let gw = state.gateway.clone();
-    tokio::spawn(execute_turn_chain(core, gw, handle, prompt, reply));
+    let span = turn_chain_span(&core);
+    tokio::spawn(tracing::Instrument::instrument(
+        execute_turn_chain(core, gw, handle, prompt, reply),
+        span,
+    ));
+}
+
+/// The span a turn chain runs in: its admitted run's, so the turn and its
+/// delivery are one trace (plan M5b).
+fn turn_chain_span(core: &Core) -> tracing::Span {
+    core.admitted_trace()
+        .map_or_else(tracing::Span::current, vak_session::runs::span)
 }
 
 /// Voice and other non-HTTP surfaces use the same governed executor while
@@ -3566,12 +3577,9 @@ pub(crate) fn start_turn_chain_with_gateway(
     prompt: vak_llm::Message,
     reply: Option<oneshot::Sender<ChatReply>>,
 ) {
-    tokio::spawn(execute_turn_chain(
-        core.clone(),
-        gateway,
-        handle,
-        prompt,
-        reply,
+    tokio::spawn(tracing::Instrument::instrument(
+        execute_turn_chain(core.clone(), gateway, handle, prompt, reply),
+        turn_chain_span(core),
     ));
 }
 

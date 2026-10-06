@@ -211,6 +211,36 @@ pub struct EffectRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+/// The `delivery` span of one attempt to send `record`, under its run's
+/// `trace_id` (plan M5b).
+pub fn delivery_span(record: &EffectRecord) -> tracing::Span {
+    let span = tracing::info_span!(
+        "delivery",
+        trace_id = tracing::field::Empty,
+        effect = %record.id,
+        kind = record.kind.name(),
+        attempt = record.attempts,
+    );
+    if let Some(run) = record.run {
+        span.record("trace_id", tracing::field::display(run));
+    }
+    span
+}
+
+impl EffectKind {
+    /// The kind's name, for telemetry: never its target or account.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Delivery { .. } => "delivery",
+            Self::MailSend { .. } => "mail_send",
+            Self::CalendarCreate { .. } => "calendar_create",
+            Self::CalendarUpdate { .. } => "calendar_update",
+            Self::CalendarCancel { .. } => "calendar_cancel",
+            Self::CalendarRsvp { .. } => "calendar_rsvp",
+        }
+    }
+}
+
 impl EffectRecord {
     fn prepared(
         effect: EffectId,

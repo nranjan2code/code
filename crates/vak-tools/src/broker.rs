@@ -164,6 +164,11 @@ struct WorkerResponse {
     content: String,
     is_error: bool,
     events: Vec<SandboxEvent>,
+    /// The worker's content-free telemetry lines for a traced call: its
+    /// `execution` span under the run's trace, forwarded by the caller
+    /// (plan M5b). A sandboxed worker has no log of its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    telemetry: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -544,12 +549,20 @@ async fn execute(
             response.version
         ));
     }
+    for line in &response.telemetry {
+        vak_telemetry::forward(line);
+    }
     if response.is_error {
         ToolOutput::error(response.content)
     } else {
         ToolOutput::ok(response.content)
     }
 }
+
+/// At most this many telemetry lines, and bytes of them, come back with
+/// one call.
+const TELEMETRY_LINES: usize = 256;
+const TELEMETRY_BYTES: usize = 64 * 1024;
 
 pub async fn worker_main() -> i32 {
     let mut bytes = Vec::new();
@@ -601,6 +614,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -614,6 +628,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -627,6 +642,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -645,6 +661,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -658,6 +675,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -671,6 +689,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -684,6 +703,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -698,6 +718,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -712,6 +733,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -723,6 +745,7 @@ pub async fn worker_main() -> i32 {
                 content,
                 is_error: false,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             })
             .await;
         }
@@ -730,6 +753,25 @@ pub async fn worker_main() -> i32 {
     let tool = crate::default_tools()
         .into_iter()
         .find(|candidate| candidate.name() == tool_name);
+    // A traced call continues its caller's span: this process captures its
+    // lines under an `execution` span naming the run and the call's span,
+    // and hands them back with its answer.
+    let captured = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let execution = match &trace {
+        Some(trace) => {
+            let _ = tracing::subscriber::set_global_default(vak_telemetry::capture_as(
+                captured.clone(),
+                "worker",
+            ));
+            tracing::info_span!(
+                "execution",
+                trace_id = %trace.run,
+                parent_span = %trace.span,
+                tool = tool_name.as_str(),
+            )
+        }
+        None => tracing::Span::none(),
+    };
     let (output, events) = match tool {
         Some(tool) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -765,7 +807,8 @@ pub async fn worker_main() -> i32 {
                     let _ = stderr.flush().await;
                 }
             });
-            let output = tool.execute(&args, &ctx).await;
+            let output =
+                tracing::Instrument::instrument(tool.execute(&args, &ctx), execution.clone()).await;
             drop(ctx.sandbox_sink);
             let _ = event_forwarder.await;
             (output, Vec::new())
@@ -775,11 +818,14 @@ pub async fn worker_main() -> i32 {
             Vec::new(),
         ),
     };
+    drop(execution);
+    let telemetry = vak_telemetry::raw_lines(&captured, TELEMETRY_LINES, TELEMETRY_BYTES);
     write_response(WorkerResponse {
         version: PROTOCOL_VERSION,
         content: output.content,
         is_error: output.is_error,
         events,
+        telemetry,
     })
     .await
 }
@@ -797,6 +843,7 @@ async fn write_response(response: WorkerResponse) -> i32 {
                 ),
                 is_error: true,
                 events: Vec::new(),
+                telemetry: Vec::new(),
             };
             match serde_json::to_vec(&refusal) {
                 Ok(payload) => payload,

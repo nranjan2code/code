@@ -1,5 +1,7 @@
 import type {
   RunRecord,
+  TelemetryLine,
+  TelemetrySpan,
   EffectRecord,
   EffectStatus,
   ChatSurface,
@@ -180,6 +182,18 @@ export const api = {
   },
   run: (id: string): Promise<RunRecord> =>
     fetch(`/runs/${encodeURIComponent(id)}`).then((r) => handle(r)),
+  runSpans: (id: string): Promise<{ spans: TelemetrySpan[] }> =>
+    fetch(`/runs/${encodeURIComponent(id)}/spans`).then((r) => handle(r)),
+  telemetryServices: (): Promise<{ services: string[] }> =>
+    fetch("/telemetry/services").then((r) => handle(r)),
+  telemetryLogs: (filter: { service?: string; level?: string; trace?: string; spans?: boolean } = {}, limit = 200): Promise<{ lines: TelemetryLine[] }> => {
+    const q = new URLSearchParams({ limit: String(limit) });
+    if (filter.service) q.set("service", filter.service);
+    if (filter.level) q.set("level", filter.level);
+    if (filter.trace) q.set("trace", filter.trace);
+    if (filter.spans) q.set("spans", "true");
+    return fetch(`/telemetry/logs?${q}`).then((r) => handle(r));
+  },
   effects: (filter: { run?: string; state?: EffectStatus } = {}, limit = 200): Promise<{ effects: EffectRecord[] }> => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (filter.run) q.set("run", filter.run);

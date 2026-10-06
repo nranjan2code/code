@@ -1364,6 +1364,9 @@ pub struct Agent {
     /// engine.md §7): reset to 0 on any non-drifting step; three in a row
     /// end the turn with the degraded outcome.
     drift_streak: u32,
+    /// The span of the step in progress (plan M5b): each provider attempt
+    /// and tool call is its child.
+    step_span: tracing::Span,
 }
 
 impl Agent {
@@ -1390,6 +1393,7 @@ impl Agent {
             handoff_used: false,
             repair: RepairState::default(),
             drift_streak: 0,
+            step_span: tracing::Span::none(),
         }
     }
 
@@ -1551,6 +1555,7 @@ impl Agent {
         let outcome = self
             .run_message_inner(prompt, steering, cancel.clone(), events.clone())
             .await;
+        self.step_span = tracing::Span::none();
         // A system-authored completion (drift, card-repeat and stale-data
         // outcomes) is the turn's answer as much as a model-authored one:
         // it must be on the ledger, or the turn never closes and the next
@@ -1867,6 +1872,7 @@ impl Agent {
         let mut logged_plan: Option<String> = None;
         let mut turn_tool_base: Option<Vec<vak_llm::ToolDefinition>> = None;
         loop {
+            self.step_span = tracing::info_span!("step", step = turn as u64);
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
             }
@@ -5520,7 +5526,18 @@ impl Agent {
                         .await
                         .map(|message| (message, first_token_ms))
                 };
-                let step = std::panic::AssertUnwindSafe(step).catch_unwind();
+                let dispatch_span = tracing::info_span!(
+                    parent: &self.step_span,
+                    "dispatch",
+                    provider = route_provider.as_str(),
+                    model = model.as_str(),
+                    attempt = attempt as u64,
+                );
+                let step = std::panic::AssertUnwindSafe(tracing::Instrument::instrument(
+                    step,
+                    dispatch_span,
+                ))
+                .catch_unwind();
 
                 let mut domain_override: Option<FailureDomain> = None;
                 let outcome = match self.config.request_timeout {
@@ -6232,21 +6249,25 @@ impl Agent {
                             (call.id.clone(), result)
                         } else {
                             let owns_lifecycle = call.name == "task" || call.name == "flow";
-                            let (returned_id, result) = execute_one(
-                                call,
-                                &self.config.tools,
-                                &cwd,
-                                &session_id,
-                                agent_id.as_deref(),
-                                &skill_names,
-                                hooks.as_ref(),
-                                hook_recorder.as_ref(),
-                                tool_activity_recorder.as_ref(),
-                                sandbox.as_ref(),
-                                self.config.trace.as_ref(),
-                                &self.call_yields,
-                                cancel,
-                                events,
+                            let call_span = tool_call_span(&self.step_span, &call);
+                            let (returned_id, result) = tracing::Instrument::instrument(
+                                execute_one(
+                                    call,
+                                    &self.config.tools,
+                                    &cwd,
+                                    &session_id,
+                                    agent_id.as_deref(),
+                                    &skill_names,
+                                    hooks.as_ref(),
+                                    hook_recorder.as_ref(),
+                                    tool_activity_recorder.as_ref(),
+                                    sandbox.as_ref(),
+                                    self.config.trace.as_ref(),
+                                    &self.call_yields,
+                                    cancel,
+                                    events,
+                                ),
+                                call_span,
                             )
                             .await;
                             if !owns_lifecycle
@@ -6332,26 +6353,30 @@ impl Agent {
                 let agent_id = agent_id.clone();
                 let trace = self.config.trace.clone();
                 let yields = self.call_yields.clone();
-                join.spawn(async move {
-                    let r = execute_one(
-                        call,
-                        &tools,
-                        &cwd,
-                        &session_id,
-                        agent_id.as_deref(),
-                        &skill_names,
-                        hooks.as_ref(),
-                        hook_recorder.as_ref(),
-                        tool_activity_recorder.as_ref(),
-                        sandbox.as_ref(),
-                        trace.as_ref(),
-                        &yields,
-                        &cancel,
-                        &events,
-                    )
-                    .await;
-                    (idx, r)
-                });
+                let call_span = tool_call_span(&self.step_span, &call);
+                join.spawn(tracing::Instrument::instrument(
+                    async move {
+                        let r = execute_one(
+                            call,
+                            &tools,
+                            &cwd,
+                            &session_id,
+                            agent_id.as_deref(),
+                            &skill_names,
+                            hooks.as_ref(),
+                            hook_recorder.as_ref(),
+                            tool_activity_recorder.as_ref(),
+                            sandbox.as_ref(),
+                            trace.as_ref(),
+                            &yields,
+                            &cancel,
+                            &events,
+                        )
+                        .await;
+                        (idx, r)
+                    },
+                    call_span,
+                ));
             }
             while let Some(res) = join.join_next().await {
                 if let Ok((idx, pair)) = res {
@@ -7179,6 +7204,19 @@ fn workspace_criterion_path(
     let resolved = std::fs::canonicalize(candidate).ok()?;
     resolved.starts_with(workspace).then_some(resolved)
 }
+/// The span of one tool call, a child of its step (plan M5b). Its
+/// `span_id` is the call's trace span, which the worker's `execution`
+/// span names as its parent.
+fn tool_call_span(step: &tracing::Span, call: &PendingToolCall) -> tracing::Span {
+    tracing::info_span!(
+        parent: step,
+        "tool_call",
+        tool = call.name.as_str(),
+        call = call.id.as_str(),
+        span_id = tracing::field::Empty,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn execute_one(
     call: PendingToolCall,
@@ -7283,6 +7321,7 @@ async fn execute_one(
             let call_trace = trace.map(vak_session::trace::TraceKey::child);
             if let Some(key) = &call_trace {
                 sandbox_sink = sandbox_sink.with_trace(key.clone());
+                tracing::Span::current().record("span_id", tracing::field::display(key.span));
             }
             let events_tx = events.clone();
             // Files the call reported creating or changing in the workspace
@@ -7320,7 +7359,11 @@ async fn execute_one(
             // The context (and its event sender) moves into the task and is
             // dropped when it ends, so joining the forwarder below cannot
             // wait on a sender this function still holds.
-            let res = tokio::spawn(async move { tool.execute(&call.input, &ctx).await }).await;
+            let res = tokio::spawn(tracing::Instrument::instrument(
+                async move { tool.execute(&call.input, &ctx).await },
+                tracing::Span::current(),
+            ))
+            .await;
             let output = match res {
                 Ok(out) => {
                     let mut effects = Vec::new();

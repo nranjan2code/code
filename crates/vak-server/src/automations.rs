@@ -542,7 +542,12 @@ pub(crate) async fn claim_and_fire(
     match claimed {
         Ok(triggers::Claimed::Idle) => Ok(None),
         Ok(triggers::Claimed::Spent) => Err(NotFired::Busy),
-        Ok(triggers::Claimed::Started(started)) => fire(state, trigger, *started).await.map(Some),
+        Ok(triggers::Claimed::Started(started)) => {
+            let span = vak_session::runs::span(&started.trace);
+            tracing::Instrument::instrument(fire(state, trigger, *started), span)
+                .await
+                .map(Some)
+        }
         Err(error) => {
             tracing::warn!(trigger = %trigger.id, error_kind = %vak_telemetry::error_kind(&error), "an automation's slot was not claimed");
             Err(NotFired::Refused)

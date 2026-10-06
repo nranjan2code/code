@@ -219,7 +219,7 @@ supported baseline and run `vak self verify` after installation.
 | Symptom | Check |
 |---|---|
 | bridge replies "(gateway unreachable)" | gateway down or token mismatch — `vak open admin --print` prints the pinned `VAK_GATEWAY_TOKEN` as a loopback-only link; compare it against what the bridge is configured with |
-| replies "(aborted)" | Inspect the current run and gateway logs at `~/Library/Logs/vak/gateway.log` (macOS) or `~/.local/state/vak/logs/gateway.log` (Linux) |
+| replies "(aborted)" | Open the run in the admin console (Runs, then its timeline), or System › Traces & logs. The server's structured log is `vak-server.jsonl` in `~/Library/Logs/vak` (macOS) or `~/.local/state/vak/logs` (Linux); `gateway.log` there holds only what the process wrote to stderr, such as a panic |
 | tool calls denied on phone | expected in default deny mode; configure an approver surface or use TUI/desktop for escalations |
 | model errors | `/health` shows effective provider/model plus provenance/revision; keys live in the Shared secret scope (docs/design/44-shared-config.md, "Secrets Chain"), not a file — use the Settings UI or `PUT /config/key` to check/change them |
 | MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |

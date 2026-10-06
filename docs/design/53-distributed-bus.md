@@ -19,6 +19,20 @@ Given complex, massive multi-agent execution, the fabric guarantees:
 
 ---
 
+## Data-architecture amendments (plan M5b, 2026-10-06)
+
+- **The bus carries references only** (review R22). The server publishes a
+  `SystemEvent` as its kind and the ids a subscriber needs (session, entry,
+  approval, question, provider and model names), never its summary,
+  preview, reason, label or error text
+  (`vak_server::bus::reference`, test `bus_payload_carries_references_only`).
+  A subscriber that needs more reads it through the authenticated API.
+- **Work streams age out.** `NatsBus` creates each work queue's stream
+  itself (`work_stream_config`): work-queue retention and a `max_age` of
+  `WORK_QUEUE_MAX_AGE` (24 hours), with a durable explicit-ack consumer, so
+  an unclaimed task does not outlive its usefulness and the stream is never
+  an archive.
+
 ## 1. Architectural Topology
 
 ```text

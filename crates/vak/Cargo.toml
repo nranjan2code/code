@@ -25,6 +25,7 @@ vak-llm = { workspace = true }
 vak-server = { workspace = true }
 vak-presentation = { workspace = true }
 vak-session = { workspace = true }
+tracing = { workspace = true }
 vak-terminal = { workspace = true }
 clap = { workspace = true }
 futures = { workspace = true }

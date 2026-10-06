@@ -106,6 +106,25 @@ impl Default for NatsConfig {
     }
 }
 
+/// How long a work queue's stream keeps a task nobody claimed (plan M5b,
+/// review R22). A stream is a hand-off between processes, never an
+/// archive: what the work is lives in the store, and the stream carries
+/// references to it.
+pub const WORK_QUEUE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// The JetStream stream behind work queue `queue`: work-queue retention
+/// (a task is gone once claimed and acknowledged), and gone after
+/// [`WORK_QUEUE_MAX_AGE`] if nobody claims it.
+pub fn work_stream_config(queue: &str) -> async_nats::jetstream::stream::Config {
+    async_nats::jetstream::stream::Config {
+        name: format!("VAK_WORK_{}", queue.to_uppercase()),
+        subjects: vec![format!("vak.work.{queue}.task")],
+        retention: async_nats::jetstream::stream::RetentionPolicy::WorkQueue,
+        max_age: WORK_QUEUE_MAX_AGE,
+        ..Default::default()
+    }
+}
+
 /// Production distributed messaging engine powered by NATS Core & JetStream.
 pub struct NatsBus {
     client: async_nats::Client,
@@ -145,6 +164,20 @@ impl NatsBus {
     /// Access live operational metrics.
     pub fn metrics(&self) -> Arc<BusMetrics> {
         self.metrics.clone()
+    }
+
+    /// The work queue's stream, created with its age limit when missing.
+    async fn work_stream(
+        &self,
+        queue: &str,
+    ) -> Result<async_nats::jetstream::stream::Stream, BusError> {
+        self.js
+            .get_or_create_stream(work_stream_config(queue))
+            .await
+            .map_err(|e| BusError::WorkQueue {
+                queue: queue.to_string(),
+                reason: e.to_string(),
+            })
     }
 }
 
@@ -240,6 +273,7 @@ impl TaskAckHandle for NatsJetStreamAckHandle {
 impl WorkQueue for NatsBus {
     async fn enqueue(&self, queue: &str, envelope: MessageEnvelope) -> Result<String, BusError> {
         let subject = format!("vak.work.{queue}.task");
+        self.work_stream(queue).await?;
         let payload =
             serde_json::to_vec(&envelope).map_err(|e| BusError::Serialization(e.to_string()))?;
         let payload_len = payload.len();
@@ -270,18 +304,22 @@ impl WorkQueue for NatsBus {
     ) -> Result<Option<ClaimedTask>, BusError> {
         use futures::StreamExt;
 
-        let stream_name = format!("VAK_WORK_{}", queue.to_uppercase());
         let consumer_name = format!("worker_{queue}");
-
-        let stream = match self.js.get_stream(&stream_name).await {
-            Ok(s) => s,
-            Err(_) => return Ok(None),
-        };
-
-        let consumer = match stream.get_consumer(&consumer_name).await {
-            Ok(c) => c,
-            Err(_) => return Ok(None),
-        };
+        let stream = self.work_stream(queue).await?;
+        let consumer: async_nats::jetstream::consumer::PullConsumer = stream
+            .get_or_create_consumer(
+                &consumer_name,
+                async_nats::jetstream::consumer::pull::Config {
+                    durable_name: Some(consumer_name.clone()),
+                    ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| BusError::WorkQueue {
+                queue: queue.to_string(),
+                reason: e.to_string(),
+            })?;
 
         let mut messages = match consumer.fetch().max_messages(1).messages().await {
             Ok(m) => m,
@@ -499,5 +537,25 @@ impl WorkQueue for InMemoryBus {
         } else {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A work queue's stream ages out what nobody claimed, and drops what
+    /// was claimed (review R22).
+    #[test]
+    fn work_streams_have_a_max_age() {
+        let config = work_stream_config("research");
+        assert_eq!(config.name, "VAK_WORK_RESEARCH");
+        assert_eq!(config.subjects, ["vak.work.research.task"]);
+        assert_eq!(config.max_age, WORK_QUEUE_MAX_AGE);
+        assert!(config.max_age > Duration::ZERO);
+        assert_eq!(
+            config.retention,
+            async_nats::jetstream::stream::RetentionPolicy::WorkQueue
+        );
     }
 }

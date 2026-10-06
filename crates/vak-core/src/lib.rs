@@ -6381,11 +6381,46 @@ impl Core {
         goal: Option<(String, Vec<String>)>,
         work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        use tracing::Instrument as _;
         let runs = self.runs();
         let opened: Arc<std::sync::OnceLock<vak_session::ids::RunId>> = Arc::default();
+        // The turn's spans open before its work and learn their ids once the
+        // run is minted (plan M5b). A turn with no admitted run is its own
+        // run and its root span; an admitted run's span is its opener's.
+        let run_span = if self.run_admission.trace.is_none() {
+            tracing::info_span!(
+                "run",
+                trace_id = tracing::field::Empty,
+                agent = tracing::field::Empty,
+                cause = tracing::field::Empty,
+            )
+        } else {
+            tracing::Span::none()
+        };
+        let turn_span = if run_span.is_none() {
+            tracing::info_span!(
+                "turn",
+                trace_id = tracing::field::Empty,
+                turn = tracing::field::Empty,
+                session = tracing::field::Empty,
+            )
+        } else {
+            tracing::info_span!(
+                parent: &run_span,
+                "turn",
+                trace_id = tracing::field::Empty,
+                turn = tracing::field::Empty,
+                session = tracing::field::Empty,
+            )
+        };
+        let spans = TurnSpans {
+            run: run_span.clone(),
+            turn: turn_span.clone(),
+        };
         let result = self
             .run_turn_recorded(
                 opened.clone(),
+                spans,
                 session,
                 prompt,
                 cancel,
@@ -6396,7 +6431,9 @@ impl Core {
                 goal,
                 work_mode,
             )
+            .instrument(turn_span)
             .await;
+        drop(run_span);
         // The run this turn opened settles with whatever the turn returned,
         // on every path out of it.
         if let Some(run) = opened.get() {
@@ -6442,6 +6479,7 @@ impl Core {
     async fn run_turn_recorded(
         mut self,
         opened: Arc<std::sync::OnceLock<vak_session::ids::RunId>>,
+        spans: TurnSpans,
         mut session: SessionLog,
         prompt: vak_session::MessageRecord,
         cancel: CancellationToken,
@@ -6538,6 +6576,7 @@ impl Core {
                 &turn_id,
             );
         cfg.trace = Some(run_trace.clone());
+        spans.record(&run_trace, &turn_id);
         // A turn with no admitted run is its own run, and opens it before
         // anything is written; an admitted run was opened by whoever minted
         // it. Either way the run names this ledger.
@@ -11972,5 +12011,29 @@ mod mail_calendar_routine_usage_tests {
             .fetch_add(3, Ordering::AcqRel);
         let next_turn_core = core.clone();
         assert_eq!(next_turn_core.mail_calendar_routine_items_used(), 3);
+    }
+}
+
+/// The spans a turn runs in (plan M5b), opened before the run is minted and
+/// told its ids once it is.
+struct TurnSpans {
+    run: tracing::Span,
+    turn: tracing::Span,
+}
+
+impl TurnSpans {
+    fn record(&self, trace: &vak_session::trace::TraceKey, turn_id: &str) {
+        let run = trace.run.to_string();
+        self.run.record("trace_id", run.as_str());
+        self.run
+            .record("agent", tracing::field::display(trace.agent));
+        self.run
+            .record("cause", vak_session::runs::cause_kind(&trace.cause));
+        self.turn.record("trace_id", run.as_str());
+        self.turn.record("turn", turn_id);
+        if let Some(session) = &trace.session {
+            self.turn
+                .record("session", tracing::field::display(session));
+        }
     }
 }
