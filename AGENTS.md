@@ -1360,8 +1360,10 @@ in progress, and the rest of V4 follows it.
   §30.1). The fence path is the fallback when no matching tool is present,
   and a fence carries the same arguments the tool takes. A card tool's
   arguments are flat beside `semantic_type`, use only the schema keywords
-  every provider carries, put no data in keys and hold no list of records
-  inside a record in a list (measured, §30.1;
+  every provider carries, put no data in keys, hold no list of records
+  inside a record in a list, require `semantic_type` first and ask for no
+  value that starts with `|` (a table is its rows, `A | B` strings)
+  (measured, §30.1;
   `every_card_schema_is_flat_and_portable`); each shape's `build` turns them
   into the stored card. The card travels in the call's *arguments*
   (recorded untruncated in the ledger); the tool result is only a short ack

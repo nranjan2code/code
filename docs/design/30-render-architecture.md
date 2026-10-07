@@ -200,7 +200,7 @@ to be one every model writes reliably. Measured 2026-10-07 against
 gemma4:e2b-mlx (20 runs per tool and per shape; the model wrote the same
 nested data as plain JSON in a reply 14 times in 15, so the weak point is the
 tool-call encoding, not JSON or the size of the data), every card tool's
-arguments follow four rules, checked by
+arguments follow six rules, checked by
 `every_card_schema_is_flat_and_portable`:
 
 1. **No envelope.** The card's fields sit at the top level beside
@@ -220,36 +220,38 @@ arguments follow four rules, checked by
    flat lists joined by a name, as a database would: a timeline's options are
    their own list naming their step, a chart's points name their series. A
    timeline went from 12 of 20 (options inside items) to 16 of 20 valid with
-   none dropped. A table is a Markdown table (40 of 40, against 25 of 40 for
-   rows of cells and 0 of 10 for rows of lists), parsed into the stored
-   columns and rows; a nested value carried as one JSON string was no better
-   (9 of 15).
+   none dropped. A table is its rows (rule 6); a nested value carried as one
+   JSON string was no better (9 of 15).
+5. **`semantic_type` is required and comes first**, even where the tool's
+   name settles it (`build` still fills the default when it is missing). A
+   call's first argument sets its syntax: a short enumerated value written
+   first is written in the model's own string delimiter, and the long values
+   after it follow. With `semantic_type` optional the model opened with the
+   long value and malformed it.
+6. **No value is asked to start with `|`.** Gemma's string delimiter is
+   `<|"|>`; a Markdown table opening with `|` fused into the single token
+   `="|` (p = 0.86 at that position, against 0.04 for the delimiter), which
+   Ollama's parser drops. A table is a list of row strings, header first,
+   cells separated by `|` (`Name | Country`), parsed into the stored columns
+   and rows.
 
 The stored card, and every renderer, pack, digest and channel that reads it,
 is unchanged by the contract: `build` is the only place the two meet.
 
-**Open question: prompt length and call syntax.** With the contract in
-place, one captured request ("three famous lighthouses … as a table card",
-12.5k-character system prompt, 17 tools) still gets a valid
-`emit_table_card` call in only 4 of 20 sampled runs on gemma4:e2b-mlx; the
-model's other calls are written `table="…"`, which Ollama's parser drops
-(its log: `gemma4 tool call parsing failed`). Bisected 2026-10-07:
-
-- The same request with a one-line system prompt: 10 of 10 valid.
-- No single block is the cause. Dropping any one block (identity, capability
-  contract, card guidance, Office, bash, rules, guardrails, surface, the
-  More tools catalogue) leaves sampled runs failing; the good short prompt
-  padded with 7k characters of the harmless rules and guardrails text falls
-  to 3 of 10.
-- Not truncation: all 8,224 prompt tokens were evaluated against a 131,072
-  window. Not sampling: at temperature 0 the full prompt fails 10 of 10.
-  Thinking on: 3 of 10. The `table` schema and description hold no `=`.
-
-So the measured cause is the length of the prefix Vak sends, independent of
-which text it is. What remains open is whether Vak should send a shorter
-prefix to a model whose measured capacity profile shows this (doc 68's
-instruction horizon is the place such a measurement would live), or recover
-a dropped call, which Ollama does not return to the client today.
+**How rules 5 and 6 were found.** One captured request ("three famous
+lighthouses … as a table card", Vak's full 12.5k-character system prompt, 17
+tools) got a valid `emit_table_card` call in 4 of 20 runs on gemma4:e2b-mlx;
+the rest were written `table="| …`, which Ollama drops (its log: `gemma4
+tool call parsing failed`). Removing prompt blocks one at a time changed
+nothing reliably, and padding a short prompt with harmless text broke it, so
+the prompt's length only tipped a balance. Token log-probabilities at the
+decision point showed the balance: after `call:emit_table_card{table` the
+model chose `="|` with p = 0.86. With a one-line prompt it had opened with
+`semantic_type` instead, and its correct delimiter carried into `table`.
+Measured 2026-10-07, 20 runs each on the full request: `semantic_type`
+required, 15 of 20; rows as a list of strings, 18 of 20; both, 20 of 20;
+the shipped schema and description, 30 of 32 (2 refused by a check stricter
+than `build`).
 
 **Presentation check.** Prompt guidance is advisory, and a strong model can
 still answer in prose what the app would have shown as a card. After the

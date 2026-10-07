@@ -311,14 +311,22 @@ fn table_fields() -> Value {
     fields(
         serde_json::json!({
             "title": string(""),
-            "table": string("The table in Markdown: a header row, a separator row such as |---|---|, then one row per line.")
+            "rows": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "The table's rows, header first; each row's cells separated by | (for example Name | Country)."
+            }
         }),
-        &["table"],
+        &["rows"],
     )
 }
 
 fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
-    let (labels, rows) = markdown_table(args["table"].as_str().unwrap_or_default())?;
+    let lines: Vec<&str> = args["rows"]
+        .as_array()
+        .map(|rows| rows.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let (labels, rows) = table_rows(&lines)?;
     let numeric: Vec<bool> = (0..labels.len())
         .map(|column| {
             let cells: Vec<&str> = rows
@@ -366,36 +374,28 @@ fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
     Ok(Value::Object(payload))
 }
 
-/// A Markdown table's column labels and rows. Labels are unique (a repeat
-/// gets ` (2)`), an empty label is `Column N`, a short row is padded, and a
-/// cell's outer `**`/`__` emphasis is dropped.
-fn markdown_table(text: &str) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
-    let lines: Vec<&str> = text
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    let mut rows = Vec::new();
-    for (at, line) in lines.iter().enumerate() {
-        if !line.contains('|') {
-            return Err(format!(
-                "line {} of `table` is not a table row; write every row between | bars",
-                at + 1
-            ));
-        }
-        rows.push(markdown_cells(line));
-    }
+/// A table's column labels and rows from its row strings, header first.
+/// Cells are split at `|` (outer bars optional, `\|` is a literal bar),
+/// separator rows such as `---|---` are skipped, labels are unique (a
+/// repeat gets ` (2)`), an empty label is `Column N`, a short row is padded,
+/// and a cell's outer `**`/`__` emphasis is dropped.
+fn table_rows(lines: &[&str]) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
     let separator = |row: &Vec<String>| {
         row.iter().all(|cell| {
             let cell = cell.trim_matches(':');
             !cell.is_empty() && cell.chars().all(|c| c == '-')
         })
     };
-    if rows.len() < 2 || !separator(&rows[1]) {
-        return Err(
-            "`table` needs a header row, then a separator row such as |---|---|, then the rows"
-                .into(),
-        );
+    let rows: Vec<Vec<String>> = lines
+        .iter()
+        .flat_map(|row| row.lines())
+        .map(str::trim)
+        .filter(|row| !row.is_empty())
+        .map(markdown_cells)
+        .filter(|row| !separator(row))
+        .collect();
+    if rows.len() < 2 {
+        return Err("`rows` needs the header row first, then at least one row".into());
     }
     let mut labels: Vec<String> = Vec::new();
     for (at, label) in rows[0].iter().enumerate() {
@@ -413,10 +413,7 @@ fn markdown_table(text: &str) -> Result<(Vec<String>, Vec<Vec<String>>), String>
         labels.push(unique);
     }
     let mut data = Vec::new();
-    for (at, mut row) in rows.into_iter().skip(2).enumerate() {
-        if separator(&row) {
-            continue;
-        }
+    for (at, mut row) in rows.into_iter().skip(1).enumerate() {
         if row.len() > labels.len() {
             return Err(format!(
                 "row {} has {} cells but the header has {}",
@@ -429,7 +426,7 @@ fn markdown_table(text: &str) -> Result<(Vec<String>, Vec<Vec<String>>), String>
         data.push(row);
     }
     if data.is_empty() {
-        return Err("`table` has a header but no rows".into());
+        return Err("`rows` has a header but no rows".into());
     }
     Ok((labels, data))
 }
@@ -823,7 +820,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_table_card",
-        description: "Emit a data table / comparison / budget / inventory card, written as a Markdown table. For selectable travel or outing choices, use semantic_type travel_options; make the first column Option (or Choice) and put one choice in each row so the user can select it.",
+        description: "Emit a data table / comparison / budget / inventory card: its rows, header first, cells separated by |. For selectable travel or outing choices, use semantic_type travel_options; make the first column Option (or Choice) and put one choice in each row so the user can select it.",
         semantic_types: &[
             "coding.benchmark",
             "coding.dependencies",
@@ -1027,7 +1024,7 @@ fn fixture_for(shape_name: &str) -> Value {
             "tests": [{"name": "it_works", "status": "passed"}]
         }),
         "emit_terminal_card" => serde_json::json!({"command": "ls", "output": "a.rs"}),
-        "emit_table_card" => serde_json::json!({"table": "| Name |\n|---|\n| Alice |"}),
+        "emit_table_card" => serde_json::json!({"rows": ["Name", "Alice"]}),
         "emit_timeline_card" => serde_json::json!({
             "title": "T",
             "items": [{"label": "Step 1", "detail": "d"}]
@@ -1113,7 +1110,7 @@ impl Tool for EmitCardTool {
         let mut required: Vec<Value> = own["required"].as_array().cloned().unwrap_or_default();
         let default = default_semantic_type(self.shape);
         let description = match default {
-            Some(default) => format!("Which kind of card this is; leave out for {default}."),
+            Some(default) => format!("Which kind of card this is ({default} for a plain one)."),
             None => "Which kind of card this is.".to_string(),
         };
         properties.insert(
@@ -1124,9 +1121,7 @@ impl Tool for EmitCardTool {
                 "description": description
             }),
         );
-        if default.is_none() {
-            required.insert(0, Value::String("semantic_type".into()));
-        }
+        required.insert(0, Value::String("semantic_type".into()));
         serde_json::json!({"type": "object", "properties": properties, "required": required})
     }
 
@@ -1620,10 +1615,11 @@ mod tests {
             .map(|output| output.payload)
     }
 
-    /// The four rules (docs/design/30-render-architecture.md §30.1), checked
-    /// on every tool's advertised schema: only the keywords every provider
-    /// carries to a model, and no list of records inside a record that is
-    /// itself in a list.
+    /// The contract's rules (docs/design/30-render-architecture.md §30.1),
+    /// checked on every tool's advertised schema: only the keywords every
+    /// provider carries to a model, no list of records inside a record that
+    /// is itself in a list, `semantic_type` required first, and no value
+    /// asked to start with `|`.
     #[test]
     fn every_card_schema_is_flat_and_portable() {
         const KEYWORDS: &[&str] = &[
@@ -1671,20 +1667,38 @@ mod tests {
                 tool.name()
             );
             walk(&schema, tool.name(), 0, &mut problems);
+            if schema["required"][0] != "semantic_type" {
+                problems.push(format!(
+                    "{}: semantic_type is not required first",
+                    tool.name()
+                ));
+            }
+            if schema.to_string().contains("|---") {
+                problems.push(format!(
+                    "{}: asks for a value that starts with |",
+                    tool.name()
+                ));
+            }
         }
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
-    /// The table a model writes most reliably (40 of 40 live, against 25 of
-    /// 40 for rows of cells) becomes the stored grid: keyed columns, rows by
-    /// label, numeric columns as numbers.
+    /// A table is its rows as `A | B` strings, header first (20 of 20 live
+    /// against 4 of 20 for one Markdown string, whose leading `|` the model
+    /// fused into `table="|`), and becomes the stored grid: keyed columns,
+    /// rows by label, numeric columns as numbers.
     #[test]
-    fn a_markdown_table_becomes_the_stored_grid() {
+    fn table_rows_become_the_stored_grid() {
         let payload = built(
             "emit_table_card",
             serde_json::json!({
                 "title": "Lighthouses",
-                "table": "| **Name** | Country | Height (m) |\n| :--- | --- | ---: |\n| Tower of Hercules | Spain | 55 |\n| Bell Rock | Scotland | 35.3 |"
+                "rows": [
+                    "| **Name** | Country | Height (m) |",
+                    "| :--- | --- | ---: |",
+                    "Tower of Hercules | Spain | 55",
+                    "Bell Rock | Scotland | 35.3"
+                ]
             }),
         )
         .unwrap();
@@ -1696,14 +1710,18 @@ mod tests {
         assert_eq!(payload["rows"][1]["Height (m)"], 35.3);
         let refused = built(
             "emit_table_card",
-            serde_json::json!({"table": "Name, Country"}),
+            serde_json::json!({"rows": ["Name | Country"]}),
         );
-        assert!(refused.unwrap_err().contains("between | bars"));
+        assert!(refused.unwrap_err().contains("at least one row"));
         let refused = built(
             "emit_table_card",
-            serde_json::json!({"table": "| Name |\n| Bob |"}),
+            serde_json::json!({"rows": ["Name", "Bob | Smith"]}),
         );
-        assert!(refused.unwrap_err().contains("separator row"));
+        assert!(
+            refused
+                .unwrap_err()
+                .contains("2 cells but the header has 1")
+        );
     }
 
     #[test]
