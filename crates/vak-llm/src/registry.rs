@@ -168,6 +168,12 @@ pub fn default_registry() -> ProviderRegistry {
         "opencode-zen",
         openai_compat("https://opencode.ai/zen/v1", true, false),
     );
+    // NVIDIA NIM's hosted catalogue speaks chat completions. No cache key:
+    // the endpoint documents no such parameter.
+    registry.register(
+        "nvidia",
+        openai_compat(crate::models::NVIDIA_DEFAULT_BASE_URL, false, false),
+    );
 
     use crate::ollama::OllamaProvider;
     registry.register("ollama", |auth| {

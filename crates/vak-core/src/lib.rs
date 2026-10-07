@@ -4304,6 +4304,17 @@ impl Core {
                     ..Default::default()
                 })
             }
+            "nvidia" => {
+                let api_key = required_key("NVIDIA_API_KEY", "nvidia")?;
+                let base_url = vak_config::get_var("VAK_NVIDIA_BASE_URL")
+                    .unwrap_or_else(|| vak_llm::models::NVIDIA_DEFAULT_BASE_URL.into());
+                Ok(ProviderAuth {
+                    credential_id: Some(vak_llm::credential_id(&base_url, &api_key)),
+                    api_key,
+                    base_url: Some(base_url),
+                    ..Default::default()
+                })
+            }
             "ollama" => {
                 // Threaded through generically (registry.rs::ProviderAuth::options)
                 // rather than a provider-specific auth variant, per invariant
@@ -4360,6 +4371,7 @@ impl Core {
             "openai" | "openai-responses" => Some("OPENAI_API_KEYS"),
             "openrouter" | "openrouter-responses" => Some("OPENROUTER_API_KEYS"),
             "opencode-zen" => Some("OPENCODE_API_KEYS"),
+            "nvidia" => Some("NVIDIA_API_KEYS"),
             "ollama" => None,
             "bedrock" => Some("AWS_BEARER_TOKEN_BEDROCK"),
             _ => None,
@@ -4460,6 +4472,7 @@ impl Core {
             "openai" | "openai-responses" => Some("OPENAI_API_KEY"),
             "openrouter" | "openrouter-responses" => Some("OPENROUTER_API_KEY"),
             "opencode-zen" => Some("OPENCODE_API_KEY"),
+            "nvidia" => Some("NVIDIA_API_KEY"),
             "bedrock" => Some("AWS_BEARER_TOKEN_BEDROCK"),
             _ => None,
         }
@@ -4478,6 +4491,7 @@ impl Core {
             "openrouter" => Some("OpenRouter"),
             "openrouter-responses" => Some("OpenRouter (Responses API)"),
             "opencode-zen" => Some("OpenCode Zen"),
+            "nvidia" => Some("NVIDIA NIM"),
             "bedrock" => Some("Amazon Bedrock"),
             "ollama" => Some("Ollama"),
             _ => None,
@@ -8908,6 +8922,29 @@ mod channel_mcp_network_tests {
             "anthropic-pool-key",
         );
         assert_eq!(auth.credential_id.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn nvidia_nim_is_a_chat_completions_provider_with_its_own_key() {
+        vak_config::set_override("NVIDIA_API_KEY", "nvidia-test-key");
+        let directory = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(directory.path().to_path_buf(), true).unwrap();
+        let auth = core.provider_auth_for("nvidia").unwrap();
+        assert!(core.provider_configured("nvidia"));
+        vak_config::clear_override("NVIDIA_API_KEY");
+        assert_eq!(auth.api_key, "nvidia-test-key");
+        assert_eq!(
+            auth.base_url.as_deref(),
+            Some("https://integrate.api.nvidia.com/v1")
+        );
+        assert_eq!(Core::provider_env_var("nvidia"), Some("NVIDIA_API_KEY"));
+        assert_eq!(Core::provider_label("nvidia"), Some("NVIDIA NIM"));
+        assert!(Core::provider_known("nvidia"));
+        assert!(
+            vak_llm::registry::default_registry()
+                .names()
+                .contains(&"nvidia".to_string())
+        );
     }
 
     /// The Bedrock tests set process-wide overrides the others read; run

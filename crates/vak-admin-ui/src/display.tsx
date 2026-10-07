@@ -76,6 +76,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   openrouter: "OpenRouter",
   "openrouter-responses": "OpenRouter (Responses API)",
   "opencode-zen": "OpenCode Zen",
+  nvidia: "NVIDIA NIM",
   bedrock: "Amazon Bedrock",
   ollama: "Ollama (local)",
 };

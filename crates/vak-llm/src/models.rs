@@ -4,7 +4,7 @@
 //!
 //! Three response shapes cover every provider we speak to:
 //!   - OpenAI-compatible (`openai`, `openai-responses`, `openrouter`,
-//!     `openrouter-responses`, `opencode-zen`, `ollama`, Bedrock Mantle):
+//!     `openrouter-responses`, `opencode-zen`, `nvidia`, `ollama`, Bedrock Mantle):
 //!     `GET {base}/models`
 //!     → `{ "data": [{ "id" }] }`
 //!   - Anthropic: same path but `x-api-key` + `anthropic-version` headers.
@@ -425,7 +425,12 @@ pub async fn model_context(
         }
         // OpenAI-compatible endpoints: ask for the one model. A server that
         // does not publish limits answers without them, and that is `None`.
-        "openai" | "openai-responses" | "openrouter-responses" | "bedrock" | "opencode-zen" => {
+        "openai"
+        | "openai-responses"
+        | "openrouter-responses"
+        | "bedrock"
+        | "opencode-zen"
+        | "nvidia" => {
             let provider_adapter = crate::registry::default_registry().get(provider, auth)?;
             let response = send_admitted(
                 provider_adapter.as_ref(),
@@ -611,6 +616,9 @@ pub fn record_anthropic_capabilities(model: &str, caps: AnthropicCapabilities) {
     cache.fast_mode.insert(model.to_string(), caps.fast_mode);
 }
 
+/// NVIDIA NIM's hosted, OpenAI-compatible endpoint.
+pub const NVIDIA_DEFAULT_BASE_URL: &str = "https://integrate.api.nvidia.com/v1";
+
 /// The provider's documented API host, for callers that never set an
 /// override. These are endpoints, not a model catalogue — the model list
 /// itself always comes off the wire.
@@ -624,6 +632,7 @@ fn default_base_url(provider: &str) -> Option<&'static str> {
         "openrouter-responses" => Some("https://openrouter.ai/api/v1"),
         "bedrock" => Some("https://bedrock-mantle.us-east-1.api.aws/v1"),
         "opencode-zen" => Some("https://opencode.ai/zen/v1"),
+        "nvidia" => Some(NVIDIA_DEFAULT_BASE_URL),
         "ollama" => Some("http://localhost:11434/v1"),
         _ => None,
     }
@@ -702,6 +711,7 @@ mod tests {
             "openrouter",
             "openrouter-responses",
             "opencode-zen",
+            "nvidia",
             "ollama",
         ] {
             assert!(default_base_url(p).is_some(), "{p} has no default base url");

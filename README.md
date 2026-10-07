@@ -93,7 +93,7 @@ Pick read-only exploration, work inside one folder, or explicitly grant full acc
 
 ### Your models, your tools
 
-Use Anthropic, OpenAI, Google Gemini, OpenRouter, Amazon Bedrock, OpenCode Zen, any OpenAI-compatible endpoint, or a local model through **Ollama**. The model list comes from your own key, so new models appear the day they ship. Extend it with **skills**, **MCP servers**, **plugins**, **hooks** and **flows**.
+Use Anthropic, OpenAI, Google Gemini, OpenRouter, Amazon Bedrock, OpenCode Zen, NVIDIA NIM, any OpenAI-compatible endpoint, or a local model through **Ollama**. The model list comes from your own key, so new models appear the day they ship. Extend it with **skills**, **MCP servers**, **plugins**, **hooks** and **flows**.
 
 [Explore extensions →](docs/design/09-extensibility.md)
 
