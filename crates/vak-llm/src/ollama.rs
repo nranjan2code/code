@@ -68,8 +68,20 @@ pub fn build_body(config: &OllamaConfig, request: &ChatRequest) -> Result<Value,
     if let Some(system) = &request.system {
         messages.push(serde_json::json!({"role": "system", "content": system}));
     }
+    // A result names the call it answers and that call's tool: Ollama's
+    // renderers pair them by these fields, and without them gemma4's
+    // template labelled every result `response:unknown`.
+    let tool_names: std::collections::HashMap<&str, &str> = request
+        .messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .filter_map(|b| match b {
+            ContentBlock::ToolUse { id, name, .. } => Some((id.as_str(), name.as_str())),
+            _ => None,
+        })
+        .collect();
     for m in &request.messages {
-        append_message(&mut messages, m)?;
+        append_message(&mut messages, m, &tool_names)?;
     }
 
     let mut options = serde_json::Map::new();
@@ -111,7 +123,11 @@ pub fn build_body(config: &OllamaConfig, request: &ChatRequest) -> Result<Value,
     Ok(body)
 }
 
-fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
+fn append_message(
+    out: &mut Vec<Value>,
+    m: &Message,
+    tool_names: &std::collections::HashMap<&str, &str>,
+) -> Result<(), LlmError> {
     match m.role {
         Role::User => {
             let mut text_parts: Vec<&str> = Vec::new();
@@ -139,10 +155,23 @@ fn append_message(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
                 }
             }
             for r in tool_results {
-                let ContentBlock::ToolResult { content, .. } = r else {
+                let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } = r
+                else {
                     unreachable!()
                 };
-                out.push(serde_json::json!({"role": "tool", "content": content}));
+                let mut msg = serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": tool_use_id,
+                    "content": content,
+                });
+                if let Some(name) = tool_names.get(tool_use_id.as_str()) {
+                    msg["tool_name"] = Value::String((*name).to_string());
+                }
+                out.push(msg);
             }
             if !text_parts.is_empty() || !images.is_empty() {
                 let mut msg = serde_json::json!({
@@ -536,6 +565,10 @@ mod tests {
         );
         assert_eq!(msgs[2]["role"], "tool");
         assert_eq!(msgs[2]["content"], "result text");
+        // Ollama's renderers pair a result with its call by these; without
+        // them gemma4 read every result as `response:unknown`.
+        assert_eq!(msgs[2]["tool_call_id"], "call_0");
+        assert_eq!(msgs[2]["tool_name"], "search");
     }
 
     #[test]
