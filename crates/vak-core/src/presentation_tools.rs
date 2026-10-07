@@ -618,7 +618,7 @@ fn chart_fields() -> Value {
             "chart_type": {"type": "string", "enum": ["line", "bar", "area"]},
             "x_label": string(""),
             "y_label": string(""),
-            "accessible_summary": string("One sentence saying what the chart shows."),
+            "accessible_summary": string("Optional: one sentence saying what the chart shows."),
             "points": list_of(
                 "Every point of every series.",
                 serde_json::json!({
@@ -629,7 +629,7 @@ fn chart_fields() -> Value {
                 &["series", "x", "y"],
             )
         }),
-        &["chart_type", "points", "accessible_summary"],
+        &["chart_type", "points"],
     )
 }
 
@@ -658,6 +658,19 @@ fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
             "accessible_summary",
         ],
     );
+    if !payload
+        .get("accessible_summary")
+        .and_then(Value::as_str)
+        .is_some_and(|summary| !summary.trim().is_empty())
+    {
+        if series.is_empty() {
+            return Err("give `points`: every point, each with its series, x and y".into());
+        }
+        payload.insert(
+            "accessible_summary".into(),
+            Value::String(chart_summary(args, &series)),
+        );
+    }
     payload.insert(
         "series".into(),
         Value::Array(
@@ -668,6 +681,44 @@ fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
         ),
     );
     Ok(Value::Object(payload))
+}
+
+/// What a chart shows, in words, from its own data: each series with its
+/// first and last point. The stored chart needs one (it is the chart's text
+/// form on a surface that draws none); measured on gemma4, 30 of 32 chart
+/// calls left the sentence out, with every point right.
+fn chart_summary(args: &Map<String, Value>, series: &[(String, Vec<Value>)]) -> String {
+    let shown = |value: &Value| {
+        value
+            .as_str()
+            .map_or_else(|| value.to_string(), str::to_string)
+    };
+    let lines: Vec<String> = series
+        .iter()
+        .filter_map(|(name, points)| {
+            let (first, last) = (points.first()?, points.last()?);
+            let name = if name.is_empty() { "Series" } else { name };
+            Some(if points.len() == 1 {
+                format!("{name}: {} at {}", shown(&first["y"]), shown(&first["x"]))
+            } else {
+                format!(
+                    "{name}: {} at {} to {} at {}, {} points",
+                    shown(&first["y"]),
+                    shown(&first["x"]),
+                    shown(&last["y"]),
+                    shown(&last["x"]),
+                    points.len()
+                )
+            })
+        })
+        .collect();
+    let title = args
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or("Chart");
+    format!("{title}. {}.", lines.join("; "))
 }
 
 fn media_fields() -> Value {
@@ -701,7 +752,7 @@ fn build_media(args: &Map<String, Value>) -> Result<Value, String> {
 fn metric_fields() -> Value {
     fields(
         serde_json::json!({
-            "label": string("What is measured, for a single metric."),
+            "label": string("What is measured, e.g. CPU usage. Give it with every value."),
             "value": string("The reading, e.g. 28.5."),
             "unit": string(""),
             "location": string("Where or what the readings are for, e.g. a city."),
@@ -1909,6 +1960,36 @@ mod tests {
                 "a type's last word names its card: {request}"
             );
         }
+    }
+
+    #[test]
+    fn a_chart_without_a_summary_gets_one_from_its_points() {
+        let payload = built(
+            "emit_chart_card",
+            serde_json::json!({
+                "chart_type": "line",
+                "title": "API latency",
+                "points": [
+                    {"series": "p99", "x": "Hour 1", "y": 150},
+                    {"series": "p99", "x": "Hour 2", "y": 180}
+                ]
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            payload["accessible_summary"],
+            "API latency. p99: 150 at Hour 1 to 180 at Hour 2, 2 points."
+        );
+        let own = built(
+            "emit_chart_card",
+            serde_json::json!({
+                "chart_type": "bar",
+                "accessible_summary": "Rising",
+                "points": [{"series": "a", "x": "1", "y": 1}]
+            }),
+        )
+        .unwrap();
+        assert_eq!(own["accessible_summary"], "Rising");
     }
 
     /// Found live: with `media_type` in the schema beside `semantic_type`,

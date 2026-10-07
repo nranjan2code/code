@@ -257,7 +257,8 @@ is unchanged by the contract: `build` is the only place the two meet.
    colon), a recipe's ingredients and steps plain text, which the stored
    recipe already accepts. Measured on captured requests on 2026-10-07: an
    overview card 8 of 12 as records, 12 of 12 as strings; a recipe 9 of 12
-   and 12 of 12. Shapes not yet measured keep their records.
+   and 12 of 12. Timeline items and chart points, measured since, stay
+   records (rule 10).
 9. **One field for one thing.** A card never asks for the same fact twice
    or offers two fields the same value fits. The media card asked for its
    kind as `semantic_type` and again as `media_type`, and for an address
@@ -276,6 +277,18 @@ is unchanged by the contract: `build` is the only place the two meet.
    its title or description, else the file's name (5 of 12 image calls
    gave an address alone); a link preview with no title (6 of 12 before,
    2 of 12 after) is titled by its site.
+
+10. **Ask only for what the model's data does not already say.** A
+   required field the model leaves out costs a refused call. Measured on
+   captured requests on 2026-10-07, 12 runs each: 20 of 22 chart calls
+   left out the required `accessible_summary`, with every point and the
+   `chart_type` right in all 22. The sentence is now optional, and a chart
+   without one gets it from its own points (each series' first and last
+   point); a chart with neither points nor a sentence is refused. Measured in the same run and
+   left as they are: timeline items as records, 35 of 36 valid, and chart
+   points as records, valid in every chart call, so rule 8's strings are
+   not needed there. A single metric came without its `label` in 5 of 24
+   calls; with the field described as "Give it with every value", 1 of 24.
 
 **A card is identified by its `semantic_type`.** Every type belongs to one
 card tool, so the agent loop routes a card call to the admitted card tool
