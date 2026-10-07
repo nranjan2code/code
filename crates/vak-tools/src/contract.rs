@@ -42,7 +42,22 @@ fn check(schema: &Value, value: &Value, path: &str, problems: &mut Vec<String>) 
             .as_array()
             .is_some_and(|values| !values.iter().any(|candidate| candidate == value))
     {
-        problems.push(format!("{path} is not an allowed value"));
+        // Name the choices: told only that a value was not allowed, a model
+        // sent the same one again (measured live 2026-10-08: `chart_type:
+        // "bar_chart"` three times, until a repair turn showed the schema).
+        let choices: Vec<String> = enum_values
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|choice| match choice {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            })
+            .collect();
+        problems.push(format!(
+            "{path} {value} is not one of: {}",
+            choices.join(", ")
+        ));
         return;
     }
     // `oneOf`: the value must match exactly one branch. Used for conditional
@@ -219,6 +234,20 @@ fn schema_type_label(types: &Value) -> String {
 mod tests {
     use super::validate_input;
     use serde_json::json;
+
+    #[test]
+    fn a_wrong_choice_is_answered_with_the_choices() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"chart_type": {"type": "string", "enum": ["line", "bar", "area"]}},
+        });
+        let error = validate_input(&schema, &json!({"chart_type": "bar_chart"})).unwrap_err();
+        assert_eq!(
+            error,
+            "invalid tool arguments: arguments.chart_type \"bar_chart\" is not one of: line, bar, area"
+        );
+        assert!(validate_input(&schema, &json!({"chart_type": "bar"})).is_ok());
+    }
 
     #[test]
     fn required_fields_are_checked_without_tool_names() {
