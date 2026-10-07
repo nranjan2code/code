@@ -65,6 +65,37 @@ features from a model-name prefix:
 | `openrouter`, compatible gateways, `ollama` | OpenAI-compatible Chat Completions | Compatibility is endpoint- and model-specific; reject live mismatches rather than assuming support. |
 | `google` | Gemini `streamGenerateContent` + SSE | Client function declarations/results are supported; Google recommends its newer Interactions API for new agent integrations, but this route remains a distinct supported wire contract. |
 
+### Reasoning effort
+
+`ChatRequest.effort` is one dial, rendered by each adapter in its own
+wire's words:
+
+| Wire | Field |
+|---|---|
+| Anthropic | `output_config.effort` |
+| OpenAI Responses | `reasoning.effort` |
+| OpenAI chat completions | `reasoning_effort` (`reasoning.effort` through OpenRouter) |
+| Gemini | `generationConfig.thinkingConfig.thinkingLevel` |
+| Ollama (native) | never sent |
+
+A wire with three levels sends anything above `high` as `high`. A turn's
+own steps carry an effort only when its reading is a direct reply
+(`DemandHint::direct_reply`: every part of the turn is conversation, or an
+answer expected in one reply, read confidently, with no cited evidence
+asked for), and then only `low`: a reading may ask for less reasoning than
+the provider's default, never more (invariant 32,
+docs/design/47-commitment-kernel.md). With no such reading nothing is
+sent and the provider's default stands.
+
+No table says which models take the setting. A 400 that names it
+(`models::rejects_effort`) is retried once without it, and that model on
+that endpoint is remembered for the life of the process
+(`models::mark_effort_unsupported`), so later requests skip it.
+
+Ollama never receives it. Measured on gemma4 (2026-10-07): with thinking
+off, a card call failed 20 of 20, so on that wire the model's own default
+is the only setting.
+
 ### Anthropic: reasoning depth and fast mode
 
 The adapter never sends `thinking: {type: "disabled"}` or an explicit

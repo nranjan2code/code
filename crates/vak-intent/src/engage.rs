@@ -208,6 +208,13 @@ pub struct DemandHint {
     pub reasoning_required: bool,
     pub evidence_required: bool,
     pub structured_output: bool,
+    /// The whole turn is one reply from what is already known: every part
+    /// of it is conversation, or an answer expected in one reply, read
+    /// confidently. The only thing it is used for is asking a provider for
+    /// less reasoning than its default; nothing ever asks for more on a
+    /// reading (invariant 32), and false changes nothing.
+    #[serde(default)]
+    pub direct_reply: bool,
 }
 
 /// When the loop may stop.
@@ -336,6 +343,7 @@ impl Engagement {
                     reasoning_required: false,
                     evidence_required: false,
                     structured_output: false,
+                    direct_reply: false,
                 },
                 stop: StopProfile::Message,
                 context: ContextProfile::Recall,
@@ -444,6 +452,7 @@ impl Posture {
                     reasoning_required: a.demand.reasoning_required || b.demand.reasoning_required,
                     evidence_required: a.demand.evidence_required || b.demand.evidence_required,
                     structured_output: a.demand.structured_output || b.demand.structured_output,
+                    direct_reply: a.demand.direct_reply && b.demand.direct_reply,
                 },
                 stop: if b.stop.rank() > a.stop.rank() {
                     b.stop
@@ -633,6 +642,13 @@ pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool
                 delivery.shape,
                 OutputShape::Matrix | OutputShape::Table | OutputShape::Diff
             ),
+            direct_reply: slice_capabilities
+                && reading.horizon == Horizon::Immediate
+                && reading.evidence.rank() < Evidence::Cited.rank()
+                && reading
+                    .acts()
+                    .iter()
+                    .all(|act| matches!(act, Act::Converse | Act::Answer)),
         },
         stop: derive_stop(reading),
         context: derive_context(reading),
@@ -1127,6 +1143,34 @@ mod tests {
         let demand = derive(&r, &Authority::default(), true).posture.demand;
         assert!(demand.reasoning_required);
         assert!(demand.evidence_required);
+    }
+
+    /// Only a turn that is conversation, or an answer in one reply, read
+    /// confidently, is a direct reply; one part that is anything more
+    /// makes the whole turn not one.
+    #[test]
+    fn a_direct_reply_is_conversation_or_an_answer_in_one_reply() {
+        let direct = |act, horizon, evidence, confident| {
+            let r = reading(act, horizon, Stakes::Inert, evidence);
+            derive(&r, &Authority::default(), confident)
+        };
+        let chat = direct(Act::Converse, Horizon::Immediate, Evidence::None, true);
+        let answer = direct(Act::Answer, Horizon::Immediate, Evidence::None, true);
+        assert!(chat.posture.demand.direct_reply);
+        assert!(answer.posture.demand.direct_reply);
+        for other in [
+            direct(Act::Answer, Horizon::Immediate, Evidence::None, false),
+            direct(Act::Answer, Horizon::Turn, Evidence::None, true),
+            direct(Act::Answer, Horizon::Immediate, Evidence::Cited, true),
+            direct(Act::Analyze, Horizon::Immediate, Evidence::None, true),
+            direct(Act::Author, Horizon::Immediate, Evidence::None, true),
+        ] {
+            assert!(!other.posture.demand.direct_reply);
+            assert!(!chat.meet(&other).posture.demand.direct_reply);
+        }
+        assert!(chat.meet(&answer).posture.demand.direct_reply);
+        assert!(!Engagement::general().posture.demand.direct_reply);
+        assert!(!Engagement::orienting().posture.demand.direct_reply);
     }
 
     /// A reading whose contenders include an effectful act must checkpoint;

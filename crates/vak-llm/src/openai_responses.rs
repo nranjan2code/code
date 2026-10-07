@@ -115,6 +115,9 @@ pub fn build_body(
             .collect();
         body["tools"] = Value::Array(tools);
     }
+    if let Some(effort) = request.effort {
+        body["reasoning"] = serde_json::json!({ "effort": effort.three_level() });
+    }
     Ok(body)
 }
 
@@ -481,32 +484,50 @@ impl Provider for OpenAiResponsesProvider {
             &request.model,
         );
         let url = format!("{}/responses", self.config.base_url.trim_end_matches('/'));
-        let body = build_body(&self.config, &request)?;
-        let send_fut = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.config.api_key)
-            .json(&body)
-            .send();
-        let response = tokio::select! {
-            _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-            r = send_fut => match r {
-                Ok(r) => r,
-                Err(e) => return Err(LlmError::Network(e.to_string())),
-            },
-        };
-
-        let status = response.status();
-        if !status.is_success() {
+        let mut request = request;
+        if request.effort.is_some()
+            && !crate::models::effort_allowed(&self.config.base_url, &request.model)
+        {
+            request.effort = None;
+        }
+        // A model that refuses the reasoning setting is asked once more
+        // without it and remembered (docs/design/01-llm.md).
+        let response = loop {
+            let body = build_body(&self.config, &request)?;
+            let send_fut = self
+                .http
+                .post(&url)
+                .bearer_auth(&self.config.api_key)
+                .json(&body)
+                .send();
+            let response = tokio::select! {
+                _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+                r = send_fut => match r {
+                    Ok(r) => r,
+                    Err(e) => return Err(LlmError::Network(e.to_string())),
+                },
+            };
+            let status = response.status();
+            if status.is_success() {
+                break response;
+            }
             let observation = crate::openai::openai_capacity_observation(response.headers());
             let project_observation =
                 crate::openai::openai_project_capacity_observation(response.headers());
             let retry_after = crate::openai::retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
+            if status.as_u16() == 400
+                && request.effort.is_some()
+                && crate::models::rejects_effort(&text)
+            {
+                crate::models::mark_effort_unsupported(&self.config.base_url, &request.model);
+                request.effort = None;
+                continue;
+            }
             capacity_ticket.observe_model(observation);
             capacity_ticket.observe_account(project_observation);
             return Err(map_status_error(status.as_u16(), &text, retry_after));
-        }
+        };
 
         capacity_ticket.observe_model(crate::openai::openai_capacity_observation(
             response.headers(),
@@ -599,6 +620,24 @@ mod build_body_tests {
 
     fn config() -> OpenAiResponsesConfig {
         OpenAiResponsesConfig::default()
+    }
+
+    #[test]
+    fn effort_is_sent_as_reasoning_effort_and_only_when_set() {
+        let mut req = ChatRequest::new("gpt-5.6");
+        req.messages = vec![Message::user_text("hi")];
+        assert!(
+            build_body(&config(), &req)
+                .unwrap()
+                .get("reasoning")
+                .is_none()
+        );
+        req.effort = Some(crate::types::Effort::Max);
+        let body = build_body(&config(), &req).unwrap();
+        assert_eq!(body["reasoning"]["effort"], "high");
+        req.effort = Some(crate::types::Effort::Low);
+        let body = build_body(&config(), &req).unwrap();
+        assert_eq!(body["reasoning"]["effort"], "low");
     }
 
     #[test]

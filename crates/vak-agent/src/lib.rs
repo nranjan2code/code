@@ -394,6 +394,11 @@ pub struct AgentConfig {
     /// targets one is refused with a message the model can act on.
     pub protected_paths: Vec<String>,
     pub retrieval_check: Option<RetrievalCheck>,
+    /// Reasoning depth asked of the provider for this turn's own steps.
+    /// `None` leaves the provider's default. `Core` sets it only to lower
+    /// it, for a turn read as a direct reply (invariant 32); an adapter
+    /// with no such dial, and Ollama always, ignores it.
+    pub effort: Option<vak_llm::Effort>,
     /// What satisfies the freshness check: any call that observed current
     /// state this run. See `ObservationCheck`. Absent, only retrieval counts.
     pub observation_check: Option<ObservationCheck>,
@@ -592,6 +597,7 @@ impl AgentConfig {
             artifacts: None,
             protected_paths: Vec::new(),
             retrieval_check: None,
+            effort: None,
             observation_check: None,
             envelope_check: None,
             presentation_rebuild: None,
@@ -2286,7 +2292,7 @@ impl Agent {
                     cache,
                     previous_response_id: None,
                     think: None,
-                    effort: None,
+                    effort: self.config.effort,
                 }
             };
             let mut base_request = base_request;

@@ -590,6 +590,19 @@ mod tests {
         assert_eq!(sized_num_ctx(base, "other", 3_000, None), 4_096);
     }
 
+    /// Measured on gemma4: a card call written without thinking failed 20
+    /// of 20, so an effort setting never reaches this wire.
+    #[test]
+    fn an_effort_setting_changes_nothing_on_this_wire() {
+        let mut req = ChatRequest::new("gemma3:e2b");
+        req.messages = vec![Message::user_text("hi")];
+        let plain = build_body(&OllamaConfig::default(), &req, None).unwrap();
+        req.effort = Some(crate::types::Effort::Low);
+        let lowered = build_body(&OllamaConfig::default(), &req, None).unwrap();
+        assert_eq!(plain, lowered);
+        assert!(lowered.get("think").is_none());
+    }
+
     #[test]
     fn body_takes_the_model_window_and_caps_output_only_when_asked() {
         let mut req = ChatRequest::new("gemma3:e2b");

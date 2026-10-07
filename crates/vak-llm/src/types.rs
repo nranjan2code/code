@@ -292,10 +292,12 @@ pub struct CacheHints {
     pub breakpoints: Vec<CacheBreakpoint>,
 }
 
-/// Reasoning depth on models that support `output_config.effort`
-/// (docs/design/68-context-engine.md §11 "Anthropic" row). Rendered by the
-/// Anthropic adapter only; every other adapter ignores this field entirely
-/// — none of them expose an equivalent knob today.
+/// Reasoning depth, rendered by each adapter in its own wire's terms
+/// (docs/design/01-llm.md "Reasoning effort"): Anthropic
+/// `output_config.effort`, OpenAI Responses `reasoning.effort`, chat
+/// completions `reasoning_effort`, Gemini `thinkingConfig.thinkingLevel`.
+/// The native Ollama adapter ignores it: measured, a card call written
+/// without thinking failed 20 of 20.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Effort {
     Low,
@@ -313,6 +315,15 @@ impl Effort {
             Effort::High => "high",
             Effort::XHigh => "xhigh",
             Effort::Max => "max",
+        }
+    }
+
+    /// The level on a wire that has three: anything above high is high.
+    pub fn three_level(self) -> &'static str {
+        match self {
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High | Effort::XHigh | Effort::Max => "high",
         }
     }
 }
@@ -351,9 +362,9 @@ pub struct ChatRequest {
     /// when `effort` is unset, the adapter reads `think == Some(false)` as
     /// "spend as little as possible" and sends `effort: low`.
     pub think: Option<bool>,
-    /// Explicit reasoning depth (Anthropic `output_config.effort`). `None`
-    /// leaves the provider's default, except that the Anthropic adapter
-    /// falls back to `Low` when `think == Some(false)` (see `think`).
+    /// Explicit reasoning depth (see [`Effort`]). `None` leaves the
+    /// provider's default, except that the Anthropic adapter falls back to
+    /// `Low` when `think == Some(false)` (see `think`).
     pub effort: Option<Effort>,
 }
 

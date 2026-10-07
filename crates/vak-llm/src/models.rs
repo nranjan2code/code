@@ -531,27 +531,48 @@ fn anthropic_capability_cache() -> &'static std::sync::Mutex<AnthropicCapability
     CACHE.get_or_init(|| std::sync::Mutex::new(AnthropicCapabilityCache::default()))
 }
 
-/// Whether the adapter should attempt `output_config.effort` for `model`.
+/// Whether an adapter should send a reasoning-effort setting for `model`
+/// on `wire` (the adapter's endpoint; `anthropic` for the Anthropic one).
 /// Defaults to `true` (unknown models are worth trying) until
-/// [`mark_anthropic_effort_unsupported`] narrows it.
-pub fn anthropic_effort_allowed(model: &str) -> bool {
+/// [`mark_effort_unsupported`] narrows it.
+pub fn effort_allowed(wire: &str, model: &str) -> bool {
     anthropic_capability_cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .effort
-        .get(model)
+        .get(&effort_key(wire, model))
         .copied()
         .unwrap_or(true)
 }
 
-/// Records that `model` rejected `output_config.effort` (a live 400 naming
-/// the parameter): every later request in this process skips sending it.
-pub fn mark_anthropic_effort_unsupported(model: &str) {
+/// Records that `model` on `wire` rejected a reasoning-effort setting (a
+/// live 400 naming the parameter): every later request in this process
+/// skips sending it.
+pub fn mark_effort_unsupported(wire: &str, model: &str) {
     anthropic_capability_cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .effort
-        .insert(model.to_string(), false);
+        .insert(effort_key(wire, model), false);
+}
+
+/// The `wire` the Anthropic adapter's effort memory is kept under.
+pub const ANTHROPIC_WIRE: &str = "anthropic";
+
+fn effort_key(wire: &str, model: &str) -> String {
+    format!("{wire}\n{model}")
+}
+
+/// Provider phrasing that identifies a 400 as caused by the reasoning-effort
+/// setting an adapter sent, distinct from an unrelated validation failure:
+/// each wire's own name for it (`output_config.effort`, `reasoning.effort`,
+/// `reasoning_effort`, `thinkingConfig`). Keyed off the provider's wording,
+/// never a model table.
+pub fn rejects_effort(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    ["effort", "output_config", "reasoning", "thinking"]
+        .iter()
+        .any(|name| normalized.contains(name))
 }
 
 /// Whether the adapter should attempt `speed: "fast"` for `model`. Defaults
@@ -584,7 +605,9 @@ pub fn record_anthropic_capabilities(model: &str, caps: AnthropicCapabilities) {
     let mut cache = anthropic_capability_cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    cache.effort.insert(model.to_string(), caps.effort);
+    cache
+        .effort
+        .insert(effort_key(ANTHROPIC_WIRE, model), caps.effort);
     cache.fast_mode.insert(model.to_string(), caps.fast_mode);
 }
 
@@ -781,15 +804,31 @@ mod tests {
     // a process-wide static, and tests in this module run concurrently.
     #[test]
     fn effort_defaults_to_allowed_for_an_unseen_model() {
-        assert!(anthropic_effort_allowed("test-model-effort-unseen-1"));
+        assert!(effort_allowed(ANTHROPIC_WIRE, "test-model-effort-unseen-1"));
     }
 
     #[test]
     fn marking_effort_unsupported_narrows_it_for_that_model_only() {
-        anthropic_effort_allowed("test-model-effort-sibling-2"); // establish baseline
-        mark_anthropic_effort_unsupported("test-model-effort-marked-2");
-        assert!(!anthropic_effort_allowed("test-model-effort-marked-2"));
-        assert!(anthropic_effort_allowed("test-model-effort-sibling-2"));
+        mark_effort_unsupported(ANTHROPIC_WIRE, "test-model-effort-marked-2");
+        assert!(!effort_allowed(
+            ANTHROPIC_WIRE,
+            "test-model-effort-marked-2"
+        ));
+        assert!(effort_allowed(
+            ANTHROPIC_WIRE,
+            "test-model-effort-sibling-2"
+        ));
+        assert!(
+            effort_allowed("https://other.example/v1", "test-model-effort-marked-2"),
+            "a refusal is remembered for the wire that refused"
+        );
+        assert!(rejects_effort("Unsupported parameter: 'reasoning.effort'"));
+        assert!(rejects_effort(
+            "Thinking level is not supported for this model"
+        ));
+        assert!(!rejects_effort(
+            "messages: at least one message is required"
+        ));
     }
 
     #[test]

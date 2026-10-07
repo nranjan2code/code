@@ -990,7 +990,10 @@ in progress, and the rest of V4 follows it.
 32. **Intent narrows, never widens** (docs/design/47-commitment-kernel.md).
     A resolved engagement may lower a budget, lower a permission ceiling, or
     *raise* an approval floor. It may never grant a tool, touch the route
-    ladder, cap the turn budget or delegation, raise a cap, or lower a floor:
+    ladder, cap the turn budget or delegation, raise a cap, or lower a floor,
+    and the one thing it asks of a provider is less reasoning than its
+    default for a turn read as a direct reply, never more and never on
+    Ollama (docs/design/01-llm.md, "Reasoning effort"):
     those caps only ever removed capacity from requests the reader got wrong.
     This is a property of the types rather than a rule to remember: `Limits`
     is a meet semilattice whose top element reproduces pre-kernel behaviour,

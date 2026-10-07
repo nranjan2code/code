@@ -216,6 +216,11 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
             .collect();
         body["tools"] = serde_json::json!([{ "functionDeclarations": decls }]);
     }
+    if let Some(effort) = request.effort {
+        body["generationConfig"] = serde_json::json!({
+            "thinkingConfig": { "thinkingLevel": effort.three_level() }
+        });
+    }
     Ok(body)
 }
 
@@ -532,30 +537,48 @@ impl Provider for GoogleProvider {
             self.config.base_url.trim_end_matches('/'),
             request.model
         );
-        let body = build_body(&request)?;
-        let send_fut = self
-            .http
-            .post(&url)
-            .header("x-goog-api-key", &self.config.api_key)
-            .json(&body)
-            .send();
-        let response = tokio::select! {
-            _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-            r = send_fut => match r {
-                Ok(r) => r,
-                Err(e) => return Err(LlmError::Network(e.to_string())),
-            },
-        };
-
-        let status = response.status();
-        if !status.is_success() {
+        let mut request = request;
+        if request.effort.is_some()
+            && !crate::models::effort_allowed(&self.config.base_url, &request.model)
+        {
+            request.effort = None;
+        }
+        // A model that refuses the thinking setting is asked once more
+        // without it and remembered (docs/design/01-llm.md).
+        let response = loop {
+            let body = build_body(&request)?;
+            let send_fut = self
+                .http
+                .post(&url)
+                .header("x-goog-api-key", &self.config.api_key)
+                .json(&body)
+                .send();
+            let response = tokio::select! {
+                _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+                r = send_fut => match r {
+                    Ok(r) => r,
+                    Err(e) => return Err(LlmError::Network(e.to_string())),
+                },
+            };
+            let status = response.status();
+            if status.is_success() {
+                break response;
+            }
             let headers = response.headers().clone();
             let retry_after = crate::openai::retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
+            if status.as_u16() == 400
+                && request.effort.is_some()
+                && crate::models::rejects_effort(&text)
+            {
+                crate::models::mark_effort_unsupported(&self.config.base_url, &request.model);
+                request.effort = None;
+                continue;
+            }
             let observation = google_capacity_observation(&headers, Some(&text));
             capacity_ticket.observe_model(observation);
             return Err(map_status_error(status.as_u16(), &text, retry_after));
-        }
+        };
 
         capacity_ticket.observe_model(google_capacity_observation(response.headers(), None));
 
@@ -859,6 +882,19 @@ mod build_body_tests {
         assert!(
             parts.iter().all(|p| p.get("thoughtSignature").is_none()),
             "thinking from a closed turn must not carry a thought signature"
+        );
+    }
+
+    #[test]
+    fn effort_is_sent_as_a_thinking_level_and_only_when_set() {
+        let mut req = ChatRequest::new("gemini-test");
+        req.messages = vec![Message::user_text("hi")];
+        assert!(build_body(&req).unwrap().get("generationConfig").is_none());
+        req.effort = Some(crate::types::Effort::Low);
+        let body = build_body(&req).unwrap();
+        assert_eq!(
+            body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
+            "low"
         );
     }
 

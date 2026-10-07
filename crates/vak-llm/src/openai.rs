@@ -270,6 +270,13 @@ pub fn build_body(config: &OpenAiConfig, request: &ChatRequest) -> Result<Value,
             .collect();
         body["tools"] = Value::Array(tools);
     }
+    if let Some(effort) = request.effort {
+        if config.openrouter {
+            body["reasoning"] = serde_json::json!({ "effort": effort.three_level() });
+        } else {
+            body["reasoning_effort"] = serde_json::json!(effort.three_level());
+        }
+    }
     Ok(body)
 }
 
@@ -617,31 +624,49 @@ impl Provider for OpenAiCompletionsProvider {
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
         );
-        let body = build_body(&self.config, &request)?;
-        let send_fut = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.config.api_key)
-            .json(&body)
-            .send();
-        let response = tokio::select! {
-            _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-            r = send_fut => match r {
-                Ok(r) => r,
-                Err(e) => return Err(LlmError::Network(e.to_string())),
-            },
-        };
-
-        let status = response.status();
-        if !status.is_success() {
+        let mut request = request;
+        if request.effort.is_some()
+            && !crate::models::effort_allowed(&self.config.base_url, &request.model)
+        {
+            request.effort = None;
+        }
+        // A model that refuses the reasoning setting is asked once more
+        // without it and remembered (docs/design/01-llm.md).
+        let response = loop {
+            let body = build_body(&self.config, &request)?;
+            let send_fut = self
+                .http
+                .post(&url)
+                .bearer_auth(&self.config.api_key)
+                .json(&body)
+                .send();
+            let response = tokio::select! {
+                _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+                r = send_fut => match r {
+                    Ok(r) => r,
+                    Err(e) => return Err(LlmError::Network(e.to_string())),
+                },
+            };
+            let status = response.status();
+            if status.is_success() {
+                break response;
+            }
             let observation = openai_capacity_observation(response.headers());
             let project_observation = openai_project_capacity_observation(response.headers());
             let retry_after = retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
+            if status.as_u16() == 400
+                && request.effort.is_some()
+                && crate::models::rejects_effort(&text)
+            {
+                crate::models::mark_effort_unsupported(&self.config.base_url, &request.model);
+                request.effort = None;
+                continue;
+            }
             capacity_ticket.observe_model(observation);
             capacity_ticket.observe_account(project_observation);
             return Err(map_status_error(status.as_u16(), &text, retry_after));
-        }
+        };
 
         capacity_ticket.observe_model(openai_capacity_observation(response.headers()));
         capacity_ticket.observe_account(openai_project_capacity_observation(response.headers()));
@@ -871,6 +896,30 @@ mod build_body_tests {
             breakpoints: Vec::new(),
         });
         req
+    }
+
+    #[test]
+    fn effort_is_sent_in_the_wires_own_words_and_only_when_set() {
+        let mut req = req_with_cache();
+        let config = OpenAiConfig {
+            api_key: "k".into(),
+            base_url: "https://api.example/v1".into(),
+            cache_key: false,
+            openrouter: false,
+        };
+        let body = build_body(&config, &req).unwrap();
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("reasoning").is_none());
+        req.effort = Some(crate::types::Effort::Low);
+        let body = build_body(&config, &req).unwrap();
+        assert_eq!(body["reasoning_effort"], "low");
+        let routed = OpenAiConfig {
+            openrouter: true,
+            ..config
+        };
+        let body = build_body(&routed, &req).unwrap();
+        assert_eq!(body["reasoning"]["effort"], "low");
+        assert!(body.get("reasoning_effort").is_none());
     }
 
     #[test]

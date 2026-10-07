@@ -324,15 +324,6 @@ fn validate_message(m: &Message) -> Result<(), LlmError> {
     Ok(())
 }
 
-/// Provider phrasing that identifies a 400 as caused specifically by the
-/// `output_config.effort` parameter, distinct from an unrelated validation
-/// failure — same "key off the provider's own wording" approach as
-/// `LlmError::classify_400`'s over-length markers.
-fn rejects_effort(message: &str) -> bool {
-    let normalized = message.to_ascii_lowercase();
-    normalized.contains("effort") || normalized.contains("output_config")
-}
-
 pub fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmError {
     let message = serde_json::from_str::<Value>(body)
         .ok()
@@ -672,7 +663,8 @@ impl Provider for AnthropicProvider {
             });
         }
 
-        let mut effort_allowed = crate::models::anthropic_effort_allowed(&request.model);
+        let mut effort_allowed =
+            crate::models::effort_allowed(crate::models::ANTHROPIC_WIRE, &request.model);
         let mut fast_mode =
             self.config.fast_mode && crate::models::anthropic_fast_mode_allowed(&request.model);
         let mut capacity_identity =
@@ -697,8 +689,11 @@ impl Provider for AnthropicProvider {
                 let observation = anthropic_capacity_observation(&headers);
                 let retry_after = retry_after_header(&response);
                 let text = response.text().await.unwrap_or_default();
-                if rejects_effort(&text) {
-                    crate::models::mark_anthropic_effort_unsupported(&request.model);
+                if crate::models::rejects_effort(&text) {
+                    crate::models::mark_effort_unsupported(
+                        crate::models::ANTHROPIC_WIRE,
+                        &request.model,
+                    );
                     effort_allowed = false;
                     response = self
                         .send_once(&request, effort_allowed, fast_mode, &cancel)
@@ -1331,6 +1326,7 @@ mod build_body_tests {
 
     #[test]
     fn rejects_effort_detects_the_parameter_by_name() {
+        use crate::models::rejects_effort;
         assert!(rejects_effort(
             "output_config.effort: extra fields not permitted"
         ));

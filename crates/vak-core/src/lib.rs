@@ -5725,6 +5725,7 @@ impl Core {
             reasoning_required: false,
             evidence_required: false,
             structured_output: false,
+            direct_reply: false,
         });
         let demand = vak_llm::score_demand(vak_llm::DemandInput {
             estimated_input_tokens: 0,
@@ -7013,6 +7014,11 @@ impl Core {
             credential_id: turn_primary_credential_id,
         };
         cfg.provider_name = Some(turn_primary_provider.clone());
+        cfg.effort = engagement
+            .posture
+            .demand
+            .direct_reply
+            .then_some(vak_llm::Effort::Low);
         let mut turn_plan =
             self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand));
         // The engagement's modality constraint: a leg that cannot see is not
