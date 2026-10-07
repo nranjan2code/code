@@ -223,7 +223,10 @@ arguments follow seven rules, checked by
    none dropped. A table is its rows (rule 6); a nested value carried as one
    JSON string was no better (9 of 15).
 5. **`semantic_type` is required and comes first**, even where the tool's
-   name settles it (`build` still fills the default when it is missing). A
+   name settles it; such a tool fills a missing type before the call is
+   validated (`Tool::fill_defaults`), and a refusal for a missing choice
+   lists the allowed values. Live, the universal card was refused for a
+   missing type with nothing telling the model what the types were. A
    call's first argument sets its syntax: a short enumerated value written
    first is written in the model's own string delimiter, and the long values
    after it follow. With `semantic_type` optional the model opened with the

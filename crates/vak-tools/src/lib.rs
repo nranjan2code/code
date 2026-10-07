@@ -330,6 +330,13 @@ pub trait Tool: Send + Sync {
         })
     }
 
+    /// Arguments this tool fills in itself when a call leaves them out,
+    /// applied before the call is validated: a card tool whose name settles
+    /// its type fills `semantic_type`, which its schema asks for first
+    /// (docs/design/30-render-architecture.md §30.1, rule 5). It only adds
+    /// a missing field and never changes one the call wrote.
+    fn fill_defaults(&self, _args: &mut Value) {}
+
     /// A reason this call cannot succeed, decided from its arguments alone
     /// before permission is evaluated, so a person is never asked to approve
     /// a call that would only be refused (a text edit of a Word file). It

@@ -1124,6 +1124,15 @@ impl Tool for EmitCardTool {
         true
     }
 
+    fn fill_defaults(&self, args: &mut Value) {
+        if let (Some(fields), Some(default)) =
+            (args.as_object_mut(), default_semantic_type(self.shape))
+            && !fields.contains_key("semantic_type")
+        {
+            fields.insert("semantic_type".into(), Value::String(default.into()));
+        }
+    }
+
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match validate_call(self.shape, args, &vak_delivery::built_in_skill_registry()) {
             Ok(output) => ToolOutput::ok(format!(
@@ -1682,6 +1691,27 @@ mod tests {
     /// against 4 of 20 for one Markdown string, whose leading `|` the model
     /// fused into `table="|`), and becomes the stored grid: keyed columns,
     /// rows by label, numeric columns as numbers.
+    /// A card tool whose name settles its type fills a missing type before
+    /// validation; one that covers unlike things invents none.
+    #[test]
+    fn only_a_card_tool_with_a_default_fills_a_missing_type() {
+        let tool = |name: &str| {
+            EmitCardTool::all()
+                .into_iter()
+                .find(|tool| tool.name() == name)
+                .unwrap()
+        };
+        let mut table = serde_json::json!({"rows": ["A", "1"]});
+        tool("emit_table_card").fill_defaults(&mut table);
+        assert_eq!(table["semantic_type"], "table");
+        let mut chosen = serde_json::json!({"semantic_type": "budget", "rows": ["A", "1"]});
+        tool("emit_table_card").fill_defaults(&mut chosen);
+        assert_eq!(chosen["semantic_type"], "budget");
+        let mut universal = serde_json::json!({"title": "T"});
+        tool("emit_universal_card").fill_defaults(&mut universal);
+        assert!(universal.get("semantic_type").is_none());
+    }
+
     #[test]
     fn table_rows_become_the_stored_grid() {
         let payload = built(

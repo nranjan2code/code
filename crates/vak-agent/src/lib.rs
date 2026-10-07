@@ -7284,7 +7284,8 @@ fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) 
 /// does not exist; with no `semantic_type`, a name `emit_<type>_card` names
 /// the type (live: `emit_transaction_card`) and the type is filled in. The
 /// owner's schema then validates the call, so an error names the owner's
-/// fields and the next step loads its schema. Schema-driven from each card
+/// fields and the next step loads its schema. A card tool whose name settles
+/// its type fills a missing `semantic_type` (`Tool::fill_defaults`). Schema-driven from each card
 /// tool's own `semantic_type` enum, never a list of names.
 fn normalize_card_type(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) -> PendingToolCall {
     let called = tools.iter().find(|tool| tool.name() == call.name);
@@ -7299,6 +7300,9 @@ fn normalize_card_type(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) -> Pe
     if let Some((name, input)) = card_owner(&call.name, &call.input, &cards) {
         call.name = name;
         call.input = input;
+    }
+    if let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) {
+        tool.fill_defaults(&mut call.input);
     }
     call
 }

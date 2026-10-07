@@ -126,7 +126,23 @@ fn check(schema: &Value, value: &Value, path: &str, problems: &mut Vec<String>) 
     let before = problems.len();
     for key in &required_keys {
         if !object.contains_key(*key) {
-            problems.push(format!("{path} is missing required `{key}`"));
+            // A missing choice names its choices, so one repair can make it.
+            let choices = properties
+                .and_then(|props| props.get(*key))
+                .and_then(|property| property.get("enum"))
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|value| format!("`{value}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .filter(|choices| !choices.is_empty())
+                .map(|choices| format!(" (one of {choices})"))
+                .unwrap_or_default();
+            problems.push(format!("{path} is missing required `{key}`{choices}"));
         }
     }
     if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false)
@@ -282,6 +298,21 @@ mod tests {
         ] {
             assert!(error.contains(part), "missing {part:?} in {error}");
         }
+    }
+
+    #[test]
+    fn a_missing_choice_names_its_choices() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"semantic_type": {"type": "string", "enum": ["map", "entity"]}},
+            "required": ["semantic_type"]
+        });
+        let error = validate_input(&schema, &json!({})).unwrap_err();
+        assert!(
+            error
+                .contains("arguments is missing required `semantic_type` (one of `map`, `entity`)"),
+            "{error}"
+        );
     }
 
     /// A field missing inside a list item names the item, so it is not read
