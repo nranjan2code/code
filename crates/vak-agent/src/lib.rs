@@ -8017,7 +8017,8 @@ fn uncited_sources_outcome(model: &str, urls: &[String]) -> TurnOutcome {
 
 /// The source URLs a card cites (a `url`, or a `source` that is a web
 /// address) that appear nowhere in `evidence`, compared without scheme,
-/// `www.`, fragment or trailing slash.
+/// `www.`, fragment or trailing slash. A media card's `url` may be a
+/// workspace path, which cites nothing.
 fn uncited_urls(input: &Value, evidence: &str) -> Vec<String> {
     fn cited(value: &Value, out: &mut Vec<String>) {
         match value {
@@ -8048,6 +8049,12 @@ fn uncited_urls(input: &Value, evidence: &str) -> Vec<String> {
     }
     let mut urls = Vec::new();
     cited(input, &mut urls);
+    if input["semantic_type"]
+        .as_str()
+        .is_some_and(|kind| kind.starts_with("media."))
+    {
+        urls.retain(|url| url.starts_with("http://") || url.starts_with("https://"));
+    }
     if urls.is_empty() {
         return urls;
     }
@@ -8761,8 +8768,11 @@ mod tool_recovery_tests {
             uncited_urls(&card, evidence),
             vec!["https://made-up.example/news", "https://techcrunch.com/..."]
         );
-        let media = serde_json::json!({"semantic_type": "media.image", "source": "images/a.png"});
+        let media = serde_json::json!({"semantic_type": "media.image", "url": "images/a.png"});
         assert!(uncited_urls(&media, "").is_empty());
+        let fetched =
+            serde_json::json!({"semantic_type": "media.image", "url": "https://x.example/i.png"});
+        assert_eq!(uncited_urls(&fetched, ""), vec!["https://x.example/i.png"]);
         assert_eq!(
             uncited_urls(
                 &serde_json::json!({"source": "https://x.example/i.png"}),

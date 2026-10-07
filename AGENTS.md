@@ -1363,7 +1363,9 @@ in progress, and the rest of V4 follows it.
   every provider carries, put no data in keys, hold no list of records
   inside a record in a list, require `semantic_type` first and ask for no
   value that starts with `|` (a table is its rows, `A | B` strings) and end
-  no record in a number (a research source carries its one `finding`); a
+  no record in a number (a research source carries its one `finding`) and
+  ask for no fact twice (a media card's kind is its `semantic_type`, its
+  address its one `url`); a
   card call goes to the card tool that owns its `semantic_type`
   (`normalize_card_type` in vak-agent) (measured, §30.1;
   `every_card_schema_is_flat_and_portable`); each shape's `build` turns them

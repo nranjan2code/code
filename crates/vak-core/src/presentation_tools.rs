@@ -673,13 +673,11 @@ fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
 fn media_fields() -> Value {
     fields(
         serde_json::json!({
-            "url": string("For link.preview: the page's URL."),
+            "url": string("The page's URL for link.preview; the file's URL or workspace path for media.image, media.video and media.audio."),
             "title": string(""),
-            "image_url": string("For link.preview: an image for the page."),
+            "thumbnail_url": string("For link.preview only: a thumbnail image for the page."),
             "description": string("For link.preview: a short description of the page."),
             "site_name": string("For link.preview: the site's name."),
-            "source": string("For media.image, media.video and media.audio: the file's URL or workspace path."),
-            "media_type": {"type": "string", "enum": ["image", "video", "audio"], "description": "For media.image, media.video and media.audio."},
             "alt": string("For media.image, media.video and media.audio: what it shows, in words.")
         }),
         &[],
@@ -692,11 +690,9 @@ fn build_media(args: &Map<String, Value>) -> Result<Value, String> {
         &[
             "url",
             "title",
-            "image_url",
+            "thumbnail_url",
             "description",
             "site_name",
-            "source",
-            "media_type",
             "alt",
         ],
     )))
@@ -915,7 +911,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_media_card",
-        description: "Emit a link preview (url and title) or a media card (image, video or audio: source, media_type and alt).",
+        description: "Emit a link preview (url and title) or a media card (image, video or audio: url and alt).",
         semantic_types: &["link.preview", "media.image", "media.video", "media.audio"],
         fields: media_fields,
         build: build_media,
@@ -1037,19 +1033,13 @@ fn fixture_for(shape_name: &str) -> Value {
 }
 
 /// `emit_media_card` carries two kinds of card: a link preview (url+title)
-/// and media (source+media_type+alt). Override the shared fixture for the
+/// and media (url+alt). Override the shared fixture for the
 /// media types.
 fn fixture_override(semantic_type: &str) -> Option<Value> {
     match semantic_type {
-        "media.image" => Some(
-            serde_json::json!({"source": "https://example.com/a.png", "media_type": "image", "alt": "a"}),
-        ),
-        "media.video" => Some(
-            serde_json::json!({"source": "https://example.com/a.mp4", "media_type": "video", "alt": "a"}),
-        ),
-        "media.audio" => Some(
-            serde_json::json!({"source": "https://example.com/a.mp3", "media_type": "audio", "alt": "a"}),
-        ),
+        "media.image" => Some(serde_json::json!({"url": "https://example.com/a.png", "alt": "a"})),
+        "media.video" => Some(serde_json::json!({"url": "https://example.com/a.mp4", "alt": "a"})),
+        "media.audio" => Some(serde_json::json!({"url": "https://example.com/a.mp3", "alt": "a"})),
         _ => None,
     }
 }
@@ -1210,11 +1200,91 @@ fn validate_call(
         ));
     }
     let payload = (shape.build)(&own)?;
+    let payload = match semantic_type.strip_prefix("media.") {
+        Some(kind) => stored_media(kind, payload)?,
+        None if semantic_type == "link.preview" => stored_link(payload)?,
+        None => payload,
+    };
     let envelope = serde_json::json!({
         "semantic_type": semantic_type,
         "payload": normalize_payload(semantic_type, payload),
     });
     vak_delivery::parse_fragment_with(&envelope.to_string(), skills).map_err(|e| e.to_string())
+}
+
+/// The stored media card from the tool's arguments. The tool asks for the
+/// kind once, as the `semantic_type`, and for one address, `url`, the field
+/// a link preview uses too. Measured on gemma4, 12 runs a variant
+/// (docs/design/30-render-architecture.md §30.1): with `media_type` beside
+/// `semantic_type` the model left `semantic_type` out, with `source` beside
+/// `url` it wrote the address in `url`, and with a link preview's
+/// `image_url` in the schema an image's address went there. What it shows
+/// is its `alt`, else its title or description, else the file's own name.
+fn stored_media(kind: &str, payload: Value) -> Result<Value, String> {
+    let Value::Object(mut card) = payload else {
+        return Ok(payload);
+    };
+    let source = card_text(&card, "url")
+        .ok_or_else(|| format!("give `url`: the {kind} file's URL or workspace path"))?;
+    let alt = ["alt", "title", "description"]
+        .iter()
+        .find_map(|key| card_text(&card, key))
+        .or_else(|| address_name(&source))
+        .ok_or_else(|| format!("give `alt`: what the {kind} shows, in words"))?;
+    card.remove("url");
+    card.remove("thumbnail_url");
+    card.insert("source".into(), Value::String(source));
+    card.insert("alt".into(), Value::String(alt));
+    card.insert("media_type".into(), Value::String(kind.into()));
+    Ok(Value::Object(card))
+}
+
+/// The stored link preview: its thumbnail is `image_url`, and a preview
+/// given no title is titled by the site it points at.
+fn stored_link(payload: Value) -> Result<Value, String> {
+    let Value::Object(mut card) = payload else {
+        return Ok(payload);
+    };
+    let url = card_text(&card, "url").ok_or("give `url`: the page's URL")?;
+    if let Some(thumbnail) = card.remove("thumbnail_url") {
+        card.insert("image_url".into(), thumbnail);
+    }
+    if card_text(&card, "title").is_none() {
+        let site = url
+            .split_once("://")
+            .map_or(url.as_str(), |(_, rest)| rest)
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        card.insert(
+            "title".into(),
+            Value::String(if site.is_empty() { url } else { site }),
+        );
+    }
+    Ok(Value::Object(card))
+}
+
+fn card_text(card: &Map<String, Value>, key: &str) -> Option<String> {
+    card.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+/// The last path segment of an address, without query or fragment.
+fn address_name(address: &str) -> Option<String> {
+    address
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
 }
 
 /// The `emit_*_card` tool that carries `semantic_type`, if any.
@@ -1261,7 +1331,8 @@ pub fn presentation_check_nudge(
 /// app's own signal and recipe detection over the request text (the same
 /// detection the presentation check runs over the answer), and the card a
 /// request names: "a table card", "an itinerary card", where the word
-/// before "card" is a card tool's own noun or one of its types, and "a
+/// before "card" is a card tool's own noun, one of its types or a type's
+/// last word ("an image card" is `media.image`), and "a
 /// card" with no kind is the general-purpose one. Found live: recipes
 /// describe an answer's shape (a Markdown table, an ingredient list), so
 /// "…as a table card" and "…as a recipe card" predicted nothing, every card
@@ -1318,10 +1389,10 @@ fn named_card_tools(request: &str) -> std::collections::BTreeSet<String> {
             let names_it = |phrase: &str| {
                 !phrase.is_empty()
                     && (phrase == noun
-                        || shape
-                            .semantic_types
-                            .iter()
-                            .any(|t| t.replace(['_', '.'], " ") == phrase))
+                        || shape.semantic_types.iter().any(|t| {
+                            t.replace(['_', '.'], " ") == phrase
+                                || t.rsplit_once('.').is_some_and(|(_, last)| last == phrase)
+                        }))
             };
             if names_it(one) || names_it(&two) {
                 named.insert(shape.name.to_string());
@@ -1828,6 +1899,71 @@ mod tests {
         );
         assert!(predict("Give me a summary of the meeting").is_empty());
         assert!(predict("hello there").is_empty());
+        for request in [
+            "Show an image card for https://example.com/a.jpg",
+            "Show a video card for https://example.com/a.mp4",
+            "Show an audio card for https://example.com/a.mp3",
+        ] {
+            assert!(
+                predict(request).contains("emit_media_card"),
+                "a type's last word names its card: {request}"
+            );
+        }
+    }
+
+    /// Found live: with `media_type` in the schema beside `semantic_type`,
+    /// the model filled `media_type` and left `semantic_type` out, and every
+    /// image, video and audio card was refused. The stored card still names
+    /// its kind; the tool derives it.
+    #[test]
+    fn a_media_card_takes_its_kind_once_as_the_semantic_type() {
+        let schema = (shape("emit_media_card").fields)();
+        assert!(schema["properties"].get("media_type").is_none());
+        assert!(schema["properties"].get("source").is_none());
+        for kind in ["image", "video", "audio"] {
+            let payload = built(
+                "emit_media_card",
+                serde_json::json!({
+                    "semantic_type": format!("media.{kind}"),
+                    "url": "https://example.com/a",
+                    "title": "A title"
+                }),
+            )
+            .unwrap();
+            assert_eq!(payload["media_type"], kind);
+            assert_eq!(payload["source"], "https://example.com/a");
+            assert_eq!(payload["alt"], "A title");
+            assert!(payload.get("url").is_none());
+        }
+        let refused = built(
+            "emit_media_card",
+            serde_json::json!({"semantic_type": "media.audio", "title": "Episode one"}),
+        );
+        assert!(refused.unwrap_err().contains("give `url`"));
+        let named = built(
+            "emit_media_card",
+            serde_json::json!({"semantic_type": "media.image", "url": "https://example.com/p/tower.jpg?w=2"}),
+        )
+        .unwrap();
+        assert_eq!(named["alt"], "tower.jpg");
+        let link = built(
+            "emit_media_card",
+            serde_json::json!({
+                "semantic_type": "link.preview",
+                "url": "https://www.rust-lang.org/learn",
+                "thumbnail_url": "https://www.rust-lang.org/logo.png"
+            }),
+        )
+        .unwrap();
+        assert_eq!(link["title"], "www.rust-lang.org");
+        assert_eq!(link["image_url"], "https://www.rust-lang.org/logo.png");
+        assert!(link.get("thumbnail_url").is_none());
+        assert!(schema["properties"].get("image_url").is_none());
+        let refused = built(
+            "emit_media_card",
+            serde_json::json!({"semantic_type": "media.image", "url": "s", "alt": "a", "media_type": "image"}),
+        );
+        assert!(refused.unwrap_err().contains("unexpected `media_type`"));
     }
 
     #[test]

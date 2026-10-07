@@ -258,6 +258,24 @@ is unchanged by the contract: `build` is the only place the two meet.
    recipe already accepts. Measured on captured requests on 2026-10-07: an
    overview card 8 of 12 as records, 12 of 12 as strings; a recipe 9 of 12
    and 12 of 12. Shapes not yet measured keep their records.
+9. **One field for one thing.** A card never asks for the same fact twice
+   or offers two fields the same value fits. The media card asked for its
+   kind as `semantic_type` and again as `media_type`, and for an address
+   as `url` (a link preview), `source` (media) and `image_url` (a
+   preview's thumbnail). Measured on captured requests on 2026-10-07, 12
+   runs each: image, video and audio cards were valid 0 of 12 each (the
+   kind went in `media_type` and `semantic_type` was left out in 19 of
+   36; the address went in `url` or `image_url`). Without `media_type`:
+   1, 2 and 3 of 12. With one `url`: video 12, audio 11, image 2 (the
+   address in `image_url`). With the thumbnail named `thumbnail_url`:
+   image, video, audio and link preview each 12 of 12 with their type and
+   `url`. The tool now takes
+   `semantic_type`, `url`, `alt`, `title`, `description`, `site_name` and
+   `thumbnail_url`; the stored card's `source`, `media_type` and
+   `image_url` are derived. What a media card shows is its `alt`, else
+   its title or description, else the file's name (5 of 12 image calls
+   gave an address alone); a link preview with no title (6 of 12 before,
+   2 of 12 after) is titled by its site.
 
 **A card is identified by its `semantic_type`.** Every type belongs to one
 card tool, so the agent loop routes a card call to the admitted card tool
@@ -283,7 +301,8 @@ list keep the timeline card (`progress` and `status` render items with their
 status), and rows and columns keep the table.
 
 **Citations.** A card cites only what this conversation holds. Every `url`
-a card carries (and a media `source` that is a web address) must appear in
+a card carries (a media card's only when it is a web address, since it may
+be a workspace path) must appear in
 the person's own messages or in a successful non-card tool call's arguments
 or result, its whole evidence body included (`SessionLog::evidence_text`);
 a failed fetch's URL is not evidence. A card citing anything else is not
