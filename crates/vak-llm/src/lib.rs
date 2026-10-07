@@ -83,6 +83,15 @@ pub trait Provider: Send + Sync {
         Ok(())
     }
 
+    /// Whether this adapter keeps a deferred tool's schema out of the
+    /// request for `model` and lets the provider's own tool search load it
+    /// (`ToolDefinition::defer`). An adapter that answers `false` would send
+    /// a deferred schema in full, so its caller sends loaded tools only and
+    /// the model reaches the rest through `find_tools`.
+    fn defers_tools(&self, _model: &str) -> bool {
+        false
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,

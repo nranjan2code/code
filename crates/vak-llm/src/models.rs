@@ -527,6 +527,7 @@ pub async fn anthropic_model_capabilities(
 #[derive(Default)]
 struct AnthropicCapabilityCache {
     effort: std::collections::HashMap<String, bool>,
+    tool_search: std::collections::HashMap<String, bool>,
     fast_mode: std::collections::HashMap<String, bool>,
 }
 
@@ -576,6 +577,41 @@ fn effort_key(wire: &str, model: &str) -> String {
 pub fn rejects_effort(message: &str) -> bool {
     let normalized = message.to_ascii_lowercase();
     ["effort", "output_config", "reasoning", "thinking"]
+        .iter()
+        .any(|name| normalized.contains(name))
+}
+
+/// Whether the Responses adapter should offer the provider's own tool
+/// search to `model` on `wire` (the adapter's endpoint), so deferred tool
+/// schemas stay out of the request until the model looks for them. Defaults
+/// to `true` until [`mark_tool_search_unsupported`] narrows it.
+pub fn tool_search_allowed(wire: &str, model: &str) -> bool {
+    anthropic_capability_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .tool_search
+        .get(&effort_key(wire, model))
+        .copied()
+        .unwrap_or(true)
+}
+
+/// Records that `model` on `wire` refused tool search (a live 400 naming
+/// it): every later request in this process sends loaded tools only, and
+/// the model reaches the rest through `find_tools`.
+pub fn mark_tool_search_unsupported(wire: &str, model: &str) {
+    anthropic_capability_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .tool_search
+        .insert(effort_key(wire, model), false);
+}
+
+/// Provider phrasing that identifies a 400 as caused by the tool search
+/// entry, a deferred tool or an echoed tool search item, by the wire's own
+/// names for them. Keyed off the provider's wording, never a model table.
+pub fn rejects_tool_search(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    ["tool_search", "defer_loading"]
         .iter()
         .any(|name| normalized.contains(name))
 }
@@ -839,6 +875,26 @@ mod tests {
         assert!(!rejects_effort(
             "messages: at least one message is required"
         ));
+    }
+
+    #[test]
+    fn tool_search_refusal_is_remembered_per_wire_and_model() {
+        let wire = "https://api.example/v1";
+        assert!(tool_search_allowed(wire, "test-model-search-1"));
+        mark_tool_search_unsupported(wire, "test-model-search-1");
+        assert!(!tool_search_allowed(wire, "test-model-search-1"));
+        assert!(tool_search_allowed(wire, "test-model-search-2"));
+        assert!(tool_search_allowed(
+            "https://other.example/v1",
+            "test-model-search-1"
+        ));
+        assert!(rejects_tool_search(
+            "Invalid value: 'tool_search'. Supported values are: 'function'"
+        ));
+        assert!(rejects_tool_search(
+            "Unknown parameter: 'tools[3].defer_loading'"
+        ));
+        assert!(!rejects_tool_search("max_output_tokens is too large"));
     }
 
     #[test]

@@ -835,17 +835,13 @@ fn strip_replayed_thinking(messages: &mut [Message]) {
     }
 }
 
-/// Per-leg tool inclusion (docs/design/68-context-engine.md §5): Anthropic
-/// legs get the full core+deferred set (deferred schemas withheld from the
-/// prefix there via `defer_loading`, discoverable through the server-side
-/// tool-search tool); every other provider gets core only — its adapter
-/// ignores `ToolDefinition::defer` and would otherwise send the deferred
-/// schema in full, defeating the point of deferring it.
-fn tools_for_leg(
-    tools: &[vak_llm::ToolDefinition],
-    provider_name: &str,
-) -> Vec<vak_llm::ToolDefinition> {
-    if provider_name == "anthropic" {
+/// Per-leg tool inclusion (docs/design/68-context-engine.md §5): a leg whose
+/// adapter defers tools (`Provider::defers_tools`) gets the loaded and the
+/// deferred set, the deferred schemas withheld there and found through the
+/// provider's own tool search; every other leg gets the loaded set only,
+/// because its adapter would send a deferred schema in full.
+fn tools_for_leg(tools: &[vak_llm::ToolDefinition], defers: bool) -> Vec<vak_llm::ToolDefinition> {
+    if defers {
         return tools.to_vec();
     }
     tools.iter().filter(|t| !t.defer).cloned().collect()
@@ -853,8 +849,8 @@ fn tools_for_leg(
 
 /// Promote tools `find_tools` returned this turn from deferred to loaded, so
 /// the next step declares them on every provider. A deferred copy of the same
-/// name is replaced in place, not kept beside it: a non-Anthropic leg drops
-/// every deferred definition (`tools_for_leg`), so keeping only that copy
+/// name is replaced in place, not kept beside it: a leg that does not defer
+/// tools drops every deferred definition (`tools_for_leg`), so keeping only that copy
 /// meant a discovered tool was never callable there.
 fn load_discovered(
     definitions: &mut Vec<vak_llm::ToolDefinition>,
@@ -1002,17 +998,18 @@ mod tool_loading_tests {
     }
 
     #[test]
-    fn a_discovered_tool_is_declared_on_a_non_anthropic_leg() {
+    fn a_discovered_tool_is_declared_on_a_leg_that_does_not_defer() {
         let mut defs = vec![def("find_tools"), def("bash").deferred()];
         assert!(
-            !tools_for_leg(&defs, "ollama")
-                .iter()
-                .any(|d| d.name == "bash"),
-            "deferred tools stay out of a non-Anthropic request until found"
+            !tools_for_leg(&defs, false).iter().any(|d| d.name == "bash"),
+            "deferred tools stay out of a leg that does not defer them until found"
         );
         load_discovered(&mut defs, vec![def("bash")]);
         assert_eq!(defs.len(), 2, "promoted in place, never duplicated");
-        let sent = tools_for_leg(&defs, "ollama");
+        let sent = tools_for_leg(&defs, false);
+        assert!(sent.iter().any(|d| d.name == "bash"));
+        let defs = vec![def("find_tools"), def("bash").deferred()];
+        let sent = tools_for_leg(&defs, true);
         assert!(sent.iter().any(|d| d.name == "bash"));
     }
 }
@@ -5123,10 +5120,10 @@ impl Agent {
             return;
         };
         let before = profile.clone();
-        // Count what that leg was sent: a non-Anthropic leg never carries the
-        // deferred tool schemas.
+        // Count what that leg was sent: only a leg that defers tools carries
+        // the deferred set.
         let mut sent = request.clone();
-        sent.tools = tools_for_leg(&request.tools, settled_provider);
+        sent.tools = tools_for_leg(&request.tools, self.provider.defers_tools(&request.model));
         let chars_sent = chat_request_chars(&sent);
         let cache_miss = usage.cache_read_input_tokens.unwrap_or(0) == 0;
         profile.observe_usage(chars_sent, usage, first_token_latency_ms, cache_miss);
@@ -5149,20 +5146,15 @@ impl Agent {
 
     /// Lowers the primary route's horizon after it rejected `request` as too
     /// long and records the change. Sized by what the primary leg is actually
-    /// sent: a non-Anthropic leg never carries the deferred tool schemas.
+    /// sent: only a leg that defers tools carries the deferred set.
     async fn lower_horizon_for_rejection(
         &mut self,
         profile: &CapacityProfile,
         request: &ChatRequest,
         reason: String,
     ) -> CapacityProfile {
-        let route_provider = self
-            .config
-            .provider_name
-            .clone()
-            .unwrap_or_else(|| self.provider.name().to_string());
         let mut sent = request.clone();
-        sent.tools = tools_for_leg(&request.tools, &route_provider);
+        sent.tools = tools_for_leg(&request.tools, self.provider.defers_tools(&request.model));
         let request_tokens = profile.estimate_tokens(chat_request_chars(&sent));
         let mut lowered = profile.clone();
         lowered.observe_over_length(
@@ -5414,11 +5406,9 @@ impl Agent {
             };
             ledger.receipt.stamp_leg(&route_provider, model);
             // Per-leg tool inclusion (docs/design/68-context-engine.md §5):
-            // only Anthropic legs get the deferred schemas (withheld from
-            // the prefix there via `defer_loading`); every other provider
-            // sees core only, since its tool index is already in the
-            // prefix and `find_tools` is how it reaches the rest.
-            leg_req.tools = tools_for_leg(&request.tools, &route_provider);
+            // a leg that defers tools gets the deferred set too, and every
+            // other leg the loaded set, with `find_tools` for the rest.
+            leg_req.tools = tools_for_leg(&request.tools, provider_arc.defers_tools(model));
             if li > 0 && forward {
                 self.record_activity(
                     vak_session::ActivityKind::RouteFallback,

@@ -87,6 +87,16 @@ the provider's default, never more (invariant 32,
 docs/design/47-commitment-kernel.md). With no such reading nothing is
 sent and the provider's default stands.
 
+A plain factual question is not a direct reply, and stays that way.
+Measured on 2026-10-08 with `vak intent explain`: 20 of 20 questions got
+the same reading (an answer, within the turn, no reasoning demanded): 8
+single facts ("What is the capital of Australia?"), 10 that need working
+out ("Which is larger, 2^100 or 3^63, and by what factor?") and 2 that
+need a tool ("What is in my notes.txt file?"). Nothing in the reading
+tells them apart, so lowering effort for that reading would lower it for
+the ten that need it. Only a reading the words themselves make immediate
+(conversation, or an answer expected in one reply) is lowered.
+
 No table says which models take the setting. A 400 that names it
 (`models::rejects_effort`) is retried once without it, and that model on
 that endpoint is remembered for the life of the process
@@ -95,6 +105,42 @@ that endpoint is remembered for the life of the process
 Ollama never receives it. Measured on gemma4 (2026-10-07): with thinking
 off, a card call failed 20 of 20, so on that wire the model's own default
 is the only setting.
+
+### Deferred tools and tool search
+
+Whether a wire can keep a deferred tool's schema out of the request is the
+adapter's answer, `Provider::defers_tools(model)`, never a provider name
+in the agent loop. A leg whose adapter says yes is sent the loaded and the
+deferred tools; any other leg is sent the loaded tools only, and the model
+reaches the rest through `find_tools`
+(docs/design/68-context-engine.md §5).
+
+| Wire | Deferred tool | Search entry | What comes back |
+|---|---|---|---|
+| Anthropic | `defer_loading: true` | `tool_search_tool_regex_20251119` | `server_tool_use`, `tool_search_tool_result` blocks |
+| OpenAI Responses | `defer_loading: true` | `{"type": "tool_search"}` | `tool_search_call`, `tool_search_output` items |
+| every other wire | not sent | none | nothing |
+
+What comes back is kept as an opaque `ContentBlock::Provider` block in the
+ledger and sent again only on the wire that wrote it. The Responses
+adapter sends its search items in order, ahead of the call they loaded a
+tool for, and without their `id`: an item sent by id is refused unless the
+reasoning item before it comes too, and reasoning is not replayed there.
+They go only while the request still carries a deferred tool.
+
+No table says which models take tool search. A 400 that names it
+(`models::rejects_tool_search`) is retried once with the loaded tools
+only, and that model on that endpoint is remembered for the life of the
+process (`models::mark_tool_search_unsupported`).
+
+Measured on `gpt-6-luna` through the server (2026-10-08): the entry and
+18 to 22 deferred tools were accepted on every request. Asked to use its
+own search, the model did on 10 of 10 turns, and all 37 later requests
+that carried the search items were accepted. Left to choose, with
+`find_tools` loaded and named in the prompt, it called `find_tools` on 10
+of 10 turns and its own search on none. A deferred tool still costs its
+name and description in every request: about 2,500 input tokens for 20
+tools.
 
 ### Anthropic: reasoning depth and fast mode
 
