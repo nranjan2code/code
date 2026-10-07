@@ -42,6 +42,23 @@ use serde_json::Value;
 use vak_tools::context::ToolContext;
 use vak_tools::{Tool, ToolOutput};
 
+/// One card tool: the flat arguments a model writes, and how they become the
+/// stored card.
+///
+/// The arguments follow four rules, each measured live (docs/design/
+/// 30-render-architecture.md §30.1): the card's fields sit at the top level
+/// beside `semantic_type`, never inside a `payload` envelope (13 of 16
+/// dropped calls left that envelope open); the schema uses only `type`,
+/// `properties`, `items`, `required`, `enum` and `description`, the keywords
+/// every provider carries to a model (Ollama drops `oneOf`,
+/// `additionalProperties` and bounds, so a shape stated only through them
+/// reached the model as a bare object); no data travels as an object key (a
+/// label such as `Year Built` is not a key every call syntax can write); and
+/// no record holds a list of records (a timeline's options and a chart's
+/// points are their own lists, joined by a name). A table is Markdown, the
+/// one form of rows that never closes a nested list. The stored card, and
+/// every renderer, digest and channel that reads it, is unchanged: `build`
+/// turns the arguments into it.
 struct CardShape {
     /// Tool name, e.g. `emit_chart_card`.
     name: &'static str,
@@ -53,311 +70,706 @@ struct CardShape {
     /// time fails closed (rejected, not silently accepted) rather than
     /// open.
     semantic_types: &'static [&'static str],
-    /// JSON Schema for the `payload` field specifically (the tool's
-    /// `parameters` wraps this as `{semantic_type: enum, payload: <this>}`).
-    payload_schema: fn() -> Value,
+    /// The tool's arguments beside `semantic_type`, as
+    /// `{"properties": {...}, "required": [...]}`.
+    fields: fn() -> Value,
+    /// The stored card payload for validated arguments, or a refusal the
+    /// model can act on.
+    build: fn(&Map<String, Value>) -> Result<Value, String>,
 }
 
-fn universal_card_payload_schema() -> Value {
+type Map<K, V> = serde_json::Map<K, V>;
+
+fn string(description: &str) -> Value {
+    if description.is_empty() {
+        serde_json::json!({"type": "string"})
+    } else {
+        serde_json::json!({"type": "string", "description": description})
+    }
+}
+
+fn integer(description: &str) -> Value {
+    if description.is_empty() {
+        serde_json::json!({"type": "integer"})
+    } else {
+        serde_json::json!({"type": "integer", "description": description})
+    }
+}
+
+fn list_of(description: &str, properties: Value, required: &[&str]) -> Value {
     serde_json::json!({
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "summary": {"type": "string"}
-        },
-        "additionalProperties": true,
-        "description": "Free-form key/value fields beyond title/summary are shown as a details list."
+        "type": "array",
+        "description": description,
+        "items": {"type": "object", "properties": properties, "required": required}
     })
 }
 
-fn research_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "sources": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "description": "Copy the source title from the retrieved result."},
-                        "url": {"type": "string", "description": "Required: copy the exact source URL from retrieved evidence, not a guessed homepage or search URL."},
-                        "snippet": {"type": "string", "description": "Use only text supported by the retrieved source."},
-                        "source_name": {"type": "string", "description": "Optional; include only if the retrieved result identifies this publisher."},
-                        "published_at": {"type": "string", "description": "Optional; include only when the retrieved result supplies a publication date."}
-                    },
-                    "required": ["title", "url"]
-                }
-            },
-            "takeaways": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string"},
-                        "citation_indices": {
-                            "type": "array",
-                            "items": {"type": "integer"},
-                            "minItems": 1,
-                            "description": "1-based indices into `sources`; every takeaway must cite at least one source."
-                        }
-                    },
-                    "required": ["text", "citation_indices"]
-                }
+fn fields(properties: Value, required: &[&str]) -> Value {
+    serde_json::json!({"properties": properties, "required": required})
+}
+
+/// The arguments' own fields that the stored card keeps as they are.
+fn copy(args: &Map<String, Value>, keys: &[&str]) -> Map<String, Value> {
+    keys.iter()
+        .filter_map(|key| {
+            args.get(*key)
+                .map(|value| ((*key).to_string(), value.clone()))
+        })
+        .collect()
+}
+
+fn records<'a>(args: &'a Map<String, Value>, key: &str) -> &'a [Value] {
+    args.get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+/// A value the schema asks for as text: a number written as text becomes a
+/// JSON number, a number sent as a number stays one, anything else is text.
+fn scalar(value: &Value) -> Value {
+    match value {
+        Value::Number(_) => value.clone(),
+        Value::String(text) => number_or_text(text),
+        Value::Null => Value::String(String::new()),
+        other => Value::String(other.to_string()),
+    }
+}
+
+/// A number written as text, as a JSON number; anything else stays text.
+fn number_or_text(text: &str) -> Value {
+    let trimmed = text.trim();
+    let plain = trimmed.replace(',', "");
+    match plain.parse::<f64>() {
+        Ok(n) if n.is_finite() && !plain.is_empty() => {
+            if n.fract() == 0.0 && n.abs() < 9.0e15 {
+                Value::from(n as i64)
+            } else {
+                Value::from(n)
             }
-        },
-        "required": ["sources", "takeaways"]
-    })
+        }
+        _ => Value::String(trimmed.to_string()),
+    }
 }
 
-fn diff_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "files": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "filename": {"type": "string"},
-                        "additions": {"type": "integer", "minimum": 0},
-                        "deletions": {"type": "integer", "minimum": 0},
-                        "hunks": {"type": "string", "description": "Unified diff hunk text for this file"}
-                    },
-                    "required": ["filename", "hunks", "additions", "deletions"]
-                }
+fn universal_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(""),
+            "summary": string(""),
+            "fields": list_of(
+                "Each detail the card lists, as a label and its value.",
+                serde_json::json!({"label": string(""), "value": string("")}),
+                &["label", "value"],
+            )
+        }),
+        &[],
+    )
+}
+
+fn build_universal(args: &Map<String, Value>) -> Result<Value, String> {
+    let mut payload = copy(args, &["title", "summary"]);
+    for field in records(args, "fields") {
+        let label = field["label"].as_str().unwrap_or_default().trim();
+        if label.is_empty() {
+            return Err("a field has an empty `label`".into());
+        }
+        if payload.contains_key(label) {
+            return Err(format!(
+                "two fields are labelled `{label}`; give each its own label"
+            ));
+        }
+        payload.insert(label.to_string(), field["value"].clone());
+    }
+    Ok(Value::Object(payload))
+}
+
+fn research_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(""),
+            "sources": list_of(
+                "The retrieved sources, in order.",
+                serde_json::json!({
+                    "title": string("Copy the source title from the retrieved result."),
+                    "url": string("Copy the exact source URL from retrieved evidence, not a guessed homepage or search URL."),
+                    "snippet": string("Use only text supported by the retrieved source."),
+                    "source_name": string("Optional; include only if the retrieved result identifies this publisher."),
+                    "published_at": string("Optional; include only when the retrieved result supplies a publication date.")
+                }),
+                &["title", "url"],
+            ),
+            "takeaways": list_of(
+                "The findings, each supported by one source.",
+                serde_json::json!({
+                    "text": string(""),
+                    "source": integer("The number of the source in sources that supports this takeaway: 1 for the first.")
+                }),
+                &["text", "source"],
+            )
+        }),
+        &["sources", "takeaways"],
+    )
+}
+
+fn build_research(args: &Map<String, Value>) -> Result<Value, String> {
+    let mut payload = copy(args, &["title", "sources"]);
+    let sources = records(args, "sources").len();
+    let mut takeaways = Vec::new();
+    for (at, takeaway) in records(args, "takeaways").iter().enumerate() {
+        let source = takeaway["source"].as_u64().unwrap_or(0);
+        if source == 0 || source as usize > sources {
+            return Err(format!(
+                "takeaway {} cites source {source}, but sources are numbered 1 to {sources}",
+                at + 1
+            ));
+        }
+        takeaways.push(serde_json::json!({"text": takeaway["text"], "citation_indices": [source]}));
+    }
+    payload.insert("takeaways".into(), Value::Array(takeaways));
+    Ok(Value::Object(payload))
+}
+
+fn diff_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "files": list_of(
+                "One entry per changed file.",
+                serde_json::json!({
+                    "filename": string(""),
+                    "additions": integer("Lines added, 0 or more."),
+                    "deletions": integer("Lines removed, 0 or more."),
+                    "hunks": string("Unified diff hunk text for this file.")
+                }),
+                &["filename", "hunks", "additions", "deletions"],
+            )
+        }),
+        &["files"],
+    )
+}
+
+fn build_diff(args: &Map<String, Value>) -> Result<Value, String> {
+    for file in records(args, "files") {
+        for key in ["additions", "deletions"] {
+            if file[key].as_u64().is_none() {
+                return Err(format!("`{key}` must be a whole number, 0 or more"));
             }
-        },
-        "required": ["files"]
-    })
+        }
+    }
+    Ok(Value::Object(copy(args, &["files"])))
 }
 
-fn test_matrix_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "suite_name": {"type": "string"},
-            "total": {"type": "integer"},
-            "passed": {"type": "integer"},
-            "failed": {"type": "integer"},
-            "skipped": {"type": "integer"},
-            "tests": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "status": {"type": "string", "enum": ["passed", "failed", "skipped"]},
-                        "duration_ms": {"type": "integer"},
-                        "message": {"type": "string"}
-                    },
-                    "required": ["name", "status"]
-                }
+fn test_report_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "suite_name": string(""),
+            "tests": list_of(
+                "One entry per test that ran.",
+                serde_json::json!({
+                    "name": string(""),
+                    "status": {"type": "string", "enum": ["passed", "failed", "skipped"]},
+                    "duration_ms": integer(""),
+                    "message": string("")
+                }),
+                &["name", "status"],
+            )
+        }),
+        &["tests"],
+    )
+}
+
+fn build_test_report(args: &Map<String, Value>) -> Result<Value, String> {
+    if records(args, "tests").iter().any(|test| {
+        test.get("duration_ms")
+            .is_some_and(|ms| ms.as_u64().is_none())
+    }) {
+        return Err("`duration_ms` must be a whole number, 0 or more".into());
+    }
+    Ok(Value::Object(copy(args, &["suite_name", "tests"])))
+}
+
+fn terminal_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "command": string(""),
+            "output": string(""),
+            "exit_code": integer(""),
+            "duration_ms": integer("")
+        }),
+        &["output"],
+    )
+}
+
+fn build_terminal(args: &Map<String, Value>) -> Result<Value, String> {
+    Ok(Value::Object(copy(
+        args,
+        &["command", "output", "exit_code", "duration_ms"],
+    )))
+}
+
+fn table_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(""),
+            "table": string("The table in Markdown: a header row, a separator row such as |---|---|, then one row per line.")
+        }),
+        &["table"],
+    )
+}
+
+fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
+    let (labels, rows) = markdown_table(args["table"].as_str().unwrap_or_default())?;
+    let numeric: Vec<bool> = (0..labels.len())
+        .map(|column| {
+            let cells: Vec<&str> = rows
+                .iter()
+                .map(|row| row[column].as_str())
+                .filter(|cell| !cell.is_empty())
+                .collect();
+            !cells.is_empty() && cells.iter().all(|cell| number_or_text(cell).is_number())
+        })
+        .collect();
+    let columns: Vec<Value> = labels
+        .iter()
+        .zip(&numeric)
+        .map(|(label, numeric)| {
+            let mut column = serde_json::json!({"key": label, "label": label});
+            if *numeric {
+                column["isNumeric"] = Value::Bool(true);
             }
-        },
-        "required": ["tests"]
-    })
+            column
+        })
+        .collect();
+    let rows: Vec<Value> = rows
+        .iter()
+        .map(|row| {
+            Value::Object(
+                labels
+                    .iter()
+                    .zip(row)
+                    .zip(&numeric)
+                    .map(|((label, cell), numeric)| {
+                        let value = if *numeric && !cell.is_empty() {
+                            number_or_text(cell)
+                        } else {
+                            Value::String(cell.clone())
+                        };
+                        (label.clone(), value)
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut payload = copy(args, &["title"]);
+    payload.insert("columns".into(), Value::Array(columns));
+    payload.insert("rows".into(), Value::Array(rows));
+    Ok(Value::Object(payload))
 }
 
-fn terminal_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "command": {"type": "string"},
-            "output": {"type": "string"},
-            "exit_code": {"type": "integer"},
-            "duration_ms": {"type": "integer"}
-        },
-        "required": ["output"]
-    })
+/// A Markdown table's column labels and rows. Labels are unique (a repeat
+/// gets ` (2)`), an empty label is `Column N`, a short row is padded, and a
+/// cell's outer `**`/`__` emphasis is dropped.
+fn markdown_table(text: &str) -> Result<(Vec<String>, Vec<Vec<String>>), String> {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    let mut rows = Vec::new();
+    for (at, line) in lines.iter().enumerate() {
+        if !line.contains('|') {
+            return Err(format!(
+                "line {} of `table` is not a table row; write every row between | bars",
+                at + 1
+            ));
+        }
+        rows.push(markdown_cells(line));
+    }
+    let separator = |row: &Vec<String>| {
+        row.iter().all(|cell| {
+            let cell = cell.trim_matches(':');
+            !cell.is_empty() && cell.chars().all(|c| c == '-')
+        })
+    };
+    if rows.len() < 2 || !separator(&rows[1]) {
+        return Err(
+            "`table` needs a header row, then a separator row such as |---|---|, then the rows"
+                .into(),
+        );
+    }
+    let mut labels: Vec<String> = Vec::new();
+    for (at, label) in rows[0].iter().enumerate() {
+        let base = if label.is_empty() {
+            format!("Column {}", at + 1)
+        } else {
+            label.clone()
+        };
+        let mut unique = base.clone();
+        let mut n = 2;
+        while labels.contains(&unique) {
+            unique = format!("{base} ({n})");
+            n += 1;
+        }
+        labels.push(unique);
+    }
+    let mut data = Vec::new();
+    for (at, mut row) in rows.into_iter().skip(2).enumerate() {
+        if separator(&row) {
+            continue;
+        }
+        if row.len() > labels.len() {
+            return Err(format!(
+                "row {} has {} cells but the header has {}",
+                at + 1,
+                row.len(),
+                labels.len()
+            ));
+        }
+        row.resize(labels.len(), String::new());
+        data.push(row);
+    }
+    if data.is_empty() {
+        return Err("`table` has a header but no rows".into());
+    }
+    Ok((labels, data))
 }
 
-fn table_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "columns": {
-                "type": "array",
-                "description": "One entry per column; its key names that column's field in every row.",
-                "items": {
-                    "type": "object",
-                    "properties": {"key": {"type": "string"}, "label": {"type": "string"}, "isNumeric": {"type": "boolean"}},
-                    "required": ["key", "label"]
-                }
-            },
-            "rows": {
-                "type": "array",
-                "description": "One object per row, mapping each column key to that row's value.",
-                "items": {"type": "object", "additionalProperties": true}
+fn markdown_cells(line: &str) -> Vec<String> {
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let line = line.strip_suffix('|').unwrap_or(line);
+    let mut cells = Vec::new();
+    let mut cell = String::new();
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'|') => {
+                cell.push('|');
+                chars.next();
             }
-        },
-        "required": ["columns", "rows"]
-    })
+            '|' => cells.push(std::mem::take(&mut cell)),
+            other => cell.push(other),
+        }
+    }
+    cells.push(cell);
+    cells
+        .into_iter()
+        .map(|cell| {
+            let cell = cell.trim();
+            ["**", "__"]
+                .iter()
+                .find_map(|mark| {
+                    cell.strip_prefix(mark)
+                        .and_then(|inner| inner.strip_suffix(mark))
+                })
+                .unwrap_or(cell)
+                .trim()
+                .to_string()
+        })
+        .collect()
 }
 
-fn timeline_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "items": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "label": {"type": "string"},
-                        "detail": {"type": "string"},
-                        "status": {"type": "string"},
-                        "time": {"type": "string", "description": "When it happens, e.g. 1:00–4:00 pm"},
-                        "options": {
-                            "type": "array",
-                            "description": "Alternatives for this step, one of which the person chooses",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "label": {"type": "string"},
-                                    "detail": {"type": "string"},
-                                    "facts": {"type": "array", "items": {"type": "string"}, "description": "Short facts, e.g. \"20 min away\""}
-                                },
-                                "required": ["label"]
-                            }
-                        }
-                    },
-                    "required": ["label"]
-                }
-            }
-        },
-        "required": ["items"]
-    })
+fn timeline_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(""),
+            "items": list_of(
+                "The steps, milestones or entries, in order.",
+                serde_json::json!({
+                    "label": string(""),
+                    "detail": string(""),
+                    "status": string(""),
+                    "time": string("When it happens, e.g. 1:00–4:00 pm.")
+                }),
+                &["label"],
+            ),
+            "options": list_of(
+                "Alternatives for a step, one of which the person chooses. Leave out when no step offers a choice.",
+                serde_json::json!({
+                    "step": string("The label of the step this is an alternative for, exactly as written in items."),
+                    "label": string(""),
+                    "detail": string(""),
+                    "facts": string("Short facts separated by semicolons, e.g. 20 min away; free entry.")
+                }),
+                &["step", "label"],
+            )
+        }),
+        &["items"],
+    )
 }
 
-fn recipe_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
-            "servings": {"type": "integer"},
-            "prep_time_minutes": {"type": "integer"},
-            "cook_time_minutes": {"type": "integer"},
-            "ingredients": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {"name": {"type": "string"}, "amount": {"type": "number"}, "unit": {"type": "string"}},
-                    "required": ["name"]
-                }
-            },
-            "steps": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string"},
-                        "timer_seconds": {"type": "integer", "minimum": 1, "maximum": 86400}
-                    },
-                    "required": ["text"]
-                }
-            }
-        },
-        "required": ["title", "ingredients", "steps"]
-    })
+fn build_timeline(args: &Map<String, Value>) -> Result<Value, String> {
+    let mut items: Vec<Value> = records(args, "items").to_vec();
+    for option in records(args, "options") {
+        let step = option["step"].as_str().unwrap_or_default().trim();
+        let found = items
+            .iter()
+            .position(|item| {
+                item["label"]
+                    .as_str()
+                    .is_some_and(|label| label.trim() == step)
+            })
+            .or_else(|| {
+                items.iter().position(|item| {
+                    item["label"]
+                        .as_str()
+                        .is_some_and(|label| label.trim().eq_ignore_ascii_case(step))
+                })
+            })
+            .ok_or_else(|| {
+                format!(
+                    "option `{}` names step `{step}`, which is not the label of any item",
+                    option["label"].as_str().unwrap_or_default()
+                )
+            })?;
+        let mut choice = copy(
+            option.as_object().unwrap_or(&Map::new()),
+            &["label", "detail"],
+        );
+        let facts: Vec<Value> = option["facts"]
+            .as_str()
+            .unwrap_or_default()
+            .split(';')
+            .map(str::trim)
+            .filter(|fact| !fact.is_empty())
+            .map(|fact| Value::String(fact.to_string()))
+            .collect();
+        if !facts.is_empty() {
+            choice.insert("facts".into(), Value::Array(facts));
+        }
+        let item = &mut items[found];
+        match item.get_mut("options").and_then(Value::as_array_mut) {
+            Some(options) => options.push(Value::Object(choice)),
+            None => item["options"] = Value::Array(vec![Value::Object(choice)]),
+        }
+    }
+    let mut payload = copy(args, &["title"]);
+    payload.insert("items".into(), Value::Array(items));
+    Ok(Value::Object(payload))
 }
 
-fn ui_preview_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "status": {"type": "string"},
-            "title": {"type": "string"},
-            "artifact_path": {"type": "string"},
-            "html": {"type": "string"}
-        },
-        "additionalProperties": false
-    })
+fn recipe_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(""),
+            "servings": integer(""),
+            "prep_time_minutes": integer(""),
+            "cook_time_minutes": integer(""),
+            "ingredients": list_of(
+                "Each ingredient.",
+                serde_json::json!({"name": string(""), "amount": {"type": "number"}, "unit": string("")}),
+                &["name"],
+            ),
+            "steps": list_of(
+                "Each step, in order.",
+                serde_json::json!({
+                    "text": string(""),
+                    "timer_seconds": integer("Optional timer for this step, in seconds, from 1 to 86400.")
+                }),
+                &["text"],
+            )
+        }),
+        &["title", "ingredients", "steps"],
+    )
 }
 
-fn chart_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "title": {"type": "string"},
+fn build_recipe(args: &Map<String, Value>) -> Result<Value, String> {
+    if args
+        .get("servings")
+        .is_some_and(|n| !n.as_u64().is_some_and(|n| (1..=10_000).contains(&n)))
+    {
+        return Err("`servings` must be a whole number from 1 to 10000".into());
+    }
+    if records(args, "ingredients").iter().any(|i| {
+        i.get("amount")
+            .is_some_and(|a| !a.as_f64().is_some_and(|a| a >= 0.0))
+    }) {
+        return Err("an ingredient's `amount` must be 0 or more".into());
+    }
+    if records(args, "steps").iter().any(|s| {
+        s.get("timer_seconds")
+            .is_some_and(|t| !t.as_u64().is_some_and(|t| (1..=86_400).contains(&t)))
+    }) {
+        return Err("a step's `timer_seconds` must be from 1 to 86400".into());
+    }
+    Ok(Value::Object(copy(
+        args,
+        &[
+            "title",
+            "servings",
+            "prep_time_minutes",
+            "cook_time_minutes",
+            "ingredients",
+            "steps",
+        ],
+    )))
+}
+
+fn ui_preview_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "status": string(""),
+            "title": string(""),
+            "artifact_path": string("The workspace path of the file to preview."),
+            "html": string("")
+        }),
+        &[],
+    )
+}
+
+fn build_ui_preview(args: &Map<String, Value>) -> Result<Value, String> {
+    Ok(Value::Object(copy(
+        args,
+        &["status", "title", "artifact_path", "html"],
+    )))
+}
+
+fn chart_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "title": string(""),
             "chart_type": {"type": "string", "enum": ["line", "bar", "area"]},
-            "x_label": {"type": "string"},
-            "y_label": {"type": "string"},
-            "accessible_summary": {"type": "string"},
-            "series": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "points": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "x": {"type": ["string", "number"]},
-                                    "y": {"type": "number"}
-                                },
-                                "required": ["x", "y"]
-                            }
-                        }
-                    },
-                    "required": ["name", "points"]
-                }
-            }
-        },
-        "required": ["chart_type", "series", "accessible_summary"]
-    })
+            "x_label": string(""),
+            "y_label": string(""),
+            "accessible_summary": string("One sentence saying what the chart shows."),
+            "points": list_of(
+                "Every point of every series.",
+                serde_json::json!({
+                    "series": string("The name of the series this point belongs to."),
+                    "x": string("The x value: a category or a number, as text."),
+                    "y": {"type": "number"}
+                }),
+                &["series", "x", "y"],
+            )
+        }),
+        &["chart_type", "points", "accessible_summary"],
+    )
 }
 
-fn media_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "description": "For semantic_type `link.preview`, use the first shape (url+title). For `media.image`/`media.video`/`media.audio`, use the second shape (source+media_type+alt).",
-        "oneOf": [
-            {
-                "properties": {
-                    "url": {"type": "string"},
-                    "title": {"type": "string"},
-                    "image_url": {"type": "string"},
-                    "description": {"type": "string"},
-                    "site_name": {"type": "string"}
-                },
-                "required": ["url", "title"]
-            },
-            {
-                "properties": {
-                    "source": {"type": "string"},
-                    "media_type": {"type": "string", "enum": ["image", "video", "audio"]},
-                    "alt": {"type": "string"},
-                    "title": {"type": "string"}
-                },
-                "required": ["source", "media_type", "alt"]
-            }
-        ]
-    })
+fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
+    let mut series: Vec<(String, Vec<Value>)> = Vec::new();
+    for point in records(args, "points") {
+        let name = point["series"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let x = scalar(&point["x"]);
+        let entry = serde_json::json!({"x": x, "y": point["y"]});
+        match series.iter_mut().find(|(existing, _)| *existing == name) {
+            Some((_, points)) => points.push(entry),
+            None => series.push((name, vec![entry])),
+        }
+    }
+    let mut payload = copy(
+        args,
+        &[
+            "title",
+            "chart_type",
+            "x_label",
+            "y_label",
+            "accessible_summary",
+        ],
+    );
+    payload.insert(
+        "series".into(),
+        Value::Array(
+            series
+                .into_iter()
+                .map(|(name, points)| serde_json::json!({"name": name, "points": points}))
+                .collect(),
+        ),
+    );
+    Ok(Value::Object(payload))
 }
 
-fn metric_payload_schema() -> Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "label": {"type": "string"},
-            "value": {"type": ["string", "number"]},
-            "unit": {"type": "string"},
-            "location": {"type": "string", "description": "Optional grid title when reporting multiple metrics at once"}
-        },
-        "additionalProperties": {"type": ["string", "number"]},
-        "description": "For a single metric, set label/value/unit. For several at once (a grid of current readings), use additional key/value fields instead."
-    })
+fn media_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "url": string("For link.preview: the page's URL."),
+            "title": string(""),
+            "image_url": string("For link.preview: an image for the page."),
+            "description": string("For link.preview: a short description of the page."),
+            "site_name": string("For link.preview: the site's name."),
+            "source": string("For media.image, media.video and media.audio: the file's URL or workspace path."),
+            "media_type": {"type": "string", "enum": ["image", "video", "audio"], "description": "For media.image, media.video and media.audio."},
+            "alt": string("For media.image, media.video and media.audio: what it shows, in words.")
+        }),
+        &[],
+    )
+}
+
+fn build_media(args: &Map<String, Value>) -> Result<Value, String> {
+    Ok(Value::Object(copy(
+        args,
+        &[
+            "url",
+            "title",
+            "image_url",
+            "description",
+            "site_name",
+            "source",
+            "media_type",
+            "alt",
+        ],
+    )))
+}
+
+fn metric_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "label": string("What is measured, for a single metric."),
+            "value": string("The reading, e.g. 28.5."),
+            "unit": string(""),
+            "location": string("Where or what the readings are for, e.g. a city."),
+            "readings": list_of(
+                "Several readings at once, shown as a grid; leave label, value and unit out then.",
+                serde_json::json!({"label": string(""), "value": string(""), "unit": string("")}),
+                &["label", "value"],
+            )
+        }),
+        &[],
+    )
+}
+
+fn build_metric(args: &Map<String, Value>) -> Result<Value, String> {
+    let readings = records(args, "readings");
+    if readings.is_empty() {
+        if !args.contains_key("label") || !args.contains_key("value") {
+            return Err("give `label` and `value`, or several `readings`".into());
+        }
+        let mut payload = copy(args, &["label", "unit", "location"]);
+        payload.insert("value".into(), scalar(&args["value"]));
+        return Ok(Value::Object(payload));
+    }
+    let mut payload = copy(args, &["location"]);
+    for reading in readings {
+        let label = reading["label"].as_str().unwrap_or_default().trim();
+        if label.is_empty() || payload.contains_key(label) {
+            return Err(format!("each reading needs its own label (`{label}`)"));
+        }
+        let value = scalar(&reading["value"]);
+        let value = match reading["unit"]
+            .as_str()
+            .map(str::trim)
+            .filter(|u| !u.is_empty())
+        {
+            Some(unit) => Value::String(format!(
+                "{} {unit}",
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_string)
+            )),
+            None => value,
+        };
+        payload.insert(label.to_string(), value);
+    }
+    Ok(Value::Object(payload))
 }
 
 const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_universal_card",
-        description: "Emit a static general-purpose card (map, calendar, board, entity, document, graph, form, alert, and similar) with a title/summary and free-form key/value fields. This card has no row-selection control; for choices the user can select, use emit_table_card with semantic_type travel_options and one row per option.",
+        description: "Emit a static general-purpose card (map, calendar, board, entity, document, graph, form, alert, and similar) with a title, a summary and labelled details. This card has no row-selection control; for choices the user can select, use emit_table_card with semantic_type travel_options and one row per option.",
         semantic_types: &[
             "map",
             "route_map",
@@ -378,35 +790,40 @@ const SHAPES: &[CardShape] = &[
             "progress_dashboard",
             "simulation",
         ],
-        payload_schema: universal_card_payload_schema,
+        fields: universal_fields,
+        build: build_universal,
     },
     CardShape {
         name: "emit_research_card",
         description: "Emit a research/news synthesis card: several distinct findings drawn from multiple cited sources, each takeaway traceable to a source. Every source needs its exact retrieved title and URL; omit publication dates or publisher names the evidence did not provide. Choose it by the shape of the answer, not because you searched: a single measurement or fact (a temperature, a price, a score) belongs on the metric card and a comparison on the table card, with the source named in your sentence.",
         semantic_types: &["research.synthesis", "research_brief", "news"],
-        payload_schema: research_payload_schema,
+        fields: research_fields,
+        build: build_research,
     },
     CardShape {
         name: "emit_diff_card",
         description: "Emit a code-diff card for changes you made.",
         semantic_types: &["coding.diff"],
-        payload_schema: diff_payload_schema,
+        fields: diff_fields,
+        build: build_diff,
     },
     CardShape {
         name: "emit_test_report_card",
         description: "Emit a test-results card summarizing a test run you actually executed.",
         semantic_types: &["test.report"],
-        payload_schema: test_matrix_payload_schema,
+        fields: test_report_fields,
+        build: build_test_report,
     },
     CardShape {
         name: "emit_terminal_card",
         description: "Emit a card showing a command you ran and its real captured output.",
         semantic_types: &["terminal.view"],
-        payload_schema: terminal_payload_schema,
+        fields: terminal_fields,
+        build: build_terminal,
     },
     CardShape {
         name: "emit_table_card",
-        description: "Emit a data table / comparison / budget / inventory card with explicit columns and rows. For selectable travel or outing choices, use semantic_type travel_options; make the first column Option (or Choice) and put one choice in each row so the user can select it.",
+        description: "Emit a data table / comparison / budget / inventory card, written as a Markdown table. For selectable travel or outing choices, use semantic_type travel_options; make the first column Option (or Choice) and put one choice in each row so the user can select it.",
         semantic_types: &[
             "coding.benchmark",
             "coding.dependencies",
@@ -426,11 +843,12 @@ const SHAPES: &[CardShape] = &[
             "criteria_matrix",
             "tradeoff_analysis",
         ],
-        payload_schema: table_payload_schema,
+        fields: table_fields,
+        build: build_table,
     },
     CardShape {
         name: "emit_timeline_card",
-        description: "Emit a timeline/plan/checklist/schedule card: an ordered or grouped list of steps, milestones, or items. When a step offers alternatives to choose between, give that one step (for example \"After lunch\") an options list holding each alternative, rather than listing the alternatives as separate steps.",
+        description: "Emit a timeline/plan/checklist/schedule card: an ordered or grouped list of steps, milestones, or items. When a step offers alternatives to choose between, list each alternative in options, naming its step, rather than listing the alternatives as separate steps.",
         semantic_types: &[
             "coding.deployment",
             "coding.incident",
@@ -469,7 +887,8 @@ const SHAPES: &[CardShape] = &[
             "decision_analysis",
             "meal_plan",
         ],
-        payload_schema: timeline_payload_schema,
+        fields: timeline_fields,
+        build: build_timeline,
     },
     CardShape {
         name: "emit_recipe_card",
@@ -481,17 +900,19 @@ const SHAPES: &[CardShape] = &[
             "lifestyle.recipe",
             "lifestyle.culinary_recipe",
         ],
-        payload_schema: recipe_payload_schema,
+        fields: recipe_fields,
+        build: build_recipe,
     },
     CardShape {
         name: "emit_ui_preview_card",
         description: "Emit a preview card for an HTML/UI artifact you wrote to the workspace.",
         semantic_types: &["ui.preview"],
-        payload_schema: ui_preview_payload_schema,
+        fields: ui_preview_fields,
+        build: build_ui_preview,
     },
     CardShape {
         name: "emit_chart_card",
-        description: "Emit a chart card for a numeric series over time or categories.",
+        description: "Emit a chart card for a numeric series over time or categories. Give every point with the name of its series.",
         semantic_types: &[
             "chart",
             "trend",
@@ -501,19 +922,22 @@ const SHAPES: &[CardShape] = &[
             "comparison_chart",
             "telemetry.chart",
         ],
-        payload_schema: chart_payload_schema,
+        fields: chart_fields,
+        build: build_chart,
     },
     CardShape {
         name: "emit_media_card",
-        description: "Emit a link preview or media (image/video/audio) card.",
+        description: "Emit a link preview (url and title) or a media card (image, video or audio: source, media_type and alt).",
         semantic_types: &["link.preview", "media.image", "media.video", "media.audio"],
-        payload_schema: media_payload_schema,
+        fields: media_fields,
+        build: build_media,
     },
     CardShape {
         name: "emit_metric_card",
         description: "Emit a metric card: a single current measurement or a small grid of them (a reading, a price, a KPI, a benchmark number). Prefer it whenever the answer is one value, even if you searched the web to get it.",
         semantic_types: &["metric", "telemetry.metric", "weather"],
-        payload_schema: metric_payload_schema,
+        fields: metric_fields,
+        build: build_metric,
     },
 ];
 
@@ -577,21 +1001,24 @@ fn normalize_payload(semantic_type: &str, mut payload: Value) -> Value {
     payload
 }
 
-/// One representative-but-minimal fixture payload per shape, built to
-/// satisfy that shape's `payload_schema` (and, where the schema alone
-/// isn't enough, the stricter per-type validators in
-/// `vak_delivery::skills::validate_payload`). Every `semantic_type` this
-/// shape's tool can emit is then executed with the SAME fixture, to
-/// prove the shared schema (plus `normalize_payload` for the couple of
-/// known type-specific exceptions) genuinely renders for every type the
-/// tool claims to support — not just one hand-picked example.
+/// One representative-but-minimal set of arguments per shape, valid for
+/// that shape's schema (and, where the schema alone isn't enough, the
+/// stricter per-type validators in `vak_delivery::skills::validate_payload`).
+/// Every `semantic_type` this shape's tool can emit is then executed with
+/// the SAME arguments, to prove the shared shape (plus `normalize_payload`
+/// for the couple of known type-specific exceptions) genuinely renders for
+/// every type the tool claims to support — not just one hand-picked example.
 #[allow(clippy::panic)]
 fn fixture_for(shape_name: &str) -> Value {
     match shape_name {
-        "emit_universal_card" => serde_json::json!({"title": "T", "summary": "S"}),
+        "emit_universal_card" => serde_json::json!({
+            "title": "T",
+            "summary": "S",
+            "fields": [{"label": "Owner", "value": "Ada"}]
+        }),
         "emit_research_card" => serde_json::json!({
             "sources": [{"title": "Src", "url": "https://example.com"}],
-            "takeaways": [{"text": "Point", "citation_indices": [1]}]
+            "takeaways": [{"text": "Point", "source": 1}]
         }),
         "emit_diff_card" => serde_json::json!({
             "files": [{"filename": "a.rs", "hunks": "@@ -1 +1 @@", "additions": 1, "deletions": 0}]
@@ -600,10 +1027,7 @@ fn fixture_for(shape_name: &str) -> Value {
             "tests": [{"name": "it_works", "status": "passed"}]
         }),
         "emit_terminal_card" => serde_json::json!({"command": "ls", "output": "a.rs"}),
-        "emit_table_card" => serde_json::json!({
-            "columns": [{"key": "name", "label": "Name"}],
-            "rows": [{"name": "Alice"}]
-        }),
+        "emit_table_card" => serde_json::json!({"table": "| Name |\n|---|\n| Alice |"}),
         "emit_timeline_card" => serde_json::json!({
             "title": "T",
             "items": [{"label": "Step 1", "detail": "d"}]
@@ -617,20 +1041,17 @@ fn fixture_for(shape_name: &str) -> Value {
         "emit_chart_card" => serde_json::json!({
             "chart_type": "line",
             "accessible_summary": "flat",
-            "series": [{"name": "s1", "points": [{"x": 1, "y": 2.0}]}]
+            "points": [{"series": "s1", "x": "1", "y": 2.0}]
         }),
         "emit_media_card" => serde_json::json!({"url": "https://example.com", "title": "Link"}),
-        "emit_metric_card" => {
-            serde_json::json!({"label": "Uptime", "value": 99.9, "unit": "%"})
-        }
+        "emit_metric_card" => serde_json::json!({"label": "Uptime", "value": "99.9", "unit": "%"}),
         other => panic!("no fixture defined for shape {other} — add one"),
     }
 }
 
-/// A shape's schema can be a `oneOf` covering several distinct payload
-/// shapes for different semantic_types within it (e.g. `emit_media_card`:
-/// `link.preview` wants url+title, `media.*` wants source+media_type+alt).
-/// Override the shared fixture for those specific types.
+/// `emit_media_card` carries two kinds of card: a link preview (url+title)
+/// and media (source+media_type+alt). Override the shared fixture for the
+/// media types.
 fn fixture_override(semantic_type: &str) -> Option<Value> {
     match semantic_type {
         "media.image" => Some(
@@ -646,17 +1067,19 @@ fn fixture_override(semantic_type: &str) -> Option<Value> {
     }
 }
 
-/// Every `(tool, semantic_type, payload)` the tools claim to support, with a
-/// schema-valid payload — the single source for conformance tests here and in
-/// vak-server (which checks the full call → ledger → projection path).
+/// Every `(tool, semantic_type, arguments)` the tools claim to support, with
+/// schema-valid arguments that carry the type — the single source for
+/// conformance tests here and in vak-server (which checks the full call →
+/// ledger → projection path).
 #[doc(hidden)]
 pub fn conformance_cases() -> Vec<(&'static str, &'static str, Value)> {
     let mut out = Vec::new();
     for shape in SHAPES {
         for &semantic_type in shape.semantic_types {
-            let payload =
+            let mut args =
                 fixture_override(semantic_type).unwrap_or_else(|| fixture_for(shape.name));
-            out.push((shape.name, semantic_type, payload));
+            args["semantic_type"] = Value::String(semantic_type.to_string());
+            out.push((shape.name, semantic_type, args));
         }
     }
     out
@@ -685,26 +1108,30 @@ impl Tool for EmitCardTool {
     }
 
     fn schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "semantic_type": {
-                    "type": "string",
-                    "enum": self.shape.semantic_types,
-                    "description": "Which of this shape's card types this is."
-                },
-                "payload": (self.shape.payload_schema)()
-            },
-            "required": ["semantic_type", "payload"]
-        })
+        let own = (self.shape.fields)();
+        let mut properties = own["properties"].as_object().cloned().unwrap_or_default();
+        let mut required: Vec<Value> = own["required"].as_array().cloned().unwrap_or_default();
+        let default = default_semantic_type(self.shape);
+        let description = match default {
+            Some(default) => format!("Which kind of card this is; leave out for {default}."),
+            None => "Which kind of card this is.".to_string(),
+        };
+        properties.insert(
+            "semantic_type".into(),
+            serde_json::json!({
+                "type": "string",
+                "enum": self.shape.semantic_types,
+                "description": description
+            }),
+        );
+        if default.is_none() {
+            required.insert(0, Value::String("semantic_type".into()));
+        }
+        serde_json::json!({"type": "object", "properties": properties, "required": required})
     }
 
     fn presents_cards(&self) -> bool {
         true
-    }
-
-    fn canonical_input(&self, input: &Value) -> Option<Value> {
-        canonical_card_input(self.shape, input)
     }
 
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
@@ -725,7 +1152,8 @@ impl Tool for EmitCardTool {
 
 /// The type a card tool's own name already settles, when it settles one:
 /// `emit_table_card` without a type is a table. A shape whose name covers
-/// unlike things (a map or a calendar; an image or a video) has none.
+/// unlike things (a map or a calendar; an image or a video) has none, and
+/// its schema requires `semantic_type`.
 fn default_semantic_type(shape: &CardShape) -> Option<&'static str> {
     if let [only] = shape.semantic_types {
         return Some(only);
@@ -742,93 +1170,23 @@ fn default_semantic_type(shape: &CardShape) -> Option<&'static str> {
     shape.semantic_types.contains(&generic).then_some(generic)
 }
 
-/// A card call written in an unambiguous variant of the tool's shape, in
-/// its canonical `{semantic_type, payload}` form (measured live: a model's
-/// first call to `emit_table_card` was a correct flat `{columns, rows}`
-/// with column names and list rows, and the envelope refused it three
-/// times). The payload's fields at the top level move into `payload`; a
-/// `semantic_type` inside the payload moves out; a missing type is the one
-/// the tool's name settles; a table's column names and list rows become
-/// keyed columns and rows. `None` when nothing needed changing.
-fn canonical_card_input(shape: &CardShape, input: &Value) -> Option<Value> {
-    let object = input.as_object()?;
-    let mut semantic_type = object.get("semantic_type").cloned();
-    let mut payload = match object.get("payload") {
-        Some(payload) => payload.clone(),
-        None => {
-            let rest: serde_json::Map<String, Value> = object
-                .iter()
-                .filter(|(key, _)| key.as_str() != "semantic_type")
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect();
-            if rest.is_empty() {
-                return None;
-            }
-            Value::Object(rest)
-        }
-    };
-    if let Some(inner) = payload.as_object_mut()
-        && let Some(found) = inner.remove("semantic_type")
-        && semantic_type.is_none()
-    {
-        semantic_type = Some(found);
-    }
-    let semantic_type = semantic_type
-        .or_else(|| default_semantic_type(shape).map(|found| Value::String(found.into())))?;
-    if shape.name == "emit_table_card" {
-        canonical_table(&mut payload);
-    }
-    let canonical = serde_json::json!({ "semantic_type": semantic_type, "payload": payload });
-    (canonical != *input).then_some(canonical)
-}
-
-/// Column names become `{key, label}` columns, and a row written as a list
-/// becomes an object keyed by those columns, in order.
-fn canonical_table(payload: &mut Value) {
-    let Some(columns) = payload.get("columns").and_then(Value::as_array).cloned() else {
-        return;
-    };
-    let columns: Vec<Value> = columns
-        .into_iter()
-        .map(|column| match column {
-            Value::String(name) => serde_json::json!({ "key": name, "label": name }),
-            other => other,
-        })
-        .collect();
-    let keys: Vec<String> = columns
-        .iter()
-        .filter_map(|column| {
-            column
-                .get("key")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        })
-        .collect();
-    if let Some(rows) = payload.get("rows").and_then(Value::as_array).cloned() {
-        let rows: Vec<Value> = rows
-            .into_iter()
-            .map(|row| match row {
-                Value::Array(cells) if cells.len() <= keys.len() => Value::Object(
-                    keys.iter()
-                        .cloned()
-                        .zip(cells)
-                        .collect::<serde_json::Map<String, Value>>(),
-                ),
-                other => other,
-            })
-            .collect();
-        payload["rows"] = Value::Array(rows);
-    }
-    payload["columns"] = Value::Array(columns);
-}
-
 fn validate_call(
     shape: &CardShape,
     args: &Value,
     skills: &vak_delivery::SkillRegistry,
 ) -> Result<vak_delivery::StructuredOutput, String> {
-    let Some(semantic_type) = args.get("semantic_type").and_then(Value::as_str) else {
-        return Err("missing or non-string `semantic_type`".into());
+    let Some(args) = args.as_object() else {
+        return Err("the arguments must be an object".into());
+    };
+    let semantic_type = match args.get("semantic_type") {
+        Some(Value::String(semantic_type)) => semantic_type.as_str(),
+        Some(_) => return Err("`semantic_type` must be a string".into()),
+        None => default_semantic_type(shape).ok_or_else(|| {
+            format!(
+                "missing `semantic_type`; it is one of {:?}",
+                shape.semantic_types
+            )
+        })?,
     };
     if !shape.semantic_types.contains(&semantic_type) {
         return Err(format!(
@@ -836,12 +1194,31 @@ fn validate_call(
             shape.semantic_types
         ));
     }
-    let Some(payload) = args.get("payload") else {
-        return Err("missing `payload`".into());
-    };
+    let mut own = args.clone();
+    own.remove("semantic_type");
+    let fields = (shape.fields)();
+    let known = fields["properties"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    let unknown: Vec<String> = own
+        .keys()
+        .filter(|key| !known.contains_key(key.as_str()))
+        .map(|key| format!("`{key}`"))
+        .collect();
+    if !unknown.is_empty() {
+        let takes: Vec<String> = known.keys().map(|key| format!("`{key}`")).collect();
+        return Err(format!(
+            "unexpected {}; {} takes {} beside `semantic_type`",
+            unknown.join(", "),
+            shape.name,
+            takes.join(", ")
+        ));
+    }
+    let payload = (shape.build)(&own)?;
     let envelope = serde_json::json!({
         "semantic_type": semantic_type,
-        "payload": normalize_payload(semantic_type, payload.clone()),
+        "payload": normalize_payload(semantic_type, payload),
     });
     vak_delivery::parse_fragment_with(&envelope.to_string(), skills).map_err(|e| e.to_string())
 }
@@ -886,16 +1263,23 @@ pub fn presentation_check_nudge(
     })
 }
 
-/// The card tools a request itself reads as, from the app's own signal and
-/// recipe detection over the request text — the same detection the
-/// presentation check runs over the answer. These are loaded for the turn;
-/// every other card tool is deferred until the check or `find_tools` asks.
+/// The card tools a request itself reads as. Two readings, unioned: the
+/// app's own signal and recipe detection over the request text (the same
+/// detection the presentation check runs over the answer), and the card a
+/// request names: "a table card", "an itinerary card", where the word
+/// before "card" is a card tool's own noun or one of its types, and "a
+/// card" with no kind is the general-purpose one. Found live: recipes
+/// describe an answer's shape (a Markdown table, an ingredient list), so
+/// "…as a table card" and "…as a recipe card" predicted nothing, every card
+/// tool was deferred, and the model guessed arguments it could not see.
+/// The predicted tools are loaded for the turn; every other card tool is
+/// deferred until the check, a call to it, or `find_tools` asks.
 pub fn predicted_card_tools(
     request: &str,
     recipes: &vak_delivery::RecipeCatalog,
 ) -> std::collections::BTreeSet<String> {
     let signals = vak_delivery::signals_from_text(request);
-    recipes
+    let mut predicted: std::collections::BTreeSet<String> = recipes
         .intended_outputs(&signals, "desktop")
         .map(|intended| {
             intended
@@ -905,7 +1289,55 @@ pub fn predicted_card_tools(
                 .map(str::to_string)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    predicted.extend(named_card_tools(request));
+    predicted
+}
+
+/// The card tools a request asks for by name: each word (or two) before
+/// "card" that is a card tool's noun or one of its types.
+fn named_card_tools(request: &str) -> std::collections::BTreeSet<String> {
+    let words: Vec<String> = request
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect();
+    let mut named = std::collections::BTreeSet::new();
+    let mut asked_for_a_card = false;
+    for (at, word) in words.iter().enumerate() {
+        if word != "card" && word != "cards" {
+            continue;
+        }
+        asked_for_a_card = true;
+        let one = at.checked_sub(1).map(|i| words[i].as_str()).unwrap_or("");
+        let two = at
+            .checked_sub(2)
+            .map(|i| format!("{} {one}", words[i]))
+            .unwrap_or_default();
+        for shape in SHAPES {
+            let noun = shape
+                .name
+                .trim_start_matches("emit_")
+                .trim_end_matches("_card")
+                .replace('_', " ");
+            let names_it = |phrase: &str| {
+                !phrase.is_empty()
+                    && (phrase == noun
+                        || shape
+                            .semantic_types
+                            .iter()
+                            .any(|t| t.replace(['_', '.'], " ") == phrase))
+            };
+            if names_it(one) || names_it(&two) {
+                named.insert(shape.name.to_string());
+            }
+        }
+    }
+    if asked_for_a_card && named.is_empty() {
+        named.insert("emit_universal_card".to_string());
+    }
+    named
 }
 
 /// Names of every tool that declares `presents_cards()`, for the permission
@@ -1177,49 +1609,231 @@ pub fn identity_digest(semantic_type: &str, payload: &Value) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
-    /// The three calls a model made live, each refused before: a flat
-    /// table with column names and list rows; the payload with the type
-    /// inside it; and a keyed payload with the type inside it. Each now
-    /// becomes the canonical envelope and validates.
-    #[test]
-    fn unambiguous_card_calls_become_canonical() {
-        let shape = SHAPES
-            .iter()
-            .find(|shape| shape.name == "emit_table_card")
-            .unwrap();
-        let skills = vak_delivery::built_in_skill_registry();
-        let calls = [
-            serde_json::json!({"columns": ["Harbour", "Country"], "rows": [["Port of Singapore", "Singapore"], ["Sydney Harbour", "Australia"]]}),
-            serde_json::json!({"payload": {"columns": ["Harbour", "Country"], "rows": [["Sydney Harbour", "Australia"]], "semantic_type": "table"}}),
-            serde_json::json!({"payload": {"columns": [{"key": "Harbour", "label": "Harbour"}, {"key": "Country", "label": "Country"}], "rows": [{"Country": "Spain", "Harbour": "Barcelona"}], "semantic_type": "table"}}),
-        ];
-        for call in calls {
-            let canonical = canonical_card_input(shape, &call).expect("rewritten");
-            assert_eq!(canonical["semantic_type"], "table", "{canonical}");
-            assert!(
-                validate_call(shape, &canonical, &skills).is_ok(),
-                "{canonical}"
-            );
-        }
-        let flat = canonical_card_input(shape, &calls_first()).unwrap();
-        assert_eq!(flat["payload"]["rows"][0]["Country"], "Singapore");
-        assert_eq!(flat["payload"]["columns"][0]["label"], "Harbour");
-        // A canonical call is left alone; a shape whose name settles no type
-        // still needs one.
-        let canonical = canonical_card_input(shape, &calls_first()).unwrap();
-        assert!(canonical_card_input(shape, &canonical).is_none());
-        let universal = SHAPES
-            .iter()
-            .find(|shape| shape.name == "emit_universal_card")
-            .unwrap();
-        assert!(canonical_card_input(universal, &serde_json::json!({"title": "x"})).is_none());
-    }
-
-    fn calls_first() -> serde_json::Value {
-        serde_json::json!({"columns": ["Harbour", "Country"], "rows": [["Port of Singapore", "Singapore"]]})
-    }
-
     use super::*;
+
+    fn shape(name: &str) -> &'static CardShape {
+        SHAPES.iter().find(|shape| shape.name == name).unwrap()
+    }
+
+    fn built(name: &str, args: serde_json::Value) -> Result<Value, String> {
+        validate_call(shape(name), &args, &vak_delivery::built_in_skill_registry())
+            .map(|output| output.payload)
+    }
+
+    /// The four rules (docs/design/30-render-architecture.md §30.1), checked
+    /// on every tool's advertised schema: only the keywords every provider
+    /// carries to a model, and no list of records inside a record that is
+    /// itself in a list.
+    #[test]
+    fn every_card_schema_is_flat_and_portable() {
+        const KEYWORDS: &[&str] = &[
+            "type",
+            "properties",
+            "items",
+            "required",
+            "enum",
+            "description",
+        ];
+        fn walk(schema: &Value, path: &str, record_lists: usize, out: &mut Vec<String>) {
+            let Some(object) = schema.as_object() else {
+                return;
+            };
+            for key in object.keys() {
+                if !KEYWORDS.contains(&key.as_str()) {
+                    out.push(format!("{path}: `{key}` is not carried by every provider"));
+                }
+            }
+            if object.get("type").is_some_and(|t| !t.is_string()) {
+                out.push(format!("{path}: a union `type`"));
+            }
+            if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+                for (name, property) in properties {
+                    walk(property, &format!("{path}.{name}"), record_lists, out);
+                }
+            }
+            if let Some(items) = object.get("items") {
+                let nested = record_lists
+                    + usize::from(items.get("type").and_then(Value::as_str) == Some("object"));
+                if nested > 1 {
+                    out.push(format!(
+                        "{path}: a list of records inside a list of records"
+                    ));
+                }
+                walk(items, &format!("{path}[]"), nested, out);
+            }
+        }
+        let mut problems = Vec::new();
+        for tool in EmitCardTool::all() {
+            let schema = tool.schema();
+            assert!(
+                schema["properties"].get("payload").is_none(),
+                "{}",
+                tool.name()
+            );
+            walk(&schema, tool.name(), 0, &mut problems);
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
+    }
+
+    /// The table a model writes most reliably (40 of 40 live, against 25 of
+    /// 40 for rows of cells) becomes the stored grid: keyed columns, rows by
+    /// label, numeric columns as numbers.
+    #[test]
+    fn a_markdown_table_becomes_the_stored_grid() {
+        let payload = built(
+            "emit_table_card",
+            serde_json::json!({
+                "title": "Lighthouses",
+                "table": "| **Name** | Country | Height (m) |\n| :--- | --- | ---: |\n| Tower of Hercules | Spain | 55 |\n| Bell Rock | Scotland | 35.3 |"
+            }),
+        )
+        .unwrap();
+        assert_eq!(payload["columns"][0]["label"], "Name");
+        assert_eq!(payload["columns"][2]["isNumeric"], true);
+        assert!(payload["columns"][1].get("isNumeric").is_none());
+        assert_eq!(payload["rows"][1]["Country"], "Scotland");
+        assert_eq!(payload["rows"][0]["Height (m)"], 55);
+        assert_eq!(payload["rows"][1]["Height (m)"], 35.3);
+        let refused = built(
+            "emit_table_card",
+            serde_json::json!({"table": "Name, Country"}),
+        );
+        assert!(refused.unwrap_err().contains("between | bars"));
+        let refused = built(
+            "emit_table_card",
+            serde_json::json!({"table": "| Name |\n| Bob |"}),
+        );
+        assert!(refused.unwrap_err().contains("separator row"));
+    }
+
+    #[test]
+    fn timeline_options_join_their_step_by_label() {
+        let payload = built(
+            "emit_timeline_card",
+            serde_json::json!({
+                "semantic_type": "plan.timeline",
+                "title": "Saturday",
+                "items": [{"label": "Morning"}, {"label": "Lunch"}],
+                "options": [
+                    {"step": "Lunch", "label": "Bistro", "facts": "5 min away; €15"},
+                    {"step": "lunch", "label": "Picnic"}
+                ]
+            }),
+        )
+        .unwrap();
+        let options = payload["items"][1]["options"].as_array().unwrap();
+        assert_eq!(options.len(), 2);
+        assert_eq!(
+            options[0]["facts"],
+            serde_json::json!(["5 min away", "€15"])
+        );
+        assert!(payload["items"][0].get("options").is_none());
+        let refused = built(
+            "emit_timeline_card",
+            serde_json::json!({"items": [{"label": "Morning"}], "options": [{"step": "Dinner", "label": "X"}]}),
+        );
+        assert!(refused.unwrap_err().contains("not the label of any item"));
+    }
+
+    #[test]
+    fn chart_points_group_into_series_and_research_sources_are_checked() {
+        let payload = built(
+            "emit_chart_card",
+            serde_json::json!({
+                "chart_type": "bar",
+                "accessible_summary": "rainfall",
+                "points": [
+                    {"series": "2025", "x": "Jan", "y": 50},
+                    {"series": "2026", "x": "Jan", "y": 40},
+                    {"series": "2025", "x": "Feb", "y": 45}
+                ]
+            }),
+        )
+        .unwrap();
+        assert_eq!(payload["series"][0]["name"], "2025");
+        assert_eq!(payload["series"][0]["points"].as_array().unwrap().len(), 2);
+        assert_eq!(payload["series"][0]["points"][0]["x"], "Jan");
+        let refused = built(
+            "emit_research_card",
+            serde_json::json!({
+                "sources": [{"title": "S", "url": "https://example.com"}],
+                "takeaways": [{"text": "T", "source": 2}]
+            }),
+        );
+        assert!(refused.unwrap_err().contains("numbered 1 to 1"));
+    }
+
+    /// Found live: a model shown a card tool only by name wrote
+    /// `metric_data` and `metric_type`; the refusal names them and what the
+    /// tool takes.
+    /// Found live: "…as a table card" and "…as a recipe card" predicted no
+    /// card tool, so every card schema was withheld.
+    #[test]
+    fn a_request_that_names_a_card_loads_that_card() {
+        let recipes = vak_delivery::built_in_recipes();
+        let predict = |request: &str| predicted_card_tools(request, &recipes);
+        assert!(
+            predict("Show three famous lighthouses and their countries as a table card.")
+                .contains("emit_table_card")
+        );
+        assert!(predict("Give me a pancake recipe as a recipe card.").contains("emit_recipe_card"));
+        assert!(predict("Plan Saturday as an itinerary card").contains("emit_timeline_card"));
+        assert!(predict("Put the weekly spend in a budget card").contains("emit_table_card"));
+        assert!(
+            predict("Show a card for the Eiffel Tower with its height")
+                .contains("emit_universal_card")
+        );
+        assert!(predict("Give me a summary of the meeting").is_empty());
+        assert!(predict("hello there").is_empty());
+    }
+
+    #[test]
+    fn an_unknown_field_is_named_with_the_fields_the_tool_takes() {
+        let refused = built(
+            "emit_metric_card",
+            serde_json::json!({"metric_data": {"height": "330 m"}, "name": "Eiffel Tower"}),
+        )
+        .unwrap_err();
+        assert!(
+            refused.contains("unexpected `metric_data`, `name`"),
+            "{refused}"
+        );
+        assert!(refused.contains("`readings`"), "{refused}");
+    }
+
+    #[test]
+    fn labelled_details_and_readings_never_travel_as_keys() {
+        let payload = built(
+            "emit_universal_card",
+            serde_json::json!({
+                "semantic_type": "entity",
+                "title": "Eiffel Tower",
+                "fields": [{"label": "Year Built", "value": "1889"}]
+            }),
+        )
+        .unwrap();
+        assert_eq!(payload["Year Built"], "1889");
+        let payload = built(
+            "emit_metric_card",
+            serde_json::json!({
+                "semantic_type": "weather",
+                "location": "Noida",
+                "readings": [
+                    {"label": "Temperature", "value": "28", "unit": "°C"},
+                    {"label": "Humidity", "value": "61"}
+                ]
+            }),
+        )
+        .unwrap();
+        assert_eq!(payload["Temperature"], "28 °C");
+        assert_eq!(payload["Humidity"], 61);
+        let payload = built(
+            "emit_metric_card",
+            serde_json::json!({"label": "Uptime", "value": "99.9", "unit": "%"}),
+        )
+        .unwrap();
+        assert_eq!(payload["value"], 99.9);
+    }
 
     /// Real trigger: "Vak wants to use emit_metric_card — this needs your
     /// approval" under a card that had already rendered. Cards are Vak's own
@@ -1290,11 +1904,9 @@ mod tests {
             .unwrap();
         let args = serde_json::json!({
             "semantic_type": "chart",
-            "payload": {
-                "chart_type": "line",
-                "accessible_summary": "flat line",
-                "series": [{"name": "s1", "points": [{"x": 1, "y": 2.0}]}]
-            }
+            "chart_type": "line",
+            "accessible_summary": "flat line",
+            "points": [{"series": "s1", "x": "1", "y": 2.0}]
         });
         let out = tool
             .execute(&args, &ToolContext::new(std::env::temp_dir()))
@@ -1322,7 +1934,8 @@ mod tests {
             .unwrap();
         let args = serde_json::json!({
             "semantic_type": "chart",
-            "payload": {"chart_type": "line", "series": []}
+            "chart_type": "line",
+            "points": []
         });
         let out = tool
             .execute(&args, &ToolContext::new(std::env::temp_dir()))
@@ -1339,10 +1952,8 @@ mod tests {
         let long = "x".repeat(6000);
         let args = serde_json::json!({
             "semantic_type": "research.synthesis",
-            "payload": {
-                "sources": [{"title": "S", "url": "https://example.com"}],
-                "takeaways": [{"text": long, "citation_indices": [1]}]
-            }
+            "sources": [{"title": "S", "url": "https://example.com"}],
+            "takeaways": [{"text": long, "source": 1}]
         });
         let card = rebuild_call(
             "emit_research_card",
@@ -1359,10 +1970,7 @@ mod tests {
             .into_iter()
             .find(|t| t.name() == "emit_chart_card")
             .unwrap();
-        let args = serde_json::json!({
-            "semantic_type": "recipe.card",
-            "payload": {}
-        });
+        let args = serde_json::json!({"semantic_type": "recipe.card"});
         let ctx = ToolContext::new(std::env::temp_dir());
         let out = tool.execute(&args, &ctx).await;
         assert!(out.is_error, "a chart tool must refuse a recipe type");
@@ -1373,11 +1981,10 @@ mod tests {
         let skills = vak_delivery::built_in_skill_registry();
         let mut failures = Vec::new();
         for tool in EmitCardTool::all() {
-            for (name, semantic_type, payload) in conformance_cases()
+            for (name, semantic_type, args) in conformance_cases()
                 .into_iter()
                 .filter(|(name, _, _)| *name == tool.name())
             {
-                let args = serde_json::json!({"semantic_type": semantic_type, "payload": payload});
                 let ctx = ToolContext::new(std::env::temp_dir());
                 let out = tool.execute(&args, &ctx).await;
                 if out.is_error {
@@ -1639,9 +2246,9 @@ mod tests {
             payload,
             serde_json::json!({"title": "T", "html": "<p>x</p>"})
         );
-        let schema = ui_preview_payload_schema();
-        assert_eq!(schema["additionalProperties"], serde_json::json!(false));
+        let schema = ui_preview_fields();
         assert!(schema["properties"].get("sandbox").is_none());
+        assert!(schema["properties"].get("connect_src").is_none());
     }
 
     #[test]
@@ -1659,12 +2266,10 @@ mod tests {
         let skills = vak_delivery::built_in_skill_registry();
         let args = serde_json::json!({
             "semantic_type": "chart",
-            "payload": {
-                "title": "Revenue",
-                "chart_type": "line",
-                "accessible_summary": "flat",
-                "series": [{"name": "s1", "points": [{"x": 1, "y": 2.0}]}]
-            }
+            "title": "Revenue",
+            "chart_type": "line",
+            "accessible_summary": "flat",
+            "points": [{"series": "s1", "x": "1", "y": 2.0}]
         });
         let info = presentation_info("emit_chart_card", &args, &skills)
             .expect("a valid call must rebuild");
@@ -1682,7 +2287,7 @@ mod tests {
     #[test]
     fn presentation_info_is_none_for_an_invalid_call() {
         let skills = vak_delivery::built_in_skill_registry();
-        let args = serde_json::json!({"semantic_type": "chart", "payload": {"series": []}});
+        let args = serde_json::json!({"semantic_type": "chart", "points": []});
         assert!(presentation_info("emit_chart_card", &args, &skills).is_none());
     }
 }

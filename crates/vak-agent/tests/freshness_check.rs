@@ -231,7 +231,7 @@ async fn a_live_data_answer_without_retrieval_gets_one_freshness_redo() {
             // cited card (the grounding check then has nothing to add).
             search_call("s1"),
             text_msg(
-                "```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Delhi 05:30\",\"value\":26.4,\"unit\":\"C\",\"source\":\"https://example-met.in/delhi\"}}\n```",
+                "```vak\n{\"semantic_type\":\"metric\",\"label\":\"Delhi 05:30, per https://example-met.in/delhi\",\"value\":\"26.4\",\"unit\":\"C\"}\n```",
             ),
         ],
         true,
@@ -438,7 +438,7 @@ fn card_call(id: &str, value: &str) -> AssistantMessage {
         content: vec![ContentBlock::ToolUse {
             id: id.into(),
             name: "emit_metric_card".into(),
-            input: serde_json::json!({"semantic_type":"metric","payload":{"label":"Delhi","value":value,"unit":"C"}}),
+            input: serde_json::json!({"semantic_type":"metric","label":"Delhi","value":value,"unit":"C"}),
         }],
         stop_reason: StopReason::ToolUse,
         usage: Usage::default(),

@@ -68,7 +68,7 @@ pub(crate) fn find_duplicate_card_fence(text: &str, emitted_types: &[String]) ->
 mod tests {
     use super::*;
 
-    const CHART: &str = r#"{"semantic_type":"chart","payload":{"series":[]}}"#;
+    const CHART: &str = r#"{"semantic_type":"chart","chart_type":"line","points":[]}"#;
 
     fn fenced(body: &str) -> String {
         format!("Here you go.\n\n```vak\n{body}\n```\n")
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn an_invalid_body_is_reported_with_its_parse_error() {
-        let text = fenced(r#"{"semantic_type":"chart","payload":{"series":[}}"#);
+        let text = fenced(r#"{"semantic_type":"chart","points":[}"#);
         assert!(find_malformed_vak_fence(&text).is_some());
     }
 
@@ -125,7 +125,7 @@ mod tests {
             Some("chart".into())
         );
         // A different card whose *text* mentions the chart envelope is not one.
-        let metric = r#"{"semantic_type":"metric","payload":{"label":"say \"semantic_type\":\"chart\" here","value":1}}"#;
+        let metric = r#"{"semantic_type":"metric","label":"say \"semantic_type\":\"chart\" here","value":"1"}"#;
         assert_eq!(find_duplicate_card_fence(&fenced(metric), &emitted), None);
         assert_eq!(find_duplicate_card_fence("no fence at all", &emitted), None);
     }

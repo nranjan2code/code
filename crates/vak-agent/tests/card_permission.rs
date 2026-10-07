@@ -227,13 +227,13 @@ impl Tool for StrictCardTool {
         "emit_metric_card"
     }
     fn description(&self) -> &str {
-        "test stand-in with a required payload"
+        "test stand-in with a required label"
     }
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
-            "properties": {"payload": {"type": "object"}},
-            "required": ["payload"]
+            "properties": {"label": {"type": "string"}},
+            "required": ["label"]
         })
     }
     fn presents_cards(&self) -> bool {

@@ -1015,14 +1015,16 @@ pub struct Evidence {
     pub is_error: bool,
 }
 
-/// Drops every ```` ```vak ```` fence from `narration` whose `payload`
-/// digest matches one of this turn's presentation entries: the card is
-/// already shown through the entry, and replaying the fence would teach the
-/// model the duplicate it is told never to produce (docs/design/68 §10).
+/// Drops every ```` ```vak ```` fence from `narration` whose `semantic_type`
+/// is a card this turn recorded: the card is already shown through its
+/// entry, and replaying the fence would teach the model the duplicate it is
+/// told never to produce (docs/design/68 §10). A fence carries a card
+/// tool's arguments, not the stored payload, so its type is what the two
+/// share.
 fn strip_duplicate_fences(narration: &str, presentations: &[PresentationRecord]) -> String {
     let known: HashSet<&str> = presentations
         .iter()
-        .map(|record| record.payload_digest.as_str())
+        .map(|record| record.semantic_type.as_str())
         .collect();
     let mut out = String::with_capacity(narration.len());
     let mut lines = narration.lines().peekable();
@@ -1051,9 +1053,12 @@ fn strip_duplicate_fences(narration: &str, presentations: &[PresentationRecord])
         }
         let duplicate = serde_json::from_str::<Value>(&body)
             .ok()
-            .and_then(|value| value.get("payload").cloned())
-            .map(|payload| crate::types::payload_digest(&payload))
-            .map(|digest| known.contains(digest.as_str()))
+            .and_then(|value| {
+                value
+                    .get("semantic_type")
+                    .and_then(Value::as_str)
+                    .map(|semantic_type| known.contains(semantic_type))
+            })
             .unwrap_or(false);
         if !duplicate {
             out.push_str(line);
@@ -1841,13 +1846,10 @@ mod tests {
             title: "Temperature".into(),
             identity_digest: String::new(),
         };
-        let narration = format!(
-            "It is 29.1°C.\n```vak\n{}\n```\nStay hydrated.",
-            serde_json::json!({"semantic_type": "metric", "payload": payload})
-        );
-        let kept = strip_duplicate_fences(&narration, std::slice::from_ref(&record));
+        let narration = "It is 29.1°C.\n```vak\n{\"semantic_type\":\"metric\",\"label\":\"Temperature\",\"value\":\"29.1\",\"unit\":\"C\"}\n```\nStay hydrated.";
+        let kept = strip_duplicate_fences(narration, std::slice::from_ref(&record));
         assert_eq!(kept.trim(), "It is 29.1°C.\nStay hydrated.");
-        let other = "```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Wind\"}}\n```";
+        let other = "```vak\n{\"semantic_type\":\"chart\",\"chart_type\":\"line\"}\n```";
         assert_eq!(
             strip_duplicate_fences(other, std::slice::from_ref(&record)).trim(),
             other

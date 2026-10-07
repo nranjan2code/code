@@ -70,8 +70,8 @@ impl Provider for Scripted {
 }
 
 /// Stand-in for `vak_core::presentation_tools::EmitCardTool` — returns the
-/// same `{"semantic_type","payload"}` envelope shape the real tool wraps
-/// its arguments in, without pulling in the vak-core dependency.
+/// card's flat arguments as the real tool takes them, without pulling in
+/// the vak-core dependency.
 struct FakeEmitChartCard;
 
 #[async_trait]
@@ -93,10 +93,7 @@ impl Tool for FakeEmitChartCard {
     }
 
     async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        let envelope = serde_json::json!({
-            "semantic_type": "chart",
-            "payload": args.get("payload").cloned().unwrap_or(serde_json::json!({})),
-        });
+        let envelope = args.clone();
         ToolOutput::ok(envelope.to_string())
     }
 }
@@ -256,7 +253,8 @@ fn user_texts(agent: &Agent) -> Vec<String> {
 
 const PROSE: &str = "Weekly moves as a TABLE:\n\n| Index | Change |\n|---|---|\n| Nifty | -0.22% |";
 const NARRATION: &str = "The chart is shown above.";
-const CHART_INPUT: fn() -> serde_json::Value = || serde_json::json!({"semantic_type": "chart", "payload": {"chart_type": "line", "series": []}});
+const CHART_INPUT: fn() -> serde_json::Value =
+    || serde_json::json!({"semantic_type": "chart", "chart_type": "line", "points": []});
 
 async fn run(agent: &mut Agent) -> TurnOutcome {
     agent
@@ -368,7 +366,7 @@ async fn no_nudge_when_a_card_was_already_emitted_this_run() {
 async fn no_nudge_when_the_answer_already_carries_an_inline_card() {
     let dir = tempdir().unwrap();
     let with_fence = format!(
-        "{PROSE}\n\n```vak\n{{\"semantic_type\":\"metric\",\"payload\":{{\"label\":\"x\",\"value\":1}}}}\n```"
+        "{PROSE}\n\n```vak\n{{\"semantic_type\":\"metric\",\"label\":\"x\",\"value\":\"1\"}}\n```"
     );
     let (mut agent, _) = build_agent(&dir, "pc-fence", vec![text_msg(&with_fence)], true).await;
     assert!(matches!(
@@ -394,5 +392,33 @@ async fn with_no_check_configured_the_loop_is_untouched() {
         !user_texts(&agent)
             .iter()
             .any(|t| t.contains("[presentation-check]"))
+    );
+}
+
+/// Found live: a model shown a card tool only by name called it with
+/// arguments it had guessed, three times. Calling a deferred tool loads it,
+/// so the request after the call declares its schema.
+#[tokio::test]
+async fn calling_a_deferred_tool_loads_its_schema_for_the_next_step() {
+    let dir = tempdir().unwrap();
+    let (mut agent, requests) = build_agent(
+        &dir,
+        "pc-direct",
+        vec![
+            tool_call_msg("c1", "emit_chart_card", CHART_INPUT()),
+            text_msg(NARRATION),
+        ],
+        false,
+    )
+    .await;
+    assert!(matches!(
+        run(&mut agent).await,
+        TurnOutcome::Completed { .. }
+    ));
+    let requests = requests.lock().unwrap();
+    assert!(!requests[0].contains(&"emit_chart_card".to_string()));
+    assert!(
+        requests[1].contains(&"emit_chart_card".to_string()),
+        "{requests:?}"
     );
 }

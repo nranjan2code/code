@@ -554,7 +554,7 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
         tool_call(
             "c2",
             "emit_ui_preview_card",
-            serde_json::json!({"payload": {"artifact_path": "./deck.pptx", "html": "<h1>Next steps</h1>"}}),
+            serde_json::json!({"artifact_path": "./deck.pptx", "html": "<h1>Next steps</h1>"}),
         ),
         tool_call(
             "c4",

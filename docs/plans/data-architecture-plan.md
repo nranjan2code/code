@@ -1648,7 +1648,10 @@ Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):
   now rewrites an unambiguous variant into the canonical form before
   validation. For a card that means a payload's fields at the top level, a
   type inside the payload, a type the tool's name already settles, and a
-  table's column names and list rows.
+  table's column names and list rows. Superseded the same day: the envelope itself
+  was the fault, so every card tool's arguments became flat (the card
+  argument contract, docs/design/30-render-architecture.md §30.1) and the
+  hook was removed.
 - A card's result was replaced by a bare `{"ok": true}`, which dropped
   the tool's "it is on screen; finish" and led to repeat calls. The
   result now keeps that text, in plain words, with the presentation id.

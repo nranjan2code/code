@@ -107,10 +107,7 @@ impl Tool for FakeEmitChartCard {
         true
     }
     async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        let envelope = serde_json::json!({
-            "semantic_type": "chart",
-            "payload": args.get("payload").cloned().unwrap_or(serde_json::json!({})),
-        });
+        let envelope = args.clone();
         ToolOutput::ok(envelope.to_string())
     }
 }
@@ -121,7 +118,9 @@ impl Tool for FakeEmitChartCard {
 fn fake_rebuild() -> vak_agent::PresentationRebuild {
     Arc::new(|_name, input| {
         let semantic_type = input.get("semantic_type")?.as_str()?.to_string();
-        let payload = vak_session::types::canonicalize_json(input.get("payload")?);
+        let mut card = input.as_object()?.clone();
+        card.remove("semantic_type");
+        let payload = vak_session::types::canonicalize_json(&serde_json::Value::Object(card));
         let title = payload
             .get("title")
             .and_then(|v| v.as_str())
@@ -222,7 +221,7 @@ async fn turn_card_is_written_at_close() {
 #[tokio::test]
 async fn fence_presentation_is_written_once() {
     let dir = tempdir().unwrap();
-    let fence = "Here's a fresh chart.\n\n```vak\n{\"semantic_type\":\"chart\",\"payload\":{\"title\":\"Fresh\",\"series\":[1,2,3]}}\n```";
+    let fence = "Here's a fresh chart.\n\n```vak\n{\"semantic_type\":\"chart\",\"title\":\"Fresh\",\"points\":[{\"series\":\"s\",\"x\":\"1\",\"y\":1}]}\n```";
     let mut agent = build_agent(&dir, "fence-write", vec![text_msg(fence)], vec![], true);
     let outcome = agent
         .run(
@@ -256,7 +255,7 @@ async fn fence_presentation_deduped_against_tool_emitted_card() {
     // rule exists for) — the duplicate-card-check repair nudge fires once,
     // and the model ignores it (attempt two repeats it too), so the run
     // completes with the duplicate fence still present in the final text.
-    let duplicate_fence = "Here's the chart you asked for.\n\n```vak\n{\"semantic_type\":\"chart\",\"payload\":{\"title\":\"Sales\",\"series\":[1,2,3]}}\n```";
+    let duplicate_fence = "Here's the chart you asked for.\n\n```vak\n{\"semantic_type\":\"chart\",\"title\":\"Sales\",\"points\":[{\"series\":\"s\",\"x\":\"1\",\"y\":1}]}\n```";
     let mut agent = build_agent(
         &dir,
         "fence-dedup",
@@ -264,7 +263,7 @@ async fn fence_presentation_deduped_against_tool_emitted_card() {
             tool_call_msg(
                 "call_1",
                 "emit_chart_card",
-                serde_json::json!({"semantic_type": "chart", "payload": {"title": "Sales", "series": [1, 2, 3]}}),
+                serde_json::json!({"semantic_type": "chart", "title": "Sales", "points": [{"series": "s", "x": "1", "y": 1}]}),
             ),
             text_msg(duplicate_fence),
             text_msg(duplicate_fence),

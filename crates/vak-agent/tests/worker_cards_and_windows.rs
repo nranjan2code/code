@@ -145,7 +145,9 @@ fn big_output() -> String {
 
 fn fake_rebuild() -> vak_agent::PresentationRebuild {
     Arc::new(|_name, input| {
-        let payload = vak_session::types::canonicalize_json(input.get("payload")?);
+        let mut card = input.as_object()?.clone();
+        card.remove("semantic_type");
+        let payload = vak_session::types::canonicalize_json(&serde_json::Value::Object(card));
         Some(PresentationCard {
             semantic_type: "chart".into(),
             skill_id: "test".into(),
@@ -303,7 +305,7 @@ async fn a_workers_card_is_shown_and_recallable_in_the_delegating_conversation()
         call(
             "c1",
             "emit_chart_card",
-            serde_json::json!({"payload": {"title": "Sales by month", "series": [1, 2, 3]}}),
+            serde_json::json!({"title": "Sales by month", "points": [{"series": "s", "x": "Jan", "y": 1}]}),
         ),
         text_msg("charted"),
         text_msg("the worker charted it"),

@@ -180,21 +180,53 @@ envelope format is identical regardless of provider.
 row above is how `vak-core/src/presentation_tools.rs`'s twelve
 `emit_*_card` tools reach this pipeline — one tool per payload *shape*
 (not per `semantic_type`; siblings that share a shape, e.g. every
-timeline-flavored type, share one tool), each with a JSON Schema precise
-enough to satisfy `SkillRegistry::validate()`. `execute()` validates the
-call's arguments against `SkillRegistry` and replies with a short ack (or a
-repairable tool error); the projection rebuilds the card from the call's own
-arguments (`card_output_from_call`), which the ledger records untruncated —
-the card is never carried in result text, of which an over-long result's
-request carries only a window (docs/design/68-context-engine.md §3). This is now the *preferred* path over
-writing a ```vak fence directly (`system-prompt.md`,
-`docs/design/07-prompt.md` v3.4.5): measured against the real local model
-this app ships (gemma4:e2b-mlx via Ollama), a free-text fence in prose
-parsed as valid JSON only ~20% of the time, against 100% for a tool call
-constrained by a precise schema — the schema is enforced as the model
-constructs the call, so a malformed card never reaches this layer at all.
-The fence path remains the fallback for a turn where no matching
-`emit_*_card` tool is present.
+timeline-flavored type, share one tool; the twelve carry all 97 types).
+`execute()` turns the call's arguments into the stored card (each shape's
+`build`), validates it against `SkillRegistry`, and replies with a short ack
+(or a repairable tool error naming the field); the card is written as a
+`Presentation` ledger entry at that moment and never carried in result text,
+of which an over-long result's request carries only a window
+(docs/design/68-context-engine.md §3). A tool call is the *preferred* path
+over writing a ```vak fence directly (`system-prompt.md`,
+`docs/design/07-prompt.md` v3.4.5): measured against gemma4:e2b-mlx via
+Ollama, a free-text fence parsed as valid JSON only ~20% of the time. The
+fence path remains the fallback for a turn where no matching tool is present,
+and a fence carries exactly the arguments the tool would take.
+
+**The card argument contract.** A tool call is not constrained by its schema
+everywhere: Ollama samples a local model's call syntax freely and drops a call
+it cannot parse without telling the client, so the argument shape itself has
+to be one every model writes reliably. Measured 2026-10-07 against
+gemma4:e2b-mlx (20 runs per tool and per shape; the model wrote the same
+nested data as plain JSON in a reply 14 times in 15, so the weak point is the
+tool-call encoding, not JSON or the size of the data), every card tool's
+arguments follow four rules, checked by
+`every_card_schema_is_flat_and_portable`:
+
+1. **No envelope.** The card's fields sit at the top level beside
+   `semantic_type`, which a tool whose name settles the type lets the model
+   leave out. 13 of 16 dropped calls had left a `payload` wrapper open; with
+   the wrapper gone, a UI preview went from 1 to 20 calls in 20 and a recipe
+   from 7 to 19.
+2. **Only the keywords every provider carries:** `type` (one type, never a
+   union), `properties`, `items`, `required`, `enum`, `description`. Ollama's
+   tool schema type drops `oneOf`, `additionalProperties` and bounds, so a
+   shape stated only through them reached the model as a bare object; bounds
+   and union shapes are checked by `build`, with a message naming the field.
+3. **No data in keys.** Labelled details and metric readings are lists of
+   `{label, value}`; a label such as `Year Built` is not a key every call
+   syntax can write.
+4. **No list of records inside a record in a list.** Nesting is expressed as
+   flat lists joined by a name, as a database would: a timeline's options are
+   their own list naming their step, a chart's points name their series. A
+   timeline went from 12 of 20 (options inside items) to 16 of 20 valid with
+   none dropped. A table is a Markdown table (40 of 40, against 25 of 40 for
+   rows of cells and 0 of 10 for rows of lists), parsed into the stored
+   columns and rows; a nested value carried as one JSON string was no better
+   (9 of 15).
+
+The stored card, and every renderer, pack, digest and channel that reads it,
+is unchanged by the contract: `build` is the only place the two meet.
 
 **Presentation check.** Prompt guidance is advisory, and a strong model can
 still answer in prose what the app would have shown as a card. After the

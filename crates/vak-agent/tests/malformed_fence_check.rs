@@ -171,10 +171,10 @@ fn user_texts(agent: &Agent) -> Vec<String> {
 }
 
 // The exact malformed shape from the live bug: a `decision` fence whose
-// payload has a bare (unquoted) key, `precision":1` instead of `"precision":1`.
-const REAL_MALFORMED_FENCE: &str = "```vak\n{\"semantic_type\":\"decision\",\"payload\":{\"title\":\"Capability Confirmation\",\"choices\":[{\"name\":\"Yes\",\"reason\":\"ok\"}],precision\":1}}\n```\n\n### Explanation\n\nYes, I can do that.";
+// fence has a bare (unquoted) key, `precision":1` instead of `"precision":1`.
+const REAL_MALFORMED_FENCE: &str = "```vak\n{\"semantic_type\":\"decision\",\"title\":\"Capability Confirmation\",\"items\":[{\"label\":\"Yes\",\"detail\":\"ok\"}],precision\":1}\n```\n\n### Explanation\n\nYes, I can do that.";
 
-const VALID_FENCE: &str = "```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Uptime\",\"value\":99.9,\"unit\":\"%\"}}\n```";
+const VALID_FENCE: &str = "```vak\n{\"semantic_type\":\"metric\",\"label\":\"Uptime\",\"value\":\"99.9\",\"unit\":\"%\"}\n```";
 
 #[tokio::test]
 async fn malformed_fence_gets_one_repair_turn_naming_the_parse_error() {

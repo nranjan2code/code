@@ -52,6 +52,16 @@ fn chart_payload(summary: &str) -> serde_json::Value {
     })
 }
 
+/// The arguments a model writes for the card `chart_payload` stores.
+fn chart_call(summary: &str) -> serde_json::Value {
+    serde_json::json!({
+        "semantic_type": "chart",
+        "chart_type": "line",
+        "points": [{"series": "s1", "x": "1", "y": 2.0}],
+        "accessible_summary": summary,
+    })
+}
+
 fn record_for(turn_id: &str, tool_use_id: &str, summary: &str) -> PresentationRecord {
     let payload = canonicalize_json(&chart_payload(summary));
     PresentationRecord {
@@ -175,7 +185,7 @@ fn derive_messages_skips_presentation_entries_like_receipts() {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-1".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({"semantic_type": "chart", "payload": chart_payload("flat")}),
+                input: chart_call("flat"),
             }]),
             meta: None,
         })
@@ -292,7 +302,7 @@ fn non_card_evidence_since_collects_prior_non_card_tool_results_only() {
         message: Message::assistant(vec![ContentBlock::ToolUse {
             id: "call-1".into(),
             name: "emit_chart_card".into(),
-            input: serde_json::json!({"semantic_type": "chart", "payload": chart_payload("flat")}),
+            input: chart_call("flat"),
         }]),
         meta: None,
     })

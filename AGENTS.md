@@ -1355,14 +1355,20 @@ in progress, and the rest of V4 follows it.
   card preferentially by calling one of the twelve `emit_*_card` tools
   (`vak-core/src/presentation_tools.rs`, one per payload shape, not per
   `semantic_type`) rather than writing an inline ` ```vak ` fence — measured
-  far more reliable against the small local models this app targets (see
+  far more reliable against the local models this app ships (see
   `docs/design/07-prompt.md` v3.4.5, `docs/design/30-render-architecture.md`
-  §30.1). The fence path is the fallback when no matching tool is present. The
-  card travels in the call's *arguments* (recorded untruncated in the ledger);
-  the tool result is only a short ack or a repairable validation error, and
-  `vak-server`'s projection rebuilds the card from the call
-  (`vak_core::presentation_tools::card_output_from_call`) — never from result
-  text, of which an over-long result's request carries only a window. A
+  §30.1). The fence path is the fallback when no matching tool is present,
+  and a fence carries the same arguments the tool takes. A card tool's
+  arguments are flat beside `semantic_type`, use only the schema keywords
+  every provider carries, put no data in keys and hold no list of records
+  inside a record in a list (measured, §30.1;
+  `every_card_schema_is_flat_and_portable`); each shape's `build` turns them
+  into the stored card. The card travels in the call's *arguments*
+  (recorded untruncated in the ledger); the tool result is only a short ack
+  or a repairable validation error naming the field, and the card is written
+  as a `Presentation` ledger entry when it validates, which `vak-server`'s
+  projection reads — never result text, of which an over-long result's
+  request carries only a window. A
   worker's cards reach the conversation that delegated to it: the worker
   records them in its own ledger, `task` hands them up beside its text
   (`ToolOutput::delegated`), and the parent loop records each as a

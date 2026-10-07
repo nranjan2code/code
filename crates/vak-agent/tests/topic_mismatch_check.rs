@@ -148,7 +148,9 @@ fn weather_card_call(id: &str) -> AssistantMessage {
             name: "emit_metric_card".into(),
             input: serde_json::json!({
                 "semantic_type": "weather",
-                "payload": {"label": "Noida Weather", "unit": "Celsius", "value": "28°C"}
+                "label": "Noida Weather",
+                "unit": "Celsius",
+                "value": "28°C"
             }),
         }],
         stop_reason: StopReason::ToolUse,
@@ -165,7 +167,8 @@ fn ai_entity_card_call(id: &str) -> AssistantMessage {
             name: "emit_entity_card".into(),
             input: serde_json::json!({
                 "semantic_type": "entity",
-                "payload": {"title": "OpenAI announces GPT-6", "summary": "newest model launch"}
+                "title": "OpenAI announces GPT-6",
+                "summary": "newest model launch"
             }),
         }],
         stop_reason: StopReason::ToolUse,

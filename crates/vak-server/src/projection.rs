@@ -2480,7 +2480,7 @@ mod tests {
     ) {
         let skills = vak_delivery::built_in_skill_registry();
         let info = vak_core::presentation_tools::presentation_info(tool, args, &skills)
-            .expect("fixture call must validate");
+            .unwrap_or_else(|| panic!("fixture call must validate: {tool} {args:.600}"));
         let turn_id = log.latest_directive_entry_id().unwrap_or_default();
         let payload_digest = vak_session::types::payload_digest(&info.payload);
         log.append_presentation(vak_session::types::PresentationRecord {
@@ -2650,7 +2650,7 @@ mod tests {
         for summary in ["revenue", "cost"] {
             let info = vak_core::presentation_tools::presentation_info(
                 "emit_chart_card",
-                &serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":summary}}),
+                &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":summary}),
                 &skills,
             )
             .expect("fixture card validates");
@@ -3947,7 +3947,7 @@ mod tests {
         })
         .expect("append user message");
 
-        let chart_input = |summary: &str| serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":summary}});
+        let chart_input = |summary: &str| serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":summary});
         let ack = || "Card displayed to the user (chart).".to_string();
 
         log.append_message(MessageRecord {
@@ -4106,7 +4106,7 @@ mod tests {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-1".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"revenue"}}),
+                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":"revenue"}),
             }]),
             meta: None,
         })
@@ -4127,13 +4127,13 @@ mod tests {
             &mut log,
             "emit_chart_card",
             "call-1",
-            &serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"revenue"}}),
+            &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":"revenue"}),
         );
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-2".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"cost"}}),
+                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":"cost"}),
             }]),
             meta: None,
         })
@@ -4154,7 +4154,7 @@ mod tests {
             &mut log,
             "emit_chart_card",
             "call-2",
-            &serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":"cost"}}),
+            &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":"cost"}),
         );
 
         let timeline = snapshot("two-charts", &log);
@@ -4214,11 +4214,12 @@ mod tests {
         })
         .expect("user");
         let takeaways: Vec<_> = (0..12)
-            .map(|i| serde_json::json!({"text": format!("Takeaway {i}: {}", "detail ".repeat(40)), "citation_indices": [1]}))
+            .map(|i| serde_json::json!({"text": format!("Takeaway {i}: {}", "detail ".repeat(40)), "source": 1}))
             .collect();
         let input = serde_json::json!({
             "semantic_type": "research.synthesis",
-            "payload": {"sources": [{"title": "Reuters", "url": "https://example.com/a"}], "takeaways": takeaways}
+            "sources": [{"title": "Reuters", "url": "https://example.com/a"}],
+            "takeaways": takeaways
         });
         assert!(
             input.to_string().len() > 3000,
@@ -4299,7 +4300,9 @@ mod tests {
         .expect("user");
         let input = serde_json::json!({
             "semantic_type": "metric",
-            "payload": {"label": "Temperature", "value": 25, "unit": "C"}
+            "label": "Temperature",
+            "value": "25",
+            "unit": "C"
         });
         let call_entry = log
             .append_message(MessageRecord {
@@ -4491,8 +4494,59 @@ mod tests {
         }
     }
 
+    /// Appends `padding` to the longest string in `value` (never
+    /// `semantic_type`; a Markdown table gains a padded row), so a padded
+    /// fixture still carries only the fields its card accepts.
+    fn pad_longest_text(value: &mut serde_json::Value, padding: &str) -> bool {
+        fn longest<'a>(value: &'a mut serde_json::Value, best: &mut Option<&'a mut String>) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    for (key, field) in fields.iter_mut() {
+                        if key == "semantic_type" {
+                            continue;
+                        }
+                        if let serde_json::Value::String(text) = field {
+                            if best.as_ref().is_none_or(|b| b.len() < text.len()) {
+                                *best = Some(text);
+                            }
+                        } else {
+                            longest(field, best);
+                        }
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for item in items {
+                        if let serde_json::Value::String(text) = item {
+                            if best.as_ref().is_none_or(|b| b.len() < text.len()) {
+                                *best = Some(text);
+                            }
+                        } else {
+                            longest(item, best);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut best = None;
+        longest(value, &mut best);
+        best.map(|text| {
+            if text.trim_end().ends_with('|') {
+                let columns = text
+                    .lines()
+                    .next()
+                    .map_or(1, |row| row.matches('|').count().saturating_sub(1));
+                let cells = vec![padding.trim(); columns.max(1)].join(" | ");
+                text.push_str(&format!("\n| {cells} |"));
+            } else {
+                text.push_str(padding);
+            }
+        })
+        .is_some()
+    }
+
     /// Not per-type and not per-size: every type the emit tools support, at a
-    /// normal size and padded far past the tool framework's result line
+    /// normal size and padded (one of its own text fields) far past the tool framework's result line
     /// limit, must come out of the real `snapshot()` as exactly one card of
     /// that type — from the call arguments alone, with only an ack as result.
     #[test]
@@ -4504,11 +4558,14 @@ mod tests {
             cases.len()
         );
         let mut failures = Vec::new();
-        for (tool, semantic_type, payload) in cases {
+        for (tool, semantic_type, args) in cases {
             for padded in [false, true] {
-                let mut payload = payload.clone();
+                let mut args = args.clone();
                 if padded {
-                    payload["x_padding"] = serde_json::Value::String("p".repeat(6000));
+                    assert!(
+                        pad_longest_text(&mut args, &" p".repeat(3000)),
+                        "{semantic_type}: a fixture with no text to pad"
+                    );
                 }
                 let dir = tempfile::tempdir().expect("tempdir");
                 let mut log = SessionLog::create(
@@ -4545,8 +4602,7 @@ mod tests {
                     meta: None,
                 })
                 .expect("user");
-                let call_args =
-                    serde_json::json!({"semantic_type": semantic_type, "payload": payload});
+                let call_args = args.clone();
                 log.append_message(MessageRecord {
                     message: Message::assistant(vec![ContentBlock::ToolUse {
                         id: "c1".into(),
@@ -4608,15 +4664,21 @@ mod tests {
     #[test]
     fn every_built_in_pack_compiles_its_real_emitter_shape() {
         let cases = vak_core::presentation_tools::conformance_cases();
+        let skills = vak_delivery::built_in_skill_registry();
         let mut failures = Vec::new();
         for seed in vak_presentation::seeds::built_in_seed_pack() {
-            let Some((_, semantic_type, payload)) = cases
+            let Some((tool, semantic_type, args)) = cases
                 .iter()
                 .find(|(_, kind, _)| seed.spec.accepts.iter().any(|accepted| accepted == kind))
             else {
                 failures.push(format!("{} has no emitted semantic type", seed.spec.id));
                 continue;
             };
+            // Packs read the stored card, which the tool builds from its
+            // arguments.
+            let payload = vak_core::presentation_tools::presentation_info(tool, args, &skills)
+                .expect("conformance arguments build a card")
+                .payload;
             let compiled = vak_presentation::compile(
                 &seed.spec,
                 &vak_presentation::CompileInput {
@@ -4656,7 +4718,12 @@ mod tests {
         .expect("user");
         let input = serde_json::json!({
             "semantic_type": "metric",
-            "payload": {"label": "Noida now", "condition": "Sunny", "temperature": "35.2°C", "humidity": "31%"}
+            "location": "Noida now",
+            "readings": [
+                {"label": "condition", "value": "Sunny"},
+                {"label": "temperature", "value": "35.2°C"},
+                {"label": "humidity", "value": "31%"}
+            ]
         });
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
@@ -4755,7 +4822,7 @@ mod tests {
     }
 
     fn append_card_call(log: &mut SessionLog, id: &str, summary: &str) {
-        let input = serde_json::json!({"semantic_type":"chart","payload":{"chart_type":"line","series":[],"accessible_summary":summary}});
+        let input = serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":summary});
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: id.into(),

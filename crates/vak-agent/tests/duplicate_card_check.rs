@@ -67,8 +67,8 @@ impl Provider for Scripted {
 }
 
 /// Stand-in for `vak_core::presentation_tools::EmitCardTool` — returns the
-/// same `{"semantic_type","payload"}` envelope shape the real tool wraps
-/// its arguments in, without pulling in the vak-core dependency.
+/// card's flat arguments as the real tool takes them, without pulling in
+/// the vak-core dependency.
 struct FakeEmitChartCard;
 
 #[async_trait]
@@ -90,10 +90,7 @@ impl Tool for FakeEmitChartCard {
     }
 
     async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        let envelope = serde_json::json!({
-            "semantic_type": "chart",
-            "payload": args.get("payload").cloned().unwrap_or(serde_json::json!({})),
-        });
+        let envelope = args.clone();
         ToolOutput::ok(envelope.to_string())
     }
 }
@@ -227,7 +224,7 @@ fn user_texts(agent: &Agent) -> Vec<String> {
     })
 }
 
-const DUPLICATE_FENCE: &str = "Here's the chart you asked for.\n\n```vak\n{\"semantic_type\":\"chart\",\"payload\":{\"chart_type\":\"line\",\"series\":[]}}\n```";
+const DUPLICATE_FENCE: &str = "Here's the chart you asked for.\n\n```vak\n{\"semantic_type\":\"chart\",\"chart_type\":\"line\",\"points\":[]}\n```";
 const NARRATION_ONLY: &str = "Here's the chart you asked for.";
 
 #[tokio::test]
@@ -240,7 +237,7 @@ async fn a_fence_repeating_a_just_emitted_card_gets_one_repair_turn() {
             tool_call_msg(
                 "call_1",
                 "emit_chart_card",
-                serde_json::json!({"semantic_type": "chart", "payload": {"chart_type": "line", "series": []}}),
+                serde_json::json!({"semantic_type": "chart", "chart_type": "line", "points": []}),
             ),
             text_msg(DUPLICATE_FENCE),
             text_msg(NARRATION_ONLY),
@@ -286,7 +283,7 @@ async fn repair_is_bounded_to_one_attempt_not_a_loop() {
             tool_call_msg(
                 "call_1",
                 "emit_chart_card",
-                serde_json::json!({"semantic_type": "chart", "payload": {"chart_type": "line", "series": []}}),
+                serde_json::json!({"semantic_type": "chart", "chart_type": "line", "points": []}),
             ),
             text_msg(DUPLICATE_FENCE),
             text_msg(DUPLICATE_FENCE), // still duplicated after the nudge
@@ -325,7 +322,7 @@ async fn narration_without_a_duplicate_fence_is_never_touched() {
             tool_call_msg(
                 "call_1",
                 "emit_chart_card",
-                serde_json::json!({"semantic_type": "chart", "payload": {"chart_type": "line", "series": []}}),
+                serde_json::json!({"semantic_type": "chart", "chart_type": "line", "points": []}),
             ),
             text_msg(NARRATION_ONLY),
         ],

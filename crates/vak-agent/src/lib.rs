@@ -1137,7 +1137,9 @@ mod topic_gate_tests {
     fn a_weather_card_matches_a_weather_directive() {
         let input = serde_json::json!({
             "semantic_type": "weather",
-            "payload": {"label": "Noida Weather", "unit": "Celsius", "value": "28°C"}
+            "label": "Noida Weather",
+            "unit": "Celsius",
+            "value": "28°C"
         });
         assert!(card_shares_a_topic_with(
             "what is the current weather in noida",
@@ -1153,7 +1155,9 @@ mod topic_gate_tests {
         // card from an unrelated older turn anyway.
         let input = serde_json::json!({
             "semantic_type": "weather",
-            "payload": {"label": "Noida Weather", "unit": "Celsius", "value": "28°C"}
+            "label": "Noida Weather",
+            "unit": "Celsius",
+            "value": "28°C"
         });
         assert!(!card_shares_a_topic_with(
             "what is the current top news in AI",
@@ -1166,7 +1170,8 @@ mod topic_gate_tests {
     fn an_on_topic_ai_card_matches() {
         let input = serde_json::json!({
             "semantic_type": "research.synthesis",
-            "payload": {"title": "AI news roundup", "sources": [{"title": "Latest AI breakthroughs"}]}
+            "title": "AI news roundup",
+            "sources": [{"title": "Latest AI breakthroughs"}]
         });
         assert!(card_shares_a_topic_with(
             "what is the current top news in AI",
@@ -1177,7 +1182,7 @@ mod topic_gate_tests {
 
     #[test]
     fn a_directive_with_only_stopwords_is_never_gated() {
-        let input = serde_json::json!({"payload": {"label": "anything at all"}});
+        let input = serde_json::json!({"label": "anything at all"});
         assert!(card_shares_a_topic_with(
             "what is this now",
             "emit_metric_card",
@@ -1195,7 +1200,8 @@ mod topic_gate_tests {
         // call site does this by widening the context string before calling
         // this function, which is what this test exercises directly.
         let input = serde_json::json!({
-            "payload": {"title": "OpenAI announces GPT-6", "summary": "a major model release"}
+            "title": "OpenAI announces GPT-6",
+            "summary": "a major model release"
         });
         let directive_plus_evidence =
             "what is the current top news in AI OpenAI today unveiled GPT-6, its newest model";
@@ -1210,7 +1216,7 @@ mod topic_gate_tests {
     fn recency_words_alone_never_establish_a_shared_topic() {
         // Both directives use "current"/"now"/"right"; without stripping
         // them as stopwords, this unrelated pair would look related.
-        let input = serde_json::json!({"payload": {"label": "Noida Weather"}});
+        let input = serde_json::json!({"label": "Noida Weather"});
         assert!(!card_shares_a_topic_with(
             "what is currently happening right now in politics",
             "emit_metric_card",
@@ -6044,10 +6050,7 @@ impl Agent {
                 continue;
             }
             if self.tool_presents_cards(&call.name)
-                && let Some(path) = call
-                    .input
-                    .pointer("/payload/artifact_path")
-                    .and_then(Value::as_str)
+                && let Some(path) = call.input.get("artifact_path").and_then(Value::as_str)
                 && let Some(delivered) = deliveries
                     .paths
                     .iter()
@@ -6228,6 +6231,33 @@ impl Agent {
         }
     }
 
+    /// A call to a tool this turn deferred loads it, as `find_tools` would:
+    /// a model that calls a tool it was shown only by name wrote arguments
+    /// it could not see the schema for (found live: `metric_data` and an
+    /// invented `emit_card`, repeated three times), so the next step carries
+    /// the schema whatever this call's outcome.
+    fn load_called_deferred(&self, calls: &[PendingToolCall]) {
+        let deferred: Vec<vak_llm::ToolDefinition> = self
+            .base_tool_definitions()
+            .into_iter()
+            .filter(|definition| definition.defer)
+            .filter(|definition| calls.iter().any(|call| call.name == definition.name))
+            .collect();
+        if deferred.is_empty() {
+            return;
+        }
+        let mut discovered = self
+            .config
+            .discovered_tools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for definition in deferred {
+            if !discovered.iter().any(|known| known.name == definition.name) {
+                discovered.push(definition);
+            }
+        }
+    }
+
     async fn execute_batch_calls(
         &self,
         calls: Vec<PendingToolCall>,
@@ -6246,6 +6276,7 @@ impl Agent {
             .map(|call| normalize_mcp_call(call, &index))
             .map(|call| normalize_schema_wrapper(call, &self.config.tools))
             .collect::<Vec<_>>();
+        self.load_called_deferred(&calls);
         let n = calls.len();
         let cwd = self
             .session
@@ -7170,9 +7201,6 @@ fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) 
     let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) else {
         return call;
     };
-    if let Some(input) = tool.canonical_input(&call.input) {
-        call.input = input;
-    }
     let schema = tool.schema();
     if let Some(input) = unwrapped_schema_input(&schema, &call.input) {
         call.input = input;
@@ -8486,14 +8514,15 @@ mod tool_recovery_tests {
             "type": "object",
             "properties": {
                 "semantic_type": {"type": "string", "enum": ["weather"]},
-                "payload": {"type": "object"}
+                "label": {"type": "string"},
+                "value": {"type": "string"}
             },
-            "required": ["semantic_type", "payload"],
-            "additionalProperties": false
+            "required": ["label", "value"]
         });
         let canonical = serde_json::json!({
             "semantic_type": "weather",
-            "payload": {"temperature": "28.5°C"}
+            "label": "Temperature",
+            "value": "28.5°C"
         });
         assert_eq!(
             unwrapped_schema_input(
@@ -8504,10 +8533,7 @@ mod tool_recovery_tests {
         );
         assert_eq!(unwrapped_schema_input(&schema, &canonical), None);
         assert_eq!(
-            unwrapped_schema_input(
-                &schema,
-                &serde_json::json!({"metric_card": {"payload": {}}})
-            ),
+            unwrapped_schema_input(&schema, &serde_json::json!({"metric_card": {"value": "1"}})),
             None
         );
         assert_eq!(
