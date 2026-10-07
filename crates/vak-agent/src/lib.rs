@@ -3025,18 +3025,9 @@ impl Agent {
                     } else {
                         receipts.doc_files_modified += 1;
                     }
-                } else if matches!(
-                    call.name.as_str(),
-                    "read"
-                        | "read_file"
-                        | "glob"
-                        | "grep"
-                        | "inspect"
-                        | "browse"
-                        | "webfetch"
-                        | "session_search"
-                        | "search"
-                        | "session_list"
+                } else if stop_policy::looks_something_up(
+                    &call.name,
+                    self.tool_presents_cards(&call.name),
                 ) {
                     receipts.read_or_inspected += 1;
                 }

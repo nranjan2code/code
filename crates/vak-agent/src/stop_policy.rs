@@ -98,6 +98,18 @@ pub struct ReceiptSummary {
     pub unresolved_error: Option<(String, String)>,
 }
 
+/// Whether a call that neither ran a command nor changed a file looked
+/// something up for the request. Every tool does, except the one that only
+/// finds other tools and one that shows a card: which tool is the right
+/// place to look is the tool's business, never a list of names here. A list
+/// counted `read` and `grep` and left out `automations`, `workers` and
+/// `doc_read`, so "list my automations", answered correctly from
+/// `automations`, was sent back as not yet looked at (measured 2026-10-08:
+/// 5 of 5 turns, three to five extra requests each).
+pub(crate) fn looks_something_up(tool: &str, presents_cards: bool) -> bool {
+    tool != "find_tools" && !presents_cards
+}
+
 impl ReceiptSummary {
     pub fn has_execution_receipt(&self) -> bool {
         self.substantive_bash_calls > 0
@@ -886,6 +898,22 @@ mod tests {
             ),
             Some(BlockReason::UnresolvedToolFailure { .. })
         ));
+    }
+
+    #[test]
+    fn any_tool_that_reads_counts_as_looking_it_up() {
+        for tool in [
+            "read",
+            "automations",
+            "workers",
+            "doc_read",
+            "recall",
+            "mcp",
+        ] {
+            assert!(looks_something_up(tool, false), "{tool}");
+        }
+        assert!(!looks_something_up("find_tools", false));
+        assert!(!looks_something_up("emit_table_card", true));
     }
 
     #[test]
