@@ -200,7 +200,7 @@ to be one every model writes reliably. Measured 2026-10-07 against
 gemma4:e2b-mlx (20 runs per tool and per shape; the model wrote the same
 nested data as plain JSON in a reply 14 times in 15, so the weak point is the
 tool-call encoding, not JSON or the size of the data), every card tool's
-arguments follow seven rules, checked by
+arguments follow eight rules, checked by
 `every_card_schema_is_flat_and_portable`:
 
 1. **No envelope.** The card's fields sit at the top level beside
@@ -249,6 +249,15 @@ is unchanged by the contract: `build` is the only place the two meet.
    7 of 12 dropped calls); with `snippet` and `takeaway` side by side it
    filled only one. On a captured request after a 50k-character page,
    3 of 8 calls arrived before and 8 of 8 after.
+
+8. **A list item is a string where the card allows it.** Records inside a
+   list are where the call syntax slips (a value closed with `"` instead
+   of the delimiter, a `}` left out after a number). A table's rows are
+   `A | B`, a universal card's details `Label: value` (split at the first
+   colon), a recipe's ingredients and steps plain text, which the stored
+   recipe already accepts. Measured on captured requests on 2026-10-07: an
+   overview card 8 of 12 as records, 12 of 12 as strings; a recipe 9 of 12
+   and 12 of 12. Shapes not yet measured keep their records.
 
 **A card is identified by its `semantic_type`.** Every type belongs to one
 card tool, so the agent loop routes a card call to the admitted card tool

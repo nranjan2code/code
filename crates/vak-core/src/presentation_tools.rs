@@ -157,11 +157,11 @@ fn universal_fields() -> Value {
         serde_json::json!({
             "title": string(""),
             "summary": string(""),
-            "fields": list_of(
-                "Each detail the card lists, as a label and its value.",
-                serde_json::json!({"label": string(""), "value": string("")}),
-                &["label", "value"],
-            )
+            "fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Each detail the card lists, written Label: value."
+            }
         }),
         &[],
     )
@@ -169,17 +169,27 @@ fn universal_fields() -> Value {
 
 fn build_universal(args: &Map<String, Value>) -> Result<Value, String> {
     let mut payload = copy(args, &["title", "summary"]);
-    for field in records(args, "fields") {
-        let label = field["label"].as_str().unwrap_or_default().trim();
+    let details = args["fields"].as_array().cloned().unwrap_or_default();
+    for (at, detail) in details.iter().enumerate() {
+        let Some((label, value)) = detail.as_str().and_then(|text| text.split_once(':')) else {
+            return Err(format!(
+                "field {} is not written `Label: value`; put a colon after its label",
+                at + 1
+            ));
+        };
+        let label = label.trim();
         if label.is_empty() {
-            return Err("a field has an empty `label`".into());
+            return Err(format!(
+                "field {} has an empty label before its colon",
+                at + 1
+            ));
         }
         if payload.contains_key(label) {
             return Err(format!(
                 "two fields are labelled `{label}`; give each its own label"
             ));
         }
-        payload.insert(label.to_string(), field["value"].clone());
+        payload.insert(label.to_string(), Value::String(value.trim().to_string()));
     }
     Ok(Value::Object(payload))
 }
@@ -547,19 +557,16 @@ fn recipe_fields() -> Value {
             "servings": integer(""),
             "prep_time_minutes": integer(""),
             "cook_time_minutes": integer(""),
-            "ingredients": list_of(
-                "Each ingredient.",
-                serde_json::json!({"name": string(""), "amount": {"type": "number"}, "unit": string("")}),
-                &["name"],
-            ),
-            "steps": list_of(
-                "Each step, in order.",
-                serde_json::json!({
-                    "text": string(""),
-                    "timer_seconds": integer("Optional timer for this step, in seconds, from 1 to 86400.")
-                }),
-                &["text"],
-            )
+            "ingredients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Each ingredient with its amount, for example 1.5 cups flour."
+            },
+            "steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Each step, in order."
+            }
         }),
         &["title", "ingredients", "steps"],
     )
@@ -571,18 +578,6 @@ fn build_recipe(args: &Map<String, Value>) -> Result<Value, String> {
         .is_some_and(|n| !n.as_u64().is_some_and(|n| (1..=10_000).contains(&n)))
     {
         return Err("`servings` must be a whole number from 1 to 10000".into());
-    }
-    if records(args, "ingredients").iter().any(|i| {
-        i.get("amount")
-            .is_some_and(|a| !a.as_f64().is_some_and(|a| a >= 0.0))
-    }) {
-        return Err("an ingredient's `amount` must be 0 or more".into());
-    }
-    if records(args, "steps").iter().any(|s| {
-        s.get("timer_seconds")
-            .is_some_and(|t| !t.as_u64().is_some_and(|t| (1..=86_400).contains(&t)))
-    }) {
-        return Err("a step's `timer_seconds` must be from 1 to 86400".into());
     }
     Ok(Value::Object(copy(
         args,
@@ -1007,7 +1002,7 @@ fn fixture_for(shape_name: &str) -> Value {
         "emit_universal_card" => serde_json::json!({
             "title": "T",
             "summary": "S",
-            "fields": [{"label": "Owner", "value": "Ada"}]
+            "fields": ["Owner: Ada"]
         }),
         "emit_research_card" => serde_json::json!({
             "sources": [{"title": "Src", "url": "https://example.com", "finding": "Point"}]
@@ -1026,8 +1021,8 @@ fn fixture_for(shape_name: &str) -> Value {
         }),
         "emit_recipe_card" => serde_json::json!({
             "title": "Soup",
-            "ingredients": [{"name": "Water"}],
-            "steps": [{"text": "Boil"}]
+            "ingredients": ["1 cup water"],
+            "steps": ["Boil"]
         }),
         "emit_ui_preview_card" => serde_json::json!({"title": "Preview"}),
         "emit_chart_card" => serde_json::json!({
@@ -1856,11 +1851,20 @@ mod tests {
             serde_json::json!({
                 "semantic_type": "entity",
                 "title": "Eiffel Tower",
-                "fields": [{"label": "Year Built", "value": "1889"}]
+                "fields": ["Year Built: 1889", "Location: Paris: Champ de Mars"]
             }),
         )
         .unwrap();
         assert_eq!(payload["Year Built"], "1889");
+        assert_eq!(
+            payload["Location"], "Paris: Champ de Mars",
+            "split at the first colon"
+        );
+        let refused = built(
+            "emit_universal_card",
+            serde_json::json!({"semantic_type": "entity", "fields": ["no colon here"]}),
+        );
+        assert!(refused.unwrap_err().contains("Label: value"));
         let payload = built(
             "emit_metric_card",
             serde_json::json!({
