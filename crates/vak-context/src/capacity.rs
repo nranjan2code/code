@@ -639,7 +639,9 @@ pub fn probe_request(
     let mut request = vak_llm::ChatRequest::new(model);
     request.messages = messages;
     request.tools = vec![probe_lookup_tool(), vak_llm::ToolDefinition::probe_ack()];
-    request.max_tokens = 32;
+    // A measurement, not a cap on content: the probe times prefill and
+    // needs only the one short acknowledgement call back.
+    request.max_tokens = Some(32);
     request
 }
 
@@ -975,7 +977,7 @@ mod tests {
     #[test]
     fn probe_request_is_shaped_like_projected_turns_and_ends_with_probe_ack() {
         let req = probe_request(1_000, 0.25, "test-model");
-        assert_eq!(req.max_tokens, 32);
+        assert_eq!(req.max_tokens, Some(32));
         let names: Vec<&str> = req.tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, vec!["lookup", "probe_ack"]);
         assert!(req.cache.is_none());

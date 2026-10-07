@@ -265,7 +265,9 @@ fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelCo
                         .and_then(|(_, v)| v.as_u64())
                 });
 
-            let input_tokens = param_ctx.or(details_ctx).or(model_info_ctx).unwrap_or(8192);
+            // Unknown stays unknown: an invented window once capped every
+            // model whose metadata did not name one at 8,192 tokens.
+            let input_tokens = param_ctx.or(details_ctx).or(model_info_ctx)?;
 
             // `/api/show` reports the running quantisation under
             // `details.quantization_level` (e.g. "Q4_K_M").
@@ -275,9 +277,10 @@ fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelCo
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
 
+            // Ollama publishes no output limit: the reply shares the window.
             Some(ModelContext {
                 input_tokens,
-                output_tokens: Some(4096.min(input_tokens.saturating_div(2))),
+                output_tokens: None,
                 quantisation,
             })
         }
@@ -308,6 +311,41 @@ fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelCo
             })
         }
     }
+}
+
+/// [`model_context`] for one model, asked once per process and kept: an
+/// adapter whose request needs the model's published limits (Ollama's
+/// window for `num_ctx`, Anthropic's maximum output for the required
+/// `max_tokens`) reads them here. A failed or empty lookup is not kept, so
+/// the next request asks again.
+pub async fn cached_model_context(
+    provider: &str,
+    auth: &ProviderAuth,
+    model: &str,
+) -> Option<ModelContext> {
+    type Key = (String, Option<String>, String);
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<Key, ModelContext>>,
+    > = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let key = (
+        provider.to_string(),
+        auth.base_url.clone(),
+        model.to_string(),
+    );
+    if let Some(known) = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+    {
+        return Some(known.clone());
+    }
+    let found = model_context(provider, auth, model).await.ok().flatten()?;
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(key, found.clone());
+    Some(found)
 }
 
 /// Fetch the provider-reported context limits for one model. Providers that
@@ -365,13 +403,7 @@ pub async fn model_context(
                     let json = read_json(res).await?;
                     return Ok(context_from_json("ollama", &json));
                 }
-                _ => {
-                    return Ok(Some(ModelContext {
-                        input_tokens: 8192,
-                        output_tokens: Some(4096),
-                        quantisation: None,
-                    }));
-                }
+                _ => return Ok(None),
             }
         }
         "anthropic" => {
@@ -664,7 +696,7 @@ mod tests {
             context_from_json("ollama", &json),
             Some(ModelContext {
                 input_tokens: 32768,
-                output_tokens: Some(4096),
+                output_tokens: None,
                 quantisation: None,
             })
         );
@@ -700,7 +732,7 @@ mod tests {
             context_from_json("ollama", &json),
             Some(ModelContext {
                 input_tokens: 16384,
-                output_tokens: Some(4096),
+                output_tokens: None,
                 quantisation: None,
             })
         );
@@ -716,7 +748,7 @@ mod tests {
             context_from_json("ollama", &json),
             Some(ModelContext {
                 input_tokens: 8192,
-                output_tokens: Some(4096),
+                output_tokens: None,
                 quantisation: Some("Q4_K_M".to_string()),
             })
         );

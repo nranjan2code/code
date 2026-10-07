@@ -63,7 +63,14 @@ impl OllamaProvider {
     }
 }
 
-pub fn build_body(config: &OllamaConfig, request: &ChatRequest) -> Result<Value, LlmError> {
+/// `window` is the model's own context length, used for `num_ctx` when the
+/// operator pinned none: without it the server's small default window cut
+/// Vak's prompt short.
+pub fn build_body(
+    config: &OllamaConfig,
+    request: &ChatRequest,
+    window: Option<u64>,
+) -> Result<Value, LlmError> {
     let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len() + 1);
     if let Some(system) = &request.system {
         messages.push(serde_json::json!({"role": "system", "content": system}));
@@ -85,13 +92,12 @@ pub fn build_body(config: &OllamaConfig, request: &ChatRequest) -> Result<Value,
     }
 
     let mut options = serde_json::Map::new();
-    if let Some(num_ctx) = config.num_ctx {
+    if let Some(num_ctx) = config.num_ctx.or(window) {
         options.insert("num_ctx".to_string(), serde_json::json!(num_ctx));
     }
-    options.insert(
-        "num_predict".to_string(),
-        serde_json::json!(request.max_tokens),
-    );
+    if let Some(max_tokens) = request.max_tokens {
+        options.insert("num_predict".to_string(), serde_json::json!(max_tokens));
+    }
 
     let mut body = serde_json::json!({
         "model": request.model,
@@ -430,7 +436,20 @@ impl Provider for OllamaProvider {
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
         let url = format!("{}/api/chat", self.config.base_url.trim_end_matches('/'));
-        let body = build_body(&self.config, &request)?;
+        let window = match self.config.num_ctx {
+            Some(_) => None,
+            None => {
+                let auth = crate::registry::ProviderAuth {
+                    api_key: self.config.api_key.clone(),
+                    base_url: Some(self.config.base_url.clone()),
+                    ..Default::default()
+                };
+                crate::models::cached_model_context("ollama", &auth, &request.model)
+                    .await
+                    .map(|context| context.input_tokens)
+            }
+        };
+        let body = build_body(&self.config, &request, window)?;
         let mut req = self.http.post(&url).json(&body);
         if !self.config.api_key.is_empty() {
             req = req.bearer_auth(&self.config.api_key);
@@ -515,15 +534,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn body_omits_num_ctx_by_default_and_sets_num_predict() {
+    fn body_takes_the_model_window_and_caps_output_only_when_asked() {
         let mut req = ChatRequest::new("gemma3:e2b");
-        req.max_tokens = 512;
         req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&OllamaConfig::default(), &req).unwrap();
+        let body = build_body(&OllamaConfig::default(), &req, None).unwrap();
         assert_eq!(body["keep_alive"], "30m");
         assert!(body["options"].get("num_ctx").is_none());
-        assert_eq!(body["options"]["num_predict"], 512);
+        assert!(body["options"].get("num_predict").is_none());
         assert_eq!(body["stream"], true);
+        req.max_tokens = Some(512);
+        let body = build_body(&OllamaConfig::default(), &req, Some(131_072)).unwrap();
+        assert_eq!(body["options"]["num_ctx"], 131_072);
+        assert_eq!(body["options"]["num_predict"], 512);
     }
 
     #[test]
@@ -535,8 +557,8 @@ mod tests {
             keep_alive: "10m".into(),
             ..Default::default()
         };
-        let body = build_body(&config, &req).unwrap();
-        assert_eq!(body["options"]["num_ctx"], 8192);
+        let body = build_body(&config, &req, Some(131_072)).unwrap();
+        assert_eq!(body["options"]["num_ctx"], 8192, "the operator's pin wins");
         assert_eq!(body["keep_alive"], "10m");
     }
 
@@ -555,7 +577,7 @@ mod tests {
                 content: vec![ContentBlock::tool_result("call_0", "result text")],
             },
         ];
-        let body = build_body(&OllamaConfig::default(), &req).unwrap();
+        let body = build_body(&OllamaConfig::default(), &req, None).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         let call = &msgs[1]["tool_calls"][0];
         // Ollama's native wire wants a JSON object, not an escaped string.
@@ -581,7 +603,7 @@ mod tests {
             },
             ContentBlock::text("answer"),
         ])];
-        let body = build_body(&OllamaConfig::default(), &req).unwrap();
+        let body = build_body(&OllamaConfig::default(), &req, None).unwrap();
         assert_eq!(body["messages"][0]["content"], "answer");
     }
 

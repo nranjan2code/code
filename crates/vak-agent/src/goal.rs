@@ -170,7 +170,6 @@ pub fn audit_request(model: &str, prompt: String) -> ChatRequest {
     let mut req = ChatRequest::new(model);
     req.system = Some(AUDIT_SYSTEM.to_string());
     req.messages = vec![vak_llm::Message::user_text(prompt)];
-    req.max_tokens = 1024;
     // The provider's default for thinking, deliberately. Measured live on
     // `gemma4:e2b-mlx` with the tolerant parser below: thinking on, 6/6
     // verdicts usable at ~8s; thinking off, 3/6 at ~2s, the rest lost to
@@ -254,7 +253,6 @@ pub fn handoff_request(model: &str, prompt: String) -> ChatRequest {
     let mut req = ChatRequest::new(model);
     req.system = Some(HANDOFF_SYSTEM.to_string());
     req.messages = vec![vak_llm::Message::user_text(prompt)];
-    req.max_tokens = 800;
     req.think = Some(false);
     req
 }

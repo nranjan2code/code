@@ -520,6 +520,19 @@ graded "no response content".
   to `/api/chat` for this and for `num_ctx`).
 - Prefill on this machine is ~740 tok/s; with a stable prefix a 30k-token
   session costs ~1s of prefill per turn instead of ~40s.
+- Limits are the model's own, never literals (2026-10-07). The Ollama
+  adapter sends `num_ctx` from the model's `/api/show` context length
+  (`models::cached_model_context`) unless `[providers.ollama] num_ctx` pins
+  one, and `num_predict` only when a request has an output budget: Ollama
+  publishes no output limit, and the invented `min(4096, ctx/2)` it replaced
+  cut a research card's call off at exactly 4,096 tokens. An unknown window
+  stays unknown rather than becoming 8,192. Anthropic's required
+  `max_tokens` is the request's budget, else the model's published maximum.
+  Side requests (compaction summary, goal judge and handoff, flow planner,
+  work-contract author) carry no cap of their own; the judge runs with
+  thinking on, which counts against `num_predict`. Reflection keeps a small
+  output budget because the spend gate plans this unrequested call against
+  it.
 
 ### 9. No first-class integrations
 

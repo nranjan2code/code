@@ -5261,7 +5261,7 @@ impl Core {
                     &leg.provider,
                     &leg.model,
                     target,
-                    request.max_tokens as u64,
+                    request.max_tokens.map_or(0, u64::from),
                     Self::PROBE_REQUEST_TIMEOUT,
                     cancel,
                 )
@@ -5489,7 +5489,7 @@ impl Core {
             provider_route,
             &request.model,
             estimated_input,
-            request.max_tokens as u64,
+            request.max_tokens.map_or(0, u64::from),
             Self::PROBE_REQUEST_TIMEOUT,
             cancel,
         )
@@ -6180,7 +6180,7 @@ impl Core {
         request.system =
             Some("You classify requests for an agent runtime. Answer with JSON only.".to_string());
         request.messages = vec![vak_llm::Message::user_text(user_prompt.clone())];
-        request.max_tokens = output_budget;
+        request.max_tokens = Some(output_budget);
         // A strict-JSON answer, not a deliberation: measured live on a
         // thinking model, the default spent the whole budget in its thinking
         // channel and returned nothing.
@@ -8293,7 +8293,7 @@ impl Core {
                     &self.effective_provider(),
                     &model,
                     before,
-                    req.max_tokens as u64,
+                    req.max_tokens.map_or(0, u64::from),
                     timeout,
                     &cancel,
                 )
@@ -8305,7 +8305,7 @@ impl Core {
                     &self.effective_provider(),
                     &model,
                     before,
-                    req.max_tokens as u64,
+                    req.max_tokens.map_or(0, u64::from),
                     &cancel,
                 )
                 .await
@@ -11673,10 +11673,10 @@ mod capacity_probe_tests {
         // No real Ollama server needs to exist: metadata discovery
         // (`model_context`) is a plain reqwest call this test does not
         // control, so it is pointed at a bound-then-dropped loopback port —
-        // guaranteed connection-refused, which `model_context`'s own
-        // fallback turns into a fixed 8192/4096 declared window/output
-        // reserve, deterministically and without depending on what may or
-        // may not be listening on the default Ollama port.
+        // guaranteed connection-refused, so the model publishes nothing and
+        // the configured window applies, deterministically and without
+        // depending on what may or may not be listening on the default
+        // Ollama port.
         let unused_port = {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.local_addr().unwrap().port()
@@ -11708,8 +11708,10 @@ mod capacity_probe_tests {
         // `capacity_profile_for` never blocks on a probe: the very first
         // bind returns a metadata-only profile immediately.
         let bound = core.capacity_profile_for(&loopback_leg, &mut session).await;
-        assert_eq!(bound.declared_window, 8_192, "the ollama metadata fallback");
-        assert_eq!(bound.output_reserve, 4_096);
+        // The fake model publishes nothing: no window or output limit is
+        // invented for it, so the configured ones stand.
+        assert_eq!(bound.declared_window, core.config().context_window);
+        assert_eq!(bound.output_reserve, u64::from(core.config().max_tokens));
         assert!(
             bound.provenance.rungs.is_empty(),
             "no ladder rung may run on the turn's own critical path"
@@ -11725,24 +11727,38 @@ mod capacity_probe_tests {
         };
         core.maybe_start_capacity_probe(&loopback_leg).await;
         let probed = wait_for_capacity_probe(&core, &key).await;
+        // The fake provider follows every rung, so the horizon is the
+        // largest rung the ladder tried below the window.
+        let rungs = &probed.provenance.rungs;
+        assert!(!rungs.is_empty());
+        assert!(rungs.iter().all(|rung| rung.accepted
+            && rung.followed_instruction == Some(true)
+            && rung.tokens < bound.declared_window));
         assert_eq!(
-            probed.instruction_horizon.tokens, 4_000,
-            "the single rung under declared_window * 0.9 that the fake provider followed"
+            probed.instruction_horizon.tokens,
+            rungs
+                .iter()
+                .map(|rung| rung.tokens)
+                .max()
+                .unwrap_or_default()
         );
         assert_eq!(probed.instruction_horizon.confidence, 0.9);
-        assert_eq!(probed.provenance.rungs.len(), 1);
-        assert!(probed.provenance.rungs[0].accepted);
-        assert_eq!(probed.provenance.rungs[0].followed_instruction, Some(true));
 
         // The next bind catches the session's ledger up on what the
         // background probe delivered (the ledger belongs to the turn, the
         // detached task has none).
         let caught_up = core.capacity_profile_for(&loopback_leg, &mut session).await;
-        assert_eq!(caught_up.instruction_horizon.tokens, 4_000);
+        assert_eq!(
+            caught_up.instruction_horizon.tokens,
+            probed.instruction_horizon.tokens
+        );
         let recorded: vak_context::capacity::CapacityProfile = session
             .latest_capacity_profile(&key)
             .expect("the probe must be recorded as a ledger activity");
-        assert_eq!(recorded.instruction_horizon.tokens, 4_000);
+        assert_eq!(
+            recorded.instruction_horizon.tokens,
+            probed.instruction_horizon.tokens
+        );
 
         // A hosted provider `provider_auth_for` has no wiring for at all
         // fails auth resolution deterministically, regardless of any real

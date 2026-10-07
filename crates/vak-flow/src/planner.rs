@@ -251,7 +251,7 @@ async fn complete_text(
         system: Some(system.to_string()),
         messages: vec![Message::user_text(prompt)],
         tools: Vec::new(),
-        max_tokens: 4096,
+        max_tokens: None,
         temperature: None,
         cache: None,
         previous_response_id: None,
@@ -278,7 +278,7 @@ async fn complete_text(
                     &deps.provider_route,
                     &request.model,
                     estimated_input,
-                    request.max_tokens as u64,
+                    request.max_tokens.map_or(0, u64::from),
                     timeout,
                     cancel,
                 )
@@ -290,7 +290,7 @@ async fn complete_text(
                     &deps.provider_route,
                     &request.model,
                     estimated_input,
-                    request.max_tokens as u64,
+                    request.max_tokens.map_or(0, u64::from),
                     cancel,
                 )
                 .await

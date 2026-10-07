@@ -286,7 +286,7 @@ pub async fn propose(
     let mut req = ChatRequest::new(model);
     req.system = Some(system_prompt());
     req.messages = vec![user];
-    req.max_tokens = MAX_TOKENS;
+    req.max_tokens = Some(MAX_TOKENS);
 
     let estimated_input = (req.system.as_deref().unwrap_or("").chars().count() as u64
         + tail.chars().count() as u64)

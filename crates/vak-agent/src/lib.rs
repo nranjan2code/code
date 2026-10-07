@@ -436,7 +436,8 @@ pub struct AgentConfig {
     pub dispatch_ceiling: u32,
     /// Reserve for the completion (`max_tokens`), subtracted from the
     /// horizon by `CapacityProfile::budget` (docs/design/68-context-engine.md
-    /// §4).
+    /// §4). 0 means no cap: nothing published one and the operator set none,
+    /// so a request carries no `max_tokens` (`output_budget`).
     pub max_output: u64,
     /// Provider-declared context window, used only to build a
     /// metadata-only `CapacityProfile` (`CapacityProfile::from_metadata_only`)
@@ -2278,7 +2279,7 @@ impl Agent {
                     system: Some(self.config.system_prefix.clone()),
                     messages,
                     tools: tool_defs.clone(),
-                    max_tokens: self.config.max_output as u32,
+                    max_tokens: self.output_budget(),
                     temperature: None,
                     cache,
                     previous_response_id: None,
@@ -2398,7 +2399,7 @@ impl Agent {
                                     system: Some(self.config.system_prefix.clone()),
                                     messages,
                                     tools: tool_defs.clone(),
-                                    max_tokens: self.config.max_output as u32,
+                                    max_tokens: self.output_budget(),
                                     temperature: None,
                                     cache,
                                     previous_response_id: None,
@@ -3955,6 +3956,13 @@ impl Agent {
         Ok(())
     }
 
+    /// The `max_tokens` a request carries: the configured or published
+    /// output budget, or none when neither exists.
+    fn output_budget(&self) -> Option<u32> {
+        (self.config.max_output > 0)
+            .then(|| u32::try_from(self.config.max_output).unwrap_or(u32::MAX))
+    }
+
     async fn start_managed_contract(
         &self,
         prompt: &str,
@@ -3990,7 +3998,7 @@ impl Agent {
             system: Some(CONTRACT_AUTHOR_SYSTEM.into()),
             messages: vec![Message::user_text(prompt)],
             tools: Vec::new(),
-            max_tokens: self.config.max_output.min(8_000) as u32,
+            max_tokens: self.output_budget(),
             temperature: None,
             cache: None,
             previous_response_id: None,

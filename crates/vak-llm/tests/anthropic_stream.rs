@@ -9,8 +9,17 @@ use vak_llm::sse::SseDecoder;
 use vak_llm::stream::StreamEvent;
 use vak_llm::types::{ChatRequest, ContentBlock, Message, Role, StopReason, ToolDefinition};
 
+/// A request from a caller with an output budget, so the adapter needs no
+/// model lookup on the mock server.
+fn budgeted(model: &str) -> ChatRequest {
+    let mut req = ChatRequest::new(model);
+    req.max_tokens = Some(8192);
+    req
+}
+
 fn sample_request() -> ChatRequest {
     let mut req = ChatRequest::new("claude-sonnet-4-5");
+    req.max_tokens = Some(8192);
     req.system = Some("You are a coding agent.".into());
     req.messages = vec![
         Message::user_text("list the files"),
@@ -34,7 +43,7 @@ fn sample_request() -> ChatRequest {
 
 #[test]
 fn body_serialization_matches_anthropic_shape() {
-    let body = build_body(&sample_request(), true, false).unwrap();
+    let body = build_body(&sample_request(), 8192, true, false).unwrap();
     assert_eq!(body["model"], "claude-sonnet-4-5");
     assert_eq!(body["max_tokens"], 8192);
     assert_eq!(body["stream"], true);
@@ -59,7 +68,7 @@ fn body_rejects_misplaced_blocks() {
         content: vec![ContentBlock::tool_result("x", "y")],
     }];
     assert!(matches!(
-        build_body(&req, true, false),
+        build_body(&req, 8192, true, false),
         Err(LlmError::InvalidRequest(_))
     ));
 }
@@ -191,7 +200,7 @@ async fn cache_read_and_creation_tokens_survive_message_delta_untouched() {
     })
     .unwrap();
     let mut es = provider
-        .stream(ChatRequest::new("m"), CancellationToken::new())
+        .stream(budgeted("m"), CancellationToken::new())
         .await
         .unwrap();
     while futures::StreamExt::next(&mut es).await.is_some() {}
@@ -264,7 +273,7 @@ async fn http_error_maps_to_typed_value() {
     })
     .unwrap();
     let err = provider
-        .stream(ChatRequest::new("m"), CancellationToken::new())
+        .stream(budgeted("m"), CancellationToken::new())
         .await
         .err()
         .expect("expected error");
@@ -364,4 +373,74 @@ fn sse_decoder_skips_comments_and_keepalives() {
     let f = d.next_frame().unwrap();
     assert_eq!(f.data, "y");
     assert_eq!(f.event.as_deref(), Some("x"));
+}
+
+/// With no budget on the request, the Messages API's required `max_tokens`
+/// is the model's own published maximum, asked once from the Models API.
+#[tokio::test]
+async fn an_unbudgeted_request_sends_the_models_published_maximum() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (sent_tx, sent_rx) = tokio::sync::oneshot::channel::<serde_json::Value>();
+    tokio::spawn(async move {
+        let mut sent_tx = Some(sent_tx);
+        for _ in 0..2 {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 4096];
+            let (head, body) = loop {
+                let n = sock.read(&mut buf).await.unwrap();
+                raw.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&raw).to_string();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let head = text[..end].to_string();
+                    let length = head
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    while raw.len() < end + 4 + length {
+                        let n = sock.read(&mut buf).await.unwrap();
+                        raw.extend_from_slice(&buf[..n]);
+                    }
+                    break (head, String::from_utf8_lossy(&raw[end + 4..]).to_string());
+                }
+            };
+            if head.starts_with("GET") {
+                let json = r#"{"id":"m","max_input_tokens":200000,"max_tokens":64000}"#;
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{json}",
+                    json.len()
+                );
+                sock.write_all(reply.as_bytes()).await.unwrap();
+            } else {
+                if let Some(tx) = sent_tx.take() {
+                    let _ = tx.send(serde_json::from_str(&body).unwrap());
+                }
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n{FIXTURE_CACHED_USAGE}"
+                );
+                sock.write_all(reply.as_bytes()).await.unwrap();
+            }
+            let _ = sock.shutdown().await;
+        }
+    });
+    let provider = AnthropicProvider::new(AnthropicConfig {
+        api_key: "k".into(),
+        base_url: format!("http://{addr}"),
+        model: String::new(),
+        fast_mode: false,
+    })
+    .unwrap();
+    let mut es = provider
+        .stream(ChatRequest::new("m"), CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let sent = sent_rx.await.unwrap();
+    assert_eq!(sent["max_tokens"], 64000);
 }

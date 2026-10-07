@@ -323,7 +323,11 @@ pub struct ChatRequest {
     pub system: Option<String>,
     pub messages: Vec<Message>,
     pub tools: Vec<ToolDefinition>,
-    pub max_tokens: u32,
+    /// The output budget, when there is one: an operator cap or the bound
+    /// model's published limit. `None` sends no cap where the provider
+    /// allows it (the reply then shares the model's window); an adapter
+    /// whose API requires one fills in the model's published maximum.
+    pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub cache: Option<CacheHints>,
     /// When set, an OpenAI Responses adapter chains from this prior
@@ -354,7 +358,7 @@ impl ChatRequest {
             system: None,
             messages: Vec::new(),
             tools: Vec::new(),
-            max_tokens: 8192,
+            max_tokens: None,
             temperature: None,
             cache: None,
             previous_response_id: None,

@@ -141,8 +141,11 @@ impl AnthropicProvider {
 /// `effort_allowed` and `fast_mode` are resolved by the caller (`stream`)
 /// from the in-process capability cache (`models.rs`) before this is
 /// called, so building the body stays a pure function of its inputs.
+/// `max_tokens` is required by the Messages API: the request's own budget,
+/// else the model's published maximum (see `send_once`).
 pub fn build_body(
     request: &ChatRequest,
+    max_tokens: u64,
     effort_allowed: bool,
     fast_mode: bool,
 ) -> Result<Value, LlmError> {
@@ -174,7 +177,7 @@ pub fn build_body(
 
     let mut body = serde_json::json!({
         "model": request.model,
-        "max_tokens": request.max_tokens,
+        "max_tokens": max_tokens,
         "messages": messages,
         "stream": true,
     });
@@ -803,7 +806,27 @@ impl AnthropicProvider {
         cancel: &CancellationToken,
     ) -> Result<reqwest::Response, LlmError> {
         let url = format!("{}/v1/messages", self.config.base_url.trim_end_matches('/'));
-        let body = build_body(request, effort_allowed, fast_mode)?;
+        let max_tokens = match request.max_tokens {
+            Some(budget) => u64::from(budget),
+            None => {
+                let auth = crate::registry::ProviderAuth {
+                    api_key: self.config.api_key.clone(),
+                    base_url: Some(self.config.base_url.clone()),
+                    ..Default::default()
+                };
+                crate::models::cached_model_context("anthropic", &auth, &request.model)
+                    .await
+                    .and_then(|context| context.output_tokens)
+                    .ok_or_else(|| {
+                        LlmError::InvalidRequest(format!(
+                            "the Messages API needs an output budget and the provider published \
+                             none for {}; set max_tokens in the configuration",
+                            request.model
+                        ))
+                    })?
+            }
+        };
+        let body = build_body(request, max_tokens, effort_allowed, fast_mode)?;
         let mut req = self
             .http
             .post(&url)
@@ -1015,7 +1038,7 @@ mod build_body_tests {
         let mut req = ChatRequest::new("claude-sonnet-4-5");
         req.system = Some("be helpful".into());
         req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
         assert!(body["messages"][0].get("cache_control").is_none());
     }
@@ -1035,7 +1058,7 @@ mod build_body_tests {
                 after_message: Some(1),
             }],
         });
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         assert_eq!(msgs[1]["content"][0]["cache_control"]["type"], "ephemeral");
         assert!(msgs[0].get("cache_control").is_none());
@@ -1057,7 +1080,7 @@ mod build_body_tests {
                 })
                 .collect(),
         });
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         let cached: Vec<usize> = (0..6)
             .filter(|&i| msgs[i]["content"][0].get("cache_control").is_some())
@@ -1076,7 +1099,7 @@ mod build_body_tests {
             Message::user_text("second, a fresh directive"),
             message_with_thinking("second answer"),
         ];
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         // Turn 1 (indices 0-1) is closed: thinking must not survive.
         assert!(
@@ -1117,7 +1140,7 @@ mod build_body_tests {
                 content: vec![ContentBlock::tool_result("t1", "result")],
             },
         ];
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         // The whole exchange is one turn (the tool-result message is not a
         // fresh directive), so thinking in message 1 must still be present.
@@ -1138,7 +1161,7 @@ mod build_body_tests {
             ToolDefinition::new("core_tool", "always visible", serde_json::json!({})),
             ToolDefinition::new("rare_tool", "rarely needed", serde_json::json!({})).deferred(),
         ];
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools[0]["type"], "tool_search_tool_regex_20251119");
         let core = tools.iter().find(|t| t["name"] == "core_tool").unwrap();
@@ -1161,7 +1184,7 @@ mod build_body_tests {
             "always visible",
             serde_json::json!({}),
         )];
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "core_tool");
@@ -1180,7 +1203,7 @@ mod build_body_tests {
             kind: "server_tool_use".into(),
             raw: raw.clone(),
         }])];
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         let sent = &body["messages"][0]["content"][0];
         assert_eq!(sent, &raw, "a provider block must round-trip unchanged");
         assert_ne!(sent["type"], "provider");
@@ -1235,7 +1258,7 @@ mod build_body_tests {
         let mut req = ChatRequest::new("claude-opus-5");
         req.messages = vec![Message::user_text("hi")];
         req.effort = Some(Effort::XHigh);
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         assert_eq!(body["output_config"]["effort"], "xhigh");
     }
 
@@ -1244,7 +1267,7 @@ mod build_body_tests {
         let mut req = ChatRequest::new("claude-haiku-4-5");
         req.messages = vec![Message::user_text("classify this")];
         req.think = Some(false);
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         assert_eq!(body["output_config"]["effort"], "low");
     }
 
@@ -1254,7 +1277,7 @@ mod build_body_tests {
         req.messages = vec![Message::user_text("hi")];
         req.think = Some(false);
         req.effort = Some(Effort::Max);
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         assert_eq!(body["output_config"]["effort"], "max");
     }
 
@@ -1262,7 +1285,7 @@ mod build_body_tests {
     fn no_output_config_when_neither_effort_nor_think_false_is_set() {
         let mut req = ChatRequest::new("claude-sonnet-5");
         req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&req, true, false).unwrap();
+        let body = build_body(&req, 8192, true, false).unwrap();
         assert!(body.get("output_config").is_none());
     }
 
@@ -1271,7 +1294,7 @@ mod build_body_tests {
         let mut req = ChatRequest::new("claude-haiku-4-5");
         req.messages = vec![Message::user_text("hi")];
         req.effort = Some(Effort::High);
-        let body = build_body(&req, false, false).unwrap();
+        let body = build_body(&req, 8192, false, false).unwrap();
         assert!(body.get("output_config").is_none());
     }
 
@@ -1291,7 +1314,7 @@ mod build_body_tests {
             req.messages = vec![Message::user_text("hi")];
             req.effort = effort;
             req.think = think;
-            let body = build_body(&req, true, false).unwrap();
+            let body = build_body(&req, 8192, true, false).unwrap();
             assert!(body.get("thinking").is_none(), "{effort:?}/{think:?}");
         }
     }
@@ -1300,9 +1323,9 @@ mod build_body_tests {
     fn fast_mode_sets_the_speed_field_only_when_enabled() {
         let mut req = ChatRequest::new("claude-opus-5");
         req.messages = vec![Message::user_text("hi")];
-        let on = build_body(&req, true, true).unwrap();
+        let on = build_body(&req, 8192, true, true).unwrap();
         assert_eq!(on["speed"], "fast");
-        let off = build_body(&req, true, false).unwrap();
+        let off = build_body(&req, 8192, true, false).unwrap();
         assert!(off.get("speed").is_none());
     }
 

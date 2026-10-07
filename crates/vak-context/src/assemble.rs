@@ -63,7 +63,6 @@ pub fn compaction_request(model: &str, transcript: &str) -> ChatRequest {
     let mut req = ChatRequest::new(model);
     req.system = Some(COMPACTION_SYSTEM.to_string());
     req.messages = vec![Message::user_text(compaction_prompt(transcript))];
-    req.max_tokens = 1024;
     // A summary, not a deliberation: measured live, thinking made no
     // difference to the summary and cost 3x the latency. `effort` is set
     // explicitly rather than relying only on the Anthropic adapter's

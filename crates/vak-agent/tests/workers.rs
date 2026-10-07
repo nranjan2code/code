@@ -231,7 +231,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
     assert_eq!(tool_result.0, "child final answer");
 
     let reqs = requests.lock().unwrap();
-    assert!(reqs.iter().all(|request| request.max_tokens == 512));
+    assert!(reqs.iter().all(|request| request.max_tokens == Some(512)));
     assert!(
         reqs.len() >= 3,
         "parent call + child call(s) + parent continuation expected, got {}",
