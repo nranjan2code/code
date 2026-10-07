@@ -252,6 +252,7 @@ async fn complete_text(
         messages: vec![Message::user_text(prompt)],
         tools: Vec::new(),
         max_tokens: None,
+        context_need: None,
         temperature: None,
         cache: None,
         previous_response_id: None,

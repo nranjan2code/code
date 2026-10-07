@@ -551,8 +551,11 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
             core.effective_sandbox_name(),
         ),
         format!(
-            "context window {} tokens · max turns {} · retries {} (+{})",
-            core.config().context_window,
+            "context window {} · max turns {} · retries {} (+{})",
+            core.config().context_window.map_or_else(
+                || "the model's own".to_string(),
+                |w| format!("capped at {w} tokens")
+            ),
             core.effective_max_turns(),
             core.config().max_retries,
             core.config().run_retry_attempts,

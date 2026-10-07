@@ -239,7 +239,7 @@ fn build_fixture(dir: &Path, session_id: &str) -> Result<(SessionLog, String), S
 
 fn synthetic_profile() -> CapacityProfile {
     CapacityProfile::from_probe(
-        HORIZON_TOKENS,
+        Some(HORIZON_TOKENS),
         None,
         Horizon {
             tokens: HORIZON_TOKENS,
@@ -433,7 +433,7 @@ fn steps_are_append_only_with_a_stable_prefix(dir: &Path) -> Result<bool, String
 /// A profile with the given usable horizon, for the two-model replay.
 fn profile_with_horizon(horizon: u64) -> CapacityProfile {
     CapacityProfile::from_probe(
-        horizon,
+        Some(horizon),
         None,
         Horizon {
             tokens: horizon,

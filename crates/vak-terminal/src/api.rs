@@ -511,7 +511,8 @@ pub struct HealthReport {
     pub model: String,
     pub permission_mode: String,
     pub sandbox: String,
-    pub context_window: u64,
+    /// `None` when neither the model nor a setting states one.
+    pub context_window: Option<u64>,
     pub cwd: String,
     pub healthy: bool,
     pub circuit_breaker_healthy: bool,
@@ -542,10 +543,7 @@ impl HealthReport {
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
-            context_window: json
-                .get("context_window")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
+            context_window: json.get("context_window").and_then(|v| v.as_u64()),
             cwd: json
                 .get("cwd")
                 .and_then(|v| v.as_str())

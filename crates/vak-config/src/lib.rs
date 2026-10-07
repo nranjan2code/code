@@ -1259,7 +1259,9 @@ fn default_hook_config_enabled() -> bool {
 pub struct Config {
     pub provider: String,
     pub model: String,
-    pub max_tokens: u32,
+    /// The operator's cap on a reply, when set. `None`: the bound model's
+    /// published output limit applies, or none (docs/design/68 §8).
+    pub max_tokens: Option<u32>,
     pub max_turns: usize,
     pub permission_mode: PermissionMode,
     pub approval_mode: ApprovalMode,
@@ -1277,7 +1279,10 @@ pub struct Config {
     pub run_retry_base_backoff_ms: u64,
     pub circuit_breaker_threshold: u32,
     pub circuit_breaker_cooldown_secs: u64,
-    pub context_window: u64,
+    /// The operator's cap on the context window, when set. `None`: the
+    /// bound model's published or measured window applies, and nothing is
+    /// assumed where none is known.
+    pub context_window: Option<u64>,
     pub mcp: McpConfig,
     pub capabilities: CapabilityInheritanceResolved,
     pub ui: UiResolved,
@@ -1549,7 +1554,7 @@ impl Default for Config {
             // chooses a provider and a model together.
             provider: String::new(),
             model: String::new(),
-            max_tokens: 8192,
+            max_tokens: None,
             max_turns: 40,
             permission_mode: PermissionMode::WorkspaceWrite,
             approval_mode: ApprovalMode::Ask,
@@ -1567,7 +1572,7 @@ impl Default for Config {
             run_retry_base_backoff_ms: 2_000,
             circuit_breaker_threshold: 5,
             circuit_breaker_cooldown_secs: 60,
-            context_window: 128_000,
+            context_window: None,
             mcp: McpConfig::default(),
             capabilities: CapabilityInheritanceResolved {
                 inherit_mcp: true,
@@ -2863,7 +2868,12 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         cfg.model = model;
     }
     if let Some(mt) = merged.max_tokens {
-        cfg.max_tokens = mt;
+        if mt == 0 {
+            cfg.warnings
+                .push("max_tokens 0 is not a cap; ignored".into());
+        } else {
+            cfg.max_tokens = Some(mt);
+        }
     }
     if let Some(turns) = merged.max_turns {
         cfg.max_turns = turns;
@@ -2906,13 +2916,11 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         cfg.circuit_breaker_cooldown_secs = c;
     }
     if let Some(w) = merged.context_window {
-        if w < 16_384 {
-            cfg.warnings.push(format!(
-                "context_window {w} too small; using default {}",
-                cfg.context_window
-            ));
+        if w == 0 {
+            cfg.warnings
+                .push("context_window 0 is not a cap; ignored".into());
         } else {
-            cfg.context_window = w;
+            cfg.context_window = Some(w);
         }
     }
     cfg.voice = merged.voice.unwrap_or_default();

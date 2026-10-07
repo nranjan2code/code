@@ -128,6 +128,13 @@ function SocialIcon(props: { platform: string }) {
   return <span class="social-icon" data-platform={props.platform} aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">{glyph()}</svg></span>;
 }
 
+/** A model limit in plain words: the number and who set it, or that nothing states one. */
+function limitText(value: number | null | undefined, source: string | undefined): string {
+  if (value == null) return "Not stated by the model";
+  const by = source === "setting" ? "your setting" : "the model";
+  return `${fmt(value)} tokens · set by ${by}`;
+}
+
 function fmt(value: number): string {
   return value.toLocaleString();
 }
@@ -1975,8 +1982,8 @@ export default function Settings() {
                   <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
                   <Row title="Check freshness" description="How long a successful check still counts as current."><input class="settings-number" type="number" min="0" max="8760" value={evidenceAgeHours()} onInput={(event) => setEvidenceAgeHours(Number(event.currentTarget.value) || 0)} /><span class="settings-status">hours</span></Row>
                   <Row title="Helpers" description="Vakyartha can split big jobs across helpers that work in parallel."><span class="settings-status good">{config()?.workers ? "On" : "Off in configuration"}</span></Row>
-                  <Row title="Context size" description="Most the model reads at once before older turns are summarised."><span class="metric">{fmt(config()?.context_window ?? 0)} tokens</span></Row>
-                  <Row title="Maximum output" description="Most the model writes in one reply."><span class="metric">{fmt(config()?.max_tokens ?? 0)} tokens</span></Row>
+                  <Row title="Context size" description="Most the model reads at once before older turns are summarised."><span class="metric">{limitText(config()?.context_window, config()?.context_window_source)}</span></Row>
+                  <Row title="Maximum output" description="Most the model writes in one reply."><span class="metric">{limitText(config()?.max_tokens, config()?.max_tokens_source)}</span></Row>
                   <Row title="Where these come from" description={`AI service: ${config()?.provider_source ?? "unknown"} · model: ${config()?.model_source ?? "unknown"}`}><span /></Row>
                   <Show when={currentProviderInfo()?.requires_key}>
                     <Row title="Key storage" description={`${currentProviderInfo()?.env_var ?? "API key"} · ${currentProviderInfo()?.pool_size ?? 0} in the routing pool · kept in the Vakyartha host's secure credential store (the OS keychain, or an encrypted file when there is none). A real environment variable takes precedence.`}><span /></Row>

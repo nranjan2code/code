@@ -521,11 +521,20 @@ graded "no response content".
 - Prefill on this machine is ~740 tok/s; with a stable prefix a 30k-token
   session costs ~1s of prefill per turn instead of ~40s.
 - Limits are the model's own, never literals (2026-10-07). The Ollama
-  adapter sends `num_ctx` from the model's `/api/show` context length
-  (`models::cached_model_context`) unless `[providers.ollama] num_ctx` pins
-  one, and `num_predict` only when a request has an output budget: Ollama
+  adapter sizes `num_ctx` to what a request needs (`ChatRequest::context_need`,
+  the agent's measured prompt estimate plus reply room; else the request's
+  bytes, an upper bound on its tokens): the smallest power of two that
+  covers it, capped by the model's `/api/show` window, never asked smaller
+  again for that server and model in this process (`sized_num_ctx`), unless
+  `[providers.ollama] num_ctx` pins one. Ollama reserves memory for the whole
+  window at load: gemma4 took 16.5 GB at its full 131,072 tokens and 7.4 GB
+  at 8,192 on a 17 GB machine, and a different `num_ctx` reloads the model.
+  The MLX runner treats the window as a reservation (a longer prompt still
+  ran whole); the llama.cpp runner truncates beyond it, which is why the
+  need is measured and the window only grows. `num_predict` is sent only
+  when a request has an output budget: Ollama
   publishes no output limit, and the invented `min(4096, ctx/2)` it replaced
-  cut a research card's call off at exactly 4,096 tokens. An unknown window
+cut a research card's call off at exactly 4,096 tokens. An unknown window
   stays unknown rather than becoming 8,192. Anthropic's required
   `max_tokens` is the request's budget, else the model's published maximum.
   Side requests (compaction summary, goal judge and handoff, flow planner,
@@ -533,6 +542,29 @@ graded "no response content".
   thinking on, which counts against `num_predict`. Reflection keeps a small
   output budget because the spend gate plans this unrequested call against
   it.
+- No assumed window either. `[agent] context_window` and `max_tokens` are
+  operator caps with no default. A model that publishes no window (OpenAI
+  does not) has `declared_window: None`: the prompt ceiling is then the
+  instruction horizon alone, which starts unbounded (the top of its order;
+  every observation only lowers it), and an over-length rejection lowers it
+  and records the window the rejection states
+  (`vak_llm::error::stated_context_window`, every provider's wording). The
+  probe ladder with no window is open-ended: past its named sizes it keeps
+  doubling while rungs pass, and a rung passes only when the provider
+  reports reading it whole (a server that cuts a prompt short, or reports
+  nothing, would otherwise pass every size). Planning leaves room for the
+  replies a model is observed to write (`observe_usage`), or the operator's
+  cap, never its listed maximum, which was most of a 32k window; a
+  request's `max_tokens` is its budget clamped to the room beside its
+  prompt (`reply_room`). An operator cap
+  of any positive size is honoured (a 16,384-token floor once refused small
+  ones). Settings, `/config`, `/health` and `vak term` show each limit with
+  its source (`setting`, `model`) or that nothing states one
+  (`Core::effective_limits`, `known_limits`), never a configured default
+  presented as the model's. The 32,000-character cap on a tool call's
+  arguments and reflection's 12,000-character cut of the conversation are
+  gone: the first is bounded by the model's own output, the second was a
+  character cut of model-visible input.
 
 ### 9. No first-class integrations
 

@@ -400,7 +400,9 @@ impl<'a> Widget for OpsView<'a> {
             Line::from(vec![
                 Span::styled("context: ", self.theme.style_card()),
                 Span::styled(
-                    format!("{} tok", self.health.context_window),
+                    self.health
+                        .context_window
+                        .map_or_else(|| "not stated".to_string(), |w| format!("{w} tok")),
                     self.theme.style_info(),
                 ),
             ]),

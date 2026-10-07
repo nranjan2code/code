@@ -63,13 +63,36 @@ impl OllamaProvider {
     }
 }
 
-/// `window` is the model's own context length, used for `num_ctx` when the
-/// operator pinned none: without it the server's small default window cut
-/// Vak's prompt short.
+/// The `num_ctx` to ask for: the smallest power of two that covers `need`,
+/// never more than the model's `window`, and never less than this process
+/// last asked for on this server and model. Ollama reserves memory for the
+/// whole window when it loads a model (gemma4 took 16 GB at its full
+/// 131,072 tokens, 7.4 GB at 8,192, on a 17 GB machine), and a different
+/// `num_ctx` reloads the model, so the window grows with the conversation
+/// and is not asked smaller again.
+pub fn sized_num_ctx(base_url: &str, model: &str, need: u64, window: Option<u64>) -> u64 {
+    static ASKED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<(String, String), u64>>,
+    > = std::sync::OnceLock::new();
+    let tier = need.max(1).checked_next_power_of_two().unwrap_or(u64::MAX);
+    let sized = window.map_or(tier, |window| tier.min(window));
+    let mut asked = ASKED
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let entry = asked
+        .entry((base_url.to_string(), model.to_string()))
+        .or_insert(0);
+    *entry = (*entry).max(sized);
+    *entry
+}
+
+/// `num_ctx` is the window to ask for when the operator pinned none
+/// (`sized_num_ctx`).
 pub fn build_body(
     config: &OllamaConfig,
     request: &ChatRequest,
-    window: Option<u64>,
+    num_ctx: Option<u64>,
 ) -> Result<Value, LlmError> {
     let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len() + 1);
     if let Some(system) = &request.system {
@@ -92,7 +115,7 @@ pub fn build_body(
     }
 
     let mut options = serde_json::Map::new();
-    if let Some(num_ctx) = config.num_ctx.or(window) {
+    if let Some(num_ctx) = config.num_ctx.or(num_ctx) {
         options.insert("num_ctx".to_string(), serde_json::json!(num_ctx));
     }
     if let Some(max_tokens) = request.max_tokens {
@@ -436,7 +459,7 @@ impl Provider for OllamaProvider {
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
         let url = format!("{}/api/chat", self.config.base_url.trim_end_matches('/'));
-        let window = match self.config.num_ctx {
+        let num_ctx = match self.config.num_ctx {
             Some(_) => None,
             None => {
                 let auth = crate::registry::ProviderAuth {
@@ -444,12 +467,28 @@ impl Provider for OllamaProvider {
                     base_url: Some(self.config.base_url.clone()),
                     ..Default::default()
                 };
-                crate::models::cached_model_context("ollama", &auth, &request.model)
+                let window = crate::models::cached_model_context("ollama", &auth, &request.model)
                     .await
-                    .map(|context| context.input_tokens)
+                    .map(|context| context.input_tokens);
+                // Without a measured need, the request's bytes bound its
+                // tokens from above (every token is at least one byte).
+                let need = match request.context_need {
+                    Some(need) => need,
+                    None => {
+                        let bytes = serde_json::to_vec(&build_body(&self.config, &request, None)?)
+                            .map_or(0, |body| body.len() as u64);
+                        bytes.saturating_add(request.max_tokens.map_or(0, u64::from))
+                    }
+                };
+                Some(sized_num_ctx(
+                    &self.config.base_url,
+                    &request.model,
+                    need,
+                    window,
+                ))
             }
         };
-        let body = build_body(&self.config, &request, window)?;
+        let body = build_body(&self.config, &request, num_ctx)?;
         let mut req = self.http.post(&url).json(&body);
         if !self.config.api_key.is_empty() {
             req = req.bearer_auth(&self.config.api_key);
@@ -532,6 +571,24 @@ impl Provider for OllamaProvider {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+
+    #[test]
+    fn the_window_asked_for_covers_the_need_and_never_shrinks() {
+        let base = "http://sizing.test";
+        assert_eq!(sized_num_ctx(base, "m", 9_000, Some(131_072)), 16_384);
+        assert_eq!(
+            sized_num_ctx(base, "m", 3_000, Some(131_072)),
+            16_384,
+            "never smaller"
+        );
+        assert_eq!(sized_num_ctx(base, "m", 40_000, Some(131_072)), 65_536);
+        assert_eq!(
+            sized_num_ctx(base, "m", 500_000, Some(131_072)),
+            131_072,
+            "the model's window caps it"
+        );
+        assert_eq!(sized_num_ctx(base, "other", 3_000, None), 4_096);
+    }
 
     #[test]
     fn body_takes_the_model_window_and_caps_output_only_when_asked() {

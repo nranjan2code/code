@@ -331,7 +331,7 @@ async fn compaction_partitions_coexist_with_goal_and_receipts() {
         text_msg("primary-model", PASS_VERDICT),
     ]);
     let mut agent = setup(provider, |_| {});
-    agent.config.declared_window = 900;
+    agent.config.declared_window = Some(900);
     agent.config.max_output = 64;
     agent.set_goal("finish despite compaction", vec!["c1".into()]);
     let outcome = run(&mut agent, &format!("task {filler}")).await;

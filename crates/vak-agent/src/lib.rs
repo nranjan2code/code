@@ -444,8 +444,9 @@ pub struct AgentConfig {
     /// when the host has not wired real capacity measurement in (e.g.
     /// standalone agent use, or a test) — so an unmeasured window is still a
     /// real number from configuration, never a hardcoded magic default
-    /// baked into the planning math itself.
-    pub declared_window: u64,
+    /// baked into the planning math itself. `None` when nothing published
+    /// or capped one: planning is then bounded by what is measured.
+    pub declared_window: Option<u64>,
     /// Built-in premature-completion gate. None disables entirely.
     pub stop_policy: Option<StopPolicy>,
     /// Pre-dispatch budget admission (docs/design/15-reliability.md). None
@@ -605,8 +606,8 @@ impl AgentConfig {
             run_retry_attempts: 6,
             run_retry_base_backoff_ms: 2_000,
             dispatch_ceiling: (3 + 1) * (6 + 1),
-            max_output: 8_192,
-            declared_window: 128_000,
+            max_output: 0,
+            declared_window: None,
             stop_policy: Some(StopPolicy::default()),
             spend_gate: None,
             ladder: Vec::new(),
@@ -2280,6 +2281,7 @@ impl Agent {
                     messages,
                     tools: tool_defs.clone(),
                     max_tokens: self.output_budget(),
+                    context_need: None,
                     temperature: None,
                     cache,
                     previous_response_id: None,
@@ -2287,6 +2289,16 @@ impl Agent {
                     effort: None,
                 }
             };
+            let mut base_request = base_request;
+            let request_chars = chat_request_chars(&base_request);
+            base_request.max_tokens = reply_room(&profile, request_chars, base_request.max_tokens);
+            base_request.context_need = Some(
+                profile.estimate_tokens(request_chars).saturating_add(
+                    base_request
+                        .max_tokens
+                        .map_or(profile.output_reserve, u64::from),
+                ),
+            );
             let mut request = base_request.clone();
 
             let mut response = {
@@ -2400,6 +2412,7 @@ impl Agent {
                                     messages,
                                     tools: tool_defs.clone(),
                                     max_tokens: self.output_budget(),
+                                    context_need: None,
                                     temperature: None,
                                     cache,
                                     previous_response_id: None,
@@ -3999,6 +4012,7 @@ impl Agent {
             messages: vec![Message::user_text(prompt)],
             tools: Vec::new(),
             max_tokens: self.output_budget(),
+            context_need: None,
             temperature: None,
             cache: None,
             previous_response_id: None,
@@ -5145,7 +5159,10 @@ impl Agent {
         sent.tools = tools_for_leg(&request.tools, &route_provider);
         let request_tokens = profile.estimate_tokens(chat_request_chars(&sent));
         let mut lowered = profile.clone();
-        lowered.observe_over_length(request_tokens);
+        lowered.observe_over_length(
+            request_tokens,
+            vak_llm::error::stated_context_window(&reason),
+        );
         self.config.capacity = Some(lowered.clone());
         let mut data = self.capacity_activity_data(&lowered);
         data.insert("reason".into(), reason.clone());
@@ -7964,6 +7981,18 @@ async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> 
     TurnOutcome::Completed { response }
 }
 
+/// A request's `max_tokens`: its output budget, no larger than the room the
+/// window leaves beside this prompt, since a provider refuses a prompt and
+/// reply budget that together exceed the window. No budget stays none.
+fn reply_room(profile: &CapacityProfile, request_chars: u64, budget: Option<u32>) -> Option<u32> {
+    let budget = budget?;
+    let Some(window) = profile.declared_window else {
+        return Some(budget);
+    };
+    let room = window.saturating_sub(profile.estimate_tokens(request_chars));
+    Some(budget.min(u32::try_from(room).unwrap_or(u32::MAX)).max(1))
+}
+
 /// The turn's answer when a card still cites pages nothing retrieved after
 /// one repair: an honest statement, never the card.
 fn uncited_sources_outcome(model: &str, urls: &[String]) -> TurnOutcome {
@@ -8089,7 +8118,6 @@ mod repeat_guard_tests {
         ));
     }
 }
-const MAX_TOOL_INPUT_CHARS: usize = 32_000;
 
 /// After this many **consecutive** turns that end with an unresolved
 /// correctable tool failure (`RepairState::consecutive_failed_turns` exceeds
@@ -8139,15 +8167,6 @@ async fn authorize(
     run_call_counts: &std::sync::Mutex<HashMap<String, u32>>,
     tools: &[Arc<dyn Tool>],
 ) -> Result<(), String> {
-    let input_chars = serde_json::to_string(&call.input)
-        .map(|input| input.chars().count())
-        .unwrap_or(MAX_TOOL_INPUT_CHARS.saturating_add(1));
-    if input_chars > MAX_TOOL_INPUT_CHARS {
-        return Err(format!(
-            "tool call arguments exceed the {}-character safety limit; reduce the arguments and retry",
-            MAX_TOOL_INPUT_CHARS
-        ));
-    }
     if let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) {
         vak_tools::validate_input(&tool.schema(), &call.input)?;
         if let Some(reason) = tool.refusal(&call.input) {

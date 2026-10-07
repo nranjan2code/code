@@ -76,7 +76,7 @@ fn bash(id: &str, command: &str) -> Result<AssistantMessage, LlmError> {
 
 fn profile(horizon: u64) -> CapacityProfile {
     CapacityProfile::from_probe(
-        32_768,
+        Some(32_768),
         None,
         Horizon {
             tokens: horizon,

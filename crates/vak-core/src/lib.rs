@@ -90,7 +90,7 @@ type CapacityCache = std::sync::Mutex<
 /// Provider metadata gathered before a capacity probe runs, bundled so
 /// `run_capacity_probe` stays under clippy's argument-count lint.
 struct ProbeMetadata {
-    declared_window: u64,
+    declared_window: Option<u64>,
     output_reserve: u64,
     metadata_digest: String,
     probed_at: std::time::SystemTime,
@@ -444,6 +444,23 @@ pub struct CapabilityDiagnostic {
     /// people learn to scroll past — which is the precise failure this
     /// diagnostic exists to prevent.
     pub deliberate: bool,
+}
+
+/// What [`Core::effective_limits`] reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectiveLimits {
+    pub context_window: Option<u64>,
+    pub context_window_source: &'static str,
+    pub max_tokens: Option<u64>,
+    pub max_tokens_source: &'static str,
+}
+
+/// The narrower of two limits, either of which may be unknown.
+fn narrowest(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 impl Core {
@@ -4887,28 +4904,81 @@ impl Core {
         value
     }
 
+    /// The current route's context window and reply limit as a person
+    /// should see them, discovering the model's published limits first when
+    /// they are not known yet (invariant 17: effective values and source).
+    pub async fn effective_limits(&self) -> EffectiveLimits {
+        let route = self.effective_route();
+        let _ = self
+            .model_context_cached(&route.provider, &route.model, None)
+            .await;
+        self.known_limits()
+    }
+
+    /// [`Self::effective_limits`] from what is already discovered, with no
+    /// network call: each value with where it came from, the operator's cap
+    /// (`setting`), the model's published limit (`model`), or `unknown`.
+    pub fn known_limits(&self) -> EffectiveLimits {
+        let route = self.effective_route();
+        let metadata = self
+            .inner
+            .model_context_cache
+            .lock()
+            .ok()
+            .and_then(|cache| {
+                cache
+                    .get(&(route.provider.clone(), route.model.clone(), String::new()))
+                    .and_then(|(_, value)| value.clone())
+            });
+        let pick = |cap: Option<u64>, published: Option<u64>| match (cap, published) {
+            (Some(cap), Some(published)) if published < cap => (Some(published), "model"),
+            (Some(cap), _) => (Some(cap), "setting"),
+            (None, Some(published)) => (Some(published), "model"),
+            (None, None) => (None, "unknown"),
+        };
+        let (context_window, context_window_source) = pick(
+            self.inner.config.context_window,
+            metadata.as_ref().map(|m| m.input_tokens),
+        );
+        let (max_tokens, max_tokens_source) = pick(
+            self.inner.config.max_tokens.map(u64::from),
+            metadata.as_ref().and_then(|m| m.output_tokens),
+        );
+        EffectiveLimits {
+            context_window,
+            context_window_source,
+            max_tokens,
+            max_tokens_source,
+        }
+    }
+
+    /// The route's window and output limit: the narrowest any leg's model
+    /// published, under the operator's caps. `None` where nothing published
+    /// or capped one; nothing is assumed (docs/design/68-context-engine.md §8).
     async fn route_context_limits(
         &self,
         primary: &vak_llm::RouteLeg,
         fallback: &[vak_llm::RouteLeg],
-    ) -> (u64, u64) {
+    ) -> (Option<u64>, Option<u64>) {
         let mut legs = Vec::with_capacity(1 + fallback.len());
         legs.push(primary.clone());
         legs.extend(fallback.iter().cloned());
         let mut context_window = self.inner.config.context_window;
-        let mut max_output = u64::from(self.inner.config.max_tokens);
+        let mut max_output = self.inner.config.max_tokens.map(u64::from);
         for leg in legs {
             let metadata = self
                 .model_context_cached(&leg.provider, &leg.model, leg.credential_id.as_deref())
                 .await;
             if let Some(metadata) = metadata {
-                context_window = context_window.min(metadata.input_tokens);
-                if let Some(output) = metadata.output_tokens {
-                    max_output = max_output.min(output);
-                }
+                context_window = narrowest(context_window, Some(metadata.input_tokens));
+                max_output = narrowest(max_output, metadata.output_tokens);
             }
         }
-        (context_window, max_output.min(context_window).max(1))
+        let max_output = match (max_output, context_window) {
+            (Some(output), Some(window)) => Some(output.min(window).max(1)),
+            (output, _) => output,
+        };
+        (context_window, max_output)
     }
 
     /// Whether `leg` reaches a runner on this machine: named `ollama`, or
@@ -5011,15 +5081,15 @@ impl Core {
             (None, Some(b)) => Some(b),
             (None, None) => None,
         };
-        let declared_window = metadata
-            .as_ref()
-            .map(|m| m.input_tokens)
-            .unwrap_or(self.inner.config.context_window);
-        let output_reserve = metadata
-            .as_ref()
-            .and_then(|m| m.output_tokens)
-            .unwrap_or(u64::from(self.inner.config.max_tokens));
-        let metadata_digest = format!("{declared_window}:{output_reserve}");
+        let declared_window = narrowest(
+            metadata.as_ref().map(|m| m.input_tokens),
+            self.inner.config.context_window,
+        );
+        // Planning leaves the room the operator capped a reply at, or what
+        // replies are observed to take (`observe_usage`); the listed maximum
+        // only bounds a request's `max_tokens`.
+        let output_reserve = self.inner.config.max_tokens.map_or(0, u64::from);
+        let metadata_digest = format!("{declared_window:?}:{output_reserve}");
 
         let mut profile = match cached {
             Some(profile) => profile,
@@ -5086,15 +5156,15 @@ impl Core {
             quantisation: metadata.as_ref().and_then(|m| m.quantisation.clone()),
         };
         let now = std::time::SystemTime::now();
-        let declared_window = metadata
-            .as_ref()
-            .map(|m| m.input_tokens)
-            .unwrap_or(self.inner.config.context_window);
-        let output_reserve = metadata
-            .as_ref()
-            .and_then(|m| m.output_tokens)
-            .unwrap_or(u64::from(self.inner.config.max_tokens));
-        let metadata_digest = format!("{declared_window}:{output_reserve}");
+        let declared_window = narrowest(
+            metadata.as_ref().map(|m| m.input_tokens),
+            self.inner.config.context_window,
+        );
+        // Planning leaves the room the operator capped a reply at, or what
+        // replies are observed to take (`observe_usage`); the listed maximum
+        // only bounds a request's `max_tokens`.
+        let output_reserve = self.inner.config.max_tokens.map_or(0, u64::from);
+        let metadata_digest = format!("{declared_window:?}:{output_reserve}");
 
         let fresh = self
             .inner
@@ -5247,6 +5317,8 @@ impl Core {
             // time only), stopping as soon as the majority is settled.
             let mut passes = 0u32;
             let mut fails = 0u32;
+            // The most prompt tokens the provider said it read for this rung.
+            let mut reported_prompt = 0u64;
             let mut rejected: Option<String> = None;
             let mut transport_error: Option<vak_llm::LlmError> = None;
             let mut first_prefill_ms: Option<u64> = None;
@@ -5300,6 +5372,7 @@ impl Core {
                 match outcome {
                     Ok(message) => {
                         admission.settle(&message.usage);
+                        reported_prompt = reported_prompt.max(message.usage.prompt_tokens());
                         if let Some(observed) = vak_context::capacity::observed_tokens_per_char(
                             &request,
                             message.usage.prompt_tokens(),
@@ -5349,10 +5422,23 @@ impl Core {
             if passes < needed && fails < needed {
                 break;
             }
-            let followed = passes >= needed;
+            let mut followed = passes >= needed;
             signals.push(format!(
                 "rung {target}: {passes} followed / {fails} did not"
             ));
+            // With no window to stop at, a rung only proves something when
+            // the provider says it read the whole rung: a server that cuts
+            // a long prompt short, or reports nothing, would otherwise
+            // "follow" every size and the ladder would never end.
+            if followed
+                && declared_window.is_none()
+                && reported_prompt.saturating_mul(4) < target.saturating_mul(3)
+            {
+                followed = false;
+                signals.push(format!(
+                    "rung {target}: the provider reported {reported_prompt} prompt tokens, so it did not read the whole rung"
+                ));
+            }
             rungs.push(vak_context::capacity::Rung {
                 tokens: target,
                 accepted: true,
@@ -5378,7 +5464,10 @@ impl Core {
                 .map(|r| r.tokens)
                 .max();
             vak_context::capacity::Horizon {
-                tokens: largest_followed.unwrap_or_else(|| declared_window.min(4_000)),
+                // Nothing followed: the ladder's own first rung, never more
+                // than a known window.
+                tokens: largest_followed
+                    .unwrap_or_else(|| declared_window.map_or(4_000, |window| window.min(4_000))),
                 confidence: if largest_followed.is_some() { 0.5 } else { 0.3 },
                 last_confirmed: probed_at,
             }
@@ -5639,7 +5728,7 @@ impl Core {
         });
         let demand = vak_llm::score_demand(vak_llm::DemandInput {
             estimated_input_tokens: 0,
-            output_budget_tokens: u64::from(self.inner.config.max_tokens),
+            output_budget_tokens: self.inner.config.max_tokens.map_or(0, u64::from),
             tool_count: self.tool_names().len(),
             structured_output: hint.structured_output,
             reasoning_required: hint.reasoning_required,
@@ -6967,7 +7056,7 @@ impl Core {
             .route_context_limits(&turn_primary_leg, &turn_plan.ladder)
             .await;
         cfg.declared_window = context_window;
-        cfg.max_output = max_output;
+        cfg.max_output = max_output.unwrap_or(0);
         // Measured capacity (docs/design/68-context-engine.md §1): bound
         // immediately from what is already known (cache, ledger, or a
         // metadata-only profile) — never from a live probe. The ladder
@@ -6985,7 +7074,7 @@ impl Core {
             quantisation: capacity.provenance.quantisation.clone(),
         });
         cfg.capacity = Some(capacity);
-        cfg.declared_window = cfg.capacity.as_ref().map_or(0, |p| p.declared_window);
+        cfg.declared_window = cfg.capacity.as_ref().and_then(|p| p.declared_window);
         let sp = &self.inner.config.stop_policy;
         cfg.stop_policy = if sp.enabled {
             Some(vak_agent::StopPolicy {
@@ -8234,14 +8323,14 @@ impl Core {
         let mut profile = bound.unwrap_or_else(|| {
             vak_context::capacity::CapacityProfile::from_metadata_only(
                 self.inner.config.context_window,
-                u64::from(self.inner.config.max_tokens),
+                self.inner.config.max_tokens.map_or(0, u64::from),
                 "compact-session-now".to_string(),
                 std::time::SystemTime::now(),
             )
         });
-        profile.output_reserve = profile
-            .output_reserve
-            .min(u64::from(self.inner.config.max_tokens));
+        if let Some(cap) = self.inner.config.max_tokens {
+            profile.output_reserve = profile.output_reserve.min(u64::from(cap));
+        }
         let system = self.system_prompt();
         let tool_defs = vak_tools::definitions(&self.agent_tools());
         let prefix_chars = (system.len() as u64)
@@ -9904,7 +9993,7 @@ impl Core {
             };
             let est_profile = vak_context::capacity::CapacityProfile::from_metadata_only(
                 self.inner.config.context_window,
-                u64::from(self.inner.config.max_tokens),
+                self.inner.config.max_tokens.map_or(0, u64::from),
                 "reflection-estimate".to_string(),
                 std::time::SystemTime::now(),
             );
@@ -11709,9 +11798,10 @@ mod capacity_probe_tests {
         // bind returns a metadata-only profile immediately.
         let bound = core.capacity_profile_for(&loopback_leg, &mut session).await;
         // The fake model publishes nothing: no window or output limit is
-        // invented for it, so the configured ones stand.
-        assert_eq!(bound.declared_window, core.config().context_window);
-        assert_eq!(bound.output_reserve, u64::from(core.config().max_tokens));
+        // invented for it: with no operator cap either, it has none.
+        assert_eq!(bound.declared_window, None);
+        assert_eq!(bound.output_reserve, 0);
+        assert!(!bound.is_bounded());
         assert!(
             bound.provenance.rungs.is_empty(),
             "no ladder rung may run on the turn's own critical path"
@@ -11727,22 +11817,20 @@ mod capacity_probe_tests {
         };
         core.maybe_start_capacity_probe(&loopback_leg).await;
         let probed = wait_for_capacity_probe(&core, &key).await;
-        // The fake provider follows every rung, so the horizon is the
-        // largest rung the ladder tried below the window.
+        // No window is known, so a rung counts as followed only when the
+        // provider reports reading it whole: the ladder stops where the
+        // fake's reported prompt stops growing, instead of doubling into
+        // ever larger prompts.
         let rungs = &probed.provenance.rungs;
-        assert!(!rungs.is_empty());
-        assert!(rungs.iter().all(|rung| rung.accepted
-            && rung.followed_instruction == Some(true)
-            && rung.tokens < bound.declared_window));
-        assert_eq!(
-            probed.instruction_horizon.tokens,
-            rungs
-                .iter()
-                .map(|rung| rung.tokens)
-                .max()
-                .unwrap_or_default()
-        );
-        assert_eq!(probed.instruction_horizon.confidence, 0.9);
+        assert!(rungs.len() < 16, "the ladder ends: {rungs:?}");
+        let largest_followed = rungs
+            .iter()
+            .filter(|rung| rung.followed_instruction == Some(true))
+            .map(|rung| rung.tokens)
+            .max()
+            .unwrap_or_default();
+        assert!(largest_followed > 0, "{rungs:?}");
+        assert_eq!(probed.instruction_horizon.tokens, largest_followed);
 
         // The next bind catches the session's ledger up on what the
         // background probe delivered (the ledger belongs to the turn, the
@@ -11787,8 +11875,9 @@ mod capacity_probe_tests {
         );
         assert_eq!(hosted_profile.instruction_horizon.confidence, 0.3);
         assert_eq!(
-            hosted_profile.instruction_horizon.tokens, hosted_profile.declared_window,
-            "an unprobed hosted profile starts the horizon at the declared window"
+            hosted_profile.instruction_horizon.tokens,
+            hosted_profile.declared_window.unwrap_or(u64::MAX),
+            "an unprobed hosted profile starts the horizon at the declared window, or unbounded"
         );
 
         vak_config::clear_override("VAK_OLLAMA_BASE_URL");

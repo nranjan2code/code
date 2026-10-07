@@ -286,7 +286,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
         capacity: None,
         capacity_key: None,
         max_output: 8192,
-        declared_window: 128_000,
+        declared_window: Some(128_000),
         ladder: Vec::new(),
         ladder_provider_names: Vec::new(),
         provider_name: None,

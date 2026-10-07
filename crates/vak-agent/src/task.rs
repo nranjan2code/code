@@ -91,7 +91,7 @@ pub struct TaskDeps {
     pub capacity: Option<vak_context::capacity::CapacityProfile>,
     pub capacity_key: Option<vak_context::capacity::ProfileKey>,
     pub max_output: u64,
-    pub declared_window: u64,
+    pub declared_window: Option<u64>,
     pub ladder: Vec<(Arc<dyn Provider>, String)>,
     pub ladder_provider_names: Vec<String>,
     pub provider_name: Option<String>,

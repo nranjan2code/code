@@ -83,7 +83,7 @@ fn session_paths(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
 
 fn flat_profile(declared_window: u64) -> CapacityProfile {
     CapacityProfile::from_probe(
-        declared_window,
+        Some(declared_window),
         None,
         Horizon {
             tokens: declared_window,

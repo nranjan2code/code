@@ -90,7 +90,7 @@ async fn the_turn_continues_from_its_directive_after_a_mid_turn_reset() {
     cfg.tools = vec![Arc::new(BashTool)];
     // A 3k-token ceiling: a 14k-char tool result (~3.5k tokens) outgrows it.
     cfg.capacity = Some(CapacityProfile::from_probe(
-        32_768,
+        Some(32_768),
         None,
         Horizon {
             tokens: 3_000,

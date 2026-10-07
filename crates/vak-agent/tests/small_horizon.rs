@@ -48,7 +48,7 @@ impl Provider for Script {
 
 fn profile(declared: u64, horizon: u64, reserve: u64) -> CapacityProfile {
     CapacityProfile::from_probe(
-        declared,
+        Some(declared),
         None,
         Horizon {
             tokens: horizon,
@@ -69,6 +69,17 @@ fn profile(declared: u64, horizon: u64, reserve: u64) -> CapacityProfile {
 
 /// Runs "hi" against a prefix of `prefix_chars` characters (0.25 tokens/char).
 async fn run(profile: CapacityProfile, prefix_chars: usize) -> (TurnOutcome, usize, SessionLog) {
+    let (outcome, sent, log, _) = run_with_budget(profile, prefix_chars, 0).await;
+    (outcome, sent, log)
+}
+
+/// [`run`] with a request output budget (`max_output`), also returning the
+/// `max_tokens` the first request carried.
+async fn run_with_budget(
+    profile: CapacityProfile,
+    prefix_chars: usize,
+    max_output: u64,
+) -> (TurnOutcome, usize, SessionLog, Option<u32>) {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
         space: None,
@@ -98,6 +109,7 @@ async fn run(profile: CapacityProfile, prefix_chars: usize) -> (TurnOutcome, usi
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
     let mut cfg = AgentConfig::new("x".repeat(prefix_chars));
     cfg.capacity = Some(profile);
+    cfg.max_output = max_output;
     cfg.handoff_reset = true;
     let requests = Arc::new(Mutex::new(Vec::new()));
     let reply = |text: &str| AssistantMessage {
@@ -117,10 +129,15 @@ async fn run(profile: CapacityProfile, prefix_chars: usize) -> (TurnOutcome, usi
         .run("hi", &SteeringQueues::new(), CancellationToken::new(), tx)
         .await;
     let sent = requests.lock().unwrap().len();
+    let first_budget = requests
+        .lock()
+        .unwrap()
+        .first()
+        .and_then(|r: &ChatRequest| r.max_tokens);
     std::mem::forget(dir);
     let session = agent.session.lock().await;
     let log = SessionLog::open_read_only(session.path().to_path_buf()).unwrap();
-    (outcome, sent, log)
+    (outcome, sent, log, first_budget)
 }
 
 #[tokio::test]
@@ -143,12 +160,23 @@ async fn a_turn_that_fits_runs_when_the_prefix_leaves_no_room_for_history() {
 
 #[tokio::test]
 async fn the_listed_output_maximum_does_not_zero_the_budget() {
-    // A 32k window whose listing reports a 29k maximum completion; the agent
-    // requests at most its configured max_tokens.
-    let (outcome, _, _) = run(profile(32_768, 32_768, 29_491), 20_000).await;
+    // A 32k window whose listing reports a 29k maximum completion. The
+    // listed maximum bounds a request's max_tokens, never the room planning
+    // leaves (that is what replies are observed to take), and the request's
+    // budget is clamped to what the window leaves beside its prompt.
+    let (outcome, _, _, budget) = run_with_budget(profile(32_768, 32_768, 0), 20_000, 29_491).await;
     assert!(
         matches!(outcome, TurnOutcome::Completed { .. }),
         "{outcome:?}"
+    );
+    let budget = u64::from(budget.expect("a budget was set"));
+    assert!(
+        budget < 29_491,
+        "clamped to the room beside the prompt: {budget}"
+    );
+    assert!(
+        budget + 5_000 <= 32_768,
+        "prompt and reply fit the window: {budget}"
     );
 }
 

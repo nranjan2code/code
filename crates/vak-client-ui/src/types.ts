@@ -362,7 +362,7 @@ export interface Health {
   model: string;
   permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
   sandbox: string;
-  context_window: number;
+  context_window: number | null;
   cwd: string;
   warnings: unknown[];
   automation_scheduler?: {
@@ -421,7 +421,9 @@ export interface ConfigSnapshot {
   model: string;
   provider_source?: string;
   model_source?: string;
-  max_tokens: number;
+  /** The effective reply limit, or null when nothing states one. */
+  max_tokens: number | null;
+  max_tokens_source?: "setting" | "model" | "unknown";
   max_turns: number;
   intent_evidence_max_age_secs?: number;
   permission_mode: "ReadOnly" | "WorkspaceWrite" | "FullAccess";
@@ -441,7 +443,8 @@ export interface ConfigSnapshot {
   run_retry_base_backoff_ms: number;
   circuit_breaker_threshold: number;
   circuit_breaker_cooldown_secs: number;
-  context_window: number;
+  context_window: number | null;
+  context_window_source?: "setting" | "model" | "unknown";
   theme: string;
   bell: boolean;
   stop_policy: { enabled: boolean; marker_gate: boolean; verify_gate: boolean; max_blocks: number };

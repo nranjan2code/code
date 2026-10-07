@@ -146,7 +146,7 @@ export interface HealthInfo {
   permission_mode: string;
   approval_mode: "ask" | "approve-safe" | "auto-approve";
   sandbox: string;
-  context_window: number;
+  context_window: number | null;
   cwd: string;
   warnings: string[];
 }

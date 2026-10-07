@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(query) = args.next() {
         let profile = vak_context::capacity::CapacityProfile::from_metadata_only(
-            128_000,
+            None,
             0,
             "diagnostic".into(),
             std::time::SystemTime::now(),

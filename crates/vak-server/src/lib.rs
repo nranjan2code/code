@@ -3963,7 +3963,7 @@ fn health_projection(state: &AppState) -> serde_json::Value {
         ),
         "approval_mode": state.core.effective_approval_mode().as_str(),
         "sandbox": state.core.effective_sandbox_name(),
-        "context_window": state.core.config().context_window,
+        "context_window": state.core.known_limits().context_window,
         "voice": {
             "enabled": state.core.effective_voice().enabled,
             "provider": state.core.effective_voice().provider,
@@ -15848,6 +15848,7 @@ async fn get_config(
         .collect();
     let permission_rules = core.effective_permission_rules();
     let project_path = vak_config::project_path(core.cwd());
+    let limits = core.effective_limits().await;
     Json(serde_json::json!({
         "provider": route.provider,
         "model": route.model,
@@ -15856,7 +15857,8 @@ async fn get_config(
         "provider_source": route.provider_source,
         "model_source": route.model_source,
         "route_revision": route.revision,
-        "max_tokens": cfg.max_tokens,
+        "max_tokens": limits.max_tokens,
+        "max_tokens_source": limits.max_tokens_source,
         "max_turns": core.effective_max_turns(),
         "intent_evidence_max_age_secs": cfg.intent.evidence_max_age_secs,
         "permission_mode": format!("{:?}", core.effective_permission_mode()),
@@ -15879,7 +15881,8 @@ async fn get_config(
         "run_retry_base_backoff_ms": cfg.run_retry_base_backoff_ms,
         "circuit_breaker_threshold": cfg.circuit_breaker_threshold,
         "circuit_breaker_cooldown_secs": cfg.circuit_breaker_cooldown_secs,
-        "context_window": cfg.context_window,
+        "context_window": limits.context_window,
+        "context_window_source": limits.context_window_source,
         "theme": core.effective_theme(),
         "voice": core.effective_voice(),
         "memory": {

@@ -359,7 +359,7 @@ async fn handoff_reset_rescues_still_over_context() {
     let (mut agent, _dir) = setup(provider, vec![]);
     // Tiny policy so the fixture triggers the over-budget path with too
     // few turns to compact.
-    agent.config.declared_window = 900;
+    agent.config.declared_window = Some(900);
     agent.config.max_output = 64;
 
     let filler = "x".repeat(4000);

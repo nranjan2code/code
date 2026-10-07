@@ -138,7 +138,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
     cfg.max_output = 512;
-    cfg.declared_window = 8_000;
+    cfg.declared_window = Some(8_000);
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
         runs: None,
         objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
@@ -163,7 +163,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         capacity: None,
         capacity_key: None,
         max_output: 512,
-        declared_window: 8_000,
+        declared_window: Some(8_000),
         ladder: Vec::new(),
         ladder_provider_names: Vec::new(),
         provider_name: None,

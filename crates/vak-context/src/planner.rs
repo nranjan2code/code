@@ -596,7 +596,7 @@ mod tests {
 
     fn profile(horizon_tokens: u64) -> CapacityProfile {
         CapacityProfile::from_probe(
-            horizon_tokens,
+            Some(horizon_tokens),
             None,
             Horizon {
                 tokens: horizon_tokens,

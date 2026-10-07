@@ -143,7 +143,7 @@ async fn a_tiny_horizon_eventually_triggers_incremental_compaction() {
     // metadata-only one built from these two fields (docs/design/68 §4).
     // Small enough that recency alone cannot hold every turn at Full, and
     // eventually not even at Card, forcing a packet.
-    cfg.declared_window = 600;
+    cfg.declared_window = Some(600);
     cfg.max_output = 20;
     let mut agent = Agent::new(provider, log, cfg);
 
@@ -240,7 +240,7 @@ async fn no_usable_horizon_fails_closed_when_handoff_is_disabled() {
     let mut cfg = AgentConfig::new("sys");
     // A horizon far too small to hold even the current directive plus
     // output reserve: budget saturates to 0 (no usable horizon).
-    cfg.declared_window = 5;
+    cfg.declared_window = Some(5);
     cfg.max_output = 5;
     cfg.handoff_reset = false;
     cfg.run_retry_attempts = 0;

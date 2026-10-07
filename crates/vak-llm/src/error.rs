@@ -54,6 +54,36 @@ const OVER_LENGTH_MARKERS: [&str; 9] = [
     "too large for model with",                   // Mistral
 ];
 
+/// The context window an over-length rejection states, when it states one:
+/// "maximum context length is 8192 tokens" (OpenAI, vLLM), "maximum context
+/// length (8192)" (Ollama), "220000 tokens > 200000 maximum" (Anthropic),
+/// "exceeds the available context size (8192 tokens)" (llama.cpp). The
+/// number compared against (`> N`) wins; otherwise the first number after
+/// the provider's own over-length phrase. `None` when it names none.
+pub fn stated_context_window(message: &str) -> Option<u64> {
+    fn first_number(text: &str) -> Option<u64> {
+        let start = text.find(|c: char| c.is_ascii_digit())?;
+        let digits: String = text[start..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == ',')
+            .filter(char::is_ascii_digit)
+            .collect();
+        digits.parse().ok()
+    }
+    let lower = message.to_ascii_lowercase();
+    if let Some(at) = lower.find(" > ") {
+        let after = &lower[at + 3..];
+        if after.trim_start().starts_with(|c: char| c.is_ascii_digit()) {
+            return first_number(after);
+        }
+    }
+    OVER_LENGTH_MARKERS
+        .iter()
+        .find_map(|marker| lower.find(marker).map(|at| at + marker.len()))
+        .and_then(|after| first_number(&lower[after..]))
+        .filter(|&window| window > 0)
+}
+
 impl LlmError {
     /// Preserve provider-declared quota exhaustion as a terminal account
     /// condition. Unrecognized codes remain ordinary retryable throttles.
@@ -181,6 +211,30 @@ impl LlmError {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_stated_window_is_read_from_each_providers_wording() {
+        use super::stated_context_window as window;
+        assert_eq!(
+            window(
+                "This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens."
+            ),
+            Some(8192)
+        );
+        assert_eq!(
+            window("request exceeds the model's maximum context length (8192)"),
+            Some(8192)
+        );
+        assert_eq!(
+            window("prompt is too long: 220000 tokens > 200000 maximum"),
+            Some(200_000)
+        );
+        assert_eq!(
+            window("the request exceeds the available context size (8,192 tokens)"),
+            Some(8192)
+        );
+        assert_eq!(window("prompt is too long"), None);
+    }
     use super::LlmError;
 
     #[test]

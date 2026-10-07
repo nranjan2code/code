@@ -328,6 +328,12 @@ pub struct ChatRequest {
     /// allows it (the reply then shares the model's window); an adapter
     /// whose API requires one fills in the model's published maximum.
     pub max_tokens: Option<u32>,
+    /// The tokens this request needs, its measured prompt estimate plus the
+    /// room left for the reply, when the caller measured it. A provider that
+    /// reserves a window per request (Ollama's `num_ctx`) sizes it to this
+    /// rather than to the model's maximum, which reserved 16 GB on a 17 GB
+    /// machine (docs/design/68-context-engine.md §8).
+    pub context_need: Option<u64>,
     pub temperature: Option<f32>,
     pub cache: Option<CacheHints>,
     /// When set, an OpenAI Responses adapter chains from this prior
@@ -359,6 +365,7 @@ impl ChatRequest {
             messages: Vec::new(),
             tools: Vec::new(),
             max_tokens: None,
+            context_need: None,
             temperature: None,
             cache: None,
             previous_response_id: None,

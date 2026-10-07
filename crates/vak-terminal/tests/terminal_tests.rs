@@ -593,7 +593,10 @@ mod real_server {
         let health = client.health().await.expect("health() must succeed");
         assert!(!health.provider.is_empty(), "provider should be set");
         assert!(!health.model.is_empty(), "model should be set");
-        assert!(health.context_window > 0, "context_window should be > 0");
+        assert!(
+            health.context_window.is_none_or(|window| window > 0),
+            "a stated context_window is never 0"
+        );
         assert!(
             !health.provider.is_empty(),
             "provider must resolve from health"

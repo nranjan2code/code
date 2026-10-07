@@ -221,22 +221,6 @@ pub fn parse_proposals(reply: &str) -> Proposals {
     out
 }
 
-/// The newest `max` characters of `text`, cut on a character boundary: a
-/// byte slice panics inside a multi-byte character (any Devanagari, CJK or
-/// emoji conversation longer than the budget), and reflection wants the end
-/// of the conversation, not its start.
-fn newest_chars(text: &str, max: usize) -> &str {
-    let count = text.chars().count();
-    if count <= max {
-        return text;
-    }
-    let start = text
-        .char_indices()
-        .nth(count - max)
-        .map_or(0, |(index, _)| index);
-    &text[start..]
-}
-
 /// The reflector's system prompt. Public so budget admission can price the
 /// auxiliary dispatch with its real input shape.
 pub fn system_prompt() -> String {
@@ -280,7 +264,7 @@ pub async fn propose(
         role: Role::User,
         content: vec![ContentBlock::text(format!(
             "Recent conversation:\n\n{}",
-            newest_chars(&tail, 12_000)
+            tail
         ))],
     };
     let mut req = ChatRequest::new(model);

@@ -111,7 +111,7 @@ async fn run(
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
     let mut cfg = AgentConfig::new("sys");
     cfg.capacity = Some(CapacityProfile::from_metadata_only(
-        200_000,
+        Some(200_000),
         8_192,
         "d".into(),
         std::time::SystemTime::now(),
@@ -269,7 +269,7 @@ async fn run_profile(
     let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
     let mut cfg = AgentConfig::new("sys");
     cfg.capacity = Some(CapacityProfile::from_metadata_only(
-        200_000,
+        Some(200_000),
         8_192,
         "d".into(),
         std::time::SystemTime::now(),

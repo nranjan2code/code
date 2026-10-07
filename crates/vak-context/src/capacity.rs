@@ -176,8 +176,12 @@ pub struct ProbeProvenance {
 /// (docs/design/68-context-engine.md §1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapacityProfile {
-    /// Provider metadata (existing `model_context()`), before any probing.
-    pub declared_window: u64,
+    /// The window the provider published (`model_context()`), capped by
+    /// the operator's `context_window`, or learned from the limit an
+    /// over-length rejection stated. `None` when nothing has said it: the
+    /// ceiling is then the instruction horizon alone, and no window is
+    /// invented (docs/design/68-context-engine.md §1).
+    pub declared_window: Option<u64>,
     /// The largest prompt the provider has actually accepted.
     pub verified_window: Option<u64>,
     /// The largest prompt at which the model still followed a tool
@@ -191,7 +195,10 @@ pub struct CapacityProfile {
     /// Input tokens per second of prefill, cache-miss turns only.
     pub prefill_tps: Ewma,
     pub cache: CacheBehaviour,
-    /// Provider max output, or the largest completion observed.
+    /// The room planning leaves for a reply: the operator's `max_tokens`
+    /// cap, or the largest reply this model has actually written
+    /// (`observe_usage`). Never the provider's listed maximum, which can be
+    /// most of the window and would leave the prompt nothing.
     pub output_reserve: u64,
     pub provenance: ProbeProvenance,
     /// Set when feedback lowered the horizon (§1 "schedules a re-probe");
@@ -217,7 +224,7 @@ impl CapacityProfile {
     /// models"): the horizon starts at the declared window with low
     /// confidence and is tightened only by feedback or a later full probe.
     pub fn from_metadata_only(
-        declared_window: u64,
+        declared_window: Option<u64>,
         output_reserve: u64,
         metadata_digest: String,
         probed_at: SystemTime,
@@ -225,8 +232,10 @@ impl CapacityProfile {
         CapacityProfile {
             declared_window,
             verified_window: None,
+            // Unmeasured, the horizon is the top of its order: no bound
+            // observed yet. Every observation only lowers it (`min`).
             instruction_horizon: Horizon {
-                tokens: declared_window,
+                tokens: declared_window.unwrap_or(u64::MAX),
                 confidence: HOSTED_UNPROBED_CONFIDENCE,
                 last_confirmed: probed_at,
             },
@@ -249,7 +258,7 @@ impl CapacityProfile {
     /// A profile built from a converged horizon ladder (§1 "Horizon
     /// ladder").
     pub fn from_probe(
-        declared_window: u64,
+        declared_window: Option<u64>,
         verified_window: Option<u64>,
         horizon: Horizon,
         cache: CacheBehaviour,
@@ -276,9 +285,16 @@ impl CapacityProfile {
     /// completion together, so the ceiling never exceeds the window less the
     /// output reserve.
     pub fn prompt_ceiling(&self) -> u64 {
-        self.instruction_horizon
-            .tokens
-            .min(self.declared_window.saturating_sub(self.output_reserve))
+        let window = self.declared_window.map_or(u64::MAX, |window| {
+            window.saturating_sub(self.output_reserve)
+        });
+        self.instruction_horizon.tokens.min(window)
+    }
+
+    /// Whether anything has bounded the prompt yet: a published or stated
+    /// window, or a measured horizon.
+    pub fn is_bounded(&self) -> bool {
+        self.prompt_ceiling() < u64::MAX
     }
 
     /// Remaining input budget for history: the prompt ceiling minus the
@@ -347,6 +363,7 @@ impl CapacityProfile {
         first_token_latency_ms: Option<u64>,
         cache_miss: bool,
     ) {
+        self.output_reserve = self.output_reserve.max(usage.output_tokens);
         let prompt_tokens = usage.prompt_tokens();
         if chars_sent > 0 && prompt_tokens > 0 {
             self.tokens_per_char
@@ -392,7 +409,13 @@ impl CapacityProfile {
     /// `request_tokens × OVER_LENGTH_SHRINK` with `HORIZON_FEEDBACK_CONFIDENCE`
     /// — never widened, only ever lowered, like every other horizon
     /// feedback path.
-    pub fn observe_over_length(&mut self, request_tokens: u64) {
+    pub fn observe_over_length(&mut self, request_tokens: u64, stated_window: Option<u64>) {
+        if let Some(stated) = stated_window {
+            self.declared_window = Some(
+                self.declared_window
+                    .map_or(stated, |known| known.min(stated)),
+            );
+        }
         self.verified_window = Some(match self.verified_window {
             Some(previous) => previous.min(request_tokens),
             None => request_tokens,
@@ -454,12 +477,30 @@ pub struct Ladder {
     searching: bool,
     result: Option<Horizon>,
     verified_window: Option<u64>,
+    /// No window bounds the rungs: the next one is the last one doubled.
+    open_ended: bool,
 }
 
 impl Ladder {
     /// Builds the rung sequence: the named starting sizes filtered to (and
     /// extended geometrically past, by doubling) `declared_window * 0.9`.
-    pub fn new(declared_window: u64) -> Self {
+    ///
+    /// With no known window the ladder is open-ended: past the named
+    /// sizes it keeps doubling while each rung passes, and stops at the
+    /// first rejection or unfollowed instruction (`report`).
+    pub fn new(declared_window: Option<u64>) -> Self {
+        let Some(declared_window) = declared_window else {
+            return Ladder {
+                rungs: LADDER_START_RUNGS.to_vec(),
+                next_index: 0,
+                last_pass: None,
+                first_fail: None,
+                searching: false,
+                result: None,
+                verified_window: None,
+                open_ended: true,
+            };
+        };
         let cap = (declared_window as f64 * LADDER_MAX_FRACTION) as u64;
         let mut rungs: Vec<u64> = LADDER_START_RUNGS
             .into_iter()
@@ -485,6 +526,7 @@ impl Ladder {
             searching: false,
             result: None,
             verified_window: None,
+            open_ended: false,
         }
     }
 
@@ -528,6 +570,12 @@ impl Ladder {
             });
             if !self.searching {
                 self.next_index += 1;
+                if self.open_ended && self.next_index >= self.rungs.len() {
+                    let next = tokens.saturating_mul(2);
+                    if next > tokens {
+                        self.rungs.push(next);
+                    }
+                }
             }
         } else {
             // Accepted but the model did not follow the instruction: this
@@ -909,7 +957,7 @@ mod tests {
     #[test]
     fn over_length_feedback_shrinks_the_horizon_and_never_widens_it() {
         let mut profile = flat_profile(10_000);
-        profile.observe_over_length(8_000);
+        profile.observe_over_length(8_000, None);
         assert_eq!(profile.verified_window, Some(8_000));
         assert_eq!(profile.instruction_horizon.tokens, 7_200); // 8_000 * 0.9
         assert_eq!(profile.instruction_horizon.confidence, 0.6);
@@ -917,7 +965,7 @@ mod tests {
 
         // A later, larger rejected size must not widen the already-lowered
         // horizon or verified_window back up.
-        profile.observe_over_length(9_000);
+        profile.observe_over_length(9_000, None);
         assert_eq!(profile.verified_window, Some(8_000));
         assert_eq!(profile.instruction_horizon.tokens, 7_200);
     }
@@ -943,11 +991,66 @@ mod tests {
         assert!(!profile.is_stale(just_over_a_day, false));
     }
 
+    /// Planning leaves room for the replies this model actually writes.
+    #[test]
+    fn the_reply_room_grows_with_observed_replies() {
+        let mut profile =
+            CapacityProfile::from_metadata_only(Some(32_768), 0, String::new(), SystemTime::now());
+        let usage = |output| vak_llm::Usage {
+            input_tokens: 100,
+            output_tokens: output,
+            ..Default::default()
+        };
+        profile.observe_usage(400, &usage(700), None, false);
+        profile.observe_usage(400, &usage(300), None, false);
+        assert_eq!(profile.output_reserve, 700);
+        assert_eq!(profile.prompt_ceiling(), 32_768 - 700);
+    }
+
+    /// Nothing published a window: nothing is invented. The ceiling is
+    /// unbounded until a rejection states one, which then bounds it.
+    #[test]
+    fn an_unknown_window_is_learned_from_the_limit_a_rejection_states() {
+        let mut profile =
+            CapacityProfile::from_metadata_only(None, 0, String::new(), SystemTime::now());
+        assert!(!profile.is_bounded());
+        profile.observe_over_length(140_000, Some(128_000));
+        assert_eq!(profile.declared_window, Some(128_000));
+        assert!(profile.is_bounded());
+        assert!(profile.prompt_ceiling() <= 128_000);
+        profile.observe_over_length(130_000, Some(200_000));
+        assert_eq!(
+            profile.declared_window,
+            Some(128_000),
+            "a window only narrows"
+        );
+    }
+
+    /// With no window, the ladder keeps doubling while rungs pass and stops
+    /// at the first one the model does not follow.
+    #[test]
+    fn an_open_ended_ladder_grows_until_a_rung_fails() {
+        let mut ladder = Ladder::new(None);
+        let real_horizon = 300_000u64;
+        let mut tried = Vec::new();
+        while let Some(rung) = ladder.next_rung() {
+            tried.push(rung);
+            ladder.report(rung, true, rung <= real_horizon);
+            assert!(tried.len() < 64, "the ladder must converge");
+        }
+        assert!(tried.iter().any(|&rung| rung > 64_000), "{tried:?}");
+        let horizon = ladder.result().expect("converged").tokens;
+        assert!(
+            horizon <= real_horizon && horizon > real_horizon / 2,
+            "{horizon}"
+        );
+    }
+
     #[test]
     fn ladder_converges_via_binary_search_within_tolerance() {
         // Real horizon is 20_000; every rung <= 20_000 passes, every rung
         // above fails the instruction.
-        let mut ladder = Ladder::new(200_000);
+        let mut ladder = Ladder::new(Some(200_000));
         let real_horizon = 20_000u64;
         let mut iterations = 0;
         while let Some(rung) = ladder.next_rung() {
@@ -964,7 +1067,7 @@ mod tests {
 
     #[test]
     fn ladder_records_verified_window_on_provider_rejection() {
-        let mut ladder = Ladder::new(200_000);
+        let mut ladder = Ladder::new(Some(200_000));
         // First rung is accepted and followed.
         let first = ladder.next_rung().expect("first rung");
         ladder.report(first, true, true);
@@ -1112,7 +1215,7 @@ mod tests {
 
     fn flat_profile_with_reserve(horizon_tokens: u64, output_reserve: u64) -> CapacityProfile {
         CapacityProfile::from_probe(
-            horizon_tokens,
+            Some(horizon_tokens),
             None,
             Horizon {
                 tokens: horizon_tokens,

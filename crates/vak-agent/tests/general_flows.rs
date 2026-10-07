@@ -470,7 +470,7 @@ async fn compaction_during_long_research_session() {
     // Small enough that the three heavily-padded seeded turns above cannot
     // all fit even as cards, forcing a packet on the very first plan, and
     // large enough for the tools' schemas beside one packet.
-    cfg.declared_window = 1700;
+    cfg.declared_window = Some(1700);
     cfg.max_output = 100;
     // The handoff-reset rescue is a different mechanism (Phase H) from
     // incremental compaction and would consume its own scripted response

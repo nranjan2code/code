@@ -1769,7 +1769,12 @@ fn run_config_dump(cwd: PathBuf) {
             println!("cwd              = {}", core.cwd().display());
             println!("provider         = {}", core.effective_provider());
             println!("model            = {}", core.effective_model());
-            println!("max_tokens       = {}", core.config().max_tokens);
+            println!(
+                "max_tokens       = {}",
+                core.config()
+                    .max_tokens
+                    .map_or_else(|| "the model's own".to_string(), |cap| cap.to_string())
+            );
             println!("max_turns        = {}", core.effective_max_turns());
             println!("permission_mode  = {:?}", core.effective_permission_mode());
             println!(
