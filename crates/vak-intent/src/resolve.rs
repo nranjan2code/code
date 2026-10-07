@@ -70,10 +70,12 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// search (Locate). 12 — "recent" and "recently" are temporal deixis: a
 /// card of "three recent headlines" built from nothing retrieved carried
 /// invented ones; plural conversation nouns ("recent conversations") stay
-/// local. The test
+/// local. 13 — a greeting followed only by a word for when ("how are you
+/// today?") is social and asks for no current value; the lexicon is
+/// unchanged. The test
 /// `lexicon_digest_matches_resolver_version` pins the tables to this number
 /// so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 12;
+pub const RESOLVER_VERSION: u32 = 13;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1390,7 +1392,7 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            12,
+            13,
             "7b2e45638aca545669738ff350e5778d1291a8b3458f3255b77c573b489bd120",
         );
         let digest = crate::signals::lexicon_digest();
@@ -2147,6 +2149,8 @@ mod tests {
             "update the README to reflect the latest changes",
             "fix the live reload bug in the dev server",
             "hello there, how are you doing today",
+            "hi, how are you today?",
+            "good morning! how are you doing right now?",
             "what time is it right now",
         ] {
             let intent = resolve_text(text).intent();

@@ -1523,6 +1523,19 @@ fn classify(
     if lone_social || (social_phrase && read.consumed.iter().all(|c| *c)) {
         return ClauseKind::Social;
     }
+    // "Hi, how are you today?": with the greeting set aside, what is left
+    // says only when. It asks nothing, whatever its punctuation. Found
+    // live: it read as a question about a current value, and the model
+    // fetched the time.
+    if (read.greeting > 0.0 || !read.stripped.is_empty())
+        && tokens.words.iter().all(|word| {
+            RECENCY_PHRASES
+                .iter()
+                .any(|(phrase, _)| split_phrase(phrase).contains(&word.as_str()))
+        })
+    {
+        return ClauseKind::Social;
+    }
     if desire {
         return ClauseKind::Request;
     }
@@ -2185,6 +2198,9 @@ fn read_stakes_and_evidence(clause: &ClauseRead, checkable: bool, out: &mut Extr
 }
 
 fn read_recency(clause: &ClauseRead, out: &mut Extraction) {
+    if clause.kind == ClauseKind::Social {
+        return;
+    }
     let tokens = &clause.tokens;
     if refers_to_prior_response(tokens) {
         return;
