@@ -311,7 +311,16 @@ labelled details; they were timeline cards, a list of items, and in a live
 run on gemma4 every request for one was answered with an entity, document or
 graph card instead (decided 2026-10-07). Types whose content is an ordered
 list keep the timeline card (`progress` and `status` render items with their
-status), and rows and columns keep the table.
+status), and rows and columns keep the table. `faq` is a universal card
+too, each detail written `Question? Answer`. Measured on a captured request
+on gemma4, 12 runs each: as a timeline card 0 of 12 (the model reasoned
+that an FAQ is the general-purpose card, which was not loaded, and stopped
+or called a card it was not offered); as a universal card with `Label:
+value` details 2 of 12, and 1 of 12 when the description said `Question:
+answer` (the string ended at the question mark); as a table 1 of 12; with
+`Question? Answer`, all 12 chose the card and the type, 8 as written, 2 as
+`Question:` and `Answer:` fields in turn, which the builder pairs, and 2
+with questions alone, which the refusal names.
 
 **Citations.** A card cites only what this conversation holds. Every `url`
 a card carries (a media card's only when it is a web address, since it may

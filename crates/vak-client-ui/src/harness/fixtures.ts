@@ -220,7 +220,7 @@ export const TYPE_CATEGORY: Record<string, Category[]> = {
   overview: ["universal_card"], summary: ["universal_card"], detail: ["universal_card"], notes: ["timeline"], follow_up: ["timeline"],
   reminder: ["timeline"], shopping_list: ["timeline"], lesson: ["timeline"], reading_list: ["timeline"], habit_plan: ["timeline"],
   project_plan: ["timeline"], meeting_notes: ["timeline"], contact_log: ["timeline"], home_project: ["timeline"],
-  care_plan: ["timeline"], event_plan: ["timeline"], media_list: ["timeline"], collection: ["timeline"], faq: ["timeline"],
+  care_plan: ["timeline"], event_plan: ["timeline"], media_list: ["timeline"], collection: ["timeline"], faq: ["universal_card"],
   decision: ["timeline"],
   // chart
   chart: ["chart"], "telemetry.chart": ["chart"], trend: ["chart"], timeseries: ["chart"], metric_chart: ["chart"],

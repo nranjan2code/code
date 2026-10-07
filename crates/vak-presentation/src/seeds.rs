@@ -157,7 +157,6 @@ const TIMELINE_TYPES: &[&str] = &[
     "event_plan",
     "media_list",
     "collection",
-    "faq",
     "decision",
     "decision_analysis",
     "meal_plan",
@@ -193,6 +192,7 @@ const UNIVERSAL_TYPES: &[&str] = &[
     "overview",
     "summary",
     "detail",
+    "faq",
 ];
 
 fn binding(path: &str) -> SpecValue {

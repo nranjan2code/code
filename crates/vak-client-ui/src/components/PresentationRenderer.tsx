@@ -1306,7 +1306,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "event_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Event Plan", "Event")} />,
   "media_list": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Media List", "Media")} />,
   "collection": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Collection", "Collection")} />,
-  "faq": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Frequently Asked Questions", "FAQ")} />,
+  "faq": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "FAQ")} />,
   "decision": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Decision Analysis", "Decision")} />,
 
   // 9. Visualizations & Charts

@@ -160,7 +160,7 @@ fn universal_fields() -> Value {
             "fields": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Each detail the card lists, written Label: value."
+                "description": "Each detail the card lists, written Label: value. An FAQ's are each written Question? Answer."
             }
         }),
         &[],
@@ -170,19 +170,32 @@ fn universal_fields() -> Value {
 fn build_universal(args: &Map<String, Value>) -> Result<Value, String> {
     let mut payload = copy(args, &["title", "summary"]);
     let details = args["fields"].as_array().cloned().unwrap_or_default();
-    for (at, detail) in details.iter().enumerate() {
-        let Some((label, value)) = detail.as_str().and_then(|text| text.split_once(':')) else {
+    let mut at = 0;
+    while at < details.len() {
+        let text = details[at].as_str().unwrap_or_default();
+        at += 1;
+        let next = details.get(at).and_then(Value::as_str).unwrap_or_default();
+        let (label, value) = if let Some(question) = asked(text, &["question", "q"])
+            && let Some(answer) = asked(next, &["answer", "a"])
+        {
+            at += 1;
+            (question, answer)
+        } else if let Some((question, answer)) = question_and_answer(text) {
+            (question, answer)
+        } else if text.trim_end().ends_with('?') {
             return Err(format!(
-                "field {} is not written `Label: value`; put a colon after its label",
-                at + 1
+                "field {at} is a question with no answer; write it `Question? Answer`"
+            ));
+        } else if let Some((label, value)) = text.split_once(':') {
+            (label, value)
+        } else {
+            return Err(format!(
+                "field {at} is not written `Label: value`; put a colon after its label"
             ));
         };
         let label = label.trim();
         if label.is_empty() {
-            return Err(format!(
-                "field {} has an empty label before its colon",
-                at + 1
-            ));
+            return Err(format!("field {at} has an empty label before its colon"));
         }
         if payload.contains_key(label) {
             return Err(format!(
@@ -192,6 +205,30 @@ fn build_universal(args: &Map<String, Value>) -> Result<Value, String> {
         payload.insert(label.to_string(), Value::String(value.trim().to_string()));
     }
     Ok(Value::Object(payload))
+}
+
+/// A field written `Question? Answer`: the question up to its mark, and
+/// the answer after it. A colon before the mark makes it `Label: value`.
+fn question_and_answer(text: &str) -> Option<(&str, &str)> {
+    let mark = text.find('?')?;
+    if text[..mark].contains(':') {
+        return None;
+    }
+    let (question, answer) = text.split_at(mark + 1);
+    let answer = answer.trim_start_matches([' ', ':', '-', '–', '—']).trim();
+    (!answer.is_empty()).then_some((question, answer))
+}
+
+/// The text of a field labelled as one half of a question and answer
+/// written as two fields (`Question: …` then `Answer: …`, or `Q1: …` then
+/// `A1: …`): `names` with an optional number.
+fn asked<'a>(text: &'a str, names: &[&str]) -> Option<&'a str> {
+    let (label, value) = text.split_once(':')?;
+    let label = label
+        .trim()
+        .trim_end_matches(|c: char| c.is_ascii_digit() || c == ' ')
+        .to_lowercase();
+    names.contains(&label.as_str()).then_some(value.trim())
 }
 
 fn research_fields() -> Value {
@@ -804,7 +841,7 @@ fn build_metric(args: &Map<String, Value>) -> Result<Value, String> {
 const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_universal_card",
-        description: "Emit a static general-purpose card (an overview, summary or detail of one subject, an architecture, map, calendar, board, entity, document, graph, form, alert, and similar) with a title, a summary and labelled details. This card has no row-selection control; for choices the user can select, use emit_table_card with semantic_type travel_options and one row per option.",
+        description: "Emit a static general-purpose card (an overview, summary or detail of one subject, an FAQ, an architecture, map, calendar, board, entity, document, graph, form, alert, and similar) with a title, a summary and labelled details. This card has no row-selection control; for choices the user can select, use emit_table_card with semantic_type travel_options and one row per option.",
         semantic_types: &[
             "map",
             "route_map",
@@ -828,6 +865,7 @@ const SHAPES: &[CardShape] = &[
             "overview",
             "summary",
             "detail",
+            "faq",
         ],
         fields: universal_fields,
         build: build_universal,
@@ -917,7 +955,6 @@ const SHAPES: &[CardShape] = &[
             "event_plan",
             "media_list",
             "collection",
-            "faq",
             "decision",
             "decision_analysis",
             "meal_plan",
@@ -2082,6 +2119,28 @@ mod tests {
             serde_json::json!({"semantic_type": "entity", "fields": ["no colon here"]}),
         );
         assert!(refused.unwrap_err().contains("Label: value"));
+        let faq = built(
+            "emit_universal_card",
+            serde_json::json!({
+                "semantic_type": "faq",
+                "title": "Bakery FAQ",
+                "fields": [
+                    "Do you deliver? Yes: within 5 km.",
+                    "Q2: What are your hours?",
+                    "A2: 7 am to 4 pm.",
+                    "Parking: Is there any? Behind the shop."
+                ]
+            }),
+        )
+        .unwrap();
+        assert_eq!(faq["Do you deliver?"], "Yes: within 5 km.");
+        assert_eq!(faq["What are your hours?"], "7 am to 4 pm.");
+        assert_eq!(faq["Parking"], "Is there any? Behind the shop.");
+        let unanswered = built(
+            "emit_universal_card",
+            serde_json::json!({"semantic_type": "faq", "fields": ["Do you deliver?"]}),
+        );
+        assert!(unanswered.unwrap_err().contains("Question? Answer"));
         let payload = built(
             "emit_metric_card",
             serde_json::json!({
