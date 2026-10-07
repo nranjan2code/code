@@ -228,6 +228,29 @@ arguments follow four rules, checked by
 The stored card, and every renderer, pack, digest and channel that reads it,
 is unchanged by the contract: `build` is the only place the two meet.
 
+**Open question: prompt length and call syntax.** With the contract in
+place, one captured request ("three famous lighthouses … as a table card",
+12.5k-character system prompt, 17 tools) still gets a valid
+`emit_table_card` call in only 4 of 20 sampled runs on gemma4:e2b-mlx; the
+model's other calls are written `table="…"`, which Ollama's parser drops
+(its log: `gemma4 tool call parsing failed`). Bisected 2026-10-07:
+
+- The same request with a one-line system prompt: 10 of 10 valid.
+- No single block is the cause. Dropping any one block (identity, capability
+  contract, card guidance, Office, bash, rules, guardrails, surface, the
+  More tools catalogue) leaves sampled runs failing; the good short prompt
+  padded with 7k characters of the harmless rules and guardrails text falls
+  to 3 of 10.
+- Not truncation: all 8,224 prompt tokens were evaluated against a 131,072
+  window. Not sampling: at temperature 0 the full prompt fails 10 of 10.
+  Thinking on: 3 of 10. The `table` schema and description hold no `=`.
+
+So the measured cause is the length of the prefix Vak sends, independent of
+which text it is. What remains open is whether Vak should send a shorter
+prefix to a model whose measured capacity profile shows this (doc 68's
+instruction horizon is the place such a measurement would live), or recover
+a dropped call, which Ollama does not return to the client today.
+
 **Presentation check.** Prompt guidance is advisory, and a strong model can
 still answer in prose what the app would have shown as a card. After the
 turn-loop's other repair checks, `Agent::run` asks an optional
