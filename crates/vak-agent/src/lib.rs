@@ -1834,6 +1834,10 @@ impl Agent {
         // observation (`AgentConfig::observation_check`): reading the file
         // or running the command is how a local "current" value is found.
         let mut observed_this_run = false;
+        // A retrieval was called this run, whatever it returned: with
+        // `observed_this_run` still false, every one failed, and the honest
+        // answer reports that rather than shows a card with no data.
+        let mut retrieval_attempted_this_run = false;
         let mut freshness_repair_attempted = false;
         let mut empty_step_repair_attempted = false;
         let mut card_repeat_streak: u32 = 0;
@@ -2779,6 +2783,7 @@ impl Agent {
                 if !presentation_repair_attempted
                     && !cards_emitted_this_run
                     && !file_delivered_this_run
+                    && !(retrieval_attempted_this_run && !observed_this_run)
                     && let Some(check) = &self.config.presentation_check
                 {
                     let text = response.text_content();
@@ -3286,6 +3291,15 @@ impl Agent {
                     ToolRunOutput::Err(_) => None,
                 })
                 .collect();
+            retrieval_attempted_this_run |= results.iter().any(|(id, _)| {
+                let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("tool");
+                call_inputs.get(id).is_some_and(|input| {
+                    self.config
+                        .retrieval_check
+                        .as_ref()
+                        .is_some_and(|check| check(name, input))
+                })
+            });
             if !observed_this_run {
                 observed_this_run = !retrieval_tool_names.is_empty()
                     || results.iter().any(|(id, out)| {
@@ -6275,6 +6289,7 @@ impl Agent {
             .map(normalize_tool_call)
             .map(|call| normalize_mcp_call(call, &index))
             .map(|call| normalize_schema_wrapper(call, &self.config.tools))
+            .map(|call| normalize_card_type(call, &self.config.tools))
             .collect::<Vec<_>>();
         self.load_called_deferred(&calls);
         let n = calls.len();
@@ -7202,28 +7217,105 @@ fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) 
         return call;
     };
     let schema = tool.schema();
-    if let Some(input) = unwrapped_schema_input(&schema, &call.input) {
+    if let Some(input) = unwrapped_schema_input(&schema, &call.name, &call.input) {
         call.input = input;
     }
     call
 }
 
-fn unwrapped_schema_input(schema: &Value, input: &Value) -> Option<Value> {
-    if vak_tools::validate_input(schema, input).is_ok() {
-        return None;
+/// A card call is identified by its `semantic_type`, which every card tool
+/// requires (docs/design/30-render-architecture.md §30.1, rule 5) and which
+/// belongs to exactly one card tool. A call is routed to the admitted card
+/// tool that owns its type when it names another card tool (live: a form
+/// card written in full under `emit_ui_preview_card`) or a card tool that
+/// does not exist; with no `semantic_type`, a name `emit_<type>_card` names
+/// the type (live: `emit_transaction_card`) and the type is filled in. The
+/// owner's schema then validates the call, so an error names the owner's
+/// fields and the next step loads its schema. Schema-driven from each card
+/// tool's own `semantic_type` enum, never a list of names.
+fn normalize_card_type(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) -> PendingToolCall {
+    let called = tools.iter().find(|tool| tool.name() == call.name);
+    if called.is_some_and(|tool| !tool.presents_cards()) {
+        return call;
     }
-    let object = input.as_object()?;
-    let (outer_key, inner) = object.iter().next().filter(|_| object.len() == 1)?;
-    if !inner.is_object()
-        || schema
-            .get("properties")
-            .and_then(Value::as_object)
-            .is_some_and(|properties| properties.contains_key(outer_key))
-        || vak_tools::validate_input(schema, inner).is_err()
-    {
-        return None;
+    let cards: Vec<(String, Value)> = tools
+        .iter()
+        .filter(|tool| tool.presents_cards())
+        .map(|tool| (tool.name().to_string(), tool.schema()))
+        .collect();
+    if let Some((name, input)) = card_owner(&call.name, &call.input, &cards) {
+        call.name = name;
+        call.input = input;
     }
-    Some(inner.clone())
+    call
+}
+
+fn card_types(schema: &Value) -> impl Iterator<Item = &str> {
+    schema["properties"]["semantic_type"]["enum"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+}
+
+fn card_owner(name: &str, input: &Value, cards: &[(String, Value)]) -> Option<(String, Value)> {
+    let owner_of = |semantic_type: &str| {
+        let mut owners = cards
+            .iter()
+            .filter(|(_, schema)| card_types(schema).any(|t| t == semantic_type));
+        let owner = owners.next()?;
+        owners.next().is_none().then(|| owner.0.clone())
+    };
+    let known = cards.iter().any(|(card, _)| card == name);
+    match input.get("semantic_type").and_then(Value::as_str) {
+        Some(semantic_type) => {
+            let owner = owner_of(semantic_type)?;
+            (owner != name).then(|| (owner, input.clone()))
+        }
+        None if !known => {
+            let named = name.strip_prefix("emit_")?.strip_suffix("_card")?;
+            let semantic_type = [named.to_string(), named.replace('_', ".")]
+                .into_iter()
+                .find(|candidate| owner_of(candidate).is_some())?;
+            let owner = owner_of(&semantic_type)?;
+            let mut input = input.as_object()?.clone();
+            input.insert("semantic_type".into(), Value::String(semantic_type));
+            Some((owner, Value::Object(input)))
+        }
+        None => None,
+    }
+}
+
+/// The call's arguments without a redundant wrapper object. A wrapper whose
+/// key names the called tool itself (`metric_card` or `emit_metric_card`
+/// around a metric card's fields, nested twice live) can only be a
+/// wrapper, so it is removed whatever is inside and validation then names
+/// what the fields really lack; any other single unknown key is removed
+/// only when what it wraps is valid as it stands.
+fn unwrapped_schema_input(schema: &Value, tool: &str, input: &Value) -> Option<Value> {
+    let names_tool = |key: &str| key == tool || Some(key) == tool.strip_prefix("emit_");
+    let mut current = input;
+    let mut unwrapped = None;
+    loop {
+        if vak_tools::validate_input(schema, current).is_ok() {
+            return unwrapped;
+        }
+        let object = current.as_object()?;
+        let Some((outer_key, inner)) = object.iter().next().filter(|_| object.len() == 1) else {
+            return unwrapped;
+        };
+        if !inner.is_object()
+            || schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .is_some_and(|properties| properties.contains_key(outer_key))
+            || !(names_tool(outer_key) || vak_tools::validate_input(schema, inner).is_ok())
+        {
+            return unwrapped;
+        }
+        current = inner;
+        unwrapped = Some(inner.clone());
+    }
 }
 
 fn extract_worker_id(text: &str) -> Option<String> {
@@ -8155,14 +8247,17 @@ fn normalize_response_tool_uses(
         let ContentBlock::ToolUse { id, name, input } = block else {
             continue;
         };
-        let call = normalize_schema_wrapper(
-            normalize_mcp_call(
-                normalize_tool_call(PendingToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    input: input.clone(),
-                }),
-                mcp_index,
+        let call = normalize_card_type(
+            normalize_schema_wrapper(
+                normalize_mcp_call(
+                    normalize_tool_call(PendingToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    }),
+                    mcp_index,
+                ),
+                tools,
             ),
             tools,
         );
@@ -8508,6 +8603,56 @@ mod tool_recovery_tests {
     }
 
     #[test]
+    fn a_card_call_goes_to_the_card_tool_that_owns_its_type() {
+        use super::card_owner;
+        let card = |types: &[&str], field: &str| {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "semantic_type": {"type": "string", "enum": types},
+                    field: {"type": "string"}
+                },
+                "required": ["semantic_type"]
+            })
+        };
+        let cards = vec![
+            (
+                "emit_ui_preview_card".to_string(),
+                card(&["ui.preview"], "artifact_path"),
+            ),
+            (
+                "emit_universal_card".to_string(),
+                card(&["calendar", "transaction"], "summary"),
+            ),
+        ];
+        let calendar = serde_json::json!({"semantic_type": "calendar", "summary": "Week"});
+        let routed = |name: &str, input: &serde_json::Value| card_owner(name, input, &cards);
+        assert_eq!(
+            routed("emit_ui_preview_card", &calendar),
+            Some(("emit_universal_card".into(), calendar.clone()))
+        );
+        assert_eq!(
+            routed("emit_calendar_card", &calendar)
+                .map(|(owner, _)| owner)
+                .as_deref(),
+            Some("emit_universal_card")
+        );
+        assert_eq!(routed("emit_universal_card", &calendar), None);
+        let named = serde_json::json!({"summary": "45 EUR"});
+        assert_eq!(
+            routed("emit_transaction_card", &named),
+            Some((
+                "emit_universal_card".into(),
+                serde_json::json!({"semantic_type": "transaction", "summary": "45 EUR"})
+            ))
+        );
+        assert_eq!(routed("emit_ui_preview_card", &named), None);
+        let unknown = serde_json::json!({"semantic_type": "recipe"});
+        assert_eq!(routed("emit_ui_preview_card", &unknown), None);
+        assert_eq!(routed("emit_recipe_card", &serde_json::json!({})), None);
+    }
+
+    #[test]
     fn one_redundant_provider_wrapper_is_removed_only_when_inner_schema_is_valid() {
         use super::unwrapped_schema_input;
         let schema = serde_json::json!({
@@ -8527,21 +8672,40 @@ mod tool_recovery_tests {
         assert_eq!(
             unwrapped_schema_input(
                 &schema,
+                "emit_other_card",
                 &serde_json::json!({"metric_card": canonical.clone()})
             ),
             Some(canonical.clone())
         );
-        assert_eq!(unwrapped_schema_input(&schema, &canonical), None);
         assert_eq!(
-            unwrapped_schema_input(&schema, &serde_json::json!({"metric_card": {"value": "1"}})),
+            unwrapped_schema_input(&schema, "emit_other_card", &canonical),
             None
         );
         assert_eq!(
             unwrapped_schema_input(
                 &schema,
-                &serde_json::json!({"metric_card": canonical, "extra": true})
+                "emit_other_card",
+                &serde_json::json!({"metric_card": {"value": "1"}})
             ),
             None
+        );
+        assert_eq!(
+            unwrapped_schema_input(
+                &schema,
+                "emit_other_card",
+                &serde_json::json!({"metric_card": canonical.clone(), "extra": true})
+            ),
+            None
+        );
+        // A wrapper named for the called tool is removed, twice nested
+        // included, even when what it holds is incomplete.
+        assert_eq!(
+            unwrapped_schema_input(
+                &schema,
+                "emit_metric_card",
+                &serde_json::json!({"metric_card": {"metric_card": {"value": "1"}}})
+            ),
+            Some(serde_json::json!({"value": "1"}))
         );
     }
 }

@@ -72,6 +72,25 @@ impl Provider for Scripted {
 /// Stand-in for `vak_core::presentation_tools::EmitCardTool` — returns the
 /// card's flat arguments as the real tool takes them, without pulling in
 /// the vak-core dependency.
+/// A retrieval that fails, as a fetch answering 403 now does.
+struct FailingFetch;
+
+#[async_trait::async_trait]
+impl Tool for FailingFetch {
+    fn name(&self) -> &str {
+        "fetch"
+    }
+    fn description(&self) -> &str {
+        "fetch a url"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::error("[webfetch] GET https://example.com -> 403 Forbidden")
+    }
+}
+
 struct FakeEmitChartCard;
 
 #[async_trait]
@@ -182,7 +201,8 @@ async fn build_agent(
             cfg.model = "test-model".into();
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
-            cfg.tools = vec![Arc::new(FakeEmitChartCard)];
+            cfg.tools = vec![Arc::new(FakeEmitChartCard), Arc::new(FailingFetch)];
+            cfg.retrieval_check = Some(Arc::new(|name, _| name == "fetch"));
             // As in production: a card tool the request did not predict is
             // deferred, so it is not declared until something loads it.
             cfg.tool_definitions = Some(vec![
@@ -192,6 +212,11 @@ async fn build_agent(
                     serde_json::json!({"type": "object"}),
                 )
                 .deferred(),
+                vak_llm::ToolDefinition::new(
+                    "fetch",
+                    "test stand-in",
+                    serde_json::json!({"type": "object"}),
+                ),
             ]);
             if with_check {
                 cfg.presentation_check = Some(Arc::new(|text, offered| {
@@ -355,6 +380,40 @@ async fn no_nudge_when_a_card_was_already_emitted_this_run() {
         run(&mut agent).await,
         TurnOutcome::Completed { .. }
     ));
+    assert!(
+        !user_texts(&agent)
+            .iter()
+            .any(|t| t.contains("[presentation-check]"))
+    );
+}
+
+/// Every retrieval this run failed, so the answer can only report that; a
+/// nudge toward a card would ask for one with no data (live: a weather card
+/// asked for after a 403).
+#[tokio::test]
+async fn no_nudge_when_every_retrieval_this_run_failed() {
+    let dir = tempdir().unwrap();
+    let (mut agent, _) = build_agent(
+        &dir,
+        "pc-failed-fetch",
+        vec![
+            tool_call_msg(
+                "f1",
+                "fetch",
+                serde_json::json!({"url": "https://example.com"}),
+            ),
+            text_msg("TABLE: the page could not be retrieved (403), so I have no figures."),
+            text_msg("TABLE: the fetch failed with 403 Forbidden, so I have no figures."),
+        ],
+        true,
+    )
+    .await;
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?} {:?}",
+        user_texts(&agent)
+    );
     assert!(
         !user_texts(&agent)
             .iter()

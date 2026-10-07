@@ -126,7 +126,7 @@ fn check(schema: &Value, value: &Value, path: &str, problems: &mut Vec<String>) 
     let before = problems.len();
     for key in &required_keys {
         if !object.contains_key(*key) {
-            problems.push(format!("required parameter `{key}` was omitted"));
+            problems.push(format!("{path} is missing required `{key}`"));
         }
     }
     if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false)
@@ -274,14 +274,46 @@ mod tests {
         .unwrap_err();
         assert!(error.starts_with("invalid tool arguments: "), "{error}");
         for part in [
-            "required parameter `semantic_type` was omitted",
-            "required parameter `payload` was omitted",
+            "arguments is missing required `semantic_type`",
+            "arguments is missing required `payload`",
             "unexpected parameter `command_run`",
             "unexpected parameter `output`",
             "arguments takes `semantic_type`, `payload`",
         ] {
             assert!(error.contains(part), "missing {part:?} in {error}");
         }
+    }
+
+    /// A field missing inside a list item names the item, so it is not read
+    /// as the call's own field (live: a research card refused twice for a
+    /// `title` each source lacked, read as the card's own `title`).
+    #[test]
+    fn a_missing_nested_field_names_its_item() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
+                        "required": ["title"]
+                    }
+                }
+            },
+            "required": ["title"]
+        });
+        let error = validate_input(
+            &schema,
+            &json!({"title": "News", "sources": [{"url": "https://example.com"}]}),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("arguments.sources[0] is missing required `title`"),
+            "{error}"
+        );
+        assert!(!error.contains("arguments is missing"), "{error}");
     }
 
     #[test]

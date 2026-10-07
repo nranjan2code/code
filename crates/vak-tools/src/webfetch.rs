@@ -352,9 +352,28 @@ pub async fn guarded_get(
     })
 }
 
+/// A server's error status is an error value, never a page: a 403 or 404
+/// body is the site's own chrome, and read as a result it made the run
+/// count a retrieval that found nothing, then ask the answer to "use" it
+/// and to show it as a card (live: a weather card asked for after a 403).
+/// The message names only the status, so its failure kind comes from the
+/// status words (`Forbidden` is an access failure) and never from words
+/// in a page, which could read as a correctable argument fault.
+fn http_error_output(url: &str, status: u16) -> ToolOutput {
+    let status = reqwest::StatusCode::from_u16(status)
+        .map_or_else(|_| status.to_string(), |status| status.to_string());
+    ToolOutput::error(format!(
+        "[webfetch] GET {url} -> {status}: the server answered with an error instead of \
+         the page, so nothing was retrieved from it."
+    ))
+}
+
 impl WebFetchTool {
     async fn run(&self, raw: &str, format: PageFormat) -> ToolOutput {
         match guarded_get(raw, &[], MAX_BODY_BYTES).await {
+            Ok(fetched) if fetched.status >= 400 => {
+                http_error_output(&fetched.final_url, fetched.status)
+            }
             Ok(fetched) => {
                 let body = String::from_utf8_lossy(&fetched.body);
                 let text = if is_html(&fetched.content_type) {
@@ -747,5 +766,18 @@ mod tests {
             "{}",
             out.content
         );
+    }
+
+    #[test]
+    fn an_error_status_is_an_error_that_asks_for_no_argument_fix() {
+        for status in [400, 401, 403, 404, 410, 500, 503] {
+            let output = super::http_error_output("https://example.com/a", status);
+            assert!(output.is_error, "{status}");
+            assert!(
+                !output.classify().is_correctable(),
+                "{status}: {}",
+                output.content
+            );
+        }
     }
 }

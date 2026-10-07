@@ -120,7 +120,7 @@ fn text_msg(t: &str) -> AssistantMessage {
 }
 
 fn fenced_research_answer() -> String {
-    "Here is what I found:\n\n```vak\n{\"semantic_type\":\"research.synthesis\",\"sources\":[{\"title\":\"UPI fee debate\",\"url\":\"https://example-news.in/upi-fee-debate\"}],\"takeaways\":[{\"text\":\"Parliament is debating a UPI fee.\",\"source\":1}]}\n```".into()
+    "Here is what I found:\n\n```vak\n{\"semantic_type\":\"research.synthesis\",\"sources\":[{\"title\":\"UPI fee debate\",\"url\":\"https://example-news.in/upi-fee-debate\",\"finding\":\"Parliament is debating a UPI fee.\"}]}\n```".into()
 }
 
 async fn build_agent(

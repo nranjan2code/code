@@ -189,43 +189,39 @@ fn research_fields() -> Value {
         serde_json::json!({
             "title": string(""),
             "sources": list_of(
-                "The retrieved sources, in order.",
+                "The retrieved sources, in order, each with what it found.",
                 serde_json::json!({
                     "title": string("Copy the source title from the retrieved result."),
                     "url": string("Copy the exact source URL from retrieved evidence, not a guessed homepage or search URL."),
-                    "snippet": string("Use only text supported by the retrieved source."),
+                    "finding": string("What this source found that answers the request, in one sentence, supported by its text."),
                     "source_name": string("Optional; include only if the retrieved result identifies this publisher."),
                     "published_at": string("Optional; include only when the retrieved result supplies a publication date.")
                 }),
-                &["title", "url"],
-            ),
-            "takeaways": list_of(
-                "The findings, each supported by one source.",
-                serde_json::json!({
-                    "text": string(""),
-                    "source": integer("The number of the source in sources that supports this takeaway: 1 for the first.")
-                }),
-                &["text", "source"],
+                &["title", "url", "finding"],
             )
         }),
-        &["sources", "takeaways"],
+        &["sources"],
     )
 }
 
+/// Each source's `finding` becomes a takeaway citing that source: one list
+/// of flat records, each ending in a string (docs/design/30-render-architecture.md
+/// §30.1), where a separate takeaway list numbered by source ended records
+/// in an integer the model often left unclosed.
 fn build_research(args: &Map<String, Value>) -> Result<Value, String> {
-    let mut payload = copy(args, &["title", "sources"]);
-    let sources = records(args, "sources").len();
+    let mut payload = copy(args, &["title"]);
+    let mut sources = Vec::new();
     let mut takeaways = Vec::new();
-    for (at, takeaway) in records(args, "takeaways").iter().enumerate() {
-        let source = takeaway["source"].as_u64().unwrap_or(0);
-        if source == 0 || source as usize > sources {
-            return Err(format!(
-                "takeaway {} cites source {source}, but sources are numbered 1 to {sources}",
-                at + 1
-            ));
+    for (at, source) in records(args, "sources").iter().enumerate() {
+        let mut kept = source.clone();
+        if let Some(fields) = kept.as_object_mut() {
+            fields.remove("finding");
         }
-        takeaways.push(serde_json::json!({"text": takeaway["text"], "citation_indices": [source]}));
+        sources.push(kept);
+        takeaways
+            .push(serde_json::json!({"text": source["finding"], "citation_indices": [at + 1]}));
     }
+    payload.insert("sources".into(), Value::Array(sources));
     payload.insert("takeaways".into(), Value::Array(takeaways));
     Ok(Value::Object(payload))
 }
@@ -1014,8 +1010,7 @@ fn fixture_for(shape_name: &str) -> Value {
             "fields": [{"label": "Owner", "value": "Ada"}]
         }),
         "emit_research_card" => serde_json::json!({
-            "sources": [{"title": "Src", "url": "https://example.com"}],
-            "takeaways": [{"text": "Point", "source": 1}]
+            "sources": [{"title": "Src", "url": "https://example.com", "finding": "Point"}]
         }),
         "emit_diff_card" => serde_json::json!({
             "files": [{"filename": "a.rs", "hunks": "@@ -1 +1 @@", "additions": 1, "deletions": 0}]
@@ -1771,14 +1766,19 @@ mod tests {
         assert_eq!(payload["series"][0]["name"], "2025");
         assert_eq!(payload["series"][0]["points"].as_array().unwrap().len(), 2);
         assert_eq!(payload["series"][0]["points"][0]["x"], "Jan");
-        let refused = built(
+        let research = built(
             "emit_research_card",
             serde_json::json!({
-                "sources": [{"title": "S", "url": "https://example.com"}],
-                "takeaways": [{"text": "T", "source": 2}]
+                "sources": [
+                    {"title": "A", "url": "https://a.example", "finding": "First."},
+                    {"title": "B", "url": "https://b.example", "finding": "Second."}
+                ]
             }),
-        );
-        assert!(refused.unwrap_err().contains("numbered 1 to 1"));
+        )
+        .unwrap();
+        assert_eq!(research["takeaways"][1]["text"], "Second.");
+        assert_eq!(research["takeaways"][1]["citation_indices"][0], 2);
+        assert!(research["sources"][0].get("finding").is_none());
     }
 
     /// Found live: a model shown a card tool only by name wrote
@@ -1970,8 +1970,7 @@ mod tests {
         let long = "x".repeat(6000);
         let args = serde_json::json!({
             "semantic_type": "research.synthesis",
-            "sources": [{"title": "S", "url": "https://example.com"}],
-            "takeaways": [{"text": long, "source": 1}]
+            "sources": [{"title": "S", "url": "https://example.com", "finding": long}]
         });
         let card = rebuild_call(
             "emit_research_card",

@@ -1362,8 +1362,10 @@ in progress, and the rest of V4 follows it.
   arguments are flat beside `semantic_type`, use only the schema keywords
   every provider carries, put no data in keys, hold no list of records
   inside a record in a list, require `semantic_type` first and ask for no
-  value that starts with `|` (a table is its rows, `A | B` strings)
-  (measured, §30.1;
+  value that starts with `|` (a table is its rows, `A | B` strings) and end
+  no record in a number (a research source carries its one `finding`); a
+  card call goes to the card tool that owns its `semantic_type`
+  (`normalize_card_type` in vak-agent) (measured, §30.1;
   `every_card_schema_is_flat_and_portable`); each shape's `build` turns them
   into the stored card. The card travels in the call's *arguments*
   (recorded untruncated in the ledger); the tool result is only a short ack

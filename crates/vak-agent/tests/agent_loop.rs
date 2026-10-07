@@ -552,7 +552,7 @@ async fn malformed_tool_input_is_rejected_by_the_admitted_schema() {
             _ => None,
         })
         .expect("schema rejection must be recorded as a tool result");
-    assert!(result.contains("required parameter `path` was omitted"));
+    assert!(result.contains("arguments is missing required `path`"));
 }
 
 #[tokio::test]

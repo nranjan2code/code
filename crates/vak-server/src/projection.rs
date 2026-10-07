@@ -4213,13 +4213,18 @@ mod tests {
             meta: None,
         })
         .expect("user");
-        let takeaways: Vec<_> = (0..12)
-            .map(|i| serde_json::json!({"text": format!("Takeaway {i}: {}", "detail ".repeat(40)), "source": 1}))
+        let sources: Vec<_> = (0..12)
+            .map(|i| {
+                serde_json::json!({
+                    "title": format!("Reuters {i}"),
+                    "url": format!("https://example.com/{i}"),
+                    "finding": format!("Takeaway {i}: {}", "detail ".repeat(40))
+                })
+            })
             .collect();
         let input = serde_json::json!({
             "semantic_type": "research.synthesis",
-            "sources": [{"title": "Reuters", "url": "https://example.com/a"}],
-            "takeaways": takeaways
+            "sources": sources
         });
         assert!(
             input.to_string().len() > 3000,

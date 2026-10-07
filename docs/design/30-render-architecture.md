@@ -200,7 +200,7 @@ to be one every model writes reliably. Measured 2026-10-07 against
 gemma4:e2b-mlx (20 runs per tool and per shape; the model wrote the same
 nested data as plain JSON in a reply 14 times in 15, so the weak point is the
 tool-call encoding, not JSON or the size of the data), every card tool's
-arguments follow six rules, checked by
+arguments follow seven rules, checked by
 `every_card_schema_is_flat_and_portable`:
 
 1. **No envelope.** The card's fields sit at the top level beside
@@ -238,6 +238,29 @@ arguments follow six rules, checked by
 The stored card, and every renderer, pack, digest and channel that reads it,
 is unchanged by the contract: `build` is the only place the two meet.
 
+7. **One text field per record, and no record ends in a number.** A
+   research card is its sources, each with the one-sentence `finding` it
+   supports; `build` turns each finding into a takeaway citing its source.
+   A separate takeaway list numbered by source ended each record in an
+   integer, and the model left that record unclosed (`…<|"|>,source:5]`,
+   7 of 12 dropped calls); with `snippet` and `takeaway` side by side it
+   filled only one. On a captured request after a 50k-character page,
+   3 of 8 calls arrived before and 8 of 8 after.
+
+**A card is identified by its `semantic_type`.** Every type belongs to one
+card tool, so the agent loop routes a card call to the admitted card tool
+that owns its type (`normalize_card_type`), whatever card tool it named,
+including one that does not exist; with no type, a name `emit_<type>_card`
+names it. Measured on captured requests: a form card was written in full
+under `emit_ui_preview_card` in 7 of 8 runs and a transaction card under an
+invented `emit_transaction_card` in 7 of 8, with the right `semantic_type`
+almost every time; rewording the tool description and the prompt changed
+neither. The owner's schema then validates the call, and a refusal names
+the item a field is missing from (`arguments.sources[0] is missing required
+`title``), which read before as the card's own field. A wrapper object
+named for the called tool (`{"metric_card": {...}}`) is removed whatever it
+holds.
+
 **How rules 5 and 6 were found.** One captured request ("three famous
 lighthouses … as a table card", Vak's full 12.5k-character system prompt, 17
 tools) got a valid `emit_table_card` call in 4 of 20 runs on gemma4:e2b-mlx;
@@ -262,6 +285,9 @@ non-default recipe whose signals all match, independent of which outputs exist)
 → the offered `emit_*_card` tool that carries one of its primary types. If no
 card was emitted this run and no inline fence is present, the model gets one
 `[presentation-check]` nudge; it may decline by resending unchanged. No
+nudge follows a run whose every retrieval failed (a fetch answering 403 is
+an error value, never a page): the honest answer reports the failure, and a
+card would have no data. No
 per-type rules live in the loop.
 
 ### 30.2 The Semantic Compiler
