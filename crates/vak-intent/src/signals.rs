@@ -735,6 +735,8 @@ const RECENCY_PHRASES: &[(&str, f64)] = &[
     ("this morning", 0.8),
     ("this week", 0.5),
     ("latest", 0.7),
+    ("recent", 0.6),
+    ("recently", 0.6),
     ("real time", 0.8),
     ("at the moment", 0.9),
     ("up to date", 0.7),
@@ -780,9 +782,15 @@ const LOCAL_NOUNS: &[&str] = &[
     "page",
     "screen",
     "session",
+    "sessions",
     "conversation",
+    "conversations",
     "chat",
+    "chats",
+    "message",
+    "messages",
     "thread",
+    "threads",
     "context",
     "task",
     "plan",
@@ -2312,6 +2320,18 @@ mod tests {
     fn temporal_deixis_is_recorded_and_local_nouns_are_not() {
         let now = extract(&request("what is the current price of copper"));
         assert_eq!(now.recency.as_ref().map(|r| r.0.as_str()), Some("current"));
+        // "Recent" asks for the world as it stands now, unless what is
+        // recent is local: invented headlines once filled a "recent news"
+        // card built from nothing retrieved.
+        let news = extract(&request(
+            "Show a news card with three recent technology headlines.",
+        ));
+        assert_eq!(news.recency.as_ref().map(|r| r.0.as_str()), Some("recent"));
+        assert!(
+            extract(&request("Summarise the recent changes in this branch."))
+                .recency
+                .is_none()
+        );
         assert!(now.signals.iter().any(|s| s.name.starts_with("recency:")));
         // The evidence standard is left to the request's own words.
         assert_ne!(now.evidence.winner().map(|w| w.0), Some(Evidence::Cited));

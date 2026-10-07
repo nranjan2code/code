@@ -1709,7 +1709,7 @@ crates/vak-intent    the decision layer (docs/design/47-commitment-kernel.md):
                      element reproduces pre-kernel behaviour; `meet` is the only
                      composition operator and there is deliberately no `join`.
                      Temporal deixis ("current", "right now", "today",
-                     "latest") is a signal that sets the `live-data` domain
+                     "latest", "recent") is a signal that sets the `live-data` domain
                      without raising the evidence standard -- the vote alone,
                      tried and measured, stalled a small local model into
                      silence (docs/design/68-context-engine.md §7).

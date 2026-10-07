@@ -67,10 +67,13 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// the lexicon is unchanged. 10 — question words, auxiliaries and pronouns
 /// are not keywords, so sharing "what" no longer continues a thread. 11 —
 /// "show" is a delivery verb (Answer) like "give" and "present", not a
-/// search (Locate). The test
+/// search (Locate). 12 — "recent" and "recently" are temporal deixis: a
+/// card of "three recent headlines" built from nothing retrieved carried
+/// invented ones; plural conversation nouns ("recent conversations") stay
+/// local. The test
 /// `lexicon_digest_matches_resolver_version` pins the tables to this number
 /// so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 11;
+pub const RESOLVER_VERSION: u32 = 12;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1356,6 +1359,7 @@ pub fn prompt_digest(prompt: &str) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+
     use super::*;
 
     fn now() -> chrono::DateTime<chrono::Utc> {
@@ -1386,8 +1390,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            11,
-            "ed7acfc30107a5a8ce7a9cb6389491d9e46457a15be0e86699ba4512b0ee57a7",
+            12,
+            "7b2e45638aca545669738ff350e5778d1291a8b3458f3255b77c573b489bd120",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(
