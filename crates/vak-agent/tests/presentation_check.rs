@@ -421,6 +421,37 @@ async fn no_nudge_when_every_retrieval_this_run_failed() {
     );
 }
 
+/// A card citing a page nothing here retrieved is refused, once with a
+/// repair, then the turn ends on an honest statement and no card.
+#[tokio::test]
+async fn a_card_citing_an_unretrieved_page_is_never_shown() {
+    let dir = tempdir().unwrap();
+    let cited = serde_json::json!({"sources": [{"url": "https://made-up.example/report"}]});
+    let (mut agent, _) = build_agent(
+        &dir,
+        "pc-uncited",
+        vec![
+            tool_call_msg("c1", "emit_chart_card", cited.clone()),
+            tool_call_msg("c2", "emit_chart_card", cited),
+        ],
+        false,
+    )
+    .await;
+    let outcome = run(&mut agent).await;
+    let TurnOutcome::Completed { response } = &outcome else {
+        panic!("{outcome:?}");
+    };
+    assert!(
+        response
+            .text_content()
+            .contains("could not verify the sources"),
+        "{}",
+        response.text_content()
+    );
+    let session = agent.session.lock().await;
+    assert!(session.presentations().is_empty(), "no card is recorded");
+}
+
 #[tokio::test]
 async fn no_nudge_when_the_answer_already_carries_an_inline_card() {
     let dir = tempdir().unwrap();

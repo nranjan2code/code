@@ -1842,6 +1842,7 @@ impl Agent {
         let mut empty_step_repair_attempted = false;
         let mut card_repeat_streak: u32 = 0;
         let mut topic_repair_attempted = false;
+        let mut citation_repair_attempted = false;
         // The most recent non-card tool result's own text this run, for the
         // fail-closed fallback below: when a topic-mismatched card has to be
         // refused twice, the evidence that WAS gathered is worth showing
@@ -3085,16 +3086,37 @@ impl Agent {
             // turn's own tool call still sitting in context. Each gated
             // call gets an error value naming which check refused it;
             // either one gets exactly one repair before failing closed.
+            // Citations: a card that names a source URL nothing in this
+            // conversation retrieved or was given names a page it never
+            // saw (live: a research card's sources written after a search
+            // page that held none of them).
             enum CardGate {
                 Fresh,
                 Topic,
+                Uncited(Vec<String>),
             }
+            let evidence = if calls
+                .iter()
+                .any(|call| self.tool_presents_cards(&call.name))
+            {
+                self.session
+                    .lock()
+                    .await
+                    .evidence_text(|name| self.tool_presents_cards(name))
+            } else {
+                String::new()
+            };
             let mut gated: Vec<(PendingToolCall, CardGate)> = Vec::new();
             let calls: Vec<PendingToolCall> = calls
                 .into_iter()
                 .filter(|call| {
                     if !self.tool_presents_cards(&call.name) {
                         return true;
+                    }
+                    let uncited = uncited_urls(&call.input, &evidence);
+                    if !uncited.is_empty() {
+                        gated.push((call.clone(), CardGate::Uncited(uncited)));
+                        return false;
                     }
                     if wants_live_data && !observed_this_run {
                         gated.push((call.clone(), CardGate::Fresh));
@@ -3150,6 +3172,20 @@ impl Agent {
                         .await;
                 }
                 topic_repair_attempted = true;
+            }
+            let uncited: Vec<String> = gated
+                .iter()
+                .filter_map(|(_, gate)| match gate {
+                    CardGate::Uncited(urls) => Some(urls.clone()),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            if !uncited.is_empty() {
+                if citation_repair_attempted {
+                    return uncited_sources_outcome(&self.config.model, &uncited);
+                }
+                citation_repair_attempted = true;
             }
             // A raw search-results HTML page is not a retrieved source for a
             // current fact. When a genuine discovery route is offered, turn
@@ -3212,6 +3248,15 @@ impl Agent {
                          nothing has been retrieved on this turn, so the card would carry a figure \
                          from an earlier answer. {available} Retrieve current evidence first and \
                          build the card from what it returns. If retrieval fails, say what failed.")
+                    }
+                    CardGate::Uncited(urls) => {
+                        format!(
+                            "[uncited-source]: not shown — this card cites {} which nothing in this \
+                             conversation retrieved or was given. A card cites only the exact URLs of \
+                             pages a tool fetched here. Fetch the page first, or answer in text and say \
+                             what could not be verified.",
+                            urls.iter().map(|url| format!("`{url}`")).collect::<Vec<_>>().join(", ")
+                        )
                     }
                     CardGate::Topic => {
                         "[topic-mismatch]: not shown — this card's own content has nothing to do \
@@ -7907,6 +7952,74 @@ async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> 
     TurnOutcome::Completed { response }
 }
 
+/// The turn's answer when a card still cites pages nothing retrieved after
+/// one repair: an honest statement, never the card.
+fn uncited_sources_outcome(model: &str, urls: &[String]) -> TurnOutcome {
+    TurnOutcome::Completed {
+        response: AssistantMessage {
+            content: vec![ContentBlock::text(format!(
+                "I could not verify the sources for that card: {} {} not retrieved in this \
+                 conversation, so I am not showing it. Share a source or ask me to fetch one.",
+                urls.iter()
+                    .map(|url| format!("`{url}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if urls.len() == 1 { "was" } else { "were" }
+            ))],
+            stop_reason: StopReason::EndTurn,
+            usage: Usage::default(),
+            model: model.to_string(),
+            response_id: None,
+        },
+    }
+}
+
+/// The source URLs a card cites (a `url`, or a `source` that is a web
+/// address) that appear nowhere in `evidence`, compared without scheme,
+/// `www.`, fragment or trailing slash.
+fn uncited_urls(input: &Value, evidence: &str) -> Vec<String> {
+    fn cited(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::Object(fields) => {
+                for (key, field) in fields {
+                    match field {
+                        Value::String(text)
+                            if key == "url"
+                                || (key == "source"
+                                    && (text.starts_with("http://")
+                                        || text.starts_with("https://"))) =>
+                        {
+                            out.push(text.clone());
+                        }
+                        other => cited(other, out),
+                    }
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| cited(item, out)),
+            _ => {}
+        }
+    }
+    fn plain(text: &str) -> String {
+        text.to_lowercase()
+            .replace("https://", "")
+            .replace("http://", "")
+            .replace("www.", "")
+    }
+    let mut urls = Vec::new();
+    cited(input, &mut urls);
+    if urls.is_empty() {
+        return urls;
+    }
+    let evidence = plain(evidence);
+    urls.into_iter()
+        .filter(|url| {
+            let url = plain(url.split('#').next().unwrap_or(url));
+            let url = url.trim().trim_end_matches('/');
+            !url.is_empty() && !evidence.contains(url)
+        })
+        .collect()
+}
+
 fn bounded_error_summary(error: &str) -> String {
     let value: Value = serde_json::from_str(error).unwrap_or(Value::Null);
     let summary = value
@@ -8599,6 +8712,32 @@ mod tool_recovery_tests {
         assert_eq!(
             repair.input.get("action").and_then(|v| v.as_str()),
             Some("list")
+        );
+    }
+
+    #[test]
+    fn a_card_cites_only_urls_the_conversation_holds() {
+        use super::uncited_urls;
+        let evidence =
+            "[webfetch] GET https://www.example.com/report -> 200 OK\nSee https://other.org/a.";
+        let card = serde_json::json!({"sources": [
+            {"url": "https://example.com/report/", "finding": "x"},
+            {"url": "http://other.org/a#top", "finding": "y"},
+            {"url": "https://made-up.example/news", "finding": "z"},
+            {"url": "https://techcrunch.com/...", "finding": "w"}
+        ]});
+        assert_eq!(
+            uncited_urls(&card, evidence),
+            vec!["https://made-up.example/news", "https://techcrunch.com/..."]
+        );
+        let media = serde_json::json!({"semantic_type": "media.image", "source": "images/a.png"});
+        assert!(uncited_urls(&media, "").is_empty());
+        assert_eq!(
+            uncited_urls(
+                &serde_json::json!({"source": "https://x.example/i.png"}),
+                ""
+            ),
+            vec!["https://x.example/i.png"]
         );
     }
 

@@ -964,6 +964,76 @@ impl SessionLog {
         out
     }
 
+    /// Everything this conversation holds that a card may cite: the
+    /// person's own messages, every non-card tool call's arguments and
+    /// result, and the whole body behind a windowed result. A card that
+    /// names a source URL found nowhere in it names a page nothing here
+    /// retrieved and nobody gave (docs/design/30-render-architecture.md
+    /// §30.1, "Citations").
+    pub fn evidence_text(&self, is_card_tool: impl Fn(&str) -> bool) -> String {
+        let chain = self.chain_to_root();
+        // A failed call retrieved nothing: its arguments and its error text
+        // (which names the URL it could not fetch) are not evidence.
+        let mut excluded: std::collections::HashSet<String> = chain
+            .iter()
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::Message(record) => Some(record.message.content.iter()),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|block| match block {
+                vak_llm::ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error: true,
+                    ..
+                } => Some(tool_use_id.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut out = String::new();
+        for entry in &chain {
+            match &entry.payload {
+                EntryPayload::Message(record) => {
+                    let from_person = record.message.role == vak_llm::Role::User
+                        && record.meta.as_ref().is_none_or(|m| m.control.is_none());
+                    for block in &record.message.content {
+                        match block {
+                            vak_llm::ContentBlock::Text { text } if from_person => {
+                                out.push_str(text);
+                                out.push('\n');
+                            }
+                            vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                                if is_card_tool(name) {
+                                    excluded.insert(id.clone());
+                                } else if !excluded.contains(id) {
+                                    out.push_str(&input.to_string());
+                                    out.push('\n');
+                                }
+                            }
+                            vak_llm::ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                ..
+                            } if !excluded.contains(tool_use_id) => {
+                                out.push_str(content);
+                                out.push('\n');
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                EntryPayload::EvidenceBody(record) if !excluded.contains(&record.tool_use_id) => {
+                    if let Some(text) = self.object_text(&record.body) {
+                        out.push_str(&text);
+                        out.push('\n');
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
     /// Append a finalized or provisional voice transcript. The transcript
     /// is an audit projection; callers must append a normal Message entry
     /// separately when the utterance is committed as model input.

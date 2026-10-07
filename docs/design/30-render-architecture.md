@@ -261,6 +261,17 @@ the item a field is missing from (`arguments.sources[0] is missing required
 named for the called tool (`{"metric_card": {...}}`) is removed whatever it
 holds.
 
+**Citations.** A card cites only what this conversation holds. Every `url`
+a card carries (and a media `source` that is a web address) must appear in
+the person's own messages or in a successful non-card tool call's arguments
+or result, its whole evidence body included (`SessionLog::evidence_text`);
+a failed fetch's URL is not evidence. A card citing anything else is not
+shown: the model is told which URL nothing retrieved and to fetch it or
+answer in text, and a second such card ends the turn on an honest statement
+(`uncited_sources_outcome`). Found live: with no search tool configured, a
+research card's sources were written after a fetched search-results page
+that contained none of them.
+
 **How rules 5 and 6 were found.** One captured request ("three famous
 lighthouses … as a table card", Vak's full 12.5k-character system prompt, 17
 tools) got a valid `emit_table_card` call in 4 of 20 runs on gemma4:e2b-mlx;
