@@ -214,10 +214,10 @@ export const TYPE_CATEGORY: Record<string, Category[]> = {
   // ui preview
   "ui.preview": ["ui_preview"],
   // timeline (large group)
-  "coding.deployment": ["timeline"], "coding.incident": ["timeline"], "coding.architecture": ["timeline"], "coding.release": ["timeline"],
+  "coding.deployment": ["timeline"], "coding.incident": ["timeline"], "coding.architecture": ["universal_card"], "coding.release": ["timeline"],
   "plan.timeline": ["timeline"], timeline: ["timeline"], itinerary: ["timeline"], checklist: ["timeline"], schedule: ["timeline"],
   agenda: ["timeline"], milestones: ["timeline"], progress: ["timeline"], status: ["timeline"], steps: ["timeline"],
-  overview: ["timeline"], summary: ["timeline"], detail: ["timeline"], notes: ["timeline"], follow_up: ["timeline"],
+  overview: ["universal_card"], summary: ["universal_card"], detail: ["universal_card"], notes: ["timeline"], follow_up: ["timeline"],
   reminder: ["timeline"], shopping_list: ["timeline"], lesson: ["timeline"], reading_list: ["timeline"], habit_plan: ["timeline"],
   project_plan: ["timeline"], meeting_notes: ["timeline"], contact_log: ["timeline"], home_project: ["timeline"],
   care_plan: ["timeline"], event_plan: ["timeline"], media_list: ["timeline"], collection: ["timeline"], faq: ["timeline"],

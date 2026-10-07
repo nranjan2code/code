@@ -261,6 +261,15 @@ the item a field is missing from (`arguments.sources[0] is missing required
 named for the called tool (`{"metric_card": {...}}`) is removed whatever it
 holds.
 
+**Which card owns a type.** A type belongs to the card whose shape fits
+its content. `overview`, `summary`, `detail` (one subject described) and
+`coding.architecture` (components and how they relate) are universal cards,
+labelled details; they were timeline cards, a list of items, and in a live
+run on gemma4 every request for one was answered with an entity, document or
+graph card instead (decided 2026-10-07). Types whose content is an ordered
+list keep the timeline card (`progress` and `status` render items with their
+status), and rows and columns keep the table.
+
 **Citations.** A card cites only what this conversation holds. Every `url`
 a card carries (and a media `source` that is a web address) must appear in
 the person's own messages or in a successful non-card tool call's arguments

@@ -762,7 +762,7 @@ fn build_metric(args: &Map<String, Value>) -> Result<Value, String> {
 const SHAPES: &[CardShape] = &[
     CardShape {
         name: "emit_universal_card",
-        description: "Emit a static general-purpose card (map, calendar, board, entity, document, graph, form, alert, and similar) with a title, a summary and labelled details. This card has no row-selection control; for choices the user can select, use emit_table_card with semantic_type travel_options and one row per option.",
+        description: "Emit a static general-purpose card (an overview, summary or detail of one subject, an architecture, map, calendar, board, entity, document, graph, form, alert, and similar) with a title, a summary and labelled details. This card has no row-selection control; for choices the user can select, use emit_table_card with semantic_type travel_options and one row per option.",
         semantic_types: &[
             "map",
             "route_map",
@@ -782,6 +782,10 @@ const SHAPES: &[CardShape] = &[
             "conversation",
             "progress_dashboard",
             "simulation",
+            "coding.architecture",
+            "overview",
+            "summary",
+            "detail",
         ],
         fields: universal_fields,
         build: build_universal,
@@ -845,7 +849,6 @@ const SHAPES: &[CardShape] = &[
         semantic_types: &[
             "coding.deployment",
             "coding.incident",
-            "coding.architecture",
             "coding.release",
             "plan.timeline",
             "timeline",
@@ -857,9 +860,6 @@ const SHAPES: &[CardShape] = &[
             "progress",
             "status",
             "steps",
-            "overview",
-            "summary",
-            "detail",
             "notes",
             "follow_up",
             "reminder",

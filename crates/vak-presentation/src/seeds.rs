@@ -131,7 +131,6 @@ const TABLE_TYPES: &[&str] = &[
 const TIMELINE_TYPES: &[&str] = &[
     "coding.deployment",
     "coding.incident",
-    "coding.architecture",
     "coding.release",
     "plan.timeline",
     "timeline",
@@ -143,9 +142,6 @@ const TIMELINE_TYPES: &[&str] = &[
     "progress",
     "status",
     "steps",
-    "overview",
-    "summary",
-    "detail",
     "notes",
     "follow_up",
     "reminder",
@@ -193,6 +189,10 @@ const UNIVERSAL_TYPES: &[&str] = &[
     "conversation",
     "progress_dashboard",
     "simulation",
+    "coding.architecture",
+    "overview",
+    "summary",
+    "detail",
 ];
 
 fn binding(path: &str) -> SpecValue {
