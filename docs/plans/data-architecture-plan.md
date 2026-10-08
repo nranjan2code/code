@@ -1607,7 +1607,8 @@ the model:
   the request.
 
 M8.4 is split into three steps: a (sharing), b (editing and Put back) and
-c (the Artifact API moves and the acceptance run).
+c (the Artifact API moves and the acceptance run). Step c has six parts
+of its own (its design is below).
 
 M8.4a (2026-10-07): `POST /library/{id}/shares` makes an artifact grant
 with a token, a role, an expiry and an optional `history_from` version,
@@ -1640,6 +1641,57 @@ Put back for any, and a card's action row has Save to Library. Tests
 card). Live: an edit of "Harbour poem" became version 3, credited to the
 person, and the workspace file matches it; a table card saved from a
 chat appears in the Library.
+
+**M8.4c design (agreed 2026-10-08).** The maintainer chose:
+- **A full move.** Anything that is an artifact (a declared deliverable, a
+  Review candidate, an Office or PDF draft) is read, compared and reviewed
+  by artifact id and version through `/library`. The session's candidate
+  file routes go (invariant 30). The execution routes stay only for files
+  nobody declared and for live output.
+- **One comment thread.** A comment is a `Commented` row on an artifact
+  version. Asking Vak to revise is an action on a comment, and a guest
+  with the commenter role sees the same thread. Candidate comments and
+  their routes go.
+- **A shared conversation keeps its view, and its files inherit.** A
+  guest's conversation grant reaches the conversation's artifacts by
+  inheritance through the artifact routes, and an artifact that breaks
+  inheritance is hidden from that guest.
+- **The acceptance run uses both models and a Word document:** the whole
+  run on `gpt-6-luna`, then create and review again on local Ollama
+  (`gemma4`).
+
+The steps, each shipped whole:
+1. **M8.4c-a** Review by version (server). A version made from a
+   candidate answers what the candidate routes answer today, by artifact
+   id and version: its text and bytes, its Office or PDF projection, its
+   review (the diff against its parent) and a narrowed draft. Accept, undo
+   and the workspace checks are actions on the version. A session's
+   sandbox records name the artifact and version of each candidate and
+   each declared file. Exit test `review_by_artifact_version`.
+2. **M8.4c-b** One comment thread. Candidate comments become `Commented`
+   rows; `POST /library/{id}/comments/{comment}/revise` asks Vak to
+   revise, and the revision is a version whose parent is the one
+   commented on. The candidate comment routes and the
+   `CandidateComment` activity go. Exit test
+   `one_comment_thread_per_version`.
+3. **M8.4c-c** The client. The Canvas opens an artifact version (the
+   subject that replaces `draft_file`), its Office, PDF and diff viewers
+   and Redline read `/library`, and the Workbench lists what is waiting
+   for review as versions, with their comments, Accept and Undo. Chat
+   cards, Canvas tabs and Workbench files gain Open in Library, and the
+   Workbench gains the Library's star (doc 74 C8). The candidate file
+   routes and their client calls are deleted. Browser run.
+4. **M8.4c-d** The shared conversation. `SharedConversation` reads the
+   conversation's files, versions and comments through the artifact
+   routes under the guest's conversation grant. Exit test
+   `conversation_grant_reaches_its_artifacts_until_broken`.
+5. **M8.4c-e** Navigation. The admin groups of doc 74 §6.1 in the words
+   already chosen (Conversations, Runs, Library, Automations), the
+   client's sidebar, and every link that still points at a replaced
+   screen. Browser check at both sizes.
+6. **M8.4c-f** The acceptance run: create → review → promote → share →
+   comment → revise, recorded under `docs/audits/`. M8 is done when it
+   passes; erase waits for M7a.
 
 Investigating the live failures of M8.3b and M8.4b found faults in
 Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):
