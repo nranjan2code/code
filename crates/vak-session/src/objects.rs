@@ -46,6 +46,20 @@ fn scope_error(scope: &str, error: vak_storage::StorageError) -> SessionError {
     }
 }
 
+/// The scope what one person other than the owner wrote into a
+/// conversation is granted to (plan M7a-b): destroying it removes that
+/// person's contributions and leaves the conversation readable.
+pub fn contributor_scope(session_id: &str, principal: &str) -> String {
+    format!("contributor:{session_id}:{principal}")
+}
+
+/// The principal a contributor scope names.
+pub fn contributor_of(scope: &str) -> Option<&str> {
+    let mut parts = scope.strip_prefix("contributor:")?.splitn(2, ':');
+    parts.next()?;
+    parts.next()
+}
+
 pub(crate) fn objects_error(error: vak_storage::StorageError) -> SessionError {
     SessionError::Objects(error.to_string())
 }

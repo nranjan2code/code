@@ -317,3 +317,59 @@ fn an_artifacts_rows_keep_no_content_and_go_with_its_key() {
         Some("Hiring plan")
     );
 }
+
+/// A comment is kept under its author's own key (plan M7a-b): removing
+/// one person's contributions leaves the artifact and other comments.
+#[test]
+fn a_guests_comments_go_with_their_key_and_the_artifact_stays() {
+    let (shared, tenant) = home();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let id = artifacts
+        .declare(
+            "spc_comments",
+            "vak",
+            "brief.md",
+            ArtifactKind::File,
+            Some("Brief".into()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let version = artifacts
+        .version(id, by_person(b"draft", None), None, None)
+        .unwrap();
+    for (author, name, text) in [
+        ("guest:asha", "Asha", "tighten the second paragraph"),
+        ("owner", "You", "agreed, will do"),
+    ] {
+        artifacts
+            .record(
+                id,
+                ArtifactStep::Commented {
+                    version,
+                    author: author.into(),
+                    author_name: name.into(),
+                    text: text.into(),
+                    id: None,
+                    at_place: Default::default(),
+                },
+                None,
+                None,
+            )
+            .unwrap();
+    }
+    let stored = vak_session::chain::RecordChain::at(shared.artifacts()).text();
+    assert!(!stored.contains("tighten") && !stored.contains("Asha"));
+    assert_eq!(artifacts.get(&id.to_string()).unwrap().comments.len(), 2);
+
+    TenantObjects::for_tenant(&tenant)
+        .unwrap()
+        .destroy_scope_key(&vak_core::artifacts::comment_scope(&id, "guest:asha"))
+        .unwrap();
+
+    let left = artifacts.get(&id.to_string()).unwrap();
+    assert_eq!(left.title.as_deref(), Some("Brief"));
+    assert_eq!(left.comments.len(), 1);
+    assert_eq!(left.comments[0].text, "agreed, will do");
+}

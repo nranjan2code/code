@@ -7,7 +7,7 @@ use crate::sources::Source;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::Value;
 use vak_session::tail::{self, Position};
-use vak_session::types::{CallEffect, Entry, EntryPayload};
+use vak_session::types::{CallEffect, EntryPayload};
 
 /// The node id of a session from its plain or `ses_` id.
 pub(crate) fn session_node(id: &str) -> String {
@@ -277,7 +277,7 @@ fn session_entry(
     at: Position,
     bytes: &[u8],
 ) -> rusqlite::Result<()> {
-    let Ok(entry) = serde_json::from_slice::<Entry>(bytes) else {
+    let Some(entry) = vak_session::SessionLog::decode(bytes) else {
         return Ok(());
     };
     let Some(session_id) = session.node.clone() else {

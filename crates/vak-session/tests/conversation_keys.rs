@@ -181,3 +181,80 @@ fn a_ledger_with_no_key_is_not_read() {
     ));
     assert_eq!(SessionLog::text(&path), "");
 }
+
+fn from_guest(principal: &str, name: &str, text: &str) -> MessageRecord {
+    MessageRecord {
+        message: Message::user_text(format!("{name}: {text}")),
+        meta: Some(vak_session::MessageMeta {
+            author_id: Some(principal.into()),
+            author_name: Some(name.into()),
+            request_id: Some("r1".into()),
+            ..Default::default()
+        }),
+    }
+}
+
+/// A guest's message is kept under their own key (plan M7a-b): destroying
+/// it removes what they wrote, changes no ledger byte, and leaves the
+/// owner's conversation and the other guest's message readable.
+#[test]
+fn guest_erasure_keeps_owner_conversation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = written(dir.path(), "ses-keys-guests");
+    let mut log = SessionLog::open(path.clone()).unwrap();
+    let asha = log
+        .append_message(from_guest("guest:asha", "Asha", "the venue holds ninety"))
+        .unwrap();
+    let ben = log
+        .append_message(from_guest("guest:ben", "Ben", "catering is booked"))
+        .unwrap();
+    drop(log);
+    let before = stored_bytes(&path);
+    // The guest's words are not in the frame even with the conversation's
+    // key: the frame holds a reference to their object.
+    assert!(!SessionLog::text(&path).contains("ninety"));
+    let whole = SessionLog::open_read_only(path.clone()).unwrap();
+    let texts = |log: &SessionLog| -> Vec<String> {
+        log.derive_transcript()
+            .iter()
+            .map(|message| message.message.text_content())
+            .collect()
+    };
+    assert!(texts(&whole).iter().any(|text| text.contains("ninety")));
+
+    TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())
+        .unwrap()
+        .destroy_scope_key(&vak_session::objects::contributor_scope(
+            "ses-keys-guests",
+            "guest:asha",
+        ))
+        .unwrap();
+
+    assert_eq!(
+        stored_bytes(&path),
+        before,
+        "removing a guest changes no byte"
+    );
+    let after = SessionLog::open(path.clone()).unwrap();
+    assert_eq!(after.len(), 4, "every entry is still there");
+    let transcript = after.derive_transcript();
+    let removed = transcript
+        .iter()
+        .find(|message| message.entry_id == asha.id)
+        .unwrap();
+    assert!(removed.removed);
+    assert_eq!(removed.author_id.as_deref(), Some("guest:asha"));
+    assert_eq!(removed.author_name, None);
+    assert_eq!(
+        removed.message.text_content(),
+        vak_session::log::REMOVED_TEXT
+    );
+    let kept = transcript
+        .iter()
+        .find(|message| message.entry_id == ben.id)
+        .unwrap();
+    assert!(!kept.removed && kept.message.text_content().contains("catering is booked"));
+    let all = texts(&after).join("\n");
+    assert!(all.contains(SECRET), "the owner's own message is untouched");
+    assert!(!all.contains("ninety") && !all.contains("Asha"));
+}

@@ -328,6 +328,12 @@ pub fn object_scope(artifact: &ArtifactId) -> String {
     format!("artifact:{artifact}")
 }
 
+/// The scope one person's comments on an artifact are granted to, so
+/// their contributions can be removed and the artifact kept (plan M7a-b).
+pub fn comment_scope(artifact: &ArtifactId, author: &str) -> String {
+    vak_session::objects::contributor_scope(&artifact.to_string(), author)
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct State {
     artifacts: BTreeMap<String, Artifact>,
@@ -539,6 +545,16 @@ impl Artifacts {
         state
             .artifacts
             .retain(|id, _| !vak_session::content::scope_destroyed(&format!("artifact:{id}")));
+        // So may a comment whose author has since been removed.
+        let mut removed: BTreeMap<String, bool> = BTreeMap::new();
+        for (id, artifact) in &mut state.artifacts {
+            artifact.comments.retain(|comment| {
+                let scope = vak_session::objects::contributor_scope(id, &comment.author);
+                !*removed
+                    .entry(scope)
+                    .or_insert_with_key(|scope| vak_session::content::scope_destroyed(scope))
+            });
+        }
         state
     }
 
@@ -557,12 +573,14 @@ impl Artifacts {
         let mut row = serde_json::to_value(event).map_err(|error| {
             store_error(vak_session::types::SessionError::Objects(error.to_string()))
         })?;
-        vak_session::content::seal_fields_under(
-            &mut row,
-            &object_scope(&event.artifact),
-            ROW_CONTENT,
-        )
-        .map_err(store_error)?;
+        // A comment belongs to who wrote it; everything else an artifact's
+        // rows say belongs to the artifact.
+        let scope = match &event.step {
+            ArtifactStep::Commented { author, .. } => comment_scope(&event.artifact, author),
+            _ => object_scope(&event.artifact),
+        };
+        vak_session::content::seal_fields_under(&mut row, &scope, ROW_CONTENT)
+            .map_err(store_error)?;
         self.chain.append(&row).map_err(store_error)
     }
 

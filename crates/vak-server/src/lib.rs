@@ -8214,6 +8214,7 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
                 "entry_id": item.entry_id,
                 "author_id": item.author_id,
                 "author_name": item.author_name,
+                "removed": item.removed,
                 "attachments": item.attachments,
                 "artifacts": item.artifacts,
             })

@@ -117,6 +117,12 @@ fn storage_error(error: vak_storage::StorageError) -> SessionError {
     }
 }
 
+/// The fields of a stored message entry that are what its author wrote.
+const CONTRIBUTED: &[&str] = &["message", "meta"];
+
+/// What stands in the conversation for a participant's removed message.
+pub const REMOVED_TEXT: &str = "[A participant's message was removed at their request.]";
+
 pub struct SessionLog {
     path: PathBuf,
     ledger: LedgerDir,
@@ -250,7 +256,7 @@ impl SessionLog {
                 }
             };
             for (i, bytes) in raw.iter().enumerate() {
-                let Ok(entry) = serde_json::from_slice::<Entry>(bytes) else {
+                let Some(entry) = SessionLog::decode(bytes) else {
                     warnings.push(format!(
                         "skipped unparseable entry {} of segment {number} in {}",
                         i + 1,
@@ -305,9 +311,9 @@ impl SessionLog {
                 message: "indexed record changed; rebuild the index".into(),
             });
         }
-        let entry: Entry = serde_json::from_str(line).map_err(|error| SessionError::Corrupt {
+        let entry = SessionLog::decode(line.as_bytes()).ok_or_else(|| SessionError::Corrupt {
             line: 0,
-            message: error.to_string(),
+            message: "indexed record does not decode".into(),
         })?;
         if entry.id != expected_id {
             return Err(SessionError::Corrupt {
@@ -483,7 +489,7 @@ impl SessionLog {
             };
             for frame in located {
                 count += 1;
-                let entry = serde_json::from_slice::<Entry>(&frame.entry).ok();
+                let entry = SessionLog::decode(&frame.entry);
                 if !visit(entry.as_ref()) {
                     return count;
                 }
@@ -576,10 +582,7 @@ impl SessionLog {
         if entry.at_turn.is_none() {
             entry.at_turn = self.current_turn.clone();
         }
-        let line = serde_json::to_string(&entry).map_err(|e| SessionError::Corrupt {
-            line: 0,
-            message: e.to_string(),
-        })?;
+        let line = self.stored_line(&entry)?;
         let key = self.ledger.key.clone();
         let Some((_, writer)) = self.ledger.writer.as_mut() else {
             return Err(SessionError::Locked(self.path.clone()));
@@ -611,6 +614,70 @@ impl SessionLog {
         self.tail_id = Some(entry.id.clone());
         self.entries.push(entry.clone());
         Ok(entry)
+    }
+
+    /// The entry as its frame holds it. What a person other than the owner
+    /// wrote is kept as an object of their contributor scope, so their
+    /// contributions can be removed and the conversation kept (plan M7a-b).
+    fn stored_line(&self, entry: &Entry) -> Result<String, SessionError> {
+        let corrupt = |error: serde_json::Error| SessionError::Corrupt {
+            line: 0,
+            message: error.to_string(),
+        };
+        let contributor = match (&entry.payload, self.header()) {
+            (EntryPayload::Message(record), Some(header)) => record
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.author_id.as_deref())
+                .map(|author| crate::objects::contributor_scope(&header.session_id, author)),
+            _ => None,
+        };
+        let Some(scope) = contributor else {
+            return serde_json::to_string(entry).map_err(corrupt);
+        };
+        let mut row = serde_json::to_value(entry).map_err(corrupt)?;
+        crate::content::seal_fields_under(&mut row, &scope, CONTRIBUTED)?;
+        Ok(row.to_string())
+    }
+
+    /// The entry a frame holds. A participant's message whose key was
+    /// destroyed decodes as a typed placeholder in its place, so the
+    /// conversation stays whole around it.
+    pub fn decode(bytes: &[u8]) -> Option<Entry> {
+        const MARK: &[u8] = b"\"sealed\":";
+        if !bytes.windows(MARK.len()).any(|window| window == MARK) {
+            return serde_json::from_slice(bytes).ok();
+        }
+        let mut row: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+        if !row.get("sealed").is_some_and(serde_json::Value::is_object) {
+            return serde_json::from_value(row).ok();
+        }
+        match crate::content::restore(&mut row).ok()? {
+            crate::content::Restored::Whole => {}
+            crate::content::Restored::Erased => {
+                let author = row
+                    .pointer("/sealed/scope")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(crate::objects::contributor_of)
+                    .map(str::to_string);
+                let fields = row.as_object_mut()?;
+                fields.remove("sealed");
+                fields.insert(
+                    "message".into(),
+                    serde_json::to_value(vak_llm::Message::user_text(REMOVED_TEXT)).ok()?,
+                );
+                fields.insert(
+                    "meta".into(),
+                    serde_json::to_value(MessageMeta {
+                        author_id: author,
+                        removed: true,
+                        ..Default::default()
+                    })
+                    .ok()?,
+                );
+            }
+        }
+        serde_json::from_value(row).ok()
     }
 
     pub fn append_message(&mut self, record: MessageRecord) -> Result<Entry, SessionError> {
@@ -2410,6 +2477,7 @@ impl SessionLog {
                         .map(|meta| meta.artifacts.clone())
                         .unwrap_or_default(),
                     typed: record.meta.as_ref().and_then(|meta| meta.typed.clone()),
+                    removed: record.meta.as_ref().is_some_and(|meta| meta.removed),
                 }),
                 EntryPayload::Compaction(c) => Some(TranscriptMessage {
                     entry_id: entry.id.clone(),
@@ -2424,6 +2492,7 @@ impl SessionLog {
                     attachments: Vec::new(),
                     artifacts: Vec::new(),
                     typed: None,
+                    removed: false,
                 }),
                 _ => None,
             })

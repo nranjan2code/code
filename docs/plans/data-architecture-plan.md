@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-b's first two parts (content in every shared chain is an object of its owner's scope). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-b's first three parts (content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1571,10 +1571,36 @@ shared chains:
 - Tests: `an_artifacts_rows_keep_no_content_and_go_with_its_key`,
   `a_conversations_own_chain_is_sealed_and_goes_with_it`.
 
+**Part 3, done 2026-10-08: the contributor key.**
+- A message a person other than the owner writes into a conversation (the
+  one entry with `MessageMeta::author_id`) is stored with its `message`
+  and `meta` as an object of `contributor:<session id>:<principal>`
+  (`vak_session::objects::contributor_scope`); the frame, still sealed
+  under the conversation's key, holds the reference.
+- Every decode of a stored entry goes through `SessionLog::decode`
+  (opening a ledger, `scan`, `read_record_at`, the catalog's ingest). When
+  the contributor's key is destroyed it yields a user message with the
+  fixed text `REMOVED_TEXT`, the author's id and `MessageMeta::removed`,
+  so `derive_messages()` and the transcript keep the turn's shape and the
+  model and the people in the conversation see that something was removed.
+  No ledger byte changes and every other entry reads as before.
+- A comment on an artifact is its author's too: its `author_name` and
+  `text` are an object of `contributor:<artifact id>:<author>`
+  (`artifacts::comment_scope`), and a read drops a comment whose author's
+  key is gone.
+- This differs from doc 73 §7.3's wording (a guest's frames under their
+  own key): a frame has one key per segment reader, so the contribution is
+  an object of the contributor's scope inside a conversation-keyed frame.
+  What erasure gets is the same: one key destroyed, the frames in place,
+  the chain verifying, a placeholder shown.
+- Tests: `guest_erasure_keeps_owner_conversation`,
+  `a_guests_comments_go_with_their_key_and_the_artifact_stays`.
+- Left for erasure (M7a-e): find a person's contributor scopes across
+  conversations and artifacts, destroy a conversation's or an artifact's
+  contributor scopes with it, and rebuild the rollups and catalog rows
+  that folded the text before.
+
 Still to do in M7a-b:
-- **Part 3, the contributor key:** a guest's frames in a conversation
-  sealed under a (conversation, principal) scope, with the typed
-  placeholder in `derive_messages()`.
 - **Part 4, the provider-account scope** and its grant on provider-derived
   objects (`vak-mail-calendar`).
 

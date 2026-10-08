@@ -318,6 +318,9 @@ pub struct TranscriptMessage {
     pub artifacts: Vec<AttachedArtifact>,
     /// What the person typed when the runtime rewrote it (`MessageMeta::typed`).
     pub typed: Option<String>,
+    /// The message stands in for one a participant had removed
+    /// (`MessageMeta::removed`).
+    pub removed: bool,
 }
 
 /// `message` with its first text block replaced by what the person typed, when
@@ -408,6 +411,10 @@ pub struct MessageMeta {
     /// message holds what the model received; a client shows this instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed: Option<String>,
+    /// The message stands in for one a participant wrote and later had
+    /// removed: its key was destroyed, and the text is the runtime's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
 }
 
 /// What the person asked of an attached artifact.
