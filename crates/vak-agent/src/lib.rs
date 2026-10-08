@@ -1844,6 +1844,10 @@ impl Agent {
         // answer reports that rather than shows a card with no data.
         let mut retrieval_attempted_this_run = false;
         let mut freshness_repair_attempted = false;
+        // A card shown this run that only restated figures the request
+        // itself gave: the answer is the person's own data, so nothing
+        // needs retrieving to make it current.
+        let mut restated_request_figures = false;
         let mut empty_step_repair_attempted = false;
         let mut card_repeat_streak: u32 = 0;
         let mut topic_repair_attempted = false;
@@ -2671,7 +2675,7 @@ impl Agent {
                 // repeat of an earlier turn's data. One bounded redo naming
                 // the gap; the model may decline by saying it has no live
                 // data, which the grounding phrases below already accept.
-                if wants_live_data && !observed_this_run {
+                if wants_live_data && !observed_this_run && !restated_request_figures {
                     let admits_no_data = admits_no_data(&response.text_content());
                     if !admits_no_data && freshness_repair_attempted {
                         // Repaired once already and still nothing retrieved
@@ -3127,8 +3131,12 @@ impl Agent {
                         return false;
                     }
                     if wants_live_data && !observed_this_run {
-                        gated.push((call.clone(), CardGate::Fresh));
-                        return false;
+                        if figures_come_from(&prompt_owned, &call.input) {
+                            restated_request_figures = true;
+                        } else {
+                            gated.push((call.clone(), CardGate::Fresh));
+                            return false;
+                        }
                     }
                     // Scoped to "a retrieval actually succeeded this run":
                     // that is the one circumstance the real bug needs and
@@ -8002,6 +8010,47 @@ fn uncited_sources_outcome(model: &str, urls: &[String]) -> TurnOutcome {
     }
 }
 
+/// Whether every figure a card call carries is one the person's own words
+/// this turn gave, and it carries at least one. Such a card restates the
+/// request ("show the current CPU usage of 42 percent as a metric card"):
+/// it cannot be a figure carried over from an earlier answer, which is what
+/// the freshness gate exists to stop. Measured live 2026-10-08: that
+/// request's correct card was refused 3 of 3 times.
+fn figures_come_from(request: &str, input: &Value) -> bool {
+    fn figures(text: &str, out: &mut Vec<String>) {
+        let mut current = String::new();
+        for ch in text.chars() {
+            if ch.is_ascii_digit() || (ch == '.' && !current.is_empty()) {
+                current.push(ch);
+            } else if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+            }
+        }
+        if !current.is_empty() {
+            out.push(current);
+        }
+        for figure in out.iter_mut() {
+            while figure.ends_with('.') {
+                figure.pop();
+            }
+        }
+    }
+    fn carried(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::Number(number) => figures(&number.to_string(), out),
+            Value::String(text) => figures(text, out),
+            Value::Array(items) => items.iter().for_each(|item| carried(item, out)),
+            Value::Object(fields) => fields.values().for_each(|field| carried(field, out)),
+            Value::Bool(_) | Value::Null => {}
+        }
+    }
+    let mut given = Vec::new();
+    figures(request, &mut given);
+    let mut shown = Vec::new();
+    carried(input, &mut shown);
+    !shown.is_empty() && shown.iter().all(|figure| given.contains(figure))
+}
+
 /// The source URLs a card cites (a `url`, or a `source` that is a web
 /// address) that appear nowhere in `evidence`, compared without scheme,
 /// `www.`, fragment or trailing slash. A media card's `url` may be a
@@ -8738,6 +8787,27 @@ mod tool_recovery_tests {
             repair.input.get("action").and_then(|v| v.as_str()),
             Some("list")
         );
+    }
+
+    #[test]
+    fn a_card_that_restates_the_requests_own_figures_is_not_a_stale_one() {
+        let request = "Show the current CPU usage of 42 percent as a metric card.";
+        let card = serde_json::json!({"semantic_type": "metric", "label": "CPU usage",
+            "readings": [{"label": "CPU usage", "value": "42"}], "unit": "%"});
+        assert!(super::figures_come_from(request, &card));
+        let other = serde_json::json!({"semantic_type": "metric", "value": "57"});
+        assert!(!super::figures_come_from(request, &other));
+        let mixed = serde_json::json!({"semantic_type": "metric", "value": 42, "delta": "3.5"});
+        assert!(!super::figures_come_from(request, &mixed));
+        let none = serde_json::json!({"semantic_type": "metric", "label": "CPU usage"});
+        assert!(
+            !super::figures_come_from(request, &none),
+            "a card with no figure restates nothing"
+        );
+        assert!(super::figures_come_from(
+            "Latest reading: 1.5 bar at 20 degrees.",
+            &serde_json::json!({"value": 1.5, "note": "at 20"})
+        ));
     }
 
     #[test]

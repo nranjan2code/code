@@ -474,6 +474,11 @@ tolerate topic changes:
   A request to recall what the assistant reported earlier is historical
   retrieval, even when it names a temporal topic such as “the latest weather
   answer”; it must not be routed through this freshness gate.
+  A card whose every figure the person's own words this turn gave is not
+  stopped either, and its turn is not redone (`figures_come_from`): "show
+  the current CPU usage of 42 percent as a metric card" asks for nothing to
+  be retrieved, and its correct card was refused 3 of 3 times
+  (2026-10-08).
   Measured live: the model's "repair" was a different stale card from an
   older turn. The signal sets the domain
   only — raising the evidence standard through the stance text made the
