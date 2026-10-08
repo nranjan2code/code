@@ -566,7 +566,10 @@ dedupe (review R1). The design is:
   payload, commitment statement) are field-encrypted under the
   conversation key they came from (§5). Provider-derived fields additionally
   require the source-account grant/key described above, so deleting the
-  provider account does not erase adjacent unrelated content.
+  provider account does not erase adjacent unrelated content. (Plan §M7a
+  "M7a design", 2026-10-08: such content is stored as a tenant object
+  granted to the conversation's scope instead, and the row keeps a
+  reference.)
 - **Objects have their own random key.** Each scope that references an
   object stores that key wrapped under the scope key (a *key grant*). An
   object stays readable while any grant survives, so the same file in two

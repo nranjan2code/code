@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); no step of it is built. Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1396,7 +1396,8 @@ test `feed_pipeline_is_gone`. With it M6.5 is done.
   destruction, derived plaintext removal (`secure_delete` plus a WAL
   checkpoint), and a signed receipt naming what it couldn't reach.
 - **Erasure (doc 74 §4):**
-  - Scopes: provider account, conversation, person, Agent, space, tenant.
+  - Scopes: a conversation, one guest's contributions to it, and a
+    connected provider account. Person, Agent, space and tenant are M7b.
   - Preview digests and approvals.
   - A lineage walk, key destruction, derived plaintext removal
     (`secure_delete` plus a WAL checkpoint), and a signed receipt naming
@@ -1406,7 +1407,8 @@ test `feed_pipeline_is_gone`. With it M6.5 is done.
     records and indexes while preserving unrelated conversation data, and
     reports provider dispatches, recipients, backups, and other copies outside
     Vak's control. Disconnect/revocation alone is not erasure.
-- **Holds, labels and quotas** (doc 74 §3).
+- **Holds on a conversation** (doc 74 §3.2), checked by the reconciler
+  and by erasure; the other hold scopes are M7b.
 - **Agent lifecycle:** add `Revoked`, and wire each state's data effects
   (review R26).
 - **Quotas** (doc 74 §3.3).
@@ -1428,7 +1430,6 @@ test `feed_pipeline_is_gone`. With it M6.5 is done.
   `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`.
 - `erasure_follows_lineage`, `erasure_leaves_ledger_bytes_unchanged`,
   `guest_erasure_keeps_owner_conversation`,
-  `person_erasure_spans_agents_and_chats`,
   `provider_account_erasure_spans_agents_and_conversations`,
   `provider_account_erasure_preserves_unrelated_conversation_content`,
   `provider_account_erasure_reapplies_after_restore`,
@@ -1437,6 +1438,55 @@ test `feed_pipeline_is_gone`. With it M6.5 is done.
   `restore_reapplies_erasures`, `revoke_cuts_endpoints_within_one_tick`.
 - `thirty_day_soak_stays_within_budget`.
 - The browser acceptance scenarios in doc 74 §9 that name these screens.
+
+#### M7a design (agreed with the maintainer 2026-10-08)
+
+What the tree had when the design was settled: session ledger frames are
+written unencrypted (the M3b slice 2 deviation), only objects are keyed per
+conversation, there is no contributor key, no provider-account key and no
+keying of content in shared ledgers; `vak_storage::scopes` already has
+`shred`, `hold` and `release`, and memory, entities and learning record
+`derived_from`.
+
+Decisions:
+
+1. **Ledger frames are always encrypted** under their conversation key.
+   There is no tenant policy switch and no plaintext path; a plaintext
+   ledger is not read, so the dev data home is purged once when this lands.
+2. **M7a erases three scopes:** a conversation, one guest's contributions
+   to it, and a connected provider account. Person, Agent, space and tenant
+   are M7b, with the data roles.
+3. **Content in a shared ledger is a tenant object** granted to its
+   conversation's scope (inbox body, commitment statement, delivery text),
+   as an effect's payload already is; the row keeps ids and state. This
+   replaces doc 73 §7.3's field encryption: one mechanism, not two.
+4. **Holds in M7a are holds on a conversation**, set through the API and
+   the CLI and checked by the reconciler's guard and by erasure. The other
+   scopes, the query hold and the Retention & holds screen are M7b.
+5. **A receipt is signed with a per-tenant Ed25519 key** held by the key
+   authority, so a downloaded receipt verifies with the public key alone.
+6. **Delete permanently** erases a trashed conversation on the reconciler's
+   next pass once its owner types its title; otherwise the 30-day window
+   closes it.
+7. **The backup rework is M7a's last build step**; M7a is not done without
+   `restore_reapplies_erasures`.
+8. **Live verification never commits on the real data home.** A dev server
+   on the real home runs the reconciler observe-only; commit is verified in
+   tests and on a throwaway `VAK_HOME`.
+
+Steps, each shipped whole and in this order:
+
+| Step | What | Exit tests |
+|---|---|---|
+| M7a-a | Conversation keys: every session ledger frame encrypted under its conversation's scope key; the readers (the catalog tailer, `SessionLog`) open through it; the per-turn byte and fsync budgets re-measured | `compressed_before_encrypted`, `bytes_per_turn_budget`, a shredded conversation's ledger verifies and does not decrypt |
+| M7a-b | Content out of shared ledgers into objects granted to the conversation; the contributor key for a guest's frames with the typed placeholder in `derive_messages()`; the provider-account scope and its grant on provider-derived objects | a guest's frames read through their own key; an account-derived object reads only with the account's grant |
+| M7a-c | `crates/vak-lifecycle`: the reconciler, observe-only; the default tenant label; one plan object behind `vak data status`, `usage` and `plan`, `/data/status`, `/data/usage` and `/data/lifecycle`, and the admin Storage (A7) and Lifecycle (A8) screens | `reconciler_observe_only_commits_nothing`, `reconciler_is_idempotent` |
+| M7a-d | Commit for the ephemeral and derived classes (runtime scrub, environments, checkpoints, Document history, inbox entries, cost and activity segments), object GC and quotas; the scattered retention goes (`MAX_STORED_CHECKPOINTS`, finops and alerts compaction, `cleanup_artifacts`, `/memory/cleanup`); `vak data gc` | `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`, `quota_refuses_admission_not_records` |
+| M7a-e | Trash as lifecycle state (the sidecars, their routes and `/workspaces/forget` go); conversation holds; conversation erasure: preview digest, the lineage walk with artifact versions, key destruction, catalog rows removed with `secure_delete` and a WAL checkpoint, the signed receipt; drafts fade; admin Conversations lifecycle (A2, A3); client menu, Trash, "Why is this gone?" and Workbench states (C1, C2, C3, C8); `vak data erase --scope conversation` | `erasure_follows_lineage`, `erasure_leaves_ledger_bytes_unchanged`, `stale_preview_cannot_authorise`, `hold_blocks_every_destructive_transition` |
+| M7a-f | Erasing a guest's contributions and a provider account | `guest_erasure_keeps_owner_conversation`, `provider_account_erasure_spans_agents_and_conversations`, `provider_account_erasure_preserves_unrelated_conversation_content` |
+| M7a-g | Agent lifecycle: `Revoked`, each state's data effects, the Agents lifecycle panel (A14) | `revoke_cuts_endpoints_within_one_tick` |
+| M7a-h | Backup: ciphertext and wrapped keys, the coherent manifest, restore re-applies erasures and bumps the writer epoch; Backup & restore (A16); `vak data backup` | `restore_reapplies_erasures`, `provider_account_erasure_reapplies_after_restore` |
+| M7a-i | Integrity (A9) and Data health (A1); `vak data verify`, `rebuild-catalog`, `export`, `cat` and `grep`; the soak; the new invariant and the docs of §5; the browser acceptance of doc 74 §9 | `thirty_day_soak_stays_within_budget`, the acceptance run |
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

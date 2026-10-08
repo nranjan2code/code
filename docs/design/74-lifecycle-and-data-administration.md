@@ -373,7 +373,7 @@ Two rules make that true:
   content field in a shared ledger (inbox `body`, delivery text, outbox job
   payload, commitment statement, turn-card text) is field-encrypted under
   the conversation key. Non-content fields (ids, timestamps, states) stay
-  readable for audit and scheduling.
+  readable for audit and scheduling. (Plan §M7a "M7a design", 2026-10-08: such content is stored as a tenant object granted to the conversation's scope instead, and the row keeps a reference.)
 - **Derived writes record `derived_from`.** Memory notes, entities, skill
   proposals, FTS rows and embeddings name their source conversation and turn
   (plan M1).

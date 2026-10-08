@@ -74,7 +74,16 @@ Known slow tests (each over 60 s, not failures):
 | 12a | M6.5a sources, `source_poll`, Rust connectors, `intake/` chain, detection, catalog source, `/intake` API | `intake_item_has_trace_and_provenance` | Done (`f187fed3d`) |
 | 12b | M6.5b `session_search` over items, alerts into the Inbox, push intake | `quarantined_item_absent_from_agent_retrieval` | Done (`81bcf6385`) |
 | 12c | M6.5c screens on `/intake`, browser run, Python pipeline and `feeds.rs` deleted | `feed_pipeline_is_gone`, browser run | Done (`29385cd9a`) |
-| 13 | M7a lifecycle: honest deletion (after M6) | see plan §M7a (reconciler, erasure, hold, quota and soak tests, doc 74 §9 browser runs) | |
+| 13 | M7a lifecycle: honest deletion (after M6) | see plan §M7a (reconciler, erasure, hold, quota and soak tests, doc 74 §9 browser runs) | Design agreed 2026-10-08 (plan §M7a "M7a design"); steps 13a to 13i below |
+| 13a | M7a-a conversation keys: ledger frames always encrypted | `compressed_before_encrypted`, `bytes_per_turn_budget` | |
+| 13b | M7a-b shared-ledger content as conversation objects; contributor key; provider-account scope | see plan | |
+| 13c | M7a-c `vak-lifecycle` reconciler, observe-only; default label; Storage and Lifecycle screens | `reconciler_observe_only_commits_nothing`, `reconciler_is_idempotent` | |
+| 13d | M7a-d commit for ephemeral and derived classes; object GC; quotas; scattered retention removed | `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`, `quota_refuses_admission_not_records` | |
+| 13e | M7a-e trash as lifecycle state; conversation holds; conversation erasure with signed receipt; client Trash | `erasure_follows_lineage`, `erasure_leaves_ledger_bytes_unchanged`, `stale_preview_cannot_authorise`, `hold_blocks_every_destructive_transition` | |
+| 13f | M7a-f guest and provider-account erasure | `guest_erasure_keeps_owner_conversation`, `provider_account_erasure_*` | |
+| 13g | M7a-g Agent lifecycle `Revoked` and data effects | `revoke_cuts_endpoints_within_one_tick` | |
+| 13h | M7a-h backup rework | `restore_reapplies_erasures`, `provider_account_erasure_reapplies_after_restore` | |
+| 13i | M7a-i Integrity, Data health, remaining `vak data` verbs, soak, invariant, acceptance | `thirty_day_soak_stays_within_budget`, doc 74 §9 runs | |
 | 14 | M7b lifecycle: governance (after M7a) | `label_on_any_node_resolves` and the remaining doc 74 §9 runs | |
 | 15 | M8 design (only declared deliverables, optional title, versions as an `artifacts/` chain with a rollup) | plan §M8 design | Done (`52c470d01`) |
 | 15a | M8.1 identity and versions: `artifacts/` chain + rollup, `Tool::artifact`, candidates/promotions/Office drafts as versions, catalog nodes, `/library` | `concurrent_edit_creates_sibling_versions`, `saved_version_survives_origin_erasure` | Done (`ce275405b`) |
