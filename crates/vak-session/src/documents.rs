@@ -174,6 +174,32 @@ pub fn prune_history(name: &str, cutoff: i64) -> Result<usize, String> {
         .map_err(|error| format!("prune {name}: {error}"))
 }
 
+/// Releases, in each scope Documents are kept in, every object no live
+/// Document names any more (what pruning and forgetting leave), then
+/// deletes the objects no scope holds (plan M7a-d). A grant younger than
+/// `min_age` stays: a save in flight has written objects its Document
+/// does not name yet. The `tenant` and `agent:<id>` scopes hold Documents
+/// and nothing else, which is what makes this safe; a failure to read a
+/// Document ends the pass with nothing released for its scope. Returns
+/// how many grants were released and how many objects were deleted.
+pub fn collect(min_age: std::time::Duration) -> Result<(usize, usize), String> {
+    crate::fence::check().map_err(|error| error.to_string())?;
+    let mut scopes: std::collections::BTreeSet<String> =
+        names().iter().map(|name| scope_of(name)).collect();
+    scopes.insert("tenant".into());
+    let mut released = 0;
+    for scope in scopes {
+        released += documents(&scope)?
+            .collect(min_age)
+            .map_err(|error| format!("collect {scope}: {error}"))?;
+    }
+    let deleted = {
+        use crate::objects::Objects;
+        tenant()?.collect().map_err(|error| error.to_string())?
+    };
+    Ok((released, deleted))
+}
+
 /// How many versions the Document at `path` has had.
 pub fn version_count(path: &Path) -> usize {
     let (name, scope) = name_and_scope(path);

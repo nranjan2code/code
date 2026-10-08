@@ -171,7 +171,15 @@ impl LocalObjectStore {
         let id = self.id_key.id(plaintext);
         let path = self.object_path(&id);
         if path.exists() {
-            if self.grant_path(&id, scope).exists() {
+            let grant = self.grant_path(&id, scope);
+            if grant.exists() {
+                // Putting again is naming again: the grant's age restarts,
+                // so a collection that spares young grants spares an
+                // object a save has just reused and not yet linked.
+                fs::File::options()
+                    .write(true)
+                    .open(&grant)?
+                    .set_modified(std::time::SystemTime::now())?;
                 return Ok(id);
             }
             if let Some(key) = self.recover_key(&id)? {
@@ -238,6 +246,33 @@ impl LocalObjectStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// Every object `scope` holds a grant on, with how long ago the grant
+    /// was written: what a collection of one scope walks.
+    pub fn granted_to(&self, scope: &str) -> Result<Vec<(ObjectId, std::time::Duration)>> {
+        let name = seal::hex(scope.as_bytes());
+        let mut out = Vec::new();
+        let Ok(dirs) = fs::read_dir(self.root.join("grants")) else {
+            return Ok(out);
+        };
+        for dir in dirs {
+            let dir = dir?;
+            let id = ObjectId(dir.file_name().to_string_lossy().into_owned());
+            if valid_id(&id).is_err() {
+                continue;
+            }
+            let Ok(meta) = fs::metadata(dir.path().join(&name)) else {
+                continue;
+            };
+            let age = meta
+                .modified()
+                .ok()
+                .and_then(|at| at.elapsed().ok())
+                .unwrap_or_default();
+            out.push((id, age));
+        }
+        Ok(out)
     }
 
     /// Removes every object with no live grant. Returns how many.

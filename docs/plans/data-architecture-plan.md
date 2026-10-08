@@ -1781,8 +1781,31 @@ chain a sealed segment at a time.**
   same scope also holds makes that other one unreadable. It belongs with
   part 4, where release becomes collection by reachability.
 
+**Part 4, done 2026-10-08: collection by reachability.**
+- `Documents::collect(min_age)` releases, in one scope, the grant on
+  every object no live Document of that scope names (its current version,
+  the history behind it, their content). `vak_session::documents::collect`
+  runs it for the `tenant` scope and each `agent:<id>` scope, which hold
+  Documents and nothing else, then deletes the objects no scope holds
+  (`Store::gc`). A committing pass ends with it.
+- It fails closed: a Document that cannot be walked ends the pass for its
+  scope with nothing released, because one that could not be read must
+  never count as naming nothing.
+- A grant younger than an hour is spared (`COLLECT_GRACE`): a save writes
+  its objects before it moves its Document's ref, and one in flight names
+  nothing yet. Putting an object a scope already holds restarts its
+  grant's age, so content a save reuses is spared too.
+- `Documents::forget` no longer releases content another live Document of
+  its scope still names (the fault found in part 3b).
+- Other scopes are not swept: a conversation's, an artifact's, a source's
+  and an account's objects go when their grant is released by what owns
+  them (a removed checkpoint) or when their scope's key is destroyed
+  (erasure, M7a-e), after which `Store::gc` deletes them.
+- Tests: `gc_keeps_everything_reachable` (vak-core), and the storage
+  pruning test now covers collection and a forgotten twin.
+
 Still to do in M7a-d:
-- **Part 4:** object GC and quotas. `gc_keeps_everything_reachable`,
+- **Part 5:** quotas (doc 74 §3.3). `quota_refuses_admission_not_records`. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

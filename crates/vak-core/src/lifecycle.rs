@@ -79,6 +79,11 @@ fn document_items() -> Vec<Item> {
     items
 }
 
+/// How long a grant must have been held before collection may release
+/// it: longer than any save takes between writing its objects and moving
+/// its Document's ref.
+const COLLECT_GRACE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 /// How long a chain's open segment takes rows before it is sealed, so
 /// that the rows of a quiet chain age out no more than this late.
 const SEAL_AFTER_DAYS: i64 = 30;
@@ -136,6 +141,10 @@ pub struct Tick {
     /// Due actions of classes this build cannot carry out yet.
     pub left: u64,
     pub reclaimed_bytes: u64,
+    /// Grants released on objects no Document names any more, and objects
+    /// deleted because no scope holds them.
+    pub released_grants: u64,
+    pub deleted_objects: u64,
 }
 
 /// What one declared place in the data home holds.
@@ -627,6 +636,8 @@ impl Core {
             failed: Vec::new(),
             left: 0,
             reclaimed_bytes: 0,
+            released_grants: 0,
+            deleted_objects: 0,
             plan,
         };
         let chain = self.lifecycle_chain();
@@ -672,6 +683,19 @@ impl Core {
                     let _ = chain.append(&row);
                     tick.failed.push(row);
                 }
+            }
+        }
+        if commit {
+            match vak_session::documents::collect(COLLECT_GRACE) {
+                Ok((released, deleted)) => {
+                    tick.released_grants = released as u64;
+                    tick.deleted_objects = deleted as u64;
+                }
+                Err(error) => tracing::warn!(
+                    kind = "lifecycle",
+                    error_kind = %vak_telemetry::error_kind(&std::io::Error::other(error)),
+                    "objects were not collected this pass"
+                ),
             }
         }
         tracing::info!(

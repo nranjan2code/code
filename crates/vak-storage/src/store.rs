@@ -29,6 +29,8 @@ pub trait Store: Send + Sync {
     fn put_object(&self, plaintext: &[u8], scope: &str) -> Result<ObjectId>;
     fn get_object(&self, id: &ObjectId, scope: &str) -> Result<Vec<u8>>;
     fn remove_grant(&self, id: &ObjectId, scope: &str) -> Result<()>;
+    /// Every object `scope` holds a grant on, with the grant's age.
+    fn granted_to(&self, scope: &str) -> Result<Vec<(ObjectId, std::time::Duration)>>;
     /// Collects objects with no live grant (scopes in `held` always count).
     fn gc(&self, held: &dyn Fn(&str) -> bool) -> Result<usize>;
     fn get_ref(&self, name: &str) -> Result<Option<RefValue>>;
@@ -202,6 +204,10 @@ impl Store for LocalStore {
         self.meta.committed().map(|_| ())
     }
 
+    fn granted_to(&self, scope: &str) -> Result<Vec<(ObjectId, std::time::Duration)>> {
+        self.objects.granted_to(scope)
+    }
+
     fn gc(&self, held: &dyn Fn(&str) -> bool) -> Result<usize> {
         let n = self.objects.gc_holding(held)?;
         if n > 0 {
@@ -311,6 +317,17 @@ impl Store for MemoryStore {
             g.remove(scope);
         }
         self.meta.committed().map(|_| ())
+    }
+
+    /// Nothing here keeps a time, so every grant reads as long held.
+    fn granted_to(&self, scope: &str) -> Result<Vec<(ObjectId, std::time::Duration)>> {
+        Ok(self
+            .objs()?
+            .grants
+            .iter()
+            .filter(|(_, scopes)| scopes.contains(scope))
+            .map(|(id, _)| (id.clone(), std::time::Duration::MAX))
+            .collect())
     }
 
     fn gc(&self, _held: &dyn Fn(&str) -> bool) -> Result<usize> {

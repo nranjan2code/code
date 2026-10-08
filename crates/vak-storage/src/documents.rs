@@ -233,18 +233,68 @@ impl Documents {
         self.store.get_object(&v.content, &self.scope)
     }
 
-    /// Tombstones the document and releases this scope's grants on all of its
-    /// objects. Returns how many versions were forgotten.
+    /// Every object a live document readable through this scope still
+    /// names: its current version, the history behind it, and their
+    /// content. A document of another scope is not readable here and is
+    /// passed over; any other failure is an error, because a document that
+    /// could not be walked must never read as holding nothing.
+    fn live_objects(&self) -> Result<std::collections::HashSet<ObjectId>> {
+        let mut live = std::collections::HashSet::new();
+        for full in self.store.ref_names("doc/")? {
+            let Some(name) = full.strip_prefix("doc/") else {
+                continue;
+            };
+            let history = match self.history(name) {
+                Ok(history) => history,
+                Err(StorageError::Forgotten | StorageError::NoGrant | StorageError::NotFound) => {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            for v in history {
+                live.insert(v.id);
+                live.insert(v.content);
+            }
+        }
+        Ok(live)
+    }
+
+    /// Tombstones the document and releases what only it named. An object
+    /// another live document of this scope still names keeps its grant:
+    /// the same text is one object however many documents hold it.
+    /// Returns how many versions were forgotten.
     pub fn forget(&self, name: &str) -> Result<usize> {
         let rname = Self::ref_name(name);
         let history = self.history(name)?;
         let cur = self.generation(name)?;
         self.store.cas_ref(&rname, cur, self.epoch, TOMBSTONE)?;
+        let live = self.live_objects()?;
         for v in &history {
-            self.store.remove_grant(&v.content, &self.scope)?;
-            self.store.remove_grant(&v.id, &self.scope)?;
+            for id in [&v.content, &v.id] {
+                if !live.contains(id) {
+                    self.store.remove_grant(id, &self.scope)?;
+                }
+            }
         }
         Ok(history.len())
+    }
+
+    /// Releases this scope's grant on every object no live document names
+    /// any more: what pruning and forgetting left behind. A grant younger
+    /// than `min_age` is left, because a save writes its objects before it
+    /// moves the document's ref, and one in flight names nothing yet.
+    /// Returns how many grants were released. This scope must hold
+    /// documents and nothing else.
+    pub fn collect(&self, min_age: std::time::Duration) -> Result<usize> {
+        let live = self.live_objects()?;
+        let mut released = 0;
+        for (id, age) in self.store.granted_to(&self.scope)? {
+            if age >= min_age && !live.contains(&id) {
+                self.store.remove_grant(&id, &self.scope)?;
+                released += 1;
+            }
+        }
+        Ok(released)
     }
 }
 
@@ -288,6 +338,17 @@ mod tests {
         );
         // A document saved once has no history to prune.
         assert_eq!(docs.prune("other", 5 * day).unwrap(), 0);
+        // Collecting releases what pruning left unnamed and nothing a
+        // live document names: "two", which only the pruned history held.
+        // "one" is still `other`'s.
+        assert_eq!(docs.collect(std::time::Duration::ZERO).unwrap(), 1);
+        assert_eq!(docs.current("note").unwrap().unwrap().1, b"three");
+        assert_eq!(docs.current("other").unwrap().unwrap().1, b"one");
+        assert_eq!(docs.collect(std::time::Duration::ZERO).unwrap(), 0);
+        // Forgetting a document leaves text another one still holds.
+        docs.save_at("twin", b"three", None, 0).unwrap();
+        docs.forget("twin").unwrap();
+        assert_eq!(docs.current("note").unwrap().unwrap().1, b"three");
         // Saving goes on from the kept head.
         let next = docs.generation("note").unwrap();
         docs.save_at("note", b"four", next, 9 * day).unwrap();
