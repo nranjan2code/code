@@ -166,6 +166,45 @@ pub struct Usage {
     pub bytes: u64,
 }
 
+/// Where an install stands against its quota (docs/design/74 §3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaState {
+    /// No limit is set.
+    None,
+    Ok,
+    /// Past four fifths of the limit: a warning, nothing refused.
+    Soft,
+    /// At the limit: new work is refused. Nothing is removed to make room
+    /// but what can be rebuilt.
+    Hard,
+}
+
+/// The install's storage against its limit, as last measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct Quota {
+    pub state: QuotaState,
+    pub limit_bytes: Option<u64>,
+    /// What cannot be rebuilt: records, objects, Documents, settings.
+    pub kept_bytes: u64,
+    /// What can: derived indexes, caches, telemetry, scratch.
+    pub rebuildable_bytes: u64,
+    pub measured_at: DateTime<Utc>,
+}
+
+/// What must be kept, what can be rebuilt, and when they were measured.
+type Measured = (u64, u64, DateTime<Utc>);
+type Measurements = std::sync::Mutex<std::collections::HashMap<PathBuf, Measured>>;
+
+/// The last measurement of each data home this process has measured: what
+/// the check before a turn reads, so that it never walks the files itself.
+fn measurements() -> &'static Measurements {
+    static MEASURED: std::sync::OnceLock<Measurements> = std::sync::OnceLock::new();
+    MEASURED.get_or_init(Default::default)
+}
+
+const REBUILDABLE: &[&str] = &["derived", "ephemeral", "telemetry"];
+
 /// The reconciler as a person asks about it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Status {
@@ -183,6 +222,7 @@ pub struct Status {
     pub reclaimable_bytes: u64,
     pub files: u64,
     pub bytes: u64,
+    pub quota: Quota,
 }
 
 /// Files and bytes under `path`, following no link. `seen` keeps a file
@@ -293,6 +333,113 @@ impl Core {
             bytes: rows.iter().map(|row| row.bytes).sum(),
             rows,
         }
+    }
+
+    /// Measures the data home and keeps the figure for `quota`. Called by
+    /// each lifecycle pass and by the first check of a process.
+    pub fn measure_storage(&self) -> Usage {
+        let usage = self.data_usage();
+        let rebuildable: u64 = usage
+            .rows
+            .iter()
+            .filter(|row| REBUILDABLE.contains(&row.class.as_str()))
+            .map(|row| row.bytes)
+            .sum();
+        if let Ok(mut measured) = measurements().lock() {
+            measured.insert(
+                self.inner.sessions_home.clone(),
+                (usage.bytes - rebuildable, rebuildable, usage.at),
+            );
+        }
+        usage
+    }
+
+    /// The install against its limit, from the last measurement (taken now
+    /// when this process has none).
+    pub fn quota(&self) -> Quota {
+        let read = || {
+            measurements()
+                .lock()
+                .ok()
+                .and_then(|measured| measured.get(&self.inner.sessions_home).copied())
+        };
+        let (kept_bytes, rebuildable_bytes, measured_at) = read()
+            .or_else(|| {
+                self.measure_storage();
+                read()
+            })
+            .unwrap_or((0, 0, Utc::now()));
+        let limit_bytes = self.config().lifecycle.quota_bytes;
+        let state = match limit_bytes {
+            None => QuotaState::None,
+            Some(limit) if kept_bytes >= limit => QuotaState::Hard,
+            Some(limit) if kept_bytes + rebuildable_bytes >= limit / 5 * 4 => QuotaState::Soft,
+            Some(_) => QuotaState::Ok,
+        };
+        Quota {
+            state,
+            limit_bytes,
+            kept_bytes,
+            rebuildable_bytes,
+            measured_at,
+        }
+    }
+
+    /// Refuses new work when what the install must keep has reached its
+    /// limit. Nothing is removed to make room: a record is never evicted
+    /// (docs/design/74 §3.3).
+    pub(crate) fn refuse_over_quota(&self) -> Result<(), crate::CoreError> {
+        let quota = self.quota();
+        match (quota.state, quota.limit_bytes) {
+            (QuotaState::Hard, Some(limit)) => Err(crate::CoreError::OverQuota {
+                used_mb: quota.kept_bytes / (1024 * 1024),
+                limit_mb: limit / (1024 * 1024),
+            }),
+            _ => Ok(()),
+        }
+    }
+
+    /// Removes each Agent's tool cache: what a hard limit evicts, because
+    /// a cache is rebuilt by the next command that wants it. Returns the
+    /// transitions made.
+    fn evict_caches(&self, chain: &vak_session::chain::RecordChain) -> Vec<Transition> {
+        let mut made = Vec::new();
+        for (space, space_dir) in child_dirs(&executions_root()) {
+            for (agent, agent_dir) in child_dirs(&space_dir) {
+                let path = agent_dir.join("cache");
+                let (files, bytes) = measure(&path, &mut HashSet::new());
+                if files == 0 {
+                    continue;
+                }
+                let item = format!("{space}/{agent}/cache");
+                let mut row = Transition {
+                    at: Utc::now(),
+                    key: format!("evict:{item}"),
+                    class: DataClass::Execution,
+                    item,
+                    does: vak_lifecycle::OnExpiry::Remove,
+                    reason: vak_lifecycle::Reason::Size,
+                    bytes,
+                    files,
+                    state: TransitionState::Started,
+                    error_kind: None,
+                };
+                if chain.append(&row).is_err() {
+                    continue;
+                }
+                row.at = Utc::now();
+                match std::fs::remove_dir_all(&path) {
+                    Ok(()) => row.state = TransitionState::Committed,
+                    Err(error) => {
+                        row.state = TransitionState::Failed;
+                        row.error_kind = Some(vak_telemetry::error_kind(&error).to_string());
+                    }
+                }
+                let _ = chain.append(&row);
+                made.push(row);
+            }
+        }
+        made
     }
 
     /// Everything the reconciler observes, as items a label is applied to.
@@ -685,6 +832,18 @@ impl Core {
                 }
             }
         }
+        // At the limit, what can be rebuilt goes first; records never do.
+        self.measure_storage();
+        if commit && self.quota().state == QuotaState::Hard {
+            for row in self.evict_caches(&chain) {
+                if row.state == TransitionState::Committed {
+                    tick.reclaimed_bytes += row.bytes;
+                    tick.committed.push(row);
+                } else {
+                    tick.failed.push(row);
+                }
+            }
+        }
         if commit {
             match vak_session::documents::collect(COLLECT_GRACE) {
                 Ok((released, deleted)) => {
@@ -711,8 +870,9 @@ impl Core {
     /// The reconciler's state and what the data home holds.
     pub fn data_status(&self) -> Status {
         let plan = self.lifecycle_plan();
-        let usage = self.data_usage();
+        let usage = self.measure_storage();
         Status {
+            quota: self.quota(),
             at: plan.at,
             mode: if self.config().lifecycle.commit {
                 "commit"

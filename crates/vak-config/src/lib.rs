@@ -587,6 +587,10 @@ pub struct LifecycleSettings {
     /// "observe" (default) computes and shows the plan and removes
     /// nothing; "commit" also carries out the kinds whose commit is built.
     pub mode: Option<String>,
+    /// The most this install may store, in gigabytes; unset means no
+    /// limit. At the limit new work is refused; records are never removed
+    /// to make room (docs/design/74 §3.3).
+    pub quota_gb: Option<f64>,
 }
 
 /// Resolved retention mode.
@@ -594,6 +598,8 @@ pub struct LifecycleSettings {
 pub struct LifecycleResolved {
     /// Whether the reconciler carries out its plan.
     pub commit: bool,
+    /// The most this install may store, in bytes; `None` is no limit.
+    pub quota_bytes: Option<u64>,
 }
 
 /// Resolved capacity-probe policy.
@@ -1645,7 +1651,10 @@ impl Default for Config {
             probe: ProbeResolved {
                 hosted: "none".into(),
             },
-            lifecycle: LifecycleResolved { commit: false },
+            lifecycle: LifecycleResolved {
+                commit: false,
+                quota_bytes: None,
+            },
             intent: IntentResolved {
                 enabled: true,
                 accept_confidence: 0.75,
@@ -3096,6 +3105,17 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         }
     };
 
+    cfg.lifecycle.quota_bytes = match merged.lifecycle.quota_gb {
+        None => None,
+        Some(gb) if gb.is_finite() && gb > 0.0 => Some((gb * 1024.0 * 1024.0 * 1024.0) as u64),
+        Some(other) => {
+            cfg.warnings.push(format!(
+                "lifecycle.quota_gb must be a positive number, not {other}; no limit applies"
+            ));
+            None
+        }
+    };
+
     cfg.probe.hosted = match merged.probe.hosted.as_deref() {
         None | Some("none") => "none".into(),
         Some("full") => "full".into(),
@@ -4175,6 +4195,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.lifecycle.mode.is_some() {
         base.lifecycle.mode = over.lifecycle.mode;
+    }
+    if over.lifecycle.quota_gb.is_some() {
+        base.lifecycle.quota_gb = over.lifecycle.quota_gb;
     }
     if over.providers.ollama.keep_alive.is_some() {
         base.providers.ollama.keep_alive = over.providers.ollama.keep_alive;

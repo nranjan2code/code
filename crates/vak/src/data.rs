@@ -53,6 +53,21 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 size(status.bytes),
                 status.files
             );
+            let quota = &status.quota;
+            let kept = size(quota.kept_bytes);
+            println!(
+                "limit         {}",
+                match (quota.state, quota.limit_bytes) {
+                    (vak_core::lifecycle::QuotaState::Hard, Some(limit)) => format!(
+                        "full: {kept} kept of {}; new work is refused until space is freed or the limit is raised",
+                        size(limit)
+                    ),
+                    (vak_core::lifecycle::QuotaState::Soft, Some(limit)) =>
+                        format!("nearly full: {kept} kept of {}", size(limit)),
+                    (_, Some(limit)) => format!("{kept} kept of {}", size(limit)),
+                    (_, None) => "none set ([lifecycle] quota_gb)".to_string(),
+                }
+            );
             println!(
                 "due now       {} items, {}",
                 status.due,

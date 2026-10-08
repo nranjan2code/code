@@ -379,6 +379,12 @@ pub enum CoreError {
         "this request needs a model that can serve {modalities}, and no leg on the route (primary: {model}) is declared able to; set [route] modality_hints or choose a capable model"
     )]
     UnsupportedModality { modalities: String, model: String },
+    /// What the install must keep has reached `[lifecycle] quota_gb`
+    /// (docs/design/74 §3.3). New work is refused; nothing is removed.
+    #[error(
+        "storage is full: {used_mb} MB kept of a {limit_mb} MB limit. Nothing was removed. Free space by deleting conversations or files you no longer need, or raise [lifecycle] quota_gb, then try again"
+    )]
+    OverQuota { used_mb: u64, limit_mb: u64 },
 }
 
 /// Stats reported by a successful manual compaction.
@@ -6666,6 +6672,7 @@ impl Core {
         let prompt_text = request.text_content();
         let admitted_agent = session.header().and_then(|header| header.agent.clone());
         self.refuse_inactive_agent(admitted_agent.as_ref())?;
+        self.refuse_over_quota()?;
         self.agent_identity = admitted_agent.map(|admitted| self.live_agent_identity(admitted));
         // The approver that will actually serve this run is the authority on
         // whether its gates reach anyone. Whatever the host stamped earlier

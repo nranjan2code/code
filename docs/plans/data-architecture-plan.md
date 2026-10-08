@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-d's first three parts (a committing pass for executions, checkpoints, environments, rotated logs and expired chain segments, off unless `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1480,7 +1480,7 @@ Steps, each shipped whole and in this order:
 | M7a-a | **Done 2026-10-08 (note below).** Conversation keys: every session ledger frame encrypted under its conversation's scope key; the readers (the catalog tailer, `SessionLog`) open through it; the per-turn byte and fsync budgets re-measured | `compressed_before_encrypted`, `bytes_per_turn_budget`, `a_destroyed_key_leaves_the_bytes_and_the_chain_and_nothing_readable` |
 | M7a-b | **Done 2026-10-08 (notes below).** Content out of shared ledgers into objects granted to the conversation; the contributor key for a guest's frames with the typed placeholder in `derive_messages()`; the provider-account scope and its grant on provider-derived objects | a guest's frames read through their own key; an account-derived object reads only with the account's grant |
 | M7a-c | **Done 2026-10-08 (note below).** `crates/vak-lifecycle`: the reconciler, observe-only; the default tenant label; one plan object behind `vak data status`, `usage` and `plan`, `/data/status`, `/data/usage` and `/data/lifecycle`, and the admin Storage (A7) and Lifecycle (A8) screens | `reconciler_observe_only_commits_nothing`, `reconciler_is_idempotent` |
-| M7a-d | Commit for the ephemeral and derived classes (runtime scrub, environments, checkpoints, Document history, inbox entries, cost and activity segments), object GC and quotas; the scattered retention goes (`MAX_STORED_CHECKPOINTS`, finops and alerts compaction, `cleanup_artifacts`, `/memory/cleanup`); `vak data gc` | `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`, `quota_refuses_admission_not_records` |
+| M7a-d | **Done 2026-10-08 (notes below).** Commit for the ephemeral and derived classes (runtime scrub, environments, checkpoints, Document history, inbox entries, cost and activity segments), object GC and quotas; the scattered retention goes (`MAX_STORED_CHECKPOINTS`, finops and alerts compaction, `cleanup_artifacts`, `/memory/cleanup`); `vak data gc` | `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`, `quota_refuses_admission_not_records` |
 | M7a-e | Trash as lifecycle state (the sidecars, their routes and `/workspaces/forget` go); conversation holds; conversation erasure: preview digest, the lineage walk with artifact versions, key destruction, catalog rows removed with `secure_delete` and a WAL checkpoint, the signed receipt; drafts fade; admin Conversations lifecycle (A2, A3); client menu, Trash, "Why is this gone?" and Workbench states (C1, C2, C3, C8); `vak data erase --scope conversation` | `erasure_follows_lineage`, `erasure_leaves_ledger_bytes_unchanged`, `stale_preview_cannot_authorise`, `hold_blocks_every_destructive_transition` |
 | M7a-f | Erasing a guest's contributions and a provider account | `guest_erasure_keeps_owner_conversation`, `provider_account_erasure_spans_agents_and_conversations`, `provider_account_erasure_preserves_unrelated_conversation_content` |
 | M7a-g | Agent lifecycle: `Revoked`, each state's data effects, the Agents lifecycle panel (A14) | `revoke_cuts_endpoints_within_one_tick` |
@@ -1804,8 +1804,32 @@ chain a sealed segment at a time.**
 - Tests: `gc_keeps_everything_reachable` (vak-core), and the storage
   pruning test now covers collection and a forgotten twin.
 
-Still to do in M7a-d:
-- **Part 5:** quotas (doc 74 §3.3). `quota_refuses_admission_not_records`. `gc_keeps_everything_reachable`,
+**Part 5, decided with the maintainer and done 2026-10-08: the install
+quota.** One limit for the whole install, none unless a person sets one,
+measured by the retention pass.
+- `[lifecycle] quota_gb` (privileged, like `mode`) is the most the install
+  may store. Unset is no limit; usage is measured and shown either way.
+- Every pass (and the first check of a process) measures the registry's
+  paths and keeps two figures: what must be kept (records, objects,
+  Documents, settings) and what can be rebuilt (derived, ephemeral,
+  telemetry). The check before a turn reads those figures and walks
+  nothing, so the install can overshoot by what ten minutes of work
+  writes. The server now runs a pass every ten minutes in either mode; an
+  observing pass removes nothing and still measures.
+- Past four fifths of the limit the state is `soft` (a warning on the
+  status and the Storage screen). At the limit, counting only what must
+  be kept, it is `hard`: `Core::refuse_over_quota` refuses the next turn
+  with `CoreError::OverQuota`, which says how much is kept, the limit and
+  that nothing was removed. A committing pass at the limit removes each
+  Agent's tool cache, which the next command rebuilds; no record, object
+  or Document is ever removed to make room.
+- `vak data status` and the admin console's Data › Storage show the limit
+  and where the install stands.
+- Not built: the inbox notification at the soft limit (the warning is on
+  the two surfaces above only), and limits per space or per Agent (M7b).
+- Test: `quota_refuses_admission_not_records`.
+
+M7a-d is done with this part. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

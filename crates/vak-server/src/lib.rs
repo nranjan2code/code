@@ -19079,9 +19079,12 @@ pub fn start_scheduler(state: &AppState) {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
-            if !vak_session::fence::is_fenced() && st.core.config().lifecycle.commit {
+            // An observing pass removes nothing; it still measures, which
+            // is what the quota check before each turn reads.
+            if !vak_session::fence::is_fenced() {
                 let core = st.core.clone();
-                let _ = tokio::task::spawn_blocking(move || core.lifecycle_tick(true)).await;
+                let commit = core.config().lifecycle.commit;
+                let _ = tokio::task::spawn_blocking(move || core.lifecycle_tick(commit)).await;
             }
         }
     });

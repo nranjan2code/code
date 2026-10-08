@@ -179,6 +179,27 @@ function Retention() {
   );
 }
 
+function Limit() {
+  const [status] = createResource<DataStatus>(() => api.dataStatus());
+  return (
+    <Show when={status()?.quota}>
+      {(quota) => (
+        <p role={quota().state === "hard" ? "alert" : undefined}>
+          <Show when={quota().limit_bytes} fallback={<span class="dim">No storage limit is set.</span>}>
+            {(limit) => (
+              <>
+                <strong>{size(quota().kept_bytes)}</strong> kept of a {size(limit())} limit.
+                <Show when={quota().state === "hard"}> Storage is full: new work is refused until space is freed or the limit is raised. Nothing is removed to make room.</Show>
+                <Show when={quota().state === "soft"}> Storage is nearly full.</Show>
+              </>
+            )}
+          </Show>
+        </p>
+      )}
+    </Show>
+  );
+}
+
 function Storage() {
   const [usage, { refetch }] = createResource<DataUsage>(() => api.dataUsage());
   return (
@@ -195,6 +216,7 @@ function Storage() {
           {(read) => (
             <>
               <p><strong>{size(read().bytes)}</strong> in {read().files} files.</p>
+              <Limit />
               <div class="ops-table-wrap">
                 <table class="ops-table">
                   <thead><tr><th>Where</th><th>Kind</th><th>Part of Vakyartha</th><th>Files</th><th>Size</th></tr></thead>

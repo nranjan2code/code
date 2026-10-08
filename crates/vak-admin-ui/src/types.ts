@@ -1508,6 +1508,13 @@ export interface DataStatus {
   reclaimable_bytes: number;
   files: number;
   bytes: number;
+  quota: {
+    state: "none" | "ok" | "soft" | "hard";
+    limit_bytes?: number | null;
+    kept_bytes: number;
+    rebuildable_bytes: number;
+    measured_at: string;
+  };
 }
 
 export interface DataTransition {
