@@ -21,6 +21,31 @@ pub fn states(shared: &vak_config::scope::SharedScope) -> Vec<(String, Conversat
     conversation_state::all(&tenant(shared)).unwrap_or_default()
 }
 
+/// The state of one conversation; the default when it has none.
+pub fn state(
+    shared: &vak_config::scope::SharedScope,
+    session_id: &str,
+) -> std::io::Result<ConversationState> {
+    conversation_state::get(&tenant(shared), session_id).map_err(std::io::Error::other)
+}
+
+/// Marks conversations erased, now. Final: an erased conversation's state
+/// never changes again. Only erasure calls this (`crate::erasure`).
+pub(crate) fn mark_erased(
+    shared: &vak_config::scope::SharedScope,
+    session_ids: &[String],
+) -> std::io::Result<()> {
+    let now = chrono::Utc::now();
+    for id in session_ids {
+        conversation_state::update(&tenant(shared), id, |state| {
+            state.trashed_at = state.trashed_at.or(Some(now));
+            state.erased_at = Some(now);
+        })
+        .map_err(std::io::Error::other)?;
+    }
+    Ok(())
+}
+
 /// Every session id that is hidden: in the trash, or erased.
 pub fn trashed(shared: &vak_config::scope::SharedScope) -> HashSet<String> {
     states(shared)

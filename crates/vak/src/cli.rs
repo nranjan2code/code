@@ -621,6 +621,25 @@ pub(crate) enum DataAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Erase a conversation in the trash for good. Shows what will be
+    /// destroyed and asks you to type its title
+    Erase {
+        /// The conversation's id
+        session: String,
+        /// What is erased; only a conversation for now
+        #[arg(long, default_value = "conversation")]
+        scope: String,
+    },
+    /// Put a conversation on hold, so that nothing erases it
+    Hold {
+        /// The conversation's id
+        session: String,
+        /// Release the hold
+        #[arg(long)]
+        release: bool,
+    },
+    /// The signed receipt of every erasure
+    Receipts,
     /// What retention would remove or move to the trash now (a dry run)
     Plan {
         /// Print the plan as JSON

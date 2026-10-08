@@ -1889,10 +1889,25 @@ state.**
   are unchanged, the receipt and its signature) and
   `stale_preview_cannot_authorise` (which also checks the hold).
 
-Still to do in M7a-e: routes and CLI for preview, erase and hold
-(`vak data erase --scope conversation`); drafts moving to the trash; the
-screens (admin A2 and A3, client C1, C2, C3 and C8); the lifecycle and
-erasure chains as catalog sources; and the `/workspaces/forget` route. `gc_keeps_everything_reachable`,
+**Part 3, done 2026-10-08: the routes and the CLI.**
+- `GET /conversations/{id}/erasure` returns the preview and what the
+  person must type: the conversation's title, or the start of its id when
+  it has none. `POST` erases with the digest and the typed title;
+  `PUT /conversations/{id}/hold` sets or releases a hold;
+  `GET /data/erasure/receipts` lists the receipts. All are the owner's
+  and are checked against this workspace like the trash routes
+  (invariant 22). A refusal carries a `reason` a client can act on
+  (`not_in_trash`, `stale_preview`, `held`, `confirmation`,
+  `already_erased`).
+- `vak data erase <id>` shows the preview and asks for the title;
+  `vak data hold <id> [--release]`; `vak data receipts` lists them and
+  says whether each signature verifies.
+- Test: `a_conversation_is_erased_from_the_trash_with_its_title_typed`,
+  through the real router with its bearer check.
+
+Still to do in M7a-e: drafts moving to the trash; the screens (admin A2
+and A3, client C1, C2, C3 and C8); the lifecycle and erasure chains as
+catalog sources; and the `/workspaces/forget` route. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

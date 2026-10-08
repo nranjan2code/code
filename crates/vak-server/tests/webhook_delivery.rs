@@ -113,11 +113,18 @@ fn git_seed(cwd: &std::path::Path) {
             .env("GIT_COMMITTER_EMAIL", "t@t")
             .output()
             .unwrap();
-        assert!(out.status.success(), "git {args:?} failed");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
     run(&["init", "-q"]);
     std::fs::write(cwd.join("README.md"), "seed\n").unwrap();
-    run(&["add", "."]);
+    // The project's own files only. The test's data home sits inside this
+    // folder, and the running server writes there (the catalog's
+    // write-ahead log comes and goes), so adding everything races it.
+    run(&["add", "README.md", ".vak"]);
     run(&["commit", "-q", "-m", "seed"]);
 }
 

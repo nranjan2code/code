@@ -947,6 +947,12 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/archived", delete(delete_all_archived))
         .route("/sessions/{id}", delete(delete_session))
         .route("/sessions/{id}/restore", post(restore_session))
+        .route(
+            "/conversations/{id}/erasure",
+            get(erasure_preview).post(erase_conversation),
+        )
+        .route("/conversations/{id}/hold", put(hold_conversation))
+        .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/skills", get(list_skills))
         .route("/social/connectors", get(list_social_connectors))
         .route(
@@ -10146,6 +10152,140 @@ async fn restore_session(
         return trash_write_failed(&error);
     }
     Json(serde_json::json!({ "restored": id })).into_response()
+}
+
+/// What a person types to confirm an erasure: the conversation's title,
+/// or the start of its id when it has none.
+fn erasure_confirmation(core: &Core, id: &str) -> String {
+    session_node(core, id)
+        .and_then(|node| node.title)
+        .map(|title| title.trim().to_string())
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| id.chars().take(8).collect())
+}
+
+fn erasure_refused(error: &vak_core::erasure::ErasureError) -> axum::response::Response {
+    use vak_core::erasure::ErasureError as E;
+    let status = match error {
+        E::NotFound(_) => StatusCode::NOT_FOUND,
+        E::NotInTrash | E::AlreadyErased | E::Held | E::StalePreview => StatusCode::CONFLICT,
+        E::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    let reason = match error {
+        E::NotFound(_) => "not_found",
+        E::NotInTrash => "not_in_trash",
+        E::AlreadyErased => "already_erased",
+        E::Held => "held",
+        E::StalePreview => "stale_preview",
+        E::Failed(_) => "failed",
+    };
+    (
+        status,
+        Json(serde_json::json!({ "error": error.to_string(), "reason": reason })),
+    )
+        .into_response()
+}
+
+/// What erasing a conversation would destroy, the digest a confirmation
+/// must carry, and what the person must type (docs/design/74 §4).
+async fn erasure_preview(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    if !find_session_in_cwd(&state.core, &id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let confirm = erasure_confirmation(&state.core, &id);
+    let core = state.core.clone();
+    let session = id.clone();
+    match tokio::task::spawn_blocking(move || core.erasure_preview(&session)).await {
+        Ok(Ok(preview)) => {
+            Json(serde_json::json!({ "preview": preview, "confirm": confirm })).into_response()
+        }
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct EraseBody {
+    /// The digest of the preview the person confirmed.
+    digest: String,
+    /// What they typed: the conversation's title, as the preview gave it.
+    confirm: String,
+}
+
+/// Erases a conversation in the trash for good. The person typed its
+/// title and confirmed a preview; a preview that no longer matches, a
+/// hold, or a conversation that is not in the trash refuses it.
+async fn erase_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<EraseBody>,
+) -> axum::response::Response {
+    if !find_session_in_cwd(&state.core, &id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if body.confirm.trim() != erasure_confirmation(&state.core, &id) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "type the conversation's title to erase it",
+                "reason": "confirmation",
+            })),
+        )
+            .into_response();
+    }
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    let session = id.clone();
+    let erased = tokio::task::spawn_blocking(move || {
+        core.erase_conversation(
+            &session,
+            Some(&body.digest),
+            vak_core::erasure::Cause::Person,
+            Some(actor),
+        )
+    })
+    .await;
+    match erased {
+        Ok(Ok(receipt)) => {
+            state.forget_session(&id);
+            Json(serde_json::json!({ "receipt": receipt })).into_response()
+        }
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct HoldBody {
+    held: bool,
+}
+
+/// Puts a conversation on hold or releases it. While held it is not
+/// erased, by a person or by the end of its time in the trash.
+async fn hold_conversation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<HoldBody>,
+) -> axum::response::Response {
+    if !find_session_in_cwd(&state.core, &id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match state.core.hold_conversation(&id, body.held) {
+        Ok(()) => Json(serde_json::json!({ "held": body.held })).into_response(),
+        Err(error) => erasure_refused(&error),
+    }
+}
+
+/// The signed receipt of every erasure.
+async fn erasure_receipts(State(state): State<AppState>) -> axum::response::Response {
+    data_read(
+        state,
+        |core| serde_json::json!({ "receipts": core.erasure_receipts() }),
+    )
+    .await
 }
 
 async fn delete_all_archived(State(state): State<AppState>) -> axum::response::Response {

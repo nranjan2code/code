@@ -151,6 +151,114 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
             }
             i32::from(!tick.failed.is_empty())
         }
+        crate::cli::DataAction::Erase { session, scope } => {
+            if scope != "conversation" {
+                eprintln!("error: only --scope conversation can be erased yet");
+                return 2;
+            }
+            let preview = match core.erasure_preview(&session) {
+                Ok(preview) => preview,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    return 1;
+                }
+            };
+            let title = core
+                .catalog()
+                .ok()
+                .and_then(|catalog| catalog.open_node(&session).ok().flatten())
+                .and_then(|node| node.title)
+                .map(|title| title.trim().to_string())
+                .filter(|title| !title.is_empty())
+                .unwrap_or_else(|| session.chars().take(8).collect());
+            println!("This erases the conversation \"{title}\" for good. It cannot be undone.");
+            println!(
+                "  conversations   {} (it and the workers it started)",
+                preview.conversations.len()
+            );
+            println!("  unkept drafts   {}", preview.artifacts.len());
+            println!("  memory notes    {}", preview.memory_notes);
+            println!(
+                "  already sent    {} (messages and changes outside Vakyartha stay sent)",
+                preview.sent_outside
+            );
+            if preview.held {
+                println!("It is on hold and cannot be erased until the hold is released.");
+                return 1;
+            }
+            if preview.trashed_at.is_none() {
+                println!("It is not in the trash. Move it to the trash first.");
+                return 1;
+            }
+            println!("Type the conversation's title to erase it:");
+            let mut typed = String::new();
+            if std::io::stdin().read_line(&mut typed).is_err() || typed.trim() != title {
+                println!("Not erased: the title did not match.");
+                return 1;
+            }
+            match core.erase_conversation(
+                &session,
+                Some(&preview.digest),
+                vak_core::erasure::Cause::Person,
+                Some(vak_session::trace::local::local_owner()),
+            ) {
+                Ok(receipt) => {
+                    println!(
+                        "Erased. Receipt {} ({} keys destroyed, {} search rows removed).",
+                        receipt.id, receipt.keys_destroyed, receipt.search_rows_removed
+                    );
+                    println!("Not reached by this erasure:");
+                    for line in &receipt.not_reached {
+                        println!("  - {line}");
+                    }
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
+        }
+        crate::cli::DataAction::Hold { session, release } => {
+            match core.hold_conversation(&session, !release) {
+                Ok(()) => {
+                    println!(
+                        "{}",
+                        if release {
+                            "The hold is released."
+                        } else {
+                            "On hold: nothing erases this conversation until the hold is released."
+                        }
+                    );
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
+        }
+        crate::cli::DataAction::Receipts => {
+            let receipts = core.erasure_receipts();
+            if receipts.is_empty() {
+                println!("nothing has been erased");
+            }
+            for receipt in &receipts {
+                println!(
+                    "{}  {}  {:<8} {}  {}",
+                    receipt.at.format("%Y-%m-%d %H:%M"),
+                    receipt.id,
+                    name(&receipt.cause),
+                    receipt.subject,
+                    if receipt.verifies() {
+                        "signature ok"
+                    } else {
+                        "SIGNATURE DOES NOT VERIFY"
+                    }
+                );
+            }
+            0
+        }
         crate::cli::DataAction::Plan { json } => {
             let plan = core.lifecycle_plan();
             if json {

@@ -146,12 +146,8 @@ impl Core {
     fn reach(&self, session_id: &str) -> Result<Reach, ErasureError> {
         let failed = |error: String| ErasureError::Failed(error);
         let shared = self.shared_scope();
-        let tenant_home = vak_config::paths::tenant_home_at(
-            &self.inner.sessions_home,
-            vak_config::paths::LOCAL_TENANT,
-        );
-        let state = vak_session::conversation_state::get(&tenant_home, session_id)
-            .map_err(|error| failed(error.to_string()))?;
+        let state =
+            crate::trash::state(&shared, session_id).map_err(|error| failed(error.to_string()))?;
         let catalog = self.catalog().map_err(|error| failed(error.to_string()))?;
         let _ = catalog.catch_up();
         if state.erased_at.is_none()
@@ -342,10 +338,6 @@ impl Core {
             return Err(ErasureError::StalePreview);
         }
         let tenant = self.tenant_objects()?;
-        let tenant_home = vak_config::paths::tenant_home_at(
-            &self.inner.sessions_home,
-            vak_config::paths::LOCAL_TENANT,
-        );
         // Derived plaintext first, while the conversation can still be
         // named: memory notes, then the search rows.
         let mut notes_removed = 0;
@@ -369,15 +361,10 @@ impl Core {
                 .map_err(|error| failed(error.to_string()))?;
         }
         let now = Utc::now();
-        for conversation in &reach.conversations {
-            vak_session::conversation_state::update(&tenant_home, conversation, |state| {
-                state.trashed_at = state.trashed_at.or(Some(now));
-                state.erased_at = Some(now);
-            })
-            .map_err(|error| failed(error.to_string()))?;
-        }
-        // Rollups that folded its rows are folded again without them.
         let shared = self.shared_scope();
+        crate::trash::mark_erased(&shared, &reach.conversations)
+            .map_err(|error| failed(error.to_string()))?;
+        // Rollups that folded its rows are folded again without them.
         let _ = vak_session::documents::forget(&shared.artifacts_rollup());
         for (_, home) in vak_session_agent_homes(&shared) {
             let scope = vak_config::scope::AgentScope::new(home);

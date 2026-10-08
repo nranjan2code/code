@@ -2493,3 +2493,115 @@ async fn data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only() {
     assert_eq!(made["transitions"], serde_json::json!([]));
     assert_eq!(plan["unobserved"], serde_json::json!([]));
 }
+
+/// Erasing a conversation over HTTP (plan M7a-e): a preview, the typed
+/// title, the digest, the hold, and the signed receipt.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
+    let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
+        responses: Mutex::new(VecDeque::new()),
+    }))
+    .await;
+    // A conversation of this workspace, made the way a turn would.
+    let core = Core::new(cwd.clone()).unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
+    let mut log = core.start_session().await.unwrap();
+    let id = log.header().unwrap().session_id.clone();
+    log.append_message(vak_session::MessageRecord {
+        message: vak_llm::Message::user_text("plan the orchard walk"),
+        meta: None,
+    })
+    .unwrap();
+    drop(log);
+
+    let client = reqwest::Client::new();
+    let url = |path: &str| format!("{base}/conversations/{id}/{path}");
+    let send = |request: reqwest::RequestBuilder| {
+        let token = token.clone();
+        async move {
+            let response = request.bearer_auth(token).send().await.unwrap();
+            let status = response.status().as_u16();
+            let body = response
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or_default();
+            (status, body)
+        }
+    };
+    assert_eq!(reqwest::get(url("erasure")).await.unwrap().status(), 401);
+
+    // In use: it can be previewed and cannot be erased.
+    let (status, looked) = send(client.get(url("erasure"))).await;
+    assert_eq!(status, 200, "{looked}");
+    let confirm = looked["confirm"].as_str().unwrap().to_string();
+    let digest = looked["preview"]["digest"].as_str().unwrap().to_string();
+    let erase = |digest: &str, confirm: &str| {
+        client
+            .post(url("erasure"))
+            .json(&serde_json::json!({ "digest": digest, "confirm": confirm }))
+    };
+    let (status, refused) = send(erase(&digest, &confirm)).await;
+    assert_eq!(
+        (status, refused["reason"].as_str()),
+        (409, Some("not_in_trash"))
+    );
+
+    // Into the trash, the way the app does it.
+    let (status, _) = send(
+        client
+            .post(format!("{base}/sessions/{id}/archive"))
+            .json(&serde_json::json!({ "archived": true })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (status, _) = send(client.delete(format!("{base}/sessions/{id}"))).await;
+    assert_eq!(status, 200);
+
+    // The digest shown before it was trashed no longer authorises.
+    let (status, refused) = send(erase(&digest, &confirm)).await;
+    assert_eq!(
+        (status, refused["reason"].as_str()),
+        (409, Some("stale_preview"))
+    );
+    let (_, looked) = send(client.get(url("erasure"))).await;
+    let digest = looked["preview"]["digest"].as_str().unwrap().to_string();
+    // Without its title typed, nothing happens.
+    let (status, refused) = send(erase(&digest, "erase it")).await;
+    assert_eq!(
+        (status, refused["reason"].as_str()),
+        (400, Some("confirmation"))
+    );
+    // On hold, nothing happens either.
+    let hold = |held: bool| {
+        client
+            .put(url("hold"))
+            .json(&serde_json::json!({ "held": held }))
+    };
+    assert_eq!(send(hold(true)).await.0, 200);
+    let (status, refused) = send(erase(&digest, &confirm)).await;
+    assert_eq!((status, refused["reason"].as_str()), (409, Some("held")));
+    assert_eq!(send(hold(false)).await.0, 200);
+
+    let (status, done) = send(erase(&digest, &confirm)).await;
+    assert_eq!(status, 200, "{done}");
+    let receipt: vak_core::erasure::Receipt =
+        serde_json::from_value(done["receipt"].clone()).unwrap();
+    assert_eq!(receipt.subject, id);
+    assert!(
+        receipt.verifies(),
+        "the receipt checks with its public key alone"
+    );
+    assert!(receipt.actor.is_some(), "it names who asked");
+
+    let (_, kept) = send(client.get(format!("{base}/data/erasure/receipts"))).await;
+    assert_eq!(kept["receipts"].as_array().unwrap().len(), 1);
+    let (status, again) = send(erase(&digest, &confirm)).await;
+    assert!(
+        status == 404 || again["reason"] == "already_erased",
+        "erased is final: {status} {again}"
+    );
+    // And it cannot be restored.
+    let (status, _) = send(client.post(format!("{base}/sessions/{id}/restore"))).await;
+    assert_eq!(status, 404);
+}
