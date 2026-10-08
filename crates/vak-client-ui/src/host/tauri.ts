@@ -102,14 +102,6 @@ export const activeHost: Host = {
     return typeof dir === "string" ? dir : null;
   },
 
-  async forgetWorkspace(cwd: string): Promise<void> {
-    try {
-      await invoke("forget_workspace_desktop", { cwd });
-    } catch (e) {
-      console.warn("forget_workspace_desktop failed:", e);
-    }
-  },
-
   async saveFile(suggestedName: string, bytes: Uint8Array<ArrayBuffer>): Promise<SaveOutcome> {
     const extension = suggestedName.split(".").pop() ?? "txt";
     const path = await saveDialog({

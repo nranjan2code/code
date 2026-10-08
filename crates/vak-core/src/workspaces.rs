@@ -7,14 +7,14 @@
 //! Forgetting a workspace removes it from the lists a surface shows. It
 //! does not touch its session ledgers, memory, checkpoints, receipts or
 //! commitments, nor the project's `.vak/config.toml`, secret scope or trust
-//! decision. So opening it again restores everything, which is what makes
-//! forgetting safe to offer as a one-click action. Deleting a workspace's
-//! history is a different operation and does not live behind this door.
+//! decision. So opening it again restores everything. A space is hidden
+//! by its id, from the admin console's Projects (`spaces::set_forgotten`);
+//! erasing what a space holds is erasure's, never this.
 //!
 //! # One store, every surface
 //!
-//! The desktop, the browser client and the admin console all read and
-//! write this one record (AGENTS.md invariant 30).
+//! The desktop, the browser client and the admin console all read this
+//! one record (AGENTS.md invariant 30).
 
 use std::path::{Path, PathBuf};
 
@@ -29,11 +29,6 @@ fn io(error: String) -> std::io::Error {
 /// forgotten. Re-opening is the un-forget; there is no separate verb.
 pub fn remember(path: &Path) -> std::io::Result<()> {
     vak_config::spaces::opened(path).map(drop).map_err(io)
-}
-
-/// Stop showing `path`. Its sessions, memory, and settings are untouched.
-pub fn forget(path: &Path) -> std::io::Result<()> {
-    vak_config::spaces::forget(path).map(drop).map_err(io)
 }
 
 /// Whether `path`'s space has been explicitly forgotten.
@@ -82,6 +77,12 @@ mod tests {
         let ws = home.join(name);
         std::fs::create_dir_all(&ws).unwrap();
         ws.canonicalize().unwrap()
+    }
+
+    /// Hides the space of `ws`, as the admin console does, by its id.
+    fn forget(ws: &Path) -> std::io::Result<()> {
+        let id = vak_config::spaces::bind(ws).map_err(io)?;
+        vak_config::spaces::set_forgotten(&id, true).map_err(io)
     }
 
     #[test]

@@ -1132,21 +1132,6 @@ fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
 }
 
 #[tauri::command]
-fn forget_workspace_desktop(cwd: String) {
-    let path = std::path::Path::new(&cwd);
-    let _ = vak_core::workspaces::forget(path);
-    let mut prefs = desktop_prefs();
-    prefs.recent_workspaces.retain(|p| p != &cwd);
-    if prefs.last_project.as_deref() == Some(&cwd) {
-        prefs.last_project = prefs.recent_workspaces.first().cloned();
-    }
-    let _ = std::fs::create_dir_all(vak_home());
-    if let Ok(json) = serde_json::to_string(&prefs) {
-        let _ = std::fs::write(prefs_path(), json);
-    }
-}
-
-#[tauri::command]
 fn get_desktop_autostart(app: AppHandle) -> bool {
     let tray = app.state::<TrayState>();
     tray.autostart.load(Ordering::SeqCst)
@@ -1331,7 +1316,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             backend_info,
-            forget_workspace_desktop,
             get_desktop_autostart,
             set_desktop_autostart,
             open_admin,

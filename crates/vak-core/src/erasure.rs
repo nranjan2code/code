@@ -117,6 +117,14 @@ const NOT_REACHED: &[&str] = &[
     "What an Agent wrote in other conversations from what it learned here.",
 ];
 
+const DRAFT_NOT_REACHED: &[&str] = &[
+    "The conversation that made this draft: it is kept, with whatever it says about the draft.",
+    "Copies the AI services received when they answered: they are held by those services under their own terms.",
+    "Copies already downloaded or delivered outside Vakyartha: they stay with whoever received them.",
+    "Backups made before this erasure: they still hold the encrypted records until they expire.",
+    "Other versions of the same file: only this draft was erased.",
+];
+
 /// Everything one erasure will touch, gathered before anything is.
 struct Reach {
     conversations: Vec<String>,
@@ -130,7 +138,7 @@ struct Reach {
 }
 
 impl Core {
-    fn tenant_objects(&self) -> Result<std::sync::Arc<TenantObjects>, ErasureError> {
+    pub(crate) fn tenant_objects(&self) -> Result<std::sync::Arc<TenantObjects>, ErasureError> {
         TenantObjects::for_tenant(&vak_config::paths::tenant_home_at(
             &self.inner.sessions_home,
             vak_config::paths::LOCAL_TENANT,
@@ -380,7 +388,7 @@ impl Core {
             keys.update(scope.as_bytes());
             keys.update([0]);
         }
-        let mut receipt = Receipt {
+        let receipt = Receipt {
             id: format!("ers_{}", uuid::Uuid::now_v7()),
             at: now,
             scope: "conversation".into(),
@@ -399,7 +407,24 @@ impl Core {
             public_key: String::new(),
             signature: String::new(),
         };
-        // The public key is part of what is signed.
+        let receipt = self.sign_and_record(&tenant, receipt)?;
+        tracing::info!(
+            kind = "erasure",
+            outcome = "completed",
+            count = receipt.keys_destroyed,
+            "a conversation was erased"
+        );
+        Ok(receipt)
+    }
+
+    /// Signs a receipt with the tenant's key and appends it to the
+    /// erasures chain. The public key is part of what is signed.
+    fn sign_and_record(
+        &self,
+        tenant: &TenantObjects,
+        mut receipt: Receipt,
+    ) -> Result<Receipt, ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
         let (_, public_key) = tenant
             .sign(b"")
             .map_err(|error| failed(error.to_string()))?;
@@ -408,14 +433,118 @@ impl Core {
             .sign(&receipt.signed_bytes())
             .map_err(|error| failed(error.to_string()))?;
         receipt.signature = signature;
-        vak_session::chain::RecordChain::at(shared.erasures())
+        vak_session::chain::RecordChain::at(self.shared_scope().erasures())
             .append(&receipt)
             .map_err(|error| failed(error.to_string()))?;
+        Ok(receipt)
+    }
+
+    /// Erases a draft version from the trash: its bytes are released and
+    /// deleted once nothing else holds them. When that leaves the artifact
+    /// with no version, and nobody starred or shared it, the artifact goes
+    /// whole: its keys are destroyed and its search rows removed. Refused
+    /// while the artifact's key is on hold.
+    pub fn erase_draft(
+        &self,
+        artifact: &str,
+        version: &str,
+        cause: Cause,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Result<Receipt, ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
+        vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
+        let subject = format!("{artifact}/{version}");
+        let missing = || ErasureError::Failed("no such draft".into());
+        let artifact_id = vak_session::ids::ArtifactId::parse(artifact).map_err(|_| missing())?;
+        let version_id = vak_session::ids::VersionId::parse(version).map_err(|_| missing())?;
+        let artifacts = self.artifacts();
+        let current = artifacts.get(artifact).ok_or_else(missing)?;
+        let found = current
+            .versions
+            .iter()
+            .find(|known| known.id == version_id)
+            .ok_or_else(missing)?;
+        if found.erased {
+            return Err(ErasureError::AlreadyErased);
+        }
+        if found.trashed_at.is_none() {
+            return Err(ErasureError::NotInTrash);
+        }
+        let tenant = self.tenant_objects()?;
+        let object_scope = crate::artifacts::object_scope(&artifact_id);
+        if tenant.scope_held(&object_scope) {
+            return Err(ErasureError::Held);
+        }
+        artifacts
+            .erase_version(artifact_id, version_id, actor)
+            .map_err(|error| failed(error.to_string()))?;
+        let shared = self.shared_scope();
+        let shared_out = crate::grants::Grants::at(&shared)
+            .on(&crate::grants::GrantObject::Artifact(artifact_id))
+            .map_err(|error| failed(error.to_string()))?
+            .iter()
+            .any(|held| held.status(Utc::now()) == crate::grants::GrantStatus::Active);
+        let whole = !current.starred
+            && !shared_out
+            && current
+                .versions
+                .iter()
+                .all(|known| known.erased || known.id == version_id);
+        let mut scopes = Vec::new();
+        let mut search_rows_removed = 0;
+        if whole {
+            search_rows_removed = self
+                .catalog()
+                .map_err(|error| failed(error.to_string()))?
+                .erase(&[], &[artifact.to_string()])
+                .map_err(|error| failed(error.to_string()))?;
+            scopes.push(object_scope);
+            scopes.extend(
+                tenant
+                    .scopes_with_prefix(&contributor_scope(artifact, ""))
+                    .map_err(|error| failed(error.to_string()))?,
+            );
+            for scope in &scopes {
+                tenant
+                    .destroy_scope_key(scope)
+                    .map_err(|error| failed(error.to_string()))?;
+            }
+            let _ = vak_session::documents::forget(&shared.artifacts_rollup());
+        }
+        let objects_deleted = {
+            use vak_session::objects::Objects;
+            tenant.collect().unwrap_or(0) as u64
+        };
+        let mut keys = Sha256::new();
+        for scope in &scopes {
+            keys.update(scope.as_bytes());
+            keys.update([0]);
+        }
+        let receipt = Receipt {
+            id: format!("ers_{}", uuid::Uuid::now_v7()),
+            at: Utc::now(),
+            scope: "draft".into(),
+            subject,
+            cause,
+            actor,
+            conversations: 0,
+            artifacts: u64::from(whole),
+            keys_destroyed: scopes.len() as u64,
+            keys_digest: keys.finalize().iter().map(|b| format!("{b:02x}")).collect(),
+            memory_notes_removed: 0,
+            search_rows_removed,
+            objects_deleted,
+            sent_outside: 0,
+            not_reached: DRAFT_NOT_REACHED.iter().map(ToString::to_string).collect(),
+            public_key: String::new(),
+            signature: String::new(),
+        };
+        let receipt = self.sign_and_record(&tenant, receipt)?;
         tracing::info!(
             kind = "erasure",
             outcome = "completed",
-            count = receipt.keys_destroyed,
-            "a conversation was erased"
+            count = receipt.objects_deleted,
+            "a draft was erased"
         );
         Ok(receipt)
     }

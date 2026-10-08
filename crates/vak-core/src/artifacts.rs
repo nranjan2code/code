@@ -132,6 +132,17 @@ pub enum ArtifactStep {
     Archived {
         on: bool,
     },
+    /// A draft went into the trash (`on`) or was restored from it. In the
+    /// trash it is still whole and can be read; it is erased when its time
+    /// there ends (doc 74 §2.7).
+    Trashed {
+        version: VersionId,
+        on: bool,
+    },
+    /// A version's bytes were erased. The row that named it stays.
+    Erased {
+        version: VersionId,
+    },
     /// A person kept this version: it outlives the conversation it came
     /// from (doc 74 §4).
     Saved {
@@ -218,9 +229,29 @@ pub struct Version {
     /// than one when the same bytes were put up for Review again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proposed: Vec<Proposal>,
+    /// When it went into the trash; absent while it is not there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trashed_at: Option<DateTime<Utc>>,
+    /// When it was last restored from the trash: a draft's age starts
+    /// again from here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored_at: Option<DateTime<Utc>>,
+    /// Its bytes were erased.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub erased: bool,
 }
 
 impl Version {
+    /// A version nobody accepted or saved, whose bytes are kept.
+    pub fn is_draft(&self) -> bool {
+        !self.promoted && !self.saved && !self.removed && !self.erased && self.object.is_some()
+    }
+
+    /// Neither in the trash nor erased.
+    pub fn is_present(&self) -> bool {
+        self.trashed_at.is_none() && !self.erased
+    }
+
     /// The newest candidate that proposes this version: the one Review
     /// acts on.
     pub fn proposal(&self) -> Option<&Proposal> {
@@ -262,17 +293,25 @@ pub struct Artifact {
 
 impl Artifact {
     /// The versions no other version was made from: one, unless edits made
-    /// from the same version are waiting to be reconciled.
+    /// from the same version are waiting to be reconciled. A version in the
+    /// trash or erased is not counted, so the version it was made from is
+    /// current again.
     pub fn heads(&self) -> Vec<&Version> {
         self.versions
             .iter()
             .filter(|version| {
-                !self
-                    .versions
-                    .iter()
-                    .any(|child| child.parent.as_ref() == Some(&version.id))
+                version.is_present()
+                    && !self.versions.iter().any(|child| {
+                        child.is_present() && child.parent.as_ref() == Some(&version.id)
+                    })
             })
             .collect()
+    }
+
+    /// Whether every version it has is in the trash or erased: it is
+    /// listed in the trash, not the Library.
+    pub fn in_trash(&self) -> bool {
+        !self.versions.is_empty() && !self.versions.iter().any(Version::is_present)
     }
 
     /// The newest head: what "the current version" means.
@@ -420,6 +459,9 @@ fn fold(state: &mut State, bytes: &[u8]) {
                     saved: false,
                     proposed: Vec::new(),
                     removed: false,
+                    trashed_at: None,
+                    restored_at: None,
+                    erased: false,
                 });
             }
         }
@@ -442,6 +484,9 @@ fn fold(state: &mut State, bytes: &[u8]) {
                     saved: false,
                     proposed: Vec::new(),
                     removed: true,
+                    trashed_at: None,
+                    restored_at: None,
+                    erased: false,
                 });
             }
         }
@@ -452,6 +497,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 .find(|known| known.id == version)
             {
                 found.promoted = true;
+                found.trashed_at = None;
             }
         }
         ArtifactStep::Proposed {
@@ -484,6 +530,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 .find(|known| known.id == version)
             {
                 found.saved = true;
+                found.trashed_at = None;
             }
         }
         ArtifactStep::Downloaded { version } => artifact.last_download = Some(version),
@@ -506,6 +553,30 @@ fn fold(state: &mut State, bytes: &[u8]) {
         ArtifactStep::Renamed { title } => artifact.title = Some(title),
         ArtifactStep::Starred { on } => artifact.starred = on,
         ArtifactStep::Archived { on } => artifact.archived = on,
+        ArtifactStep::Trashed { version, on } => {
+            if let Some(found) = artifact
+                .versions
+                .iter_mut()
+                .find(|known| known.id == version)
+            {
+                if on {
+                    // Trashing again does not restart its time there.
+                    found.trashed_at.get_or_insert(event.at);
+                } else if found.trashed_at.take().is_some() {
+                    found.restored_at = Some(event.at);
+                }
+            }
+        }
+        ArtifactStep::Erased { version } => {
+            if let Some(found) = artifact
+                .versions
+                .iter_mut()
+                .find(|known| known.id == version)
+            {
+                found.erased = true;
+                found.object = None;
+            }
+        }
     }
 }
 
@@ -748,6 +819,78 @@ impl Artifacts {
         })
     }
 
+    /// Moves a draft into the trash or restores it. Only a draft goes in:
+    /// a version someone accepted or saved is kept.
+    pub fn trash_version(
+        &self,
+        artifact: ArtifactId,
+        version: VersionId,
+        on: bool,
+        actor: Option<PrincipalId>,
+    ) -> Result<(), ArtifactError> {
+        let current = self
+            .get(&artifact.to_string())
+            .ok_or_else(|| ArtifactError::NotFound(artifact.to_string()))?;
+        let found = current
+            .versions
+            .iter()
+            .find(|known| known.id == version)
+            .ok_or_else(|| ArtifactError::NotFound(version.to_string()))?;
+        if found.erased {
+            return Err(ArtifactError::Invalid("this version was erased".into()));
+        }
+        if on && !found.is_draft() {
+            return Err(ArtifactError::Invalid(
+                "only a draft nobody accepted or saved goes to the trash".into(),
+            ));
+        }
+        if on == found.trashed_at.is_some() {
+            return Ok(());
+        }
+        self.record(artifact, ArtifactStep::Trashed { version, on }, None, actor)
+    }
+
+    /// Erases a version from the trash: its bytes are released, unless
+    /// another version of the artifact holds the same ones, and the record
+    /// says so. Returns whether it erased anything.
+    pub fn erase_version(
+        &self,
+        artifact: ArtifactId,
+        version: VersionId,
+        actor: Option<PrincipalId>,
+    ) -> Result<bool, ArtifactError> {
+        let current = self
+            .get(&artifact.to_string())
+            .ok_or_else(|| ArtifactError::NotFound(artifact.to_string()))?;
+        let found = current
+            .versions
+            .iter()
+            .find(|known| known.id == version)
+            .ok_or_else(|| ArtifactError::NotFound(version.to_string()))?;
+        if found.erased {
+            return Ok(false);
+        }
+        if found.trashed_at.is_none() {
+            return Err(ArtifactError::Invalid(
+                "a version is erased from the trash".into(),
+            ));
+        }
+        // The record first: a version that says it is whole must be.
+        self.record(artifact, ArtifactStep::Erased { version }, None, actor)?;
+        if let Some(object) = &found.object {
+            let shared = current
+                .versions
+                .iter()
+                .any(|other| other.id != version && other.object.as_ref() == Some(object));
+            if !shared {
+                TenantObjects::for_tenant(&self.tenant_home)
+                    .and_then(|objects| objects.release(object, &object_scope(&artifact)))
+                    .map_err(store_error)?;
+            }
+        }
+        Ok(true)
+    }
+
     /// A version's bytes, when they were kept.
     pub fn bytes(
         &self,
@@ -763,6 +906,9 @@ impl Artifacts {
             return Err(ArtifactError::Invalid(
                 "the file is gone in this version".into(),
             ));
+        }
+        if found.erased {
+            return Err(ArtifactError::Invalid("this version was erased".into()));
         }
         let object = found
             .object

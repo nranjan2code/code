@@ -1989,17 +1989,6 @@ export async function undoVersion(at: VersionRef): Promise<SandboxPromotionUndoR
   const response = await req<{ kind: "PromotionUndo"; record: SandboxPromotionUndoRecord }>(`${versionUrl(at)}/undo`, { method: "POST" });
   return response.record;
 }
-/**
- * Stop listing a workspace. Sessions, memory, checkpoints, and the
- * project's own settings all survive — re-opening the folder restores it
- * exactly, which is what makes this safe to offer as one click.
- */
-export function forgetWorkspace(path: string): Promise<{ forgotten: string }> {
-  return req("/workspaces/forget", {
-    method: "POST",
-    body: JSON.stringify({ path }),
-  });
-}
 
 /**
  * Directory listing for the workspace picker (docs/design/48-web-client.md

@@ -36,6 +36,7 @@ pub const COMMITTED: &[DataClass] = &[
     DataClass::Checkpoint,
     DataClass::Environment,
     DataClass::Telemetry,
+    DataClass::DraftVersion,
     DataClass::InboxEntry,
     DataClass::ActivitySegment,
     DataClass::Incident,
@@ -460,6 +461,32 @@ impl Core {
     /// A conversation in the trash: its window started when it went in,
     /// and when it ends the conversation is erased (doc 74 §2.4).
     fn trash_items(&self) -> Vec<Item> {
+        let mut items = self.trashed_conversations();
+        let objects = self.tenant_objects().ok();
+        for artifact in self.artifacts().list() {
+            let held = objects.as_ref().is_some_and(|objects| {
+                objects.scope_held(&crate::artifacts::object_scope(&artifact.id))
+            });
+            for version in &artifact.versions {
+                let Some(since) = version.trashed_at.filter(|_| !version.erased) else {
+                    continue;
+                };
+                items.push(Item {
+                    id: format!("draft/{}/{}", artifact.id, version.id),
+                    class: DataClass::Trash,
+                    since,
+                    bytes: version.size,
+                    files: 1,
+                    guard: held.then_some(Guard::Held),
+                    group: None,
+                    rank: 0,
+                });
+            }
+        }
+        items
+    }
+
+    fn trashed_conversations(&self) -> Vec<Item> {
         crate::trash::states(&self.shared_scope())
             .into_iter()
             .filter(|(_, state)| state.erased_at.is_none())
@@ -656,8 +683,9 @@ impl Core {
         items
     }
 
-    /// A version nobody accepted or saved is a draft. One on a starred or
-    /// shared artifact is kept.
+    /// A version nobody accepted or saved is a draft, aged from when it was
+    /// made or last restored from the trash. One on a starred or shared
+    /// artifact is kept; one already in the trash is the trash's.
     fn draft_items(&self) -> Vec<Item> {
         let grants = crate::grants::Grants::at(&self.shared_scope());
         let now = Utc::now();
@@ -672,14 +700,13 @@ impl Core {
                 });
             let kept = artifact.starred || shared;
             for version in &artifact.versions {
-                if version.promoted || version.saved || version.removed || version.object.is_none()
-                {
+                if !version.is_draft() || !version.is_present() {
                     continue;
                 }
                 items.push(Item {
-                    id: version.id.to_string(),
+                    id: format!("{}/{}", artifact.id, version.id),
                     class: DataClass::DraftVersion,
-                    since: version.at,
+                    since: version.restored_at.unwrap_or(version.at),
                     bytes: version.size,
                     files: 1,
                     guard: kept.then_some(Guard::Kept),
@@ -694,11 +721,16 @@ impl Core {
     /// The plan the reconciler would run now under the default label. It
     /// is computed and shown; nothing is committed.
     pub fn lifecycle_plan(&self) -> Plan {
+        self.lifecycle_plan_at(Utc::now())
+    }
+
+    /// The plan as it would be at `now`.
+    pub fn lifecycle_plan_at(&self, now: DateTime<Utc>) -> Plan {
         vak_lifecycle::plan(
             &self.lifecycle_items(),
             OBSERVED,
             &Label::default_tenant(),
-            Utc::now(),
+            now,
         )
     }
 
@@ -775,7 +807,26 @@ impl Core {
                         .map_err(|error| std::io::Error::other(error.to_string())),
                 )
             }
+            // An expired draft goes to the trash, whole and restorable.
+            DataClass::DraftVersion => {
+                let parts = id_parts(&action.item, 2)?;
+                let artifact = vak_session::ids::ArtifactId::parse(parts[0]).ok()?;
+                let version = vak_session::ids::VersionId::parse(parts[1]).ok()?;
+                Some(
+                    self.artifacts()
+                        .trash_version(artifact, version, true, None)
+                        .map_err(|error| std::io::Error::other(error.to_string())),
+                )
+            }
             // The end of the trash window is an erasure, with its receipt.
+            DataClass::Trash if action.item.starts_with("draft/") => {
+                let parts = id_parts(&action.item, 3)?;
+                Some(
+                    self.erase_draft(parts[1], parts[2], crate::erasure::Cause::Policy, None)
+                        .map(|_| ())
+                        .map_err(|error| std::io::Error::other(error.to_string())),
+                )
+            }
             DataClass::Trash => Some(
                 self.erase_conversation(&action.item, None, crate::erasure::Cause::Policy, None)
                     .map(|_| ())
@@ -794,7 +845,6 @@ impl Core {
                         .map_err(std::io::Error::other),
                 )
             }
-            _ => None,
         }
     }
 
@@ -803,11 +853,16 @@ impl Core {
     /// is touched and again when it is done; a fenced process and an
     /// observing one commit nothing.
     pub fn lifecycle_tick(&self, commit: bool) -> Tick {
+        self.lifecycle_tick_at(commit, Utc::now())
+    }
+
+    /// One pass over the plan as it would be at `now`.
+    pub fn lifecycle_tick_at(&self, commit: bool, now: DateTime<Utc>) -> Tick {
         let commit = commit && vak_session::fence::check().is_ok();
         if commit {
             self.seal_aged_segments();
         }
-        let plan = self.lifecycle_plan();
+        let plan = self.lifecycle_plan_at(now);
         let mut tick = Tick {
             mode: if commit { "commit" } else { "observe" },
             committed: Vec::new(),

@@ -72,8 +72,8 @@ record (rule 2), so that is not repeated per row.
 `bound → active → detached → archived → erased`
 
 - **Detached**: every machine binding is removed. Data is kept, and the
-  space can be re-bound. This replaces today's `workspaces/forget`, which
-  forgets a path and leaves data scattered.
+  space can be re-bound. This replaces `workspaces/forget`, which forgot
+  a path and left data scattered (deleted at plan M7a-e).
 - **Archived**: read-only. Its schedules are disabled and its retention
   clocks start.
 - **Erased** is an erasure request with scope *space* (§3.4). Files in the

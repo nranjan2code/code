@@ -1393,7 +1393,6 @@ fn router_with_state(state: AppState) -> Router {
         .route("/stream", get(stream::stream))
         .route("/workspaces", get(web::list_workspaces))
         .route("/workspaces/open", post(web::open_workspace))
-        .route("/workspaces/forget", post(web::forget_workspace))
         .route("/fs/dirs", get(web::list_dirs))
         .route("/pty", get(web::pty_socket))
         .route("/voice/session", get(voice::voice_socket))

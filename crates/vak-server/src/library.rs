@@ -704,6 +704,7 @@ fn summary(artifact: &vak_core::artifacts::Artifact) -> serde_json::Value {
         "summary": artifact.summary,
         "starred": artifact.starred,
         "archived": artifact.archived,
+        "in_trash": artifact.in_trash(),
         "created_at": artifact.created_at,
         "updated_at": artifact.updated_at,
         "versions": artifact.versions.len(),
@@ -713,13 +714,28 @@ fn summary(artifact: &vak_core::artifacts::Artifact) -> serde_json::Value {
     })
 }
 
-/// `GET /library`: every artifact, newest change first.
-async fn list(State(state): State<AppState>) -> Response {
+#[derive(serde::Deserialize)]
+struct Listing {
+    #[serde(default)]
+    trash: bool,
+}
+
+/// `GET /library`: every artifact, newest change first. One whose every
+/// version is in the trash is listed only with `?trash=true`, which lists
+/// nothing else.
+async fn list(
+    State(state): State<AppState>,
+    axum::extract::Query(listing): axum::extract::Query<Listing>,
+) -> Response {
     let artifacts = state.core.artifacts();
     let listed = tokio::task::spawn_blocking(move || artifacts.list()).await;
     match listed {
         Ok(all) => Json(serde_json::json!({
-            "artifacts": all.iter().map(summary).collect::<Vec<_>>(),
+            "artifacts": all
+                .iter()
+                .filter(|artifact| artifact.in_trash() == listing.trash)
+                .map(summary)
+                .collect::<Vec<_>>(),
         }))
         .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -852,6 +868,43 @@ async fn save(
         return StatusCode::NOT_FOUND.into_response();
     }
     record(&state, &id, ArtifactStep::Saved { version })
+}
+
+#[derive(serde::Deserialize)]
+struct Trashing {
+    on: bool,
+}
+
+/// `PUT /library/{id}/versions/{version}/trash`: a person moves a draft
+/// to the trash or restores it. A version someone accepted or saved does
+/// not go, and an erased one does not come back.
+async fn trash_version(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+    Json(body): Json<Trashing>,
+) -> Response {
+    let (Ok(artifact), Ok(version)) = (
+        vak_session::ids::ArtifactId::parse(&id),
+        vak_session::ids::VersionId::parse(&version),
+    ) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let actor = Some(crate::request_actor(&state));
+    let artifacts = state.core.artifacts();
+    let done = tokio::task::spawn_blocking(move || {
+        artifacts.trash_version(artifact, version, body.on, actor)
+    })
+    .await;
+    match done {
+        Ok(Ok(())) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Err(vak_core::artifacts::ArtifactError::NotFound(_))) => {
+            StatusCode::NOT_FOUND.into_response()
+        }
+        Ok(Err(vak_core::artifacts::ArtifactError::Invalid(message))) => {
+            refuse(StatusCode::CONFLICT, &message)
+        }
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 fn record(state: &AppState, id: &str, step: ArtifactStep) -> Response {
@@ -1574,7 +1627,8 @@ fn shown(
         .iter()
         .enumerate()
         .filter(|(index, version)| {
-            Some(version.id) == head || from.is_some_and(|from| *index >= from)
+            version.is_present()
+                && (Some(version.id) == head || from.is_some_and(|from| *index >= from))
         })
         .map(|(index, version)| (index + 1, version.clone()))
         .collect()
@@ -1684,6 +1738,10 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route("/library/{id}/versions/{version}/save", post(save))
+        .route(
+            "/library/{id}/versions/{version}/trash",
+            axum::routing::put(trash_version),
+        )
         .route("/library/{id}/versions/{version}/text", get(version_text))
         .route("/library/{id}/versions/{version}/raw", get(version_raw))
         .route(

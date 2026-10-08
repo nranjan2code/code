@@ -236,11 +236,6 @@ pub fn opened(path: &Path) -> Result<String, String> {
     })
 }
 
-/// Stop offering the space of `path`. Nothing it holds is touched.
-pub fn forget(path: &Path) -> Result<String, String> {
-    change(path, |space| space.forgotten = true)
-}
-
 /// Name the space of `path`.
 pub fn set_name(path: &Path, name: &str) -> Result<String, String> {
     let name = name.to_string();

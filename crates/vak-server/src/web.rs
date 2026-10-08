@@ -484,40 +484,6 @@ pub(crate) async fn open_workspace(
     Json(host_payload(&state)).into_response()
 }
 
-/// Stop listing a workspace. Its sessions, memory, and settings survive.
-///
-/// Deliberately NOT a delete: removing a project from a list is a thing
-/// people do casually, and it must therefore be a thing that costs nothing
-/// to undo. Erasing an append-only ledger is a different operation with
-/// different consequences, and it does not live behind this button.
-pub(crate) async fn forget_workspace(
-    State(state): State<AppState>,
-    Json(body): Json<OpenWorkspaceBody>,
-) -> Response {
-    let path = PathBuf::from(body.path.trim());
-    // If the active workspace is being forgotten, fall back to the default core.
-    if canonical_eq(&path, state.active_core().cwd()) && !canonical_eq(&path, state.core.cwd()) {
-        *state
-            .active_core
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-    }
-    match vak_core::workspaces::forget(&path) {
-        Ok(()) => Json(serde_json::json!({ "forgotten": body.path })).into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response(),
-    }
-}
-
-/// Same folder, allowing for symlinks.
-fn canonical_eq(a: &Path, b: &Path) -> bool {
-    let resolve = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-    resolve(a) == resolve(b)
-}
-
 // ---- directory browser -----------------------------------------------------
 
 /// Roots the picker may browse. Empty config means the operator's home

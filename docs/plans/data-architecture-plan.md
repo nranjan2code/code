@@ -1905,9 +1905,46 @@ state.**
 - Test: `a_conversation_is_erased_from_the_trash_with_its_title_typed`,
   through the real router with its bearer check.
 
-Still to do in M7a-e: drafts moving to the trash; the screens (admin A2
-and A3, client C1, C2, C3 and C8); the lifecycle and erasure chains as
-catalog sources; and the `/workspaces/forget` route. `gc_keeps_everything_reachable`,
+**Part 4, done 2026-10-08: drafts fade, and `/workspaces/forget` is
+gone.**
+- A draft version (nobody accepted or saved it, and its artifact is not
+  starred or shared) goes to the trash 60 days after it was made or last
+  restored: an `ArtifactStep::Trashed` row, so `Version::trashed_at`. In
+  the trash it is whole and can be read. `DraftVersion` is now in
+  `lifecycle::COMMITTED`.
+- A version in the trash, or erased, is not a head: the version it was
+  made from is current again. An artifact whose every version is there
+  leaves `GET /library` and is listed by `GET /library?trash=true`.
+- `PUT /library/{id}/versions/{version}/trash` with `{on}` is a person
+  moving a draft there or restoring it. Accepting or saving a version
+  takes it out; an accepted or saved version is refused, and so is an
+  erased one. A restored draft's age starts again from the restore.
+- After 30 days there `Core::erase_draft` erases it, as the trash's
+  observer lists it (`draft/<artifact>/<version>`): an
+  `ArtifactStep::Erased` row, then the version's bytes are released
+  unless another version of the artifact holds the same ones, and
+  collection deletes them. When that leaves the artifact with no version
+  and nobody starred or shared it, its keys are destroyed and its search
+  rows removed. A hold on the artifact's key keeps the draft back. Each
+  erasure writes a signed receipt with scope `draft`.
+- A guest sees no version that is in the trash or erased.
+- `POST /workspaces/forget`, the client and desktop calls behind it and
+  the path-keyed `spaces::forget` are deleted; no screen called them. A
+  space is hidden by its id from the admin console's Projects
+  (`spaces::set_forgotten`), which is unchanged.
+- `Core::lifecycle_tick_at` and `lifecycle_plan_at` take the time to
+  plan for, so a test can age what has no file to backdate.
+- Not done here: a person erasing a draft at once (only the end of the
+  trash window does); a row that names an erased draft keeps its path
+  and title, sealed under the artifact's key, until the whole artifact
+  goes; comments on an erased version stay while the artifact does.
+- Tests: `an_old_draft_goes_to_the_trash_and_is_erased_when_its_time_there_ends`
+  (which also checks the hold, the shared bytes and the receipts) and
+  `a_draft_is_trashed_and_restored_and_a_saved_version_is_not`, through
+  the real router.
+
+Still to do in M7a-e: the screens (admin A2 and A3, client C1, C2, C3
+and C8), and the lifecycle and erasure chains as catalog sources. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

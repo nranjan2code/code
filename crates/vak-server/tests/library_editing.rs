@@ -185,3 +185,101 @@ async fn a_saved_card_is_kept_in_the_library() {
     let bytes = core.artifacts().bytes(&artifact, &head.id).unwrap();
     assert!(String::from_utf8(bytes).unwrap().contains("Sydney"));
 }
+
+/// A draft goes to the trash and comes back through the real router (plan
+/// M7a-e part 4): in the trash it leaves the Library list, and a saved
+/// version does not go.
+#[tokio::test]
+async fn a_draft_is_trashed_and_restored_and_a_saved_version_is_not() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(dir.path()).unwrap();
+    let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+    let space = vak_session::trace::local::space(core.cwd()).to_string();
+    let artifacts = core.artifacts();
+    let id = artifacts
+        .declare(
+            &space,
+            "vak",
+            "trash-me.md",
+            ArtifactKind::File,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let draft = artifacts
+        .version(
+            id,
+            NewVersion {
+                parent: None,
+                bytes: b"a draft",
+                source: VersionSource::Person,
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+    let (router, token) = vak_server::secured_router(core);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = reqwest::Client::new();
+    let trash = |on: bool| {
+        client
+            .put(format!("http://{addr}/library/{id}/versions/{draft}/trash"))
+            .bearer_auth(&token)
+            .json(&json!({ "on": on }))
+            .send()
+    };
+    let listed = |trash: bool| {
+        let request = client
+            .get(format!("http://{addr}/library?trash={trash}"))
+            .bearer_auth(&token)
+            .send();
+        async move {
+            let body: Value = request.await.unwrap().json().await.unwrap();
+            body["artifacts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|artifact| artifact["id"] == id.to_string())
+        }
+    };
+
+    let unsigned = client
+        .put(format!("http://{addr}/library/{id}/versions/{draft}/trash"))
+        .json(&json!({ "on": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unsigned.status(), 401);
+
+    assert!(listed(false).await && !listed(true).await);
+    assert_eq!(trash(true).await.unwrap().status(), 204);
+    assert!(!listed(false).await && listed(true).await);
+    // Still whole while it is there.
+    let bytes = client
+        .get(format!("http://{addr}/library/{id}/versions/{draft}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bytes.status(), 200);
+
+    assert_eq!(trash(false).await.unwrap().status(), 204);
+    assert!(listed(false).await && !listed(true).await);
+
+    // Saved, it is kept: the trash refuses it.
+    let saved = client
+        .post(format!("http://{addr}/library/{id}/versions/{draft}/save"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), 204);
+    assert_eq!(trash(true).await.unwrap().status(), 409);
+    assert!(listed(false).await);
+}
