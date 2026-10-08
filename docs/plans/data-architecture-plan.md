@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-d's first part (a committing pass for environments and rotated logs, off unless `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-d's first two parts (a committing pass for executions, checkpoints, environments and rotated logs, off unless `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1699,14 +1699,43 @@ M7a-b is done with this part.
 - Not in this part: the lifecycle chain is not yet a catalog source (it
   becomes one with "Why is this gone?" at M7a-e).
 
+**Part 2, done 2026-10-08: executions and checkpoints; the last
+scattered limit goes.**
+- A rule can keep so many of a group: `Rule::keep_newest` keeps a group's
+  first item and its newest N by `Item::rank`, and the rest are due at
+  once (`Reason::Count`). The default label's checkpoint rule is "the
+  first and the newest 20 of a session, and all of them 30 days after the
+  session's last one" (doc 74 §2.9).
+- `MAX_STORED_CHECKPOINTS` and the pruning inside `checkpoints::store` are
+  deleted. `checkpoints::remove` releases a removed checkpoint's contents
+  unless another of the session's names them, as the pruning did, and the
+  reconciler is its only caller. Of the scattered retention the plan
+  lists, this was the last still in the tree: finops and alerts
+  compaction, `cleanup_artifacts` and `/memory/cleanup` were already gone.
+- An execution's directory in the runtime root is due a week after the
+  last write anywhere in it, and is removed whole. Settled where an
+  unreviewed draft is kept: a draft put up for Review is frozen as a
+  candidate under the Agent home (`sandbox/candidates`), outside the
+  execution, so Review, narrowing and promotion do not need the execution
+  directory; what goes with it is temp files and scratch that was never
+  put up for Review. An Agent's tool cache beside its executions is not an
+  execution and is left for quota eviction (part 4).
+- Both classes are in `lifecycle::OBSERVED` and `COMMITTED`.
+- Tests: `settled_execution_leaves_nothing` (vak-core, which also checks
+  the checkpoint count), `a_group_keeps_its_first_and_its_newest_and_all_go_when_it_is_old`
+  (vak-lifecycle), `removing_a_checkpoint_releases_only_what_no_other_names`.
+- With retention observing by default (part 1), nothing caps checkpoints
+  on an install that has not set `[lifecycle] mode = "commit"` until the
+  default changes at M7a-i.
+
 Still to do in M7a-d:
-- **Part 2:** observers and commit for executions (after settling where
-  an unreviewed draft's files are kept: they are in the execution's
-  directory today), checkpoints, Document history, inbox entries and cost
-  and activity segments; the scattered retention goes with them
-  (`MAX_STORED_CHECKPOINTS`, finops and alerts compaction,
-  `cleanup_artifacts`, `/memory/cleanup`). `settled_execution_leaves_nothing`.
-- **Part 3:** object GC and quotas. `gc_keeps_everything_reachable`,
+- **Part 3, rows in record chains:** inbox entries, cost and activity
+  segments, runs with no conversation, incidents and allowlist entries
+  are rows of append-only chains, and Document history is versions behind
+  a ref. Expiring them needs its own mechanism (a sealed segment dropped
+  whole with the chain's head carried forward, and pruning a Document's
+  old versions), which is not designed yet.
+- **Part 4:** object GC and quotas. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

@@ -33,7 +33,11 @@ invariant 29): never partially read, never migrated.
   legacy checkpoint with no manifest deletes nothing.
 - **Why state-based, not operation-based**: bash mutations are not invertible;
   snapshots cover them by construction. Cost is bounded by the caps above.
-- **Retention**: `store` keeps only the newest 20 checkpoints per session.
+- **Retention**: `store` prunes nothing. A session keeps its first
+  checkpoint and its newest 20, and all of them go 30 days after its last
+  one: a rule of the default retention label, carried out by the lifecycle
+  reconciler through `checkpoints::remove` when `[lifecycle] mode` is
+  `commit` (data-architecture plan M7a-d).
   Contents a pruned manifest names lose the conversation's grant unless a
   surviving manifest of that session still names them, and objects no scope
   holds are then collected.

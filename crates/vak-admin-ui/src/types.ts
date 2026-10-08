@@ -1492,6 +1492,7 @@ export interface DataRule {
   class: string;
   delete_after_secs?: number;
   max_bytes?: number;
+  keep_newest?: number;
   on_expiry: string;
 }
 

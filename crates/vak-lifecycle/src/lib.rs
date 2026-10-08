@@ -73,6 +73,10 @@ pub struct Rule {
     /// The most the class may hold; the oldest items go first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_bytes: Option<u64>,
+    /// How many of a group's items are kept beside its first: the newest
+    /// this many, by `Item::rank`. The rest are due at once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep_newest: Option<u64>,
     pub on_expiry: OnExpiry,
 }
 
@@ -94,6 +98,7 @@ impl Label {
             class,
             delete_after_secs: Some(days * DAY),
             max_bytes: None,
+            keep_newest: None,
             on_expiry,
         };
         Label {
@@ -102,7 +107,13 @@ impl Label {
             rules: vec![
                 after(DataClass::Trash, 30, OnExpiry::Remove),
                 after(DataClass::Run, 180, OnExpiry::Remove),
-                after(DataClass::Checkpoint, 30, OnExpiry::Remove),
+                // A session keeps its first checkpoint and its newest 20;
+                // all of them go 30 days after its last one (doc 74 §2.9).
+                Rule {
+                    keep_newest: Some(20),
+                    ..after(DataClass::Checkpoint, 30, OnExpiry::Remove)
+                },
+                after(DataClass::Execution, 7, OnExpiry::Remove),
                 after(DataClass::Environment, 7, OnExpiry::Remove),
                 after(DataClass::DraftVersion, 60, OnExpiry::Trash),
                 after(DataClass::DocumentHistory, 90, OnExpiry::Remove),
@@ -114,6 +125,7 @@ impl Label {
                     class: DataClass::Telemetry,
                     delete_after_secs: Some(14 * DAY),
                     max_bytes: Some(200 * 1024 * 1024),
+                    keep_newest: None,
                     on_expiry: OnExpiry::Remove,
                 },
             ],
@@ -149,6 +161,13 @@ pub struct Item {
     pub files: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard: Option<Guard>,
+    /// What the item belongs with, for a rule that keeps so many of a
+    /// group (a session's checkpoints).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// The item's place in its group: a higher rank is newer.
+    #[serde(default)]
+    pub rank: u64,
 }
 
 /// Why an action is due.
@@ -159,6 +178,8 @@ pub enum Reason {
     Age,
     /// The class holds more than the rule's `max_bytes`.
     Size,
+    /// Its group holds more than the rule's `keep_newest`.
+    Count,
 }
 
 /// One transition the plan would make.
@@ -251,6 +272,29 @@ pub fn plan(items: &[Item], observed: &[DataClass], label: &Label, now: DateTime
         let mut over = rule
             .max_bytes
             .map_or(0, |max| summary.bytes.saturating_sub(max));
+        // Per group: the ranks a count rule keeps (the first and the
+        // newest `keep_newest`); every other rank is past the count.
+        let mut kept_ranks: std::collections::BTreeMap<&str, Vec<u64>> = Default::default();
+        if let Some(keep) = rule.keep_newest {
+            for item in &of_class {
+                if let Some(group) = item.group.as_deref() {
+                    kept_ranks.entry(group).or_default().push(item.rank);
+                }
+            }
+            for ranks in kept_ranks.values_mut() {
+                ranks.sort_unstable();
+                let first = ranks.first().copied();
+                let newest = ranks.len().saturating_sub(keep as usize);
+                *ranks = ranks.split_off(newest);
+                ranks.extend(first);
+            }
+        }
+        let past_count = |item: &Item| {
+            item.group
+                .as_deref()
+                .and_then(|group| kept_ranks.get(group))
+                .is_some_and(|kept| !kept.contains(&item.rank))
+        };
         for item in of_class {
             let expired = rule
                 .delete_after_secs
@@ -258,6 +302,7 @@ pub fn plan(items: &[Item], observed: &[DataClass], label: &Label, now: DateTime
                 .filter(|due| *due <= now);
             let found = match expired {
                 Some(due) => Some((Reason::Age, due)),
+                None if past_count(item) => Some((Reason::Count, now)),
                 None if over > 0 => Some((Reason::Size, now)),
                 None => None,
             };
@@ -319,6 +364,8 @@ mod tests {
             bytes,
             files: 1,
             guard: None,
+            group: None,
+            rank: 0,
         }
     }
 
@@ -419,14 +466,51 @@ mod tests {
     }
 
     #[test]
+    fn a_group_keeps_its_first_and_its_newest_and_all_go_when_it_is_old() {
+        let label = Label::default_tenant();
+        let checkpoint = |seq: u64, day: i64| Item {
+            group: Some("vak/session-1".into()),
+            rank: seq,
+            ..item(
+                &format!("vak/session-1/{seq}"),
+                DataClass::Checkpoint,
+                day,
+                1,
+            )
+        };
+        let items: Vec<Item> = (0..25).map(|seq| checkpoint(seq, 10)).collect();
+        // While the session is recent: the first and the newest 20 stay.
+        let made = plan(&items, ALL, &label, at(11));
+        let mut taken: Vec<&str> = made.actions.iter().map(|a| a.item.as_str()).collect();
+        taken.sort_unstable();
+        assert_eq!(
+            taken,
+            [
+                "vak/session-1/1",
+                "vak/session-1/2",
+                "vak/session-1/3",
+                "vak/session-1/4"
+            ]
+        );
+        assert!(made.actions.iter().all(|a| a.reason == Reason::Count));
+        // Thirty days after its last one, every checkpoint is due.
+        let old = plan(&items, ALL, &label, at(41));
+        assert_eq!(old.actions.len(), 25);
+        assert!(old.actions.iter().all(|a| a.reason == Reason::Age));
+        // Another session's checkpoints are counted on their own.
+        let other = Item {
+            group: Some("vak/session-2".into()),
+            ..item("vak/session-2/0", DataClass::Checkpoint, 10, 1)
+        };
+        assert!(plan(&[other], ALL, &label, at(11)).actions.is_empty());
+    }
+
+    #[test]
     fn a_class_nobody_looked_at_is_named_not_assumed_empty() {
         let label = Label::default_tenant();
         let made = plan(&[], &[DataClass::Environment], &label, at(0));
         assert!(!made.unobserved.contains(&DataClass::Environment));
         assert!(made.unobserved.contains(&DataClass::Trash));
-        assert!(
-            !made.unobserved.contains(&DataClass::Execution),
-            "no rule, no gap"
-        );
+        assert!(made.unobserved.contains(&DataClass::Execution));
     }
 }

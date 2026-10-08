@@ -49,8 +49,6 @@ const IGNORED_DIRS: [&str; 5] = [
 const IGNORED_RUNTIME_FILES: [&str; 3] = ["catalog.db", "catalog.db-wal", "catalog.db-shm"];
 const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
-/// Checkpoints accumulate once per turn; keep only the newest N per session.
-const MAX_STORED_CHECKPOINTS: usize = 20;
 
 /// One captured file. Content is the tenant object whose id is `hash`;
 /// `size`/`mtime_ns` are the fast-path signature the next capture compares
@@ -250,8 +248,7 @@ fn mtime_nanos(meta: &std::fs::Metadata) -> Option<u64> {
 /// partial blob.
 /// Every stored sequence number for `session_id`, ascending. Reads only
 /// the manifest directory's file names -- never opens or parses a
-/// manifest -- so this is cheap even with the full `MAX_STORED_CHECKPOINTS`
-/// present.
+/// manifest -- so this is cheap however many are present.
 fn list_seqs(scope: &vak_config::scope::AgentScope, session_id: &str) -> std::io::Result<Vec<u32>> {
     let dir = manifest_dir(scope, session_id);
     let entries = match std::fs::read_dir(&dir) {
@@ -417,14 +414,13 @@ pub fn capture(
     ))
 }
 
-/// Persists a manifest atomically and prunes manifests older than the
-/// newest [`MAX_STORED_CHECKPOINTS`] for this session. A pruned manifest's
-/// contents lose this session's grant unless a surviving manifest still
-/// names them, and objects no scope holds any more are collected. Returns
-/// the new manifest file's path.
+/// Persists a manifest atomically and returns its path. Nothing is pruned
+/// here: how many a session keeps and for how long is the lifecycle
+/// reconciler's rule (`vak_lifecycle::Label`, plan M7a-d), which removes
+/// one through [`remove`].
 pub fn store(
     scope: &vak_config::scope::AgentScope,
-    objects: &dyn Objects,
+    _objects: &dyn Objects,
     m: &Manifest,
 ) -> std::io::Result<PathBuf> {
     let dir = manifest_dir(scope, &m.session_id);
@@ -433,39 +429,62 @@ pub fn store(
     let tmp = dir.join(format!(".{:04}.tmp", m.seq));
     std::fs::write(&tmp, serde_json::to_vec(m).map_err(std::io::Error::other)?)?;
     std::fs::rename(&tmp, &path)?;
+    Ok(path)
+}
 
-    let seqs = list_seqs(scope, &m.session_id)?;
-    if seqs.len() > MAX_STORED_CHECKPOINTS {
-        let (pruned, kept) = seqs.split_at(seqs.len() - MAX_STORED_CHECKPOINTS);
-        let contents = |seq: &u32| -> Vec<ManifestEntry> {
-            load(scope, &m.session_id, *seq)
-                .map(|manifest| manifest.files)
-                .unwrap_or_default()
-        };
-        let live: HashSet<String> = kept
-            .iter()
-            .flat_map(contents)
-            .map(|entry| entry.hash)
-            .collect();
-        let grant = conversation_scope(&m.session_id);
-        let mut released = false;
-        for oldest in pruned {
-            for entry in contents(oldest) {
-                if !live.contains(&entry.hash) {
-                    let object = ObjectRef {
-                        id: entry.hash,
-                        len: entry.size,
-                    };
-                    released |= objects.release(&object, &grant).is_ok();
-                }
-            }
-            let _ = std::fs::remove_file(dir.join(format!("{oldest:04}.json")));
-        }
-        if released {
-            let _ = objects.collect();
+/// Removes checkpoint `seq` of `session_id`. Its contents lose this
+/// session's grant unless a surviving manifest still names them, and
+/// objects no scope holds any more are collected. `false` when there was
+/// no such checkpoint.
+pub fn remove(
+    scope: &vak_config::scope::AgentScope,
+    objects: &dyn Objects,
+    session_id: &str,
+    seq: u32,
+) -> std::io::Result<bool> {
+    let path = manifest_dir(scope, session_id).join(format!("{seq:04}.json"));
+    if !path.exists() {
+        return Ok(false);
+    }
+    let contents = |seq: &u32| -> Vec<ManifestEntry> {
+        load(scope, session_id, *seq)
+            .map(|manifest| manifest.files)
+            .unwrap_or_default()
+    };
+    let gone = contents(&seq);
+    let live: HashSet<String> = list_seqs(scope, session_id)?
+        .iter()
+        .filter(|kept| **kept != seq)
+        .flat_map(contents)
+        .map(|entry| entry.hash)
+        .collect();
+    std::fs::remove_file(&path)?;
+    let grant = conversation_scope(session_id);
+    let mut released = false;
+    for entry in gone {
+        if !live.contains(&entry.hash) {
+            let object = ObjectRef {
+                id: entry.hash,
+                len: entry.size,
+            };
+            released |= objects.release(&object, &grant).is_ok();
         }
     }
-    Ok(path)
+    if released {
+        let _ = objects.collect();
+    }
+    Ok(true)
+}
+
+/// Every session that has a stored checkpoint, by id.
+pub fn sessions(scope: &vak_config::scope::AgentScope) -> Vec<String> {
+    std::fs::read_dir(checkpoint_root(scope))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect()
 }
 
 /// Every manifest stored for `session_id`, oldest first. A file that
@@ -1026,7 +1045,7 @@ mod tests {
     }
 
     #[test]
-    fn store_prunes_old_checkpoints_and_releases_their_contents() {
+    fn removing_a_checkpoint_releases_only_what_no_other_names() {
         let dir = tempfile::tempdir().unwrap();
         // A sibling temp dir, never nested inside `dir` — sessions_home is
         // never inside a real workspace either, and capturing the blob
@@ -1049,9 +1068,20 @@ mod tests {
             .unwrap();
             store(&vak_config::scope::AgentScope::new(&home), objects(), &cp).unwrap();
         }
-        let list = list(&vak_config::scope::AgentScope::new(&home), "s").unwrap();
-        assert_eq!(list.len(), 20, "old checkpoints must be pruned");
-        assert_eq!(list[0].seq, 5, "oldest pruned first");
+        let scope = vak_config::scope::AgentScope::new(&home);
+        assert_eq!(
+            list(&scope, "s").unwrap().len(),
+            25,
+            "storing prunes nothing: retention is the reconciler's rule"
+        );
+        assert_eq!(sessions(&scope), ["s"]);
+        for seq in 0..5u32 {
+            assert!(remove(&scope, objects(), "s", seq).unwrap());
+        }
+        assert!(!remove(&scope, objects(), "s", 0).unwrap(), "already gone");
+        let list = list(&scope, "s").unwrap();
+        assert_eq!(list.len(), 20);
+        assert_eq!(list[0].seq, 5);
 
         let grant = conversation_scope("s");
         let readable = |seq: u32| {
@@ -1068,7 +1098,7 @@ mod tests {
         };
         assert!(
             (0..5).all(|seq| !readable(seq)),
-            "pruned contents are released"
+            "a removed checkpoint's own contents are released"
         );
         assert!(
             (5..25).all(readable),

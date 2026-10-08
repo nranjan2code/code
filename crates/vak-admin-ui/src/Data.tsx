@@ -23,7 +23,7 @@ const words = (name: string) => name.replaceAll("_", " ");
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 
 const DOES: Record<string, string> = { remove: "Remove", trash: "Move to trash" };
-const WHY: Record<string, string> = { age: "Past its keep time", size: "Over its size limit" };
+const WHY: Record<string, string> = { age: "Past its keep time", size: "Over its size limit", count: "More than a conversation keeps" };
 const KEPT: Record<string, string> = { held: "On hold", live: "In use", kept: "Kept by a person" };
 const KEEP_DAYS = (secs?: number) => (secs ? `${Math.round(secs / 86400)} days` : "");
 
@@ -155,14 +155,14 @@ function Retention() {
           {(read) => (
             <div class="ops-table-wrap">
               <table class="ops-table">
-                <thead><tr><th>Kind</th><th>Kept for</th><th>Size limit</th><th>Then</th><th>Watched</th></tr></thead>
+                <thead><tr><th>Kind</th><th>Kept for</th><th>Limit</th><th>Then</th><th>Watched</th></tr></thead>
                 <tbody>
                   <For each={read().label.rules}>
                     {(rule) => (
                       <tr>
                         <td>{words(rule.class)}</td>
                         <td>{KEEP_DAYS(rule.delete_after_secs)}</td>
-                        <td>{rule.max_bytes ? size(rule.max_bytes) : ""}</td>
+                        <td>{rule.max_bytes ? size(rule.max_bytes) : rule.keep_newest ? `first and newest ${rule.keep_newest}` : ""}</td>
                         <td>{DOES[rule.on_expiry] ?? rule.on_expiry}</td>
                         <td>{read().observed.includes(rule.class) ? "Yes" : "Not yet"}</td>
                       </tr>
