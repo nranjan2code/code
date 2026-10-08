@@ -1520,7 +1520,17 @@ ledger and its objects unreadable together.
   erasure refuses a conversation with a live turn. The dev data home is
   purged once: its ledgers have no key.
 
-**M7a-b, in three parts; part 1 done 2026-10-08.** Part 1, content out of
+**Live check of M7a-a, 2026-10-08** (dev server on a purged data home,
+one turn on local Ollama, through the HTTP API): the conversation read
+back, was listed and was found by search, before and after a server
+restart. On disk its ledger was `KEY`, `LOCK` and one 14,880-byte segment
+holding neither the test phrase nor any JSON field name. The one
+plaintext copy of the phrase in the data and cache homes was the
+catalog's database, the derived copy doc 73 §7.3 names. Not checked live:
+destroying a key (no route does it until M7a-e), a guest, and the app's
+screens.
+
+**M7a-b, in four parts; part 1 done 2026-10-08.** Part 1, content out of
 shared chains:
 - `vak_session::content` is the one mechanism: `seal_fields` and
   `seal_except` move a row's content into one tenant object granted to its
