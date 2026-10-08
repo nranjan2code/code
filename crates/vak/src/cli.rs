@@ -370,6 +370,12 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<InboxAction>,
     },
+    /// What Vak keeps and what its retention would remove: status / usage /
+    /// plan. Nothing is removed; the plan is shown.
+    Data {
+        #[command(subcommand)]
+        action: Option<DataAction>,
+    },
     /// Run records: every unit of work, whatever caused it (list / show)
     Runs {
         #[command(subcommand)]
@@ -599,6 +605,20 @@ pub(crate) enum SelfAction {
         /// Report what would change without installing anything
         #[arg(long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum DataAction {
+    /// The reconciler's mode, the retention that applies, and totals
+    Status,
+    /// Measured storage by root, class and owner
+    Usage,
+    /// What retention would remove or move to the trash now (a dry run)
+    Plan {
+        /// Print the plan as JSON
+        #[arg(long)]
+        json: bool,
     },
 }
 

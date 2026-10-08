@@ -2431,3 +2431,51 @@ fn worktree_count(repo: &std::path::Path) -> usize {
         .count()
         - 1
 }
+
+/// The data routes (plan M7a-c) answer the owner with the measured usage
+/// and the dry-run plan, and nobody without the token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only() {
+    let (base, token, _cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
+        responses: Mutex::new(VecDeque::new()),
+    }))
+    .await;
+    let client = reqwest::Client::new();
+    for path in ["/data/status", "/data/usage", "/data/lifecycle/plan"] {
+        let anon = reqwest::get(format!("{base}{path}")).await.unwrap();
+        assert_eq!(anon.status(), 401, "{path}");
+    }
+    let read = |path: &'static str| {
+        let (client, base, token) = (client.clone(), base.clone(), token.clone());
+        async move {
+            let response = client
+                .get(format!("{base}{path}"))
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200, "{path}");
+            response.json::<serde_json::Value>().await.unwrap()
+        }
+    };
+    let status = read("/data/status").await;
+    assert_eq!(status["mode"], "observe");
+    assert_eq!(status["label"]["id"], "default");
+    assert!(
+        status["observed"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("environment"))
+    );
+    let usage = read("/data/usage").await;
+    assert!(usage["rows"].is_array() && usage["bytes"].is_u64());
+    let plan = read("/data/lifecycle/plan").await;
+    assert!(plan["actions"].is_array());
+    assert!(
+        plan["unobserved"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("trash"))
+    );
+}

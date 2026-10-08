@@ -30,6 +30,7 @@ pub mod intake;
 pub mod intake_alerts;
 pub mod intent;
 pub mod learning;
+pub mod lifecycle;
 pub mod memory;
 pub mod misread;
 pub mod onboarding;

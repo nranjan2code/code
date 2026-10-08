@@ -13,6 +13,7 @@ use vak_llm::stream::StreamEvent;
 mod agents_cli;
 mod backup;
 mod cli;
+mod data;
 mod digest;
 mod doctor;
 mod effects;
@@ -595,6 +596,7 @@ async fn main() {
         Some(Command::Digest { days }) => digest::run_digest(cwd, days),
         Some(Command::Triggers { action }) => triggers::run_triggers(cwd, action),
         Some(Command::Inbox { action }) => inbox::run_inbox(cwd, action),
+        Some(Command::Data { action }) => data::run_data(cwd, action),
         Some(Command::Runs { action }) => runs::run_runs(cwd, action),
         Some(Command::Effects { action }) => effects::run_effects(cwd, action),
         Some(Command::Plan {

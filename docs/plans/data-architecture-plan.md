@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans, and commits nothing), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1479,7 +1479,7 @@ Steps, each shipped whole and in this order:
 |---|---|---|
 | M7a-a | **Done 2026-10-08 (note below).** Conversation keys: every session ledger frame encrypted under its conversation's scope key; the readers (the catalog tailer, `SessionLog`) open through it; the per-turn byte and fsync budgets re-measured | `compressed_before_encrypted`, `bytes_per_turn_budget`, `a_destroyed_key_leaves_the_bytes_and_the_chain_and_nothing_readable` |
 | M7a-b | **Done 2026-10-08 (notes below).** Content out of shared ledgers into objects granted to the conversation; the contributor key for a guest's frames with the typed placeholder in `derive_messages()`; the provider-account scope and its grant on provider-derived objects | a guest's frames read through their own key; an account-derived object reads only with the account's grant |
-| M7a-c | `crates/vak-lifecycle`: the reconciler, observe-only; the default tenant label; one plan object behind `vak data status`, `usage` and `plan`, `/data/status`, `/data/usage` and `/data/lifecycle`, and the admin Storage (A7) and Lifecycle (A8) screens | `reconciler_observe_only_commits_nothing`, `reconciler_is_idempotent` |
+| M7a-c | **Done 2026-10-08 (note below).** `crates/vak-lifecycle`: the reconciler, observe-only; the default tenant label; one plan object behind `vak data status`, `usage` and `plan`, `/data/status`, `/data/usage` and `/data/lifecycle`, and the admin Storage (A7) and Lifecycle (A8) screens | `reconciler_observe_only_commits_nothing`, `reconciler_is_idempotent` |
 | M7a-d | Commit for the ephemeral and derived classes (runtime scrub, environments, checkpoints, Document history, inbox entries, cost and activity segments), object GC and quotas; the scattered retention goes (`MAX_STORED_CHECKPOINTS`, finops and alerts compaction, `cleanup_artifacts`, `/memory/cleanup`); `vak data gc` | `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`, `quota_refuses_admission_not_records` |
 | M7a-e | Trash as lifecycle state (the sidecars, their routes and `/workspaces/forget` go); conversation holds; conversation erasure: preview digest, the lineage walk with artifact versions, key destruction, catalog rows removed with `secure_delete` and a WAL checkpoint, the signed receipt; drafts fade; admin Conversations lifecycle (A2, A3); client menu, Trash, "Why is this gone?" and Workbench states (C1, C2, C3, C8); `vak data erase --scope conversation` | `erasure_follows_lineage`, `erasure_leaves_ledger_bytes_unchanged`, `stale_preview_cannot_authorise`, `hold_blocks_every_destructive_transition` |
 | M7a-f | Erasing a guest's contributions and a provider account | `guest_erasure_keeps_owner_conversation`, `provider_account_erasure_spans_agents_and_conversations`, `provider_account_erasure_preserves_unrelated_conversation_content` |
@@ -1636,6 +1636,40 @@ returned, not what the Agent then wrote from it.
 - Test: `provider_account_erasure_preserves_unrelated_conversation_content`.
 
 M7a-b is done with this part.
+
+**M7a-c, done 2026-10-08: the reconciler, observe-only.**
+- `crates/vak-lifecycle` decides and has no vak dependency: the default
+  tenant label (doc 74 §3.1's table as `Label::default_tenant`), and
+  `plan(items, observed, label, now)`, which is deterministic. An action's
+  key names one transition of one item (`remove:<id>`, `trash:<id>`), so
+  committing a plan twice is committing it once; actions are ordered
+  rebuildable classes first and records last (doc 74 §5).
+- `vak_core::lifecycle` observes and writes nothing. Three classes are
+  observed: a run's environment (aged from when its run settled, live
+  while it runs, an orphan aged from its last write), a service's rotated
+  log files (the file being written is live), and draft versions (kept
+  while the artifact is starred or shared). `Core::data_usage` measures
+  every path `state::REGISTRY` declares, each file once.
+- A class the label has a rule for and no observer looks at is listed in
+  `Plan::unobserved`, never reported as nothing due: checkpoints, the
+  trash (its sidecar records no time until M7a-e), Document history, inbox
+  entries, allowlist entries, runs, activity segments and incidents.
+  Executions have no rule yet: an unreviewed draft's files live in its
+  execution directory, so scrubbing one waits for M7a-d to settle where a
+  draft's bytes are kept.
+- Surfaces: `GET /data/status`, `/data/usage` and `/data/lifecycle/plan`
+  (owner only); `vak data status | usage | plan [--json]`; the admin
+  console's Operate › Data, with Retention (the plan, what is kept back and
+  why, the label's rules and which are watched) and Storage (measured
+  usage by root, class and owner).
+- Not built here: a background tick. With nothing to commit there is
+  nothing for a loop to do; the plan is computed when asked. The tick,
+  `POST /data/lifecycle/tick` and lifecycle records come with the first
+  class that commits (M7a-d).
+- Tests: `reconciler_is_idempotent` (vak-lifecycle),
+  `reconciler_observe_only_commits_nothing` (vak-core: the file tree of
+  the data home, logs and runtime is identical before and after),
+  `data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only`.
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

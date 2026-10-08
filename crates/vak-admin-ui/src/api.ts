@@ -1,5 +1,8 @@
 import type {
   RunRecord,
+  DataPlan,
+  DataStatus,
+  DataUsage,
   TelemetryLine,
   TelemetrySpan,
   EffectRecord,
@@ -178,6 +181,10 @@ export const api = {
     ),
 
   health: () => fetch("/health").then((r) => handle<HealthInfo>(r)),
+  dataStatus: (): Promise<DataStatus> => fetch("/data/status").then((r) => handle(r)),
+  dataUsage: (): Promise<DataUsage> => fetch("/data/usage").then((r) => handle(r)),
+  dataPlan: (): Promise<DataPlan> => fetch("/data/lifecycle/plan").then((r) => handle(r)),
+
   runs: (status?: string, limit = 200): Promise<{ runs: RunRecord[] }> => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (status) q.set("status", status);

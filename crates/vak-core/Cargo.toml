@@ -33,6 +33,7 @@ vak-delivery = { workspace = true }
 vak-flow = { workspace = true }
 vak-hooks = { workspace = true }
 vak-intent = { workspace = true }
+vak-lifecycle = { workspace = true }
 vak-commit = { workspace = true }
 vak-llm = { workspace = true }
 vak-mail-calendar = { workspace = true }

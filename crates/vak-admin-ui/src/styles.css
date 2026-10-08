@@ -7164,3 +7164,5 @@ button.inbox-meta-tag:hover {
   color: var(--text);
   font-family: var(--font-mono, monospace);
 }
+.data-page { display: grid; gap: 16px; }
+.data-page h3 { margin: 16px 0 6px; }

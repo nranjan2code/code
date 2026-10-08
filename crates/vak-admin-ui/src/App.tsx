@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import Projects from "./Projects";
 import Runs from "./Runs";
+import Data from "./Data";
 import Diagnostics from "./Diagnostics";
 import Automations from "./Automations";
 import { api, AuthRequired } from "./api";
@@ -7150,6 +7151,13 @@ const operationsTab = () => {
   return OPERATIONS_TABS.slice(1).find((tab) => current.startsWith(`${tab.hash}/`))?.hash ?? "#/operations";
 };
 
+const DATA_TABS = [
+  { hash: "#/data", label: "Retention" },
+  { hash: "#/data/storage", label: "Storage" },
+] as const;
+
+const dataTab = () => ((route().split("?", 1)[0] || "").startsWith("#/data/storage") ? "#/data/storage" : "#/data");
+
 const SETTINGS_TABS = [
   { hash: "#/settings", label: "Models & keys" },
   { hash: "#/settings/permissions", label: "Access rules" },
@@ -7186,6 +7194,15 @@ const NAV: NavItem[] = [
     scope: "switchable",
     children: OPERATIONS_TABS,
     activeChild: operationsTab,
+  },
+  {
+    group: "Operate",
+    hash: "#/data",
+    label: "Data",
+    icon: ICONS.data,
+    scope: "global",
+    children: DATA_TABS,
+    activeChild: dataTab,
   },
   // Extensions are four distinct governance questions — what external
   // processes can be started, what instructions are loaded, what intercepts
@@ -7845,6 +7862,7 @@ export default function App() {
               <Match when={currentRoute() === "#/runs"}>
                 <Runs id={route().split("?", 1)[0].startsWith("#/runs/") ? decodeURIComponent(route().split("?", 1)[0].slice("#/runs/".length)) : undefined} />
               </Match>
+              <Match when={currentRoute() === "#/data"}><Data section={dataTab() === "#/data/storage" ? "storage" : "retention"} /></Match>
               <Match when={currentRoute() === "#/diagnostics"}><Diagnostics /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
               <Match when={currentRoute() === "#/prompts"}><PromptsPage /></Match>

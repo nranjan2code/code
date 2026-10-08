@@ -916,6 +916,9 @@ fn router_with_state(state: AppState) -> Router {
             post(session_work_reassign),
         )
         .route("/flows", get(flows_list))
+        .route("/data/status", get(data_status))
+        .route("/data/usage", get(data_usage))
+        .route("/data/lifecycle/plan", get(data_lifecycle_plan))
         .route("/runs", get(runs_list))
         .route("/runs/{id}", get(run_detail))
         .route("/runs/{id}/spans", get(telemetry::run_spans))
@@ -7409,6 +7412,35 @@ impl RunsQuery {
 
 /// The run records, newest first (plan M4.2): every unit of work, whatever
 /// caused it. A record that cannot be read is an error, never skipped.
+/// A read of the whole data home walks its files, so it runs off the
+/// request threads.
+async fn data_read<T: serde::Serialize + Send + 'static>(
+    state: AppState,
+    read: impl FnOnce(&Core) -> T + Send + 'static,
+) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || read(&core)).await {
+        Ok(value) => Json(value).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// The reconciler's mode, its label, and what the data home holds
+/// (docs/design/74 §7).
+async fn data_status(State(state): State<AppState>) -> axum::response::Response {
+    data_read(state, |core| core.data_status()).await
+}
+
+/// Measured storage by root, class and owner.
+async fn data_usage(State(state): State<AppState>) -> axum::response::Response {
+    data_read(state, |core| core.data_usage()).await
+}
+
+/// The dry-run plan: what the reconciler would do now. Nothing is done.
+async fn data_lifecycle_plan(State(state): State<AppState>) -> axum::response::Response {
+    data_read(state, |core| core.lifecycle_plan()).await
+}
+
 async fn runs_list(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<RunsQuery>,

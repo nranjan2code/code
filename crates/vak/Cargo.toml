@@ -17,6 +17,7 @@ async-trait = { workspace = true }
 vak-config = { workspace = true }
 vak-commit = { workspace = true }
 vak-core = { workspace = true }
+vak-lifecycle = { workspace = true }
 vak-intent = { workspace = true }
 vak-delivery = { workspace = true }
 vak-eval = { workspace = true }

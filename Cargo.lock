@@ -7039,6 +7039,7 @@ dependencies = [
  "vak-eval",
  "vak-flow",
  "vak-intent",
+ "vak-lifecycle",
  "vak-llm",
  "vak-ooxml",
  "vak-ops",
@@ -7201,6 +7202,7 @@ dependencies = [
  "vak-hooks",
  "vak-intake",
  "vak-intent",
+ "vak-lifecycle",
  "vak-llm",
  "vak-mail-calendar",
  "vak-mcp",
@@ -7346,6 +7348,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "vak-lifecycle"
+version = "7.0.0-dev"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

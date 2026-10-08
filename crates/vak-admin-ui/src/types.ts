@@ -1485,3 +1485,42 @@ export interface TelemetrySpan extends TelemetryLine {
   duration_ms: number;
   started_at: string;
 }
+
+/// Operate › Data (plan M7a-c): `/data/status`, `/data/usage` and
+/// `/data/lifecycle/plan`.
+export interface DataRule {
+  class: string;
+  delete_after_secs?: number;
+  max_bytes?: number;
+  on_expiry: string;
+}
+
+export interface DataStatus {
+  at: string;
+  mode: string;
+  label: { id: string; name: string; rules: DataRule[] };
+  observed: string[];
+  unobserved: string[];
+  due: number;
+  guarded: number;
+  reclaimable_bytes: number;
+  files: number;
+  bytes: number;
+}
+
+export interface DataUsage {
+  at: string;
+  rows: { root: string; class: string; owner: string; files: number; bytes: number }[];
+  files: number;
+  bytes: number;
+}
+
+export interface DataPlan {
+  at: string;
+  label: string;
+  actions: { key: string; class: string; item: string; does: string; reason: string; due: string; bytes: number; files: number }[];
+  guarded: { class: string; item: string; guard: string }[];
+  classes: { class: string; items: number; bytes: number; due: number; due_bytes: number; guarded: number }[];
+  unobserved: string[];
+  reclaimable_bytes: number;
+}
