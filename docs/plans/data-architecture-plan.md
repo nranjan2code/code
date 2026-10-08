@@ -1759,6 +1759,30 @@ routes. Live on `gpt-6-luna`: a three-paragraph Word draft was reviewed,
 starred, narrowed to version 2, accepted into the folder and undone by
 version, and the old routes answer 404.
 
+M8.4c-d (2026-10-08): a guest's reach is decided by the grants. A
+conversation guest reaches a version when their conversation grant is
+active and strong enough for the request (reading needs a viewer,
+commenting a commenter), the version is reviewed in that conversation,
+and the artifact still inherits (`Grants::may`, called from
+`library::discusser`). An artifact that broke inheritance, as sharing it
+by a link does, is refused to that guest and left out of the `artifacts`
+list their sandbox records return; the owner is unaffected, and restoring
+inheritance gives it back. The live run found that no guest request to a
+`/library` path had ever reached its handler: the audience check after
+authentication read the conversation id from the path's second segment,
+which there is the artifact id, and refused all of them. It now rechecks
+the guest's own conversation on a Library path, and the tests run
+through that check. The shared conversation reads its files, their
+Office view, their review and their thread only through the artifact
+routes. Test `conversation_grant_reaches_its_artifacts_until_broken`.
+Live on `gpt-6-luna` with an invited guest: the guest read a Word draft
+(3 units), its bytes and its review, and commented, in the guest page
+too; was refused accept, the Library list and the artifact's page; and
+after the owner shared the artifact by a link was refused every read
+and saw no binding for it. Left as it is: the Canvas names a draft by
+the draft that proposes it (its tab identity and version numbers are the
+draft's), and reads the version.
+
 Investigating the live failures of M8.3b and M8.4b found faults in
 Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):
 - `emit_table_card` refused a correct flat `{columns, rows}` table

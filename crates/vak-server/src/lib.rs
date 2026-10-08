@@ -3192,13 +3192,18 @@ async fn enforce_participant_audience(
     if let Some(AuthenticatedPrincipal::Participant(participant)) =
         req.extensions().get::<AuthenticatedPrincipal>()
     {
-        let conversation_id = req
-            .uri()
-            .path()
-            .trim_matches('/')
-            .split('/')
-            .nth(1)
-            .unwrap_or_default();
+        // A conversation's own routes name it in the path. A Library
+        // route names an artifact, so the audience rechecked there is that
+        // of the guest's own conversation, and the handler decides whether
+        // the grant reaches the artifact (`library::discusser`). Read as a
+        // conversation id, the artifact id refused every guest (found
+        // live, plan M8.4c-d).
+        let mut segments = req.uri().path().trim_matches('/').split('/');
+        let conversation_id = match (segments.next(), segments.next()) {
+            (Some("sessions"), Some(id)) => id,
+            (Some("library"), _) => participant.conversation_id.as_str(),
+            _ => "",
+        };
         let audience = conversation_audience(&state, conversation_id);
         if !participant_matches_conversation_audience(
             participant,
@@ -12272,6 +12277,7 @@ async fn list_sandbox_records(State(state): State<AppState>) -> axum::response::
 async fn list_session_sandbox_records(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let path = sandbox_records_path(&state, &id);
@@ -12291,7 +12297,7 @@ async fn list_session_sandbox_records(
                 .collect::<Vec<_>>();
             // Which artifact and version each candidate and declared file
             // is, so a client addresses Review through the Library.
-            let artifacts = library::bindings(&state, &id);
+            let artifacts = library::bindings(&state, &id, &principal);
             Json(serde_json::json!({ "records": records, "artifacts": artifacts })).into_response()
         }
         Err(error) => (
@@ -22811,7 +22817,12 @@ mod sandbox_promotion_tests {
         };
 
         let records = json(
-            list_session_sandbox_records(State(state.clone()), Path("session-1".into())).await,
+            list_session_sandbox_records(
+                State(state.clone()),
+                Path("session-1".into()),
+                axum::Extension(AuthenticatedPrincipal::Operator),
+            )
+            .await,
         )
         .await;
         assert_eq!(
@@ -24372,6 +24383,10 @@ mod sandbox_promotion_tests {
                 "/sessions/{id}/coworking/messages",
                 post(create_coworking_message),
             )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
             .with_state(state)
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {
@@ -24505,6 +24520,10 @@ mod sandbox_promotion_tests {
                 "/sessions/{id}/coworking/approvals/{req_id}/delegate",
                 post(delegate_coworking_approval),
             )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
             .with_state(state)
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {
@@ -24635,6 +24654,189 @@ mod sandbox_promotion_tests {
         assert!(!core.cwd().join(".vak/permissions.local.toml").exists());
     }
 
+    /// Plan M8.4c-d: a guest's conversation grant reaches the artifacts
+    /// reviewed in that conversation until one breaks inheritance; a guest
+    /// of another conversation reaches none of them.
+    #[tokio::test]
+    async fn conversation_grant_reaches_its_artifacts_until_broken() {
+        use tower::ServiceExt;
+        use vak_core::grants::GrantObject;
+
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core.clone());
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("result.txt"), "shared draft")
+            .await
+            .unwrap();
+        let candidate = export_candidate(&state).await;
+        let (artifact_id, version_id) =
+            proposed_version(&state, &candidate.candidate.candidate_id, "result.txt");
+        let grants = vak_core::grants::Grants::at(&core.shared_scope());
+        let invite = |name: &str, conversation: &str, token: &str, capabilities: &[&str]| {
+            coworking::invite(
+                &grants,
+                coworking::AudienceGrant {
+                    grant_id: coworking::test_grant_id(name),
+                    principal_id: format!("person-{name}"),
+                    display_name: name.into(),
+                    conversation_id: conversation.into(),
+                    audience_id: "local".into(),
+                    capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
+                    token_hash: coworking::token_hash(token),
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+                    trace: None,
+                    actor: None,
+                },
+            )
+            .unwrap();
+        };
+        invite("asha", "session-1", "asha-token", &["read", "comment"]);
+        invite("ravi", "session-1", "ravi-token", &["read"]);
+        invite("mina", "session-2", "mina-token", &["read", "comment"]);
+
+        let app = Router::new()
+            .route(
+                "/library/{id}/versions/{version}/comments",
+                get(library::thread).post(library::add_comment),
+            )
+            .route(
+                "/library/{id}/versions/{version}/text",
+                get(library::version_text),
+            )
+            .route(
+                "/sessions/{id}/sandbox/records",
+                get(list_session_sandbox_records),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
+            .with_state(state)
+            .layer(axum::middleware::from_fn_with_state(
+                AuthPolicy {
+                    token: "operator-secret".into(),
+                    home: core.scope().into_root(),
+                    shared: core.shared_scope().into_root(),
+                    trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
+                },
+                require_bearer,
+            ));
+        let version = format!("/library/{artifact_id}/versions/{version_id}");
+        let call = |method: axum::http::Method, path: String, bearer: &str, body: &str| {
+            let request = axum::http::Request::builder()
+                .method(method)
+                .uri(path)
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {bearer}"),
+                )
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap();
+            let app = app.clone();
+            async move {
+                let response = app.oneshot(request).await.unwrap();
+                let status = response.status();
+                let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                    .await
+                    .unwrap();
+                (
+                    status,
+                    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default(),
+                )
+            }
+        };
+        let get = axum::http::Method::GET;
+        let post = axum::http::Method::POST;
+        let note = r#"{"text":"Looks right to me"}"#;
+        let bound = |records: &serde_json::Value| records["artifacts"].as_array().unwrap().len();
+
+        // The conversation grant reaches the artifact reviewed there.
+        let (status, text) = call(get.clone(), format!("{version}/text"), "asha-token", "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(text["content"], "shared draft");
+        let (status, _) = call(
+            post.clone(),
+            format!("{version}/comments"),
+            "asha-token",
+            note,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let (status, thread) =
+            call(get.clone(), format!("{version}/comments"), "ravi-token", "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(thread["comments"][0]["actor_name"], "asha");
+        // A grant to read is not a grant to comment.
+        let (status, _) = call(
+            post.clone(),
+            format!("{version}/comments"),
+            "ravi-token",
+            note,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let records = "/sessions/session-1/sandbox/records".to_string();
+        let (_, listed) = call(get.clone(), records.clone(), "asha-token", "").await;
+        assert_eq!(bound(&listed), 1);
+        // A guest of another conversation reaches none of it.
+        for path in [format!("{version}/text"), format!("{version}/comments")] {
+            let (status, _) = call(get.clone(), path, "mina-token", "").await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+        let (status, _) = call(
+            post.clone(),
+            format!("{version}/comments"),
+            "mina-token",
+            note,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+
+        // The artifact breaks inheritance: the conversation no longer
+        // reaches it, and the guest is no longer told of it.
+        let object =
+            GrantObject::Artifact(vak_session::ids::ArtifactId::parse(&artifact_id).unwrap());
+        grants.break_inheritance(object.clone(), None).unwrap();
+        for (method, path, body) in [
+            (get.clone(), format!("{version}/text"), ""),
+            (get.clone(), format!("{version}/comments"), ""),
+            (post.clone(), format!("{version}/comments"), note),
+        ] {
+            let (status, _) = call(method, path, "asha-token", body).await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+        let (_, listed) = call(get.clone(), records.clone(), "asha-token", "").await;
+        assert_eq!(bound(&listed), 0);
+        // The owner still reads it and sees the guest's comment.
+        let (status, thread) = call(
+            get.clone(),
+            format!("{version}/comments"),
+            "operator-secret",
+            "",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(thread["comments"].as_array().unwrap().len(), 1);
+        let (_, listed) = call(get.clone(), records.clone(), "operator-secret", "").await;
+        assert_eq!(bound(&listed), 1);
+
+        // Inheritance restored, the conversation reaches it again.
+        grants.restore_inheritance(object, None).unwrap();
+        let (status, _) = call(get.clone(), format!("{version}/text"), "asha-token", "").await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = call(get, format!("{version}/text"), "mina-token", "").await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
     #[tokio::test]
     /// Plan M8.4c-b: the owner and a guest of the conversation write in
     /// the one thread a version has; a guest who may only read cannot.
@@ -24697,6 +24899,10 @@ mod sandbox_promotion_tests {
                 get(library::thread).post(library::add_comment),
             )
             .route("/sessions/{id}/coworking/updates", get(coworking_updates))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                enforce_participant_audience,
+            ))
             .with_state(state)
             .layer(axum::middleware::from_fn_with_state(
                 AuthPolicy {

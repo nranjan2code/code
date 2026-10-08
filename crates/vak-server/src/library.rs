@@ -175,10 +175,26 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
 
 /// The artifacts and versions a conversation's Review and declared files
 /// are: what its sandbox records name them by (plan M8.4c-a).
-pub(crate) fn bindings(state: &AppState, session: &str) -> Vec<serde_json::Value> {
+pub(crate) fn bindings(
+    state: &AppState,
+    session: &str,
+    principal: &crate::AuthenticatedPrincipal,
+) -> Vec<serde_json::Value> {
     let mut found = Vec::new();
     for artifact in state.core.artifacts().list() {
         for version in &artifact.versions {
+            // A guest is told only of versions their grant reaches.
+            if discusser(
+                state,
+                principal,
+                &artifact,
+                version,
+                vak_core::grants::Role::Viewer,
+            )
+            .is_err()
+            {
+                continue;
+            }
             let entry = |candidate: Option<&str>| {
                 serde_json::json!({
                     "artifact": artifact.id,
@@ -276,7 +292,13 @@ async fn readable(
     let found = version_of(&artifact, version)
         .cloned()
         .ok_or(StatusCode::NOT_FOUND)?;
-    discusser(state, principal, &found)?;
+    discusser(
+        state,
+        principal,
+        &artifact,
+        &found,
+        vak_core::grants::Role::Viewer,
+    )?;
     let artifacts = state.core.artifacts();
     let path = artifact.path.clone();
     tokio::task::spawn_blocking(move || artifacts.bytes(&artifact, &found.id))
@@ -350,9 +372,15 @@ fn may_review(
     let missing = || Box::new(refuse(StatusCode::NOT_FOUND, "no such version"));
     let artifact = state.core.artifacts().get(id).ok_or_else(missing)?;
     let found = version_of(&artifact, version).ok_or_else(missing)?;
-    discusser(state, principal, found)
-        .map(|_| ())
-        .map_err(|status| Box::new(status.into_response()))
+    discusser(
+        state,
+        principal,
+        &artifact,
+        found,
+        vak_core::grants::Role::Viewer,
+    )
+    .map(|_| ())
+    .map_err(|status| Box::new(status.into_response()))
 }
 
 /// `GET /library/{id}/versions/{version}/document`: the Office or PDF
@@ -1289,25 +1317,48 @@ fn comment(
     }
 }
 
-/// Who a request speaks as in a version's thread: the owner, or a guest of
-/// the conversation the version is being reviewed in. An artifact share's
+/// Who a request speaks as on a version, in the role it needs: the owner,
+/// or a guest of a conversation the version is reviewed in. The guest's
+/// conversation grant reaches the artifact by inheritance, decided by the
+/// grants (`Grants::may`): an artifact that broke inheritance, as sharing
+/// it by itself does, is no longer reached through the conversation, and a
+/// grant that ended or is too weak reaches nothing. An artifact share's
 /// guest uses `/shared/artifact`.
 fn discusser(
     state: &AppState,
     principal: &crate::AuthenticatedPrincipal,
+    artifact: &vak_core::artifacts::Artifact,
     version: &vak_core::artifacts::Version,
+    role: vak_core::grants::Role,
 ) -> Result<(String, String), StatusCode> {
     match principal {
         crate::AuthenticatedPrincipal::Operator => {
             Ok((crate::request_actor(state).to_string(), "You".into()))
         }
         crate::AuthenticatedPrincipal::Participant(guest) => {
+            use vak_core::grants::GrantObject;
+            let grants = crate::coworking::grants(state);
+            let now = chrono::Utc::now();
             let reviewed_there = version.proposed.iter().any(|proposal| {
                 proposal.session == guest.conversation_id
                     && crate::conversation_audience(state, &proposal.session).as_deref()
                         == Some(guest.audience_id.as_str())
             });
-            if reviewed_there {
+            let in_conversation = reviewed_there
+                && grants.may(
+                    &guest.principal_id,
+                    &GrantObject::Conversation(guest.conversation_id.clone()),
+                    role,
+                    false,
+                    now,
+                );
+            if grants.may(
+                &guest.principal_id,
+                &GrantObject::Artifact(artifact.id),
+                role,
+                in_conversation,
+                now,
+            ) {
                 Ok((guest.principal_id.clone(), guest.display_name.clone()))
             } else {
                 Err(StatusCode::FORBIDDEN)
@@ -1357,7 +1408,13 @@ pub(crate) async fn thread(
     let Some(found) = version_of(&artifact, &version) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    if let Err(status) = discusser(&state, &principal, found) {
+    if let Err(status) = discusser(
+        &state,
+        &principal,
+        &artifact,
+        found,
+        vak_core::grants::Role::Viewer,
+    ) {
         return status.into_response();
     }
     let comments: Vec<_> = artifact
@@ -1384,7 +1441,13 @@ pub(crate) async fn add_comment(
     let Some(found) = version_of(&artifact, &version) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let (author, author_name) = match discusser(&state, &principal, found) {
+    let (author, author_name) = match discusser(
+        &state,
+        &principal,
+        &artifact,
+        found,
+        vak_core::grants::Role::Commenter,
+    ) {
         Ok(who) => who,
         Err(status) => return status.into_response(),
     };

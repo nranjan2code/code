@@ -229,7 +229,7 @@ export default function SharedConversation() {
     const guest = { headers: { Authorization: `Bearer ${current.token}` }, credentials: "omit" as const, cache: "no-store" as const, referrerPolicy: "no-referrer" as const };
     try {
       const at = versionUrl(candidateId, path);
-      if (!at) throw new Error("This draft has no saved version yet.");
+      if (!at) throw new Error("This file is not shared through this conversation. Ask the owner if you need it.");
       const [file, history] = await Promise.all([
         fetch(`${at}/text`, guest).then((response) => {
           if (response.status === 401 || response.status === 403) { stop(); throw new Error("Access to this invitation ended."); }
@@ -360,7 +360,7 @@ export default function SharedConversation() {
     setFileError(null);
     try {
       const thread = threadUrl(file.candidateId, file.path);
-      if (!thread) throw new Error("This draft has no version to comment on yet.");
+      if (!thread) throw new Error("This file is not shared through this conversation, so it cannot be commented on here.");
       const response = await fetch(thread, {
         method: "POST",
         headers: { Authorization: `Bearer ${current.token}`, "Content-Type": "application/json" },

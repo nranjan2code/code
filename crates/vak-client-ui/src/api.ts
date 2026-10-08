@@ -1863,7 +1863,7 @@ export async function versionOf(sessionId: string, candidateId: string, path: st
     await listSessionSandboxRecords(sessionId);
   }
   const found = knownVersion(sessionId, candidateId, path);
-  if (!found) throw new Error("This draft has no saved version yet.");
+  if (!found) throw new Error(token ? "This file is not shared through this conversation." : "This draft has no saved version yet.");
   return found;
 }
 
