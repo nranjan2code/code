@@ -1516,9 +1516,10 @@ async fn archive_toggle_is_reflected_in_session_list() {
         .unwrap();
     assert!(archived_flag(listed));
 
-    // The sidecar must persist independently of the running server.
-    let raw = std::fs::read_to_string(cwd.join("home/archive.json")).unwrap();
-    assert!(raw.contains(&session_id));
+    // The state persists independently of the running server.
+    let archived =
+        vak_core::trash::archived(&vak_config::scope::SharedScope::new(cwd.join("home")));
+    assert_eq!(archived.get(&session_id), Some(&true));
 
     let off = client
         .post(format!("{base}/sessions/{session_id}/archive"))
@@ -1589,15 +1590,13 @@ async fn delete_all_archived_never_touches_a_different_workspaces_session() {
     let id_a = make_archived_session(&cwd_a, &home).await;
     let id_b = make_archived_session(&cwd_b, &home).await;
 
-    // Archive both directly in the shared sidecar, exactly as the running
-    // server would after two `POST .../archive` calls from two different
+    // Archive both in the shared state, exactly as the running server
+    // would after two `POST .../archive` calls from two different
     // workspaces.
-    let archive_path = home.join("archive.json");
-    std::fs::write(
-        &archive_path,
-        serde_json::to_string(&serde_json::json!({ &id_a: true, &id_b: true })).unwrap(),
-    )
-    .unwrap();
+    for id in [&id_a, &id_b] {
+        vak_core::trash::set_archived(&vak_config::scope::SharedScope::new(&home), id, true)
+            .unwrap();
+    }
 
     // A server bound to workspace B only.
     vak_config::paths::isolate_home_for_tests();
@@ -1626,14 +1625,13 @@ async fn delete_all_archived_never_touches_a_different_workspaces_session() {
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["trashed"], 1, "only workspace B's own session, {body}");
 
-    let deleted: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(home.join("deleted.json")).unwrap()).unwrap();
-    assert_eq!(
-        deleted[&id_b], true,
+    let deleted = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&home));
+    assert!(
+        deleted.contains(&id_b),
         "workspace B's archived session must be deleted"
     );
     assert!(
-        deleted.get(&id_a).is_none() || deleted[&id_a] != true,
+        !deleted.contains(&id_a),
         "workspace A's archived session must survive a bulk delete run from workspace B"
     );
 }
@@ -2493,10 +2491,5 @@ async fn data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only() {
     assert_eq!(tick["committed"], serde_json::json!([]));
     let made = read("/data/lifecycle/transitions").await;
     assert_eq!(made["transitions"], serde_json::json!([]));
-    assert!(
-        plan["unobserved"]
-            .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("trash"))
-    );
+    assert_eq!(plan["unobserved"], serde_json::json!([]));
 }

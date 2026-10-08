@@ -7,6 +7,7 @@
 
 pub mod chain;
 pub mod content;
+pub mod conversation_state;
 pub mod cursors;
 pub mod documents;
 pub mod effects;

@@ -475,29 +475,11 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
-        path: "deleted.json",
-        root: Root::Data,
-        owner: "vak-core (trash)",
-        schema: None,
-        // The trash: session ids hidden everywhere until restored.
-        class: Class::Desired,
-        on_purge: OnPurge::Remove,
-    },
-    StateEntry {
         path: "social-x-usage.json",
         root: Root::Data,
         owner: "vak-server",
         schema: None,
         // The X preview's monthly request ceiling and the count spent so far.
-        class: Class::Desired,
-        on_purge: OnPurge::Remove,
-    },
-    StateEntry {
-        path: "archive.json",
-        root: Root::Data,
-        owner: "vak-server",
-        schema: None,
-        // Session ids hidden from the everyday list, still searchable.
         class: Class::Desired,
         on_purge: OnPurge::Remove,
     },

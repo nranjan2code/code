@@ -15,6 +15,7 @@ use vak_lifecycle::{DataClass, Guard, Item, Label, Plan};
 /// The classes this build observes. A class with a rule and no observer is
 /// reported in `Plan::unobserved`, never assumed empty.
 pub const OBSERVED: &[DataClass] = &[
+    DataClass::Trash,
     DataClass::Execution,
     DataClass::Checkpoint,
     DataClass::Environment,
@@ -451,7 +452,29 @@ impl Core {
         items.extend(self.draft_items());
         items.extend(self.chain_items());
         items.extend(document_items());
+        items.extend(self.trash_items());
         items
+    }
+
+    /// A conversation in the trash: its window started when it went in,
+    /// and when it ends the conversation is erased (doc 74 §2.4).
+    fn trash_items(&self) -> Vec<Item> {
+        crate::trash::states(&self.shared_scope())
+            .into_iter()
+            .filter(|(_, state)| state.erased_at.is_none())
+            .filter_map(|(id, state)| {
+                Some(Item {
+                    id,
+                    class: DataClass::Trash,
+                    since: state.trashed_at?,
+                    bytes: 0,
+                    files: 0,
+                    guard: None,
+                    group: None,
+                    rank: 0,
+                })
+            })
+            .collect()
     }
 
     /// The chains whose rows age out a sealed segment at a time: each

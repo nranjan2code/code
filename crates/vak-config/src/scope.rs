@@ -374,20 +374,10 @@ impl SharedScope {
         self.root.join("intake")
     }
 
-    /// The trash sidecar.
-    pub fn deleted(&self) -> PathBuf {
-        self.root.join("deleted.json")
-    }
-
     /// The X preview's monthly request ceiling and usage count. Shared, because
     /// one bearer token is one bill however many Agents use it.
     pub fn social_x_usage(&self) -> PathBuf {
         self.root.join("social-x-usage.json")
-    }
-
-    /// The archive sidecar.
-    pub fn archive(&self) -> PathBuf {
-        self.root.join("archive.json")
     }
 
     pub fn operations(&self) -> PathBuf {
@@ -568,8 +558,6 @@ mod tests {
         assert_eq!(s.agent("mira").root(), data.join("agents/mira"));
         assert_eq!(s.gateway_allowlist(), data.join("gateway/allowlist.json"));
         assert_eq!(s.triggers(), data.join("triggers"));
-        assert_eq!(s.deleted(), data.join("deleted.json"));
-        assert_eq!(s.archive(), data.join("archive.json"));
         assert_eq!(s.operations(), data.join("operations"));
         assert_eq!(s.cost_log(), data.join("cost-log"));
         assert_eq!(s.trusted(), data.join("trusted"));

@@ -103,8 +103,11 @@ fn reconciler_observe_only_commits_nothing() {
         "a second look plans the same transitions"
     );
     // What nobody observed is said, not counted as nothing due.
-    assert!(plan.unobserved.contains(&DataClass::Trash));
-    assert!(!plan.unobserved.contains(&DataClass::Environment));
+    assert!(
+        plan.unobserved.is_empty(),
+        "every class with a rule has an observer: {:?}",
+        plan.unobserved
+    );
 
     assert_eq!(status.mode, "observe");
     assert_eq!(status.due, 2);

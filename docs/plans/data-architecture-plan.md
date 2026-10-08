@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-e's first part (2026-10-08: the trash and the archive are one state ref per conversation), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1829,7 +1829,31 @@ measured by the retention pass.
   the two surfaces above only), and limits per space or per Agent (M7b).
 - Test: `quota_refuses_admission_not_records`.
 
-M7a-d is done with this part. `gc_keeps_everything_reachable`,
+M7a-d is done with this part.
+
+**M7a-e, in parts; part 1 done 2026-10-08: the trash is lifecycle
+state.**
+- `vak_session::conversation_state` keeps one ref per conversation,
+  `lc/ses/<session id>`, moved by CAS under the writer epoch: whether it
+  is archived, when it went into the trash, and when it was erased. An
+  erased conversation's state never changes again.
+- `archive.json` and `deleted.json`, their path accessors and their
+  registry entries are deleted. `vak_core::trash` keeps the questions its
+  readers ask (`trashed`, `is_trashed`, `search_exclusions`, `set`) and
+  gains `archived`, `set_archived` and `states`; the server's archive
+  handlers use it and write no file.
+- Trashing records the time once; trashing again does not restart the
+  window, and a restored conversation is archived again, as before.
+- The reconciler observes the trash: one item per trashed conversation,
+  aged from when it went in, due at the label's 30 days. With it every
+  class that has a rule has an observer (`Plan::unobserved` is empty).
+  Nothing carries that action out yet: it is erasure, part 2.
+- Test: `the_trash_window_starts_once_and_the_archive_survives_a_restore`.
+
+Still to do in M7a-e: conversation erasure with its preview, lineage walk
+and signed receipt; conversation holds; drafts moving to the trash; the
+screens (admin A2 and A3, client C1, C2, C3 and C8); `vak data erase`;
+and the `/workspaces/forget` route. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

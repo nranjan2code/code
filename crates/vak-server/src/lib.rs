@@ -10035,25 +10035,8 @@ async fn restore_checkpoint(
 
 // ---- archive (sidebar visibility; ledgers stay untouched) --------------------
 
-fn archive_path(core: &Core) -> PathBuf {
-    core.shared_scope().archive()
-}
-
 fn read_archive(core: &Core) -> HashMap<String, bool> {
-    std::fs::read_to_string(archive_path(core))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-fn write_archive(core: &Core, map: &HashMap<String, bool>) {
-    if let Some(parent) = archive_path(core).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = archive_path(core).with_extension("json.tmp");
-    if std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_default()).is_ok() {
-        let _ = std::fs::rename(&tmp, archive_path(core));
-    }
+    vak_core::trash::archived(&core.shared_scope())
 }
 
 /// Whether session `id` belongs to this Core's workspace, whichever Agent
@@ -10080,9 +10063,11 @@ async fn set_archived(
         )
             .into_response();
     }
-    let mut map = read_archive(&state.core);
-    map.insert(id, body.archived);
-    write_archive(&state.core, &map);
+    if let Err(error) =
+        vak_core::trash::set_archived(&state.core.shared_scope(), &id, body.archived)
+    {
+        return trash_write_failed(&error);
+    }
     Json(serde_json::json!({ "archived": body.archived })).into_response()
 }
 
