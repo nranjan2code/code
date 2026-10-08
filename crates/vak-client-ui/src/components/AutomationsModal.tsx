@@ -220,7 +220,7 @@ export default function AutomationsModal() {
 
   return (
     <Show when={tasksOpen()}>
-      <Sheet size="wide" class="tasks-modal" title="Automations" subtitle="Prompt automations need a Git project. Scripts can run without Git." onClose={() => { const focused = taskFocusId(); if (focused) scrolledIds.delete(focused); setTasksOpen(false); setTaskFocusId(null); }}>
+      <Sheet size="wide" class="tasks-modal" title="Automations" subtitle="Each run works in its own copy of the folder, and what it changed comes back for review." onClose={() => { const focused = taskFocusId(); if (focused) scrolledIds.delete(focused); setTasksOpen(false); setTaskFocusId(null); }}>
           <Show when={error()}>
             <div class="gate-err">{error()}</div>
           </Show>
@@ -285,7 +285,7 @@ export default function AutomationsModal() {
                     value={prompt()}
                     onInput={(e) => setPrompt(e.currentTarget.value)}
                   />
-                  <span class="hint">Runs in a separate Git project copy so changes can be reviewed.</span>
+                  <span class="hint">Works in a separate copy of the folder so changes can be reviewed.</span>
                 </Show>
                 <Show when={kind() === "script"}>
                   <label class="watchdog-row">
@@ -296,7 +296,7 @@ export default function AutomationsModal() {
                     value={script()}
                     onInput={(e) => setScript(e.currentTarget.value)}
                   />
-                  <span class="hint">Runs without an AI model or Git project.</span>
+                  <span class="hint">Runs without an AI model.</span>
                   </label>
                 </Show>
                 <div class="task-add-row">

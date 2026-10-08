@@ -1192,7 +1192,7 @@ export function SessionsList() {
   return (
     <div class="view sessions-view">
       <PageHeader
-        title="Sessions & Conversations"
+        title="Conversations"
         description="Historical and active agent conversations, turn-by-turn workflow pipelines, and forensic execution traces."
         actions={
           <button type="button" class="button primary" disabled={creating()} onClick={startNewSession}>
@@ -1247,7 +1247,7 @@ export function SessionsList() {
       {/* Sessions Posture Deck */}
       <div class="sessions-posture-deck">
         <div class="sessions-kpi-card">
-          <span class="kpi-label">Total Sessions</span>
+          <span class="kpi-label">Total conversations</span>
           <span class="kpi-value font-mono">{totalCount()}</span>
           <span class="kpi-sub dim">Every conversation, kept in full</span>
         </div>
@@ -1672,7 +1672,7 @@ export function SessionForensics(props: { sessionId: string }) {
       <div class="forensics-masthead">
         <div class="masthead-nav-bar">
           <button type="button" class="button small ghost" onClick={() => navigate("#/sessions")}>
-            ‹ Sessions
+            ‹ Conversations
           </button>
           <div class="masthead-id-pill">
             <span class="cdot cdot-ok" />

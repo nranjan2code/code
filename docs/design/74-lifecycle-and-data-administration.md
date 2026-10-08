@@ -466,6 +466,11 @@ Changes:
 | Configure | Integrations, Gateway, Permissions & security, Prompts, Memory, Settings | the same, plus **Governance** (**Retention & holds**, **Erasure requests**), **Spaces**, **Agents** (lifecycle panel), Security › **Keys** |
 | System | Setup, FinOps | Setup, FinOps (per Agent and per run), **Backup & restore**, **Diagnostics › Traces & logs**, Security › **Audit export** |
 
+As built at plan M8.4c-e (2026-10-08): Work is Conversations, Runs,
+Library, Automations and Commitments. Automations (the word chosen for
+triggers) are made and edited there, and Operations keeps an Automations
+tab for what is running.
+
 `#/operations/work/runs/<session_id>` is replaced by `#/runs/<run_id>`
 (review R13). Trigger definitions (today's scheduled tasks) stay editable
 under Operate › Triggers; there is one place for triggers, not two.

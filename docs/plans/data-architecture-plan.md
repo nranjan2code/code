@@ -1783,6 +1783,27 @@ and saw no binding for it. Left as it is: the Canvas names a draft by
 the draft that proposes it (its tab identity and version numbers are the
 draft's), and reads the version.
 
+M8.4c-e (2026-10-08): navigation. In the admin console the Work group
+is Conversations (the screen that was called Sessions; its route is
+unchanged), Runs, Library, Automations and Commitments: Library moved
+out of Configure › Knowledge, which keeps Memory, Sources and Search.
+Automations stays in Work, where they are made and edited, and
+Operations keeps its own Automations tab for what is running (the
+maintainer's choice; doc 74 §6.1 had one place under Operate). Two Inbox
+links pointed at `#/skills`, a route that does not exist and showed Home;
+they open Extensions › Skills. In the client the sidebar has Library,
+Inbox with its unread count, and Automations: since the agent-first
+change Inbox opened only by a keyboard shortcut and Automations only
+from an Inbox entry. Settings calls hooks Hooks, as the admin console
+does, so Automations means scheduled work everywhere. The Automations
+sheet no longer says a prompt automation needs a Git project (untrue
+since M4.8), and the admin Inbox says automation where it said scheduled
+task. Checked live: all 18 admin navigation items and 26 sub-screens
+open their own screen, and the client's three rows open theirs. Not
+added: the items of milestones not built (Data health, Storage,
+Lifecycle, Integrity, Sync, Governance, Keys, Audit export, Backup &
+restore).
+
 Investigating the live failures of M8.3b and M8.4b found faults in
 Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):
 - `emit_table_card` refused a correct flat `{columns, rows}` table

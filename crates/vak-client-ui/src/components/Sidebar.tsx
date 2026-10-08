@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
-import { activeAgentId, agentOpening, agentsEpoch, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, narrowViewport, setInboxOpen, setLibraryOpen, setNotice, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen } from "../store";
+import { activeAgentId, agentOpening, agentsEpoch, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, narrowViewport, inboxOpen, inboxUnread, libraryOpen, setInboxOpen, setLibraryOpen, setTasksOpen, setNotice, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { host } from "../host";
@@ -77,7 +77,9 @@ export default function Sidebar() {
       </div>
 
       <button type="button" class="sb-search-row" onClick={() => setSearchOpen(true)}><Icon name="search" /><span>Search</span><kbd>⌘K</kbd></button>
-      <button type="button" class="sb-search-row" onClick={() => { setInboxOpen(false); setLibraryOpen(true); if (narrowViewport()) setSidebarOpen(false); }}><Icon name="layers" /><span>Library</span></button>
+      <button type="button" class="sb-search-row" classList={{ active: libraryOpen() && !inboxOpen() }} onClick={() => { setInboxOpen(false); setLibraryOpen(true); if (narrowViewport()) setSidebarOpen(false); }}><Icon name="layers" /><span>Library</span></button>
+      <button type="button" class="sb-search-row" classList={{ active: inboxOpen() }} aria-label={inboxUnread() ? `Inbox, ${inboxUnread()} unread` : "Inbox"} onClick={() => { setLibraryOpen(false); setInboxOpen(true); if (narrowViewport()) setSidebarOpen(false); }}><Icon name="bell" /><span>Inbox</span><Show when={inboxUnread() > 0}><kbd>{inboxUnread()}</kbd></Show></button>
+      <button type="button" class="sb-search-row" onClick={() => { setTasksOpen(true); if (narrowViewport()) setSidebarOpen(false); }}><Icon name="timer" /><span>Automations</span></button>
 
       <div class="sb-section-row"><span class="sb-section-title">Agents</span></div>
       <nav class="sb-agent-list" aria-label="Agents">

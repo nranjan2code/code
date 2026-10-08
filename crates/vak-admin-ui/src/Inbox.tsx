@@ -28,7 +28,7 @@ export type InboxFilterCategory =
   | "tasks";
 
 export const INBOX_KIND_LABELS: Record<string, string> = {
-  task_summary: "scheduled task",
+  task_summary: "automation",
   approval_pending: "needs approval",
   approval_denied: "refused",
   budget_alert: "budget alert",
@@ -440,7 +440,7 @@ export function Inbox() {
               </h3>
               <p class="inbox-zero-desc">
                 {unreadOnly()
-                  ? "Vakyartha captures unattended approval escalations, heartbeat check-ins, FinOps budget alerts, and scheduled task summaries here."
+                  ? "Vakyartha captures unattended approval escalations, heartbeat check-ins, FinOps budget alerts, and automation summaries here."
                   : "Try clearing search filters or selecting a different category to view historical entries."}
               </p>
               <Show when={unreadOnly() && entries().length > 0}>
@@ -627,7 +627,7 @@ export function Inbox() {
                             <button
                               type="button"
                               class="button small ghost"
-                              onClick={() => navigate("#/skills")}
+                              onClick={() => navigate("#/integrations/skills")}
                             >
                               Open Skill Registry
                             </button>
@@ -673,7 +673,7 @@ export function Inbox() {
                           <button
                             type="button"
                             class="button small ghost"
-                            onClick={() => navigate("#/skills")}
+                            onClick={() => navigate("#/integrations/skills")}
                           >
                             View skill proposals
                           </button>

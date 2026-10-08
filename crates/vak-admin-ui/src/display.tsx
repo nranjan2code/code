@@ -45,6 +45,7 @@ export const ICONS = {
   overview: "M3 3v18h18M7 15l4-6 4 4 5-8",
   operations: "M4 6h16M4 12h16M4 18h16 M8 6v12 M16 6v12",
   runs: "M5 4l7 8-7 8 M13 4l7 8-7 8",
+  library: "M4 5h6v14H4z M10 5h4v14h-4z M15 6l4-1 3 13-4 1z",
   diagnostics: "M3 12h4l3-8 4 16 3-8h4",
   automations: "M12 3v3 M12 18v3 M3 12h3 M18 12h3 M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8",
   commitments: "M5 3h11l3 3v15H5z M9 8h6 M9 12h6 M9 16.5l1.7 1.7L14 15",

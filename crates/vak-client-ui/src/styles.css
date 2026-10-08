@@ -410,6 +410,7 @@ html[data-visual-pack="dimensional"] .brand-wordmark { visibility: hidden; }
 .sidebar-settings kbd { color: var(--faint); background: transparent; border: 0; }
 .sb-search-row { display: flex; align-items: center; gap: 10px; width: calc(100% - 24px); min-height: 38px; margin: 0 var(--space-3) 6px; padding: 0 10px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text-soft); font-size: var(--fs-ui); text-align: left; }
 .sb-search-row:hover { color: var(--text); background: var(--surface-hover); }
+.sb-search-row.active { color: var(--text); background: var(--surface-hover); }
 .sb-search-row kbd { margin-left: auto; color: var(--faint); background: transparent; border: 0; font: 500 var(--fs-caption) var(--sans); }
 .sidebar-more { position: relative; }
 .sidebar-more > summary { display: grid; place-items: center; width: 34px; height: 34px; border-radius: var(--radius-sm); color: var(--text-soft); cursor: pointer; list-style: none; }

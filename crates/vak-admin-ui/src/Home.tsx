@@ -1508,7 +1508,7 @@ export function Home() {
             </div>
             <button class="ghost small" onClick={() => navigate("#/sessions")}>View all</button>
           </div>
-          <Show when={recentSessions().length > 0} fallback={<div class="empty">No sessions recorded yet.</div>}>
+          <Show when={recentSessions().length > 0} fallback={<div class="empty">No conversations recorded yet.</div>}>
             <div class="recent-sessions">
               <For each={recentSessions()}>
                 {(session) => (

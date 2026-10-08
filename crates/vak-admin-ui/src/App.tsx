@@ -467,7 +467,7 @@ function Transcript(props: { sessionId: string }) {
   return <SessionForensics sessionId={props.sessionId} />;
 }
 
-// ---- Extensions (MCP servers, skills, hooks, scheduled tasks) ---------------
+// ---- Extensions (MCP servers, plugins, skills, hooks) ------------------------
 
 /// Everything that widens what the agent can do, and what each thing is
 /// permitted to do once loaded. Four sub-routes, one per extension point,
@@ -484,7 +484,6 @@ const EXTENSION_TABS = [
 const KNOWLEDGE_TABS = [
   { hash: "#/memory", label: "Memory" },
   { hash: "#/sources", label: "Sources" },
-  { hash: "#/library", label: "Library" },
   { hash: "#/search", label: "Search" },
 ] as const;
 
@@ -1644,8 +1643,6 @@ Nothing runs alongside your turns. Add one to keep a record of what Vakyartha do
   );
 }
 
-// ---- Extensions › Scheduled tasks ------------------------------------------
-
 // ---- Extensions section shell ----------------------------------------------
 
 function ExtensionsSection() {
@@ -1818,7 +1815,7 @@ function noteAgeBucket(ts: string): "fresh" | "aging" | "stale" {
   return "stale";
 }
 
-function KnowledgeSubNav(props: { active: "#/memory" | "#/sources" | "#/library" | "#/search" }) {
+function KnowledgeSubNav(props: { active: "#/memory" | "#/sources" | "#/search" }) {
   return (
     <div class="knowledge-subnav">
       <a
@@ -1834,13 +1831,6 @@ function KnowledgeSubNav(props: { active: "#/memory" | "#/sources" | "#/library"
         classList={{ active: props.active === "#/sources" }}
       >
         Sources
-      </a>
-      <a
-        href="#/library"
-        class="knowledge-tab-btn"
-        classList={{ active: props.active === "#/library" }}
-      >
-        Library
       </a>
       <a
         href="#/search"
@@ -7183,8 +7173,9 @@ function navHref(hash: string): string {
 const NAV: NavItem[] = [
   { group: "Overview", hash: "#/overview", label: "Home", icon: ICONS.overview, scope: "global" },
   { group: "Overview", hash: "#/inbox", label: "Inbox", icon: ICONS.inbox, scope: "global", badge: () => unread().toString() || "" },
-  { group: "Work", hash: "#/sessions", label: "Sessions", icon: ICONS.sessions, scope: "global" },
+  { group: "Work", hash: "#/sessions", label: "Conversations", icon: ICONS.sessions, scope: "global" },
   { group: "Work", hash: "#/runs", label: "Runs", icon: ICONS.runs, scope: "global" },
+  { group: "Work", hash: "#/library", label: "Library", icon: ICONS.library, scope: "project" },
   { group: "Work", hash: "#/automations", label: "Automations", icon: ICONS.automations, scope: "project" },
   { group: "Work", hash: "#/commitments", label: "Commitments", icon: ICONS.commitments, scope: "project" },
   {
@@ -7250,7 +7241,7 @@ const NAV: NavItem[] = [
 ];
 
 function routeScope(current: string): NavItem["scope"] {
-  if (current === "#/sources" || current.startsWith("#/sources/") || current === "#/library" || current === "#/search" || current.startsWith("#/search/")) {
+  if (current === "#/sources" || current.startsWith("#/sources/") || current === "#/search" || current.startsWith("#/search/")) {
     return "project";
   }
   if (current === "#/sessions" || current.startsWith("#/sessions/")) return "global";
@@ -7462,7 +7453,6 @@ function LibrarySection() {
   const [detail] = createResource(open, (id) => api.libraryArtifact(id));
   return (
     <div class="view">
-      <KnowledgeSubNav active="#/library" />
       <PageHeader
         title="Library"
         description="Every deliverable your Agents made, across conversations, with each version and where it came from."
