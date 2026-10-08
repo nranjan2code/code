@@ -89,7 +89,7 @@ Known slow tests (each over 60 s, not failures):
 | 15d-c-c | M8.4c-c client: Canvas, Redline and Workbench on `/library`; Open in Library; star in Workbench; candidate file routes deleted | browser run | Done (2026-10-08) |
 | 15d-c-d | M8.4c-d `SharedConversation` reads through the artifact routes under the conversation grant | `conversation_grant_reaches_its_artifacts_until_broken` | Done (2026-10-08) |
 | 15d-c-e | M8.4c-e navigation reconciliation, admin and client | browser check | Done (2026-10-08) |
-| 15d-c-f | M8.4c-f acceptance run create → review → promote → share → comment → revise (gpt-6-luna, then create and review on Ollama) | `docs/audits/` record | Next |
+| 15d-c-f | M8.4c-f acceptance run create → review → promote → share → comment → revise (gpt-6-luna, then create and review on Ollama) | `docs/audits/` record | Done (2026-10-08), `docs/audits/acceptance-m8-library-2026-10-08.md`; M8 done |
 | 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | |
 
 Some large steps may need more than one commit, as M3b did. Add sub-rows

@@ -351,7 +351,10 @@ fn validate_chart_shapes(ops: &Value, pdf: bool) -> Option<String> {
 /// The refusal a text tool gives for an Office file or a PDF: a package is
 /// a ZIP of XML parts and a PDF a binary object graph, so a text read shows
 /// nothing useful and a text edit or write can only fail or destroy one.
-/// Names the tools that do handle it.
+/// Names the tools that do handle it, for a file that exists and for one
+/// still to be made: told only to read it first, a model asked to create a
+/// document read a file that was not there and stopped (live, the M8
+/// acceptance run on Ollama).
 pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
     let name = path.to_string_lossy();
     if vak_pdf::is_pdf_path(&name) {
@@ -364,7 +367,7 @@ pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
                 "{display} is a PDF, which {tool} cannot show. Read it with doc_read, which returns its text by page and line with anchors and a sha256."
             ),
             _ => format!(
-                "{display} is a PDF, which {tool} would corrupt; nothing was changed. Read it with doc_read, then change it with office_apply, which writes a draft for review."
+                "{display} is a PDF, which {tool} would corrupt; nothing was changed. Use office_apply, which writes a draft for review: to create {display}, give its path and the ops that add its content; to change one that exists, read it with doc_read first."
             ),
         });
     }
@@ -386,7 +389,7 @@ pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
             "{display} is {what}, a ZIP package that {tool} cannot show. Read it with doc_read, which returns its text with anchors and a sha256."
         ),
         _ => format!(
-            "{display} is {what}, a ZIP package that {tool} would corrupt; nothing was changed. Read it with doc_read, then change it with office_apply, which writes a draft for review."
+            "{display} is {what}, a ZIP package that {tool} would corrupt; nothing was changed. Use office_apply, which writes a draft for review: to create {display}, give its path and the ops that add its content; to change one that exists, read it with doc_read first."
         ),
     })
 }
@@ -840,6 +843,20 @@ fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    /// A text tool's refusal of a document says how to make a new one as
+    /// well as how to change one, and a read is pointed at doc_read.
+    #[test]
+    fn a_text_tools_refusal_says_how_to_create_a_document() {
+        let write = text_tool_refusal(std::path::Path::new("Launch brief.docx"), "write").unwrap();
+        assert!(write.contains("to create Launch brief.docx, give its path and the ops"));
+        assert!(write.contains("to change one that exists, read it with doc_read first"));
+        let pdf = text_tool_refusal(std::path::Path::new("report.pdf"), "edit").unwrap();
+        assert!(pdf.contains("to create report.pdf"));
+        let read = text_tool_refusal(std::path::Path::new("report.pdf"), "read").unwrap();
+        assert!(read.contains("doc_read") && !read.contains("to create"));
+        assert!(text_tool_refusal(std::path::Path::new("notes.md"), "write").is_none());
+    }
     use crate::sandbox_events::{SandboxEvent, SandboxEventSink};
 
     async fn run(dir: &Path, args: Value) -> ToolOutput {

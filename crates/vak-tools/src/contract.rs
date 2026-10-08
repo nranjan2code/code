@@ -174,7 +174,12 @@ fn check(schema: &Value, value: &Value, path: &str, problems: &mut Vec<String>) 
     }
     if let Some(properties) = properties {
         for (key, child_schema) in properties {
-            if let Some(child) = object.get(key) {
+            // An optional parameter sent as null is one left out: refused as
+            // "must be string", `"after": null` failed four of seven
+            // document-creating calls on a local model (live 2026-10-08).
+            if let Some(child) = object.get(key)
+                && !(child.is_null() && !required_keys.contains(&key.as_str()))
+            {
                 check(child_schema, child, &format!("{path}.{key}"), problems);
             }
         }
@@ -234,6 +239,24 @@ fn schema_type_label(types: &Value) -> String {
 mod tests {
     use super::validate_input;
     use serde_json::json;
+
+    #[test]
+    fn an_optional_parameter_sent_as_null_is_one_left_out() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "after": {"type": "string"}
+            },
+            "required": ["text"]
+        });
+        assert!(validate_input(&schema, &json!({"text": "Date", "after": null})).is_ok());
+        assert!(validate_input(&schema, &json!({"text": "Date", "after": 3})).is_err());
+        assert!(
+            validate_input(&schema, &json!({"text": null})).is_err(),
+            "a required parameter is still required"
+        );
+    }
 
     #[test]
     fn a_wrong_choice_is_answered_with_the_choices() {

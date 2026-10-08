@@ -643,8 +643,33 @@ pub(crate) fn attach(
     };
     // The digest stays in the typed attachment: shown to the model, it read
     // as an `office_apply` base digest.
+    // What people said about the current version is why it is being
+    // continued. Without it the Agent went looking for "the comments" in
+    // the conversations that made the file, where they never were (found in
+    // the M8 acceptance run).
+    let said: Vec<String> = artifact
+        .comments
+        .iter()
+        .filter(|comment| comment.version == head.id)
+        .map(|comment| {
+            let place = match (&comment.at_place.anchor, comment.at_place.line_start) {
+                (Some(anchor), _) => format!(" (at {anchor})"),
+                (None, Some(line)) => format!(" (line {line})"),
+                (None, None) => String::new(),
+            };
+            format!("- {}{place}: {}", comment.author_name, comment.text)
+        })
+        .collect();
+    let comments = if said.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nComments people left on version {number}:\n{}",
+            said.join("\n")
+        )
+    };
     let block = format!(
-        "[Library artifact] \"{}\": {kind} at {}, now at version {number} of {}.\nVersions:\n{}\n{ask}{reach}",
+        "[Library artifact] \"{}\": {kind} at {}, now at version {number} of {}.\nVersions:\n{}{comments}\n{ask}{reach}",
         artifact.name(),
         artifact.path,
         artifact.versions.len(),
@@ -1782,6 +1807,40 @@ mod tests {
         assert!(
             !block.contains("secret conversation words"),
             "no content, only records"
+        );
+        assert!(!block.contains("Comments people left"), "{block}");
+        let head = artifacts.get(&id.to_string()).unwrap().head().unwrap().id;
+        artifacts
+            .record(
+                id,
+                ArtifactStep::Commented {
+                    version: head,
+                    author: "prn_guest".into(),
+                    author_name: "Ravi".into(),
+                    text: "Add a one-line summary at the top.".into(),
+                    id: Some(vak_session::ids::CommentId::new()),
+                    at_place: vak_core::artifacts::Place {
+                        line_start: Some(1),
+                        ..Default::default()
+                    },
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        let (with_comments, _) = attach(
+            &core,
+            &ArtifactRef {
+                id: id.to_string(),
+                mode: vak_session::ArtifactMode::Continue,
+            },
+        )
+        .unwrap();
+        assert!(
+            with_comments.contains(
+                "Comments people left on version 1:\n- Ravi (line 1): Add a one-line summary at the top."
+            ),
+            "{with_comments}"
         );
         assert_eq!(
             attached.conversations,

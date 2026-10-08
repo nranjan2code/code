@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1803,6 +1803,21 @@ open their own screen, and the client's three rows open theirs. Not
 added: the items of milestones not built (Data health, Storage,
 Lifecycle, Integrity, Sync, Governance, Keys, Audit export, Backup &
 restore).
+
+M8.4c-f (2026-10-08): the acceptance run, recorded in
+`docs/audits/acceptance-m8-library-2026-10-08.md`. On `gpt-6-luna` every
+step passed through the running app: create, review, the Canvas, accept,
+Undo, accept again, a conversation guest, a share by link (which broke
+the guest's inheritance), comments from both guests in one thread,
+Continue working, and a second version made from the first and accepted.
+On local Ollama create and review passed on 5 of 8 create attempts
+(2 of 6 before the run's fixes). The run found and fixed four faults in
+Vak: the Workbench never showed Review, Undo or the checks for a draft
+(it looked for `.vak/scratch` in a path drafts left at M3b); Continue
+working did not tell the Agent the comments on the version; a text
+tool's refusal of a document sent a file not yet made to `doc_read`; and
+an optional parameter sent as null was refused. With it M8.4c and M8 are
+done, except erase, which is M7a's. The audit lists what stays open.
 
 Investigating the live failures of M8.3b and M8.4b found faults in
 Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):

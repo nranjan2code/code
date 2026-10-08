@@ -596,10 +596,17 @@ export default function WorkbenchPanel() {
     void reviewCandidate(requested.candidateId);
   });
 
-  // Only an execution that ran inside `.vak/scratch/` holds a draft to review
-  // and accept. A command that worked in the workspace already wrote its files
-  // where they belong, and the server refuses to export it as a candidate.
-  const ranInScratch = (exec: { scratchDir: string }) => /(^|[\\/])\.vak[\\/]scratch([\\/]|$)/.test(exec.scratchDir);
+  // Only an execution whose files are still in its own directory holds a
+  // draft to review and accept. A command that worked in the workspace
+  // already wrote its files where they belong, and the server refuses to
+  // export it as a candidate. The test is where the files are, never the
+  // directory's name: drafts left the project tree (invariant 35), and a
+  // test for `.vak/scratch` in the path then called every draft "written
+  // directly to the workspace" and hid Review, Undo and the checks.
+  const ranInScratch = (exec: { scratchDir: string; artifacts: Array<{ path: string }> }) => {
+    const root = exec.scratchDir.replace(/[\\/]+$/, "");
+    return root !== "" && exec.artifacts.some((artifact) => artifact.path.startsWith(`${root}/`) || artifact.path.startsWith(`${root}\\`));
+  };
   const candidatePath = (root: string, path: string) => `${root.replace(/\/$/, "")}/${path}`;
   const fileState = (file: { candidate_hash: string; base_hash?: string; operation?: "Upsert" | "Delete" }) =>
     file.operation === "Delete" ? "Deleted" : !file.base_hash ? "New" : file.base_hash === file.candidate_hash ? "Unchanged" : "Changed";
