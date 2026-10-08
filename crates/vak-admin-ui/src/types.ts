@@ -1499,6 +1499,7 @@ export interface DataStatus {
   at: string;
   mode: string;
   label: { id: string; name: string; rules: DataRule[] };
+  committed: string[];
   observed: string[];
   unobserved: string[];
   due: number;
@@ -1506,6 +1507,28 @@ export interface DataStatus {
   reclaimable_bytes: number;
   files: number;
   bytes: number;
+}
+
+export interface DataTransition {
+  at: string;
+  key: string;
+  class: string;
+  item: string;
+  does: string;
+  reason: string;
+  bytes: number;
+  files: number;
+  state: "started" | "committed" | "failed";
+  error_kind?: string;
+}
+
+export interface DataTick {
+  mode: string;
+  plan: DataPlan;
+  committed: DataTransition[];
+  failed: DataTransition[];
+  left: number;
+  reclaimed_bytes: number;
 }
 
 export interface DataUsage {

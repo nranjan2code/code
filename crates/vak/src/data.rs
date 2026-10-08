@@ -39,7 +39,14 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
     match action.unwrap_or(crate::cli::DataAction::Status) {
         crate::cli::DataAction::Status => {
             let status = core.data_status();
-            println!("retention     observing only: the plan is shown and nothing is removed");
+            println!(
+                "retention     {}",
+                if status.mode == "commit" {
+                    "removing what is due (for the kinds listed as carried out)"
+                } else {
+                    "observing only: the plan is shown and nothing is removed"
+                }
+            );
             println!("label         {}", status.label.name);
             println!(
                 "held          {} in {} files",
@@ -59,6 +66,7 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 classes.iter().map(name).collect::<Vec<_>>().join(", ")
             };
             println!("watched       {}", list(&status.observed));
+            println!("carried out   {}", list(&status.committed));
             println!("not watched   {}", list(&status.unobserved));
             0
         }
@@ -87,6 +95,46 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 size(usage.bytes)
             );
             0
+        }
+        crate::cli::DataAction::Gc { dry_run } => {
+            let allowed = core.config().lifecycle.commit;
+            let tick = core.lifecycle_tick(allowed && !dry_run);
+            for row in &tick.committed {
+                println!(
+                    "removed {:<16} {:>10}  {}",
+                    name(&row.class),
+                    size(row.bytes),
+                    row.item
+                );
+            }
+            for row in &tick.failed {
+                println!(
+                    "failed  {:<16} {}  ({})",
+                    name(&row.class),
+                    row.item,
+                    row.error_kind.as_deref().unwrap_or("unknown")
+                );
+            }
+            if tick.mode == "commit" {
+                println!(
+                    "removed {} items, {}; {} due items are of kinds not carried out yet",
+                    tick.committed.len(),
+                    size(tick.reclaimed_bytes),
+                    tick.left
+                );
+            } else {
+                println!(
+                    "{} items are due, {}; nothing was removed{}",
+                    tick.plan.actions.len(),
+                    size(tick.plan.reclaimable_bytes),
+                    if allowed || dry_run {
+                        ""
+                    } else {
+                        " (retention is observing; set [lifecycle] mode = \"commit\" to act)"
+                    }
+                );
+            }
+            i32::from(!tick.failed.is_empty())
         }
         crate::cli::DataAction::Plan { json } => {
             let plan = core.lifecycle_plan();

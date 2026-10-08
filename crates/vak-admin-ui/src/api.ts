@@ -2,6 +2,8 @@ import type {
   RunRecord,
   DataPlan,
   DataStatus,
+  DataTick,
+  DataTransition,
   DataUsage,
   TelemetryLine,
   TelemetrySpan,
@@ -184,6 +186,10 @@ export const api = {
   dataStatus: (): Promise<DataStatus> => fetch("/data/status").then((r) => handle(r)),
   dataUsage: (): Promise<DataUsage> => fetch("/data/usage").then((r) => handle(r)),
   dataPlan: (): Promise<DataPlan> => fetch("/data/lifecycle/plan").then((r) => handle(r)),
+  dataTransitions: (): Promise<{ transitions: DataTransition[] }> =>
+    fetch("/data/lifecycle/transitions").then((r) => handle(r)),
+  /** Runs a retention pass now; it removes only what this install's mode allows. */
+  dataTick: (): Promise<DataTick> => fetch("/data/lifecycle/tick", { method: "POST" }).then((r) => handle(r)),
 
   runs: (status?: string, limit = 200): Promise<{ runs: RunRecord[] }> => {
     const q = new URLSearchParams({ limit: String(limit) });

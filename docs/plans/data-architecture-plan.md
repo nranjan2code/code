@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans, and commits nothing), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-d's first part (a committing pass for environments and rotated logs, off unless `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1670,6 +1670,44 @@ M7a-b is done with this part.
   `reconciler_observe_only_commits_nothing` (vak-core: the file tree of
   the data home, logs and runtime is identical before and after),
   `data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only`.
+
+**M7a-d, in parts; part 1 done 2026-10-08: the committing pass.**
+- `[lifecycle] mode` is `observe` by default and `commit` when set; it is
+  privileged, so a project cannot turn another install's retention on.
+  The default becomes `commit` at M7a-i, after the soak and the
+  acceptance run; until then an install that has not asked keeps
+  everything, and the dev machine's real data home is never acted on.
+- `Core::lifecycle_tick(commit)` observes, plans and, when committing,
+  carries out the due actions of `lifecycle::COMMITTED`: a settled run's
+  environment and a rotated log, each removed in place with no grace.
+  Every transition is a row of the `lifecycle/` chain, written `started`
+  before the item is touched and `committed` or `failed` after, with ids,
+  sizes and an `error_kind`, never content. A fenced process commits
+  nothing; an item already gone is recorded committed.
+- The server runs a pass at start and every ten minutes when the mode is
+  `commit`. `POST /data/lifecycle/tick` runs one now and
+  `GET /data/lifecycle/transitions` lists what was done; a request cannot
+  ask for more than the install's mode allows. `vak data gc [--dry-run]`
+  does the same from the CLI. The admin console's Data › Retention says
+  which mode applies, has Run now, and lists what retention removed.
+- Tests: `a_committing_pass_removes_what_was_due_and_records_it`; the
+  data routes test covers the tick route observing.
+- Live, on a throwaway `VAK_HOME` in commit mode (2026-10-08): a seeded
+  stale environment and an old rotated log were planned, removed by
+  `POST /data/lifecycle/tick` (17 bytes) and listed on the Retention
+  screen; a fresh environment and the log being written stayed.
+- Not in this part: the lifecycle chain is not yet a catalog source (it
+  becomes one with "Why is this gone?" at M7a-e).
+
+Still to do in M7a-d:
+- **Part 2:** observers and commit for executions (after settling where
+  an unreviewed draft's files are kept: they are in the execution's
+  directory today), checkpoints, Document history, inbox entries and cost
+  and activity segments; the scattered retention goes with them
+  (`MAX_STORED_CHECKPOINTS`, finops and alerts compaction,
+  `cleanup_artifacts`, `/memory/cleanup`). `settled_execution_leaves_nothing`.
+- **Part 3:** object GC and quotas. `gc_keeps_everything_reachable`,
+  `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

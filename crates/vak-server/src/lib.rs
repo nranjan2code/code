@@ -919,6 +919,11 @@ fn router_with_state(state: AppState) -> Router {
         .route("/data/status", get(data_status))
         .route("/data/usage", get(data_usage))
         .route("/data/lifecycle/plan", get(data_lifecycle_plan))
+        .route("/data/lifecycle/tick", post(data_lifecycle_tick))
+        .route(
+            "/data/lifecycle/transitions",
+            get(data_lifecycle_transitions),
+        )
         .route("/runs", get(runs_list))
         .route("/runs/{id}", get(run_detail))
         .route("/runs/{id}/spans", get(telemetry::run_spans))
@@ -7439,6 +7444,24 @@ async fn data_usage(State(state): State<AppState>) -> axum::response::Response {
 /// The dry-run plan: what the reconciler would do now. Nothing is done.
 async fn data_lifecycle_plan(State(state): State<AppState>) -> axum::response::Response {
     data_read(state, |core| core.lifecycle_plan()).await
+}
+
+/// Runs a pass now. It carries the plan out only when `[lifecycle] mode`
+/// is `commit`; a request cannot ask for more than the install allows.
+async fn data_lifecycle_tick(State(state): State<AppState>) -> axum::response::Response {
+    data_read(state, |core| {
+        core.lifecycle_tick(core.config().lifecycle.commit)
+    })
+    .await
+}
+
+/// The newest transitions the reconciler made, began or could not make.
+async fn data_lifecycle_transitions(State(state): State<AppState>) -> axum::response::Response {
+    data_read(
+        state,
+        |core| serde_json::json!({ "transitions": core.lifecycle_transitions(200) }),
+    )
+    .await
 }
 
 async fn runs_list(
@@ -19044,6 +19067,21 @@ pub fn start_scheduler(state: &AppState) {
             if background_work_allowed(&st) {
                 sweep_abandoned_runs(&st);
                 scheduler_tick(&st).await;
+            }
+        }
+    });
+    // The lifecycle reconciler (plan M7a-d): one pass at start and one
+    // every ten minutes. It carries its plan out only when `[lifecycle]
+    // mode = "commit"`; otherwise it observes, and a person reads the plan.
+    let st = state.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            if !vak_session::fence::is_fenced() && st.core.config().lifecycle.commit {
+                let core = st.core.clone();
+                let _ = tokio::task::spawn_blocking(move || core.lifecycle_tick(true)).await;
             }
         }
     });

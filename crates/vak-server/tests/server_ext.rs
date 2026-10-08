@@ -2472,6 +2472,27 @@ async fn data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only() {
     assert!(usage["rows"].is_array() && usage["bytes"].is_u64());
     let plan = read("/data/lifecycle/plan").await;
     assert!(plan["actions"].is_array());
+    // A pass asked for over HTTP does what the install's mode allows and
+    // no more: this one observes.
+    let anon = client
+        .post(format!("{base}/data/lifecycle/tick"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(anon.status(), 401);
+    let tick: serde_json::Value = client
+        .post(format!("{base}/data/lifecycle/tick"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(tick["mode"], "observe");
+    assert_eq!(tick["committed"], serde_json::json!([]));
+    let made = read("/data/lifecycle/transitions").await;
+    assert_eq!(made["transitions"], serde_json::json!([]));
     assert!(
         plan["unobserved"]
             .as_array()

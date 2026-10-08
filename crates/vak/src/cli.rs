@@ -614,6 +614,13 @@ pub(crate) enum DataAction {
     Status,
     /// Measured storage by root, class and owner
     Usage,
+    /// Run retention now. It removes what is due only when `[lifecycle]
+    /// mode = "commit"`; otherwise, or with --dry-run, it shows the plan
+    Gc {
+        /// Show the plan and remove nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// What retention would remove or move to the trash now (a dry run)
     Plan {
         /// Print the plan as JSON

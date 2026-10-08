@@ -4,9 +4,9 @@
 /// run, shown and not carried out, and a kind of data nothing watches yet
 /// is named as such rather than counted as nothing due.
 
-import { createResource, For, Show } from "solid-js";
+import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
-import type { DataPlan, DataStatus, DataUsage } from "./types";
+import type { DataPlan, DataStatus, DataTransition, DataUsage } from "./types";
 
 function size(bytes: number): string {
   const units = ["B", "KB", "MB", "GB"];
@@ -30,30 +30,63 @@ const KEEP_DAYS = (secs?: number) => (secs ? `${Math.round(secs / 86400)} days` 
 function Retention() {
   const [status] = createResource<DataStatus>(() => api.dataStatus());
   const [plan, { refetch }] = createResource<DataPlan>(() => api.dataPlan());
+  const [made, { refetch: reread }] = createResource<{ transitions: DataTransition[] }>(() => api.dataTransitions());
+  const [running, setRunning] = createSignal(false);
+  const [ran, setRan] = createSignal("");
+  const acting = () => status()?.mode === "commit";
+  const runNow = async () => {
+    setRunning(true);
+    setRan("");
+    try {
+      const tick = await api.dataTick();
+      setRan(
+        tick.mode === "commit"
+          ? `Removed ${tick.committed.length} ${tick.committed.length === 1 ? "item" : "items"}, ${size(tick.reclaimed_bytes)}.${tick.failed.length ? ` ${tick.failed.length} could not be removed.` : ""}`
+          : "Looked again. Nothing was removed.",
+      );
+      void refetch();
+      void reread();
+    } catch (error) {
+      setRan(`Could not run retention: ${error}`);
+    } finally {
+      setRunning(false);
+    }
+  };
+  const done = () => (made()?.transitions ?? []).filter((row) => row.state !== "started");
   return (
     <>
       <section class="panel">
         <div class="panel-title-row">
           <div>
             <h2>What retention would do now</h2>
-            <p class="dim">Retention is observing only: this is the plan it would run. Nothing here has been removed.</p>
+            <Show
+              when={acting()}
+              fallback={<p class="dim">Retention is observing only: this is the plan it would run. Nothing here has been removed.</p>}
+            >
+              <p class="dim">
+                Retention removes what is due for: {(status()?.committed ?? []).map(words).join(", ")}. It runs every ten minutes; other kinds are shown and left alone.
+              </p>
+            </Show>
           </div>
-          <button class="ghost small" disabled={plan.loading} onClick={() => void refetch()}>Look again</button>
+          <button class="ghost small" disabled={plan.loading || running()} onClick={() => void runNow()}>
+            {acting() ? "Run now" : "Look again"}
+          </button>
         </div>
+        <Show when={ran()}><p role="status">{ran()}</p></Show>
         <Show when={!plan.error} fallback={<p class="dim">Could not read the plan: {`${plan.error}`}</p>}>
           <Show when={plan()} fallback={<p class="dim">Reading the data home…</p>}>
-            {(made) => (
+            {(planned) => (
               <>
                 <p>
-                  <strong>{made().actions.length}</strong> {made().actions.length === 1 ? "item is" : "items are"} due, {size(made().reclaimable_bytes)} in all.
-                  {" "}<strong>{made().guarded.length}</strong> past their time are kept back.
+                  <strong>{planned().actions.length}</strong> {planned().actions.length === 1 ? "item is" : "items are"} due, {size(planned().reclaimable_bytes)} in all.
+                  {" "}<strong>{planned().guarded.length}</strong> past their time are kept back.
                 </p>
-                <Show when={made().actions.length > 0}>
+                <Show when={planned().actions.length > 0}>
                   <div class="ops-table-wrap">
                     <table class="ops-table">
                       <thead><tr><th>Would</th><th>Kind</th><th>Why</th><th>Due since</th><th>Size</th><th>Item</th></tr></thead>
                       <tbody>
-                        <For each={made().actions}>
+                        <For each={planned().actions}>
                           {(action) => (
                             <tr>
                               <td>{DOES[action.does] ?? action.does}</td>
@@ -69,13 +102,13 @@ function Retention() {
                     </table>
                   </div>
                 </Show>
-                <Show when={made().guarded.length > 0}>
+                <Show when={planned().guarded.length > 0}>
                   <h3>Kept back</h3>
                   <div class="ops-table-wrap">
                     <table class="ops-table">
                       <thead><tr><th>Kind</th><th>Why it stays</th><th>Item</th></tr></thead>
                       <tbody>
-                        <For each={made().guarded}>
+                        <For each={planned().guarded}>
                           {(kept) => (
                             <tr><td>{words(kept.class)}</td><td>{KEPT[kept.guard] ?? kept.guard}</td><td class="mono">{kept.item}</td></tr>
                           )}
@@ -84,14 +117,38 @@ function Retention() {
                     </table>
                   </div>
                 </Show>
-                <Show when={made().unobserved.length > 0}>
-                  <p class="dim">Not watched yet, so nothing is planned for them: {made().unobserved.map(words).join(", ")}.</p>
+                <Show when={planned().unobserved.length > 0}>
+                  <p class="dim">Not watched yet, so nothing is planned for them: {planned().unobserved.map(words).join(", ")}.</p>
                 </Show>
               </>
             )}
           </Show>
         </Show>
       </section>
+      <Show when={done().length > 0}>
+        <section class="panel">
+          <h2>What retention has removed</h2>
+          <div class="ops-table-wrap">
+            <table class="ops-table">
+              <thead><tr><th>When</th><th>Result</th><th>Kind</th><th>Why</th><th>Size</th><th>Item</th></tr></thead>
+              <tbody>
+                <For each={done()}>
+                  {(row) => (
+                    <tr>
+                      <td>{new Date(row.at).toLocaleString()}</td>
+                      <td>{row.state === "committed" ? "Removed" : `Could not remove${row.error_kind ? ` (${row.error_kind})` : ""}`}</td>
+                      <td>{words(row.class)}</td>
+                      <td>{WHY[row.reason] ?? row.reason}</td>
+                      <td>{size(row.bytes)}</td>
+                      <td class="mono">{row.item}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </Show>
       <section class="panel">
         <h2>How long each kind is kept</h2>
         <Show when={status()} fallback={<p class="dim">{status.error ? `Could not read the label: ${status.error}` : "Reading…"}</p>}>

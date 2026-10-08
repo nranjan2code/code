@@ -342,6 +342,11 @@ impl SharedScope {
 
     /// The rollup Document of [`SharedScope::artifacts`]: each artifact's
     /// current state.
+    /// The lifecycle reconciler's transition records (plan M7a-d).
+    pub fn lifecycle(&self) -> PathBuf {
+        self.root.join("lifecycle")
+    }
+
     pub fn artifacts_rollup(&self) -> PathBuf {
         self.root.join("artifacts-rollup")
     }

@@ -169,6 +169,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub probe: ProbeSettings,
     #[serde(default)]
+    pub lifecycle: LifecycleSettings,
+    #[serde(default)]
     pub intent: IntentSettings,
     #[serde(default)]
     pub commitment: CommitmentSettings,
@@ -574,6 +576,24 @@ pub struct ProbeSettings {
     /// feedback; "full" opts in to running the horizon ladder against
     /// hosted models too.
     pub hosted: Option<String>,
+}
+
+/// `[lifecycle]`: whether retention acts or only shows its plan
+/// (data-architecture plan M7a-d). Privileged: a project cannot make
+/// another install's retention start removing things.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct LifecycleSettings {
+    /// "observe" (default) computes and shows the plan and removes
+    /// nothing; "commit" also carries out the kinds whose commit is built.
+    pub mode: Option<String>,
+}
+
+/// Resolved retention mode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleResolved {
+    /// Whether the reconciler carries out its plan.
+    pub commit: bool,
 }
 
 /// Resolved capacity-probe policy.
@@ -1295,6 +1315,7 @@ pub struct Config {
     pub work: WorkResolved,
     pub route: RouteResolved,
     pub probe: ProbeResolved,
+    pub lifecycle: LifecycleResolved,
     pub intent: IntentResolved,
     pub commitment: CommitmentResolved,
     pub automation: AutomationResolved,
@@ -1624,6 +1645,7 @@ impl Default for Config {
             probe: ProbeResolved {
                 hosted: "none".into(),
             },
+            lifecycle: LifecycleResolved { commit: false },
             intent: IntentResolved {
                 enabled: true,
                 accept_confidence: 0.75,
@@ -2834,6 +2856,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             // whoever can reach the port — a cloned repository that could
             // set these would be handing itself the machine.
             fc.server = ServerSettings::default();
+            fc.lifecycle = LifecycleSettings::default();
             fc.plugins.network_allow = None;
             fc.plugins.allow = None;
             warnings.push(format!(
@@ -3061,6 +3084,17 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .iter()
         .map(|h| h.to_ascii_lowercase())
         .collect();
+
+    cfg.lifecycle.commit = match merged.lifecycle.mode.as_deref() {
+        None | Some("observe") => false,
+        Some("commit") => true,
+        Some(other) => {
+            cfg.warnings.push(format!(
+                "unknown lifecycle.mode '{other}'; using 'observe' (valid: observe | commit)"
+            ));
+            false
+        }
+    };
 
     cfg.probe.hosted = match merged.probe.hosted.as_deref() {
         None | Some("none") => "none".into(),
@@ -3451,6 +3485,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "intent",
     "voice",
     "probe",
+    "lifecycle",
     "providers",
 ];
 const KNOWN_PLUGINS_KEYS: &[&str] = &[
@@ -4137,6 +4172,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.probe.hosted.is_some() {
         base.probe.hosted = over.probe.hosted;
+    }
+    if over.lifecycle.mode.is_some() {
+        base.lifecycle.mode = over.lifecycle.mode;
     }
     if over.providers.ollama.keep_alive.is_some() {
         base.providers.ollama.keep_alive = over.providers.ollama.keep_alive;
