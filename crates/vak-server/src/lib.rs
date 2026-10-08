@@ -29,8 +29,8 @@
 //! - `PATCH/DELETE /memory/:note_id`  → amend / forget one memory note
 //! - `GET  /search?all=true`          → cross-project recall (23-memory)
 //! - `GET  /doctor?session=`          → HealthReport JSON (29-personal-os P3)
-//! - `POST /backup/export`            → directory backup of the home dir
-//! - `POST /backup/import`            → restore with skip-or-rename conflicts
+//! - `POST /data/backups`             → directory backup of the home dir
+//! - `POST /data/backups/restore`     → restore; erasures are applied again
 //! - `GET  /digest?days=N`            → usage digest over the trailing window
 //! - `GET  /inbox?limit=&unread=true` → inbox entries + unread count (29-personal-os P6)
 //! - `POST /inbox/:id/ack`            → idempotent read-state tombstone
@@ -1407,8 +1407,12 @@ fn router_with_state(state: AppState) -> Router {
         .route("/pty", get(web::pty_socket))
         .route("/voice/session", get(voice::voice_socket))
         .route("/version", get(web::version))
-        .route("/backup/export", post(backup_export))
-        .route("/backup/import", post(backup_import))
+        .route("/data/backups", post(backup_export))
+        .route(
+            "/data/backups/restore/preview",
+            post(backup_restore_preview),
+        )
+        .route("/data/backups/restore", post(backup_import))
         .route("/digest", get(digest_report))
         .route("/inbox", get(inbox_list))
         .route("/inbox/unread_count", get(inbox_unread_count))
@@ -9392,6 +9396,26 @@ struct BackupExportBody {
     include_secrets: bool,
 }
 
+/// What restoring a backup here would do: its manifest, and the erasures
+/// recorded since it was taken, which the restore applies again.
+async fn backup_restore_preview(
+    State(state): State<AppState>,
+    Json(body): Json<BackupImportBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let src = std::path::PathBuf::from(body.src_dir.trim());
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.restore_preview(&src)).await {
+        Ok(Ok(preview)) => Json(serde_json::json!({ "preview": preview })).into_response(),
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct BackupImportBody {
     src_dir: String,
@@ -9417,10 +9441,8 @@ async fn backup_export(
         )
             .into_response();
     }
-    match tokio::task::spawn_blocking(move || {
-        vak_core::backup::export_to(&home, &dest, body.include_secrets)
-    })
-    .await
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.backup_create(&dest, body.include_secrets)).await
     {
         Ok(Ok(manifest)) => (
             StatusCode::OK,
@@ -9472,16 +9494,13 @@ async fn backup_import(
                 .into_response();
         }
     };
-    match tokio::task::spawn_blocking(move || vak_core::backup::import_from(&src, &home, conflict))
-        .await
-    {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.backup_restore(&src, conflict)).await {
+        // The restore moved the store's writer epoch: this server is fenced
+        // from here on and says so, so the person starts it again.
         Ok(Ok(report)) => (
             StatusCode::OK,
-            Json(serde_json::json!({
-                "copied": report.copied,
-                "renamed": report.renamed,
-                "skipped": report.skipped,
-            })),
+            Json(serde_json::json!({ "report": report, "restart_required": true })),
         )
             .into_response(),
         Ok(Err(e)) => (

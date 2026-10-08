@@ -57,7 +57,7 @@ consumers.
 | GET | `/sessions/:id/receipts` | dispatch forensics: per-attempt walk receipts |
 | GET | `/doctor?session=` | `HealthReport` JSON (checks/facts/frozen-ladder) |
 | GET | `/digest?days=N` | usage rollup from the cost ledger + memory/skill deltas (1–90) |
-| POST | `/backup/export` `{dest_dir,include_secrets?}` / `/backup/import` `{src_dir,conflict?}` | home backup round-trip; secrets excluded by default; 400 when source/target equals the home itself |
+| POST | `/data/backups` `{dest_dir,include_secrets?}` / `/data/backups/restore/preview` `{src_dir}` / `/data/backups/restore` `{src_dir,conflict?}` | backup of the data home as stored (encrypted) with its manifest; restore never overwrites, applies every recorded erasure again and moves the writer epoch, so the server must be started again; 400 when source or target is the home itself |
 | GET | `/skills/proposals` (+ promote/reject) | learned-skill review queue; proposals carry a `duplicate-of:` screening tag where applicable |
 | GET | `/intent/explain?prompt=&surface=&act=&horizon=&stakes=&evidence=` | resolve a prompt without running it: reading, engagement, every contributing signal, and the diff against the unrestricted baseline. Free tiers only, so it costs nothing and dispatches nothing — safe to call from a composer as the user types (`docs/design/47-commitment-kernel.md`) |
 | GET | `/intent/policy` | resolved `[intent]` + `[commitment]` policy for this workspace |

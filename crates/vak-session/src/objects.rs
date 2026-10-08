@@ -225,6 +225,23 @@ impl TenantObjects {
         self.scopes.is_shredded(scope)
     }
 
+    /// Destroys again every key a restored backup brought back for a
+    /// scope that was destroyed (`ScopeKeys::reshred`), and forgets every
+    /// key this process had unwrapped. Returns how many it removed.
+    pub fn reapply_destroyed_keys(&self) -> Result<usize, SessionError> {
+        crate::fence::check()?;
+        let removed = self.scopes.reshred().map_err(objects_error)?;
+        if let Ok(mut unwrapped) = self.unwrapped.lock() {
+            unwrapped.clear();
+        }
+        Ok(removed)
+    }
+
+    /// How many scopes have a key, and how many were destroyed.
+    pub fn scope_counts(&self) -> (usize, usize) {
+        self.scopes.counts()
+    }
+
     /// Destroys `scope`'s key: every frame sealed under it and every object
     /// granted only to it stops being readable, and no byte of either
     /// changes. Refused while the scope is held.

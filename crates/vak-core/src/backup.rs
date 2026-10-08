@@ -50,6 +50,22 @@ pub struct BackupManifest {
     /// one). Interim until erasure and restore epochs (plan M7a, M9).
     #[serde(default)]
     pub content_keys_included: bool,
+    /// The tenant store's writer epoch and ref generation when the backup
+    /// was taken (plan M7a-h). Absent in a backup made by `export_to`
+    /// alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_generation: Option<u64>,
+    /// How many scopes had a key and how many had been destroyed.
+    #[serde(default)]
+    pub scope_keys: u64,
+    #[serde(default)]
+    pub scopes_destroyed: u64,
+    /// The erasure watermark: the id of every erasure receipt the backup
+    /// holds. An erasure recorded since is re-applied on restore.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub erasures: Vec<String>,
 }
 
 impl Default for BackupManifest {
@@ -61,6 +77,11 @@ impl Default for BackupManifest {
             total_bytes: 0,
             secrets_copied: false,
             content_keys_included: false,
+            store_epoch: None,
+            ref_generation: None,
+            scope_keys: 0,
+            scopes_destroyed: 0,
+            erasures: Vec::new(),
         }
     }
 }
@@ -228,6 +249,177 @@ pub fn export_to(
     .map_err(|source| io_err(&dest_dir.join(MANIFEST_NAME), source))?;
 
     Ok(manifest)
+}
+
+/// Reads a backup's manifest.
+pub fn read_manifest(src_dir: &Path) -> Result<BackupManifest, BackupError> {
+    let path = src_dir.join(MANIFEST_NAME);
+    let text = std::fs::read_to_string(&path).map_err(|_| BackupError::InvalidBackup {
+        path: src_dir.to_path_buf(),
+        reason: "it has no manifest, so it is not a backup".into(),
+    })?;
+    serde_json::from_str(&text).map_err(|source| BackupError::Manifest { path, source })
+}
+
+fn write_manifest(dest_dir: &Path, manifest: &BackupManifest) -> Result<(), BackupError> {
+    let path = dest_dir.join(MANIFEST_NAME);
+    let text = serde_json::to_string_pretty(manifest).map_err(|source| BackupError::Manifest {
+        path: path.clone(),
+        source,
+    })?;
+    std::fs::write(&path, text).map_err(|source| io_err(&path, source))
+}
+
+/// What restoring a backup would do, before anything is copied.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RestorePreview {
+    pub manifest: BackupManifest,
+    /// Erasures recorded here since the backup was taken, by receipt id.
+    /// The backup still holds what they erased; restore erases it again.
+    pub erasures_to_reapply: Vec<String>,
+}
+
+/// What a restore did.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RestoreReport {
+    pub copied: usize,
+    pub renamed: usize,
+    pub skipped: usize,
+    /// Erasures recorded here that the backup predates.
+    pub erasures_reapplied: usize,
+    /// Keys the backup brought back for scopes that were destroyed, and
+    /// that were destroyed again.
+    pub keys_removed: usize,
+    pub objects_deleted: usize,
+    /// The store's writer epoch after the restore: every process that had
+    /// the store open before is fenced and must be started again.
+    pub writer_epoch: u64,
+}
+
+impl crate::Core {
+    fn local_tenant(
+        &self,
+    ) -> Result<std::sync::Arc<vak_session::objects::TenantObjects>, BackupError> {
+        let home = self.shared_scope().into_root();
+        vak_session::objects::TenantObjects::for_tenant(&vak_config::paths::tenant_home_at(
+            &home,
+            vak_config::paths::LOCAL_TENANT,
+        ))
+        .map_err(|error| BackupError::InvalidBackup {
+            path: home,
+            reason: error.to_string(),
+        })
+    }
+
+    /// Backs the data home up into `dest_dir`: the records and objects as
+    /// they are stored, which is encrypted, the wrapped keys, and a
+    /// manifest that says where the store stood (its writer epoch and ref
+    /// generation, its keys, and which erasures it already holds).
+    pub fn backup_create(
+        &self,
+        dest_dir: &Path,
+        include_secrets: bool,
+    ) -> Result<BackupManifest, BackupError> {
+        let home = self.shared_scope().into_root();
+        let tenant = self.local_tenant()?;
+        // Read before the copy: a backup may hold more than its manifest
+        // says, never less, so nothing it lacks is counted as kept.
+        let store = tenant.store();
+        let epoch = store.epoch().ok();
+        let generation = store.commit_generation().ok();
+        let (keys, destroyed) = tenant.scope_counts();
+        let erasures = self
+            .erasure_receipts()
+            .into_iter()
+            .map(|receipt| receipt.id)
+            .collect();
+        let mut manifest = export_to(&home, dest_dir, include_secrets)?;
+        manifest.version = 2;
+        manifest.store_epoch = epoch;
+        manifest.ref_generation = generation;
+        manifest.scope_keys = keys as u64;
+        manifest.scopes_destroyed = destroyed as u64;
+        manifest.erasures = erasures;
+        write_manifest(dest_dir, &manifest)?;
+        Ok(manifest)
+    }
+
+    /// What restoring `src_dir` here would do.
+    pub fn restore_preview(&self, src_dir: &Path) -> Result<RestorePreview, BackupError> {
+        let manifest = read_manifest(src_dir)?;
+        let erasures_to_reapply = self
+            .erasure_receipts()
+            .into_iter()
+            .map(|receipt| receipt.id)
+            .filter(|id| !manifest.erasures.contains(id))
+            .collect();
+        Ok(RestorePreview {
+            manifest,
+            erasures_to_reapply,
+        })
+    }
+
+    /// Restores `src_dir` into this data home. Nothing here is overwritten
+    /// or deleted. Before the restore ends, every erasure this home has on
+    /// record is applied again: a key the backup brought back for a
+    /// destroyed scope is destroyed, each erased conversation is marked
+    /// erased, the rollups and search are rebuilt from the records, and
+    /// what no key holds is deleted. Last, the store's writer epoch moves,
+    /// which fences every process that had it open, this one included.
+    pub fn backup_restore(
+        &self,
+        src_dir: &Path,
+        conflict: Conflict,
+    ) -> Result<RestoreReport, BackupError> {
+        let failed = |reason: String| BackupError::InvalidBackup {
+            path: src_dir.to_path_buf(),
+            reason,
+        };
+        vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
+        let preview = self.restore_preview(src_dir)?;
+        let home = self.shared_scope().into_root();
+        let imported = import_from(src_dir, &home, conflict)?;
+        let tenant = self.local_tenant()?;
+        let keys_removed = tenant
+            .reapply_destroyed_keys()
+            .map_err(|error| failed(error.to_string()))?;
+        let shared = self.shared_scope();
+        let erased: Vec<String> = self
+            .erasure_receipts()
+            .into_iter()
+            .filter(|receipt| receipt.scope == "conversation")
+            .map(|receipt| receipt.subject)
+            .collect();
+        crate::trash::mark_erased(&shared, &erased).map_err(|error| failed(error.to_string()))?;
+        let _ = vak_session::documents::forget(&shared.artifacts_rollup());
+        self.catalog()
+            .map_err(|error| failed(error.to_string()))?
+            .rebuild_after_erasure()
+            .map_err(|error| failed(error.to_string()))?;
+        let objects_deleted = {
+            use vak_session::objects::Objects;
+            tenant.collect().unwrap_or(0)
+        };
+        let writer_epoch = tenant
+            .store()
+            .restore()
+            .map_err(|error| failed(error.to_string()))?;
+        tracing::info!(
+            kind = "backup",
+            outcome = "restored",
+            count = keys_removed,
+            "a backup was restored and its erasures applied again"
+        );
+        Ok(RestoreReport {
+            copied: imported.copied,
+            renamed: imported.renamed,
+            skipped: imported.skipped,
+            erasures_reapplied: preview.erasures_to_reapply.len(),
+            keys_removed,
+            objects_deleted,
+            writer_epoch,
+        })
+    }
 }
 
 /// What to do when a restored file already exists at the destination.

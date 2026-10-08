@@ -22,13 +22,13 @@ pub fn run_backup(cwd: PathBuf, action: crate::cli::BackupAction) -> i32 {
         crate::cli::BackupAction::Export {
             dir,
             include_secrets,
-        } => export(&home, &dir, include_secrets),
+        } => export(&core, &home, &dir, include_secrets),
         crate::cli::BackupAction::Import { dir, conflict } => {
             let Some(mode) = parse_conflict(&conflict) else {
                 eprintln!("error: unknown --conflict '{conflict}' (skip | rename)");
                 return 2;
             };
-            import(&home, &dir, mode)
+            import(&core, &home, &dir, mode)
         }
     }
 }
@@ -41,7 +41,7 @@ fn parse_conflict(word: &str) -> Option<Conflict> {
     }
 }
 
-fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
+fn export(core: &Core, home: &Path, dir: &Path, include_secrets: bool) -> i32 {
     if backup::within_home(dir, home) {
         eprintln!(
             "error: refusing to export into the live vak home ({}) — pick a directory outside it",
@@ -59,7 +59,7 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
         eprintln!("!! Store that directory encrypted and share it with no one.");
         eprintln!();
     }
-    match backup::export_to(home, dir, include_secrets) {
+    match core.backup_create(dir, include_secrets) {
         Ok(manifest) => {
             println!(
                 "backed up {} file(s), {} bytes → {}",
@@ -87,7 +87,7 @@ fn export(home: &Path, dir: &Path, include_secrets: bool) -> i32 {
     }
 }
 
-fn import(home: &Path, dir: &Path, conflict: Conflict) -> i32 {
+fn import(core: &Core, home: &Path, dir: &Path, conflict: Conflict) -> i32 {
     if backup::within_home(dir, home) {
         eprintln!(
             "error: refusing to import from the live vak home ({}) — pick a backup directory outside it",
@@ -95,7 +95,7 @@ fn import(home: &Path, dir: &Path, conflict: Conflict) -> i32 {
         );
         return 2;
     }
-    match backup::import_from(dir, home, conflict) {
+    match core.backup_restore(dir, conflict) {
         Ok(report) => {
             println!(
                 "restored {} file(s) into {} ({} renamed aside, {} skipped as already present)",
@@ -103,6 +103,16 @@ fn import(home: &Path, dir: &Path, conflict: Conflict) -> i32 {
                 home.display(),
                 report.renamed,
                 report.skipped
+            );
+            if report.erasures_reapplied > 0 || report.keys_removed > 0 {
+                println!(
+                    "{} erasure(s) recorded since this backup were applied again ({} key(s) it brought back were destroyed)",
+                    report.erasures_reapplied, report.keys_removed
+                );
+            }
+            println!(
+                "Vakyartha must be started again: anything that was running is now refused writes (writer epoch {})",
+                report.writer_epoch
             );
             0
         }

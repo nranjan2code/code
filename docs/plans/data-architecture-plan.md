@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-h (2026-10-08: a restore applies every recorded erasure again and moves the writer epoch), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -2103,6 +2103,52 @@ joined through a link the owner shared. Both erasures are the owner's.
   refreshes the sidebar; those two changes were not seen again in the
   browser.
 - Test: `revoke_cuts_endpoints_within_one_tick`.
+
+**M7a-h, done 2026-10-08: backup and restore.**
+- A backup is the data home as it is stored: records and objects, which
+  are encrypted, and the wrapped scope keys with their tombstones.
+  `Core::backup_create` writes manifest version 2, which adds the tenant
+  store's writer epoch and ref generation, how many scopes had a key and
+  how many were destroyed, and the erasure watermark (the id of every
+  receipt the backup holds).
+- The hazard this closes, shown by the tests: a backup taken before an
+  erasure holds the destroyed scope's wrapped key, and a restore put that
+  key file back.
+- `Core::backup_restore` copies as before (nothing here is overwritten or
+  deleted), then, before it ends: destroys again the key of every scope
+  that has a tombstone (`ScopeKeys::reshred`,
+  `TenantObjects::reapply_destroyed_keys`), marks each erased
+  conversation erased, forgets the rollups, rebuilds search from the
+  records (`Catalog::rebuild_after_erasure`), deletes what no key holds,
+  and last moves the store's writer epoch (`Store::restore`). Every
+  process that had the store open is then fenced, the restoring one
+  included: it must be started again, and `/health` says `fenced`.
+- `Core::restore_preview` reads a backup's manifest and names the
+  erasures recorded here since it was taken. A folder with no manifest
+  is not a backup.
+- `POST /data/backups`, `/data/backups/restore/preview` and
+  `/data/backups/restore` replace `/backup/export` and `/backup/import`.
+  `vak backup export|import` keeps its name and now does the same; a
+  `vak data backup` beside it would have been a second way to do one
+  thing (invariant 30).
+- Screen (A16): the client's Settings backup card asks before restoring,
+  says how many things deleted since the backup stay deleted, and says
+  Vakyartha must be started again.
+- Not built, against the plan's list for the manifest: record heads, an
+  object inventory, per-key grants and a Desired revision (Desired state
+  is not versioned). The copy is not a snapshot: a backup taken while a
+  turn is writing can hold a torn tail, which the readers already
+  recover from. An erasure made after a backup cannot be applied when
+  that backup is restored into a different, empty home: nothing there
+  records it. Merging a backup into a home that has moved on is M9's.
+  No list of past backups, no expiry and no typed confirmation: a
+  restore overwrites nothing. The restore confirmation was not seen in a
+  browser.
+- Tests: `restore_reapplies_erasures`,
+  `provider_account_erasure_reapplies_after_restore`, and
+  `backup_roundtrip_reapplies_erasures_and_rejects_self_backup` through
+  the real router. Each has a test binary of its own, because a restore
+  fences the process.
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

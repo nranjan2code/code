@@ -182,6 +182,37 @@ impl ScopeKeys {
         self.revoke(scope)
     }
 
+    /// Destroys again the key of every scope that has a tombstone: what a
+    /// restored backup taken before the scope was shredded brings back.
+    /// Returns how many keys it removed.
+    pub fn reshred(&self) -> Result<usize> {
+        let mut removed = 0;
+        for entry in fs::read_dir(self.root.join("tombstones"))? {
+            let name = entry?.file_name();
+            let key = self.root.join("keys").join(&name);
+            if !key.exists() {
+                continue;
+            }
+            if let Some(scope) = unhex(&name.to_string_lossy()) {
+                self.authority.revoke(&scope)?;
+            }
+            fs::remove_file(&key)?;
+            removed += 1;
+        }
+        if removed > 0
+            && let Ok(dir) = fs::File::open(self.root.join("keys"))
+        {
+            let _ = dir.sync_all();
+        }
+        Ok(removed)
+    }
+
+    /// How many scopes have a key, and how many were shredded.
+    pub fn counts(&self) -> (usize, usize) {
+        let count = |kind: &str| fs::read_dir(self.root.join(kind)).map_or(0, Iterator::count);
+        (count("keys"), count("tombstones"))
+    }
+
     pub fn hold(&self, scope: &str) -> Result<()> {
         if self.is_shredded(scope) {
             return Err(StorageError::Revoked(scope.into()));

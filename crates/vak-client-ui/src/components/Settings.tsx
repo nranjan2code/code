@@ -1638,17 +1638,34 @@ export default function Settings() {
     const src = importDir().trim();
     if (!src) return;
     setBackupBusy(true);
+    let again = 0;
     try {
-      const report = await api.backupImport(src, conflict());
-      setNotice({
-        kind: "info",
-        text: `Imported from ${src} — ${report.copied} copied · ${report.renamed} renamed · ${report.skipped} skipped.`,
-      });
+      again = (await api.backupRestorePreview(src)).preview.erasures_to_reapply.length;
     } catch (error) {
-      setNotice({ kind: "error", text: `Import failed: ${error instanceof Error ? error.message : String(error)}` });
-    } finally {
+      setNotice({ kind: "error", text: `That folder cannot be restored: ${error instanceof Error ? error.message : String(error)}` });
       setBackupBusy(false);
+      return;
     }
+    setBackupBusy(false);
+    setConfirmConfig({
+      title: "Restore this backup?",
+      description: `Nothing you have now is overwritten or deleted. ${again > 0 ? `${again} thing${again === 1 ? "" : "s"} you deleted for good since this backup ${again === 1 ? "stays" : "stay"} deleted. ` : ""}Vakyartha must be started again afterwards.`,
+      confirmLabel: "Restore backup",
+      onConfirm: async () => {
+        setBackupBusy(true);
+        try {
+          const { report } = await api.backupImport(src, conflict());
+          setNotice({
+            kind: "info",
+            text: `Restored: ${report.copied} copied, ${report.renamed} renamed, ${report.skipped} already here. Quit and start Vakyartha again to continue.`,
+          });
+        } catch (error) {
+          setNotice({ kind: "error", text: `Restore failed: ${error instanceof Error ? error.message : String(error)}` });
+        } finally {
+          setBackupBusy(false);
+        }
+      },
+    });
   };
 
   // True when the form differs from what the backend is actually running.

@@ -2320,7 +2320,7 @@ export function backupExport(
   destDir: string,
   includeSecrets: boolean,
 ): Promise<{ manifest: BackupManifest; included_secrets: boolean }> {
-  return req("/backup/export", {
+  return req("/data/backups", {
     method: "POST",
     body: JSON.stringify({ dest_dir: destDir, include_secrets: includeSecrets }),
   });
@@ -2330,10 +2330,19 @@ export interface ImportReportShape {
   copied: number;
   renamed: number;
   skipped: number;
+  /** Deletions made since the backup, which the restore applied again. */
+  erasures_reapplied: number;
+  keys_removed: number;
 }
 
-export function backupImport(srcDir: string, conflict: "skip" | "rename"): Promise<ImportReportShape> {
-  return req("/backup/import", {
+/** What restoring would do: the deletions made since the backup was taken. */
+export function backupRestorePreview(srcDir: string): Promise<{ preview: { manifest: BackupManifest; erasures_to_reapply: string[] } }> {
+  return req("/data/backups/restore/preview", { method: "POST", body: JSON.stringify({ src_dir: srcDir }) });
+}
+
+/** Restores a backup. Vakyartha must be started again afterwards. */
+export function backupImport(srcDir: string, conflict: "skip" | "rename"): Promise<{ report: ImportReportShape; restart_required: boolean }> {
+  return req("/data/backups/restore", {
     method: "POST",
     body: JSON.stringify({ src_dir: srcDir, conflict }),
   });

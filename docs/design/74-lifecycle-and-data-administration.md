@@ -565,7 +565,7 @@ These replace, in the same change (invariant 30):
   `GET /sessions?trash=true` (M0's trash, `vak_core::trash`)
 - `POST /memory/cleanup`
 - `POST /workspaces/forget`
-- `POST /backup/export|import`
+- `POST /backup/export|import` (replaced by `/data/backups` at plan M7a-h)
 - `/agents/{id}/schedule|runs` (already deleted in M0)
 - `/tasks`, `/tasks/{id}/run-now`, `/tasks/{id}/retry-delivery` (by
   `/triggers` and `/effects` at M4)
