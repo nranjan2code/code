@@ -1237,8 +1237,15 @@ fn erasure_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
             edge(tx, &gone, "caused_by", id)?;
         }
         _ => {
-            if let Some((artifact, _)) = subject.split_once('/') {
-                edge(tx, id, "acted_on", artifact)?;
+            if let Some((first, _)) = subject.split_once('/') {
+                // A guest's erasure acts on a conversation; a draft's on
+                // an artifact.
+                let on = if scope == "guest" {
+                    session_node(first)
+                } else {
+                    first.to_string()
+                };
+                edge(tx, id, "acted_on", &on)?;
             }
         }
     }

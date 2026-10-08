@@ -953,6 +953,12 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/conversations/{id}/hold", put(hold_conversation))
         .route("/conversations/{id}/gone", get(conversation_gone))
+        .route("/conversations/{id}/guests", get(conversation_guests))
+        .route(
+            "/conversations/{id}/guests/{principal}/erasure",
+            get(guest_erasure_preview).post(erase_guest),
+        )
+        .route("/data/erasure/accounts/{account}", post(erase_account))
         .route("/conversations/{id}/lifecycle", get(conversation_lifecycle))
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/skills", get(list_skills))
@@ -10178,7 +10184,9 @@ fn erasure_refused(error: &vak_core::erasure::ErasureError) -> axum::response::R
     use vak_core::erasure::ErasureError as E;
     let status = match error {
         E::NotFound(_) => StatusCode::NOT_FOUND,
-        E::NotInTrash | E::AlreadyErased | E::Held | E::StalePreview => StatusCode::CONFLICT,
+        E::NotInTrash | E::AlreadyErased | E::Held | E::StalePreview | E::StillConnected => {
+            StatusCode::CONFLICT
+        }
         E::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let reason = match error {
@@ -10187,6 +10195,7 @@ fn erasure_refused(error: &vak_core::erasure::ErasureError) -> axum::response::R
         E::AlreadyErased => "already_erased",
         E::Held => "held",
         E::StalePreview => "stale_preview",
+        E::StillConnected => "still_connected",
         E::Failed(_) => "failed",
     };
     (
@@ -10351,6 +10360,105 @@ async fn erasure_receipts(State(state): State<AppState>) -> axum::response::Resp
         serde_json::json!({ "receipts": receipts })
     })
     .await
+}
+
+/// The people other than the owner who wrote in a conversation, by the
+/// name their invitation or share gave them.
+async fn conversation_guests(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    if !find_session_in_cwd(&state.core, &id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    data_read(state, move |core| {
+        let names: HashMap<String, String> = vak_core::grants::Grants::at(&core.shared_scope())
+            .on(&vak_core::grants::GrantObject::Conversation(id.clone()))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|held| !held.grant.display_name.is_empty())
+            .map(|held| (held.grant.principal, held.grant.display_name))
+            .collect();
+        let guests: Vec<serde_json::Value> = core
+            .conversation_guests(&id)
+            .into_iter()
+            .map(|principal| {
+                serde_json::json!({ "name": names.get(&principal), "principal": principal })
+            })
+            .collect();
+        serde_json::json!({ "guests": guests })
+    })
+    .await
+}
+
+/// What erasing one guest's contributions to a conversation would destroy.
+async fn guest_erasure_preview(
+    State(state): State<AppState>,
+    Path((id, principal)): Path<(String, String)>,
+) -> axum::response::Response {
+    if !find_session_in_cwd(&state.core, &id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.guest_erasure_preview(&id, &principal)).await {
+        Ok(Ok(preview)) => Json(serde_json::json!({ "preview": preview })).into_response(),
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct EraseGuestBody {
+    /// The digest of the preview the owner confirmed.
+    digest: String,
+}
+
+/// Erases what one guest wrote in a conversation and on its artifacts. The
+/// conversation stays, with a line where each of their messages was.
+async fn erase_guest(
+    State(state): State<AppState>,
+    Path((id, principal)): Path<(String, String)>,
+    Json(body): Json<EraseGuestBody>,
+) -> axum::response::Response {
+    if !find_session_in_cwd(&state.core, &id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    let erased = tokio::task::spawn_blocking(move || {
+        core.erase_guest(
+            &id,
+            &principal,
+            Some(&body.digest),
+            vak_core::erasure::Cause::Person,
+            Some(actor),
+        )
+    })
+    .await;
+    match erased {
+        Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Erases what a disconnected mail or calendar account returned, from
+/// every conversation that read it. Refused while it is still connected.
+async fn erase_account(
+    State(state): State<AppState>,
+    Path(account): Path<String>,
+) -> axum::response::Response {
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    let erased = tokio::task::spawn_blocking(move || {
+        core.erase_account(&account, vak_core::erasure::Cause::Person, Some(actor))
+    })
+    .await;
+    match erased {
+        Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// Where a conversation is in its life: archived, in the trash and until

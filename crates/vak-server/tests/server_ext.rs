@@ -2647,3 +2647,88 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
     assert_eq!(gone["receipt"]["verifies"], true);
     assert!(gone["erased_at"].is_string());
 }
+
+/// The owner erases what a guest wrote, through the real router (plan
+/// M7a-f): the guest is listed, the erasure needs the preview's digest,
+/// and an account nothing was kept for has nothing to erase.
+#[tokio::test]
+async fn a_guests_contributions_are_erased_and_the_conversation_stays() {
+    let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
+        responses: Mutex::new(VecDeque::new()),
+    }))
+    .await;
+    let core = Core::new(cwd.clone()).unwrap();
+    core.set_shared_scope(vak_config::scope::SharedScope::new(cwd.join("home")));
+    let mut log = core.start_session().await.unwrap();
+    let id = log.header().unwrap().session_id.clone();
+    log.append_message(vak_session::MessageRecord {
+        message: vak_llm::Message::user_text("plan the harvest supper"),
+        meta: None,
+    })
+    .unwrap();
+    log.append_message(vak_session::MessageRecord {
+        message: vak_llm::Message::user_text("Asha: I will bring the lanterns"),
+        meta: Some(vak_session::MessageMeta {
+            author_id: Some("guest:asha".into()),
+            author_name: Some("Asha".into()),
+            ..Default::default()
+        }),
+    })
+    .unwrap();
+    drop(log);
+
+    let client = reqwest::Client::new();
+    let send = |request: reqwest::RequestBuilder| {
+        let token = token.clone();
+        async move {
+            let response = request.bearer_auth(token).send().await.unwrap();
+            let status = response.status().as_u16();
+            let body = response
+                .json::<serde_json::Value>()
+                .await
+                .unwrap_or_default();
+            (status, body)
+        }
+    };
+    let erasure = format!("{base}/conversations/{id}/guests/guest:asha/erasure");
+    assert_eq!(reqwest::get(&erasure).await.unwrap().status(), 401);
+
+    let (status, listed) = send(client.get(format!("{base}/conversations/{id}/guests"))).await;
+    assert_eq!(status, 200, "{listed}");
+    assert_eq!(listed["guests"][0]["principal"], "guest:asha");
+
+    let (status, looked) = send(client.get(&erasure)).await;
+    assert_eq!(status, 200, "{looked}");
+    let digest = looked["preview"]["digest"].as_str().unwrap().to_string();
+    let (status, refused) = send(
+        client
+            .post(&erasure)
+            .json(&serde_json::json!({ "digest": "another" })),
+    )
+    .await;
+    assert_eq!(
+        (status, refused["reason"].as_str()),
+        (409, Some("stale_preview"))
+    );
+    let (status, done) = send(
+        client
+            .post(&erasure)
+            .json(&serde_json::json!({ "digest": digest })),
+    )
+    .await;
+    assert_eq!(status, 200, "{done}");
+    assert_eq!(done["receipt"]["scope"], "guest");
+    let (_, listed) = send(client.get(format!("{base}/conversations/{id}/guests"))).await;
+    assert!(listed["guests"].as_array().unwrap().is_empty());
+    // The conversation is still there and is not in the trash.
+    let (status, life) = send(client.get(format!("{base}/conversations/{id}/lifecycle"))).await;
+    assert_eq!((status, life["trashed_at"].is_null()), (200, true));
+
+    let (status, refused) =
+        send(client.post(format!("{base}/data/erasure/accounts/acct-unknown"))).await;
+    assert_eq!(
+        (status, refused["reason"].as_str()),
+        (404, Some("not_found"))
+    );
+}

@@ -576,6 +576,21 @@ export const api = {
   conversationLifecycle: (sessionId: string): Promise<ConversationLifecycle> =>
     fetch(`/conversations/${encodeURIComponent(sessionId)}/lifecycle`).then((r) => handle(r)),
 
+  /** The people other than the owner who wrote in a conversation. */
+  conversationGuests: (sessionId: string): Promise<{ guests: { principal: string; name?: string | null }[] }> =>
+    fetch(`/conversations/${encodeURIComponent(sessionId)}/guests`).then((r) => handle(r)),
+
+  /** Erases what one guest wrote there, after reading what it reaches. */
+  eraseGuest: async (sessionId: string, principal: string): Promise<{ receipt: ErasureReceipt }> => {
+    const url = `/conversations/${encodeURIComponent(sessionId)}/guests/${encodeURIComponent(principal)}/erasure`;
+    const looked: { preview: { digest: string } } = await fetch(url).then((r) => handle(r));
+    return fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ digest: looked.preview.digest }),
+    }).then((r) => handle(r));
+  },
+
   erasureReceipts: (): Promise<{ receipts: ErasureReceipt[] }> =>
     fetch("/data/erasure/receipts").then((r) => handle(r)),
 

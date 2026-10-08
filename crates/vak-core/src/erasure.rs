@@ -25,8 +25,21 @@ pub enum ErasureError {
     Held,
     #[error("the conversation changed since the preview; look again before erasing")]
     StalePreview,
+    #[error("this account is still connected; disconnect it before erasing what it returned")]
+    StillConnected,
     #[error("erasure did not finish: {0}")]
     Failed(String),
+}
+
+/// One erasure at a time in a process. An erasure reads the catalog to
+/// find what it reaches, and some end by rebuilding it; one that read
+/// during another's rebuild would reach less than it should.
+static ERASING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    ERASING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Why a conversation was erased.
@@ -116,6 +129,36 @@ const NOT_REACHED: &[&str] = &[
     "Entities and skills an Agent derived from this conversation: they are not examined by this erasure.",
     "What an Agent wrote in other conversations from what it learned here.",
 ];
+
+const GUEST_NOT_REACHED: &[&str] = &[
+    "What the Agent and the other people wrote in reply: it is the conversation's, and stays.",
+    "Summaries and memory notes an Agent wrote from what this person said: they are not examined by this erasure.",
+    "Copies the AI services received when they answered: they are held by those services under their own terms.",
+    "Backups made before this erasure: they still hold the encrypted records until they expire.",
+    "This person's access: erasing what they wrote does not end an invitation or a share.",
+];
+
+const ACCOUNT_NOT_REACHED: &[&str] = &[
+    "What an Agent wrote from this account's data (an answer, a card, a summary, a later turn that repeats it): it is each conversation's own content and stays until that conversation is erased.",
+    "Messages and calendar changes already sent through the account: they stay with the provider and whoever received them.",
+    "Copies the AI services received when they answered: they are held by those services under their own terms.",
+    "Backups made before this erasure: they still hold the encrypted records until they expire.",
+    "The account itself and what the provider keeps: this erases only what Vakyartha stored.",
+];
+
+/// What erasing one person's contributions to a conversation would
+/// destroy, and the digest a confirmation must carry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GuestPreview {
+    pub session_id: String,
+    pub principal: String,
+    pub digest: String,
+    pub held: bool,
+    /// Whether they wrote in the conversation itself.
+    pub messages: bool,
+    /// The conversation's artifacts they commented on.
+    pub artifacts: Vec<String>,
+}
 
 const DRAFT_NOT_REACHED: &[&str] = &[
     "The conversation that made this draft: it is kept, with whatever it says about the draft.",
@@ -311,6 +354,7 @@ impl Core {
 
     /// What erasing `session_id` would destroy. Reads only.
     pub fn erasure_preview(&self, session_id: &str) -> Result<Preview, ErasureError> {
+        let _turn = one_at_a_time();
         let reach = self.reach(session_id)?;
         if reach.erased {
             return Err(ErasureError::AlreadyErased);
@@ -359,6 +403,7 @@ impl Core {
         cause: Cause,
         actor: Option<vak_session::ids::PrincipalId>,
     ) -> Result<Receipt, ErasureError> {
+        let _turn = one_at_a_time();
         let failed = |error: String| ErasureError::Failed(error);
         vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
         let reach = self.reach(session_id)?;
@@ -446,6 +491,287 @@ impl Core {
         Ok(receipt)
     }
 
+    /// The people other than the owner whose contributions to
+    /// `session_id` are kept under a key of their own.
+    pub fn conversation_guests(&self, session_id: &str) -> Vec<String> {
+        let Ok(tenant) = self.tenant_objects() else {
+            return Vec::new();
+        };
+        let mut guests: BTreeSet<String> = BTreeSet::new();
+        for scope in self.guest_scopes(&tenant, session_id, "") {
+            if let Some(principal) = vak_session::objects::contributor_of(&scope) {
+                guests.insert(principal.to_string());
+            }
+        }
+        guests.into_iter().collect()
+    }
+
+    /// The contributor scopes with a key that `principal` (everyone, when
+    /// empty) has in `session_id` and on the artifacts made there.
+    fn guest_scopes(
+        &self,
+        tenant: &TenantObjects,
+        session_id: &str,
+        principal: &str,
+    ) -> Vec<String> {
+        let mut owners = vec![session_id.to_string()];
+        for artifact in self.artifacts().list() {
+            let here = artifact
+                .versions
+                .iter()
+                .any(|version| match &version.source {
+                    crate::artifacts::VersionSource::Call { session, .. }
+                    | crate::artifacts::VersionSource::Candidate { session, .. } => {
+                        session == session_id
+                    }
+                    crate::artifacts::VersionSource::Person => false,
+                });
+            if here {
+                owners.push(artifact.id.to_string());
+            }
+        }
+        let mut scopes = Vec::new();
+        for owner in owners {
+            let prefix = contributor_scope(&owner, principal);
+            for scope in tenant.scopes_with_prefix(&prefix).unwrap_or_default() {
+                // A prefix also matches a longer principal id.
+                if principal.is_empty()
+                    || vak_session::objects::contributor_of(&scope) == Some(principal)
+                {
+                    scopes.push(scope);
+                }
+            }
+        }
+        scopes
+    }
+
+    fn guest_preview_of(
+        &self,
+        tenant: &TenantObjects,
+        session_id: &str,
+        principal: &str,
+    ) -> Result<(GuestPreview, Vec<String>), ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
+        let state = crate::trash::state(&self.shared_scope(), session_id)
+            .map_err(|error| failed(error.to_string()))?;
+        if state.erased_at.is_some() {
+            return Err(ErasureError::AlreadyErased);
+        }
+        let scopes = self.guest_scopes(tenant, session_id, principal);
+        if principal.is_empty() || scopes.is_empty() {
+            return Err(ErasureError::NotFound(format!("{session_id}/{principal}")));
+        }
+        let own = contributor_scope(session_id, principal);
+        let mut digest = Sha256::new();
+        for scope in &scopes {
+            digest.update(scope.as_bytes());
+            digest.update([0]);
+        }
+        let held = self.conversation_held(session_id)
+            || scopes.iter().any(|scope| tenant.scope_held(scope));
+        let preview = GuestPreview {
+            session_id: session_id.to_string(),
+            principal: principal.to_string(),
+            digest: digest
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+            held,
+            messages: scopes.contains(&own),
+            artifacts: scopes
+                .iter()
+                .filter(|scope| **scope != own)
+                .filter_map(|scope| scope.split(':').nth(1).map(str::to_string))
+                .collect(),
+        };
+        Ok((preview, scopes))
+    }
+
+    /// What erasing `principal`'s contributions to `session_id` would
+    /// destroy.
+    pub fn guest_erasure_preview(
+        &self,
+        session_id: &str,
+        principal: &str,
+    ) -> Result<GuestPreview, ErasureError> {
+        let _turn = one_at_a_time();
+        let tenant = self.tenant_objects()?;
+        Ok(self.guest_preview_of(&tenant, session_id, principal)?.0)
+    }
+
+    /// Erases what one person other than the owner wrote in a conversation
+    /// and in comments on its artifacts: their keys are destroyed, so each
+    /// message reads as removed and each comment is gone, and the
+    /// conversation stays whole. Search is rebuilt without their words.
+    /// Refused while the conversation or their key is on hold, and when a
+    /// person's confirmation carries a digest that no longer matches.
+    pub fn erase_guest(
+        &self,
+        session_id: &str,
+        principal: &str,
+        digest: Option<&str>,
+        cause: Cause,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Result<Receipt, ErasureError> {
+        let _turn = one_at_a_time();
+        let failed = |error: String| ErasureError::Failed(error);
+        vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
+        let tenant = self.tenant_objects()?;
+        let (preview, scopes) = self.guest_preview_of(&tenant, session_id, principal)?;
+        if preview.held {
+            return Err(ErasureError::Held);
+        }
+        if digest.is_some_and(|digest| digest != preview.digest) {
+            return Err(ErasureError::StalePreview);
+        }
+        self.destroy_and_record(
+            &tenant,
+            &scopes,
+            Receipt {
+                id: format!("ers_{}", uuid::Uuid::now_v7()),
+                at: Utc::now(),
+                scope: "guest".into(),
+                subject: format!("{session_id}/{principal}"),
+                cause,
+                actor,
+                conversations: 0,
+                artifacts: 0,
+                keys_destroyed: 0,
+                keys_digest: String::new(),
+                memory_notes_removed: 0,
+                search_rows_removed: 0,
+                objects_deleted: 0,
+                sent_outside: 0,
+                not_reached: GUEST_NOT_REACHED.iter().map(ToString::to_string).collect(),
+                public_key: String::new(),
+                signature: String::new(),
+            },
+        )
+    }
+
+    /// Erases what a connected mail or calendar account returned, in every
+    /// conversation of every Agent that read it: the account's key is
+    /// destroyed, so each such result reads as a fixed line and the
+    /// conversations stay. Search is rebuilt without it. Refused while the
+    /// account is still connected to any Agent, and while its key is held.
+    pub fn erase_account(
+        &self,
+        account: &str,
+        cause: Cause,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Result<Receipt, ErasureError> {
+        let _turn = one_at_a_time();
+        let failed = |error: String| ErasureError::Failed(error);
+        vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
+        let tenant = self.tenant_objects()?;
+        let scope = vak_session::objects::account_scope(account);
+        if tenant.scope_destroyed(&scope) {
+            return Err(ErasureError::AlreadyErased);
+        }
+        if account.is_empty()
+            || !tenant
+                .scopes_with_prefix(&scope)
+                .map_err(|error| failed(error.to_string()))?
+                .contains(&scope)
+        {
+            return Err(ErasureError::NotFound(account.to_string()));
+        }
+        if tenant.scope_held(&scope) {
+            return Err(ErasureError::Held);
+        }
+        if self.account_connected(account) {
+            return Err(ErasureError::StillConnected);
+        }
+        self.destroy_and_record(
+            &tenant,
+            &[scope],
+            Receipt {
+                id: format!("ers_{}", uuid::Uuid::now_v7()),
+                at: Utc::now(),
+                scope: "account".into(),
+                subject: account.to_string(),
+                cause,
+                actor,
+                conversations: 0,
+                artifacts: 0,
+                keys_destroyed: 0,
+                keys_digest: String::new(),
+                memory_notes_removed: 0,
+                search_rows_removed: 0,
+                objects_deleted: 0,
+                sent_outside: 0,
+                not_reached: ACCOUNT_NOT_REACHED
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                public_key: String::new(),
+                signature: String::new(),
+            },
+        )
+    }
+
+    /// Whether any Agent still has `account` connected.
+    fn account_connected(&self, account: &str) -> bool {
+        let mut agents: Vec<String> = vak_session_agent_homes(&self.shared_scope())
+            .into_iter()
+            .map(|(agent, _)| agent)
+            .collect();
+        agents.push("vak".to_string());
+        agents.iter().any(|agent| {
+            vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent(agent)
+                .and_then(|ledger| ledger.read_all())
+                .is_ok_and(|accounts| {
+                    accounts
+                        .iter()
+                        .any(|saved| saved.id == account && saved.revoked_at.is_none())
+                })
+        })
+    }
+
+    /// The part every erasure that leaves its conversations shares: the
+    /// keys, then the rollups and the search rows that folded what they
+    /// protected, the objects nothing holds now, and the signed receipt.
+    fn destroy_and_record(
+        &self,
+        tenant: &TenantObjects,
+        scopes: &[String],
+        mut receipt: Receipt,
+    ) -> Result<Receipt, ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
+        for scope in scopes {
+            tenant
+                .destroy_scope_key(scope)
+                .map_err(|error| failed(error.to_string()))?;
+        }
+        let shared = self.shared_scope();
+        let _ = vak_session::documents::forget(&shared.artifacts_rollup());
+        receipt.search_rows_removed = self
+            .catalog()
+            .map_err(|error| failed(error.to_string()))?
+            .rebuild_after_erasure()
+            .map_err(|error| failed(error.to_string()))?;
+        receipt.objects_deleted = {
+            use vak_session::objects::Objects;
+            tenant.collect().unwrap_or(0) as u64
+        };
+        let mut keys = Sha256::new();
+        for scope in scopes {
+            keys.update(scope.as_bytes());
+            keys.update([0]);
+        }
+        receipt.keys_destroyed = scopes.len() as u64;
+        receipt.keys_digest = keys.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let receipt = self.sign_and_record(tenant, receipt)?;
+        tracing::info!(
+            kind = "erasure",
+            outcome = "completed",
+            count = receipt.keys_destroyed,
+            "contributions were erased"
+        );
+        Ok(receipt)
+    }
+
     /// Signs a receipt with the tenant's key and appends it to the
     /// erasures chain. The public key is part of what is signed.
     fn sign_and_record(
@@ -480,6 +806,7 @@ impl Core {
         cause: Cause,
         actor: Option<vak_session::ids::PrincipalId>,
     ) -> Result<Receipt, ErasureError> {
+        let _turn = one_at_a_time();
         let failed = |error: String| ErasureError::Failed(error);
         vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
         let subject = format!("{artifact}/{version}");

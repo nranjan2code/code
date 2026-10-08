@@ -277,6 +277,23 @@ impl Catalog {
         self.catch_up()
     }
 
+    /// Rebuilds after a key was destroyed, so that nothing a row said of
+    /// what that key protected is left: every row is deleted with
+    /// `secure_delete` on and replayed from the records, which now read as
+    /// removed; then the database is rewritten and its write-ahead log
+    /// emptied. Returns how many rows it replayed.
+    pub fn rebuild_after_erasure(&self) -> Result<u64, CatalogError> {
+        self.conn().execute_batch("PRAGMA secure_delete = ON;")?;
+        let replayed = self.rebuild()?;
+        self.conn().execute_batch(
+            "INSERT INTO texts_fts (texts_fts) VALUES ('optimize');
+             INSERT INTO turn_records_fts (turn_records_fts) VALUES ('optimize');
+             VACUUM;
+             PRAGMA wal_checkpoint(TRUNCATE);",
+        )?;
+        Ok(replayed.rows as u64)
+    }
+
     /// The node `id`, if the catalog knows it. A session's plain id finds
     /// its node too.
     pub fn open_node(&self, id: &str) -> Result<Option<Node>, CatalogError> {

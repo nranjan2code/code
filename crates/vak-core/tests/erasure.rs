@@ -47,6 +47,10 @@ impl Provider for Answers {
     }
 }
 
+/// These tests share one home and so one catalog, which two of them
+/// rebuild: each runs alone, or one would read the index mid-rebuild.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn core(cwd: &std::path::Path) -> Core {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
@@ -103,6 +107,7 @@ fn indexed(core: &Core, needle: &str) -> bool {
 
 #[tokio::test]
 async fn erasure_follows_lineage() {
+    let _serial = SERIAL.lock().await;
     vak_config::paths::isolate_home_for_tests();
     let work = tempfile::tempdir().unwrap();
     let core = core(work.path());
@@ -236,6 +241,7 @@ async fn erasure_follows_lineage() {
 
 #[tokio::test]
 async fn stale_preview_cannot_authorise() {
+    let _serial = SERIAL.lock().await;
     vak_config::paths::isolate_home_for_tests();
     let work = tempfile::tempdir().unwrap();
     let core = core(work.path());
@@ -286,4 +292,239 @@ async fn stale_preview_cannot_authorise() {
     core.erase_conversation(&id, Some(&fresh.digest), Cause::Person, None)
         .unwrap();
     assert!(SessionLog::read_header(&ledger).is_err());
+}
+
+fn transcript_of(ledger: &std::path::Path) -> String {
+    SessionLog::open_read_only(ledger.to_path_buf())
+        .unwrap()
+        .derive_transcript()
+        .iter()
+        .map(|message| message.message.text_content())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn from_guest(principal: &str, name: &str, text: &str) -> vak_session::MessageRecord {
+    vak_session::MessageRecord {
+        message: vak_llm::Message::user_text(format!("{name}: {text}")),
+        meta: Some(vak_session::MessageMeta {
+            author_id: Some(principal.into()),
+            author_name: Some(name.into()),
+            ..Default::default()
+        }),
+    }
+}
+
+/// The owner erases what one guest wrote (plan M7a-f): that guest's words
+/// leave the conversation and search, the other guest's and the owner's
+/// stay, no ledger byte changes, and a signed receipt says so.
+#[tokio::test]
+async fn guest_erasure_keeps_owner_conversation() {
+    let _serial = SERIAL.lock().await;
+    vak_config::paths::isolate_home_for_tests();
+    let work = tempfile::tempdir().unwrap();
+    let core = core(work.path());
+    let (id, ledger) = conversation(&core, "the quince ledger").await;
+    let mut log = SessionLog::open(ledger.clone()).unwrap();
+    log.append_message(from_guest(
+        "guest:asha",
+        "Asha",
+        "the venue holds ninety zebras",
+    ))
+    .unwrap();
+    log.append_message(from_guest(
+        "guest:ben",
+        "Ben",
+        "the caterer brings marzipan",
+    ))
+    .unwrap();
+    drop(log);
+    let before = bytes_of(&ledger);
+    assert!(indexed(&core, "zebras") && indexed(&core, "marzipan"));
+    assert_eq!(core.conversation_guests(&id), ["guest:asha", "guest:ben"]);
+
+    // A guest who wrote nothing has nothing to erase.
+    assert!(matches!(
+        core.guest_erasure_preview(&id, "guest:nobody"),
+        Err(ErasureError::NotFound(_))
+    ));
+    let preview = core.guest_erasure_preview(&id, "guest:asha").unwrap();
+    assert!(preview.messages && preview.artifacts.is_empty() && !preview.held);
+    assert!(matches!(
+        core.erase_guest(
+            &id,
+            "guest:asha",
+            Some("not the digest"),
+            Cause::Person,
+            None
+        ),
+        Err(ErasureError::StalePreview)
+    ));
+    core.hold_conversation(&id, true).unwrap();
+    assert!(matches!(
+        core.erase_guest(
+            &id,
+            "guest:asha",
+            Some(&preview.digest),
+            Cause::Person,
+            None
+        ),
+        Err(ErasureError::Held)
+    ));
+    core.hold_conversation(&id, false).unwrap();
+
+    let receipt = core
+        .erase_guest(
+            &id,
+            "guest:asha",
+            Some(&preview.digest),
+            Cause::Person,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            receipt.scope.as_str(),
+            receipt.keys_destroyed,
+            receipt.conversations
+        ),
+        ("guest", 1, 0)
+    );
+    assert_eq!(receipt.subject, format!("{id}/guest:asha"));
+    assert!(receipt.verifies() && !receipt.not_reached.is_empty());
+
+    assert_eq!(bytes_of(&ledger), before, "no ledger byte changes");
+    let said = transcript_of(&ledger);
+    assert!(!said.contains("zebras") && !said.contains("Asha"));
+    assert!(said.contains(vak_session::log::REMOVED_TEXT));
+    assert!(said.contains("marzipan") && said.contains("quince"));
+    assert!(
+        !indexed(&core, "zebras"),
+        "search no longer holds their words"
+    );
+    assert!(indexed(&core, "marzipan") && indexed(&core, "quince"));
+    assert!(!trash::is_trashed(&core.shared_scope(), &id));
+    assert_eq!(core.conversation_guests(&id), ["guest:ben"]);
+    assert!(matches!(
+        core.erase_guest(&id, "guest:asha", None, Cause::Person, None),
+        Err(ErasureError::NotFound(_))
+    ));
+}
+
+/// Erasing a connected account (plan M7a-f) removes what it returned from
+/// every conversation of every Agent that read it, and nothing else.
+#[tokio::test]
+async fn provider_account_erasure_spans_agents_and_conversations() {
+    let _serial = SERIAL.lock().await;
+    vak_config::paths::isolate_home_for_tests();
+    let work = tempfile::tempdir().unwrap();
+    let core = core(work.path());
+    let (first, first_ledger) = conversation(&core, "the walnut budget").await;
+    let (_, second_ledger) = conversation(&core, "the hazel budget").await;
+    // A conversation of another Agent, in that Agent's own home.
+    let mut header = SessionLog::read_header(&first_ledger).unwrap();
+    header.session_id = format!("{first}-scout");
+    let scout_ledger =
+        vak_config::scope::AgentScope::new(core.shared_scope().agents_dir().join("scout"))
+            .session_file(work.path(), &header.session_id);
+    std::fs::create_dir_all(scout_ledger.parent().unwrap()).unwrap();
+    drop(SessionLog::create(scout_ledger.clone(), header).unwrap());
+
+    let account = "acct-erasure-spans";
+    for (ledger, mail, file) in [
+        (
+            &first_ledger,
+            "From Dana: the lease is signed",
+            "notes: buy stamps",
+        ),
+        (
+            &second_ledger,
+            "From Dana: the lease starts in May",
+            "notes: call Omar",
+        ),
+        (
+            &scout_ledger,
+            "Calendar: lease walkthrough Tuesday",
+            "notes: bring keys",
+        ),
+    ] {
+        let mut log = SessionLog::open(ledger.clone()).unwrap();
+        log.result_from_account("call-mail", account);
+        log.append_message(vak_session::MessageRecord {
+            message: vak_llm::Message {
+                role: vak_llm::Role::User,
+                content: vec![
+                    ContentBlock::tool_result("call-mail", mail),
+                    ContentBlock::tool_result("call-read", file),
+                ],
+            },
+            meta: None,
+        })
+        .unwrap();
+    }
+    let ledgers = [&first_ledger, &second_ledger, &scout_ledger];
+    let before: Vec<_> = ledgers.iter().map(|ledger| bytes_of(ledger)).collect();
+    let results = |ledger: &std::path::Path| -> String {
+        SessionLog::open_read_only(ledger.to_path_buf())
+            .unwrap()
+            .chain_to_root()
+            .iter()
+            .filter_map(|entry| match &entry.payload {
+                vak_session::EntryPayload::Message(record) => Some(record.message.content.clone()),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|block| match block {
+                ContentBlock::ToolResult { content, .. } => Some(content),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    assert!(
+        ledgers
+            .iter()
+            .all(|ledger| results(ledger).contains("lease"))
+    );
+    assert!(
+        indexed(&core, "lease"),
+        "search held what the account returned"
+    );
+
+    assert!(matches!(
+        core.erase_account("acct-never-read", Cause::Person, None),
+        Err(ErasureError::NotFound(_))
+    ));
+    let receipt = core.erase_account(account, Cause::Person, None).unwrap();
+    assert_eq!(
+        (
+            receipt.scope.as_str(),
+            receipt.subject.as_str(),
+            receipt.keys_destroyed
+        ),
+        ("account", account, 1)
+    );
+    assert!(receipt.verifies());
+    assert!(
+        receipt
+            .not_reached
+            .iter()
+            .any(|line| line.contains("wrote from")),
+        "the receipt says what the Agent wrote from it stays"
+    );
+
+    for (ledger, was) in ledgers.iter().zip(&before) {
+        assert_eq!(&bytes_of(ledger), was, "no ledger byte changes");
+        let now = results(ledger);
+        assert!(!now.contains("lease") && !now.contains("Dana"), "{now}");
+        assert!(now.contains(vak_session::log::ACCOUNT_REMOVED_TEXT));
+        assert!(now.contains("notes:"), "other results are untouched");
+    }
+    assert!(transcript_of(&first_ledger).contains("walnut"));
+    assert!(!indexed(&core, "lease"), "search no longer holds its data");
+    assert!(indexed(&core, "walnut") && indexed(&core, "hazel"));
+    assert!(matches!(
+        core.erase_account(account, Cause::Person, None),
+        Err(ErasureError::AlreadyErased)
+    ));
 }

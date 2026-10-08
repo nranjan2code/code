@@ -151,9 +151,89 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
             }
             i32::from(!tick.failed.is_empty())
         }
-        crate::cli::DataAction::Erase { session, scope } => {
+        crate::cli::DataAction::Erase {
+            session,
+            scope,
+            guest,
+        } => {
+            let sure = |question: &str| {
+                println!("{question} Type erase to go on:");
+                let mut typed = String::new();
+                std::io::stdin().read_line(&mut typed).is_ok() && typed.trim() == "erase"
+            };
+            let report = |erased: Result<
+                vak_core::erasure::Receipt,
+                vak_core::erasure::ErasureError,
+            >| match erased {
+                Ok(receipt) => {
+                    println!(
+                        "Erased. Receipt {} ({} keys destroyed, {} stored items deleted).",
+                        receipt.id, receipt.keys_destroyed, receipt.objects_deleted
+                    );
+                    for line in &receipt.not_reached {
+                        println!("  not reached: {line}");
+                    }
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            };
+            if scope == "account" {
+                if !sure(&format!(
+                    "This erases what account {session} returned, from every conversation that read it. The conversations stay."
+                )) {
+                    println!("Not erased.");
+                    return 1;
+                }
+                return report(core.erase_account(
+                    &session,
+                    vak_core::erasure::Cause::Person,
+                    None,
+                ));
+            }
+            if scope == "guest" {
+                let Some(guest) = guest else {
+                    let guests = core.conversation_guests(&session);
+                    if guests.is_empty() {
+                        println!("No guest wrote in this conversation.");
+                    } else {
+                        println!("Name one with --guest:");
+                        for guest in guests {
+                            println!("  {guest}");
+                        }
+                    }
+                    return 2;
+                };
+                let preview = match core.guest_erasure_preview(&session, &guest) {
+                    Ok(preview) => preview,
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        return 1;
+                    }
+                };
+                if preview.held {
+                    println!("It is on hold and cannot be erased until the hold is released.");
+                    return 1;
+                }
+                if !sure(&format!(
+                    "This erases what {guest} wrote in this conversation and in comments on {} of its files. The conversation stays.",
+                    preview.artifacts.len()
+                )) {
+                    println!("Not erased.");
+                    return 1;
+                }
+                return report(core.erase_guest(
+                    &session,
+                    &guest,
+                    Some(&preview.digest),
+                    vak_core::erasure::Cause::Person,
+                    None,
+                ));
+            }
             if scope != "conversation" {
-                eprintln!("error: only --scope conversation can be erased yet");
+                eprintln!("error: --scope is conversation, guest or account");
                 return 2;
             }
             let preview = match core.erasure_preview(&session) {

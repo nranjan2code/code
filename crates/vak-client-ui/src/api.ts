@@ -1472,6 +1472,11 @@ export function conversationGone(id: string): Promise<ConversationGone> {
   return req(`/conversations/${encodeURIComponent(id)}/gone`);
 }
 
+/** Deletes what a disconnected account returned, from every conversation. */
+export function eraseAccountData(account: string): Promise<{ receipt: { id: string } }> {
+  return req(`/data/erasure/accounts/${encodeURIComponent(account)}`, { method: "POST" });
+}
+
 /** A draft in the trash, and the day it is deleted. */
 export interface TrashedDraft {
   artifact: string;

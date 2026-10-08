@@ -7,11 +7,12 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
 import { pushToast } from "./store";
+import { confirmDestructive } from "./display";
 
 const day = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
 const CAUSE: Record<string, string> = { person: "A person asked", policy: "Its time in the trash ended" };
-const SCOPE: Record<string, string> = { conversation: "Conversation", draft: "Draft" };
+const SCOPE: Record<string, string> = { conversation: "Conversation", draft: "Draft", guest: "A guest's messages", account: "A connected account's data" };
 const told = (err: unknown) => String(err instanceof Error ? err.message : err);
 
 /** The typed confirmation: erasing needs the conversation's title. */
@@ -169,7 +170,21 @@ export function ConversationTrash(props: { onChanged?: () => void }) {
 /** Conversation detail › Lifecycle: where it is in its life, and its hold. */
 export function LifecycleTab(props: { sessionId: string }) {
   const [life, { refetch }] = createResource(() => props.sessionId, (id) => api.conversationLifecycle(id));
+  const [guests, { refetch: reread }] = createResource(() => props.sessionId, (id) => api.conversationGuests(id));
   const [busy, setBusy] = createSignal(false);
+  const eraseGuest = async (principal: string, name: string) => {
+    if (!confirmDestructive(`Erase everything ${name} wrote in this conversation and in comments on its files? The conversation stays, with a line where each message was. This cannot be undone.`)) return;
+    setBusy(true);
+    try {
+      await api.eraseGuest(props.sessionId, principal);
+      pushToast("info", `What ${name} wrote was erased. The receipt is under Conversations.`);
+      void reread();
+    } catch (err) {
+      pushToast("alert", told(err));
+    } finally {
+      setBusy(false);
+    }
+  };
   const hold = async (held: boolean) => {
     setBusy(true);
     try {
@@ -204,6 +219,24 @@ export function LifecycleTab(props: { sessionId: string }) {
               <div class="lifecycle-actions">
                 <button class="button small ghost" disabled={busy()} onClick={() => void hold(!now().held)}>{now().held ? "Release hold" : "Put on hold"}</button>
               </div>
+              <Show when={(guests()?.guests ?? []).length > 0}>
+                <h3>Guests who wrote here</h3>
+                <p class="dim">A guest joined through a link you shared. Erasing what one wrote leaves the conversation and everyone else's messages.</p>
+                <div class="ops-table-wrap">
+                  <table class="ops-table">
+                    <tbody>
+                      <For each={guests()?.guests ?? []}>
+                        {(guest) => (
+                          <tr>
+                            <td>{guest.name || "A guest"}</td>
+                            <td><button class="button small danger ghost" disabled={busy() || now().held} onClick={() => void eraseGuest(guest.principal, guest.name || "this guest")}>Erase what they wrote</button></td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+              </Show>
             </>
           )}
         </Show>

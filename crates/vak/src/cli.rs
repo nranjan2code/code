@@ -621,14 +621,18 @@ pub(crate) enum DataAction {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Erase a conversation in the trash for good. Shows what will be
-    /// destroyed and asks you to type its title
+    /// Erase a conversation in the trash for good (shows what will be
+    /// destroyed and asks you to type its title), what one guest wrote
+    /// in a conversation, or what a disconnected account returned
     Erase {
-        /// The conversation's id
+        /// The conversation's id, or the account's with --scope account
         session: String,
-        /// What is erased; only a conversation for now
+        /// What is erased: conversation, guest or account
         #[arg(long, default_value = "conversation")]
         scope: String,
+        /// With --scope guest: the guest whose contributions are erased
+        #[arg(long)]
+        guest: Option<String>,
     },
     /// Put a conversation on hold, so that nothing erases it
     Hold {

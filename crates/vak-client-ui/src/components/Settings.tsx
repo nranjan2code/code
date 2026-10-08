@@ -1408,8 +1408,8 @@ export default function Settings() {
   const disconnectMailCalendar = (account: api.MailCalendarAccount) => setConfirmConfig({
     title: account.revoked_at ? "Finish disconnect cleanup?" : "Disconnect this account?",
     description: account.revoked_at
-      ? "Retry removing any Vakyartha sign-in details left by an interrupted disconnect. This does not erase saved copies of messages or events in Vakyartha."
-      : "Vakyartha will remove this Agent's saved sign-in details and try to revoke provider access where supported. This does not delete messages or events from your provider or erase copies already saved in Vakyartha.",
+      ? "Retry removing any Vakyartha sign-in details left by an interrupted disconnect. Copies of messages and events already in conversations stay until you delete them with Delete saved copies."
+      : "Vakyartha will remove this Agent's saved sign-in details and try to revoke provider access where supported. This does not delete messages or events from your provider. Copies already in conversations stay until you delete them with Delete saved copies.",
     confirmLabel: account.revoked_at ? "Finish cleanup" : "Disconnect account",
     isDanger: true,
     onConfirm: async () => {
@@ -1424,6 +1424,23 @@ export default function Settings() {
           : result.provider_revocation === "unsupported"
             ? "Local access was removed. This provider does not offer grant revocation through Vakyartha; manage connected-app access with the provider."
             : "Local access was removed, but the provider did not confirm revocation. Check connected-app access with the provider." });
+    },
+  });
+  const eraseMailCalendarCopies = (account: api.MailCalendarAccount) => setConfirmConfig({
+    title: "Delete what this account returned?",
+    description: "Every message and event Vakyartha read from this account is deleted from every conversation, for good. The conversations stay, with a line where each result was. What an agent wrote from that data (an answer, a summary) stays until you delete that conversation. Nothing changes at your provider.",
+    confirmLabel: "Delete saved copies",
+    isDanger: true,
+    onConfirm: async () => {
+      try {
+        await api.eraseAccountData(account.id);
+        setNotice({ kind: "info", text: "What this account returned was deleted from every conversation. A signed record of the deletion is kept." });
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        setNotice(status === 404
+          ? { kind: "info", text: "Nothing this account returned is saved in a conversation." }
+          : { kind: "error", text: `Could not delete the saved copies: ${error instanceof Error ? error.message : String(error)}` });
+      }
     },
   });
   const refreshMailCalendarAccount = async (account: api.MailCalendarAccount) => {
@@ -2357,6 +2374,7 @@ export default function Settings() {
                             <Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show>
                             <Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show>
                             <button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button>
+                            <Show when={account.revoked_at}><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => eraseMailCalendarCopies(account)}>Delete saved copies</button></Show>
                           </Show>
                         </div>
                       </Row>;

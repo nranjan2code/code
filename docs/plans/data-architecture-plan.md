@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -2015,6 +2015,60 @@ M7a-e is done.**
   `a_draft_is_trashed_and_restored_and_a_saved_version_is_not`
   (`draft_until`). `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
+
+**M7a-f, done 2026-10-08: erasing a guest's contributions and a
+connected account's data.** Vak has one owner; a guest is someone who
+joined through a link the owner shared. Both erasures are the owner's.
+- `Core::erase_guest(session, principal, …)` destroys the keys that hold
+  what one guest wrote in a conversation and in comments on the files
+  made there (`contributor:<session>:<principal>`,
+  `contributor:<artifact>:<principal>`). Each message then reads as
+  removed and each comment is gone; the conversation, the owner's and
+  the other guests' messages stay, and no ledger byte changes. It is
+  refused while the conversation or the key is on hold, and when a
+  confirmation's digest no longer matches the preview
+  (`Core::guest_erasure_preview`). `Core::conversation_guests` lists who
+  has such a key.
+- `Core::erase_account(account, …)` destroys `account:<id>`: what that
+  mail or calendar account returned reads as a fixed line in every
+  conversation of every Agent that read it. It is refused while any
+  Agent still has the account connected (`ErasureError::StillConnected`),
+  because a result fetched afterwards could not be stored, and while the
+  key is held. An account nothing was kept for is not found.
+- Search held what those keys protected (a turn's text, a result's
+  digest), and nothing says which conversations read an account, so both
+  end with `Catalog::rebuild_after_erasure`: every row is deleted with
+  `secure_delete` on and replayed from the records, which now read as
+  removed, then the database is rewritten and its log emptied. This costs
+  a full rebuild per erasure, which is rare.
+- Erasures take turns within a process (`erasure::ERASING`): one that
+  worked out its reach from the catalog while another was rebuilding it
+  reached less than it should, which the full suite caught once in five
+  runs. Two processes are not ordered against each other, and a search
+  made during a rebuild can come back short until it finishes.
+- Each writes a signed receipt (scope `guest` or `account`) that says
+  what was not reached. For an account: what an Agent wrote from its data
+  stays until that conversation is erased.
+- `GET /conversations/{id}/guests`,
+  `GET|POST /conversations/{id}/guests/{principal}/erasure` (the digest),
+  `POST /data/erasure/accounts/{account}`;
+  `vak data erase <id> --scope guest --guest <principal>` and
+  `vak data erase <account> --scope account`, each asking for the word
+  `erase`.
+- Screens: a disconnected account in the client's settings has Delete
+  saved copies, and the disconnect wording no longer says copies cannot
+  be erased; the admin Lifecycle tab lists the guests who wrote in a
+  conversation with Erase what they wrote.
+- Not done: a guest's grant is not ended by erasing what they wrote;
+  memory notes and summaries an Agent wrote from a guest's words are not
+  examined; the vault's private routine run history still goes only on
+  disconnect. Neither screen was seen in a browser: a throwaway home has
+  no connected account and no guest.
+- Tests: `guest_erasure_keeps_owner_conversation` (through `Core`, with
+  search and the receipt), `provider_account_erasure_spans_agents_and_conversations`,
+  `provider_account_erasure_preserves_unrelated_conversation_content`
+  (M7a-b's), and `a_guests_contributions_are_erased_and_the_conversation_stays`
+  through the real router.
 
 ### M7b — Lifecycle: governance (L, after M7a)
 
