@@ -39,6 +39,13 @@ pub fn conversation_scope(session_id: &str) -> String {
     format!("conversation:{session_id}")
 }
 
+fn scope_error(scope: &str, error: vak_storage::StorageError) -> SessionError {
+    match error {
+        vak_storage::StorageError::Revoked(_) => SessionError::Erased(scope.to_string()),
+        other => objects_error(other),
+    }
+}
+
 pub(crate) fn objects_error(error: vak_storage::StorageError) -> SessionError {
     SessionError::Objects(error.to_string())
 }
@@ -63,6 +70,9 @@ impl KekVault for CredentialVault {
 /// after it started fences it (`crate::fence`).
 pub struct TenantObjects {
     store: Arc<LocalStore>,
+    scopes: vak_storage::scopes::ScopeKeys,
+    /// Scope keys this process has unwrapped, by scope.
+    unwrapped: Mutex<HashMap<String, vak_storage::records::ScopeKey>>,
     writer_epoch: crate::fence::WriterEpoch,
 }
 
@@ -107,13 +117,75 @@ impl TenantObjects {
         .map_err(objects_error)?;
         let id_key = authority.id_key().map_err(objects_error)?;
         let _ = lock.unlock();
-        let store = LocalStore::open(&tenant_home.join("store"), id_key, Arc::new(authority))
+        let authority: Arc<dyn vak_storage::keys::KeyAuthority> = Arc::new(authority);
+        let scopes = vak_storage::scopes::ScopeKeys::open(&keys.join("scopes"), authority.clone())
+            .map_err(objects_error)?;
+        let store = LocalStore::open(&tenant_home.join("store"), id_key, authority)
             .map_err(objects_error)?;
         let writer_epoch = crate::fence::WriterEpoch(store.epoch().map_err(objects_error)?);
         Ok(Self {
             store: Arc::new(store),
+            scopes,
+            unwrapped: Default::default(),
             writer_epoch,
         })
+    }
+
+    /// The key of `scope`, created when the scope has none. A destroyed
+    /// scope is never created again.
+    pub fn create_scope_key(
+        &self,
+        scope: &str,
+    ) -> Result<vak_storage::records::ScopeKey, SessionError> {
+        crate::fence::check()?;
+        let key = self
+            .scopes
+            .create(scope)
+            .map_err(|e| scope_error(scope, e))?;
+        self.remember(scope, &key);
+        Ok(key)
+    }
+
+    /// The key of `scope`. Whether the scope was destroyed is read each
+    /// time, so a key this process unwrapped earlier stops opening anything
+    /// once another process destroys it.
+    pub fn scope_key(&self, scope: &str) -> Result<vak_storage::records::ScopeKey, SessionError> {
+        if self.scopes.is_shredded(scope) {
+            self.forget(scope);
+            return Err(SessionError::Erased(scope.to_string()));
+        }
+        if let Ok(unwrapped) = self.unwrapped.lock()
+            && let Some(key) = unwrapped.get(scope)
+        {
+            return Ok(key.clone());
+        }
+        let key = self.scopes.get(scope).map_err(|e| scope_error(scope, e))?;
+        self.remember(scope, &key);
+        Ok(key)
+    }
+
+    /// Destroys `scope`'s key: every frame sealed under it and every object
+    /// granted only to it stops being readable, and no byte of either
+    /// changes. Refused while the scope is held.
+    pub fn destroy_scope_key(&self, scope: &str) -> Result<(), SessionError> {
+        crate::fence::check()?;
+        self.scopes
+            .shred(scope)
+            .map_err(|e| scope_error(scope, e))?;
+        self.forget(scope);
+        Ok(())
+    }
+
+    fn remember(&self, scope: &str, key: &vak_storage::records::ScopeKey) {
+        if let Ok(mut unwrapped) = self.unwrapped.lock() {
+            unwrapped.insert(scope.to_string(), key.clone());
+        }
+    }
+
+    fn forget(&self, scope: &str) {
+        if let Ok(mut unwrapped) = self.unwrapped.lock() {
+            unwrapped.remove(scope);
+        }
     }
 
     /// The store under these objects, for Documents.

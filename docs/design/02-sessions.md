@@ -58,6 +58,12 @@ the workspace is bound to, and the session id
 <agent sessions home>/sessions/<space id>/<session-id>/   # record segments
 ```
 
+Every frame in those segments is sealed under the conversation's scope key
+(`vak_session::keys`, data-architecture plan M7a-a). The directory's `KEY`
+file names the scope, since the header is sealed too. A ledger with no key
+is refused, and one whose key was destroyed keeps its bytes and its
+verifiable chain and can no longer be read.
+
 A space id is a `spc_` UUIDv7 minted when a folder is first opened as a
 workspace and kept, with this machine's path bindings, in the tenant's space
 registry (`vak_config::spaces`, data-architecture plan M3b slice 5). It is

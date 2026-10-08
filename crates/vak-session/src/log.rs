@@ -40,6 +40,8 @@ struct LedgerDir {
     writer: Option<(u64, vak_storage::records::RecordWriter)>,
     /// The segment set's single-writer lock, held for the handle's life.
     lock: Option<vak_storage::segments::WriterLock>,
+    /// The conversation's key: every frame is sealed under it.
+    key: vak_storage::records::ScopeKey,
 }
 
 impl LedgerDir {
@@ -174,6 +176,10 @@ impl SessionLog {
         if !segment_numbers(&path).is_empty() {
             return Err(SessionError::Exists(path));
         }
+        let key = crate::keys::declare(
+            &path,
+            &crate::objects::conversation_scope(&header.session_id),
+        )?;
         let writer = segments.writer(1, &lock).map_err(storage_error)?;
         let mut log = SessionLog {
             path,
@@ -181,6 +187,7 @@ impl SessionLog {
                 segments,
                 writer: Some((1, writer)),
                 lock: Some(lock),
+                key,
             },
             entries: Vec::new(),
             by_id: HashMap::new(),
@@ -216,11 +223,12 @@ impl SessionLog {
             )));
         }
         let segments = vak_storage::segments::SegmentSet::open(path).map_err(storage_error)?;
+        let key = crate::keys::of_ledger(path)?;
         let mut entries = Vec::new();
         let mut by_id = HashMap::new();
         let mut warnings = Vec::new();
         for (number, _) in segment_numbers(path) {
-            let raw = match segments.read(number, None) {
+            let raw = match segments.read(number, Some(&key)) {
                 Ok(raw) => raw,
                 Err(error) => {
                     warnings.push(format!(
@@ -234,7 +242,9 @@ impl SessionLog {
                         segments.sealed_path(number)
                     };
                     vak_storage::segments::frame_bytes(&file)
-                        .and_then(|bytes| vak_storage::records::located_entries(&bytes, 0))
+                        .and_then(|bytes| {
+                            vak_storage::records::located_entries(&bytes, 0, Some(&key))
+                        })
                         .map(|located| located.into_iter().map(|e| e.entry).collect())
                         .unwrap_or_default()
                 }
@@ -278,12 +288,13 @@ impl SessionLog {
             });
         }
         let bytes = vak_storage::segments::frame_bytes(path).map_err(storage_error)?;
-        let entry_bytes = vak_storage::records::entry_at(&bytes, offset, length).map_err(|_| {
-            SessionError::Corrupt {
+        let key = crate::keys::of_segment(path)?
+            .ok_or_else(|| SessionError::Unencrypted(path.to_path_buf()))?;
+        let entry_bytes = vak_storage::records::entry_at(&bytes, offset, length, Some(&key))
+            .map_err(|_| SessionError::Corrupt {
                 line: 0,
                 message: "indexed record is outside the ledger".into(),
-            }
-        })?;
+            })?;
         let line = std::str::from_utf8(&entry_bytes).map_err(|error| SessionError::Corrupt {
             line: 0,
             message: error.to_string(),
@@ -317,6 +328,7 @@ impl SessionLog {
             )));
         }
         let (segments, lock) = LedgerDir::locked(&path)?;
+        let key = crate::keys::of_ledger(&path)?;
         let numbers = segment_numbers(&path);
         // Append to the newest segment while it is open; after a seal, the
         // next one.
@@ -352,6 +364,7 @@ impl SessionLog {
                 segments,
                 writer: Some((active, writer)),
                 lock: Some(lock),
+                key,
             },
             entries: parsed.entries,
             by_id: parsed.by_id,
@@ -370,6 +383,7 @@ impl SessionLog {
     /// read and rehydrate sessions that are currently active in another process.
     pub fn open_read_only(path: PathBuf) -> Result<Self, SessionError> {
         let parsed = Self::parse_entries(&path)?;
+        let key = crate::keys::of_ledger(&path)?;
         let segments = vak_storage::segments::SegmentSet::open(&path).map_err(storage_error)?;
         Ok(SessionLog {
             path,
@@ -377,6 +391,7 @@ impl SessionLog {
                 segments,
                 writer: None,
                 lock: None,
+                key,
             },
             entries: parsed.entries,
             by_id: parsed.by_id,
@@ -426,8 +441,10 @@ impl SessionLog {
                 line: 0,
                 message: "empty session ledger".into(),
             })?;
+        let key = crate::keys::of_ledger(path)?;
         let bytes = vak_storage::segments::frame_bytes(&first).map_err(storage_error)?;
-        let located = vak_storage::records::located_entries(&bytes, 0).map_err(storage_error)?;
+        let located =
+            vak_storage::records::located_entries(&bytes, 0, Some(&key)).map_err(storage_error)?;
         let entry = located.first().ok_or_else(|| SessionError::Corrupt {
             line: 0,
             message: "empty session ledger".into(),
@@ -454,11 +471,14 @@ impl SessionLog {
     /// visited. An entry that does not parse is counted and skipped.
     pub fn scan(path: &Path, mut visit: impl FnMut(Option<&Entry>) -> bool) -> u64 {
         let mut count = 0;
+        let Ok(key) = crate::keys::of_ledger(path) else {
+            return 0;
+        };
         for segment in SessionLog::segment_files(path) {
             let Ok(bytes) = vak_storage::segments::frame_bytes(&segment) else {
                 continue;
             };
-            let Ok(located) = vak_storage::records::located_entries(&bytes, 0) else {
+            let Ok(located) = vak_storage::records::located_entries(&bytes, 0, Some(&key)) else {
                 continue;
             };
             for frame in located {
@@ -476,11 +496,16 @@ impl SessionLog {
     /// rendering for inspection and tests. Not a format anything parses back.
     pub fn text(path: &Path) -> String {
         let mut out = String::new();
+        let Ok(key) = crate::keys::of_ledger(path) else {
+            return out;
+        };
         for segment in SessionLog::segment_files(path) {
             let Ok(bytes) = vak_storage::segments::frame_bytes(&segment) else {
                 continue;
             };
-            for frame in vak_storage::records::located_entries(&bytes, 0).unwrap_or_default() {
+            for frame in
+                vak_storage::records::located_entries(&bytes, 0, Some(&key)).unwrap_or_default()
+            {
                 out.push_str(&String::from_utf8_lossy(&frame.entry));
                 out.push('\n');
             }
@@ -555,6 +580,7 @@ impl SessionLog {
             line: 0,
             message: e.to_string(),
         })?;
+        let key = self.ledger.key.clone();
         let Some((_, writer)) = self.ledger.writer.as_mut() else {
             return Err(SessionError::Locked(self.path.clone()));
         };
@@ -563,7 +589,7 @@ impl SessionLog {
         // point syncs every frame before it, so a turn costs a few syncs,
         // not one per entry.
         writer
-            .append_unsynced(line.as_bytes(), None)
+            .append_unsynced(line.as_bytes(), Some(&key))
             .map_err(storage_error)?;
         // A request's admission is durable before its ref says so, so the
         // ref never names an admission a crash could lose.
@@ -2817,6 +2843,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("session");
         std::fs::create_dir_all(&path).unwrap();
+        crate::keys::declare(&path, "conversation:lock-test").unwrap();
 
         let log = SessionLog::open(path.clone()).unwrap();
         assert!(matches!(

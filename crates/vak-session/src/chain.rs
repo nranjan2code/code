@@ -135,7 +135,7 @@ impl RecordChain {
             let Ok(bytes) = vak_storage::segments::frame_bytes(&segment) else {
                 continue;
             };
-            let Ok(frames) = vak_storage::records::located_entries(&bytes, 0) else {
+            let Ok(frames) = vak_storage::records::located_entries(&bytes, 0, None) else {
                 continue;
             };
             for frame in frames {
@@ -211,7 +211,7 @@ mod tests {
         assert_eq!(rows.len(), 200);
         for segment in crate::log::SessionLog::segment_files(&path) {
             let bytes = vak_storage::segments::frame_bytes(&segment).unwrap();
-            assert!(vak_storage::records::located_entries(&bytes, 0).is_ok());
+            assert!(vak_storage::records::located_entries(&bytes, 0, None).is_ok());
         }
     }
 }

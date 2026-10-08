@@ -85,8 +85,36 @@ impl ScopeKeys {
         }
         let key: [u8; KEY_LEN] = seal::random()?;
         let w = self.authority.wrap(scope, &key)?;
-        self.write_atomic(&self.path("keys", scope), &w.encode())?;
-        Ok(ScopeKey(key))
+        if self.write_new(&self.path("keys", scope), &w.encode())? {
+            Ok(ScopeKey(key))
+        } else {
+            self.get(scope)
+        }
+    }
+
+    /// Writes `dest` only if nothing is there; `false` when another creator
+    /// got there first, whose bytes stand.
+    fn write_new(&self, dest: &Path, bytes: &[u8]) -> Result<bool> {
+        let n = self.seq.fetch_add(1, Ordering::Relaxed);
+        let tmp = self
+            .root
+            .join("tmp")
+            .join(format!("{}-{n}", std::process::id()));
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        let linked = fs::hard_link(&tmp, dest);
+        let _ = fs::remove_file(&tmp);
+        match linked {
+            Ok(()) => {
+                if let Some(Ok(d)) = dest.parent().map(fs::File::open) {
+                    let _ = d.sync_all();
+                }
+                Ok(true)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn get(&self, scope: &str) -> Result<ScopeKey> {
@@ -228,6 +256,25 @@ mod tests {
             read_entries(&log, None),
             Err(StorageError::Undecryptable)
         ));
+    }
+
+    #[test]
+    fn two_creators_of_one_scope_get_one_key() {
+        let d = tempfile::tempdir().unwrap();
+        let authority: Arc<dyn KeyAuthority> =
+            Arc::new(crate::keys::MemoryKeyAuthority::new().unwrap());
+        let keys = Arc::new(ScopeKeys::open(d.path(), authority).unwrap());
+        let made: Vec<_> = (0..8)
+            .map(|_| {
+                let keys = keys.clone();
+                std::thread::spawn(move || keys.create("conversation:one").unwrap().0)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .collect();
+        assert!(made.iter().all(|key| key == &made[0]));
+        assert_eq!(keys.get("conversation:one").unwrap().0, made[0]);
     }
 
     #[test]

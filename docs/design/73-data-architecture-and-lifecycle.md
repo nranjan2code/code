@@ -461,7 +461,10 @@ Five rules follow:
 - **Segmented ledgers.**
   - A session ledger is a directory of segments. Each entry is a frame:
     compressed, then encrypted under the conversation key (or a
-    contributor's key, §7.3) when tenant policy is on. Ciphertext does not
+    contributor's key, §7.3), always (plan M7a-a): the frame's byte offset
+    in its segment is the AEAD's associated data, so one frame opens
+    without the frames before it. The ledger directory names its key scope
+    in `KEY`, because the header is sealed too. Ciphertext does not
     compress, so compression happens per frame, before encryption.
   - The open segment only ever grows. A sealed segment is hashed and
     chained to the previous one, and compressed as a whole only when its
@@ -605,8 +608,8 @@ dedupe (review R1). The design is:
   anything becomes readable. Fleet DR also needs a coherent record/ref/object
   manifest, off-VM copies, fencing and a measured restore drill (§11.1).
 - **Transparency and honesty.**
-  - Encryption at rest is a per-tenant policy, on by default because
-    erasure depends on it.
+  - A conversation's ledger is always encrypted, with no policy to turn it
+    off, because erasure depends on it (plan M7a-a).
   - `vak data cat | grep | export --plain` gives people the plain view the
     product promises.
   - On a headless host, the encrypted-file store keeps its key beside its

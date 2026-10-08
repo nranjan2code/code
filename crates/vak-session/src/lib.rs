@@ -11,6 +11,7 @@ pub mod documents;
 pub mod effects;
 pub mod fence;
 pub mod ids;
+pub mod keys;
 pub mod log;
 pub mod objects;
 pub mod rollup;

@@ -75,7 +75,7 @@ Known slow tests (each over 60 s, not failures):
 | 12b | M6.5b `session_search` over items, alerts into the Inbox, push intake | `quarantined_item_absent_from_agent_retrieval` | Done (`81bcf6385`) |
 | 12c | M6.5c screens on `/intake`, browser run, Python pipeline and `feeds.rs` deleted | `feed_pipeline_is_gone`, browser run | Done (`29385cd9a`) |
 | 13 | M7a lifecycle: honest deletion (after M6) | see plan §M7a (reconciler, erasure, hold, quota and soak tests, doc 74 §9 browser runs) | Design agreed 2026-10-08 (plan §M7a "M7a design"); steps 13a to 13i below |
-| 13a | M7a-a conversation keys: ledger frames always encrypted | `compressed_before_encrypted`, `bytes_per_turn_budget` | |
+| 13a | M7a-a conversation keys: ledger frames always encrypted | `compressed_before_encrypted`, `bytes_per_turn_budget`, `a_destroyed_key_leaves_the_bytes_and_the_chain_and_nothing_readable` | Done (2026-10-08): 6,596 bytes and 8 syncs per turn sealed (6,214 unsealed); side chains stay unsealed until M7a-b |
 | 13b | M7a-b shared-ledger content as conversation objects; contributor key; provider-account scope | see plan | |
 | 13c | M7a-c `vak-lifecycle` reconciler, observe-only; default label; Storage and Lifecycle screens | `reconciler_observe_only_commits_nothing`, `reconciler_is_idempotent` | |
 | 13d | M7a-d commit for ephemeral and derived classes; object GC; quotas; scattered retention removed | `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`, `quota_refuses_admission_not_records` | |

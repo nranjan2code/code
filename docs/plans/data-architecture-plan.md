@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); no step of it is built. Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -537,8 +537,7 @@ ledger syncs at commit points only (header, a person's message, tool
 results, effects, the turn card, close). Measured on a scripted read-then-
 answer turn: 6.1 KB and 3 record syncs per turn (`bytes_per_turn_budget`,
 `fsyncs_per_turn_budget`); `derive_messages_identical_across_seal`.
-Deviations: frames are written unencrypted because no tenant policy turns
-encryption on yet, so the budget is measured without it (a sealed frame adds
+Deviations: frames were written unencrypted until M7a-a sealed every one (2026-10-08), so the budget is measured without it (a sealed frame adds
 a nonce and tag, well inside the margin); ledgers stay under the Agent home,
 named by session id, and move with the D25 work in slice 3; checkpoints
 keep `MAX_STORED_CHECKPOINTS` until retention policy lands in M7a.
@@ -1478,7 +1477,7 @@ Steps, each shipped whole and in this order:
 
 | Step | What | Exit tests |
 |---|---|---|
-| M7a-a | Conversation keys: every session ledger frame encrypted under its conversation's scope key; the readers (the catalog tailer, `SessionLog`) open through it; the per-turn byte and fsync budgets re-measured | `compressed_before_encrypted`, `bytes_per_turn_budget`, a shredded conversation's ledger verifies and does not decrypt |
+| M7a-a | **Done 2026-10-08 (note below).** Conversation keys: every session ledger frame encrypted under its conversation's scope key; the readers (the catalog tailer, `SessionLog`) open through it; the per-turn byte and fsync budgets re-measured | `compressed_before_encrypted`, `bytes_per_turn_budget`, `a_destroyed_key_leaves_the_bytes_and_the_chain_and_nothing_readable` |
 | M7a-b | Content out of shared ledgers into objects granted to the conversation; the contributor key for a guest's frames with the typed placeholder in `derive_messages()`; the provider-account scope and its grant on provider-derived objects | a guest's frames read through their own key; an account-derived object reads only with the account's grant |
 | M7a-c | `crates/vak-lifecycle`: the reconciler, observe-only; the default tenant label; one plan object behind `vak data status`, `usage` and `plan`, `/data/status`, `/data/usage` and `/data/lifecycle`, and the admin Storage (A7) and Lifecycle (A8) screens | `reconciler_observe_only_commits_nothing`, `reconciler_is_idempotent` |
 | M7a-d | Commit for the ephemeral and derived classes (runtime scrub, environments, checkpoints, Document history, inbox entries, cost and activity segments), object GC and quotas; the scattered retention goes (`MAX_STORED_CHECKPOINTS`, finops and alerts compaction, `cleanup_artifacts`, `/memory/cleanup`); `vak data gc` | `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`, `quota_refuses_admission_not_records` |
@@ -1487,6 +1486,39 @@ Steps, each shipped whole and in this order:
 | M7a-g | Agent lifecycle: `Revoked`, each state's data effects, the Agents lifecycle panel (A14) | `revoke_cuts_endpoints_within_one_tick` |
 | M7a-h | Backup: ciphertext and wrapped keys, the coherent manifest, restore re-applies erasures and bumps the writer epoch; Backup & restore (A16); `vak data backup` | `restore_reapplies_erasures`, `provider_account_erasure_reapplies_after_restore` |
 | M7a-i | Integrity (A9) and Data health (A1); `vak data verify`, `rebuild-catalog`, `export`, `cat` and `grep`; the soak; the new invariant and the docs of §5; the browser acceptance of doc 74 §9 | `thirty_day_soak_stays_within_budget`, the acceptance run |
+
+**M7a-a, done 2026-10-08.** Every frame of a session ledger is sealed
+under its conversation's scope key (`conversation:<session id>`, the scope
+its objects are already granted to), so one destroyed scope makes the
+ledger and its objects unreadable together.
+- The tenant holds its scope keys in `<tenant>/keys/scopes`
+  (`vak_storage::scopes::ScopeKeys`, wrapped by the key authority);
+  `TenantObjects::create_scope_key`, `scope_key` and `destroy_scope_key`
+  are the only way to them. Whether a scope was destroyed is read on every
+  lookup, so a key another process unwrapped earlier stops opening
+  anything. Two creators of one scope get one key.
+- A ledger directory names its scope in `KEY`, written when the ledger is
+  created, because the header (which carries the system prompt) is sealed
+  too. `vak_session::keys` resolves a directory's key; `SessionLog` (open,
+  read-only, `read_header`, `scan`, `text`, `read_record_at`) and the
+  catalog's tailer (`vak_session::tail`) read through it.
+- A ledger with no `KEY` is refused (`SessionError::Unencrypted`, naming
+  the purge); a ledger whose key was destroyed is `SessionError::Erased`,
+  its bytes unchanged and its chain still verifying.
+- The frame's associated data is now its byte offset in the segment, not
+  its sequence number, so the indexed read of one record
+  (`read_record_at`) opens a frame without the ones before it. No sealed
+  frame had been written before this, so nothing on disk changes meaning.
+- Measured on the scripted read-then-answer turn: 6,596 bytes and 8 record
+  syncs per turn sealed, against 6,214 bytes and 8 syncs unsealed on the
+  same tree (budgets 20 KiB and 8).
+- Not in this step: side record chains (runs, effects, grants, artifacts,
+  inbox) stay unsealed. They hold ids and state for many conversations,
+  so no one conversation's key fits them; their content moves into
+  conversation-granted objects at M7a-b. A writer that holds a ledger
+  open keeps appending after another process destroys its key; M7a-e's
+  erasure refuses a conversation with a live turn. The dev data home is
+  purged once: its ledgers have no key.
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

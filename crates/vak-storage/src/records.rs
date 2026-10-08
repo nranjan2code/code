@@ -2,8 +2,8 @@
 //!
 //! Frame on disk: `len u32 LE | flags u8 | payload | hash[32]` where `len`
 //! counts flags + payload, `payload` is zstd of the entry (sealed under the
-//! scope key when flags bit 0 is set, with the entry's sequence number as
-//! AAD), and `hash = SHA-256(prev_hash || len || flags || payload)`. The
+//! scope key when flags bit 0 is set, with the frame's byte offset in its
+//! segment as AAD, so one frame opens without the frames before it), and `hash = SHA-256(prev_hash || len || flags || payload)`. The
 //! chain is over the bytes as stored, so it verifies with no key and keeps
 //! verifying after the key is destroyed.
 
@@ -54,7 +54,7 @@ struct Frame<'a> {
 fn walk(
     data: &[u8],
     start: [u8; 32],
-    mut visit: impl FnMut(u64, Frame<'_>) -> Result<()>,
+    mut visit: impl FnMut(u64, u64, Frame<'_>) -> Result<()>,
 ) -> Result<ChainReport> {
     let mut pos = 0usize;
     let mut prev = start;
@@ -96,6 +96,7 @@ fn walk(
         }
         visit(
             n,
+            pos as u64,
             Frame {
                 flags: body[0],
                 payload: &body[1..],
@@ -123,11 +124,22 @@ pub fn verify_chain_from(path: &Path, prev: [u8; 32]) -> Result<ChainReport> {
 
 /// Verifies frames held in memory. Never panics on any input.
 pub fn verify_bytes(data: &[u8], prev: [u8; 32]) -> Result<ChainReport> {
-    walk(data, prev, |_, _| Ok(()))
+    walk(data, prev, |_, _, _| Ok(()))
 }
 
-fn aad(seq: u64) -> [u8; 8] {
-    seq.to_le_bytes()
+fn aad(offset: u64) -> [u8; 8] {
+    offset.to_le_bytes()
+}
+
+/// The entry in a frame's `body` (flags then payload) at `offset`.
+fn open_body(body: &[u8], offset: u64, key: Option<&ScopeKey>) -> Result<Vec<u8>> {
+    if body[0] & SEALED == 0 {
+        return seal::decompress(&body[1..]);
+    }
+    let k = key.ok_or(StorageError::Undecryptable)?;
+    let compressed =
+        seal::open(&k.0, &aad(offset), &body[1..]).map_err(|_| StorageError::Undecryptable)?;
+    seal::decompress(&compressed)
 }
 
 /// Reads every entry. A sealed frame needs `key`; without it, or after the
@@ -143,10 +155,10 @@ pub fn entries_from_bytes(
     key: Option<&ScopeKey>,
 ) -> Result<Vec<Vec<u8>>> {
     let mut out = Vec::new();
-    walk(data, prev, |seq, f| {
+    walk(data, prev, |_, offset, f| {
         let compressed = if f.flags & SEALED != 0 {
             let k = key.ok_or(StorageError::Undecryptable)?;
-            seal::open(&k.0, &aad(seq), f.payload).map_err(|_| StorageError::Undecryptable)?
+            seal::open(&k.0, &aad(offset), f.payload).map_err(|_| StorageError::Undecryptable)?
         } else {
             f.payload.to_vec()
         };
@@ -182,13 +194,20 @@ pub struct LocatedEntry {
     pub offset: u64,
     pub len: u64,
     pub entry: Vec<u8>,
+    /// Whether the frame is sealed under a scope key.
+    pub sealed: bool,
 }
 
 /// The plaintext entries of `data` from the frame at `from` onward, without
 /// verifying the chain: an index that already holds a segment's prefix reads
 /// only its suffix, and checks each entry against its own digest. A torn
-/// tail ends the list; a sealed frame is `Undecryptable`.
-pub fn located_entries(data: &[u8], from: u64) -> Result<Vec<LocatedEntry>> {
+/// tail ends the list; a sealed frame needs `key` and is `Undecryptable`
+/// without it.
+pub fn located_entries(
+    data: &[u8],
+    from: u64,
+    key: Option<&ScopeKey>,
+) -> Result<Vec<LocatedEntry>> {
     let mut out = Vec::new();
     let mut pos = usize::try_from(from).map_err(|_| StorageError::Malformed("offset"))?;
     while pos < data.len() {
@@ -207,7 +226,8 @@ pub fn located_entries(data: &[u8], from: u64) -> Result<Vec<LocatedEntry>> {
         out.push(LocatedEntry {
             offset: pos as u64,
             len: total as u64,
-            entry: plaintext(&rest[4..4 + len])?,
+            entry: open_body(&rest[4..4 + len], pos as u64, key)?,
+            sealed: rest[4] & SEALED != 0,
         });
         pos += total;
     }
@@ -215,7 +235,7 @@ pub fn located_entries(data: &[u8], from: u64) -> Result<Vec<LocatedEntry>> {
 }
 
 /// The plaintext entry of the one frame at `offset` (`len` bytes on disk).
-pub fn entry_at(data: &[u8], offset: u64, len: u64) -> Result<Vec<u8>> {
+pub fn entry_at(data: &[u8], offset: u64, len: u64, key: Option<&ScopeKey>) -> Result<Vec<u8>> {
     let start = usize::try_from(offset).map_err(|_| StorageError::Malformed("offset"))?;
     let total = usize::try_from(len).map_err(|_| StorageError::Malformed("length"))?;
     let frame = data
@@ -226,20 +246,15 @@ pub fn entry_at(data: &[u8], offset: u64, len: u64) -> Result<Vec<u8>> {
     if 4 + body_len + HASH != total {
         return Err(StorageError::Malformed("frame length"));
     }
-    plaintext(&frame[4..4 + body_len])
-}
-
-fn plaintext(body: &[u8]) -> Result<Vec<u8>> {
-    if body[0] & SEALED != 0 {
-        return Err(StorageError::Undecryptable);
-    }
-    seal::decompress(&body[1..])
+    open_body(&frame[4..4 + body_len], offset, key)
 }
 
 pub struct RecordWriter {
     file: File,
     head: [u8; 32],
     seq: u64,
+    /// Bytes of complete frames in the file: where the next frame starts.
+    at: u64,
     /// Frames written since the last sync.
     dirty: bool,
 }
@@ -285,6 +300,7 @@ impl RecordWriter {
             file,
             head: r.head,
             seq: r.entries,
+            at: r.valid_len,
             dirty: false,
         })
     }
@@ -332,7 +348,7 @@ impl RecordWriter {
     pub fn append_unsynced(&mut self, entry: &[u8], key: Option<&ScopeKey>) -> Result<[u8; 32]> {
         let compressed = seal::compress(entry)?;
         let (flags, payload) = match key {
-            Some(k) => (SEALED, seal::seal(&k.0, &aad(self.seq), &compressed)?),
+            Some(k) => (SEALED, seal::seal(&k.0, &aad(self.at), &compressed)?),
             None => (0, compressed),
         };
         let mut body = Vec::with_capacity(1 + payload.len());
@@ -350,6 +366,7 @@ impl RecordWriter {
         self.dirty = true;
         self.head = h;
         self.seq += 1;
+        self.at += frame.len() as u64;
         Ok(h)
     }
 }

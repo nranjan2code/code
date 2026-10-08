@@ -1194,6 +1194,16 @@ pub enum SessionError {
     Locked(std::path::PathBuf),
     #[error("object store: {0}")]
     Objects(String),
+    /// A session ledger with no conversation key: it was written before
+    /// ledgers were encrypted, and nothing reads it.
+    #[error(
+        "the conversation at {0} was written before conversations were encrypted and cannot be read; run `vak self uninstall --purge`, then install and run setup"
+    )]
+    Unencrypted(std::path::PathBuf),
+    /// The conversation's key was destroyed: its records remain and verify,
+    /// and nothing can read them.
+    #[error("this conversation was erased ({0})")]
+    Erased(String),
     /// The ledger's workspace was never opened as a space
     /// (`vak_config::spaces::require_bound`).
     #[error("{0}")]

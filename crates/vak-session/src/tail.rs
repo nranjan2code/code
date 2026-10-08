@@ -39,7 +39,10 @@ pub fn tail(
         let Ok(bytes) = vak_storage::segments::frame_bytes(&path) else {
             return at;
         };
-        let Ok(frames) = vak_storage::records::located_entries(&bytes, 0) else {
+        let Ok(key) = crate::keys::of(dir) else {
+            return at;
+        };
+        let Ok(frames) = vak_storage::records::located_entries(&bytes, 0, key.as_ref()) else {
             return at;
         };
         let skip = if number == from.segment {

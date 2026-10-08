@@ -15,11 +15,39 @@ use vak_session::SessionLog;
 use vak_session::types::SessionError;
 use vak_tools::ToolContext;
 
+fn header(cwd: &std::path::Path) -> vak_session::types::SessionHeader {
+    vak_session::types::SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
+        agent: None,
+        session_id: "ses-lock-during-spawns".into(),
+        created_at: chrono::Utc::now(),
+        cwd: cwd.to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: vak_session::types::FrozenContract {
+            app_version: "test".into(),
+            provider: "scripted".into(),
+            model: "m".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: String::new(),
+            permission_mode: "workspace-write".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn reopening_a_ledger_while_workers_spawn_never_finds_it_locked() {
     let dir = tempfile::tempdir().unwrap();
     let ledger = dir.path().join("session");
-    std::fs::create_dir_all(&ledger).unwrap();
+    drop(SessionLog::create(ledger.clone(), header(dir.path())).unwrap());
     std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
 
     let stop = Arc::new(AtomicBool::new(false));
