@@ -84,7 +84,15 @@ Known slow tests (each over 60 s, not failures):
 | 13g | M7a-g Agent lifecycle `Revoked` and data effects | `revoke_cuts_endpoints_within_one_tick` | **Done 2026-10-08** (`AgentLifecycle::Revoked`, `POST /agents/{agent}/revoke` with the name typed, `GET /agents/{agent}/lifecycle`, Revoke in the client's agent picker) |
 | 13h | M7a-h backup rework | `restore_reapplies_erasures`, `provider_account_erasure_reapplies_after_restore` | **Done 2026-10-08** (`Core::backup_create`, `restore_preview`, `backup_restore`; `ScopeKeys::reshred`; manifest v2; `/data/backups`…; the client's restore confirmation) |
 | 13i | M7a-i Integrity, Data health, remaining `vak data` verbs, soak, invariant, acceptance | `thirty_day_soak_stays_within_budget`, doc 74 §9 runs | **Done 2026-10-08** (`Core::data_integrity`, `/data/integrity`, admin Integrity and Home Data health; `vak data verify | rebuild-catalog | cat | grep`; the soak; retention commits by default; invariant 42; `docs/audits/acceptance-m7a-lifecycle-2026-10-08.md`). **M7a is done.** |
-| 14 | M7b lifecycle: governance (after M7a) | `label_on_any_node_resolves` and the remaining doc 74 §9 runs | |
+| 14 | M7b lifecycle: governance, trimmed to one owner (design agreed 2026-10-09, plan §M7b "M7b design") | the steps below | In progress |
+| 14a | M7b-a the install's retention rules, editable, with an impact preview | `shortened_retention_previews_what_it_removes`, `edited_rules_are_the_ones_the_pass_uses` | |
+| 14b | M7b-b holds in one place, on artifacts too | `hold_blocks_every_destructive_transition` | |
+| 14c | M7b-c erasing an Agent's data | `agent_erasure_takes_what_it_owns_and_nothing_else` | |
+| 14d | M7b-d erasing a project's data | `project_erasure_leaves_the_folder` | |
+| 14e | M7b-e erasing one person across chats | `person_erasure_spans_agents_and_chats` | |
+| 14f | M7b-f erasing everything | `install_erasure_leaves_a_receipt_and_nothing_else` | |
+| 14g | M7b-g key rotation, Keys screen, Your data | `rotation_keeps_everything_readable` | |
+| 14h | M7b-h acceptance | the run | |
 | 15 | M8 design (only declared deliverables, optional title, versions as an `artifacts/` chain with a rollup) | plan §M8 design | Done (`52c470d01`) |
 | 15a | M8.1 identity and versions: `artifacts/` chain + rollup, `Tool::artifact`, candidates/promotions/Office drafts as versions, catalog nodes, `/library` | `concurrent_edit_creates_sibling_versions`, `saved_version_survives_origin_erasure` | Done (`ce275405b`) |
 | 15b | M8.2 grants: `grants/` chain, coworking grants moved in, inheritance and breaks, catalog filtering | `share_inherits_and_breaks`, `revoked_grant_hides_from_search` | Done (`d09c0c450`) |

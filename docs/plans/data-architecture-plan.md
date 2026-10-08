@@ -2208,6 +2208,44 @@ on by default. M7a is done.**
   `hold_blocks_every_destructive_transition`, `label_on_any_node_resolves`.
 - The remaining browser acceptance scenarios in doc 74 §9.
 
+#### M7b design (agreed with the maintainer 2026-10-09)
+
+Vak has one owner. M7b is cut to what one owner uses; the rest of the
+list above is deferred with the enterprise work and is not built.
+
+Decisions:
+
+1. **Trimmed for one owner.** No data roles, no second-person approval of
+   an erasure, no erasure-request queue, no audit export. Every action is
+   the owner's.
+2. **One set of retention rules for the install.** The owner edits the
+   keep times in one place, with a preview of what a shorter time would
+   remove and a confirmation when anything is shortened. No labels on
+   Agents, projects or conversations, and no inheritance.
+3. **Four more things can be erased for good:** an Agent's data, a
+   project's data, one person across chats and Agents (with their
+   allowlist entry), and everything (the whole install). Each is the
+   owner's act, previewed, confirmed by typing a name, refused under a
+   hold, and receipted like M7a's.
+4. **Retention stays on by default** (M7a-i).
+
+Steps, each shipped whole and in this order:
+
+| Step | What | Exit tests |
+|---|---|---|
+| M7b-a | The install's retention rules as a Document the owner edits: `Core::retention_label`, the impact preview, confirmation when a time is shortened; the admin Retention screen's editor; `vak data rules` | `shortened_retention_previews_what_it_removes`, `edited_rules_are_the_ones_the_pass_uses` |
+| M7b-b | Holds listed in one place and placed on an artifact as well as a conversation; release | `hold_blocks_every_destructive_transition` |
+| M7b-c | Erasing an Agent's data (after it is revoked or archived): its conversations, memory, files and automations | `agent_erasure_takes_what_it_owns_and_nothing_else` |
+| M7b-d | Erasing a project's data: what Vak stored for one folder, never the folder | `project_erasure_leaves_the_folder` |
+| M7b-e | Erasing one person across chats and Agents, with their allowlist entry and a hashed sticky-deny fingerprint | `person_erasure_spans_agents_and_chats` |
+| M7b-f | Erasing everything, with a receipt the owner keeps | `install_erasure_leaves_a_receipt_and_nothing_else` |
+| M7b-g | Key rotation and the Keys screen (A12); the client's Your data page (C7) | `rotation_keeps_everything_readable` |
+| M7b-h | The acceptance run | the run |
+
+Not built, by decision 1 and 2: labels on any node (`label_on_any_node_resolves`),
+data roles, the Erasure requests queue (A11), Audit export (A15), a query
+hold.
+
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office
