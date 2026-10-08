@@ -266,3 +266,54 @@ fn a_removed_file_is_a_version_with_no_bytes() {
     assert!(artifacts.bytes(&artifact, &gone).is_err());
     assert_eq!(artifacts.bytes(&artifact, &first).unwrap(), b"kept so far");
 }
+
+/// What an artifact's rows say (its path, title and summary) is an object
+/// of the artifact's own scope (plan M7a-b): the chain keeps ids and steps,
+/// and destroying the artifact's key takes the artifact and leaves others.
+#[test]
+fn an_artifacts_rows_keep_no_content_and_go_with_its_key() {
+    let (shared, tenant) = home();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let declare = |path: &str, title: &str| {
+        artifacts
+            .declare(
+                "spc_sealed",
+                "vak",
+                path,
+                ArtifactKind::File,
+                Some(title.into()),
+                Some("figures for the board".into()),
+                None,
+                None,
+            )
+            .unwrap()
+    };
+    let kept = declare("kept-plan.md", "Hiring plan");
+    let gone = declare("gone-offer.md", "Offer letter");
+
+    let stored = vak_session::chain::RecordChain::at(shared.artifacts()).text();
+    for content in [
+        "Offer letter",
+        "gone-offer.md",
+        "figures for the board",
+        "Hiring plan",
+    ] {
+        assert!(!stored.contains(content), "{content} is in the chain");
+    }
+    assert!(stored.contains(&gone.to_string()) && stored.contains("\"step\":\"declared\""));
+    assert_eq!(
+        artifacts.get(&gone.to_string()).unwrap().title.as_deref(),
+        Some("Offer letter")
+    );
+
+    TenantObjects::for_tenant(&tenant)
+        .unwrap()
+        .destroy_scope_key(&vak_core::artifacts::object_scope(&gone))
+        .unwrap();
+
+    assert!(artifacts.get(&gone.to_string()).is_none());
+    assert_eq!(
+        artifacts.get(&kept.to_string()).unwrap().title.as_deref(),
+        Some("Hiring plan")
+    );
+}

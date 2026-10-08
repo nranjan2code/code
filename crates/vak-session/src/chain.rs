@@ -29,11 +29,25 @@ fn storage_error(error: vak_storage::StorageError) -> SessionError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordChain {
     dir: PathBuf,
+    /// The key scope a chain that belongs to one conversation is sealed
+    /// under; `None` for a chain many conversations share.
+    scope: Option<String>,
 }
 
 impl RecordChain {
     pub fn at(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self {
+            dir: dir.into(),
+            scope: None,
+        }
+    }
+
+    /// The chain as one conversation's own: every frame is sealed under
+    /// that conversation's key, so the chain goes with it (plan M7a-b). A
+    /// reader needs no such call; the chain's directory names its scope.
+    pub fn of_conversation(mut self, session_id: &str) -> Self {
+        self.scope = Some(crate::objects::conversation_scope(session_id));
+        self
     }
 
     pub fn path(&self) -> &Path {
@@ -70,6 +84,12 @@ impl RecordChain {
         let lock = segments.lock().map_err(storage_error)?;
         crate::fence::check()?;
         segments.recover(&lock).map_err(storage_error)?;
+        let key = match (crate::keys::of(&self.dir)?, &self.scope) {
+            (Some(key), _) => Some(key),
+            (None, None) => None,
+            (None, Some(scope)) if !self.exists() => Some(crate::keys::declare(&self.dir, scope)?),
+            (None, Some(_)) => return Err(SessionError::Unencrypted(self.dir.clone())),
+        };
         let active = match crate::log::segment_numbers(&self.dir).last() {
             Some((number, true)) => *number,
             Some((number, false)) => number + 1,
@@ -92,7 +112,7 @@ impl RecordChain {
                 message: error.to_string(),
             })?;
             writer
-                .append_unsynced(&bytes, None)
+                .append_unsynced(&bytes, key.as_ref())
                 .map_err(storage_error)?;
         }
         if sync {
@@ -131,11 +151,15 @@ impl RecordChain {
 
     /// Visits rows in order until `visit` returns `false`.
     pub fn scan<T: DeserializeOwned>(&self, mut visit: impl FnMut(T) -> bool) {
+        // A chain whose conversation was erased reads as empty.
+        let Ok(key) = crate::keys::of(&self.dir) else {
+            return;
+        };
         for segment in crate::log::SessionLog::segment_files(&self.dir) {
             let Ok(bytes) = vak_storage::segments::frame_bytes(&segment) else {
                 continue;
             };
-            let Ok(frames) = vak_storage::records::located_entries(&bytes, 0, None) else {
+            let Ok(frames) = vak_storage::records::located_entries(&bytes, 0, key.as_ref()) else {
                 continue;
             };
             for frame in frames {

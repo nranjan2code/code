@@ -377,6 +377,7 @@ impl Intake {
             .and_then(|objects| objects.put(&body, &object_scope(&source)))
             .map_err(|error| IntakeError::Store(error.to_string()))?;
         let detection = vak_intake::detect(&item);
+        let scope = object_scope(&source);
         let row = IntakeEvent {
             item: id,
             at: Utc::now(),
@@ -395,8 +396,18 @@ impl Intake {
                 evidence: detection.evidence,
             },
         };
+        // What the item says belongs to its source, like its body (plan
+        // M7a-b); the chain keeps its ids, time and disposition.
+        let mut stored =
+            serde_json::to_value(&row).map_err(|error| IntakeError::Store(error.to_string()))?;
+        vak_session::content::seal_fields_under(
+            &mut stored,
+            &scope,
+            &["title", "link", "key", "evidence"],
+        )
+        .map_err(|error| IntakeError::Store(error.to_string()))?;
         self.chain
-            .append(&row)
+            .append(&stored)
             .map_err(|error| IntakeError::Store(error.to_string()))?;
         Ok(row)
     }
@@ -435,8 +446,15 @@ impl Intake {
     /// The `taken` row of `item`, when one exists.
     pub fn taken(&self, item: &str) -> Option<IntakeEvent> {
         let mut found = None;
-        self.chain.scan(|row: IntakeEvent| {
-            if row.item == item && matches!(row.step, IntakeStep::Taken { .. }) {
+        self.chain.scan(|mut row: serde_json::Value| {
+            if row.get("item").and_then(serde_json::Value::as_str) != Some(item) {
+                return true;
+            }
+            if let Ok(vak_session::content::Restored::Whole) =
+                vak_session::content::restore(&mut row)
+                && let Ok(row) = serde_json::from_value::<IntakeEvent>(row)
+                && matches!(row.step, IntakeStep::Taken { .. })
+            {
                 found = Some(row);
                 return false;
             }

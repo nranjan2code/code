@@ -12259,7 +12259,7 @@ fn append_session_sandbox_event(
         return;
     }
     let path = vak_config::scope::AgentScope::new(home).sandbox_executions(session_id);
-    let _ = crate::sandbox_records::append_events(&path, &lines);
+    let _ = crate::sandbox_records::append_events(&path, session_id, &lines);
 }
 
 async fn list_sandbox_records(State(state): State<AppState>) -> axum::response::Response {

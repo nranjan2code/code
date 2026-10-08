@@ -33,18 +33,20 @@ fn tenant() -> Result<std::sync::Arc<TenantObjects>, SessionError> {
     TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())
 }
 
-fn seal(row: &mut Value, session_id: &str, moved: Map<String, Value>) -> Result<(), SessionError> {
+fn seal(row: &mut Value, scope: &str, moved: Map<String, Value>) -> Result<(), SessionError> {
     if moved.is_empty() {
         return Ok(());
     }
     let bytes = serde_json::to_vec(&Value::Object(moved))
         .map_err(|error| SessionError::Objects(error.to_string()))?;
-    let scope = conversation_scope(session_id);
     let tenant = tenant()?;
-    tenant.create_scope_key(&scope)?;
-    let object = tenant.put(&bytes, &scope)?;
-    let sealed = serde_json::to_value(Sealed { scope, object })
-        .map_err(|error| SessionError::Objects(error.to_string()))?;
+    tenant.create_scope_key(scope)?;
+    let object = tenant.put(&bytes, scope)?;
+    let sealed = serde_json::to_value(Sealed {
+        scope: scope.to_string(),
+        object,
+    })
+    .map_err(|error| SessionError::Objects(error.to_string()))?;
     if let Some(fields) = row.as_object_mut() {
         fields.insert(FIELD.into(), sealed);
     }
@@ -54,6 +56,17 @@ fn seal(row: &mut Value, session_id: &str, moved: Map<String, Value>) -> Result<
 /// Moves the named `fields` of `row` into an object of `session_id`'s
 /// conversation.
 pub fn seal_fields(row: &mut Value, session_id: &str, fields: &[&str]) -> Result<(), SessionError> {
+    seal_fields_under(row, &conversation_scope(session_id), fields)
+}
+
+/// As `seal_fields`, under a scope that is not a conversation's: an
+/// artifact's content belongs to the artifact, which may outlive the
+/// conversation that made it.
+pub fn seal_fields_under(
+    row: &mut Value,
+    scope: &str,
+    fields: &[&str],
+) -> Result<(), SessionError> {
     let mut moved = Map::new();
     if let Some(object) = row.as_object_mut() {
         for field in fields {
@@ -62,7 +75,12 @@ pub fn seal_fields(row: &mut Value, session_id: &str, fields: &[&str]) -> Result
             }
         }
     }
-    seal(row, session_id, moved)
+    seal(row, scope, moved)
+}
+
+/// Whether `scope`'s key was destroyed.
+pub fn scope_destroyed(scope: &str) -> bool {
+    tenant().is_ok_and(|tenant| tenant.scope_destroyed(scope))
 }
 
 /// Moves every field of `row` but those in `keep` into an object of
@@ -81,7 +99,7 @@ pub fn seal_except(row: &mut Value, session_id: &str, keep: &[&str]) -> Result<(
             }
         }
     }
-    seal(row, session_id, moved)
+    seal(row, &conversation_scope(session_id), moved)
 }
 
 /// Puts a row's sealed content back beside its ids. A row whose

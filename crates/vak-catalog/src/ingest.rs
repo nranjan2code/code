@@ -892,9 +892,15 @@ fn intake_row(
     bytes: &[u8],
 ) -> rusqlite::Result<()> {
     use vak_session::objects::Objects;
-    let Ok(row) = serde_json::from_slice::<Value>(bytes) else {
+    let Ok(mut row) = serde_json::from_slice::<Value>(bytes) else {
         return Ok(());
     };
+    if !matches!(
+        vak_session::content::restore(&mut row),
+        Ok(vak_session::content::Restored::Whole)
+    ) {
+        return Ok(());
+    }
     let Some(item) = row.get("item").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -1032,9 +1038,15 @@ fn forget_source(tx: &Transaction<'_>, path: &std::path::Path) -> rusqlite::Resu
 /// artifact's node and text; a version made by a call is produced by that
 /// call and its run; a rename or archive moves its title or status.
 fn artifact_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
-    let Ok(row) = serde_json::from_slice::<Value>(bytes) else {
+    let Ok(mut row) = serde_json::from_slice::<Value>(bytes) else {
         return Ok(());
     };
+    if !matches!(
+        vak_session::content::restore(&mut row),
+        Ok(vak_session::content::Restored::Whole)
+    ) {
+        return Ok(());
+    }
     let Some(artifact) = row.get("artifact").and_then(Value::as_str) else {
         return Ok(());
     };

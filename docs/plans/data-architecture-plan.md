@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-b's first part (shared-chain content as conversation objects). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-b's first two parts (content in every shared chain is an object of its owner's scope). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1549,14 +1549,29 @@ shared chains:
   an erasure still holds what it folded, and the catalog still holds the
   rows it indexed; erasure rebuilds the one and removes the other.
 
+**Part 2, done 2026-10-08: the other chains, surveyed row by row.**
+
+| Chain | What its rows say | What was done |
+|---|---|---|
+| `artifacts/` | a file's path, its title and summary, a comment's author name and text | those five fields are an object of the artifact's own scope (`artifact:<id>`), since a saved artifact outlives its conversation; a destroyed artifact is absent from every read |
+| sandbox records (one chain per Agent) | a candidate's files, checks, receipts and details, each naming its session | the whole `record` is an object of its session's conversation; the row keeps its `kind`; an environment record names no session and stays whole |
+| execution stream (one chain per session) | command output | the chain is its conversation's own: every frame sealed under the conversation's key (`RecordChain::of_conversation`), as the ledger's are |
+| `intake/` | an item's title, link, key and detection evidence | an object of the item's source (`intake:<source>`), where its body already is |
+| `runs/` | ids, a flow's name, a runtime-written skip reason | nothing: no content |
+| cost, routing evidence, misread | ids, model names, counts, tool names | nothing: no content |
+| security events | a runtime-written label and detail about a sign-in | nothing: about no conversation |
+| `grants/` | a principal and the display name they were invited under | nothing here: it is about a person, not a conversation, and goes with person erasure (M7b) |
+| `effects/` | a target address, a provider's receipt | the payload moved in part 1; the address stays, as doc 74 §4 lists it for the receipt |
+
+- A record chain's reader takes its key from the chain's directory
+  (`vak_session::keys::of`), so a chain is sealed or not by what it
+  declares and no reader names a conversation.
+- Office rooms and presentations are Documents, not chains; their content
+  is a Document's and is erasure's to walk (M7a-e).
+- Tests: `an_artifacts_rows_keep_no_content_and_go_with_its_key`,
+  `a_conversations_own_chain_is_sealed_and_goes_with_it`.
+
 Still to do in M7a-b:
-- **Part 2, the rest of the content in shared chains.** Not yet surveyed
-  row by row: the artifacts chain (titles, comment text, which belong to
-  the artifact's scope or a guest's), run records, intake rows, grants,
-  and the chains that belong to one session (sandbox records, execution
-  streams, Office rooms), which can be sealed whole under the
-  conversation's key once `RecordChain` reads `vak_session::keys::of` as
-  the tailer already does.
 - **Part 3, the contributor key:** a guest's frames in a conversation
   sealed under a (conversation, principal) scope, with the typed
   placeholder in `derive_messages()`.

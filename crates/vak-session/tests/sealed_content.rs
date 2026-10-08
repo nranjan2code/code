@@ -69,3 +69,33 @@ fn a_row_with_no_sealed_content_is_whole() {
     assert_eq!(restore(&mut row).unwrap(), Restored::Whole);
     assert_eq!(row["body"], "about no conversation");
 }
+
+#[test]
+fn a_conversations_own_chain_is_sealed_and_goes_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("executions");
+    let chain = || RecordChain::at(&path).of_conversation("ses-content-chain");
+    chain()
+        .append(&json!({"line": "pip install pandas"}))
+        .unwrap();
+    chain().append(&json!({"line": "42 rows written"})).unwrap();
+
+    for segment in vak_session::SessionLog::segment_files(&path) {
+        let report = vak_storage::records::verify_chain(&segment).unwrap();
+        assert_eq!(report.encrypted_frames, 2, "every frame is sealed");
+        let bytes = std::fs::read(&segment).unwrap();
+        assert!(!bytes.windows(6).any(|window| window == b"pandas"));
+    }
+    // A reader names no conversation: the chain's directory does.
+    assert_eq!(RecordChain::at(&path).read::<serde_json::Value>().len(), 2);
+
+    tenant()
+        .destroy_scope_key(&conversation_scope("ses-content-chain"))
+        .unwrap();
+    assert!(
+        RecordChain::at(&path)
+            .read::<serde_json::Value>()
+            .is_empty()
+    );
+    assert!(chain().append(&json!({"line": "more"})).is_err());
+}

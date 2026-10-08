@@ -333,10 +333,25 @@ struct State {
     artifacts: BTreeMap<String, Artifact>,
 }
 
+/// What an artifact row says, as against what it is: kept as an object of
+/// the artifact's own scope (plan M7a-b), so it goes when the artifact is
+/// erased and stays while a saved artifact outlives its conversation.
+const ROW_CONTENT: &[&str] = &["path", "title", "summary", "author_name", "text"];
+
 fn fold(state: &mut State, bytes: &[u8]) {
-    let Ok(event) = serde_json::from_slice::<ArtifactEvent>(bytes) else {
+    let Ok(mut row) = serde_json::from_slice::<serde_json::Value>(bytes) else {
         return;
     };
+    if !matches!(
+        vak_session::content::restore(&mut row),
+        Ok(vak_session::content::Restored::Whole)
+    ) {
+        return;
+    }
+    let Ok(event) = serde_json::from_value::<ArtifactEvent>(row) else {
+        return;
+    };
+
     let key = event.artifact.to_string();
     if let ArtifactStep::Declared {
         space,
@@ -517,8 +532,14 @@ impl Artifacts {
         self.chain.path()
     }
 
+    /// The rollup's state, less every artifact whose key was destroyed: the
+    /// rollup may have folded its rows before the erasure.
     fn state(&self) -> State {
-        self.rollup.read(fold)
+        let mut state: State = self.rollup.read(fold);
+        state
+            .artifacts
+            .retain(|id, _| !vak_session::content::scope_destroyed(&format!("artifact:{id}")));
+        state
     }
 
     /// Every artifact, newest change first.
@@ -533,7 +554,16 @@ impl Artifacts {
     }
 
     fn append(&self, event: &ArtifactEvent) -> Result<(), ArtifactError> {
-        self.chain.append(event).map_err(store_error)
+        let mut row = serde_json::to_value(event).map_err(|error| {
+            store_error(vak_session::types::SessionError::Objects(error.to_string()))
+        })?;
+        vak_session::content::seal_fields_under(
+            &mut row,
+            &object_scope(&event.artifact),
+            ROW_CONTENT,
+        )
+        .map_err(store_error)?;
+        self.chain.append(&row).map_err(store_error)
     }
 
     /// Declares the artifact at `path` in `space` (once; a later
