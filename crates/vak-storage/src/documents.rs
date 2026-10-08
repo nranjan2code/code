@@ -19,15 +19,28 @@ pub struct Version {
     pub parent: Option<ObjectId>,
     /// 1 for the first version of a document, then counting up.
     pub seq: u64,
+    /// When the version was saved, in seconds since the epoch. Absent on a
+    /// version written before versions carried a time: its age is unknown.
+    pub at: Option<i64>,
 }
 
-fn encode(content: &ObjectId, parent: Option<&ObjectId>, seq: u64) -> Vec<u8> {
+/// A version record. It names its document, so two documents never share
+/// one: a first version of the same content saved in the same second
+/// would otherwise be one object, and releasing it for one document would
+/// take it from the other.
+fn encode(name: &str, content: &ObjectId, parent: Option<&ObjectId>, seq: u64, at: i64) -> Vec<u8> {
     format!(
-        "v1\nparent:{}\ncontent:{}\nseq:{seq}",
+        "v1\nparent:{}\ncontent:{}\nseq:{seq}\nat:{at}\ndoc:{name}",
         parent.map_or("-", |p| p.0.as_str()),
         content.0
     )
     .into_bytes()
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64)
 }
 
 fn decode(id: &ObjectId, bytes: &[u8]) -> Result<Version> {
@@ -50,11 +63,16 @@ fn decode(id: &ObjectId, bytes: &[u8]) -> Result<Version> {
         .and_then(|l| l.strip_prefix("seq:"))
         .and_then(|v| v.parse().ok())
         .ok_or_else(bad)?;
+    let at = it
+        .next()
+        .and_then(|l| l.strip_prefix("at:"))
+        .and_then(|v| v.parse().ok());
     Ok(Version {
         id: id.clone(),
         content: ObjectId(content.to_string()),
         parent: (parent != "-").then(|| ObjectId(parent.to_string())),
         seq,
+        at,
     })
 }
 
@@ -110,6 +128,17 @@ impl Documents {
     /// Saves a new version. `expected` is the generation the caller read; a
     /// move since then is a `Conflict` and nothing is written.
     pub fn save(&self, name: &str, content: &[u8], expected: Option<u64>) -> Result<Version> {
+        self.save_at(name, content, expected, now_secs())
+    }
+
+    /// As `save`, stamping the version with `at` (seconds since the epoch).
+    pub fn save_at(
+        &self,
+        name: &str,
+        content: &[u8],
+        expected: Option<u64>,
+        at: i64,
+    ) -> Result<Version> {
         let rname = Self::ref_name(name);
         let cur = self.store.get_ref(&rname)?;
         let cur_gen = cur.as_ref().map(|c| c.generation);
@@ -128,7 +157,7 @@ impl Documents {
             None => (None, 1),
         };
         let content_id = self.store.put_object(content, &self.scope)?;
-        let vbytes = encode(&content_id, parent.as_ref(), seq);
+        let vbytes = encode(name, &content_id, parent.as_ref(), seq, at);
         let vid = self.store.put_object(&vbytes, &self.scope)?;
         self.store
             .cas_ref(&rname, expected, self.epoch, vid.0.as_bytes())?;
@@ -137,6 +166,7 @@ impl Documents {
             content: content_id,
             parent,
             seq,
+            at: Some(at),
         })
     }
 
@@ -159,16 +189,44 @@ impl Documents {
         Ok(Some((v, body)))
     }
 
-    /// Newest first.
+    /// Newest first. The history ends where an earlier version was pruned.
     pub fn history(&self, name: &str) -> Result<Vec<Version>> {
-        let mut out = Vec::new();
+        let mut out: Vec<Version> = Vec::new();
         let mut next = self.head(name)?;
         while let Some(id) = next {
-            let v = self.version(&id)?;
+            let v = match self.version(&id) {
+                Ok(v) => v,
+                // A parent that is gone is where retention cut the history.
+                Err(StorageError::NotFound | StorageError::NoGrant) if !out.is_empty() => break,
+                Err(error) => return Err(error),
+            };
             next = v.parent.clone();
             out.push(v);
         }
         Ok(out)
+    }
+
+    /// Unlinks every version saved at or before `cutoff` and everything
+    /// older than it, never the current one. Only the version records are
+    /// released: a content object may be another document's too, so what
+    /// nothing names any more is left for the store's collection. Returns
+    /// how many versions left the history.
+    pub fn prune(&self, name: &str, cutoff: i64) -> Result<usize> {
+        let history = self.history(name)?;
+        let first_old = history
+            .iter()
+            .skip(1)
+            .position(|v| v.at.is_some_and(|at| at <= cutoff))
+            .map(|index| index + 1);
+        let Some(first_old) = first_old else {
+            return Ok(0);
+        };
+        // A record with no time predates records that name their document
+        // and may be shared; it is left, unreachable, for collection.
+        for v in history[first_old..].iter().filter(|v| v.at.is_some()) {
+            self.store.remove_grant(&v.id, &self.scope)?;
+        }
+        Ok(history.len() - first_old)
     }
 
     pub fn read_version(&self, v: &Version) -> Result<Vec<u8>> {
@@ -195,6 +253,46 @@ impl Documents {
 mod tests {
     use super::*;
     use crate::keys::MemoryKeyAuthority;
+
+    #[test]
+    fn pruning_unlinks_old_versions_and_keeps_the_current_and_shared_content() {
+        let store: Arc<dyn Store> = Arc::new(MemoryStore::new(IdKey::new(&[7; 32])));
+        let docs = Documents::new(store, "tenant", 0);
+        let day = 86_400;
+        let mut generation = None;
+        for (n, text) in ["one", "two", "three"].into_iter().enumerate() {
+            docs.save_at("note", text.as_bytes(), generation, n as i64 * day)
+                .unwrap();
+            generation = docs.generation("note").unwrap();
+        }
+        // Another document with the text an old version of `note` has.
+        docs.save_at("other", b"one", None, 0).unwrap();
+
+        // Nothing is as old as the cutoff: nothing goes.
+        assert_eq!(docs.prune("note", -1).unwrap(), 0);
+        // The first two are; the current one stays however old.
+        assert_eq!(docs.prune("note", 5 * day).unwrap(), 2);
+        let left = docs.history("note").unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].at, Some(2 * day));
+        assert_eq!(docs.current("note").unwrap().unwrap().1, b"three");
+        assert_eq!(
+            docs.current("other").unwrap().unwrap().1,
+            b"one",
+            "shared content stays"
+        );
+        assert_eq!(
+            docs.prune("note", 5 * day).unwrap(),
+            0,
+            "pruning twice is pruning once"
+        );
+        // A document saved once has no history to prune.
+        assert_eq!(docs.prune("other", 5 * day).unwrap(), 0);
+        // Saving goes on from the kept head.
+        let next = docs.generation("note").unwrap();
+        docs.save_at("note", b"four", next, 9 * day).unwrap();
+        assert_eq!(docs.history("note").unwrap().len(), 2);
+    }
     use crate::objects::IdKey;
     use crate::store::{LocalStore, MemoryStore};
 

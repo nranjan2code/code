@@ -23,6 +23,7 @@ pub const OBSERVED: &[DataClass] = &[
     DataClass::InboxEntry,
     DataClass::ActivitySegment,
     DataClass::Incident,
+    DataClass::DocumentHistory,
 ];
 
 /// The classes whose plan this build can carry out. Each is removed in
@@ -36,7 +37,47 @@ pub const COMMITTED: &[DataClass] = &[
     DataClass::InboxEntry,
     DataClass::ActivitySegment,
     DataClass::Incident,
+    DataClass::DocumentHistory,
 ];
+
+/// A Document's id in a lifecycle item: a digest, because its name is a
+/// path and paths are content.
+fn document_id(name: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(name.as_bytes());
+    digest[..8]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// One item per Document with earlier versions, aged from the oldest whose
+/// time is known: it is due when at least one version is past the rule,
+/// and carrying it out removes exactly those. The current version is not
+/// history and is never counted.
+fn document_items() -> Vec<Item> {
+    let mut items = Vec::new();
+    for name in vak_session::documents::names() {
+        let times = vak_session::documents::history_times(&name);
+        let Some(oldest) = times.iter().flatten().min().copied() else {
+            continue;
+        };
+        let Some(since) = DateTime::<Utc>::from_timestamp(oldest, 0) else {
+            continue;
+        };
+        items.push(Item {
+            id: document_id(&name),
+            class: DataClass::DocumentHistory,
+            since,
+            bytes: 0,
+            files: times.len() as u64,
+            guard: None,
+            group: None,
+            rank: 0,
+        });
+    }
+    items
+}
 
 /// How long a chain's open segment takes rows before it is sealed, so
 /// that the rows of a quiet chain age out no more than this late.
@@ -253,6 +294,7 @@ impl Core {
         items.extend(telemetry_items());
         items.extend(self.draft_items());
         items.extend(self.chain_items());
+        items.extend(document_items());
         items
     }
 
@@ -550,6 +592,19 @@ impl Core {
                         .drop_segment(number)
                         .map(|_| ())
                         .map_err(|error| std::io::Error::other(error.to_string())),
+                )
+            }
+            DataClass::DocumentHistory => {
+                let name = vak_session::documents::names()
+                    .into_iter()
+                    .find(|name| document_id(name) == action.item)?;
+                let keep = Label::default_tenant()
+                    .rule(DataClass::DocumentHistory)?
+                    .delete_after_secs?;
+                Some(
+                    vak_session::documents::prune_history(&name, Utc::now().timestamp() - keep)
+                        .map(|_| ())
+                        .map_err(std::io::Error::other),
                 )
             }
             _ => None,

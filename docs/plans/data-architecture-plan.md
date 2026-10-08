@@ -1756,13 +1756,32 @@ chain a sealed segment at a time.**
   folded (an aggregate, not the row).
 - Test: `expired_rows_leave_a_chain_by_whole_segments_and_it_still_verifies`.
 
+**Part 3b, done 2026-10-08: Document history.**
+- A version record now says when it was saved (`at`) and which Document
+  it is of (`doc`); both lines are additive, and a record without them
+  reads as before with its age unknown.
+- Naming the Document fixed a fault the first test of pruning found: two
+  Documents created in the same second with the same content had the same
+  version record, one object with one grant, so releasing it for one
+  Document took it from the other.
+- `Documents::prune(name, cutoff)` unlinks every version saved at or
+  before the cutoff and everything older, never the current one. It
+  releases version records only: a content object may still be another
+  Document's, so what nothing names is left for part 4's collection.
+  `history` ends where a version was pruned.
+- The reconciler observes one item per Document that has earlier versions,
+  by a digest of its name (a name is a path, and paths are content), aged
+  from its oldest timed version, and prunes at the label's 90 days.
+  Rollup Documents, which save a version at every fold, are covered like
+  any other.
+- Tests: `pruning_unlinks_old_versions_and_keeps_the_current_and_shared_content`
+  (vak-storage), `a_documents_history_is_observed_and_pruned_and_its_current_version_stays`.
+- Found and not fixed here: `Documents::forget` releases content grants
+  one by one, so forgetting a Document whose text another Document in the
+  same scope also holds makes that other one unreadable. It belongs with
+  part 4, where release becomes collection by reachability.
+
 Still to do in M7a-d:
-- **Part 3b, Document history** (decided: versions older than 90 days go,
-  the current one always stays). A version carries no time today, and
-  content objects are shared within the Documents scope, so pruning is
-  two steps: stamp each new version with when it was saved and unlink
-  versions past the rule, then let part 4's reachability pass collect the
-  content nothing names.
 - **Part 4:** object GC and quotas. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 

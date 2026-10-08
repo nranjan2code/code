@@ -141,6 +141,39 @@ pub fn forget(path: &Path) -> Result<bool, String> {
     }
 }
 
+/// The scope a Document named `name` is in (`name_and_scope`, by name).
+fn scope_of(name: &str) -> String {
+    name_and_scope(Path::new(name)).1
+}
+
+/// Every live Document's name, across the tenant's and each Agent's scope.
+pub fn names() -> Vec<String> {
+    let Ok(docs) = documents("tenant") else {
+        return Vec::new();
+    };
+    docs.names("").unwrap_or_default()
+}
+
+/// When each earlier version of the Document named `name` was saved,
+/// newest first, without the current one. `None` for a version written
+/// before versions carried a time.
+pub fn history_times(name: &str) -> Vec<Option<i64>> {
+    documents(&scope_of(name))
+        .and_then(|docs| docs.history(name).map_err(|error| error.to_string()))
+        .map(|history| history.iter().skip(1).map(|version| version.at).collect())
+        .unwrap_or_default()
+}
+
+/// Removes from the history of the Document named `name` every version
+/// saved at or before `cutoff` (seconds since the epoch); the current one
+/// always stays (plan M7a-d). Returns how many left.
+pub fn prune_history(name: &str, cutoff: i64) -> Result<usize, String> {
+    crate::fence::check().map_err(|error| error.to_string())?;
+    documents(&scope_of(name))?
+        .prune(name, cutoff)
+        .map_err(|error| format!("prune {name}: {error}"))
+}
+
 /// How many versions the Document at `path` has had.
 pub fn version_count(path: &Path) -> usize {
     let (name, scope) = name_and_scope(path);
