@@ -254,8 +254,17 @@ fn insert(
         actor: trace.and_then(|t| t.actor),
         trace: trace.cloned(),
     };
-    let line = serde_json::to_string(&entry).map_err(|e| InboxError::Serialize(e.to_string()))?;
-    append_line(&path, &line)?;
+    let mut row = serde_json::to_value(&entry).map_err(|e| InboxError::Serialize(e.to_string()))?;
+    // What the entry says belongs to its conversation (plan M7a-b).
+    if let Some(session_id) = session_id {
+        vak_session::content::seal_fields(&mut row, session_id, &["title", "body"]).map_err(
+            |e| InboxError::Io {
+                path: path.clone(),
+                source: std::io::Error::other(e),
+            },
+        )?;
+    }
+    append_line(&path, &row.to_string())?;
     Ok(entry)
 }
 
@@ -370,7 +379,16 @@ fn scan_window(path: &Path) -> Window {
         true
     });
     let mut out = Window::default();
-    for row in window {
+    for mut row in window {
+        match vak_session::content::restore(&mut row) {
+            Ok(vak_session::content::Restored::Whole) => {}
+            // An entry about an erased conversation is gone with it.
+            Ok(vak_session::content::Restored::Erased) => continue,
+            Err(_) => {
+                out.corrupt += 1;
+                continue;
+            }
+        }
         if let Ok(e) = serde_json::from_value::<Entry>(row.clone()) {
             out.entries.push(e);
         } else if let Ok(a) = serde_json::from_value::<AckLine>(row) {
@@ -387,6 +405,52 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    #[test]
+    fn an_entry_about_a_conversation_goes_with_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let scope = vak_config::scope::AgentScope::new(dir.path());
+        let session = Some("ses-inbox-erased");
+        record(
+            &scope,
+            Kind::TaskSummary,
+            "weekly sales",
+            "north rose",
+            session,
+            None,
+            None,
+        )
+        .unwrap();
+        record(
+            &scope,
+            Kind::BudgetAlert,
+            "budget",
+            "near the cap",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let stored = vak_session::chain::RecordChain::at(inbox_path(&scope)).text();
+        assert!(!stored.contains("north rose") && !stored.contains("weekly sales"));
+        assert!(stored.contains("near the cap"));
+        let listed = list(&scope, 10);
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().any(|entry| entry.body == "north rose"));
+
+        vak_session::objects::TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())
+            .unwrap()
+            .destroy_scope_key(&vak_session::objects::conversation_scope(
+                "ses-inbox-erased",
+            ))
+            .unwrap();
+
+        let left = list_scanned(&scope, 10);
+        assert_eq!(left.corrupt, 0);
+        assert_eq!(left.entries.len(), 1);
+        assert_eq!(left.entries[0].title, "budget");
+    }
 
     #[test]
     fn record_unread_roundtrip_newest_first() {

@@ -667,3 +667,54 @@ fn revoking_an_envelope_stops_it_granting_anything() {
             .is_live(chrono::Utc::now())
     );
 }
+
+fn in_session(session: uuid::Uuid) -> vak_session::trace::TraceKey {
+    use vak_session::ids::{AgentId, SpaceId, TenantId};
+    vak_session::trace::TraceKey::root(
+        TenantId::new(),
+        SpaceId::new(),
+        AgentId::new(),
+        vak_session::trace::Cause::Heartbeat,
+    )
+    .in_turn(&session.to_string(), &uuid::Uuid::now_v7().to_string())
+}
+
+/// What a commitment says belongs to the conversation it was made in
+/// (plan M7a-b): the chain keeps ids and kinds, and erasing the
+/// conversation takes the commitment with it and leaves others alone.
+#[test]
+fn a_commitment_goes_with_the_conversation_that_made_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (kept_session, gone_session) = (uuid::Uuid::now_v7(), uuid::Uuid::now_v7());
+    let open = |session| {
+        CommitmentLedger::new(dir.path())
+            .with_trace(Some(&in_session(session)))
+            .open_commitment(spec(Evidence::None, Vec::new()))
+            .unwrap()
+    };
+    let (kept, gone) = (open(kept_session), open(gone_session));
+    let ledger = CommitmentLedger::new(dir.path());
+
+    let stored = vak_session::chain::RecordChain::at(ledger.path()).text();
+    assert!(!stored.contains("billing schema"), "{stored}");
+    assert!(stored.contains(&gone) && stored.contains("\"kind\":\"opened\""));
+    assert_eq!(ledger.all().len(), 2);
+    assert_eq!(
+        ledger.get(&gone).unwrap().unwrap().spec.objective,
+        "migrate the billing schema"
+    );
+
+    vak_session::objects::TenantObjects::for_tenant(&vak_config::paths::local_tenant_home())
+        .unwrap()
+        .destroy_scope_key(&vak_session::objects::conversation_scope(
+            &gone_session.to_string(),
+        ))
+        .unwrap();
+
+    assert_eq!(ledger.events().len(), 1);
+    assert_eq!(ledger.events_for(&gone).len(), 0);
+    assert_eq!(ledger.events_for(&kept).len(), 1);
+    // A rollup written before the erasure still holds what it folded; a
+    // fresh fold of the chain does not.
+    std::fs::remove_dir_all(dir.path()).ok();
+}

@@ -164,6 +164,11 @@ impl TenantObjects {
         Ok(key)
     }
 
+    /// Whether `scope`'s key was destroyed.
+    pub fn scope_destroyed(&self, scope: &str) -> bool {
+        self.scopes.is_shredded(scope)
+    }
+
     /// Destroys `scope`'s key: every frame sealed under it and every object
     /// granted only to it stops being readable, and no byte of either
     /// changes. Refused while the scope is held.
@@ -210,6 +215,12 @@ impl Objects for TenantObjects {
     }
 
     fn get(&self, object: &ObjectRef, scope: &str) -> Result<Vec<u8>, SessionError> {
+        // The authority's own revocations are read when a process opens it;
+        // the tombstone is read here, so an erasure in another process
+        // holds in this one.
+        if self.scopes.is_shredded(scope) {
+            return Err(SessionError::Erased(scope.to_string()));
+        }
         self.store
             .get_object(&ObjectId(object.id.clone()), scope)
             .map_err(objects_error)

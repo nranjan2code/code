@@ -161,6 +161,14 @@ impl TraceKey {
         self
     }
 
+    /// The id of the session this key runs in, as its ledger's header
+    /// spells it: what names the conversation's key scope.
+    pub fn session_id(&self) -> Option<String> {
+        self.session
+            .as_ref()
+            .map(|session| session.uuid().hyphenated().to_string())
+    }
+
     /// The same key, naming who acted and for whom.
     pub fn acting(mut self, actor: PrincipalId, on_behalf_of: Option<PrincipalId>) -> Self {
         self.actor = Some(actor);

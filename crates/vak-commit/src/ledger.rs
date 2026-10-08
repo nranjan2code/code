@@ -141,6 +141,9 @@ impl Event {
     }
 }
 
+/// The fields of a stored event that are not content.
+const ROW_IDENTITY: &[&str] = &["event_id", "commitment_id", "ts", "kind", "trace", "actor"];
+
 #[derive(Debug, thiserror::Error)]
 pub enum LedgerError {
     #[error("io error: {0}")]
@@ -248,16 +251,22 @@ impl CommitmentLedger {
     /// by recovery tooling that is deliberately reconstructing history.
     fn append_unchecked(&self, event: &Event) -> Result<(), LedgerError> {
         let chain = vak_session::chain::RecordChain::at(&self.path);
-        let appended = match (&self.trace, &event.trace) {
-            (Some(trace), None) => {
-                let mut stamped = event.clone();
-                stamped.actor = stamped.actor.or(trace.actor);
-                stamped.trace = Some(trace.clone());
-                chain.append(&stamped)
+        let mut stamped = event.clone();
+        if let (Some(trace), None) = (&self.trace, &event.trace) {
+            stamped.actor = stamped.actor.or(trace.actor);
+            stamped.trace = Some(trace.clone());
+        }
+        let stored = (|| {
+            let mut row = serde_json::to_value(&stamped)
+                .map_err(|error| vak_session::types::SessionError::Objects(error.to_string()))?;
+            // What an event says belongs to the conversation it happened
+            // in (plan M7a-b); its ids, time and kind stay readable.
+            if let Some(session) = stamped.trace.as_ref().and_then(|trace| trace.session_id()) {
+                vak_session::content::seal_except(&mut row, &session, ROW_IDENTITY)?;
             }
-            _ => chain.append(event),
-        };
-        appended.map_err(|error| LedgerError::Io(std::io::Error::other(error)))
+            chain.append(&row)
+        })();
+        stored.map_err(|error| LedgerError::Io(std::io::Error::other(error)))
     }
 
     /// Every event, oldest first. A row that is not an event is skipped
@@ -265,7 +274,18 @@ impl CommitmentLedger {
     /// not become a state change, and must not hide every row written after
     /// it either.
     pub fn events(&self) -> Vec<Event> {
-        vak_session::chain::RecordChain::at(&self.path).read()
+        let mut events = Vec::new();
+        vak_session::chain::RecordChain::at(&self.path).scan(|mut row: serde_json::Value| {
+            // An event of an erased conversation is gone with it.
+            if let Ok(vak_session::content::Restored::Whole) =
+                vak_session::content::restore(&mut row)
+                && let Ok(event) = serde_json::from_value(row)
+            {
+                events.push(event);
+            }
+            true
+        });
+        events
     }
 
     /// Events for one commitment.
@@ -527,7 +547,16 @@ impl Projection {
     /// Folds one row; a row that is not an event is skipped rather than
     /// trusted, as `events` does.
     fn fold(&mut self, bytes: &[u8]) {
-        let Ok(event) = serde_json::from_slice::<Event>(bytes) else {
+        let Ok(mut row) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+            return;
+        };
+        if !matches!(
+            vak_session::content::restore(&mut row),
+            Ok(vak_session::content::Restored::Whole)
+        ) {
+            return;
+        }
+        let Ok(event) = serde_json::from_value::<Event>(row) else {
             return;
         };
         if self.refused.contains(&event.commitment_id) {

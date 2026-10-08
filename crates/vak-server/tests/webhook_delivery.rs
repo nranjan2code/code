@@ -300,13 +300,11 @@ async fn webhook_missing_token_fails_closed() {
         effect["reason"].as_str().unwrap().contains("token_env"),
         "{effects}"
     );
-    let inbox = vak_session::chain::RecordChain::at(gw.cwd.join("home/inbox"))
-        .read::<serde_json::Value>()
-        .iter()
-        .map(|row| row.to_string())
-        .collect::<String>();
+    let inbox = vak_core::inbox::list(&vak_config::scope::AgentScope::new(gw.cwd.join("home")), 50);
     assert!(
-        inbox.contains("secret output"),
+        inbox
+            .iter()
+            .any(|entry| entry.body.contains("secret output")),
         "inbox is recorded before push"
     );
 }

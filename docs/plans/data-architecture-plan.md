@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-b's first part (shared-chain content as conversation objects). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1519,6 +1519,49 @@ ledger and its objects unreadable together.
   open keeps appending after another process destroys its key; M7a-e's
   erasure refuses a conversation with a live turn. The dev data home is
   purged once: its ledgers have no key.
+
+**M7a-b, in three parts; part 1 done 2026-10-08.** Part 1, content out of
+shared chains:
+- `vak_session::content` is the one mechanism: `seal_fields` and
+  `seal_except` move a row's content into one tenant object granted to its
+  conversation's scope and leave `sealed` (the scope and the object) beside
+  the row's ids; `restore` puts it back, or says `Erased` when the
+  conversation's key was destroyed. No row is removed or rewritten.
+- An inbox entry that names a session keeps its `title` and `body` there;
+  one about no conversation (a budget alert, a routine that could not
+  start) stays whole. A reader drops an entry whose conversation was erased.
+- A commitment event written under a key that names a session keeps only
+  `event_id`, `commitment_id`, `ts`, `kind`, `trace` and `actor` in the
+  chain. `events`, the rollup's fold and the catalog's ingest restore a
+  row before reading it, so a commitment goes with the conversation that
+  opened it and other conversations' commitments stay.
+- An effect's payload is granted to its conversation's scope when its key
+  names a session (`TraceKey::session_id`), and to the effect's own scope
+  otherwise.
+- `TenantObjects::get` refuses a destroyed scope from its tombstone, read
+  on each call, because the key authority reads its revocations only when
+  a process opens it.
+- Tests: `a_shared_row_keeps_its_ids_and_loses_its_content_with_the_conversation`,
+  `an_entry_about_a_conversation_goes_with_it`,
+  `a_commitment_goes_with_the_conversation_that_made_it`,
+  `a_delivery_from_a_conversation_goes_with_it`.
+- Left for erasure (M7a-e): a commitments rollup Document written before
+  an erasure still holds what it folded, and the catalog still holds the
+  rows it indexed; erasure rebuilds the one and removes the other.
+
+Still to do in M7a-b:
+- **Part 2, the rest of the content in shared chains.** Not yet surveyed
+  row by row: the artifacts chain (titles, comment text, which belong to
+  the artifact's scope or a guest's), run records, intake rows, grants,
+  and the chains that belong to one session (sandbox records, execution
+  streams, Office rooms), which can be sealed whole under the
+  conversation's key once `RecordChain` reads `vak_session::keys::of` as
+  the tailer already does.
+- **Part 3, the contributor key:** a guest's frames in a conversation
+  sealed under a (conversation, principal) scope, with the typed
+  placeholder in `derive_messages()`.
+- **Part 4, the provider-account scope** and its grant on provider-derived
+  objects (`vak-mail-calendar`).
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

@@ -620,9 +620,15 @@ fn effect_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
 }
 
 fn commitment_row(tx: &Transaction<'_>, agent: &str, bytes: &[u8]) -> rusqlite::Result<()> {
-    let Ok(event) = serde_json::from_slice::<Value>(bytes) else {
+    let Ok(mut event) = serde_json::from_slice::<Value>(bytes) else {
         return Ok(());
     };
+    if !matches!(
+        vak_session::content::restore(&mut event),
+        Ok(vak_session::content::Restored::Whole)
+    ) {
+        return Ok(());
+    }
     let Some(id) = event.get("commitment_id").and_then(Value::as_str) else {
         return Ok(());
     };

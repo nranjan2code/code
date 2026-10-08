@@ -424,8 +424,14 @@ fn key_of(prepare: &Prepare, payload_digest: &str, basis: &str) -> Result<String
     Ok(digest(source.as_bytes())[..20].to_string())
 }
 
-fn payload_scope(effect: &EffectId) -> String {
-    format!("effect:{effect}")
+/// The scope an effect's payload is granted to: its conversation's when
+/// the effect came from one, so the text dies with the conversation
+/// (plan M7a-b); otherwise the effect's own.
+fn payload_scope(effect: &EffectId, trace: Option<&TraceKey>) -> String {
+    match trace.and_then(TraceKey::session_id) {
+        Some(session) => crate::objects::conversation_scope(&session),
+        None => format!("effect:{effect}"),
+    }
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -534,7 +540,10 @@ impl Effects {
         let effect = EffectId::new();
         let run = prepare.trace.as_ref().map(|trace| trace.run);
         let tenant = TenantObjects::for_tenant(&self.tenant_home)?;
-        let payload = tenant.put(&prepare.payload, &payload_scope(&effect))?;
+        let payload = tenant.put(
+            &prepare.payload,
+            &payload_scope(&effect, prepare.trace.as_ref()),
+        )?;
         let actor = prepare.trace.as_ref().and_then(|trace| trace.actor);
         let step = EffectStep::Prepared {
             kind: prepare.kind,
@@ -560,8 +569,10 @@ impl Effects {
 
     /// The payload an effect was prepared with.
     pub fn payload(&self, record: &EffectRecord) -> Result<Vec<u8>, SessionError> {
-        TenantObjects::for_tenant(&self.tenant_home)?
-            .get(&record.payload, &payload_scope(&record.id))
+        TenantObjects::for_tenant(&self.tenant_home)?.get(
+            &record.payload,
+            &payload_scope(&record.id, record.trace.as_ref()),
+        )
     }
 
     /// Takes the next attempt of `effect` for this process: moves its
@@ -930,6 +941,37 @@ mod tests {
             AgentId::new(),
             Cause::Heartbeat,
         )
+    }
+
+    #[test]
+    fn a_delivery_from_a_conversation_goes_with_it() {
+        let (dir, effects) = home();
+        let session = uuid::Uuid::now_v7().to_string();
+        let from_conversation = trace().in_turn(&session, &uuid::Uuid::now_v7().to_string());
+        let said = delivery(&effects, &from_conversation, "the offer is accepted");
+        let system = delivery(&effects, &trace(), "the budget is near its cap");
+        assert_eq!(
+            effects.payload(&said).expect("payload"),
+            b"the offer is accepted"
+        );
+
+        TenantObjects::for_tenant(&dir.path().join("tenant"))
+            .expect("tenant")
+            .destroy_scope_key(&crate::objects::conversation_scope(&session))
+            .expect("destroy");
+
+        assert!(matches!(
+            effects.payload(&said),
+            Err(SessionError::Erased(_))
+        ));
+        assert_eq!(
+            effects.payload(&system).expect("payload"),
+            b"the budget is near its cap"
+        );
+        assert_eq!(
+            effects.get(said.id).expect("read").map(|r| r.id),
+            Some(said.id)
+        );
     }
 
     fn delivery(effects: &Effects, trace: &TraceKey, text: &str) -> EffectRecord {
