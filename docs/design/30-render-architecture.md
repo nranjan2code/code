@@ -289,6 +289,10 @@ is unchanged by the contract: `build` is the only place the two meet.
    points as records, valid in every chart call, so rule 8's strings are
    not needed there. A single metric came without its `label` in 5 of 24
    calls; with the field described as "Give it with every value", 1 of 24.
+   One reading written in `readings` is the single metric: as a grid of
+   one it was refused by the stored card's rule with a message that named
+   no field (live 2026-10-08, 3 of 5 calls; 6 of 6 shown once built as
+   label, value and unit).
 
 **A card is identified by its `semantic_type`.** Every type belongs to one
 card tool, so the agent loop routes a card call to the admitted card tool
@@ -320,7 +324,13 @@ value` details 2 of 12, and 1 of 12 when the description said `Question:
 answer` (the string ended at the question mark); as a table 1 of 12; with
 `Question? Answer`, all 12 chose the card and the type, 8 as written, 2 as
 `Question:` and `Answer:` fields in turn, which the builder pairs, and 2
-with questions alone, which the refusal names.
+with questions alone, which the refusal names. A question in one field with
+its answer in the next is paired the same way. The refusal of questions
+alone quotes the field and shows a pair: replayed on the captured repair
+step 12 times each (2026-10-08), naming the form alone got an answered
+card 4 times and the same bare questions again 7 times; quoting the field
+with an example pair got 8. Rewording the `fields` description with the
+same example changed nothing on the first call (7 of 12 against 6).
 
 **Citations.** A card cites only what this conversation holds. Every `url`
 a card carries (a media card's only when it is a web address, since it may

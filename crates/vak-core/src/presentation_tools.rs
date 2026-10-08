@@ -183,9 +183,21 @@ fn build_universal(args: &Map<String, Value>) -> Result<Value, String> {
         } else if let Some((question, answer)) = question_and_answer(text) {
             (question, answer)
         } else if text.trim_end().ends_with('?') {
-            return Err(format!(
-                "field {at} is a question with no answer; write it `Question? Answer`"
-            ));
+            // A question in one field and its answer in the next is the
+            // same pair, written across two.
+            if next.trim().is_empty() || next.trim_end().ends_with('?') {
+                // Quoting the field and showing a pair moved a repeat of
+                // the same bare questions to an answered card 8 of 12
+                // times, against 4 of 12 for naming the form alone
+                // (measured 2026-10-08, docs/design/30-render-architecture.md).
+                return Err(format!(
+                    "field {at} is {text:?} with no answer after it. Each field is one string \
+                     holding the question and then its answer, like \"Is parking free? Yes, \
+                     behind the building.\" Write the answers"
+                ));
+            }
+            at += 1;
+            (text, next)
         } else if let Some((label, value)) = text.split_once(':') {
             (label, value)
         } else {
@@ -811,6 +823,30 @@ fn build_metric(args: &Map<String, Value>) -> Result<Value, String> {
         }
         let mut payload = copy(args, &["label", "unit", "location"]);
         payload.insert("value".into(), scalar(&args["value"]));
+        return Ok(Value::Object(payload));
+    }
+    // One reading is the single metric, written in the list: as a grid of
+    // one it was refused by the stored card's own rule with "invalid metric
+    // payload shape or values", which named nothing to fix (live
+    // 2026-10-08, 2 of 4 calls).
+    if let [reading] = readings {
+        let mut payload = copy(args, &["location"]);
+        payload.insert("label".into(), reading["label"].clone());
+        payload.insert("value".into(), scalar(&reading["value"]));
+        let unit = [&reading["unit"], &args["unit"]]
+            .into_iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .find(|unit| !unit.is_empty());
+        if let Some(unit) = unit {
+            payload.insert("unit".into(), Value::String(unit.to_string()));
+        }
+        if payload["label"]
+            .as_str()
+            .is_none_or(|l| l.trim().is_empty())
+        {
+            return Err("the reading needs a `label`: what is measured".into());
+        }
         return Ok(Value::Object(payload));
     }
     let mut payload = copy(args, &["location"]);
@@ -2140,7 +2176,32 @@ mod tests {
             "emit_universal_card",
             serde_json::json!({"semantic_type": "faq", "fields": ["Do you deliver?"]}),
         );
-        assert!(unanswered.unwrap_err().contains("Question? Answer"));
+        let refusal = unanswered.unwrap_err();
+        assert!(refusal.contains("\"Do you deliver?\" with no answer after it"));
+        let unanswered = built(
+            "emit_universal_card",
+            serde_json::json!({"semantic_type": "faq", "fields": ["Do you deliver?", "Do you cater?"]}),
+        );
+        assert!(unanswered.is_err(), "a question is not another's answer");
+        let across = built(
+            "emit_universal_card",
+            serde_json::json!({"semantic_type": "faq",
+                "fields": ["Do you deliver?", "Yes, within 5 km.", "Is parking free? Yes."]}),
+        )
+        .unwrap();
+        assert_eq!(across["Do you deliver?"], "Yes, within 5 km.");
+        assert_eq!(across["Is parking free?"], "Yes.");
+        let one = built(
+            "emit_metric_card",
+            serde_json::json!({"semantic_type": "metric", "unit": "%",
+                "readings": [{"label": "CPU usage", "value": "42"}]}),
+        )
+        .unwrap();
+        assert_eq!(
+            one,
+            serde_json::json!({"label": "CPU usage", "value": 42, "unit": "%"}),
+            "one reading in the list is the single metric"
+        );
         let payload = built(
             "emit_metric_card",
             serde_json::json!({
