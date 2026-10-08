@@ -251,6 +251,34 @@ impl SegmentSet {
         self.seal_until(n, None, lock)
     }
 
+    /// Removes sealed segment `n`'s file, for the holder of `lock`. Its
+    /// seal entry stays, and with it the head the next segment chains
+    /// from, so every later segment still verifies: this is how rows past
+    /// their retention leave an append-only chain, a whole segment at a
+    /// time and never one row. Refused for an open segment and for the
+    /// newest sealed one, which numbers the next. `false` when the file
+    /// is already gone.
+    pub fn drop_sealed(&self, n: u64, lock: &WriterLock) -> Result<bool> {
+        self.held(lock)?;
+        let seals = self.seals()?;
+        if !seals.iter().any(|s| s.segment == n) || self.log_path(n).exists() {
+            return Err(StorageError::Malformed("segment is not sealed"));
+        }
+        if seals.iter().map(|s| s.segment).max() == Some(n) {
+            return Err(StorageError::Malformed("the newest sealed segment stays"));
+        }
+        match fs::remove_file(self.sealed_path(n)) {
+            Ok(()) => {
+                if let Ok(dir) = fs::File::open(&self.dir) {
+                    let _ = dir.sync_all();
+                }
+                Ok(true)
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn held(&self, lock: &WriterLock) -> Result<()> {
         if lock.dir == self.dir {
             Ok(())

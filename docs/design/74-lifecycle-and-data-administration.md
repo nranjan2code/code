@@ -302,6 +302,13 @@ RetentionLabel {
 | audit class | 7 y | 7 y |
 | telemetry | — | 14 d or 200 MB |
 
+As built (plan M7a-d, 2026-10-08): run records and allowlist entries have
+no rule yet. Runs of no conversation share segments with the rest and are
+kept until M7b's audit rules; allowlist entries wait for M7b's rules about
+people. Rows in a record chain leave a sealed segment at a time, so a row
+can outlive its rule by up to the 30 days a quiet chain's segment stays
+open.
+
 ### 3.2 Legal hold
 
 ```

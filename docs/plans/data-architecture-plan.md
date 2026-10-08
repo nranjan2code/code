@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-d's first two parts (a committing pass for executions, checkpoints, environments and rotated logs, off unless `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-d's first three parts (a committing pass for executions, checkpoints, environments, rotated logs and expired chain segments, off unless `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1728,13 +1728,41 @@ scattered limit goes.**
   on an install that has not set `[lifecycle] mode = "commit"` until the
   default changes at M7a-i.
 
+**Part 3, decided with the maintainer and done 2026-10-08: rows leave a
+chain a sealed segment at a time.**
+- `SegmentSet::drop_sealed` removes a sealed segment's file and keeps its
+  seal entry, so the next segment still chains from its head and every
+  later segment verifies. It refuses an open segment and a chain's newest
+  sealed one, which numbers the next. `RecordChain::segments`,
+  `seal_open` and `drop_segment` are what the reconciler uses.
+- A chain whose rows are all of one class is observed one item per sealed
+  segment, aged from its newest row, so it is due only when every row in
+  it is: each Agent's inbox (inbox entries, 90 days) and its cost, routing
+  and intent evidence (activity, 400 days), and the Operations Center's
+  incidents and action receipts (400 days). A segment holding a row with
+  no time is never planned away.
+- A quiet chain would wait months to fill a segment, so a committing pass
+  first seals any open segment whose first row is 30 days old
+  (`SEAL_AFTER_DAYS`). A row can therefore outlive its rule by up to that
+  long; no row leaves early.
+- Run records are kept: those of no conversation share segments with the
+  rest, and a record is ids and an outcome. The label's 180-day rule and
+  the `Run` class are removed until M7b's audit rules. Allowlist entries
+  are a settings file, not a chain, and move to M7b with its rules about
+  people; that class is removed from the label too.
+- Not done here: a dropped inbox row's content object keeps its grant
+  until its conversation is erased, because the same content may be held
+  by a row that stays. A rollup that folded a dropped row keeps what it
+  folded (an aggregate, not the row).
+- Test: `expired_rows_leave_a_chain_by_whole_segments_and_it_still_verifies`.
+
 Still to do in M7a-d:
-- **Part 3, rows in record chains:** inbox entries, cost and activity
-  segments, runs with no conversation, incidents and allowlist entries
-  are rows of append-only chains, and Document history is versions behind
-  a ref. Expiring them needs its own mechanism (a sealed segment dropped
-  whole with the chain's head carried forward, and pruning a Document's
-  old versions), which is not designed yet.
+- **Part 3b, Document history** (decided: versions older than 90 days go,
+  the current one always stays). A version carries no time today, and
+  content objects are shared within the Documents scope, so pruning is
+  two steps: stamp each new version with when it was saved and unlink
+  versions past the rule, then let part 4's reachability pass collect the
+  content nothing names.
 - **Part 4:** object GC and quotas. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 

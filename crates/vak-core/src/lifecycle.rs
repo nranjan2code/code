@@ -20,6 +20,9 @@ pub const OBSERVED: &[DataClass] = &[
     DataClass::Environment,
     DataClass::Telemetry,
     DataClass::DraftVersion,
+    DataClass::InboxEntry,
+    DataClass::ActivitySegment,
+    DataClass::Incident,
 ];
 
 /// The classes whose plan this build can carry out. Each is removed in
@@ -30,7 +33,29 @@ pub const COMMITTED: &[DataClass] = &[
     DataClass::Checkpoint,
     DataClass::Environment,
     DataClass::Telemetry,
+    DataClass::InboxEntry,
+    DataClass::ActivitySegment,
+    DataClass::Incident,
 ];
+
+/// How long a chain's open segment takes rows before it is sealed, so
+/// that the rows of a quiet chain age out no more than this late.
+const SEAL_AFTER_DAYS: i64 = 30;
+
+/// A record chain whose rows all belong to one retention class.
+struct ExpiringChain {
+    /// Names the chain in an item id: a kind, and the Agent it is of.
+    id: String,
+    class: DataClass,
+    chain: vak_session::chain::RecordChain,
+}
+
+/// When a chain row was written: the first time field it carries.
+fn row_time(row: &serde_json::Value) -> Option<DateTime<Utc>> {
+    ["ts", "at", "updated_at", "opened_at", "created_at"]
+        .iter()
+        .find_map(|field| row.get(field)?.as_str()?.parse().ok())
+}
 
 /// How far one planned transition got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
@@ -227,7 +252,102 @@ impl Core {
         items.extend(self.environment_items());
         items.extend(telemetry_items());
         items.extend(self.draft_items());
+        items.extend(self.chain_items());
         items
+    }
+
+    /// The chains whose rows age out a sealed segment at a time: each
+    /// Agent's inbox and its cost, routing and intent evidence, and the
+    /// Operations Center's incidents and action receipts.
+    fn expiring_chains(&self) -> Vec<ExpiringChain> {
+        let chain = |id: String, class, dir: PathBuf| ExpiringChain {
+            id,
+            class,
+            chain: vak_session::chain::RecordChain::at(dir),
+        };
+        let mut chains = Vec::new();
+        for (agent, scope) in self.agent_scopes() {
+            chains.push(chain(
+                format!("inbox:{agent}"),
+                DataClass::InboxEntry,
+                scope.inbox(),
+            ));
+            for (kind, dir) in [
+                ("cost", scope.cost_log()),
+                ("routing", scope.routing_evidence()),
+                ("intent", scope.intent_evidence()),
+            ] {
+                chains.push(chain(
+                    format!("{kind}:{agent}"),
+                    DataClass::ActivitySegment,
+                    dir,
+                ));
+            }
+        }
+        let shared = self.shared_scope();
+        for (kind, dir) in [
+            ("incidents", shared.operations_incidents()),
+            ("actions", shared.operations_actions()),
+        ] {
+            chains.push(chain(format!("{kind}:shared"), DataClass::Incident, dir));
+        }
+        chains
+    }
+
+    /// One item per sealed segment but a chain's newest: its clock starts
+    /// at its newest row, so it is due only when every row in it is. A
+    /// segment with a row that carries no time is never planned away.
+    fn chain_items(&self) -> Vec<Item> {
+        let mut items = Vec::new();
+        for expiring in self.expiring_chains() {
+            let segments = expiring.chain.segments();
+            let newest_sealed = segments
+                .iter()
+                .filter(|segment| !segment.open)
+                .map(|segment| segment.number)
+                .max();
+            for segment in segments {
+                if segment.open || Some(segment.number) == newest_sealed {
+                    continue;
+                }
+                let times: Option<Vec<DateTime<Utc>>> = segment.rows.iter().map(row_time).collect();
+                let Some(since) = times.and_then(|times| times.into_iter().max()) else {
+                    continue;
+                };
+                items.push(Item {
+                    id: format!("{}/{}", expiring.id, segment.number),
+                    class: expiring.class,
+                    since,
+                    bytes: segment.bytes,
+                    files: 1,
+                    guard: None,
+                    group: None,
+                    rank: 0,
+                });
+            }
+        }
+        items
+    }
+
+    /// Seals each expiring chain's open segment once its first row is
+    /// `SEAL_AFTER_DAYS` old. A seal removes nothing; it lets the rows age
+    /// out together. Returns how many were sealed.
+    fn seal_aged_segments(&self) -> u64 {
+        let cutoff = Utc::now() - chrono::Duration::days(SEAL_AFTER_DAYS);
+        let mut sealed = 0;
+        for expiring in self.expiring_chains() {
+            let aged = expiring
+                .chain
+                .segments()
+                .last()
+                .filter(|segment| segment.open)
+                .and_then(|segment| segment.rows.first().and_then(row_time))
+                .is_some_and(|first| first <= cutoff);
+            if aged && expiring.chain.seal_open().unwrap_or(false) {
+                sealed += 1;
+            }
+        }
+        sealed
     }
 
     /// Every Agent home in this data home, by Agent id.
@@ -417,6 +537,21 @@ impl Core {
                     crate::checkpoints::remove(&scope, objects.as_ref(), parts[1], seq).map(|_| ()),
                 )
             }
+            DataClass::InboxEntry | DataClass::ActivitySegment | DataClass::Incident => {
+                let (chain_id, number) = action.item.rsplit_once('/')?;
+                let number: u64 = number.parse().ok()?;
+                let expiring = self
+                    .expiring_chains()
+                    .into_iter()
+                    .find(|chain| chain.id == chain_id && chain.class == action.class)?;
+                Some(
+                    expiring
+                        .chain
+                        .drop_segment(number)
+                        .map(|_| ())
+                        .map_err(|error| std::io::Error::other(error.to_string())),
+                )
+            }
             _ => None,
         }
     }
@@ -426,8 +561,11 @@ impl Core {
     /// is touched and again when it is done; a fenced process and an
     /// observing one commit nothing.
     pub fn lifecycle_tick(&self, commit: bool) -> Tick {
-        let plan = self.lifecycle_plan();
         let commit = commit && vak_session::fence::check().is_ok();
+        if commit {
+            self.seal_aged_segments();
+        }
+        let plan = self.lifecycle_plan();
         let mut tick = Tick {
             mode: if commit { "commit" } else { "observe" },
             committed: Vec::new(),

@@ -20,17 +20,15 @@ pub enum DataClass {
     DraftVersion,
     DocumentHistory,
     InboxEntry,
-    AllowlistEntry,
     ActivitySegment,
     Incident,
-    Run,
     Telemetry,
 }
 
 impl DataClass {
     /// Every class, in the order a plan acts on them (doc 74 §5): the
     /// cheapest and most rebuildable first, records last.
-    pub const ORDER: [DataClass; 12] = [
+    pub const ORDER: [DataClass; 10] = [
         DataClass::Execution,
         DataClass::Environment,
         DataClass::Telemetry,
@@ -39,8 +37,6 @@ impl DataClass {
         DataClass::DraftVersion,
         DataClass::DocumentHistory,
         DataClass::InboxEntry,
-        DataClass::AllowlistEntry,
-        DataClass::Run,
         DataClass::ActivitySegment,
         DataClass::Incident,
     ];
@@ -92,7 +88,9 @@ const DAY: i64 = 24 * 60 * 60;
 
 impl Label {
     /// The tenant's default label (doc 74 §3.1). Conversation records and
-    /// their objects have no rule: they are kept.
+    /// their objects have no rule: they are kept. So are run records (ids
+    /// and outcomes; those of no conversation share segments with the
+    /// rest), and allowlist entries wait for M7b's rules about people.
     pub fn default_tenant() -> Self {
         let after = |class, days: i64, on_expiry| Rule {
             class,
@@ -106,7 +104,6 @@ impl Label {
             name: "Default".into(),
             rules: vec![
                 after(DataClass::Trash, 30, OnExpiry::Remove),
-                after(DataClass::Run, 180, OnExpiry::Remove),
                 // A session keeps its first checkpoint and its newest 20;
                 // all of them go 30 days after its last one (doc 74 §2.9).
                 Rule {
@@ -118,7 +115,6 @@ impl Label {
                 after(DataClass::DraftVersion, 60, OnExpiry::Trash),
                 after(DataClass::DocumentHistory, 90, OnExpiry::Remove),
                 after(DataClass::InboxEntry, 90, OnExpiry::Remove),
-                after(DataClass::AllowlistEntry, 90, OnExpiry::Remove),
                 after(DataClass::ActivitySegment, 400, OnExpiry::Remove),
                 after(DataClass::Incident, 400, OnExpiry::Remove),
                 Rule {
@@ -450,7 +446,7 @@ mod tests {
     fn a_plan_acts_on_rebuildable_classes_before_records() {
         let label = Label::default_tenant();
         let items = [
-            item("run-1", DataClass::Run, 0, 1),
+            item("run-1", DataClass::Incident, 0, 1),
             item("env-1", DataClass::Environment, 0, 1),
             item("log-1", DataClass::Telemetry, 0, 1),
         ];
@@ -461,7 +457,11 @@ mod tests {
             .collect();
         assert_eq!(
             order,
-            [DataClass::Environment, DataClass::Telemetry, DataClass::Run]
+            [
+                DataClass::Environment,
+                DataClass::Telemetry,
+                DataClass::Incident
+            ]
         );
     }
 

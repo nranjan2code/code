@@ -26,6 +26,16 @@ fn storage_error(error: vak_storage::StorageError) -> SessionError {
     }
 }
 
+/// One segment of a chain, with its rows as JSON.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Segment {
+    pub number: u64,
+    /// Still being appended to.
+    pub open: bool,
+    pub bytes: u64,
+    pub rows: Vec<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordChain {
     dir: PathBuf,
@@ -127,6 +137,63 @@ impl RecordChain {
         }
         drop(lock);
         Ok(())
+    }
+
+    /// The chain's segments, oldest first, each with its rows: what the
+    /// lifecycle reconciler reads to tell which sealed segment holds only
+    /// rows past their retention (plan M7a-d).
+    pub fn segments(&self) -> Vec<Segment> {
+        let Ok(key) = crate::keys::of(&self.dir) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        let files = crate::log::SessionLog::segment_files(&self.dir);
+        for ((number, open), path) in crate::log::segment_numbers(&self.dir)
+            .into_iter()
+            .zip(files)
+        {
+            let Ok(bytes) = vak_storage::segments::frame_bytes(&path) else {
+                continue;
+            };
+            let Ok(frames) = vak_storage::records::located_entries(&bytes, 0, key.as_ref()) else {
+                continue;
+            };
+            out.push(Segment {
+                number,
+                open,
+                bytes: std::fs::metadata(&path).map_or(0, |meta| meta.len()),
+                rows: frames
+                    .iter()
+                    .filter_map(|frame| serde_json::from_slice(&frame.entry).ok())
+                    .collect(),
+            });
+        }
+        out
+    }
+
+    /// Seals the open segment so its rows can age out together; the next
+    /// append starts a new one. `false` when nothing is open.
+    pub fn seal_open(&self) -> Result<bool, SessionError> {
+        let Some((number, true)) = crate::log::segment_numbers(&self.dir).last().copied() else {
+            return Ok(false);
+        };
+        let segments = vak_storage::segments::SegmentSet::open(&self.dir).map_err(storage_error)?;
+        let lock = segments.lock().map_err(storage_error)?;
+        crate::fence::check()?;
+        segments.recover(&lock).map_err(storage_error)?;
+        segments.seal(number, &lock).map_err(storage_error)?;
+        Ok(true)
+    }
+
+    /// Removes sealed segment `number` whole; later segments still verify
+    /// (`SegmentSet::drop_sealed`). Never an open segment or the newest
+    /// sealed one.
+    pub fn drop_segment(&self, number: u64) -> Result<bool, SessionError> {
+        let segments = vak_storage::segments::SegmentSet::open(&self.dir).map_err(storage_error)?;
+        let lock = segments.lock().map_err(storage_error)?;
+        crate::fence::check()?;
+        segments.recover(&lock).map_err(storage_error)?;
+        segments.drop_sealed(number, &lock).map_err(storage_error)
     }
 
     /// Every row in order. A row that does not decode as `T` is skipped,
