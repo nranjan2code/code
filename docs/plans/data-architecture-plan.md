@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-b's first three parts (content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1478,7 +1478,7 @@ Steps, each shipped whole and in this order:
 | Step | What | Exit tests |
 |---|---|---|
 | M7a-a | **Done 2026-10-08 (note below).** Conversation keys: every session ledger frame encrypted under its conversation's scope key; the readers (the catalog tailer, `SessionLog`) open through it; the per-turn byte and fsync budgets re-measured | `compressed_before_encrypted`, `bytes_per_turn_budget`, `a_destroyed_key_leaves_the_bytes_and_the_chain_and_nothing_readable` |
-| M7a-b | Content out of shared ledgers into objects granted to the conversation; the contributor key for a guest's frames with the typed placeholder in `derive_messages()`; the provider-account scope and its grant on provider-derived objects | a guest's frames read through their own key; an account-derived object reads only with the account's grant |
+| M7a-b | **Done 2026-10-08 (notes below).** Content out of shared ledgers into objects granted to the conversation; the contributor key for a guest's frames with the typed placeholder in `derive_messages()`; the provider-account scope and its grant on provider-derived objects | a guest's frames read through their own key; an account-derived object reads only with the account's grant |
 | M7a-c | `crates/vak-lifecycle`: the reconciler, observe-only; the default tenant label; one plan object behind `vak data status`, `usage` and `plan`, `/data/status`, `/data/usage` and `/data/lifecycle`, and the admin Storage (A7) and Lifecycle (A8) screens | `reconciler_observe_only_commits_nothing`, `reconciler_is_idempotent` |
 | M7a-d | Commit for the ephemeral and derived classes (runtime scrub, environments, checkpoints, Document history, inbox entries, cost and activity segments), object GC and quotas; the scattered retention goes (`MAX_STORED_CHECKPOINTS`, finops and alerts compaction, `cleanup_artifacts`, `/memory/cleanup`); `vak data gc` | `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`, `quota_refuses_admission_not_records` |
 | M7a-e | Trash as lifecycle state (the sidecars, their routes and `/workspaces/forget` go); conversation holds; conversation erasure: preview digest, the lineage walk with artifact versions, key destruction, catalog rows removed with `secure_delete` and a WAL checkpoint, the signed receipt; drafts fade; admin Conversations lifecycle (A2, A3); client menu, Trash, "Why is this gone?" and Workbench states (C1, C2, C3, C8); `vak data erase --scope conversation` | `erasure_follows_lineage`, `erasure_leaves_ledger_bytes_unchanged`, `stale_preview_cannot_authorise`, `hold_blocks_every_destructive_transition` |
@@ -1610,9 +1610,32 @@ shared chains:
   contributor scopes with it, and rebuild the rollups and catalog rows
   that folded the text before.
 
-Still to do in M7a-b:
-- **Part 4, the provider-account scope** and its grant on provider-derived
-  objects (`vak-mail-calendar`).
+**Part 4, done 2026-10-08: the provider-account scope.** Decided with the
+maintainer: what is kept under an account's key is what the provider
+returned, not what the Agent then wrote from it.
+- The `mail_calendar` tool says which connected account a result came
+  from (`ToolOutput::from_account`); the loop records it as
+  `CallEffect::Account` and tells the ledger before the result is
+  appended (`SessionLog::result_from_account`).
+- The result's block in the tool-result message keeps its call id and
+  holds what the provider returned as an object of `account:<account id>`
+  (`vak_session::objects::account_scope`). Its whole body, when one is
+  kept beside the window, is an object of the same scope, named on the
+  `EvidenceBody` row.
+- `SessionLog::decode` puts each such block back, or the fixed line
+  `ACCOUNT_REMOVED_TEXT` when the account's key was destroyed, so a
+  request still pairs every tool call with a result. The body then reads
+  as absent, including one this process had already read. Other results
+  in the same message and every other entry are untouched, and no ledger
+  byte changes.
+- The limit, which erasure's receipt must state (M7a-f): what the Agent
+  wrote from that data (its answer, a card, the turn's summary, a later
+  turn that repeats it) is the conversation's own content and stays until
+  the conversation is erased. The vault's drafts and the routine backlog
+  are not conversation content and already go on disconnect.
+- Test: `provider_account_erasure_preserves_unrelated_conversation_content`.
+
+M7a-b is done with this part.
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

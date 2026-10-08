@@ -184,6 +184,9 @@ pub struct ToolOutput {
     /// only, like `delegated`; the calling loop records it as a
     /// `CallEffect` (docs/design/85-turn-graph.md, G0).
     pub mcp_source: Option<vak_session::types::McpSource>,
+    /// The connected provider account the content came from, when it did:
+    /// the result is then kept under that account's key (plan M7a-b).
+    pub account: Option<String>,
 }
 
 pub use vak_session::types::McpSource;
@@ -210,7 +213,14 @@ impl ToolOutput {
             is_error: false,
             delegated: None,
             mcp_source: None,
+            account: None,
         }
+    }
+
+    /// The same output, naming the connected account it came from.
+    pub fn from_account(mut self, account: &str) -> Self {
+        self.account = Some(account.to_string());
+        self
     }
 
     pub fn error(content: impl Into<String>) -> Self {
@@ -219,6 +229,7 @@ impl ToolOutput {
             is_error: true,
             delegated: None,
             mcp_source: None,
+            account: None,
         }
     }
 

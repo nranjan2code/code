@@ -123,6 +123,10 @@ const CONTRIBUTED: &[&str] = &["message", "meta"];
 /// What stands in the conversation for a participant's removed message.
 pub const REMOVED_TEXT: &str = "[A participant's message was removed at their request.]";
 
+/// What stands in for a tool result whose connected account was erased.
+pub const ACCOUNT_REMOVED_TEXT: &str =
+    "[This result was removed: the connected account it came from was erased.]";
+
 pub struct SessionLog {
     path: PathBuf,
     ledger: LedgerDir,
@@ -140,6 +144,12 @@ pub struct SessionLog {
     objects: Option<std::sync::Arc<dyn crate::objects::Objects>>,
     /// Bodies already read through `objects`, by object id.
     fetched: std::sync::Mutex<HashMap<String, String>>,
+    /// The connected account each pending tool result came from, by call
+    /// id (`result_from_account`): read when the result is appended.
+    account_results: HashMap<String, String>,
+    /// The scope of each evidence body that is not the conversation's, by
+    /// object id.
+    body_scopes: HashMap<String, String>,
 }
 
 /// The ref recording that session `session_id` admitted request
@@ -203,6 +213,8 @@ impl SessionLog {
             reserved_turn: None,
             objects: None,
             fetched: Default::default(),
+            account_results: HashMap::new(),
+            body_scopes: HashMap::new(),
         };
         log.append(Entry::new(None, EntryPayload::Header(header)))?;
         Ok(log)
@@ -380,6 +392,8 @@ impl SessionLog {
             reserved_turn: None,
             objects: None,
             fetched: Default::default(),
+            account_results: HashMap::new(),
+            body_scopes: HashMap::new(),
         }
         .with_current_turn())
     }
@@ -407,6 +421,8 @@ impl SessionLog {
             reserved_turn: None,
             objects: None,
             fetched: Default::default(),
+            account_results: HashMap::new(),
+            body_scopes: HashMap::new(),
         }
         .with_current_turn())
     }
@@ -632,12 +648,64 @@ impl SessionLog {
                 .map(|author| crate::objects::contributor_scope(&header.session_id, author)),
             _ => None,
         };
-        let Some(scope) = contributor else {
+        if let Some(scope) = contributor {
+            let mut row = serde_json::to_value(entry).map_err(corrupt)?;
+            crate::content::seal_fields_under(&mut row, &scope, CONTRIBUTED)?;
+            return Ok(row.to_string());
+        }
+        // A tool result a connected account returned: the block keeps its
+        // call id, and what it says is an object of the account's scope.
+        let from_account = |id: &str| self.account_results.get(id);
+        let has_account_result = matches!(&entry.payload, EntryPayload::Message(record)
+            if record.message.content.iter().any(|block| matches!(block,
+                vak_llm::ContentBlock::ToolResult { tool_use_id, .. } if from_account(tool_use_id).is_some())));
+        if !has_account_result {
             return serde_json::to_string(entry).map_err(corrupt);
-        };
+        }
         let mut row = serde_json::to_value(entry).map_err(corrupt)?;
-        crate::content::seal_fields_under(&mut row, &scope, CONTRIBUTED)?;
+        let blocks = row
+            .pointer_mut("/message/content")
+            .and_then(serde_json::Value::as_array_mut);
+        for block in blocks.into_iter().flatten() {
+            let account = block
+                .get("tool_use_id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(from_account);
+            let (Some(account), Some(fields)) = (account.cloned(), block.as_object_mut()) else {
+                continue;
+            };
+            let Some(said) = fields.remove("content") else {
+                continue;
+            };
+            let sealed = crate::content::put(&crate::objects::account_scope(&account), &said)?;
+            fields.insert(
+                "sealed".into(),
+                serde_json::to_value(sealed).map_err(corrupt)?,
+            );
+        }
         Ok(row.to_string())
+    }
+
+    /// Puts back what each account-sealed tool result of `row` says, or a
+    /// fixed line in its place when the account was erased.
+    fn restore_account_results(row: &mut serde_json::Value) -> Option<()> {
+        let blocks = row
+            .pointer_mut("/message/content")
+            .and_then(serde_json::Value::as_array_mut)?;
+        for block in blocks {
+            let Some(fields) = block.as_object_mut() else {
+                continue;
+            };
+            let Some(sealed) = fields.remove("sealed") else {
+                continue;
+            };
+            let sealed: crate::content::Sealed = serde_json::from_value(sealed).ok()?;
+            let said = crate::content::fetch(&sealed)
+                .ok()?
+                .unwrap_or_else(|| serde_json::Value::String(ACCOUNT_REMOVED_TEXT.into()));
+            fields.insert("content".into(), said);
+        }
+        Some(())
     }
 
     /// The entry a frame holds. A participant's message whose key was
@@ -650,6 +718,9 @@ impl SessionLog {
         }
         let mut row: serde_json::Value = serde_json::from_slice(bytes).ok()?;
         if !row.get("sealed").is_some_and(serde_json::Value::is_object) {
+            // Not a contributor's entry; a tool result may still be an
+            // account's. A message with neither reads as it is stored.
+            let _ = Self::restore_account_results(&mut row);
             return serde_json::from_value(row).ok();
         }
         match crate::content::restore(&mut row).ok()? {
@@ -807,14 +878,19 @@ impl SessionLog {
     /// store is attached or the object cannot be read.
     pub fn object_text(&self, object: &crate::objects::ObjectRef) -> Option<String> {
         let mut fetched = self.fetched.lock().ok()?;
+        let scope = match self.body_scopes.get(&object.id) {
+            // What an erased account returned is gone, read before or not.
+            Some(scope) if crate::content::scope_destroyed(scope) => {
+                fetched.remove(&object.id);
+                return None;
+            }
+            Some(scope) => scope.clone(),
+            None => self.object_scope().ok()?,
+        };
         if let Some(text) = fetched.get(&object.id) {
             return Some(text.clone());
         }
-        let bytes = self
-            .objects
-            .as_ref()?
-            .get(object, &self.object_scope().ok()?)
-            .ok()?;
+        let bytes = self.objects.as_ref()?.get(object, &scope).ok()?;
         let text = String::from_utf8(bytes).ok()?;
         fetched.insert(object.id.clone(), text.clone());
         Some(text)
@@ -829,9 +905,23 @@ impl SessionLog {
         tool_use_id: &str,
         content: String,
     ) -> Result<Entry, SessionError> {
-        let body = self.put_object(content.as_bytes())?;
+        let scope = self
+            .account_results
+            .get(tool_use_id)
+            .map(|account| crate::objects::account_scope(account));
+        let body = match &scope {
+            Some(scope) => self
+                .objects
+                .as_ref()
+                .ok_or_else(|| SessionError::Objects("this ledger has no object store".into()))?
+                .put(content.as_bytes(), scope)?,
+            None => self.put_object(content.as_bytes())?,
+        };
         if let Ok(mut fetched) = self.fetched.lock() {
             fetched.insert(body.id.clone(), content);
+        }
+        if let Some(scope) = &scope {
+            self.body_scopes.insert(body.id.clone(), scope.clone());
         }
         let parent = self.tail_id.clone();
         self.append(Entry::new(
@@ -839,6 +929,7 @@ impl SessionLog {
             EntryPayload::EvidenceBody(crate::types::EvidenceBodyRecord {
                 tool_use_id: tool_use_id.to_string(),
                 body,
+                scope,
             }),
         ))
     }
@@ -1724,7 +1815,25 @@ impl SessionLog {
 
     fn with_current_turn(mut self) -> Self {
         self.current_turn = self.latest_directive_entry_id();
+        self.body_scopes = self
+            .entries
+            .iter()
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::EvidenceBody(record) => {
+                    Some((record.body.id.clone(), record.scope.clone()?))
+                }
+                _ => None,
+            })
+            .collect();
         self
+    }
+
+    /// Says the result of call `tool_use_id`, about to be appended, came
+    /// from the connected account `account`: its text and its whole body
+    /// are then kept under that account's key (plan M7a-b).
+    pub fn result_from_account(&mut self, tool_use_id: &str, account: &str) {
+        self.account_results
+            .insert(tool_use_id.to_string(), account.to_string());
     }
 
     /// Appends one compaction packet over the inclusive turn range

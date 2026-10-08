@@ -258,3 +258,108 @@ fn guest_erasure_keeps_owner_conversation() {
     assert!(all.contains(SECRET), "the owner's own message is untouched");
     assert!(!all.contains("ninety") && !all.contains("Asha"));
 }
+
+fn tool_results(log: &SessionLog) -> Vec<(String, String)> {
+    log.chain_to_root()
+        .iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Message(record) => Some(record.message.content.clone()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|block| match block {
+            vak_llm::ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } => Some((tool_use_id, content)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What a connected account returned is kept under the account's key
+/// (plan M7a-b): erasing the account removes it from the conversation, in
+/// the message and in its whole body, and leaves everything else.
+#[test]
+fn provider_account_erasure_preserves_unrelated_conversation_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = written(dir.path(), "ses-keys-account");
+    let tenant = TenantObjects::for_tenant(&vak_config::paths::local_tenant_home()).unwrap();
+    let mut log = SessionLog::open(path.clone())
+        .unwrap()
+        .with_objects(tenant.clone());
+    log.result_from_account("call-mail", "acct-keys-erased");
+    log.append_message(MessageRecord {
+        message: Message {
+            role: vak_llm::Role::User,
+            content: vec![
+                vak_llm::ContentBlock::tool_result("call-mail", "From Dana: the lease is signed"),
+                vak_llm::ContentBlock::tool_result("call-read", "notes.txt: buy stamps"),
+            ],
+        },
+        meta: None,
+    })
+    .unwrap();
+    let body = log
+        .append_evidence_body(
+            "call-mail",
+            "the whole thread with Dana about the lease".into(),
+        )
+        .unwrap();
+    let vak_session::EntryPayload::EvidenceBody(body) = body.payload else {
+        panic!("not an evidence body");
+    };
+    drop(log);
+    let before = stored_bytes(&path);
+    let stored = SessionLog::text(&path);
+    assert!(
+        !stored.contains("lease"),
+        "the account's data is not in the frame"
+    );
+    assert!(stored.contains("buy stamps"));
+
+    let whole = SessionLog::open(path.clone())
+        .unwrap()
+        .with_objects(tenant.clone());
+    assert_eq!(
+        tool_results(&whole),
+        [
+            (
+                "call-mail".to_string(),
+                "From Dana: the lease is signed".to_string()
+            ),
+            ("call-read".to_string(), "notes.txt: buy stamps".to_string()),
+        ]
+    );
+    assert!(whole.object_text(&body.body).unwrap().contains("Dana"));
+    drop(whole);
+
+    tenant
+        .destroy_scope_key(&vak_session::objects::account_scope("acct-keys-erased"))
+        .unwrap();
+
+    assert_eq!(
+        stored_bytes(&path),
+        before,
+        "erasing an account changes no byte"
+    );
+    let after = SessionLog::open(path.clone()).unwrap().with_objects(tenant);
+    assert_eq!(
+        tool_results(&after),
+        [
+            (
+                "call-mail".to_string(),
+                vak_session::log::ACCOUNT_REMOVED_TEXT.to_string()
+            ),
+            ("call-read".to_string(), "notes.txt: buy stamps".to_string()),
+        ]
+    );
+    assert_eq!(after.object_text(&body.body), None);
+    let said: Vec<String> = after
+        .derive_transcript()
+        .iter()
+        .map(|message| message.message.text_content())
+        .collect();
+    assert!(said.iter().any(|text| text.contains(SECRET)));
+}

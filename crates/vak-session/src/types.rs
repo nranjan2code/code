@@ -1057,6 +1057,10 @@ pub enum CallEffect {
     },
     /// The MCP server and tool that answered the call.
     Mcp(McpSource),
+    /// What the call returned came from a connected provider account
+    /// (mail, calendar): the result is kept under that account's key, so
+    /// erasing the account removes it from every conversation (plan M7a-b).
+    Account { account: String },
 }
 
 /// Which MCP server answered a call: the configured name, what the server
@@ -1107,6 +1111,10 @@ pub struct EvidenceBodyRecord {
     pub tool_use_id: String,
     /// The whole result, as a conversation-scoped tenant object.
     pub body: crate::objects::ObjectRef,
+    /// The scope the body is granted to when it is not the conversation's:
+    /// a connected account's, for what that account returned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
 }
 
 /// The closing record for one turn (docs/design/68-context-engine.md §10).

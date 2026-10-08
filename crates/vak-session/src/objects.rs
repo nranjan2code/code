@@ -53,6 +53,13 @@ pub fn contributor_scope(session_id: &str, principal: &str) -> String {
     format!("contributor:{session_id}:{principal}")
 }
 
+/// The scope what a connected provider account returned is granted to,
+/// wherever it was read (plan M7a-b): destroying it removes that account's
+/// data from every conversation and leaves the conversations.
+pub fn account_scope(account: &str) -> String {
+    format!("account:{account}")
+}
+
 /// The principal a contributor scope names.
 pub fn contributor_of(scope: &str) -> Option<&str> {
     let mut parts = scope.strip_prefix("contributor:")?.splitn(2, ':');

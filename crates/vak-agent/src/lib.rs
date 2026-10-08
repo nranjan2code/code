@@ -3658,6 +3658,15 @@ impl Agent {
 
             {
                 let mut session = self.session.lock().await;
+                // What a connected account returned is kept under that
+                // account's key, in the message and in its whole body.
+                for (id, yielded) in yields.iter() {
+                    for effect in &yielded.effects {
+                        if let vak_session::types::CallEffect::Account { account } = effect {
+                            session.result_from_account(id, account);
+                        }
+                    }
+                }
                 let appended = session
                     .append_message(MessageRecord {
                         message: Message {
@@ -7676,6 +7685,9 @@ async fn execute_one(
                         if let Some(source) = out.mcp_source.clone() {
                             effects.push(vak_session::types::CallEffect::Mcp(source));
                         }
+                        if let Some(account) = out.account.clone() {
+                            effects.push(vak_session::types::CallEffect::Account { account });
+                        }
                         if let Some((access, path)) = file_access {
                             effects.push(file_effect(cwd, access, path).await);
                         }
@@ -9474,7 +9486,7 @@ mod file_effect_tests {
             CallEffect::FileRead { digest, .. } | CallEffect::FileWrite { digest, .. } => {
                 digest.clone()
             }
-            CallEffect::Mcp(_) => None,
+            CallEffect::Mcp(_) | CallEffect::Account { .. } => None,
         }
     }
 

@@ -78,6 +78,31 @@ pub fn seal_fields_under(
     seal(row, scope, moved)
 }
 
+/// Keeps `value` as an object of `scope`.
+pub fn put(scope: &str, value: &Value) -> Result<Sealed, SessionError> {
+    let bytes =
+        serde_json::to_vec(value).map_err(|error| SessionError::Objects(error.to_string()))?;
+    let tenant = tenant()?;
+    tenant.create_scope_key(scope)?;
+    let object = tenant.put(&bytes, scope)?;
+    Ok(Sealed {
+        scope: scope.to_string(),
+        object,
+    })
+}
+
+/// What `sealed` holds; `None` when its scope's key was destroyed.
+pub fn fetch(sealed: &Sealed) -> Result<Option<Value>, SessionError> {
+    let tenant = tenant()?;
+    if tenant.scope_destroyed(&sealed.scope) {
+        return Ok(None);
+    }
+    let bytes = tenant.get(&sealed.object, &sealed.scope)?;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|error| SessionError::Objects(error.to_string()))
+}
+
 /// Whether `scope`'s key was destroyed.
 pub fn scope_destroyed(scope: &str) -> bool {
     tenant().is_ok_and(|tenant| tenant.scope_destroyed(scope))

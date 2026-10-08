@@ -360,7 +360,9 @@ impl TurnLink {
         let (path, kind) = match effect {
             crate::types::CallEffect::FileRead { path, .. } => (path, LinkKind::ReadFile),
             crate::types::CallEffect::FileWrite { path, .. } => (path, LinkKind::WroteFile),
-            crate::types::CallEffect::Mcp(_) => return None,
+            crate::types::CallEffect::Mcp(_) | crate::types::CallEffect::Account { .. } => {
+                return None;
+            }
         };
         let path = path.trim_start_matches("./");
         Some(TurnLink {
