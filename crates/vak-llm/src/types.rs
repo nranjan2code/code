@@ -36,13 +36,13 @@ pub enum ContentBlock {
         source: ImageSource,
     },
     /// A provider-native block this build does not interpret: Anthropic's
-    /// `server_tool_use` and `tool_search_tool_result`, and the Responses
-    /// wire's `tool_search_call` and `tool_search_output` items
-    /// (docs/design/68 §5/§11/§12). `raw` is the exact block the provider
-    /// sent, `"type"` included; `kind` mirrors `raw["type"]` for cheap
-    /// matching without re-parsing. Never executed by the agent loop:
-    /// persisted, and sent back only by the adapter whose wire wrote it.
-    /// Every adapter skips a kind that is not its own.
+    /// `server_tool_use` and `tool_search_tool_result` (docs/design/68
+    /// §5/§11/§12). `raw` is the exact block the provider sent, `"type"`
+    /// included, so the Anthropic adapter can replay it on the wire
+    /// unchanged; `kind` mirrors `raw["type"]` for cheap matching without
+    /// re-parsing. Never executed by the agent loop — persisted and
+    /// replayed verbatim. Every other adapter must skip this variant when
+    /// rendering its own wire format.
     Provider {
         kind: String,
         raw: Value,
@@ -129,8 +129,8 @@ pub struct ToolDefinition {
     #[serde(rename = "input_schema")]
     pub parameters: Value,
     /// Scheduling hint (docs/design/68 §5/§11): an adapter that defers
-    /// tools (`Provider::defers_tools`) renders `defer_loading: true`, keeps
-    /// the schema out of the request and offers the provider's tool search.
+    /// tools (`Provider::defers_tools`, today Anthropic's) renders
+    /// `defer_loading: true` and keeps the schema out of the stable prefix.
     /// Every other adapter never reads it, and its caller sends it no
     /// deferred tool.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -165,7 +165,7 @@ impl ToolDefinition {
         )
     }
 
-    /// Same tool, marked deferred (`defer_loading` on a wire that has it).
+    /// Same tool, marked deferred (Anthropic `defer_loading`).
     pub fn deferred(mut self) -> Self {
         self.defer = true;
         self

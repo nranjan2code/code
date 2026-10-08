@@ -250,15 +250,6 @@ fn unwrap_provider_blocks(message: &mut Value) {
     let Some(content) = message.get_mut("content").and_then(|c| c.as_array_mut()) else {
         return;
     };
-    // An opaque block another wire recorded (a Responses tool search item
-    // from an earlier leg) is not Anthropic's to replay.
-    content.retain(|block| {
-        block.get("type").and_then(|t| t.as_str()) != Some("provider")
-            || !block
-                .get("kind")
-                .and_then(|k| k.as_str())
-                .is_some_and(crate::openai_responses::is_tool_search_item)
-    });
     for block in content.iter_mut() {
         if block.get("type").and_then(|t| t.as_str()) == Some("provider")
             && let Some(raw) = block.get("raw").cloned()
@@ -1180,23 +1171,6 @@ mod build_body_tests {
         assert!(
             rare.get("cache_control").is_none(),
             "a deferred tool must never carry cache_control"
-        );
-    }
-
-    #[test]
-    fn a_responses_tool_search_item_is_not_replayed_to_anthropic() {
-        let mut message = serde_json::json!({"role": "assistant", "content": [
-            {"type": "provider", "kind": "tool_search_call", "raw": {"type": "tool_search_call"}},
-            {"type": "provider", "kind": "server_tool_use", "raw": {"type": "server_tool_use", "id": "s1"}},
-            {"type": "text", "text": "ok"},
-        ]});
-        unwrap_provider_blocks(&mut message);
-        assert_eq!(
-            message["content"],
-            serde_json::json!([
-                {"type": "server_tool_use", "id": "s1"},
-                {"type": "text", "text": "ok"},
-            ])
         );
     }
 

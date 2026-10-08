@@ -108,39 +108,37 @@ is the only setting.
 
 ### Deferred tools and tool search
 
-Whether a wire can keep a deferred tool's schema out of the request is the
+Whether a wire keeps a deferred tool's schema out of the request is the
 adapter's answer, `Provider::defers_tools(model)`, never a provider name
 in the agent loop. A leg whose adapter says yes is sent the loaded and the
 deferred tools; any other leg is sent the loaded tools only, and the model
 reaches the rest through `find_tools`
-(docs/design/68-context-engine.md §5).
+(docs/design/68-context-engine.md §5). Today only the Anthropic adapter
+says yes.
 
-| Wire | Deferred tool | Search entry | What comes back |
-|---|---|---|---|
-| Anthropic | `defer_loading: true` | `tool_search_tool_regex_20251119` | `server_tool_use`, `tool_search_tool_result` blocks |
-| OpenAI Responses | `defer_loading: true` | `{"type": "tool_search"}` | `tool_search_call`, `tool_search_output` items |
-| every other wire | not sent | none | nothing |
+The OpenAI Responses wire has the same feature (`defer_loading: true` on a
+function, a `{"type": "tool_search"}` entry, `tool_search_call` and
+`tool_search_output` items to send back) and Vak does not use it. It was
+built and measured on `gpt-6-luna` through the server on 2026-10-08, then
+removed:
 
-What comes back is kept as an opaque `ContentBlock::Provider` block in the
-ledger and sent again only on the wire that wrote it. The Responses
-adapter sends its search items in order, ahead of the call they loaded a
-tool for, and without their `id`: an item sent by id is refused unless the
-reasoning item before it comes too, and reasoning is not replayed there.
-They go only while the request still carries a deferred tool.
+- It works. The entry and 18 to 22 deferred tools were accepted on every
+  request. Asked to use its own search, the model did on 10 of 10 turns,
+  and all 37 later requests that carried the search items were accepted
+  (sent without their `id`: an item sent by id is refused unless the
+  reasoning item before it comes too).
+- It is not chosen. With `find_tools` loaded and named in the prompt, the
+  model called `find_tools` on 10 of 10 turns and its own search on none.
+  With `find_tools` withheld it searched on 10 of 10, in as many requests
+  per turn as before.
+- It costs more than it can save. A deferred tool still sends its name and
+  description: about 2,500 input tokens for 20 tools on every request of
+  every turn. The most it saves is one request, most of it cached, on a
+  turn that looks for a tool. `find_tools` costs nothing on the turns that
+  need no other tool, because the prompt lists names only.
 
-No table says which models take tool search. A 400 that names it
-(`models::rejects_tool_search`) is retried once with the loaded tools
-only, and that model on that endpoint is remembered for the life of the
-process (`models::mark_tool_search_unsupported`).
-
-Measured on `gpt-6-luna` through the server (2026-10-08): the entry and
-18 to 22 deferred tools were accepted on every request. Asked to use its
-own search, the model did on 10 of 10 turns, and all 37 later requests
-that carried the search items were accepted. Left to choose, with
-`find_tools` loaded and named in the prompt, it called `find_tools` on 10
-of 10 turns and its own search on none. A deferred tool still costs its
-name and description in every request: about 2,500 input tokens for 20
-tools.
+A wire is worth deferring on when a deferred tool costs it close to
+nothing per request; measure that before wiring one.
 
 ### Anthropic: reasoning depth and fast mode
 

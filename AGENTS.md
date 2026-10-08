@@ -1529,10 +1529,8 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      render per provider: Anthropic `cache_control` (<=4
                      breakpoints) + `defer_loading` + the server-side tool
                      search tool with opaque `ContentBlock::Provider`
-                     round-tripping, OpenAI Responses `defer_loading` +
-                     `tool_search` the same way (which wire defers is
-                     `Provider::defers_tools`, a refusal is remembered),
-                     OpenAI `prompt_cache_key` +
+                     round-tripping (which wire defers is the adapter's
+                     `Provider::defers_tools`), OpenAI `prompt_cache_key` +
                      `previous_response_id` chaining, OpenRouter
                      `session_id`; `turn.rs::current_turn_boundary` decides
                      what thinking gets replayed. Native Ollama

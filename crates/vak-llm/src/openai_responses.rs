@@ -62,17 +62,6 @@ fn messages_since_last_assistant(messages: &[Message]) -> &[Message] {
     }
 }
 
-/// The Responses output items the provider's tool search writes
-/// (docs/design/68-context-engine.md §5, §11). They are kept as opaque
-/// `ContentBlock::Provider` blocks and sent back unchanged, because the
-/// tools a search loaded are callable only while its items are in `input`.
-const TOOL_SEARCH_ITEMS: [&str; 2] = ["tool_search_call", "tool_search_output"];
-
-/// Whether an opaque block's `kind` is one of this wire's tool search items.
-pub fn is_tool_search_item(kind: &str) -> bool {
-    TOOL_SEARCH_ITEMS.contains(&kind)
-}
-
 pub fn build_body(
     config: &OpenAiResponsesConfig,
     request: &ChatRequest,
@@ -81,12 +70,9 @@ pub fn build_body(
         Some(_) => messages_since_last_assistant(&request.messages),
         None => &request.messages,
     };
-    // Tool search is in use exactly when the request still carries a
-    // deferred tool: `stream` drops them for a model that refused it.
-    let tool_search = request.tools.iter().any(|t| t.defer);
     let mut input: Vec<Value> = Vec::with_capacity(messages.len());
     for m in messages {
-        append_input_item(&mut input, m, tool_search)?;
+        append_input_item(&mut input, m)?;
     }
 
     // `previous_response_id` only resolves against a response the provider
@@ -119,18 +105,13 @@ pub fn build_body(
             .tools
             .iter()
             .map(|t: &ToolDefinition| {
-                let mut tool = serde_json::json!({
+                serde_json::json!({
                     "type": "function",
                     "name": t.name,
                     "description": t.description,
                     "parameters": t.parameters,
-                });
-                if t.defer {
-                    tool["defer_loading"] = serde_json::json!(true);
-                }
-                tool
+                })
             })
-            .chain(tool_search.then(|| serde_json::json!({"type": "tool_search"})))
             .collect();
         body["tools"] = Value::Array(tools);
     }
@@ -140,7 +121,7 @@ pub fn build_body(
     Ok(body)
 }
 
-fn append_input_item(out: &mut Vec<Value>, m: &Message, tool_search: bool) -> Result<(), LlmError> {
+fn append_input_item(out: &mut Vec<Value>, m: &Message) -> Result<(), LlmError> {
     match m.role {
         Role::User => {
             let mut text = String::new();
@@ -165,7 +146,11 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message, tool_search: bool) -> Re
                             "tool_use blocks must appear in assistant messages".into(),
                         ));
                     }
-                    ContentBlock::Thinking { .. } | ContentBlock::Provider { .. } => {}
+                    ContentBlock::Thinking { .. } => {}
+                    // Only the Anthropic adapter understands server-side
+                    // tool search; every other adapter skips this opaque
+                    // block entirely (docs/design/68 §5/§12).
+                    ContentBlock::Provider { .. } => {}
                 }
             }
             for (call_id, output) in outputs {
@@ -214,22 +199,6 @@ fn append_input_item(out: &mut Vec<Value>, m: &Message, tool_search: bool) -> Re
                             "arguments": serde_json::to_string(args)
                                 .map_err(|e| LlmError::Parse(e.to_string()))?,
                         }));
-                    }
-                    // This wire's own tool search items go back in order,
-                    // ahead of the call they loaded a tool for; another
-                    // wire's opaque blocks, and these once tool search is
-                    // off, are left out. They go without their `id`, as a
-                    // function call does: an item sent by id is refused
-                    // unless the reasoning item it followed comes with it,
-                    // and reasoning is not replayed on this wire.
-                    ContentBlock::Provider { kind, raw }
-                        if tool_search && is_tool_search_item(kind) =>
-                    {
-                        let mut item = raw.clone();
-                        if let Some(fields) = item.as_object_mut() {
-                            fields.remove("id");
-                        }
-                        out.push(item);
                     }
                     ContentBlock::Thinking { .. }
                     | ContentBlock::ToolResult { .. }
@@ -388,18 +357,6 @@ impl Accumulator {
                 }
                 Ok(None)
             }
-            "response.output_item.done" => {
-                let item = v.get("item").cloned().unwrap_or(Value::Null);
-                if let Some(kind) = item.get("type").and_then(|t| t.as_str())
-                    && is_tool_search_item(kind)
-                {
-                    self.message.content.push(ContentBlock::Provider {
-                        kind: kind.to_string(),
-                        raw: item,
-                    });
-                }
-                Ok(None)
-            }
             "response.function_call_arguments.delta" => {
                 let Some(delta) = v.get("delta").and_then(|d| d.as_str()) else {
                     return Ok(None);
@@ -496,10 +453,6 @@ impl Provider for OpenAiResponsesProvider {
         "openai-responses"
     }
 
-    fn defers_tools(&self, model: &str) -> bool {
-        crate::models::tool_search_allowed(&self.config.base_url, model)
-    }
-
     fn circuit_key(&self) -> String {
         crate::gate::route_identity(self.name(), &self.config.base_url, &self.config.api_key)
     }
@@ -537,11 +490,8 @@ impl Provider for OpenAiResponsesProvider {
         {
             request.effort = None;
         }
-        if !crate::models::tool_search_allowed(&self.config.base_url, &request.model) {
-            request.tools.retain(|tool| !tool.defer);
-        }
-        // A model that refuses the reasoning setting, or tool search, is
-        // asked once more without it and remembered (docs/design/01-llm.md).
+        // A model that refuses the reasoning setting is asked once more
+        // without it and remembered (docs/design/01-llm.md).
         let response = loop {
             let body = build_body(&self.config, &request)?;
             let send_fut = self
@@ -572,14 +522,6 @@ impl Provider for OpenAiResponsesProvider {
             {
                 crate::models::mark_effort_unsupported(&self.config.base_url, &request.model);
                 request.effort = None;
-                continue;
-            }
-            if status.as_u16() == 400
-                && request.tools.iter().any(|tool| tool.defer)
-                && crate::models::rejects_tool_search(&text)
-            {
-                crate::models::mark_tool_search_unsupported(&self.config.base_url, &request.model);
-                request.tools.retain(|tool| !tool.defer);
                 continue;
             }
             capacity_ticket.observe_model(observation);
@@ -813,116 +755,5 @@ mod build_body_tests {
                 ..
             }
         ));
-    }
-
-    fn deferring_request() -> ChatRequest {
-        let mut req = ChatRequest::new("gpt-test");
-        req.tools = vec![
-            ToolDefinition::new("core_tool", "always visible", serde_json::json!({})),
-            ToolDefinition::new("rare_tool", "rarely needed", serde_json::json!({})).deferred(),
-        ];
-        req
-    }
-
-    #[test]
-    fn a_deferred_tool_is_marked_and_the_search_entry_is_sent_with_it() {
-        let mut req = deferring_request();
-        req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&config(), &req).unwrap();
-        let tools = body["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 3);
-        assert!(tools[0].get("defer_loading").is_none());
-        assert_eq!(tools[1]["defer_loading"], true);
-        assert_eq!(tools[2], serde_json::json!({"type": "tool_search"}));
-
-        req.tools.retain(|tool| !tool.defer);
-        let body = build_body(&config(), &req).unwrap();
-        let tools = body["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1, "no deferred tool, no search entry");
-    }
-
-    #[test]
-    fn tool_search_items_are_kept_and_sent_back_in_order() {
-        let mut acc = Accumulator::new("gpt-test");
-        let call = r#"{"type":"tool_search_call","id":"tsc_1","execution":"server","call_id":null,"status":"completed","arguments":{"paths":["rare_tool"]}}"#;
-        let output = r#"{"type":"tool_search_output","id":"tso_1","execution":"server","call_id":null,"status":"completed","tools":[{"type":"function","name":"rare_tool"}]}"#;
-        for item in [call, output] {
-            acc.convert(&format!(
-                r#"{{"type":"response.output_item.done","item":{item}}}"#
-            ))
-            .unwrap();
-        }
-        acc.convert(
-            r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"rare_tool"}}"#,
-        )
-        .unwrap();
-        acc.convert(r#"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"rare_tool","arguments":"{}"}}"#)
-            .unwrap();
-        let kinds: Vec<&str> = acc
-            .message
-            .content
-            .iter()
-            .map(|block| match block {
-                ContentBlock::Provider { kind, .. } => kind.as_str(),
-                ContentBlock::ToolUse { .. } => "tool_use",
-                _ => "other",
-            })
-            .collect();
-        assert_eq!(
-            kinds,
-            ["tool_search_call", "tool_search_output", "tool_use"]
-        );
-
-        let mut req = deferring_request();
-        req.messages = vec![
-            Message::user_text("hi"),
-            Message::assistant(acc.message.content.clone()),
-        ];
-        let body = build_body(&config(), &req).unwrap();
-        let input = body["input"].as_array().unwrap();
-        let sent: Vec<&str> = input
-            .iter()
-            .filter_map(|item| item.get("type").and_then(Value::as_str))
-            .collect();
-        assert_eq!(
-            sent,
-            ["tool_search_call", "tool_search_output", "function_call"]
-        );
-        let mut expected = serde_json::from_str::<Value>(call).unwrap();
-        expected.as_object_mut().unwrap().remove("id");
-        assert_eq!(input[1], expected, "sent as written, without its id");
-
-        req.tools.retain(|tool| !tool.defer);
-        let body = build_body(&config(), &req).unwrap();
-        let sent: Vec<&str> = body["input"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|item| item.get("type").and_then(Value::as_str))
-            .collect();
-        assert_eq!(
-            sent,
-            ["function_call"],
-            "search items go only with tool search"
-        );
-    }
-
-    #[test]
-    fn another_wires_opaque_block_is_never_sent() {
-        let mut req = deferring_request();
-        req.messages = vec![
-            Message::user_text("hi"),
-            Message::assistant(vec![
-                ContentBlock::Provider {
-                    kind: "server_tool_use".into(),
-                    raw: serde_json::json!({"type": "server_tool_use", "id": "x"}),
-                },
-                ContentBlock::text("done"),
-            ]),
-        ];
-        let body = build_body(&config(), &req).unwrap();
-        let input = body["input"].as_array().unwrap();
-        assert_eq!(input.len(), 2);
-        assert_eq!(input[1]["role"], "assistant");
     }
 }
