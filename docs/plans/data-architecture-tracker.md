@@ -86,7 +86,7 @@ Known slow tests (each over 60 s, not failures):
 | 13i | M7a-i Integrity, Data health, remaining `vak data` verbs, soak, invariant, acceptance | `thirty_day_soak_stays_within_budget`, doc 74 §9 runs | **Done 2026-10-08** (`Core::data_integrity`, `/data/integrity`, admin Integrity and Home Data health; `vak data verify | rebuild-catalog | cat | grep`; the soak; retention commits by default; invariant 42; `docs/audits/acceptance-m7a-lifecycle-2026-10-08.md`). **M7a is done.** |
 | 14 | M7b lifecycle: governance, trimmed to one owner (design agreed 2026-10-09, plan §M7b "M7b design") | the steps below | In progress |
 | 14a | M7b-a the install's retention rules, editable, with an impact preview | `shortened_retention_previews_what_it_removes`, `edited_rules_are_the_ones_the_pass_uses` | **Done 2026-10-09** (`lifecycle::retention_label`, `Core::retention_preview`, `Core::set_retention`; `/data/rules`; `vak data rules`; the admin Retention editor) |
-| 14b | M7b-b holds in one place, on artifacts too | `hold_blocks_every_destructive_transition` | |
+| 14b | M7b-b holds in one place, on artifacts too | `hold_blocks_every_destructive_transition` | **Done 2026-10-09** (`Core::hold_artifact`, `Core::holds`, `/data/holds`, the Library's Hold, the admin On hold list) |
 | 14c | M7b-c erasing an Agent's data | `agent_erasure_takes_what_it_owns_and_nothing_else` | |
 | 14d | M7b-d erasing a project's data | `project_erasure_leaves_the_folder` | |
 | 14e | M7b-e erasing one person across chats | `person_erasure_spans_agents_and_chats` | |

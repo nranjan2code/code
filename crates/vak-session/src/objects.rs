@@ -237,6 +237,17 @@ impl TenantObjects {
         Ok(removed)
     }
 
+    /// Every scope on hold.
+    pub fn held_scopes(&self) -> Vec<String> {
+        let mut held: Vec<String> = self
+            .scopes
+            .held_scopes()
+            .map(|held| held.into_iter().collect())
+            .unwrap_or_default();
+        held.sort();
+        held
+    }
+
     /// How many scopes are on hold.
     pub fn held_count(&self) -> usize {
         self.scopes.held_scopes().map_or(0, |held| held.len())

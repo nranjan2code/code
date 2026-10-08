@@ -798,6 +798,9 @@ impl Core {
                         .any(|held| held.status(now) == crate::grants::GrantStatus::Active)
                 });
             let kept = artifact.starred || shared;
+            // A hold outranks everything: a held artifact's drafts stay
+            // where they are.
+            let held = self.artifact_held(&artifact.id.to_string());
             for version in &artifact.versions {
                 if !version.is_draft() || !version.is_present() {
                     continue;
@@ -808,7 +811,11 @@ impl Core {
                     since: version.restored_at.unwrap_or(version.at),
                     bytes: version.size,
                     files: 1,
-                    guard: kept.then_some(Guard::Kept),
+                    guard: if held {
+                        Some(Guard::Held)
+                    } else {
+                        kept.then_some(Guard::Kept)
+                    },
                     group: None,
                     rank: 0,
                 });

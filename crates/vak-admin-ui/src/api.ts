@@ -612,6 +612,17 @@ export const api = {
     }).then((r) => handle(r));
   },
 
+  /** Everything on hold. */
+  dataHolds: (): Promise<{ holds: { kind: string; id: string; name?: string | null }[] }> =>
+    fetch("/data/holds").then((r) => handle(r)),
+
+  holdArtifact: (artifact: string, on: boolean): Promise<void> =>
+    fetch(`/library/${encodeURIComponent(artifact)}/hold`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ on }),
+    }).then((r) => handle(r)),
+
   erasureReceipts: (): Promise<{ receipts: ErasureReceipt[] }> =>
     fetch("/data/erasure/receipts").then((r) => handle(r)),
 

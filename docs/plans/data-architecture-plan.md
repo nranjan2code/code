@@ -2274,6 +2274,25 @@ hold.
   `the_owner_changes_a_keep_time_and_a_shorter_one_is_confirmed` (a
   binary of its own: the rules are one Document for the home).
 
+**M7b-b, done 2026-10-09: holds in one place.**
+- `Core::hold_artifact` holds a file's key, as `Core::hold_conversation`
+  holds a conversation's. A held file's drafts do not go to the trash
+  (`Guard::Held`), none of its versions is erased, and a conversation
+  whose erasure would take it is refused.
+- `Core::holds` lists everything on hold by what the owner knows it as
+  (a conversation's title, a file's name): `GET /data/holds`, and an On
+  hold panel with Release under the admin console's Conversations.
+- A file is held from its page in the client's Library (Hold, Release
+  hold; `POST /library/{id}/hold`), which then shows no day for its
+  drafts to go by.
+- Not built: a hold on an Agent, a project or a connected account, and a
+  hold by search query. A hold has no reason or expiry recorded.
+- Neither new control was seen in a browser.
+- Tests: `hold_blocks_every_destructive_transition` (the owner's
+  erasure, the end of the trash window, a guest's erasure, a draft's
+  expiry and erasure, and a conversation that would take a held file;
+  then each goes ahead once released), and the Library route test.
+
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office

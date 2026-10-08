@@ -267,6 +267,9 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             <button class="btn sm" onClick={() => void act(() => api.libraryChange(found().id, "archive", { on: !found().archived }))}>
               {found().archived ? "Restore" : "Archive"}
             </button>
+            <button class="btn sm has-tooltip" data-tooltip={found().held ? "Let it be deleted again" : "Keep it from being deleted, by anyone or any rule"} onClick={() => void act(() => api.libraryChange(found().id, "hold", { on: !found().held }))}>
+              {found().held ? "Release hold" : "Hold"}
+            </button>
           </div>
 
           <Show when={sharing()}>

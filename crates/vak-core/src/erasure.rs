@@ -146,6 +146,17 @@ const ACCOUNT_NOT_REACHED: &[&str] = &[
     "The account itself and what the provider keeps: this erases only what Vakyartha stored.",
 ];
 
+/// Something on hold: nothing erases it, by a person or by a rule, until
+/// the hold is released.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Hold {
+    /// `conversation` or `artifact`; `other` for a key held by hand.
+    pub kind: &'static str,
+    pub id: String,
+    /// What the owner knows it by: a conversation's title, a file's name.
+    pub name: Option<String>,
+}
+
 /// What erasing one person's contributions to a conversation would
 /// destroy, and the digest a confirmation must carry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -489,6 +500,69 @@ impl Core {
             "a conversation was erased"
         );
         Ok(receipt)
+    }
+
+    /// Puts an artifact on hold or releases it: while held, its drafts do
+    /// not go to the trash, none of its versions is erased, and a
+    /// conversation whose erasure would take it is refused.
+    pub fn hold_artifact(&self, artifact: &str, held: bool) -> Result<(), ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
+        let id = vak_session::ids::ArtifactId::parse(artifact)
+            .map_err(|_| ErasureError::NotFound(artifact.to_string()))?;
+        if self.artifacts().get(artifact).is_none() {
+            return Err(ErasureError::NotFound(artifact.to_string()));
+        }
+        let tenant = self.tenant_objects()?;
+        let scope = crate::artifacts::object_scope(&id);
+        if held {
+            tenant.hold_scope(&scope)
+        } else {
+            tenant.release_scope(&scope)
+        }
+        .map_err(|error| failed(error.to_string()))
+    }
+
+    pub fn artifact_held(&self, artifact: &str) -> bool {
+        vak_session::ids::ArtifactId::parse(artifact).is_ok_and(|id| {
+            self.tenant_objects()
+                .is_ok_and(|tenant| tenant.scope_held(&crate::artifacts::object_scope(&id)))
+        })
+    }
+
+    /// Everything on hold, conversations first.
+    pub fn holds(&self) -> Vec<Hold> {
+        let Ok(tenant) = self.tenant_objects() else {
+            return Vec::new();
+        };
+        let mut holds: Vec<Hold> = tenant
+            .held_scopes()
+            .into_iter()
+            .map(|scope| {
+                if let Some(id) = scope.strip_prefix("conversation:") {
+                    Hold {
+                        kind: "conversation",
+                        id: id.to_string(),
+                        name: Some(self.erasure_confirmation(id)),
+                    }
+                } else if let Some(id) = scope.strip_prefix("artifact:") {
+                    Hold {
+                        kind: "artifact",
+                        id: id.to_string(),
+                        name: self.artifacts().get(id).map(|artifact| artifact.name()),
+                    }
+                } else {
+                    Hold {
+                        kind: "other",
+                        id: scope,
+                        name: None,
+                    }
+                }
+            })
+            .collect();
+        holds.sort_by(|a, b| {
+            (a.kind != "conversation", &a.id).cmp(&(b.kind != "conversation", &b.id))
+        });
+        holds
     }
 
     /// The people other than the owner whose contributions to

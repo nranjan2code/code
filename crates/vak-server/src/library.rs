@@ -790,8 +790,9 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
     match found {
         Ok(Some((artifact, shared))) => {
             let mut value = summary(&artifact);
+            value["held"] = serde_json::json!(state.core.artifact_held(&artifact.id.to_string()));
             // A draft nobody keeps says the day it goes to the trash.
-            let kept = artifact.starred || shared;
+            let kept = artifact.starred || shared || value["held"] == true;
             let window = vak_core::lifecycle::draft_window();
             let history: Vec<serde_json::Value> = artifact
                 .versions
@@ -881,6 +882,16 @@ async fn change(
     Path((id, action)): Path<(String, String)>,
     Json(body): Json<Change>,
 ) -> Response {
+    if action == "hold" {
+        // A hold is on the artifact's key, not a row of its record.
+        return match state.core.hold_artifact(&id, body.on.unwrap_or(true)) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err(vak_core::erasure::ErasureError::NotFound(_)) => {
+                StatusCode::NOT_FOUND.into_response()
+            }
+            Err(error) => refuse(StatusCode::CONFLICT, &error.to_string()),
+        };
+    }
     let step = match action.as_str() {
         "star" => ArtifactStep::Starred {
             on: body.on.unwrap_or(true),

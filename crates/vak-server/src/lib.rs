@@ -962,6 +962,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/conversations/{id}/lifecycle", get(conversation_lifecycle))
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/data/integrity", get(data_integrity))
+        .route("/data/holds", get(data_holds))
         .route("/data/rules", get(data_rules).put(set_data_rules))
         .route("/data/rules/preview", post(preview_data_rules))
         .route("/skills", get(list_skills))
@@ -10367,6 +10368,12 @@ async fn hold_conversation(
         Ok(()) => Json(serde_json::json!({ "held": body.held })).into_response(),
         Err(error) => erasure_refused(&error),
     }
+}
+
+/// Everything on hold: conversations and files nothing may erase until
+/// the hold is released.
+async fn data_holds(State(state): State<AppState>) -> axum::response::Response {
+    data_read(state, |core| serde_json::json!({ "holds": core.holds() })).await
 }
 
 /// The install's retention rules, and the defaults they were changed from.

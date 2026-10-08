@@ -2456,6 +2456,8 @@ export interface ArtifactSummary {
   summary?: string | null;
   starred: boolean;
   archived: boolean;
+  /** On hold: nothing deletes it until the hold is released. */
+  held?: boolean;
   created_at: string;
   updated_at: string;
   versions: number;
@@ -2543,7 +2545,7 @@ export function libraryArtifact(id: string): Promise<ArtifactDetail> {
   return req(`/library/${encodeURIComponent(id)}`);
 }
 
-export function libraryChange(id: string, action: "star" | "archive" | "rename", body: { on?: boolean; title?: string }): Promise<void> {
+export function libraryChange(id: string, action: "star" | "archive" | "rename" | "hold", body: { on?: boolean; title?: string }): Promise<void> {
   return req(`/library/${encodeURIComponent(id)}/${action}`, { method: "POST", body: JSON.stringify(body) });
 }
 

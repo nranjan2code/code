@@ -71,11 +71,14 @@ function EraseForm(props: { sessionId: string; title: string; onDone: () => void
 export function ConversationTrash(props: { onChanged?: () => void }) {
   const [trash, { refetch }] = createResource(() => api.trashedSessions());
   const [receipts, { refetch: reread }] = createResource(() => api.erasureReceipts());
+  const [holds, { refetch: reholds }] = createResource(() => api.dataHolds());
+  const HELD: Record<string, string> = { conversation: "Conversation", artifact: "File", other: "A key" };
   const [erasing, setErasing] = createSignal("");
   const [busy, setBusy] = createSignal("");
   const changed = () => {
     void refetch();
     void reread();
+    void reholds();
     props.onChanged?.();
   };
   const act = async (id: string, work: () => Promise<unknown>, done: string) => {
@@ -131,6 +134,36 @@ export function ConversationTrash(props: { onChanged?: () => void }) {
               </table>
             </div>
           </Show>
+        </Show>
+      </section>
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>On hold</h2>
+            <p class="dim">Nothing erases what is on hold, whoever asks and whichever keep time has run out. A conversation is put on hold from the trash above or its Lifecycle tab; a file from its page in the Library.</p>
+          </div>
+        </div>
+        <Show when={(holds()?.holds ?? []).length > 0} fallback={<p class="dim">Nothing is on hold.</p>}>
+          <div class="ops-table-wrap">
+            <table class="ops-table">
+              <thead><tr><th>What</th><th>Name</th><th></th></tr></thead>
+              <tbody>
+                <For each={holds()?.holds ?? []}>
+                  {(hold) => (
+                    <tr>
+                      <td>{HELD[hold.kind] ?? hold.kind}</td>
+                      <td>{hold.name || "Unnamed"}</td>
+                      <td>
+                        <Show when={hold.kind !== "other"}>
+                          <button class="button small ghost" disabled={busy() === hold.id} onClick={() => void act(hold.id, () => (hold.kind === "conversation" ? api.holdConversation(hold.id, false) : api.holdArtifact(hold.id, false)), "Hold released")}>Release hold</button>
+                        </Show>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
         </Show>
       </section>
       <section class="panel">

@@ -289,6 +289,43 @@ async fn a_draft_is_trashed_and_restored_and_a_saved_version_is_not() {
     assert_eq!(trash(false).await.unwrap().status(), 204);
     assert!(listed(false).await && !listed(true).await);
 
+    // On hold, the page says so and the draft has no day to go by.
+    let hold = |on: bool| {
+        client
+            .post(format!("http://{addr}/library/{id}/hold"))
+            .bearer_auth(&token)
+            .json(&json!({ "on": on }))
+            .send()
+    };
+    assert_eq!(hold(true).await.unwrap().status(), 204);
+    let page = || async {
+        client
+            .get(format!("http://{addr}/library/{id}"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()
+    };
+    let held = page().await;
+    assert_eq!(held["held"], true);
+    assert!(held["history"][0]["draft_until"].is_null(), "{held}");
+    let listed_holds: Value = client
+        .get(format!("http://{addr}/data/holds"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed_holds["holds"][0]["kind"], "artifact");
+    assert_eq!(listed_holds["holds"][0]["id"], id.to_string());
+    assert_eq!(hold(false).await.unwrap().status(), 204);
+    assert_eq!(page().await["held"], false);
+
     // Saved, it is kept: the trash refuses it.
     let saved = client
         .post(format!("http://{addr}/library/{id}/versions/{draft}/save"))
