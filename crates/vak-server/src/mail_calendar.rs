@@ -4545,7 +4545,15 @@ pub(super) async fn disconnect_account(
     if !registered_agent(&state, &agent_id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok(ledger) = ConnectionLedger::for_agent(&agent_id) else {
+    disconnect(&state, &agent_id, &account_id).await
+}
+
+/// Disconnects one of an Agent's accounts: the tombstone that fences local
+/// use, provider revocation where there is one, the credentials, and the
+/// account's routines. Shared by the owner's Disconnect and by revoking the
+/// Agent.
+pub(crate) async fn disconnect(state: &AppState, agent_id: &str, account_id: &str) -> Response {
+    let Ok(ledger) = ConnectionLedger::for_agent(agent_id) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let account = match ledger.read_all() {
@@ -4559,14 +4567,14 @@ pub(super) async fn disconnect_account(
     };
     // This lock orders new links behind disconnect completion. The account
     // lock then serializes refresh/disconnect for this specific credential.
-    let provider_lock = state.mail_calendar_provider_lock(&agent_id, account.provider);
+    let provider_lock = state.mail_calendar_provider_lock(agent_id, account.provider);
     let _provider_guard = provider_lock.lock().await;
-    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let operation_lock = state.mail_calendar_account_lock(agent_id, account_id);
     let _operation_guard = operation_lock.lock().await;
-    if !registered_agent(&state, &agent_id) {
+    if !registered_agent(state, agent_id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Ok(vault) = AccountVault::for_agent(&agent_id) else {
+    let Ok(vault) = AccountVault::for_agent(agent_id) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
     let account = match ledger.read_all() {
@@ -4583,11 +4591,11 @@ pub(super) async fn disconnect_account(
     // stale fence and refuses to persist credentials.
     state
         .mail_calendar_oauth
-        .cancel_provider(&agent_id, account.provider);
+        .cancel_provider(agent_id, account.provider);
     let mut already_disconnected = account.revoked_at.is_some();
     if !already_disconnected
         && ledger
-            .append_disconnected(&account_id, account.provider, chrono::Utc::now())
+            .append_disconnected(account_id, account.provider, chrono::Utc::now())
             .is_err()
     {
         // A concurrent disconnect may have written the tombstone after
@@ -4620,12 +4628,12 @@ pub(super) async fn disconnect_account(
     } else {
         "unsupported"
     };
-    if vault.remove(&account_id).is_err() {
+    if vault.remove(account_id).is_err() {
         record_account_event(
-            &state,
+            state,
             "account_disconnect_cleanup_pending",
-            &agent_id,
-            &account_id,
+            agent_id,
+            account_id,
             account.provider,
             &account.capabilities,
             "credential_removal_failed",
@@ -4633,16 +4641,16 @@ pub(super) async fn disconnect_account(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     crate::automations::pause_account_routines(
-        &state,
-        &agent_id,
-        &account_id,
+        state,
+        agent_id,
+        account_id,
         Some("Paused because its linked account was disconnected."),
     );
     record_account_event(
-        &state,
+        state,
         "account_disconnected",
-        &agent_id,
-        &account_id,
+        agent_id,
+        account_id,
         account.provider,
         &account.capabilities,
         provider_revocation,

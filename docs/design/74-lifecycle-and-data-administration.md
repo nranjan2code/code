@@ -92,7 +92,8 @@ record (rule 2), so that is not repeated per row.
 | revoked | refused | disabled | credentials cut **immediately**, bot tokens removed | intact under label; for "this Agent was compromised" |
 | erased | — | deleted | deleted | erasure scope *agent*: conversations, Documents, runs, artifacts it owns |
 
-`AgentLifecycle` (`crates/vak-server/src/agents.rs:15`) gains `Revoked`.
+`AgentLifecycle` (`crates/vak-core/src/agent_definitions.rs`) has
+`Revoked` since plan M7a-g.
 `erased` is not a state on the definition; the definition itself becomes a
 tombstone.
 

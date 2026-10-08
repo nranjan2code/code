@@ -242,3 +242,144 @@ async fn the_built_in_agent_and_unknown_agents_cannot_be_paused() {
         StatusCode::BAD_REQUEST
     );
 }
+
+/// Revoking an Agent (plan M7a-g, docs/design/74 §2.3) cuts everything it
+/// holds that reaches outside, at once: its run stops, its bot's token and
+/// its private secrets are gone, its next turn is refused, and it does not
+/// resume. Another Agent is untouched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn revoke_cuts_endpoints_within_one_tick() {
+    let (app, provider, _temp) = setup().await;
+    // What Newsy holds: a bot with a token, and a secret of its own.
+    let bot = json!({"id":"newsy-bot","surface":"telegram","label":"Newsy bot","agent_id":"newsy"});
+    let (status, made) = call(&app, "POST", "/gateway/bots", bot).await;
+    assert!(status.is_success(), "{made}");
+    let (status, set) = call(
+        &app,
+        "PUT",
+        "/gateway/bots/newsy-bot/token",
+        json!({"token":"1234567890:not-a-real-token"}),
+    )
+    .await;
+    assert!(status.is_success(), "{set}");
+    let token_name = set["env_var"].as_str().unwrap().to_owned();
+    assert!(vak_config::get_var(&token_name).is_some());
+    let secrets = vak_config::paths::agent_home("newsy").join(".env");
+    vak_config::credentials::set(&secrets, "NEWSY_FEED_KEY", "not-a-real-key").unwrap();
+    let other_secrets = vak_config::paths::agent_home("other").join(".env");
+    vak_config::credentials::set(&other_secrets, "OTHER_KEY", "not-a-real-key").unwrap();
+
+    let (_, newsy) = call(&app, "POST", "/agents/newsy/open", json!({})).await;
+    let (_, other) = call(&app, "POST", "/agents/other/open", json!({})).await;
+    let newsy = newsy["session_id"].as_str().unwrap().to_owned();
+    let other = other["session_id"].as_str().unwrap().to_owned();
+    start(&app, &newsy).await;
+    start(&app, &other).await;
+    assert!(wait_until(&app, &newsy, true).await);
+    assert!(wait_until(&app, &other, true).await);
+
+    let (status, life) = call(&app, "GET", "/agents/newsy/lifecycle", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{life}");
+    assert_eq!(
+        (
+            life["lifecycle"].clone(),
+            life["bots"].clone(),
+            life["secrets"].clone()
+        ),
+        (json!("active"), json!(1), json!(1)),
+        "{life}"
+    );
+
+    // The Agent's name is typed, or nothing happens.
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/agents/newsy/revoke",
+        json!({"confirm":"yes"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(running(&app, &newsy).await);
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            "/agents/vak/revoke",
+            json!({"confirm":"Vakyartha"})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+
+    let (status, done) = call(
+        &app,
+        "POST",
+        "/agents/newsy/revoke",
+        json!({"confirm":"Newsy"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["lifecycle"], "revoked");
+    assert_eq!(
+        (
+            done["stopped_runs"].clone(),
+            done["bot_tokens_removed"].clone(),
+            done["secrets_removed"].clone()
+        ),
+        (json!(1), json!(1), json!(1)),
+        "{done}"
+    );
+    assert!(done["not_removed"].as_array().unwrap().is_empty(), "{done}");
+    // By the time the request answers, every credential is gone.
+    assert!(
+        vak_config::get_var(&token_name).is_none(),
+        "the bot's token is removed"
+    );
+    assert!(vak_config::credentials::list(&secrets).is_empty());
+    let kept: Vec<String> = vak_config::credentials::list(&other_secrets)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(kept, ["OTHER_KEY"]);
+    assert!(wait_until(&app, &newsy, false).await, "its run stops");
+    assert!(
+        running(&app, &other).await,
+        "another Agent's run is untouched"
+    );
+
+    // Its next turn makes no model call, and it does not resume. The other
+    // Agent's turn is ended first, so every call counted is Newsy's.
+    let (status, _) = call(
+        &app,
+        "POST",
+        &format!("/sessions/{other}/cancel"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert!(wait_until(&app, &other, false).await);
+    let sent = provider.0.load(Ordering::SeqCst);
+    start(&app, &newsy).await;
+    assert!(wait_until(&app, &newsy, false).await);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert_eq!(provider.0.load(Ordering::SeqCst), sent);
+    let (status, _) = call(&app, "POST", "/agents/newsy/resume", json!({})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    // Saving its definition as active does not bring it back either.
+    let back =
+        json!({"agents":[profile("newsy","Newsy"),profile("other","Other")],"scope":"workspace"});
+    assert_eq!(
+        call(&app, "PUT", "/config/agents", back).await.0,
+        StatusCode::CONFLICT
+    );
+    let (_, life) = call(&app, "GET", "/agents/newsy/lifecycle", json!({})).await;
+    assert_eq!(
+        (
+            life["lifecycle"].clone(),
+            life["bots"].clone(),
+            life["secrets"].clone()
+        ),
+        (json!("revoked"), json!(0), json!(0))
+    );
+}

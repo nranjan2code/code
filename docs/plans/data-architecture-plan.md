@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -2069,6 +2069,40 @@ joined through a link the owner shared. Both erasures are the owner's.
   `provider_account_erasure_preserves_unrelated_conversation_content`
   (M7a-b's), and `a_guests_contributions_are_erased_and_the_conversation_stays`
   through the real router.
+
+**M7a-g, done 2026-10-08: revoking an Agent.**
+- `AgentLifecycle::Revoked`: for when an Agent may have been
+  compromised. `POST /agents/{agent}/revoke` takes the Agent's name
+  typed and, in this order, writes the lifecycle (so no turn is admitted
+  from then on), cancels its live runs, removes the token of every bot
+  bound to it, disconnects its mail and calendar accounts
+  (`mail_calendar::disconnect`, the function the owner's Disconnect now
+  calls too) and removes every secret in its private scope. All of it is
+  done before the request answers. What it made is kept.
+- It is final: Resume answers 409, and saving Agent definitions neither
+  revokes an Agent nor brings a revoked one back (`PUT /config/agents`
+  refuses a change either way).
+- A token set in the server's own environment is not Vak's to remove;
+  the answer names what was left (`not_removed`), and the Agent is
+  refused regardless.
+- `GET /agents/{agent}/lifecycle` gives its state and counts of what it
+  holds that reaches outside (bots with a token, connected accounts,
+  private secrets, automations switched on, open conversations): never
+  a secret or a name.
+- Screen (A14): the client's agent picker has Revoke on each saved
+  Agent, a sheet that says what is removed and what is kept and takes
+  the name typed, a Revoked badge and a Revoked filter. The admin
+  console has no Agents screen, so the panel is in the client.
+- Not done: its automations are not switched off; each slot is refused
+  at admission and recorded as a failed run, as for a paused Agent.
+  Archiving does not start retention clocks (labels are M7b). Erasing an
+  Agent is M7b.
+- Checked in the browser on a throwaway data home: the sheet with the
+  real counts, the revoke, the bot token gone and Resume refused. After
+  that check the sheet stopped listing zero counts and the picker now
+  refreshes the sidebar; those two changes were not seen again in the
+  browser.
+- Test: `revoke_cuts_endpoints_within_one_tick`.
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

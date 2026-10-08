@@ -773,7 +773,7 @@ export function getPromptEffective(agent?: string): Promise<{ text: string; fing
 export interface Agent {
   id: string;
   revision: number;
-  lifecycle: "active" | "paused" | "archived";
+  lifecycle: "active" | "paused" | "archived" | "revoked";
   name: string;
   character: "vak" | "mira" | "moss" | "nori" | "pip" | "lumi" | "tavi" | "beni";
   personality: string;
@@ -1475,6 +1475,27 @@ export function conversationGone(id: string): Promise<ConversationGone> {
 /** Deletes what a disconnected account returned, from every conversation. */
 export function eraseAccountData(account: string): Promise<{ receipt: { id: string } }> {
   return req(`/data/erasure/accounts/${encodeURIComponent(account)}`, { method: "POST" });
+}
+
+/** What an Agent holds that reaches outside Vakyartha: what revoking it cuts. */
+export interface AgentReach {
+  agent: string;
+  name: string;
+  lifecycle: Agent["lifecycle"];
+  bots: number;
+  accounts: number;
+  secrets: number;
+  automations: number;
+  open_conversations: number;
+}
+
+export function agentLifecycle(agent: string): Promise<AgentReach> {
+  return req(`/agents/${encodeURIComponent(agent)}/lifecycle`);
+}
+
+/** Revokes an Agent for good. `confirm` is its name, typed. */
+export function revokeAgent(agent: string, confirm: string): Promise<{ bot_tokens_removed: number; accounts_disconnected: number; secrets_removed: number; stopped_runs: number; not_removed: string[] }> {
+  return req(`/agents/${encodeURIComponent(agent)}/revoke`, { method: "POST", body: JSON.stringify({ confirm }) });
 }
 
 /** A draft in the trash, and the day it is deleted. */

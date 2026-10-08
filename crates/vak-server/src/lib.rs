@@ -1340,6 +1340,8 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/agents/{agent}/pause", post(pause_agent))
         .route("/agents/{agent}/resume", post(resume_agent))
+        .route("/agents/{agent}/revoke", post(revoke_agent))
+        .route("/agents/{agent}/lifecycle", get(agent_lifecycle))
         .route("/agents/templates", get(list_agent_templates))
         .route("/agents/instantiate", post(instantiate_agent_template))
         .route("/previews", post(create_preview))
@@ -14999,6 +15001,19 @@ async fn resume_agent(
     Path(agent): Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let revoked = agents::effective(&state.active_core()).is_ok_and(|all| {
+        all.iter()
+            .any(|saved| saved.id == agent && saved.lifecycle == agents::AgentLifecycle::Revoked)
+    });
+    if revoked {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "a revoked Agent does not resume; its sign-in details were removed",
+            })),
+        )
+            .into_response();
+    }
     match agents::set_lifecycle(&state.active_core(), &agent, agents::AgentLifecycle::Active) {
         Ok(_) => Json(serde_json::json!({ "agent": agent, "lifecycle": "active" })).into_response(),
         Err(error) => (
@@ -15007,6 +15022,194 @@ async fn resume_agent(
         )
             .into_response(),
     }
+}
+
+/// What an Agent holds that reaches outside Vak: what revoking it cuts.
+struct AgentReach {
+    /// Its bots that have a token, by id and the token's name.
+    bots: Vec<(String, String)>,
+    /// Its connected mail and calendar accounts.
+    accounts: Vec<String>,
+    /// The names of the secrets in its private scope.
+    secrets: Vec<String>,
+    /// Its automations that are switched on.
+    automations: usize,
+}
+
+fn agent_secret_scope(agent: &str) -> PathBuf {
+    vak_config::paths::agent_home(agent).join(".env")
+}
+
+fn agent_reach(state: &AppState, agent: &str) -> AgentReach {
+    let bots = state
+        .gateway
+        .bots_snapshot()
+        .into_iter()
+        .filter(|bot| bot.agent_id.as_deref() == Some(agent))
+        .filter(|bot| vak_config::get_var(&bot.token_env).is_some())
+        .map(|bot| (bot.id, bot.token_env))
+        .collect();
+    let accounts = vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent(agent)
+        .and_then(|ledger| ledger.read_all())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|account| account.revoked_at.is_none())
+        .map(|account| account.id)
+        .collect();
+    let secrets = vak_config::credentials::list(&agent_secret_scope(agent))
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let automations = vak_core::triggers::list(&state.core.shared_scope())
+        .unwrap_or_default()
+        .iter()
+        .filter(|trigger| trigger.agent == agent && trigger.enabled)
+        .count();
+    AgentReach {
+        bots,
+        accounts,
+        secrets,
+        automations,
+    }
+}
+
+fn saved_agent(state: &AppState, agent: &str) -> Option<agents::AgentDefinition> {
+    agents::effective(&state.active_core())
+        .ok()?
+        .into_iter()
+        .find(|saved| saved.id == agent)
+}
+
+/// Where a saved Agent is in its life and what it holds that revoking it
+/// would cut (docs/design/74 §6.2, A14). Counts only, never a secret.
+async fn agent_lifecycle(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(saved) = saved_agent(&state, &agent) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let reach = agent_reach(&state, &agent);
+    let running = state
+        .sessions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .filter(|handle| session_agent_id(handle).as_deref() == Some(agent.as_str()))
+        .count();
+    Json(serde_json::json!({
+        "agent": agent,
+        "name": saved.name,
+        "lifecycle": saved.lifecycle,
+        "bots": reach.bots.len(),
+        "accounts": reach.accounts.len(),
+        "secrets": reach.secrets.len(),
+        "automations": reach.automations,
+        "open_conversations": running,
+    }))
+    .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct RevokeAgentBody {
+    /// The Agent's name, typed.
+    confirm: String,
+}
+
+/// Revokes a saved Agent, for when it may have been compromised
+/// (docs/design/74 §2.3). In order: its lifecycle, so no turn is admitted
+/// from this moment; its live runs; then everything it holds that reaches
+/// outside: its bots' tokens, its connected accounts and its private
+/// secrets. What it made is kept. It does not resume.
+async fn revoke_agent(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+    Json(body): Json<RevokeAgentBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let refuse = |status: StatusCode, error: &str| {
+        (status, Json(serde_json::json!({ "error": error }))).into_response()
+    };
+    if agent == "vak" {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "the built-in Agent cannot be revoked",
+        );
+    }
+    let Some(saved) = saved_agent(&state, &agent) else {
+        return refuse(StatusCode::NOT_FOUND, "no such Agent");
+    };
+    if body.confirm.trim() != saved.name.trim() {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "type the Agent's name to revoke it",
+        );
+    }
+    if let Err(error) = agents::set_lifecycle(
+        &state.active_core(),
+        &agent,
+        agents::AgentLifecycle::Revoked,
+    ) {
+        return refuse(StatusCode::NOT_FOUND, &error);
+    }
+    let stopped = stop_agent_runs(&state, &agent);
+    let reach = agent_reach(&state, &agent);
+    let mut left = Vec::new();
+    let mut bots = 0;
+    for (id, token) in &reach.bots {
+        match state.core.remove_bot_token(token) {
+            // A token set in the server's own environment is not Vak's to
+            // remove: the Agent is refused all the same, and this says so.
+            Ok(removed) if removed.shadowed_by_env => left.push(format!("bot {id}")),
+            Ok(_) => {
+                bots += 1;
+                state.hub.emit_config_changed("bot_token_removed", id);
+            }
+            Err(_) => left.push(format!("bot {id}")),
+        }
+    }
+    let mut accounts = 0;
+    for account in &reach.accounts {
+        if mail_calendar::disconnect(&state, &agent, account)
+            .await
+            .status()
+            .is_success()
+        {
+            accounts += 1;
+        } else {
+            left.push("a connected account".to_string());
+        }
+    }
+    let scope = agent_secret_scope(&agent);
+    let mut secrets = 0;
+    for (name, _) in vak_config::credentials::list(&scope) {
+        if vak_config::credentials::remove(&scope, &name).is_ok() {
+            secrets += 1;
+        } else {
+            left.push("a private secret".to_string());
+        }
+    }
+    vak_core::security_events::record(
+        &state.core.scope(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "agent_revoked",
+        &format!(
+            "agent={agent} stopped_runs={stopped} bots={bots} accounts={accounts} secrets={secrets} left={}",
+            left.len()
+        ),
+        None,
+    );
+    Json(serde_json::json!({
+        "agent": agent,
+        "lifecycle": agents::AgentLifecycle::Revoked,
+        "stopped_runs": stopped,
+        "bot_tokens_removed": bots,
+        "accounts_disconnected": accounts,
+        "secrets_removed": secrets,
+        "not_removed": left,
+    }))
+    .into_response()
 }
 
 /// Cancel every live run that belongs to `agent_id`, deny its pending gates,
@@ -17473,6 +17676,26 @@ async fn put_agents(
                 .into_response();
         }
     };
+    // Revoking is its own action, and it is final: saving definitions
+    // neither revokes an Agent nor brings a revoked one back.
+    let was_revoked = |id: &str| {
+        agents::load(&root)
+            .unwrap_or_default()
+            .iter()
+            .any(|saved| saved.id == id && saved.lifecycle == agents::AgentLifecycle::Revoked)
+    };
+    if agents
+        .iter()
+        .any(|agent| (agent.lifecycle == agents::AgentLifecycle::Revoked) != was_revoked(&agent.id))
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "an Agent is revoked through Revoke, and a revoked Agent stays revoked",
+            })),
+        )
+            .into_response();
+    }
     match agents::save(&root, &agents) {
         Ok(saved_agents) => {
             Json(serde_json::json!({ "saved": true, "agents": saved_agents })).into_response()

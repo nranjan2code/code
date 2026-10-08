@@ -19,6 +19,10 @@ pub enum AgentLifecycle {
     Active,
     Paused,
     Archived,
+    /// Cut off for good: its sign-in details, bot tokens and connected
+    /// accounts were removed when it was revoked, and it does not resume.
+    /// What it made is kept (docs/design/74 §2.3).
+    Revoked,
 }
 
 fn default_lifecycle() -> AgentLifecycle {

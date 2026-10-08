@@ -23,8 +23,9 @@ import { sortByRecent } from "../agentRecents";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
+import RevokeAgentSheet from "./RevokeAgentSheet";
 
-type LifecycleFilter = "active" | "all" | "paused" | "archived";
+type LifecycleFilter = "active" | "all" | "paused" | "archived" | "revoked";
 
 export default function AgentPickerModal() {
   const [agents, setAgents] = createSignal<api.Agent[]>([]);
@@ -35,6 +36,7 @@ export default function AgentPickerModal() {
   const [error, setError] = createSignal("");
   const [lifecycleFilter, setLifecycleFilter] = createSignal<LifecycleFilter>("active");
   const [lifecycleBusy, setLifecycleBusy] = createSignal<string | null>(null);
+  const [revoking, setRevoking] = createSignal<api.Agent | null>(null);
   const [editing, setEditing] = createSignal<api.Agent | null>(null);
   const [editName, setEditName] = createSignal("");
   const [editCharacter, setEditCharacter] = createSignal<AgentCharacter>("mira");
@@ -239,7 +241,7 @@ export default function AgentPickerModal() {
               </button>
             </div>
             <div role="group" aria-label="Filter by status" style="display: flex; gap: 4px; margin-bottom: 8px;">
-              <For each={[{ id: "active", label: "Active" }, { id: "paused", label: "Paused" }, { id: "archived", label: "Archived" }, { id: "all", label: "All" }] as const}>
+              <For each={[{ id: "active", label: "Active" }, { id: "paused", label: "Paused" }, { id: "archived", label: "Archived" }, { id: "revoked", label: "Revoked" }, { id: "all", label: "All" }] as const}>
                 {(f) => (
                   <button
                     type="button"
@@ -291,6 +293,11 @@ export default function AgentPickerModal() {
                                 Archived
                               </span>
                             </Show>
+                            <Show when={agent.lifecycle === "revoked"}>
+                              <span style="font-size: var(--fs-meta); padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--red); border: 1px solid var(--border-soft);">
+                                Revoked
+                              </span>
+                            </Show>
                           </div>
                           <p style="margin: 3px 0 0; font-size: var(--fs-meta); color: var(--muted); line-height: 1.3;">
                             {agent.personality || "Your own agent."}
@@ -331,7 +338,19 @@ export default function AgentPickerModal() {
                               Resume
                             </button>
                           </Show>
-                          <Show when={agent.lifecycle !== "archived"}>
+                          <Show when={agent.lifecycle !== "revoked"}>
+                            <button
+                              type="button"
+                              class="icon-button subtle danger has-tooltip"
+                              data-tooltip="Revoke: cut it off for good"
+                              aria-label={`Revoke ${agent.name}`}
+                              disabled={lifecycleBusy() === agent.id}
+                              onClick={(e) => { e.stopPropagation(); setRevoking(agent); }}
+                            >
+                              <Icon name="shield" size={14} />
+                            </button>
+                          </Show>
+                          <Show when={agent.lifecycle !== "archived" && agent.lifecycle !== "revoked"}>
                             <button
                               type="button"
                               class="icon-button subtle has-tooltip"
@@ -418,6 +437,7 @@ export default function AgentPickerModal() {
               <Show when={technicalDetails()}><p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p></Show>
           </Sheet>
         }</Show>
+        <Show when={revoking()}>{(agent) => <RevokeAgentSheet agent={agent()} onClose={() => setRevoking(null)} onRevoked={(left) => { setError(left.length ? `Revoked, but some sign-in details could not be removed here: ${left.join(", ")}. Remove them where they are set.` : ""); setAgentsEpoch((n) => n + 1); void loadData(); }} />}</Show>
       </>
     </Show>
   );
