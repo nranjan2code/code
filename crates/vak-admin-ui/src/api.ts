@@ -1,4 +1,5 @@
 import type {
+  DataRulesPreview,
   DataIntegrity,
   ConversationLifecycle,
   ErasurePreview,
@@ -189,6 +190,23 @@ export const api = {
 
   health: () => fetch("/health").then((r) => handle<HealthInfo>(r)),
   dataStatus: (): Promise<DataStatus> => fetch("/data/status").then((r) => handle(r)),
+  /** The install's keep times, and the defaults they were changed from. */
+  dataRules: (): Promise<{ label: DataStatus["label"]; defaults: DataStatus["label"]; max_days: number }> =>
+    fetch("/data/rules").then((r) => handle(r)),
+  /** What new keep times would remove that the current ones keep. */
+  previewDataRules: (keepDays: Record<string, number>): Promise<{ preview: DataRulesPreview }> =>
+    fetch("/data/rules/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ keep_days: keepDays }),
+    }).then((r) => handle(r)),
+  /** Saves keep times. A shorter one needs the preview's digest. */
+  setDataRules: (keepDays: Record<string, number>, digest?: string): Promise<{ label: DataStatus["label"] }> =>
+    fetch("/data/rules", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ keep_days: keepDays, digest }),
+    }).then((r) => handle(r)),
   /** Verifies every stored record. Reads the whole data home once. */
   dataIntegrity: (): Promise<DataIntegrity> => fetch("/data/integrity").then((r) => handle(r)),
   dataUsage: (): Promise<DataUsage> => fetch("/data/usage").then((r) => handle(r)),

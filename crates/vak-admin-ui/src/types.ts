@@ -1614,3 +1614,10 @@ export interface DataIntegrity {
   search: "current" | "behind" | "unreadable";
   fenced: boolean;
 }
+
+/** What changing the keep times would do. */
+export interface DataRulesPreview {
+  digest: string;
+  shortened: string[];
+  newly_due: { class: string; items: number; bytes: number }[];
+}

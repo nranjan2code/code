@@ -365,6 +365,106 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
             );
             i32::from(!report.sound())
         }
+        crate::cli::DataAction::Rules { set, reset } => {
+            let current = vak_core::lifecycle::retention_label();
+            let defaults = vak_lifecycle::Label::default_tenant();
+            let name = |class: vak_lifecycle::DataClass| {
+                serde_json::to_value(class)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_default()
+            };
+            if set.is_empty() && !reset {
+                println!("How long each kind of data is kept ({}):", current.name);
+                for rule in &current.rules {
+                    let Some(secs) = rule.delete_after_secs else {
+                        continue;
+                    };
+                    let default = defaults
+                        .rule(rule.class)
+                        .and_then(|rule| rule.delete_after_secs);
+                    println!(
+                        "  {:<18} {:>5} days{}",
+                        name(rule.class),
+                        secs / 86_400,
+                        if default == Some(secs) {
+                            ""
+                        } else {
+                            "  (changed)"
+                        }
+                    );
+                }
+                return 0;
+            }
+            // What stands now, less the defaults, plus what is asked.
+            let mut keep_days = std::collections::BTreeMap::new();
+            if !reset {
+                for rule in &current.rules {
+                    let default = defaults
+                        .rule(rule.class)
+                        .and_then(|rule| rule.delete_after_secs);
+                    if let Some(secs) = rule.delete_after_secs.filter(|secs| default != Some(*secs))
+                    {
+                        keep_days.insert(rule.class, secs / 86_400);
+                    }
+                }
+            }
+            for pair in &set {
+                let parsed = pair.split_once('=').and_then(|(kind, days)| {
+                    let class: vak_lifecycle::DataClass =
+                        serde_json::from_value(serde_json::Value::String(kind.trim().into()))
+                            .ok()?;
+                    Some((class, days.trim().parse::<i64>().ok()?))
+                });
+                let Some((class, days)) = parsed else {
+                    eprintln!("error: '{pair}' is not kind=days");
+                    return 2;
+                };
+                keep_days.insert(class, days);
+            }
+            let preview = match core.retention_preview(&keep_days) {
+                Ok(preview) => preview,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    return 2;
+                }
+            };
+            let mut digest = None;
+            if !preview.shortened.is_empty() {
+                println!("These keep times get shorter:");
+                for class in &preview.shortened {
+                    println!("  {}", name(*class));
+                }
+                if preview.newly_due.is_empty() {
+                    println!("Nothing is past the new times yet.");
+                }
+                for impact in &preview.newly_due {
+                    println!(
+                        "  the next pass would remove {} of {} ({} bytes) that it keeps now",
+                        impact.items,
+                        name(impact.class),
+                        impact.bytes
+                    );
+                }
+                println!("Type shorten to go on:");
+                let mut typed = String::new();
+                if std::io::stdin().read_line(&mut typed).is_err() || typed.trim() != "shorten" {
+                    println!("Not changed.");
+                    return 1;
+                }
+                digest = Some(preview.digest.clone());
+            }
+            match core.set_retention(&keep_days, digest.as_deref()) {
+                Ok(label) => {
+                    println!("Saved. The rules are now: {}.", label.name);
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
+        }
         crate::cli::DataAction::RebuildCatalog => {
             match core.catalog().and_then(|catalog| Ok(catalog.rebuild()?)) {
                 Ok(rebuilt) => {

@@ -96,7 +96,7 @@ export function ConversationTrash(props: { onChanged?: () => void }) {
         <div class="panel-title-row">
           <div>
             <h2>Trash</h2>
-            <p class="dim">Hidden everywhere, search included. A conversation is erased 30 days after it went in, unless it is restored or put on hold.</p>
+            <p class="dim">Hidden everywhere, search included. A conversation is erased on the day shown, unless it is restored or put on hold. The keep time is set under Data › Retention.</p>
           </div>
         </div>
         <Show when={!trash.error} fallback={<p class="dim">Could not read the trash: {`${trash.error}`}</p>}>

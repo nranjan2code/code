@@ -1122,7 +1122,7 @@ export function SessionsList() {
   };
 
   const removeSession = async (s: SessionListItem) => {
-    if (!confirmDestructive(`Move “${s.title || "this conversation"}” to the trash? It will be hidden everywhere, search included. It can be restored from the Trash below for 30 days; after that it is erased.`)) return;
+    if (!confirmDestructive(`Move “${s.title || "this conversation"}” to the trash? It will be hidden everywhere, search included. It can be restored from the Trash below until the day shown there; after that it is erased.`)) return;
     setBusySession(s.session_id);
     try {
       await api.trashSession(s.session_id);
@@ -1137,7 +1137,7 @@ export function SessionsList() {
 
   const deleteAllArchived = async () => {
     const count = archivedCount();
-    if (!confirmDestructive(`Move all ${count} archived sessions in this workspace to the trash? They will be hidden everywhere, search included. Each can be restored for 30 days; after that it is erased.`)) return;
+    if (!confirmDestructive(`Move all ${count} archived sessions in this workspace to the trash? They will be hidden everywhere, search included. Each can be restored until the day shown in the Trash; after that it is erased.`)) return;
     setBulkBusy(true);
     try {
       const res = await api.trashAllArchived();

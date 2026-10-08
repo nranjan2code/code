@@ -113,7 +113,7 @@ export default function WorkspaceHeader() {
     if (!id) return;
     setConfirmConfig({
       title: "Move this conversation to the trash?",
-      description: "It will be hidden everywhere, including search and what the agent can recall. You can restore it for 30 days; after that it is deleted for good.",
+      description: "It will be hidden everywhere, including search and what the agent can recall. You can restore it from the trash until the day shown there; after that it is deleted for good.",
       confirmLabel: "Move to trash",
       cancelLabel: "Cancel",
       isDanger: true,

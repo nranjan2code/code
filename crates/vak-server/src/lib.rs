@@ -962,6 +962,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/conversations/{id}/lifecycle", get(conversation_lifecycle))
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/data/integrity", get(data_integrity))
+        .route("/data/rules", get(data_rules).put(set_data_rules))
+        .route("/data/rules/preview", post(preview_data_rules))
         .route("/skills", get(list_skills))
         .route("/social/connectors", get(list_social_connectors))
         .route(
@@ -10364,6 +10366,82 @@ async fn hold_conversation(
     match state.core.hold_conversation(&id, body.held) {
         Ok(()) => Json(serde_json::json!({ "held": body.held })).into_response(),
         Err(error) => erasure_refused(&error),
+    }
+}
+
+/// The install's retention rules, and the defaults they were changed from.
+async fn data_rules(State(state): State<AppState>) -> axum::response::Response {
+    data_read(state, |_| {
+        serde_json::json!({
+            "label": vak_core::lifecycle::retention_label(),
+            "defaults": vak_lifecycle::Label::default_tenant(),
+            "max_days": vak_core::lifecycle::MAX_KEEP_DAYS,
+        })
+    })
+    .await
+}
+
+#[derive(serde::Deserialize)]
+struct RulesBody {
+    /// A keep time in days for each kind the owner changes; a kind left
+    /// out goes back to its default.
+    keep_days: std::collections::BTreeMap<vak_lifecycle::DataClass, i64>,
+    /// The digest of the preview, needed when any time gets shorter.
+    #[serde(default)]
+    digest: Option<String>,
+}
+
+fn rules_refused(error: &vak_core::lifecycle::RulesError) -> axum::response::Response {
+    use vak_core::lifecycle::RulesError as E;
+    let (status, reason) = match error {
+        E::NotEditable(_) | E::OutOfRange => (StatusCode::BAD_REQUEST, "invalid"),
+        E::Confirm => (StatusCode::CONFLICT, "confirm"),
+        E::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "failed"),
+    };
+    (
+        status,
+        Json(serde_json::json!({ "error": error.to_string(), "reason": reason })),
+    )
+        .into_response()
+}
+
+/// What changing the keep times would remove that the current rules keep.
+async fn preview_data_rules(
+    State(state): State<AppState>,
+    Json(body): Json<RulesBody>,
+) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.retention_preview(&body.keep_days)).await {
+        Ok(Ok(preview)) => Json(serde_json::json!({ "preview": preview })).into_response(),
+        Ok(Err(error)) => rules_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Sets the install's keep times. A shorter one needs the digest of the
+/// preview the owner looked at.
+async fn set_data_rules(
+    State(state): State<AppState>,
+    Json(body): Json<RulesBody>,
+) -> axum::response::Response {
+    let core = state.core.clone();
+    let saved = tokio::task::spawn_blocking(move || {
+        core.set_retention(&body.keep_days, body.digest.as_deref())
+    })
+    .await;
+    match saved {
+        Ok(Ok(label)) => {
+            vak_core::security_events::record(
+                &state.core.scope(),
+                vak_core::security_events::EventKind::ConfigChange,
+                "retention_rules_changed",
+                &format!("label={}", label.id),
+                None,
+            );
+            Json(serde_json::json!({ "label": label })).into_response()
+        }
+        Ok(Err(error)) => rules_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 

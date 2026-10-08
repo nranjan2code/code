@@ -655,6 +655,17 @@ pub(crate) enum DataAction {
     },
     /// Rebuild search and lineage from the records
     RebuildCatalog,
+    /// How long each kind of data is kept. With --set, change a keep
+    /// time; a shorter one shows what it would remove and asks first
+    Rules {
+        /// A kind and its keep time in days, as kind=days (for example
+        /// trash=14). Repeat for more than one
+        #[arg(long = "set", value_name = "KIND=DAYS")]
+        set: Vec<String>,
+        /// Go back to the default keep times
+        #[arg(long)]
+        reset: bool,
+    },
     /// Print a conversation as plain text
     Cat {
         /// The conversation's id

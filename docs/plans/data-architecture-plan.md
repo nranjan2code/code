@@ -2246,6 +2246,34 @@ Not built, by decision 1 and 2: labels on any node (`label_on_any_node_resolves`
 data roles, the Erasure requests queue (A11), Audit export (A15), a query
 hold.
 
+**M7b-a, done 2026-10-09: the install's retention rules.**
+- The rules the reconciler runs under are `lifecycle::retention_label()`:
+  the defaults, with the keep times the owner changed, which are kept as
+  one Document (`SharedScope::retention_rules`), so every change is a
+  version. `trash_window` and `draft_window` read it too, so the days a
+  screen shows are the install's.
+- `Core::retention_preview(keep_days)` says which kinds get a shorter
+  time and what the next pass would remove that the current rules keep,
+  with a digest. `Core::set_retention` saves; when anything is shortened
+  it needs that digest, and is refused when what it would remove has
+  changed since. Lengthening needs nothing. A kind left out goes back to
+  its default; a keep time is 1 to 3,650 days; size limits and the
+  checkpoint count are not editable.
+- `GET|PUT /data/rules`, `POST /data/rules/preview`;
+  `vak data rules [--set kind=days] [--reset]`, which asks for the word
+  `shorten`; the admin console's Retention screen has a days field per
+  kind, Save keep times and Back to the defaults, and a shorter time
+  asks with what it would remove.
+- Screen text that named 30 or 60 days now points to the day shown,
+  since the owner can change them.
+- Checked in the browser on a throwaway data home: the editor, a longer
+  trash time saved. The shorter-time confirmation is the browser's own
+  dialog and was not driven; the route test covers it.
+- Tests: `shortened_retention_previews_what_it_removes`,
+  `edited_rules_are_the_ones_the_pass_uses`,
+  `the_owner_changes_a_keep_time_and_a_shorter_one_is_confirmed` (a
+  binary of its own: the rules are one Document for the home).
+
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office

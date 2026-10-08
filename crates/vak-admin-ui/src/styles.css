@@ -7176,3 +7176,4 @@ button.inbox-meta-tag:hover {
 .lifecycle-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; margin: 12px 0 16px; }
 .lifecycle-facts dt { color: var(--muted); }
 .lifecycle-facts dd { margin: 0; }
+.rules-days { width: 84px; height: 30px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 8px; color: inherit; background: var(--surface); font: inherit; }

@@ -347,6 +347,12 @@ impl SharedScope {
         self.root.join("erasures")
     }
 
+    /// The Document that holds the install's own retention rules (plan
+    /// M7b-a): the keep times the owner changed from the defaults.
+    pub fn retention_rules(&self) -> PathBuf {
+        self.root.join("retention").join("rules")
+    }
+
     /// The lifecycle reconciler's transition records (plan M7a-d).
     pub fn lifecycle(&self) -> PathBuf {
         self.root.join("lifecycle")

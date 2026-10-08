@@ -410,7 +410,7 @@ async function explainGone(sessionId: string): Promise<boolean> {
   }
   const when = new Date(gone.erased_at).toLocaleDateString(undefined, { dateStyle: "long" });
   const why = gone.cause === "policy"
-    ? "after 30 days in the trash"
+    ? "when its time in the trash ended"
     : gone.cause === "person" ? "because someone asked for it" : "";
   const receipt = gone.receipt?.verifies ? " A signed record of the deletion is kept." : "";
   setNotice({ kind: "info", text: `That conversation was deleted for good on ${when}${why ? ` ${why}` : ""}. Nothing of it can be shown.${receipt}` });

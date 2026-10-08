@@ -7574,6 +7574,7 @@ dependencies = [
  "vak-hooks",
  "vak-intake",
  "vak-intent",
+ "vak-lifecycle",
  "vak-llm",
  "vak-mail-calendar",
  "vak-ooxml",

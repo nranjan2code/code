@@ -27,8 +27,113 @@ const WHY: Record<string, string> = { age: "Past its keep time", size: "Over its
 const KEPT: Record<string, string> = { held: "On hold", live: "In use", kept: "Kept by a person" };
 const KEEP_DAYS = (secs?: number) => (secs ? `${Math.round(secs / 86400)} days` : "");
 
+/// The install's keep times, which the owner edits (plan M7b-a). There is
+/// one set for the whole install. A shorter time says what it would
+/// remove and asks before it is saved.
+function Rules(props: { status?: DataStatus; onSaved: () => void }) {
+  const [rules, { refetch }] = createResource(() => api.dataRules());
+  const [draft, setDraft] = createSignal<Record<string, number>>({});
+  const [busy, setBusy] = createSignal(false);
+  const [said, setSaid] = createSignal("");
+  const daysOf = (secs?: number) => (secs ? Math.round(secs / 86400) : 0);
+  const shown = (rule: { class: string; delete_after_secs?: number }) => draft()[rule.class] ?? daysOf(rule.delete_after_secs);
+  const defaultDays = (kind: string) => daysOf(rules()?.defaults.rules.find((rule) => rule.class === kind)?.delete_after_secs);
+  // What is sent: every keep time that differs from its default.
+  const wanted = () => {
+    const out: Record<string, number> = {};
+    for (const rule of rules()?.label.rules ?? []) {
+      if (!rule.delete_after_secs) continue;
+      const days = shown(rule);
+      if (days !== defaultDays(rule.class)) out[rule.class] = days;
+    }
+    return out;
+  };
+  const changed = () => Object.keys(draft()).length > 0;
+  const save = async (keepDays: Record<string, number>) => {
+    setBusy(true);
+    setSaid("");
+    try {
+      const { preview } = await api.previewDataRules(keepDays);
+      let digest: string | undefined;
+      if (preview.shortened.length > 0) {
+        const loses = preview.newly_due.length === 0
+          ? "Nothing is past the new times yet."
+          : `The next pass would remove ${preview.newly_due.map((impact) => `${impact.items} of ${words(impact.class)} (${size(impact.bytes)})`).join(", ")} that is kept now.`;
+        if (!window.confirm(`Shorter keep times for: ${preview.shortened.map(words).join(", ")}. ${loses} This cannot be undone once the pass has run. Save them?`)) {
+          setBusy(false);
+          return;
+        }
+        digest = preview.digest;
+      }
+      await api.setDataRules(keepDays, digest);
+      setDraft({});
+      setSaid("Keep times saved.");
+      void refetch();
+      props.onSaved();
+    } catch (error) {
+      setSaid(`Could not save the keep times: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section class="panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>How long each kind is kept</h2>
+          <p class="dim">One set of keep times for everything on this machine. A shorter time removes things sooner, so it says what it would remove and asks first.</p>
+        </div>
+        <div class="lifecycle-actions">
+          <button class="ghost small" disabled={busy() || rules()?.label.id === "default"} onClick={() => void save({})}>Back to the defaults</button>
+          <button class="ghost small" disabled={busy() || !changed()} onClick={() => void save(wanted())}>{busy() ? "Saving…" : "Save keep times"}</button>
+        </div>
+      </div>
+      <Show when={said()}><p role="status">{said()}</p></Show>
+      <Show when={rules()} fallback={<p class="dim">{rules.error ? `Could not read the keep times: ${rules.error}` : "Reading…"}</p>}>
+        {(read) => (
+          <div class="ops-table-wrap">
+            <table class="ops-table">
+              <thead><tr><th>Kind</th><th>Kept for (days)</th><th>Default</th><th>Limit</th><th>Then</th><th>Watched</th></tr></thead>
+              <tbody>
+                <For each={read().label.rules}>
+                  {(rule) => (
+                    <tr>
+                      <td>{words(rule.class)}</td>
+                      <td>
+                        <Show when={rule.delete_after_secs} fallback="">
+                          <input
+                            class="rules-days"
+                            type="number"
+                            min="1"
+                            max={read().max_days}
+                            aria-label={`Days ${words(rule.class)} is kept`}
+                            value={shown(rule)}
+                            onInput={(event) => {
+                              const days = Math.round(Number(event.currentTarget.value));
+                              if (Number.isFinite(days) && days >= 1) setDraft({ ...draft(), [rule.class]: days });
+                            }}
+                          />
+                        </Show>
+                      </td>
+                      <td>{KEEP_DAYS(read().defaults.rules.find((other) => other.class === rule.class)?.delete_after_secs)}</td>
+                      <td>{rule.max_bytes ? size(rule.max_bytes) : rule.keep_newest ? `first and newest ${rule.keep_newest}` : ""}</td>
+                      <td>{DOES[rule.on_expiry] ?? rule.on_expiry}</td>
+                      <td>{props.status ? (props.status.observed.includes(rule.class) ? "Yes" : "Not yet") : ""}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Show>
+      <p class="dim">Conversations and their files have no keep time: they stay until a person removes them.</p>
+    </section>
+  );
+}
+
 function Retention() {
-  const [status] = createResource<DataStatus>(() => api.dataStatus());
+  const [status, { refetch: refetchStatus }] = createResource<DataStatus>(() => api.dataStatus());
   const [plan, { refetch }] = createResource<DataPlan>(() => api.dataPlan());
   const [made, { refetch: reread }] = createResource<{ transitions: DataTransition[] }>(() => api.dataTransitions());
   const [running, setRunning] = createSignal(false);
@@ -149,32 +254,7 @@ function Retention() {
           </div>
         </section>
       </Show>
-      <section class="panel">
-        <h2>How long each kind is kept</h2>
-        <Show when={status()} fallback={<p class="dim">{status.error ? `Could not read the label: ${status.error}` : "Reading…"}</p>}>
-          {(read) => (
-            <div class="ops-table-wrap">
-              <table class="ops-table">
-                <thead><tr><th>Kind</th><th>Kept for</th><th>Limit</th><th>Then</th><th>Watched</th></tr></thead>
-                <tbody>
-                  <For each={read().label.rules}>
-                    {(rule) => (
-                      <tr>
-                        <td>{words(rule.class)}</td>
-                        <td>{KEEP_DAYS(rule.delete_after_secs)}</td>
-                        <td>{rule.max_bytes ? size(rule.max_bytes) : rule.keep_newest ? `first and newest ${rule.keep_newest}` : ""}</td>
-                        <td>{DOES[rule.on_expiry] ?? rule.on_expiry}</td>
-                        <td>{read().observed.includes(rule.class) ? "Yes" : "Not yet"}</td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Show>
-        <p class="dim">Conversations and their files have no keep time: they stay until a person removes them.</p>
-      </section>
+      <Rules status={status()} onSaved={() => { void refetchStatus(); void refetch(); }} />
     </>
   );
 }

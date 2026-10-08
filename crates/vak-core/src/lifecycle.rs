@@ -43,26 +43,103 @@ pub const COMMITTED: &[DataClass] = &[
     DataClass::DocumentHistory,
 ];
 
-/// How long something stays in the trash before it is erased, under the
-/// default label.
-pub fn trash_window() -> chrono::Duration {
+const DAY_SECS: i64 = 86_400;
+/// The longest a keep time may be set to, in days.
+pub const MAX_KEEP_DAYS: i64 = 3650;
+
+/// What the owner changed from the default rules: a keep time in days for
+/// some kinds of data. Everything not named keeps its default.
+#[derive(Debug, Default, Serialize, serde::Deserialize)]
+struct StoredRules {
+    keep_days: std::collections::BTreeMap<DataClass, i64>,
+}
+
+fn rules_path() -> PathBuf {
+    vak_config::scope::SharedScope::new(vak_config::paths::data_home()).retention_rules()
+}
+
+fn stored_rules() -> StoredRules {
+    vak_session::documents::read(&rules_path())
+        .ok()
+        .flatten()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn label_with(keep_days: &std::collections::BTreeMap<DataClass, i64>) -> Label {
+    let mut label = Label::default_tenant();
+    if keep_days.is_empty() {
+        return label;
+    }
+    label.id = "install".into();
+    label.name = "This install".into();
+    for rule in &mut label.rules {
+        if let Some(days) = keep_days.get(&rule.class) {
+            rule.delete_after_secs = Some(days * DAY_SECS);
+        }
+    }
+    label
+}
+
+/// The retention rules this install runs under: the defaults, with the
+/// keep times the owner changed (plan M7b-a). There is one set for the
+/// whole install.
+pub fn retention_label() -> Label {
+    label_with(&stored_rules().keep_days)
+}
+
+fn window(class: DataClass) -> chrono::Duration {
     chrono::Duration::seconds(
-        Label::default_tenant()
-            .rule(DataClass::Trash)
+        retention_label()
+            .rule(class)
             .and_then(|rule| rule.delete_after_secs)
             .unwrap_or(0),
     )
 }
 
+/// How long something stays in the trash before it is erased.
+pub fn trash_window() -> chrono::Duration {
+    window(DataClass::Trash)
+}
+
 /// How long a draft nobody accepted, saved, starred or shared is kept
-/// before it goes to the trash, under the default label.
+/// before it goes to the trash.
 pub fn draft_window() -> chrono::Duration {
-    chrono::Duration::seconds(
-        Label::default_tenant()
-            .rule(DataClass::DraftVersion)
-            .and_then(|rule| rule.delete_after_secs)
-            .unwrap_or(0),
-    )
+    window(DataClass::DraftVersion)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RulesError {
+    #[error("{0:?} has no keep time to change")]
+    NotEditable(DataClass),
+    #[error("a keep time is between 1 and {MAX_KEEP_DAYS} days")]
+    OutOfRange,
+    #[error("a shorter keep time removes things sooner; look at what it would remove and confirm")]
+    Confirm,
+    #[error("the rules could not be saved: {0}")]
+    Store(String),
+}
+
+/// What one kind of data would lose under proposed rules that it keeps
+/// under the current ones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ClassImpact {
+    pub class: DataClass,
+    pub items: u64,
+    pub bytes: u64,
+}
+
+/// What changing the rules would do, before they are changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RulesPreview {
+    /// A confirmation of shortened rules carries this.
+    pub digest: String,
+    pub label: Label,
+    /// The kinds whose keep time gets shorter.
+    pub shortened: Vec<DataClass>,
+    /// What the next pass would remove or move to the trash that it would
+    /// not under the current rules.
+    pub newly_due: Vec<ClassImpact>,
 }
 
 /// A Document's id in a lifecycle item: a digest, because its name is a
@@ -740,6 +817,114 @@ impl Core {
         items
     }
 
+    /// What setting the keep times to `keep_days` would do. Kinds not
+    /// named go back to their default.
+    pub fn retention_preview(
+        &self,
+        keep_days: &std::collections::BTreeMap<DataClass, i64>,
+    ) -> Result<RulesPreview, RulesError> {
+        let defaults = Label::default_tenant();
+        for (class, days) in keep_days {
+            let editable = defaults
+                .rule(*class)
+                .is_some_and(|rule| rule.delete_after_secs.is_some());
+            if !editable {
+                return Err(RulesError::NotEditable(*class));
+            }
+            if !(1..=MAX_KEEP_DAYS).contains(days) {
+                return Err(RulesError::OutOfRange);
+            }
+        }
+        let current = retention_label();
+        let label = label_with(keep_days);
+        let shortened: Vec<DataClass> = label
+            .rules
+            .iter()
+            .filter(|rule| {
+                current
+                    .rule(rule.class)
+                    .is_some_and(|now| rule.delete_after_secs < now.delete_after_secs)
+            })
+            .map(|rule| rule.class)
+            .collect();
+        let now = Utc::now();
+        let items = self.lifecycle_items();
+        let due_now: std::collections::BTreeSet<String> =
+            vak_lifecycle::plan(&items, OBSERVED, &current, now)
+                .actions
+                .into_iter()
+                .map(|action| action.key)
+                .collect();
+        let mut newly: std::collections::BTreeMap<DataClass, ClassImpact> =
+            std::collections::BTreeMap::new();
+        let mut digest = {
+            use sha2::Digest;
+            sha2::Sha256::new()
+        };
+        {
+            use sha2::Digest;
+            digest.update(serde_json::to_vec(keep_days).unwrap_or_default());
+        }
+        for action in vak_lifecycle::plan(&items, OBSERVED, &label, now).actions {
+            if due_now.contains(&action.key) {
+                continue;
+            }
+            {
+                use sha2::Digest;
+                digest.update(action.key.as_bytes());
+                digest.update([0]);
+            }
+            let impact = newly.entry(action.class).or_insert(ClassImpact {
+                class: action.class,
+                items: 0,
+                bytes: 0,
+            });
+            impact.items += 1;
+            impact.bytes += action.bytes;
+        }
+        let digest = {
+            use sha2::Digest;
+            digest
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        };
+        Ok(RulesPreview {
+            digest,
+            label,
+            shortened,
+            newly_due: newly.into_values().collect(),
+        })
+    }
+
+    /// Sets the install's keep times. Shortening any of them needs the
+    /// digest of the preview the owner looked at, and is refused when what
+    /// it would remove has changed since. Lengthening needs nothing.
+    pub fn set_retention(
+        &self,
+        keep_days: &std::collections::BTreeMap<DataClass, i64>,
+        digest: Option<&str>,
+    ) -> Result<Label, RulesError> {
+        let preview = self.retention_preview(keep_days)?;
+        if !preview.shortened.is_empty() && digest != Some(preview.digest.as_str()) {
+            return Err(RulesError::Confirm);
+        }
+        let stored = serde_json::to_string(&StoredRules {
+            keep_days: keep_days.clone(),
+        })
+        .map_err(|error| RulesError::Store(error.to_string()))?;
+        vak_session::documents::update(&rules_path(), |_| Ok(Some((stored.clone(), ()))))
+            .map_err(RulesError::Store)?;
+        tracing::info!(
+            kind = "retention_rules",
+            outcome = "changed",
+            count = preview.shortened.len(),
+            "the install's retention rules were changed"
+        );
+        Ok(preview.label)
+    }
+
     /// The plan the reconciler would run now under the default label. It
     /// is computed and shown; nothing is committed.
     pub fn lifecycle_plan(&self) -> Plan {
@@ -748,12 +933,7 @@ impl Core {
 
     /// The plan as it would be at `now`.
     pub fn lifecycle_plan_at(&self, now: DateTime<Utc>) -> Plan {
-        vak_lifecycle::plan(
-            &self.lifecycle_items(),
-            OBSERVED,
-            &Label::default_tenant(),
-            now,
-        )
+        vak_lifecycle::plan(&self.lifecycle_items(), OBSERVED, &retention_label(), now)
     }
 
     fn lifecycle_chain(&self) -> vak_session::chain::RecordChain {
@@ -858,7 +1038,7 @@ impl Core {
                 let name = vak_session::documents::names()
                     .into_iter()
                     .find(|name| document_id(name) == action.item)?;
-                let keep = Label::default_tenant()
+                let keep = retention_label()
                     .rule(DataClass::DocumentHistory)?
                     .delete_after_secs?;
                 Some(
@@ -988,7 +1168,7 @@ impl Core {
                 "observe"
             },
             committed: COMMITTED.to_vec(),
-            label: Label::default_tenant(),
+            label: retention_label(),
             observed: OBSERVED.to_vec(),
             unobserved: plan.unobserved.clone(),
             due: plan.actions.len() as u64,
