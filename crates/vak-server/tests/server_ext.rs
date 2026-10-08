@@ -2535,6 +2535,10 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
     let (status, looked) = send(client.get(url("erasure"))).await;
     assert_eq!(status, 200, "{looked}");
     let confirm = looked["confirm"].as_str().unwrap().to_string();
+    assert_eq!(
+        confirm, "plan the orchard walk",
+        "what a person types is the title the lists show, never an id"
+    );
     let digest = looked["preview"]["digest"].as_str().unwrap().to_string();
     let erase = |digest: &str, confirm: &str| {
         client
@@ -2557,6 +2561,24 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
     assert_eq!(status, 200);
     let (status, _) = send(client.delete(format!("{base}/sessions/{id}"))).await;
     assert_eq!(status, 200);
+
+    // The trash lists it with the day it is erased, and it is not gone.
+    let in_trash = |listed: &serde_json::Value| {
+        listed["sessions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|session| session["session_id"] == id)
+            .cloned()
+    };
+    let (_, listed) = send(client.get(format!("{base}/sessions?trash=true"))).await;
+    let row = in_trash(&listed).expect("a trashed conversation is in the trash");
+    assert!(
+        row["trashed_at"].is_string() && row["erase_on"].is_string(),
+        "{row}"
+    );
+    assert_eq!(row["held"], false);
+    assert_eq!(send(client.get(url("gone"))).await.0, 404);
 
     // The digest shown before it was trashed no longer authorises.
     let (status, refused) = send(erase(&digest, &confirm)).await;
@@ -2604,4 +2626,16 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
     // And it cannot be restored.
     let (status, _) = send(client.post(format!("{base}/sessions/{id}/restore"))).await;
     assert_eq!(status, 404);
+    // It is out of the trash, and asking why says when, why and the receipt.
+    let (_, listed) = send(client.get(format!("{base}/sessions?trash=true"))).await;
+    assert!(
+        in_trash(&listed).is_none(),
+        "an erased conversation is not in the trash"
+    );
+    let (status, gone) = send(client.get(url("gone"))).await;
+    assert_eq!(status, 200, "{gone}");
+    assert_eq!(gone["cause"], "person");
+    assert_eq!(gone["receipt"]["id"], receipt.id);
+    assert_eq!(gone["receipt"]["verifies"], true);
+    assert!(gone["erased_at"].is_string());
 }

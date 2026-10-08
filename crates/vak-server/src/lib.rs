@@ -952,6 +952,7 @@ fn router_with_state(state: AppState) -> Router {
             get(erasure_preview).post(erase_conversation),
         )
         .route("/conversations/{id}/hold", put(hold_conversation))
+        .route("/conversations/{id}/gone", get(conversation_gone))
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/skills", get(list_skills))
         .route("/social/connectors", get(list_social_connectors))
@@ -4627,6 +4628,13 @@ async fn list_sessions(
     let active_cwd = active.cwd().to_string_lossy().into_owned();
     let archive_map = read_archive(&state.core);
     let trashed = vak_core::trash::trashed(&state.core.shared_scope());
+    let states: HashMap<String, _> = if query.trash {
+        vak_core::trash::states(&state.core.shared_scope())
+            .into_iter()
+            .collect()
+    } else {
+        HashMap::new()
+    };
     let mut sessions = Vec::new();
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)
         .map(|read| read.flatten().collect())
@@ -4676,6 +4684,11 @@ async fn list_sessions(
         if trashed.contains(&session_id) != query.trash {
             continue;
         }
+        // An erased conversation is not in the trash: nothing restores it.
+        let in_trash = states.get(&session_id);
+        if in_trash.is_some_and(|state| state.erased_at.is_some()) {
+            continue;
+        }
         let updated_at = vak_session::SessionLog::modified(&path)
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
         let (created_at, title, entry_count, cwd, agent, conversation) = summarize_jsonl(&path);
@@ -4707,7 +4720,12 @@ async fn list_sessions(
                 .is_none()
         });
         let archived = archive_map.get(&session_id).copied().unwrap_or(false);
+        let trashed_at = in_trash.and_then(|state| state.trashed_at);
+        let held = trashed_at.is_some() && state.core.conversation_held(&session_id);
         sessions.push(serde_json::json!({
+            "trashed_at": trashed_at,
+            "erase_on": trashed_at.map(|at| at + vak_core::lifecycle::trash_window()),
+            "held": held,
             "session_id": session_id,
             "cwd": cwd.unwrap_or_else(|| state.core.cwd().to_string_lossy().into_owned()),
             "created_at": created_at,
@@ -10155,14 +10173,6 @@ async fn restore_session(
 
 /// What a person types to confirm an erasure: the conversation's title,
 /// or the start of its id when it has none.
-fn erasure_confirmation(core: &Core, id: &str) -> String {
-    session_node(core, id)
-        .and_then(|node| node.title)
-        .map(|title| title.trim().to_string())
-        .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| id.chars().take(8).collect())
-}
-
 fn erasure_refused(error: &vak_core::erasure::ErasureError) -> axum::response::Response {
     use vak_core::erasure::ErasureError as E;
     let status = match error {
@@ -10194,7 +10204,7 @@ async fn erasure_preview(
     if !find_session_in_cwd(&state.core, &id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let confirm = erasure_confirmation(&state.core, &id);
+    let confirm = state.core.erasure_confirmation(&id);
     let core = state.core.clone();
     let session = id.clone();
     match tokio::task::spawn_blocking(move || core.erasure_preview(&session)).await {
@@ -10225,7 +10235,7 @@ async fn erase_conversation(
     if !find_session_in_cwd(&state.core, &id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if body.confirm.trim() != erasure_confirmation(&state.core, &id) {
+    if body.confirm.trim() != state.core.erasure_confirmation(&id) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
@@ -10253,6 +10263,53 @@ async fn erase_conversation(
             Json(serde_json::json!({ "receipt": receipt })).into_response()
         }
         Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Why a conversation is gone: when it was erased, whether a person asked
+/// or its time in the trash ended, and its receipt. Never its content.
+async fn conversation_gone(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    // An erased conversation has no catalog node: its ledger, whose bytes
+    // erasure leaves in place, is what ties it to this workspace.
+    let here = std::fs::read_dir(state.core.scope().sessions_dir(state.core.cwd()))
+        .map(|read| {
+            read.flatten().any(|entry| {
+                vak_config::scope::ledger_session_id(&entry.path()).as_deref() == Some(id.as_str())
+            })
+        })
+        .unwrap_or(false);
+    if !here {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let core = state.core.clone();
+    let found = tokio::task::spawn_blocking(move || {
+        let erased_at = vak_core::trash::state(&core.shared_scope(), &id)
+            .ok()
+            .and_then(|state| state.erased_at)?;
+        let receipt = core
+            .erasure_receipts()
+            .into_iter()
+            .rev()
+            .find(|receipt| receipt.scope == "conversation" && receipt.subject == id);
+        Some(serde_json::json!({
+            "erased_at": erased_at,
+            "cause": receipt.as_ref().map(|receipt| receipt.cause),
+            "receipt": receipt.as_ref().map(|receipt| serde_json::json!({
+                "id": receipt.id,
+                "at": receipt.at,
+                "verifies": receipt.verifies(),
+                "not_reached": receipt.not_reached,
+            })),
+        }))
+    })
+    .await;
+    match found {
+        Ok(Some(gone)) => Json(gone).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

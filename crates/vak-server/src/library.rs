@@ -714,26 +714,54 @@ fn summary(artifact: &vak_core::artifacts::Artifact) -> serde_json::Value {
     })
 }
 
-#[derive(serde::Deserialize)]
-struct Listing {
-    #[serde(default)]
-    trash: bool,
+/// `GET /library/trash`: every draft in the trash, the one that leaves it
+/// soonest first, with the day it is erased.
+async fn trashed(State(state): State<AppState>) -> Response {
+    let artifacts = state.core.artifacts();
+    let listed = tokio::task::spawn_blocking(move || artifacts.list()).await;
+    let Ok(all) = listed else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    let window = vak_core::lifecycle::trash_window();
+    let mut drafts: Vec<(chrono::DateTime<chrono::Utc>, serde_json::Value)> = Vec::new();
+    for artifact in &all {
+        for (index, version) in artifact.versions.iter().enumerate() {
+            let Some(at) = version.trashed_at.filter(|_| !version.erased) else {
+                continue;
+            };
+            drafts.push((
+                at,
+                serde_json::json!({
+                    "artifact": artifact.id,
+                    "version": version.id,
+                    "number": index + 1,
+                    "name": artifact.name(),
+                    "agent": artifact.agent,
+                    "size": version.size,
+                    "trashed_at": at,
+                    "erase_on": at + window,
+                }),
+            ));
+        }
+    }
+    drafts.sort_by_key(|(at, _)| *at);
+    Json(serde_json::json!({
+        "drafts": drafts.into_iter().map(|(_, draft)| draft).collect::<Vec<_>>(),
+    }))
+    .into_response()
 }
 
 /// `GET /library`: every artifact, newest change first. One whose every
-/// version is in the trash is listed only with `?trash=true`, which lists
-/// nothing else.
-async fn list(
-    State(state): State<AppState>,
-    axum::extract::Query(listing): axum::extract::Query<Listing>,
-) -> Response {
+/// version is in the trash is not listed: its drafts are in
+/// `/library/trash`.
+async fn list(State(state): State<AppState>) -> Response {
     let artifacts = state.core.artifacts();
     let listed = tokio::task::spawn_blocking(move || artifacts.list()).await;
     match listed {
         Ok(all) => Json(serde_json::json!({
             "artifacts": all
                 .iter()
-                .filter(|artifact| artifact.in_trash() == listing.trash)
+                .filter(|artifact| !artifact.in_trash())
                 .map(summary)
                 .collect::<Vec<_>>(),
         }))
@@ -1735,6 +1763,7 @@ async fn shared_comment(
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/library", get(list))
+        .route("/library/trash", get(trashed))
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route("/library/{id}/versions/{version}/save", post(save))

@@ -43,6 +43,17 @@ pub const COMMITTED: &[DataClass] = &[
     DataClass::DocumentHistory,
 ];
 
+/// How long something stays in the trash before it is erased, under the
+/// default label.
+pub fn trash_window() -> chrono::Duration {
+    chrono::Duration::seconds(
+        Label::default_tenant()
+            .rule(DataClass::Trash)
+            .and_then(|rule| rule.delete_after_secs)
+            .unwrap_or(0),
+    )
+}
+
 /// A Document's id in a lifecycle item: a digest, because its name is a
 /// path and paths are content.
 fn document_id(name: &str) -> String {

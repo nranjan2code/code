@@ -1914,7 +1914,8 @@ gone.**
   `lifecycle::COMMITTED`.
 - A version in the trash, or erased, is not a head: the version it was
   made from is current again. An artifact whose every version is there
-  leaves `GET /library` and is listed by `GET /library?trash=true`.
+  leaves `GET /library`; `GET /library/trash` lists every draft in the
+  trash with the day it is erased.
 - `PUT /library/{id}/versions/{version}/trash` with `{on}` is a person
   moving a draft there or restoring it. Accepting or saving a version
   takes it out; an accepted or saved version is refused, and so is an
@@ -1943,8 +1944,37 @@ gone.**
   `a_draft_is_trashed_and_restored_and_a_saved_version_is_not`, through
   the real router.
 
-Still to do in M7a-e: the screens (admin A2 and A3, client C1, C2, C3
-and C8), and the lifecycle and erasure chains as catalog sources. `gc_keeps_everything_reachable`,
+**Part 5a, done 2026-10-08: the client's Trash.**
+- Settings › Privacy and safety › Archived tasks lists the trash with
+  the days each conversation has left (or that it is on hold), Restore,
+  and Delete for good: a sheet that shows what the erasure reaches and
+  cannot reach and takes the conversation's title typed
+  (`EraseConversationSheet`). Drafts in the trash are listed below with
+  Restore.
+- `GET /sessions?trash=true` rows carry `trashed_at`, `erase_on` and
+  `held`, and no longer list an erased conversation.
+  `vak_core::lifecycle::trash_window` is the one source of the 30 days.
+- `GET /conversations/{id}/gone` answers "Why is this gone?" for an
+  erased conversation: when, by a person or by policy, and its receipt
+  with whether the signature verifies. It ties the conversation to this
+  workspace by its ledger, because erasure removed its catalog node. No
+  screen calls it yet.
+- Found live and fixed: the text to type was the start of the
+  conversation's id, because the catalog's session node holds no title.
+  `Core::erasure_confirmation` is now the one source for the app and
+  `vak data erase`: the first 40 characters of the first thing the
+  person said, which is the title the lists show.
+- Checked in the browser at 1440 × 900 (dark) and 390 × 844 (light) on a
+  throwaway data home with the local model: the trash list, the sheet,
+  an erasure and its receipt. Drafts in the trash were not seen in the
+  browser: nothing in that home made an artifact.
+- Test: `a_conversation_is_erased_from_the_trash_with_its_title_typed`
+  now also checks the trash row, the title and `gone`.
+
+Still to do in M7a-e: the rest of the screens (the conversation menu C1,
+"Why is this gone?" C3 on a link or search hit, Workbench states C8,
+admin A2 and A3), and the lifecycle and erasure chains as catalog
+sources. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

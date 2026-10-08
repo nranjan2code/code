@@ -320,6 +320,11 @@ export interface SessionSummary {
   title?: string | null;
   running?: boolean;
   archived?: boolean;
+  /** In the trash since then, and the day it is deleted for good. */
+  trashed_at?: string | null;
+  erase_on?: string | null;
+  /** On hold: kept past that day until the hold is released. */
+  held?: boolean;
 }
 
 export interface CheckpointInfo {

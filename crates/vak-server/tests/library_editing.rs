@@ -235,17 +235,22 @@ async fn a_draft_is_trashed_and_restored_and_a_saved_version_is_not() {
             .send()
     };
     let listed = |trash: bool| {
+        let (path, key, field) = if trash {
+            ("library/trash", "drafts", "artifact")
+        } else {
+            ("library", "artifacts", "id")
+        };
         let request = client
-            .get(format!("http://{addr}/library?trash={trash}"))
+            .get(format!("http://{addr}/{path}"))
             .bearer_auth(&token)
             .send();
         async move {
             let body: Value = request.await.unwrap().json().await.unwrap();
-            body["artifacts"]
+            body[key]
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|artifact| artifact["id"] == id.to_string())
+                .any(|row| row[field] == id.to_string())
         }
     };
 

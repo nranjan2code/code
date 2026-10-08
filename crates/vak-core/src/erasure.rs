@@ -318,6 +318,35 @@ impl Core {
         Ok(Self::preview_of(session_id, &reach))
     }
 
+    /// What a person types to confirm erasing `session_id`: the start of
+    /// the first thing they said in it, which is the title the lists show,
+    /// or the start of its id when it says nothing readable.
+    pub fn erasure_confirmation(&self, session_id: &str) -> String {
+        let mut title = String::new();
+        if let Some(ledger) = self
+            .catalog()
+            .ok()
+            .and_then(|catalog| catalog.session_dir(session_id).ok().flatten())
+        {
+            vak_session::SessionLog::scan(&ledger, |entry| {
+                if let Some(vak_session::EntryPayload::Message(record)) =
+                    entry.map(|entry| &entry.payload)
+                    && record.message.role == vak_llm::Role::User
+                    && record.control_kind().is_none()
+                {
+                    let text = record.message.text_content();
+                    let line = text.trim().lines().next().unwrap_or_default().trim();
+                    title = line.chars().take(40).collect::<String>().trim().to_string();
+                }
+                title.is_empty()
+            });
+        }
+        if title.is_empty() {
+            title = session_id.chars().take(8).collect();
+        }
+        title
+    }
+
     /// Erases `session_id`. A person's erasure carries the digest of the
     /// preview they confirmed and is refused when what it would destroy
     /// has changed since; the reconciler's, at the end of the trash

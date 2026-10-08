@@ -46,6 +46,7 @@ import { capabilityHue, capabilityInitial } from "../capabilityIcon";
 import Icon, { type IconName } from "./Icon";
 import AgentMark from "./AgentMark";
 import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
+import EraseConversationSheet from "./EraseConversationSheet";
 import OperationsPanel from "./OperationsPanel";
 import DigestCard from "./DigestCard";
 import Skeleton from "./Skeleton";
@@ -1473,11 +1474,35 @@ export default function Settings() {
   };
   const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
   const [trashedSessions, setTrashedSessions] = createSignal<SessionSummary[]>([]);
+  const [trashedDrafts, setTrashedDrafts] = createSignal<api.TrashedDraft[]>([]);
+  const [erasing, setErasing] = createSignal<SessionSummary | null>(null);
   const refreshTrash = async () => {
     try {
       setTrashedSessions((await api.listTrash()).sessions);
     } catch {
       setTrashedSessions([]);
+    }
+    try {
+      setTrashedDrafts((await api.listTrashedDrafts()).drafts);
+    } catch {
+      setTrashedDrafts([]);
+    }
+  };
+  // "Deleted in 12 days", from the day the server says it goes.
+  const timeLeft = (eraseOn?: string | null, held?: boolean) => {
+    if (held) return "On hold: kept until the hold is released";
+    if (!eraseOn) return "";
+    const days = Math.ceil((new Date(eraseOn).getTime() - Date.now()) / 86_400_000);
+    if (days <= 0) return "Deleted for good soon";
+    return `Deleted for good in ${days} day${days === 1 ? "" : "s"}`;
+  };
+  const restoreDraft = async (draft: api.TrashedDraft) => {
+    try {
+      await api.setDraftTrashed(draft.artifact, draft.version, false);
+      await refreshTrash();
+      setNotice({ kind: "info", text: "Draft restored. It is back in the Library." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not restore that draft: ${error instanceof Error ? error.message : String(error)}` });
     }
   };
   createEffect(() => {
@@ -1908,18 +1933,25 @@ export default function Settings() {
             <Show when={page() === "archived"}>
               <button type="button" class="settings-scope-link" onClick={() => selectPage("privacy")}>Back to Privacy and safety</button>
               <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void trashAllArchived()}><Icon name="trash" size={14} /> Move all to trash</button></header>
-              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive and trash are both reversible</strong><span>Archived tasks stay searchable. Moving one to the trash hides it everywhere, search included, until you restore it. Nothing is erased.</span></div></div>
+              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive and trash are both reversible</strong><span>Archived tasks stay searchable. Moving one to the trash hides it everywhere, search included. You can restore it for 30 days; after that it is deleted for good.</span></div></div>
               <Show when={archivedSessions().length} fallback={<div class="archived-empty"><Icon name="archive" size={24} /><strong>No archived tasks</strong><span>Tasks you archive from the sidebar will appear here.</span></div>}>
                 <section class="archived-list" aria-label="Archived tasks">
                   <For each={archivedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="chat" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""} · {session.entries ?? 0} events</span></span><button class="settings-button" onClick={() => void restoreTask(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Move to trash" aria-label={`Move ${session.title || "untitled task"} to the trash`} onClick={() => void trashTask(session.session_id)}><Icon name="trash" size={14} /></button></div>}</For>
                 </section>
               </Show>
               <Show when={trashedSessions().length}>
-                <header class="archived-header"><div><h2>Trash</h2><p>Hidden everywhere, search included, until you restore them.</p></div></header>
+                <header class="archived-header"><div><h2>Trash</h2><p>Hidden everywhere, search included. Restore one within 30 days, or delete it for good now.</p></div></header>
                 <section class="archived-list" aria-label="Trash">
-                  <For each={trashedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="trash" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""}</span></span><button class="settings-button" onClick={() => void restoreFromTrash(session.session_id)}><Icon name="restore" size={13} /> Restore</button></div>}</For>
+                  <For each={trashedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="trash" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{timeLeft(session.erase_on, session.held)}</span></span><button class="settings-button" onClick={() => void restoreFromTrash(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Delete for good" aria-label={`Delete ${session.title || "untitled task"} for good`} disabled={session.held} onClick={() => setErasing(session)}><Icon name="trash" size={14} /></button></div>}</For>
                 </section>
               </Show>
+              <Show when={trashedDrafts().length}>
+                <header class="archived-header"><div><h2>Drafts in the trash</h2><p>Drafts nobody accepted, saved, starred or shared for 60 days. Restore one within 30 days to keep it.</p></div></header>
+                <section class="archived-list" aria-label="Drafts in the trash">
+                  <For each={trashedDrafts()}>{(draft) => <div class="archived-item"><span class="archived-item-icon"><Icon name="file" size={15} /></span><span class="archived-item-copy"><strong>{draft.name} · version {draft.number}</strong><span>{timeLeft(draft.erase_on)}</span></span><button class="settings-button" onClick={() => void restoreDraft(draft)}><Icon name="restore" size={13} /> Restore</button></div>}</For>
+                </section>
+              </Show>
+              <Show when={erasing()}>{(session) => <EraseConversationSheet sessionId={session().session_id} title={session().title || "Untitled task"} onClose={() => setErasing(null)} onErased={() => { void refreshTrash(); setNotice({ kind: "info", text: "Deleted for good." }); }} />}</Show>
             </Show>
 
             <Show when={page() === "appearance"}>

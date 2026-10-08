@@ -163,14 +163,7 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                     return 1;
                 }
             };
-            let title = core
-                .catalog()
-                .ok()
-                .and_then(|catalog| catalog.open_node(&session).ok().flatten())
-                .and_then(|node| node.title)
-                .map(|title| title.trim().to_string())
-                .filter(|title| !title.is_empty())
-                .unwrap_or_else(|| session.chars().take(8).collect());
+            let title = core.erasure_confirmation(&session);
             println!("This erases the conversation \"{title}\" for good. It cannot be undone.");
             println!(
                 "  conversations   {} (it and the workers it started)",

@@ -1438,6 +1438,49 @@ export function restoreFromTrash(id: string): Promise<{ restored: string }> {
   return req(`/sessions/${id}/restore`, { method: "POST" });
 }
 
+/** What deleting a conversation for good would reach. */
+export interface ErasurePreview {
+  session_id: string;
+  digest: string;
+  trashed_at?: string | null;
+  held: boolean;
+  conversations: string[];
+  artifacts: string[];
+  memory_notes: number;
+  sent_outside: number;
+}
+
+/** The preview, and the text the person must type: the conversation's title. */
+export function erasurePreview(id: string): Promise<{ preview: ErasurePreview; confirm: string }> {
+  return req(`/conversations/${encodeURIComponent(id)}/erasure`);
+}
+
+/** Deletes a conversation in the trash for good. `digest` is the preview's. */
+export function eraseConversation(id: string, digest: string, confirm: string): Promise<{ receipt: { id: string } }> {
+  return req(`/conversations/${encodeURIComponent(id)}/erasure`, { method: "POST", body: JSON.stringify({ digest, confirm }) });
+}
+
+/** A draft in the trash, and the day it is deleted. */
+export interface TrashedDraft {
+  artifact: string;
+  version: string;
+  number: number;
+  name: string;
+  agent: string;
+  size: number;
+  trashed_at: string;
+  erase_on: string;
+}
+
+export function listTrashedDrafts(): Promise<{ drafts: TrashedDraft[] }> {
+  return req("/library/trash");
+}
+
+/** Moves a draft to the trash, or restores it. */
+export function setDraftTrashed(artifact: string, version: string, on: boolean): Promise<void> {
+  return req(`/library/${encodeURIComponent(artifact)}/versions/${encodeURIComponent(version)}/trash`, { method: "PUT", body: JSON.stringify({ on }) });
+}
+
 export function listSkills(agent?: string): Promise<{
   skills: DiscoveredSkill[];
 }> {
