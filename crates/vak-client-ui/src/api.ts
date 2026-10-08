@@ -1569,12 +1569,6 @@ export async function readExecutionArtifactBytes(sessionId: string, executionId:
   return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
 }
 
-export async function readSandboxCandidateFileBytes(sessionId: string, candidateId: string, path: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
-  const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files/raw?path=${encodeURIComponent(path)}`);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
-}
-
 export function writeFile(path: string, content: string, session: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content, session }) });
 }
@@ -1582,7 +1576,7 @@ export function writeFile(path: string, content: string, session: string): Promi
 export type WorkspaceCheckPlan = { id: string; label: string; command: string };
 export type SandboxCandidate = { candidate_id: string; source_root: string; destination_root: string; files: Array<{ path: string; candidate_hash: string; base_hash?: string; bytes: number; operation?: "Upsert" | "Delete" }>; target_checks?: Array<{ verifier: string; path: string }>; workspace_checks?: WorkspaceCheckPlan[] };
 export type SandboxCandidateRecord = { record_id: string; session_id: string; turn_id: string; result_id: string; execution_id: string; environment_id: string; candidate_digest: string; candidate: SandboxCandidate; verified: boolean; draft_checks?: Array<{ verifier: string; path: string; status: string; evidence: string }>; updated_at: string; parent_candidate_id?: string; revision_session_id?: string; narrowed?: { path: string; keep: string[] } };
-export type SandboxPromotionRecord = { record_id: string; session_id: string; result_id: string; candidate_digest: string; candidate_id: string; receipt: { verification?: Array<{ path: string; status: string; evidence: string }>; deleted?: string[]; integration?: { applied_state_digest: string; workspace_state_status: string; target_checks_status: string; evidence: string; target_checks?: Array<{ verifier: string; path: string; status: string; evidence: string }> } }; workspace_checks?: WorkspaceCheckPlan[]; updated_at: string };
+export type SandboxPromotionRecord = { record_id: string; session_id: string; result_id: string; candidate_digest: string; candidate_id: string; receipt: { applied?: string[]; verification?: Array<{ path: string; status: string; evidence: string }>; deleted?: string[]; integration?: { applied_state_digest: string; workspace_state_status: string; target_checks_status: string; evidence: string; target_checks?: Array<{ verifier: string; path: string; status: string; evidence: string }> } }; workspace_checks?: WorkspaceCheckPlan[]; updated_at: string };
 export type SandboxPromotionUndoRecord = { record_id: string; session_id: string; candidate_id: string; receipt: { restored: string[]; verification: Array<{ path: string; status: string; evidence: string }> }; updated_at: string };
 export type SandboxWorkspaceCheckRecord = { record_id: string; session_id: string; candidate_id: string; applied_state_digest: string; check: WorkspaceCheckPlan; status: "passed" | "failed"; evidence: string; updated_at: string };
 export type SandboxCandidateRevisionRecord = { record_id: string; revision_id: string; session_id: string; parent_candidate_id: string; comment_id: string; child_session_id: string; status: "Running" | "Completed" | "Failed"; candidate_id?: string; detail?: string; updated_at: string };
@@ -1595,10 +1589,6 @@ export type SandboxRecord =
   | { kind: "Environment"; record: unknown }
   | { kind: "PreviewPreparation"; record: SandboxPreviewPreparationRecord }
   | { kind: "CandidateRevision"; record: SandboxCandidateRevisionRecord };
-
-export function readSandboxCandidateFile(sessionId: string, candidateId: string, path: string): Promise<FileResponse> {
-  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files?path=${encodeURIComponent(path)}`);
-}
 
 export type OfficeChange = {
   section: string;
@@ -1639,16 +1629,16 @@ export type OfficeReview = {
 /** The semantic change list for an Office file in a draft, and the changes
  *  a person can choose among, computed by the server in its document
  *  worker (docs/design/72, P3). */
-export function readSandboxCandidateOfficeReview(sessionId: string, candidateId: string, path: string): Promise<OfficeReview> {
-  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/office-review?path=${encodeURIComponent(path)}`);
+export function readVersionReview(at: VersionRef): Promise<OfficeReview> {
+  return req(`${versionUrl(at)}/review`);
 }
 
 /** A new version of the draft that keeps only `keep` (choice ids). The full
  *  draft stays; the new version is reviewed and accepted like any other. */
-export async function narrowSandboxCandidateOffice(sessionId: string, candidateId: string, path: string, keep: string[]): Promise<SandboxCandidateRecord> {
-  const response = await req<{ kind: "Candidate"; record: SandboxCandidateRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/office-narrow`, {
+export async function narrowVersion(at: VersionRef, keep: string[]): Promise<SandboxCandidateRecord> {
+  const response = await req<{ kind: "Candidate"; record: SandboxCandidateRecord }>(`${versionUrl(at)}/narrow`, {
     method: "POST",
-    body: JSON.stringify({ path, keep }),
+    body: JSON.stringify({ keep }),
   });
   return response.record;
 }
@@ -1771,10 +1761,11 @@ async function officeReq<T>(source: OfficeSource, url: string, init?: RequestIni
   return (text ? JSON.parse(text) : null) as T;
 }
 
-function officeUrl(source: OfficeSource, query: string): string {
-  const path = `path=${encodeURIComponent(source.path)}&${query}`;
+async function officeUrl(source: OfficeSource, query: string): Promise<string> {
+  // A saved draft is read as the artifact version it proposes.
   if (source.candidateId && source.sessionId)
-    return `/sessions/${encodeURIComponent(source.sessionId)}/sandbox/candidates/${encodeURIComponent(source.candidateId)}/office?${path}`;
+    return `${versionUrl(await versionOf(source.sessionId, source.candidateId, source.path, source.token))}/document?${query}`;
+  const path = `path=${encodeURIComponent(source.path)}&${query}`;
   if (source.executionId && source.sessionId)
     return `/sessions/${encodeURIComponent(source.sessionId)}/sandbox/executions/${encodeURIComponent(source.executionId)}/artifact/office?${path}`;
   // A file in the folder is read from the conversation's own workspace.
@@ -1784,11 +1775,11 @@ function officeUrl(source: OfficeSource, query: string): string {
 /** A page of an Office file: from unit `from`, or, given `at`, from the unit
  *  that cited anchor names (`focus` is then that unit's anchor). */
 export function readOfficeProjection(source: OfficeSource, from = 0, at?: string): Promise<OfficeProjection> {
-  return officeReq(source, officeUrl(source, at ? `at=${encodeURIComponent(at)}` : `from=${from}`));
+  return officeUrl(source, at ? `at=${encodeURIComponent(at)}` : `from=${from}`).then((url) => officeReq<OfficeProjection>(source, url));
 }
 
 export function readOfficeStructure(source: OfficeSource): Promise<OfficeStructure> {
-  return officeReq(source, officeUrl(source, "view=structure"));
+  return officeUrl(source, "view=structure").then((url) => officeReq<OfficeStructure>(source, url));
 }
 
 /** What a file card says about an Office file: its kind, counts and flags,
@@ -1800,7 +1791,7 @@ export function readOfficeFacts(source: OfficeSource): Promise<OfficeProjection 
   const key = `${source.sessionId ?? ""}:${source.candidateId ?? ""}:${source.executionId ?? ""}:${source.path}`;
   const cached = officeFactsCache.get(key);
   if (cached && Date.now() - cached.at < OFFICE_FACTS_TTL_MS) return cached.facts;
-  const facts = req<OfficeProjection>(officeUrl(source, "view=facts")).catch(() => null);
+  const facts = officeUrl(source, "view=facts").then((url) => req<OfficeProjection>(url)).catch(() => null);
   officeFactsCache.set(key, { at: Date.now(), facts });
   return facts;
 }
@@ -1835,15 +1826,46 @@ export function setOfficeFocus(source: OfficeSource, roomId: string, anchor: str
 const OFFICE_FACTS_TTL_MS = 30_000;
 const officeFactsCache = new Map<string, { at: number; facts: Promise<OfficeProjection | null> }>();
 
-export async function readSandboxCandidateFileRaw(sessionId: string, candidateId: string, path: string): Promise<string> {
-  const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files/raw?path=${encodeURIComponent(path)}`);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  return URL.createObjectURL(await response.blob());
+/** Which artifact and version a conversation's draft file or declared
+ *  file is: Review reads, comments and decides by these. */
+export type VersionBinding = { artifact: string; version: string; path: string; candidate?: string | null; promoted: boolean; removed?: boolean };
+export type VersionRef = { artifact: string; version: string };
+
+function versionUrl(at: VersionRef): string {
+  return `/library/${encodeURIComponent(at.artifact)}/versions/${encodeURIComponent(at.version)}`;
 }
 
-/** Which artifact and version a conversation's candidate file or declared
- *  file is: Review reads, comments and decides by these. */
-export type VersionBinding = { artifact: string; version: string; path: string; candidate?: string | null; promoted: boolean };
+const versionBindings = new Map<string, VersionBinding>();
+const bindingKey = (sessionId: string, candidateId: string, path: string) => `${sessionId}\n${candidateId}\n${path}`;
+function rememberVersions(sessionId: string, bindings: VersionBinding[] | undefined): void {
+  for (const binding of bindings ?? []) {
+    if (binding.candidate) versionBindings.set(bindingKey(sessionId, binding.candidate, binding.path), binding);
+  }
+}
+
+/** The version a saved draft proposes for `path`, if the server has already
+ *  said. */
+export function knownVersion(sessionId: string, candidateId: string, path: string): VersionBinding | null {
+  return versionBindings.get(bindingKey(sessionId, candidateId, path)) ?? null;
+}
+
+/** The artifact version a saved draft proposes for `path`: what every read
+ *  of the draft, its thread and its acceptance are addressed by. A guest
+ *  passes the invitation's `token`. */
+export async function versionOf(sessionId: string, candidateId: string, path: string, token?: string): Promise<VersionBinding> {
+  const known = knownVersion(sessionId, candidateId, path);
+  if (known) return known;
+  if (token) {
+    const response = await fetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`, { headers: { Authorization: `Bearer ${token}` }, credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer" });
+    if (!response.ok) throw new ApiError(response.status === 401 || response.status === 403 ? "This invitation has expired or no longer permits this action." : `Could not read the draft (${response.status}).`, response.status);
+    rememberVersions(sessionId, ((await response.json()) as { artifacts?: VersionBinding[] }).artifacts);
+  } else {
+    await listSessionSandboxRecords(sessionId);
+  }
+  const found = knownVersion(sessionId, candidateId, path);
+  if (!found) throw new Error("This draft has no saved version yet.");
+  return found;
+}
 
 /** One comment in a version's thread. `anchor` points into an Office file
  *  or PDF (`Budget!B4`, `p:1A2B3C4D`, `slide:256/shape:3`); line numbers
@@ -1852,11 +1874,11 @@ export type VersionComment = { comment_id: string | null; version: string; actor
 export type CommentPlace = { lineStart?: number; lineEnd?: number; anchor?: string };
 
 export function versionComments(artifact: string, version: string): Promise<{ comments: VersionComment[] }> {
-  return req(`/library/${encodeURIComponent(artifact)}/versions/${encodeURIComponent(version)}/comments`);
+  return req(`${versionUrl({ artifact, version })}/comments`);
 }
 
 export function commentOnVersion(artifact: string, version: string, text: string, place?: CommentPlace): Promise<{ comment_id: string }> {
-  return req(`/library/${encodeURIComponent(artifact)}/versions/${encodeURIComponent(version)}/comments`, {
+  return req(`${versionUrl({ artifact, version })}/comments`, {
     method: "POST",
     body: JSON.stringify({ text, line_start: place?.lineStart, line_end: place?.lineEnd, anchor: place?.anchor }),
   });
@@ -1866,24 +1888,39 @@ export function reviseFromComment(artifact: string, commentId: string): Promise<
   return req(`/library/${encodeURIComponent(artifact)}/comments/${encodeURIComponent(commentId)}/revise`, { method: "POST" });
 }
 
-/** The version a draft proposes for `path`, or null when the server has
- *  not recorded one. */
-export function proposedVersion(bindings: VersionBinding[], candidateId: string, path: string): VersionBinding | null {
-  return bindings.find((binding) => binding.candidate === candidateId && binding.path === path) ?? null;
+/** A version as text, or its size when it is not text. */
+export function readVersionFile(at: VersionRef): Promise<FileResponse> {
+  return req(`${versionUrl(at)}/text`);
 }
 
-/** The thread of the version a draft proposes for `path`. */
-export async function draftThread(sessionId: string, candidateId: string, path: string): Promise<{ binding: VersionBinding | null; comments: VersionComment[] }> {
-  const { artifacts } = await listSessionSandboxRecords(sessionId);
-  const binding = proposedVersion(artifacts ?? [], candidateId, path);
-  if (!binding) return { binding: null, comments: [] };
-  return { binding, comments: (await versionComments(binding.artifact, binding.version)).comments };
+export async function readVersionBytes(at: VersionRef): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
+  const response = await authFetch(`${versionUrl(at)}/raw`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
 }
 
-export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[]; artifacts?: VersionBinding[] }> {
-  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
+/** A version's bytes as an object URL for a viewer. */
+export async function readVersionRaw(at: VersionRef): Promise<string> {
+  const response = await authFetch(`${versionUrl(at)}/raw`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return URL.createObjectURL(await response.blob());
 }
 
+/** Reads of the files one saved draft holds, each as the version the draft
+ *  proposes for it. */
+export function draftReader(sessionId: string, candidateId: string) {
+  return {
+    readFile: async (path: string) => readVersionFile(await versionOf(sessionId, candidateId, path)),
+    readFileRaw: async (path: string) => readVersionRaw(await versionOf(sessionId, candidateId, path)),
+    readFileBytes: async (path: string) => readVersionBytes(await versionOf(sessionId, candidateId, path)),
+  };
+}
+
+export async function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[]; artifacts?: VersionBinding[] }> {
+  const listed = await req<{ records: SandboxRecord[]; artifacts?: VersionBinding[] }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
+  rememberVersions(sessionId, listed.artifacts);
+  return listed;
+}
 export type CoworkingInvitation = {
   grant_id: string;
   principal_id: string;
@@ -1936,21 +1973,22 @@ export async function exportSandboxCandidate(sessionId: string, executionId: str
   return response.record;
 }
 
-export async function promoteSandboxCandidate(sessionId: string, candidateId: string, files: string[]): Promise<SandboxPromotionRecord> {
-  const response = await req<{ kind: "Promotion"; record: SandboxPromotionRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/promote`, { method: "POST", body: JSON.stringify({ candidate_id: candidateId, files }) });
+/** Accepts a version into the workspace, with the other versions the same
+ *  draft proposes (`also`), in the one promotion a draft gets. */
+export async function acceptVersion(at: VersionRef, also: VersionRef[] = []): Promise<SandboxPromotionRecord> {
+  const response = await req<{ kind: "Promotion"; record: SandboxPromotionRecord }>(`${versionUrl(at)}/accept`, { method: "POST", body: JSON.stringify({ also }) });
   return response.record;
 }
 
-export async function runSandboxWorkspaceCheck(sessionId: string, candidateId: string, checkId: string): Promise<SandboxWorkspaceCheckRecord> {
-  const response = await req<{ kind: "WorkspaceCheck"; record: SandboxWorkspaceCheckRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/promotions/${encodeURIComponent(candidateId)}/checks`, { method: "POST", body: JSON.stringify({ check_id: checkId }) });
+export async function checkVersion(at: VersionRef, checkId: string): Promise<SandboxWorkspaceCheckRecord> {
+  const response = await req<{ kind: "WorkspaceCheck"; record: SandboxWorkspaceCheckRecord }>(`${versionUrl(at)}/checks`, { method: "POST", body: JSON.stringify({ check_id: checkId }) });
   return response.record;
 }
 
-export async function undoSandboxPromotion(sessionId: string, candidateId: string): Promise<SandboxPromotionUndoRecord> {
-  const response = await req<{ kind: "PromotionUndo"; record: SandboxPromotionUndoRecord }>(`/sessions/${encodeURIComponent(sessionId)}/sandbox/promotions/${encodeURIComponent(candidateId)}/undo`, { method: "POST" });
+export async function undoVersion(at: VersionRef): Promise<SandboxPromotionUndoRecord> {
+  const response = await req<{ kind: "PromotionUndo"; record: SandboxPromotionUndoRecord }>(`${versionUrl(at)}/undo`, { method: "POST" });
   return response.record;
 }
-
 /**
  * Stop listing a workspace. Sessions, memory, checkpoints, and the
  * project's own settings all survive — re-opening the folder restores it
@@ -2359,6 +2397,8 @@ export interface ArtifactVersion {
   at: string;
   promoted: boolean;
   saved: boolean;
+  /** The file is gone in this version: what a draft that deletes it proposes. */
+  removed?: boolean;
 }
 
 export interface ArtifactComment {

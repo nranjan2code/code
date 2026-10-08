@@ -86,8 +86,8 @@ Known slow tests (each over 60 s, not failures):
 | 15d-c | M8.4c design (full move, one comment thread, shared conversations inherit, both models for acceptance) | plan §M8 "M8.4c design" | Done (2026-10-08) |
 | 15d-c-a | M8.4c-a Review by version: a candidate's reads, review, narrow, accept, undo and checks by artifact id and version; sandbox records name artifact and version | `review_by_artifact_version` | Done (2026-10-08) |
 | 15d-c-b | M8.4c-b one comment thread: candidate comments become `Commented` rows, revise is an action on a comment, candidate comment routes deleted | `one_comment_thread_per_version` | Done (2026-10-08) |
-| 15d-c-c | M8.4c-c client: Canvas, Redline and Workbench on `/library`; Open in Library; star in Workbench; candidate file routes deleted | browser run | Next |
-| 15d-c-d | M8.4c-d `SharedConversation` reads through the artifact routes under the conversation grant | `conversation_grant_reaches_its_artifacts_until_broken` | |
+| 15d-c-c | M8.4c-c client: Canvas, Redline and Workbench on `/library`; Open in Library; star in Workbench; candidate file routes deleted | browser run | Done (2026-10-08) |
+| 15d-c-d | M8.4c-d `SharedConversation` reads through the artifact routes under the conversation grant | `conversation_grant_reaches_its_artifacts_until_broken` | Next |
 | 15d-c-e | M8.4c-e navigation reconciliation, admin and client | browser check | |
 | 15d-c-f | M8.4c-f acceptance run create → review → promote → share → comment → revise (gpt-6-luna, then create and review on Ollama) | `docs/audits/` record | |
 | 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | |

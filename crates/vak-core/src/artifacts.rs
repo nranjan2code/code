@@ -96,6 +96,16 @@ pub enum ArtifactStep {
         #[serde(flatten)]
         source: VersionSource,
     },
+    /// A version in which the file is gone: what a draft that deletes the
+    /// file proposes, so a deletion is reviewed and accepted like any other
+    /// version (plan M8.4c-c). It has no bytes.
+    Removed {
+        version: VersionId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<VersionId>,
+        #[serde(flatten)]
+        source: VersionSource,
+    },
     /// A Review candidate proposes this version for the file: how Review
     /// reads and decides a candidate by artifact and version (plan
     /// M8.4c-a). The same bytes proposed again name the newer candidate.
@@ -201,9 +211,27 @@ pub struct Version {
     pub promoted: bool,
     #[serde(default)]
     pub saved: bool,
-    /// The candidate in Review that proposes this version, if one does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub proposed: Option<Proposal>,
+    /// The file is gone in this version; it has no bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removed: bool,
+    /// The Review candidates that propose this version, oldest first: more
+    /// than one when the same bytes were put up for Review again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proposed: Vec<Proposal>,
+}
+
+impl Version {
+    /// The newest candidate that proposes this version: the one Review
+    /// acts on.
+    pub fn proposal(&self) -> Option<&Proposal> {
+        self.proposed.last()
+    }
+
+    pub fn proposed_by(&self, candidate: &str) -> bool {
+        self.proposed
+            .iter()
+            .any(|proposal| proposal.candidate == candidate)
+    }
 }
 
 /// An artifact's current state.
@@ -369,7 +397,30 @@ fn fold(state: &mut State, bytes: &[u8]) {
                     actor: event.actor,
                     promoted: false,
                     saved: false,
-                    proposed: None,
+                    proposed: Vec::new(),
+                    removed: false,
+                });
+            }
+        }
+        ArtifactStep::Removed {
+            version,
+            parent,
+            source,
+        } => {
+            if !artifact.versions.iter().any(|known| known.id == version) {
+                artifact.versions.push(Version {
+                    id: version,
+                    parent,
+                    object: None,
+                    digest: String::new(),
+                    size: 0,
+                    source,
+                    at: event.at,
+                    actor: event.actor,
+                    promoted: false,
+                    saved: false,
+                    proposed: Vec::new(),
+                    removed: true,
                 });
             }
         }
@@ -392,7 +443,8 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 .iter_mut()
                 .find(|known| known.id == version)
             {
-                found.proposed = Some(Proposal { session, candidate });
+                found.proposed.retain(|known| known.candidate != candidate);
+                found.proposed.push(Proposal { session, candidate });
             }
         }
         ArtifactStep::PromotionUndone { version } => {
@@ -582,6 +634,42 @@ impl Artifacts {
         Ok(version)
     }
 
+    /// Adds a version of `artifact` in which the file is gone, made from
+    /// `parent` or the current head. A head that is already such a version
+    /// is returned as it is.
+    pub fn removal(
+        &self,
+        artifact: ArtifactId,
+        parent: Option<VersionId>,
+        source: VersionSource,
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<VersionId, ArtifactError> {
+        let current = self
+            .get(&artifact.to_string())
+            .ok_or_else(|| ArtifactError::NotFound(artifact.to_string()))?;
+        let parent = parent.or_else(|| current.head().map(|head| head.id));
+        if let Some(parent) = parent
+            && let Some(same) = current.versions.iter().find(|known| known.id == parent)
+            && same.removed
+        {
+            return Ok(parent);
+        }
+        let version = VersionId::new();
+        self.append(&ArtifactEvent {
+            artifact,
+            at: Utc::now(),
+            trace: trace.cloned(),
+            actor: actor.or_else(|| trace.and_then(|trace| trace.actor)),
+            step: ArtifactStep::Removed {
+                version,
+                parent,
+                source,
+            },
+        })?;
+        Ok(version)
+    }
+
     /// Records a person's or a run's step on an artifact.
     pub fn record(
         &self,
@@ -592,7 +680,9 @@ impl Artifacts {
     ) -> Result<(), ArtifactError> {
         if matches!(
             step,
-            ArtifactStep::Declared { .. } | ArtifactStep::Versioned { .. }
+            ArtifactStep::Declared { .. }
+                | ArtifactStep::Versioned { .. }
+                | ArtifactStep::Removed { .. }
         ) {
             return Err(ArtifactError::Invalid(
                 "declare and version through their own calls".into(),
@@ -621,6 +711,11 @@ impl Artifacts {
             .iter()
             .find(|known| &known.id == version)
             .ok_or_else(|| ArtifactError::NotFound(version.to_string()))?;
+        if found.removed {
+            return Err(ArtifactError::Invalid(
+                "the file is gone in this version".into(),
+            ));
+        }
         let object = found
             .object
             .as_ref()

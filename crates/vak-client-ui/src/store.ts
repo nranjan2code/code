@@ -726,6 +726,12 @@ export const [inboxOpen, setInboxOpen] = createSignal(false);
 export const [libraryOpen, setLibraryOpen] = createSignal(false);
 /** The artifact the Library opens on, when something asked for one. */
 export const [libraryFocus, setLibraryFocus] = createSignal<string | null>(null);
+/** Opens the Library on one artifact: "Open in Library" from a chat card,
+ *  the Canvas or the Workbench. */
+export function openInLibrary(artifactId: string): void {
+  setLibraryFocus(artifactId);
+  setLibraryOpen(true);
+}
 export const [inboxUnread, setInboxUnread] = createSignal(0);
 // Feed pipeline modal.
 // Settings page to land on when the next open happens (budget banner link).

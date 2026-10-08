@@ -1123,38 +1123,6 @@ fn router_with_state(state: AppState) -> Router {
             "/sessions/{id}/sandbox/candidates",
             post(export_sandbox_candidate),
         )
-        .route(
-            "/sessions/{id}/sandbox/candidates/{candidate_id}/files",
-            get(read_sandbox_candidate_file),
-        )
-        .route(
-            "/sessions/{id}/sandbox/candidates/{candidate_id}/files/raw",
-            get(read_sandbox_candidate_file_raw),
-        )
-        .route(
-            "/sessions/{id}/sandbox/candidates/{candidate_id}/office-review",
-            get(read_sandbox_candidate_office_review),
-        )
-        .route(
-            "/sessions/{id}/sandbox/candidates/{candidate_id}/office-narrow",
-            post(narrow_sandbox_candidate_office),
-        )
-        .route(
-            "/sessions/{id}/sandbox/candidates/{candidate_id}/office",
-            get(read_sandbox_candidate_office_projection),
-        )
-        .route(
-            "/sessions/{id}/sandbox/promote",
-            post(promote_sandbox_candidate),
-        )
-        .route(
-            "/sessions/{id}/sandbox/promotions/{candidate_id}/undo",
-            post(undo_sandbox_promotion),
-        )
-        .route(
-            "/sessions/{id}/sandbox/promotions/{candidate_id}/checks",
-            post(run_sandbox_workspace_check),
-        )
         .route("/sessions/{id}/presentation", get(presentation_snapshot))
         .route("/sessions/{id}/results/{result_id}", get(session_result))
         .route(
@@ -3743,10 +3711,16 @@ fn participant_read_route_allowed(
     let can = |capability: &str| principal.capabilities.iter().any(|held| held == capability);
     // The thread of a version reviewed in the guest's conversation; the
     // handler checks that it is (`library::discusser`).
-    if let ["library", _, "versions", _, "comments"] = segments.as_slice() {
+    if let ["library", _, "versions", _, part] = segments.as_slice() {
         return can("read")
-            && (method == axum::http::Method::GET
-                || (method == axum::http::Method::POST && can("comment")));
+            && match *part {
+                "comments" => {
+                    method == axum::http::Method::GET
+                        || (method == axum::http::Method::POST && can("comment"))
+                }
+                "text" | "raw" | "document" | "review" => method == axum::http::Method::GET,
+                _ => false,
+            };
     }
     let ["sessions", conversation_id, rest @ ..] = segments.as_slice() else {
         return false;
@@ -3797,10 +3771,6 @@ fn participant_read_route_allowed(
             | ["presentation"]
             | ["results", _]
             | ["sandbox", "records"]
-            | ["sandbox", "candidates", _, "files"]
-            | ["sandbox", "candidates", _, "files", "raw"]
-            | ["sandbox", "candidates", _, "office-review"]
-            | ["sandbox", "candidates", _, "office"]
             | ["coworking", "me"]
             | ["coworking", "presence"]
             | ["coworking", "approvals"]
@@ -13217,49 +13187,6 @@ async fn narrow_sandbox_candidate_office(
     }
 }
 
-async fn read_sandbox_candidate_file(
-    State(state): State<AppState>,
-    Path((session_id, candidate_id)): Path<(String, String)>,
-    axum::extract::Query(q): axum::extract::Query<FileQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let bytes =
-        match sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &q.path).await {
-            Ok(bytes) => bytes,
-            Err(status) => return status.into_response(),
-        };
-    let size = bytes.len();
-    let content = String::from_utf8(bytes).ok();
-    Json(serde_json::json!({ "path": q.path, "kind": if content.is_some() { "text" } else { "binary" }, "bytes": size, "content": content, "editable": false })).into_response()
-}
-
-async fn read_sandbox_candidate_file_raw(
-    State(state): State<AppState>,
-    Path((session_id, candidate_id)): Path<(String, String)>,
-    axum::extract::Query(q): axum::extract::Query<FileQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let bytes =
-        match sandbox_candidate_file_bytes(&state, &session_id, &candidate_id, &q.path).await {
-            Ok(bytes) => bytes,
-            Err(status) => return status.into_response(),
-        };
-    let headers = [
-        (
-            axum::http::header::CONTENT_TYPE,
-            raw_mime_for(std::path::Path::new(&q.path)),
-        ),
-        (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        (axum::http::header::CACHE_CONTROL, "no-store"),
-        (axum::http::header::CONTENT_DISPOSITION, "attachment"),
-        (
-            axum::http::header::CONTENT_SECURITY_POLICY,
-            "sandbox; default-src 'none'",
-        ),
-    ];
-    (headers, bytes).into_response()
-}
-
 fn append_candidate_revision_activity(
     handle: &Arc<SessionHandle>,
     revision_id: &str,
@@ -21591,12 +21518,7 @@ mod sandbox_promotion_tests {
                 artifact
                     .versions
                     .iter()
-                    .find(|version| {
-                        version
-                            .proposed
-                            .as_ref()
-                            .is_some_and(|proposal| proposal.candidate == candidate)
-                    })
+                    .find(|version| version.proposed_by(candidate))
                     .map(|version| (artifact.id.to_string(), version.id.to_string()))
             })
             .expect("the candidate proposes a version of the file")
@@ -22873,10 +22795,10 @@ mod sandbox_promotion_tests {
         assert_eq!(proposed.parent, Some(earlier));
         assert_eq!(
             proposed.proposed,
-            Some(vak_core::artifacts::Proposal {
+            vec![vak_core::artifacts::Proposal {
                 session: "session-1".into(),
                 candidate: candidate_id.clone(),
-            })
+            }]
         );
         let at = |version: vak_session::ids::VersionId| Path((id.to_string(), version.to_string()));
         let json = |response: axum::response::Response| async {
@@ -22900,21 +22822,33 @@ mod sandbox_promotion_tests {
                 "path": "result.json",
                 "candidate": candidate_id,
                 "promoted": false,
+                "removed": false,
             }])
         );
 
-        let text = json(library::version_text(State(state.clone()), at(proposed.id)).await).await;
+        let text = json(
+            library::version_text(
+                State(state.clone()),
+                at(proposed.id),
+                axum::Extension(AuthenticatedPrincipal::Operator),
+            )
+            .await,
+        )
+        .await;
         assert_eq!(text["content"], r#"{"ready":true}"#);
 
-        let unknown =
-            library::version_accept(State(state.clone()), at(vak_session::ids::VersionId::new()))
-                .await;
+        let unknown = library::version_accept(
+            State(state.clone()),
+            at(vak_session::ids::VersionId::new()),
+            None,
+        )
+        .await;
         assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
-        let not_in_review = library::version_accept(State(state.clone()), at(earlier)).await;
+        let not_in_review = library::version_accept(State(state.clone()), at(earlier), None).await;
         assert_eq!(not_in_review.status(), StatusCode::CONFLICT);
         assert!(!dir.path().join("result.json").exists());
 
-        let accepted = library::version_accept(State(state.clone()), at(proposed.id)).await;
+        let accepted = library::version_accept(State(state.clone()), at(proposed.id), None).await;
         assert_eq!(accepted.status(), StatusCode::OK);
         assert_eq!(
             tokio::fs::read_to_string(dir.path().join("result.json"))
@@ -22930,9 +22864,104 @@ mod sandbox_promotion_tests {
         assert!(!artifacts.get(&id.to_string()).unwrap().versions[1].promoted);
 
         vak_core::trash::set(&state.core.shared_scope(), &["session-1".to_string()], true).unwrap();
-        let trashed = library::version_accept(State(state.clone()), at(proposed.id)).await;
+        let trashed = library::version_accept(State(state.clone()), at(proposed.id), None).await;
         assert_eq!(trashed.status(), StatusCode::NOT_FOUND);
         assert!(!dir.path().join("result.json").exists());
+    }
+
+    /// Plan M8.4c-c: a draft of several files is accepted once, by one of
+    /// its versions with the others; a version of another draft is refused.
+    #[tokio::test]
+    async fn a_draft_of_several_files_is_accepted_in_one_promotion() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core);
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("a.txt"), "first")
+            .await
+            .unwrap();
+        tokio::fs::write(scratch.join("b.txt"), "second")
+            .await
+            .unwrap();
+        let candidate = export_candidate(&state).await;
+        let id = &candidate.candidate.candidate_id;
+        let (a_artifact, a_version) = proposed_version(&state, id, "a.txt");
+        let (b_artifact, b_version) = proposed_version(&state, id, "b.txt");
+
+        let stray = state.core.artifacts();
+        let other = stray
+            .declare(
+                &vak_session::trace::local::space(state.core.cwd()).to_string(),
+                "vak",
+                "c.txt",
+                vak_core::artifacts::ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let unproposed = stray
+            .version(
+                other,
+                vak_core::artifacts::NewVersion {
+                    parent: None,
+                    bytes: b"third",
+                    source: vak_core::artifacts::VersionSource::Person,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+        let refused = library::version_accept(
+            State(state.clone()),
+            Path((a_artifact.clone(), a_version.clone())),
+            Some(Json(library::Accept {
+                also: vec![library::VersionRef {
+                    artifact: other.to_string(),
+                    version: unproposed.to_string(),
+                }],
+            })),
+        )
+        .await;
+        assert_eq!(refused.status(), StatusCode::CONFLICT);
+        assert!(!dir.path().join("a.txt").exists());
+
+        let accepted = library::version_accept(
+            State(state.clone()),
+            Path((a_artifact, a_version)),
+            Some(Json(library::Accept {
+                also: vec![library::VersionRef {
+                    artifact: b_artifact.clone(),
+                    version: b_version.clone(),
+                }],
+            })),
+        )
+        .await;
+        assert_eq!(accepted.status(), StatusCode::OK);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "first"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+            "second"
+        );
+        let promoted = |artifact: &str| {
+            state
+                .core
+                .artifacts()
+                .get(artifact)
+                .unwrap()
+                .versions
+                .iter()
+                .all(|version| version.promoted)
+        };
+        assert!(promoted(&b_artifact));
     }
 
     #[tokio::test]
@@ -23073,15 +23102,11 @@ mod sandbox_promotion_tests {
         tokio::fs::write(scratch.join("result.txt"), "changed")
             .await
             .unwrap();
-        let preview = read_sandbox_candidate_file(
-            State(state.clone()),
-            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
-            axum::extract::Query(FileQuery {
-                session: None,
-                path: "result.txt".into(),
-            }),
-        )
-        .await;
+        let (artifact_id, version_id) =
+            proposed_version(&state, &candidate.candidate.candidate_id, "result.txt");
+        let at = || Path((artifact_id.clone(), version_id.clone()));
+        let owner = || axum::Extension(AuthenticatedPrincipal::Operator);
+        let preview = library::version_text(State(state.clone()), at(), owner()).await;
         assert_eq!(preview.status(), StatusCode::OK);
         let preview: serde_json::Value = serde_json::from_slice(
             &axum::body::to_bytes(preview.into_body(), 64 * 1024)
@@ -23090,15 +23115,7 @@ mod sandbox_promotion_tests {
         )
         .unwrap();
         assert_eq!(preview["content"], "reviewed");
-        let raw = read_sandbox_candidate_file_raw(
-            State(state.clone()),
-            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
-            axum::extract::Query(FileQuery {
-                session: None,
-                path: "result.txt".into(),
-            }),
-        )
-        .await;
+        let raw = library::version_raw(State(state.clone()), at(), owner()).await;
         assert_eq!(raw.status(), StatusCode::OK);
         assert_eq!(
             axum::body::to_bytes(raw.into_body(), 64 * 1024)
@@ -23107,19 +23124,16 @@ mod sandbox_promotion_tests {
                 .as_ref(),
             b"reviewed"
         );
-        let wrong_session = read_sandbox_candidate_file(
+        // A guest of another conversation reads nothing of it.
+        let stranger = library::version_text(
             State(state.clone()),
-            Path((
-                "another-session".into(),
-                candidate.candidate.candidate_id.clone(),
-            )),
-            axum::extract::Query(FileQuery {
-                session: None,
-                path: "result.txt".into(),
-            }),
+            at(),
+            axum::Extension(AuthenticatedPrincipal::Participant(participant_of(
+                "another-session",
+            ))),
         )
         .await;
-        assert_eq!(wrong_session.status(), StatusCode::NOT_FOUND);
+        assert_eq!(stranger.status(), StatusCode::FORBIDDEN);
         let saved_file = candidate.candidate.source_root.join("result.txt");
         let mut permissions = std::fs::metadata(&saved_file).unwrap().permissions();
         #[cfg(unix)]
@@ -23131,19 +23145,21 @@ mod sandbox_promotion_tests {
         permissions.set_readonly(false);
         std::fs::set_permissions(&saved_file, permissions).unwrap();
         tokio::fs::write(&saved_file, "tampered").await.unwrap();
-        let tampered = read_sandbox_candidate_file(
-            State(state.clone()),
-            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
-            axum::extract::Query(FileQuery {
-                session: None,
-                path: "result.txt".into(),
-            }),
+        // The saved file was changed behind the record: a version reads
+        // its own kept bytes, and Review refuses the changed draft.
+        let kept = library::version_text(State(state.clone()), at(), owner()).await;
+        let kept: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(kept.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
         )
-        .await;
-        assert_eq!(tampered.status(), StatusCode::CONFLICT);
+        .unwrap();
+        assert_eq!(kept["content"], "reviewed");
+        let tampered = library::version_accept(State(state.clone()), at(), None).await;
+        assert_ne!(tampered.status(), StatusCode::OK);
+        assert!(!dir.path().join("result.txt").exists());
         tokio::fs::write(&saved_file, "reviewed").await.unwrap();
-        let (artifact_id, version_id) =
-            proposed_version(&state, &candidate.candidate.candidate_id, "result.txt");
+
         let comment = |version: String, draft: library::NewComment| {
             library::add_comment(
                 State(state.clone()),
@@ -23438,12 +23454,11 @@ mod sandbox_promotion_tests {
         let revised = tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let artifact = core.artifacts().get(&artifact_id).unwrap();
-                if let Some(version) = artifact.versions.iter().find(|version| {
-                    version
-                        .proposed
-                        .as_ref()
-                        .is_some_and(|proposal| proposal.candidate == newer.candidate.candidate_id)
-                }) {
+                if let Some(version) = artifact
+                    .versions
+                    .iter()
+                    .find(|version| version.proposed_by(&newer.candidate.candidate_id))
+                {
                     break version.clone();
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -23987,6 +24002,14 @@ mod sandbox_promotion_tests {
         assert!(port_is_available(port));
     }
 
+    fn participant_of(conversation: &str) -> coworking::VerifiedPrincipal {
+        coworking::VerifiedPrincipal {
+            conversation_id: conversation.into(),
+            audience_id: format!("conversation:{conversation}"),
+            ..participant(&["read", "comment"])
+        }
+    }
+
     fn participant(capabilities: &[&str]) -> coworking::VerifiedPrincipal {
         coworking::VerifiedPrincipal {
             grant_id: "grant-1".into(),
@@ -24027,10 +24050,10 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/presentation",
             "/sessions/session-1/results/result-1",
             "/sessions/session-1/sandbox/records",
-            "/sessions/session-1/sandbox/candidates/candidate-1/files",
-            "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
-            "/sessions/session-1/sandbox/candidates/candidate-1/office-review",
-            "/sessions/session-1/sandbox/candidates/candidate-1/office",
+            "/library/art-1/versions/ver-1/text",
+            "/library/art-1/versions/ver-1/raw",
+            "/library/art-1/versions/ver-1/document",
+            "/library/art-1/versions/ver-1/review",
             "/library/art-1/versions/ver-1/comments",
             "/sessions/session-1/coworking/updates",
             "/sessions/session-1/coworking/presence",
@@ -24049,6 +24072,9 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/executions",
             "/sessions/session-1/sandbox/promote",
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
+            "/sessions/session-1/sandbox/candidates/candidate-1/files",
+            "/sessions/session-1/sandbox/candidates/candidate-1/office",
+            "/library/art-1/versions/ver-1/save",
             "/library",
             "/library/art-1",
             "/library/art-1/versions/ver-1",

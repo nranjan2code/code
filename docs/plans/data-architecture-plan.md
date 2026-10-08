@@ -1732,6 +1732,33 @@ nothing writes or reads it. Tests `one_comment_thread_per_version`, and
 `human_feedback_produces_new_candidate_without_workspace_write` for the
 revision's parent.
 
+M8.4c-c (2026-10-08): the client reads and decides a draft only by
+artifact version. `GET /library/{id}/versions/{version}/raw` gives a
+viewer the bytes (never recorded as a download), and `text`, `raw`,
+`document` and `review` also answer a guest of the conversation the
+version is reviewed in. `accept` takes `also`, the other versions the
+same draft proposes, because a draft is promoted once. A draft that
+deletes a file proposes a version in which the file is gone (a `Removed`
+row; it has no bytes), so a deletion is reviewed and accepted like any
+other version. A version keeps every draft that proposes it, so a draft
+put up for Review again with the same bytes keeps its address. The
+session's candidate file routes are deleted (`files`, `files/raw`,
+`office`, `office-review`, `office-narrow`, `promote`, and a promotion's
+`undo` and `checks`); making a draft from a run's files
+(`POST /sessions/{id}/sandbox/candidates`) stays. In the client, the
+Canvas, the chat cards, Review in the Workbench and the shared
+conversation find a draft file's version from the sandbox records
+(`api.versionOf`) and call only `/library`; chat cards, the Canvas and
+Review have Open in Library, and Review has the Library's star. The
+Canvas still names a draft by the draft that proposes it: its subject
+keeps that identity, and what it reads is the version. Tests
+`a_draft_of_several_files_is_accepted_in_one_promotion`,
+`a_removed_file_is_a_version_with_no_bytes`, and
+`promotion_uses_frozen_candidate_after_scratch_changes` on the version
+routes. Live on `gpt-6-luna`: a three-paragraph Word draft was reviewed,
+starred, narrowed to version 2, accepted into the folder and undone by
+version, and the old routes answer 404.
+
 Investigating the live failures of M8.3b and M8.4b found faults in
 Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):
 - `emit_table_card` refused a correct flat `{columns, rows}` table

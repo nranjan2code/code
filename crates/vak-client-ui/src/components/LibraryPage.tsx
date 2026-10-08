@@ -310,7 +310,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
                       <strong>Version {number}</strong>
                       <span>{maker(v)} · {relAgo(v.at)}</span>
                       <Show when={siblings().has(v.id) && siblings().size > 1}><span class="badge">Side by side</span></Show>
-                      <Show when={v.promoted}><span class="badge">Accepted</span></Show>
+                      <Show when={v.promoted}><span class="badge">Accepted</span></Show><Show when={v.removed}><span class="badge">File removed</span></Show>
                       <Show when={v.saved}><span class="badge">Kept</span></Show>
                     </button>
                     <Show when={!v.saved}>

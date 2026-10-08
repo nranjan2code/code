@@ -11,10 +11,7 @@ export interface ArtifactPreviewReader {
 export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | null {
   switch (subject.kind) {
     case "draft_file":
-      return {
-        readFile: (path) => api.readSandboxCandidateFile(subject.sessionId, subject.candidateId, path),
-        readFileRaw: (path) => api.readSandboxCandidateFileRaw(subject.sessionId, subject.candidateId, path),
-      };
+      return api.draftReader(subject.sessionId, subject.candidateId);
     case "execution_artifact":
       return {
         readFile: (path) => api.readExecutionArtifact(subject.sessionId, subject.executionId, path),

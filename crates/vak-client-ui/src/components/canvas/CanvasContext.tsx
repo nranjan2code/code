@@ -1,6 +1,6 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import * as api from "../../api";
-import { activeId, canvasConversation, canvasMode, closeCanvasEntry, openArtifactCanvas, technicalDetails, updateCanvasEntry } from "../../store";
+import { activeId, canvasConversation, canvasMode, closeCanvasEntry, openArtifactCanvas, openInLibrary, technicalDetails, updateCanvasEntry } from "../../store";
 import { sendPrompt } from "../../App";
 import { fileSubject, subjectPath, subjectSessionId } from "../../canvasSubject";
 import type { CanvasEntry, ContextPanel } from "../../canvasStack";
@@ -75,8 +75,7 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
     try {
       const version = draft();
       if (version) {
-        const at = props.thread.binding() ?? (await api.draftThread(sessionId, version.candidateId, version.path)).binding;
-        if (!at) throw new Error("this draft has no version to comment on yet");
+        const at = props.thread.binding() ?? await api.versionOf(sessionId, version.candidateId, version.path);
         const saved = await api.commentOnVersion(at.artifact, at.version, note, place);
         commentSaved = true;
         updateCanvasEntry({ draft: "" }, tab, conversation);
@@ -124,6 +123,10 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
           }</For>
         </div>
       </Show>
+
+      <Show when={props.thread.binding()}>{(at) =>
+        <button type="button" class="btn sm artifact-canvas-library" onClick={() => openInLibrary(at().artifact)}>Open in Library</button>
+      }</Show>
 
       <Show when={props.entry.panel === "discussion" || tabs().length === 1}>
         <div class="artifact-canvas-feedback-intro">

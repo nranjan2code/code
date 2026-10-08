@@ -46,7 +46,7 @@ export function createDraftThread(draft: () => DraftSubject | undefined) {
       if (!alive()) return;
       setRecords(listed.records);
       loaded = true;
-      const found = api.proposedVersion(listed.artifacts ?? [], subject.candidateId, subject.path);
+      const found = api.knownVersion(subject.sessionId, subject.candidateId, subject.path);
       setBinding(found);
       if (found) {
         const thread = await api.versionComments(found.artifact, found.version);

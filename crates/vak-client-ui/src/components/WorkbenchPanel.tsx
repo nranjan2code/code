@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Index, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Index, Show, onCleanup } from "solid-js";
 import {
   workbenchExecutions,
   workbenchLoadError,
@@ -16,6 +16,7 @@ import {
   candidateReviewRequest,
   setCandidateReviewRequest,
   technicalDetails,
+  openInLibrary,
 } from "../store";
 import * as api from "../api";
 import { watchCoworking } from "../streamHub";
@@ -180,10 +181,7 @@ export default function WorkbenchPanel() {
     if (!version || !path || content === null || !/\.html?$/i.test(path)) return;
     let current = true;
     onCleanup(() => { current = false; });
-    void artifactPreviewHtml(path, content, {
-      readFile: (file) => api.readSandboxCandidateFile(version.session_id, version.candidate.candidate_id, file),
-      readFileRaw: (file) => api.readSandboxCandidateFileRaw(version.session_id, version.candidate.candidate_id, file),
-    })
+    void artifactPreviewHtml(path, content, api.draftReader(version.session_id, version.candidate.candidate_id))
       .catch(() => sandboxedSrcdoc(content))
       .then((page) => { if (current) setDraftPage(page); });
   });
@@ -227,10 +225,27 @@ export default function WorkbenchPanel() {
   const [reviewedVersion, setReviewedVersion] = createSignal<api.VersionBinding | null>(null);
   const loadThread = async (sessionId: string, candidateId: string, path: string | null | undefined) => {
     if (!path) return;
-    const thread = await api.draftThread(sessionId, candidateId, path);
+    const at = await api.versionOf(sessionId, candidateId, path);
+    const thread = await api.versionComments(at.artifact, at.version);
     if (candidate()?.candidate.candidate_id !== candidateId || reviewedPath() !== path) return;
-    setReviewedVersion(thread.binding);
+    setReviewedVersion(at);
     setCandidateComments(thread.comments);
+  };
+  // The Library's star on the artifact under review (doc 74 C8).
+  const [reviewedStar, { mutate: setReviewedStar }] = createResource(
+    () => reviewedVersion()?.artifact,
+    (artifact) => api.libraryArtifact(artifact).then((found) => found.starred).catch(() => undefined),
+  );
+  const toggleReviewedStar = async () => {
+    const at = reviewedVersion();
+    const on = !reviewedStar();
+    if (!at) return;
+    try {
+      await api.libraryChange(at.artifact, "star", { on });
+      setReviewedStar(on);
+    } catch (error) {
+      setReviewCommentMessage(`Could not change the star: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
   const [controlError, setControlError] = createSignal<string | null>(null);
   const [pulse, setPulse] = createSignal(0);
@@ -623,7 +638,8 @@ export default function WorkbenchPanel() {
     setOfficeNarrowError(null);
     const reviewedFile = prepared.candidate.files.find((file) => file.path === path);
     if (isDocumentPath(path) && reviewedFile?.operation !== "Delete") {
-      void api.readSandboxCandidateOfficeReview(prepared.session_id, prepared.candidate.candidate_id, path)
+      void api.versionOf(prepared.session_id, prepared.candidate.candidate_id, path)
+        .then((at) => api.readVersionReview(at))
         .then((review) => {
           if (disposed) return;
           setOfficeReview(review);
@@ -637,7 +653,7 @@ export default function WorkbenchPanel() {
     }
     const afterRequest = reviewedFile?.operation === "Delete"
       ? Promise.resolve({ content: null })
-      : api.readSandboxCandidateFile(prepared.session_id, prepared.candidate.candidate_id, path);
+      : api.versionOf(prepared.session_id, prepared.candidate.candidate_id, path).then((at) => api.readVersionFile(at));
     void Promise.allSettled([
       api.readFile(candidatePath(prepared.candidate.destination_root, path), prepared.session_id),
       afterRequest,
@@ -666,7 +682,7 @@ export default function WorkbenchPanel() {
     setOfficeNarrowBusy(true);
     setOfficeNarrowError(null);
     try {
-      const version = await api.narrowSandboxCandidateOffice(prepared.session_id, prepared.candidate.candidate_id, path, keep);
+      const version = await api.narrowVersion(await api.versionOf(prepared.session_id, prepared.candidate.candidate_id, path), keep);
       setPendingCandidates((current) => [...current, version]);
       selectCandidate(version);
       setReviewedPath(path);
@@ -698,7 +714,7 @@ export default function WorkbenchPanel() {
     setReviewCommentMessage(null);
     try {
       const path = reviewedPath();
-      const at = reviewedVersion() ?? (path ? (await api.draftThread(id, prepared.candidate.candidate_id, path)).binding : null);
+      const at = reviewedVersion() ?? (path ? await api.versionOf(id, prepared.candidate.candidate_id, path) : null);
       if (!at) throw new Error("this draft has no version to comment on yet");
       await api.commentOnVersion(at.artifact, at.version, comment, { anchor: commentAnchor() ?? undefined });
       setReviewComment("");
@@ -736,7 +752,9 @@ export default function WorkbenchPanel() {
     if (!value || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || reviewFileError() || officeExcluded().size > 0) return;
     setCandidateBusy(true);
     try {
-      const receipt = await api.promoteSandboxCandidate(value.session_id, value.candidate.candidate_id, reviewedFiles());
+      // One promotion for the draft: the first chosen file's version, with the others.
+      const chosen = await Promise.all(reviewedFiles().map((path) => api.versionOf(value.session_id, value.candidate.candidate_id, path)));
+      const receipt = await api.acceptVersion(chosen[0], chosen.slice(1));
       setPromotionMessage(null);
       recordAppended(value.session_id, { kind: "Promotion", record: receipt });
       setReviewOpen(false);
@@ -749,12 +767,19 @@ export default function WorkbenchPanel() {
     }
   };
 
+  /** A version an accepted draft put in the folder: what Undo and its checks are addressed by. */
+  const acceptedVersion = (sessionId: string, applied: api.SandboxPromotionRecord) => {
+    const path = applied.receipt.applied?.[0] ?? applied.receipt.deleted?.[0];
+    if (!path) throw new Error("this acceptance changed no file");
+    return api.versionOf(sessionId, applied.candidate_id, path);
+  };
+
   const undoPromotion = async (applied: api.SandboxPromotionRecord) => {
     const id = activeId();
     if (!id || undoBusy()) return;
     setUndoBusy(true);
     try {
-      const undone = await api.undoSandboxPromotion(id, applied.candidate_id);
+      const undone = await api.undoVersion(await acceptedVersion(id, applied));
       setPromotionMessage(`Restored ${undone.receipt.restored.length} file(s) to their pre-acceptance state.`);
       recordAppended(id, { kind: "PromotionUndo", record: undone });
     } catch (error) {
@@ -769,7 +794,7 @@ export default function WorkbenchPanel() {
     if (!id || workspaceCheckBusy()) return;
     setWorkspaceCheckBusy(check.id);
     try {
-      const receipt = await api.runSandboxWorkspaceCheck(id, applied.candidate_id, check.id);
+      const receipt = await api.checkVersion(await acceptedVersion(id, applied), check.id);
       recordAppended(id, { kind: "WorkspaceCheck", record: receipt });
       setPromotionMessage(`${check.label} ${receipt.status}.`);
     } catch (error) {
@@ -800,6 +825,10 @@ export default function WorkbenchPanel() {
                 <div class="candidate-review-section-head">
                   <h3>{reviewedPath()?.split("/").pop() ?? "Choose a file"}</h3>
                   <button type="button" class="btn sm" aria-pressed={reviewFocus()} onClick={() => setReviewFocus((focused) => !focused)}>{reviewFocus() ? "Show full review" : "Focus on this file"}</button>
+                  <Show when={reviewedVersion()}>{(at) => <>
+                    <button type="button" class="btn sm" onClick={() => openInLibrary(at().artifact)}>Open in Library</button>
+                    <button type="button" class="btn sm" aria-pressed={reviewedStar() ?? false} disabled={reviewedStar() === undefined} title="A starred draft is kept" onClick={() => void toggleReviewedStar()}>{reviewedStar() ? "Starred" : "Star"}</button>
+                  </>}</Show>
                   <Show when={reviewedPath()}>{(path) =>
                     <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
                       const version = prepared();

@@ -37,11 +37,7 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
                 continue;
             }
             for version in &artifact.versions {
-                if version
-                    .proposed
-                    .as_ref()
-                    .is_some_and(|proposal| proposal.candidate == candidate)
-                {
+                if version.proposed_by(candidate) {
                     found.push((artifact.id, version.id, version.promoted));
                 }
             }
@@ -53,12 +49,15 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
             let manifest = &candidate.candidate;
             let space = vak_session::trace::local::space(&manifest.destination_root).to_string();
             for file in &manifest.files {
-                if file.operation == vak_sandbox::CandidateOperation::Delete {
-                    continue;
-                }
                 let id = vak_core::artifacts::artifact_id(&space, &file.path);
-                let Ok(bytes) = std::fs::read(manifest.source_root.join(&file.path)) else {
-                    continue;
+                let deletes = file.operation == vak_sandbox::CandidateOperation::Delete;
+                let bytes = if deletes {
+                    Vec::new()
+                } else {
+                    match std::fs::read(manifest.source_root.join(&file.path)) {
+                        Ok(bytes) => bytes,
+                        Err(_) => continue,
+                    }
                 };
                 // Putting a file up for Review declares it: a person is
                 // asked to decide it, and its thread and versions need an
@@ -90,27 +89,36 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
                         .versions
                         .iter()
                         .rev()
-                        .find(|version| {
-                            version
-                                .proposed
-                                .as_ref()
-                                .is_some_and(|proposal| proposal.candidate == *parent)
-                        })
+                        .find(|version| version.proposed_by(parent))
                         .map(|version| version.id)
                 });
-                let version = match artifacts.version(
-                    id,
-                    NewVersion {
+                let source = VersionSource::Candidate {
+                    session: candidate.session_id.clone(),
+                    candidate: manifest.candidate_id.clone(),
+                };
+                // A draft that deletes the file proposes a version in which
+                // it is gone.
+                let made = if deletes {
+                    artifacts.removal(
+                        id,
                         parent,
-                        bytes: &bytes,
-                        source: VersionSource::Candidate {
-                            session: candidate.session_id.clone(),
-                            candidate: manifest.candidate_id.clone(),
+                        source,
+                        candidate.trace.as_ref(),
+                        candidate.actor,
+                    )
+                } else {
+                    artifacts.version(
+                        id,
+                        NewVersion {
+                            parent,
+                            bytes: &bytes,
+                            source,
                         },
-                    },
-                    candidate.trace.as_ref(),
-                    candidate.actor,
-                ) {
+                        candidate.trace.as_ref(),
+                        candidate.actor,
+                    )
+                };
+                let version = match made {
                     Ok(version) => version,
                     Err(error) => {
                         warn(error);
@@ -171,21 +179,28 @@ pub(crate) fn bindings(state: &AppState, session: &str) -> Vec<serde_json::Value
     let mut found = Vec::new();
     for artifact in state.core.artifacts().list() {
         for version in &artifact.versions {
-            let candidate = version
-                .proposed
-                .as_ref()
-                .filter(|proposal| proposal.session == session)
-                .map(|proposal| proposal.candidate.clone());
-            let declared_here = matches!(&version.source,
-                VersionSource::Call { session: from, .. } if from == session);
-            if candidate.is_some() || declared_here {
-                found.push(serde_json::json!({
+            let entry = |candidate: Option<&str>| {
+                serde_json::json!({
                     "artifact": artifact.id,
                     "version": version.id,
                     "path": artifact.path,
                     "candidate": candidate,
                     "promoted": version.promoted,
-                }));
+                    "removed": version.removed,
+                })
+            };
+            let here: Vec<_> = version
+                .proposed
+                .iter()
+                .filter(|proposal| proposal.session == session)
+                .collect();
+            let declared_here = matches!(&version.source,
+                VersionSource::Call { session: from, .. } if from == session);
+            if here.is_empty() && declared_here {
+                found.push(entry(None));
+            }
+            for proposal in here {
+                found.push(entry(Some(&proposal.candidate)));
             }
         }
     }
@@ -216,7 +231,7 @@ fn in_review(state: &AppState, id: &str, version: &str) -> Result<InReview, Box<
         .iter()
         .find(|known| known.id == version)
         .ok_or_else(missing)?;
-    let Some(proposal) = &found.proposed else {
+    let Some(proposal) = found.proposal() else {
         return Err(Box::new(refuse(
             StatusCode::CONFLICT,
             "this version is not waiting for review",
@@ -245,24 +260,41 @@ fn in_review(state: &AppState, id: &str, version: &str) -> Result<InReview, Box<
     })
 }
 
+/// Refuses a read of a version by anyone but the owner or a guest of the
+/// conversation it is reviewed in, and gives back its bytes and path.
+async fn readable(
+    state: &AppState,
+    principal: &crate::AuthenticatedPrincipal,
+    id: String,
+    version: &str,
+) -> Result<(String, Vec<u8>), StatusCode> {
+    let artifact = state
+        .core
+        .artifacts()
+        .get(&id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let found = version_of(&artifact, version)
+        .cloned()
+        .ok_or(StatusCode::NOT_FOUND)?;
+    discusser(state, principal, &found)?;
+    let artifacts = state.core.artifacts();
+    let path = artifact.path.clone();
+    tokio::task::spawn_blocking(move || artifacts.bytes(&artifact, &found.id))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map(|bytes| (path, bytes))
+        .map_err(|_| StatusCode::NOT_FOUND)
+}
+
 /// `GET /library/{id}/versions/{version}/text`: a version as text, or its
 /// size when it is not text. Never a download, and never recorded as one.
 pub(crate) async fn version_text(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
 ) -> Response {
-    let Ok(version) = vak_session::ids::VersionId::parse(&version) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let artifacts = state.core.artifacts();
-    let read = tokio::task::spawn_blocking(move || {
-        let artifact = artifacts.get(&id)?;
-        let bytes = artifacts.bytes(&artifact, &version).ok()?;
-        Some((artifact.path, bytes))
-    })
-    .await;
-    match read {
-        Ok(Some((path, bytes))) => {
+    match readable(&state, &principal, id, &version).await {
+        Ok((path, bytes)) => {
             let size = bytes.len();
             let content = String::from_utf8(bytes).ok();
             Json(serde_json::json!({
@@ -274,9 +306,53 @@ pub(crate) async fn version_text(
             }))
             .into_response()
         }
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(status) => status.into_response(),
     }
+}
+
+/// `GET /library/{id}/versions/{version}/raw`: a version's bytes for a
+/// viewer, with its media type and no script allowed to run from it. Not a
+/// download, and never recorded as one.
+pub(crate) async fn version_raw(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+) -> Response {
+    match readable(&state, &principal, id, &version).await {
+        Ok((path, bytes)) => (
+            [
+                (
+                    header::CONTENT_TYPE,
+                    crate::raw_mime_for(std::path::Path::new(&path)),
+                ),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+                (header::CACHE_CONTROL, "no-store"),
+                (header::CONTENT_DISPOSITION, "attachment"),
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    "sandbox; default-src 'none'",
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(status) => status.into_response(),
+    }
+}
+
+/// Refuses a Review read by a guest of another conversation.
+fn may_review(
+    state: &AppState,
+    principal: &crate::AuthenticatedPrincipal,
+    id: &str,
+    version: &str,
+) -> Result<(), Box<Response>> {
+    let missing = || Box::new(refuse(StatusCode::NOT_FOUND, "no such version"));
+    let artifact = state.core.artifacts().get(id).ok_or_else(missing)?;
+    let found = version_of(&artifact, version).ok_or_else(missing)?;
+    discusser(state, principal, found)
+        .map(|_| ())
+        .map_err(|status| Box::new(status.into_response()))
 }
 
 /// `GET /library/{id}/versions/{version}/document`: the Office or PDF
@@ -284,8 +360,12 @@ pub(crate) async fn version_text(
 async fn version_document(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
     axum::extract::Query(mut query): axum::extract::Query<crate::OfficeProjectionQuery>,
 ) -> Response {
+    if let Err(response) = may_review(&state, &principal, &id, &version) {
+        return *response;
+    }
     let review = match in_review(&state, &id, &version) {
         Ok(review) => review,
         Err(response) => return *response,
@@ -304,7 +384,11 @@ async fn version_document(
 pub(crate) async fn version_review(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
 ) -> Response {
+    if let Err(response) = may_review(&state, &principal, &id, &version) {
+        return *response;
+    }
     let review = match in_review(&state, &id, &version) {
         Ok(review) => review,
         Err(response) => return *response,
@@ -347,22 +431,55 @@ async fn version_narrow(
     .await
 }
 
+#[derive(Default, serde::Deserialize)]
+pub(crate) struct Accept {
+    /// Other versions the same draft proposes, accepted with this one in
+    /// the one promotion a draft gets.
+    #[serde(default)]
+    pub also: Vec<VersionRef>,
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct VersionRef {
+    pub artifact: String,
+    pub version: String,
+}
+
 /// `POST /library/{id}/versions/{version}/accept`: the version becomes the
-/// file in the workspace, through the one promotion path.
+/// file in the workspace, through the one promotion path. A draft of
+/// several files is accepted once: the others it proposes go in `also`.
 pub(crate) async fn version_accept(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, String)>,
+    body: Option<Json<Accept>>,
 ) -> Response {
     let review = match in_review(&state, &id, &version) {
         Ok(review) => review,
         Err(response) => return *response,
     };
+    let mut files = vec![review.path];
+    for other in body.map(|Json(body)| body.also).unwrap_or_default() {
+        match in_review(&state, &other.artifact, &other.version) {
+            Ok(also) if also.session == review.session && also.candidate == review.candidate => {
+                if !files.contains(&also.path) {
+                    files.push(also.path);
+                }
+            }
+            Ok(_) => {
+                return refuse(
+                    StatusCode::CONFLICT,
+                    "these versions are not proposed by the same draft",
+                );
+            }
+            Err(response) => return *response,
+        }
+    }
     crate::promote_sandbox_candidate(
         State(state),
         Path(review.session),
         Json(crate::SandboxPromotionBody {
             candidate_id: review.candidate,
-            files: vec![review.path],
+            files,
         }),
     )
     .await
@@ -1157,7 +1274,7 @@ fn comment(
         Ok(()) => {
             // People watching the conversation this version is reviewed in
             // see the thread change.
-            if let Some(proposal) = &version.proposed
+            if let Some(proposal) = version.proposal()
                 && let Some(handle) = state.get(&proposal.session)
             {
                 let _ = handle.coworking_comments_tx.send(());
@@ -1185,7 +1302,7 @@ fn discusser(
             Ok((crate::request_actor(state).to_string(), "You".into()))
         }
         crate::AuthenticatedPrincipal::Participant(guest) => {
-            let reviewed_there = version.proposed.as_ref().is_some_and(|proposal| {
+            let reviewed_there = version.proposed.iter().any(|proposal| {
                 proposal.session == guest.conversation_id
                     && crate::conversation_audience(state, &proposal.session).as_deref()
                         == Some(guest.audience_id.as_str())
@@ -1480,6 +1597,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route("/library/{id}/versions/{version}/save", post(save))
         .route("/library/{id}/versions/{version}/text", get(version_text))
+        .route("/library/{id}/versions/{version}/raw", get(version_raw))
         .route(
             "/library/{id}/versions/{version}/document",
             get(version_document),

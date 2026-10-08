@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createResource, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, setLibraryFocus, setLibraryOpen, type Item } from "../store";
+import { activeId, activeAgentId, backend, health, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactCanvas, openArtifactFile, type Item, openInLibrary } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -623,7 +623,7 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
             <div class="msg-user-artifacts" aria-label="From your Library">
               <For each={item.artifacts}>
                 {(artifact) => (
-                  <button type="button" class="msg-user-artifact" onClick={() => { setLibraryFocus(artifact.id); setLibraryOpen(true); }}>
+                  <button type="button" class="msg-user-artifact" onClick={() => openInLibrary(artifact.id)}>
                     <span class="badge">{artifact.mode === "another" ? "Make another like" : "Continue working on"}</span>
                     <span>{artifact.name}</span>
                   </button>

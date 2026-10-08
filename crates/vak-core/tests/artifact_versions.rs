@@ -210,3 +210,59 @@ fn saved_version_survives_origin_erasure() {
         b"the plan"
     );
 }
+
+/// Plan M8.4c-c: a draft that deletes a file proposes a version in which
+/// the file is gone; it has no bytes, and the same deletion again is the
+/// same version.
+#[test]
+fn a_removed_file_is_a_version_with_no_bytes() {
+    let (shared, tenant) = home();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let id = artifacts
+        .declare(
+            "spc_removed",
+            "vak",
+            "old-notes.md",
+            ArtifactKind::File,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let first = artifacts
+        .version(id, by_person(b"kept so far", None), None, None)
+        .unwrap();
+    let from_draft = || VersionSource::Candidate {
+        session: "session-1".into(),
+        candidate: "candidate-1".into(),
+    };
+    let gone = artifacts
+        .removal(id, None, from_draft(), None, None)
+        .unwrap();
+    assert_eq!(
+        artifacts
+            .removal(id, None, from_draft(), None, None)
+            .unwrap(),
+        gone
+    );
+    artifacts
+        .record(
+            id,
+            ArtifactStep::Proposed {
+                version: gone,
+                session: "session-1".into(),
+                candidate: "candidate-1".into(),
+            },
+            None,
+            None,
+        )
+        .unwrap();
+    let artifact = artifacts.get(&id.to_string()).unwrap();
+    assert_eq!(artifact.versions.len(), 2);
+    let head = artifact.head().unwrap();
+    assert!(head.removed && head.proposed_by("candidate-1"));
+    assert_eq!(head.parent, Some(first));
+    assert!(artifacts.bytes(&artifact, &gone).is_err());
+    assert_eq!(artifacts.bytes(&artifact, &first).unwrap(), b"kept so far");
+}

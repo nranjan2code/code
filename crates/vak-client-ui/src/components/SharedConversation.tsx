@@ -42,9 +42,14 @@ export default function SharedConversation() {
   const [comments, setComments] = createSignal<SharedComment[]>([]);
   /** Which artifact version each draft file is: where its thread is read and written. */
   const [bindings, setBindings] = createSignal<VersionBinding[]>([]);
-  const threadUrl = (candidateId: string, path: string) => {
+  /** Where a draft file's version is read: its text, its bytes, its thread. */
+  const versionUrl = (candidateId: string, path: string) => {
     const at = bindings().find((binding) => binding.candidate === candidateId && binding.path === path);
-    return at ? `/library/${encodeURIComponent(at.artifact)}/versions/${encodeURIComponent(at.version)}/comments` : null;
+    return at ? `/library/${encodeURIComponent(at.artifact)}/versions/${encodeURIComponent(at.version)}` : null;
+  };
+  const threadUrl = (candidateId: string, path: string) => {
+    const at = versionUrl(candidateId, path);
+    return at ? `${at}/comments` : null;
   };
   const readThread = async (token: string, candidateId: string, path: string): Promise<SharedComment[]> => {
     const url = threadUrl(candidateId, path);
@@ -221,10 +226,16 @@ export default function SharedConversation() {
       catch (cause) { setFileError(cause instanceof Error ? cause.message : String(cause)); }
       return;
     }
-    const base = `/sandbox/candidates/${encodeURIComponent(candidateId)}`;
+    const guest = { headers: { Authorization: `Bearer ${current.token}` }, credentials: "omit" as const, cache: "no-store" as const, referrerPolicy: "no-referrer" as const };
     try {
+      const at = versionUrl(candidateId, path);
+      if (!at) throw new Error("This draft has no saved version yet.");
       const [file, history] = await Promise.all([
-        read(current.conversationId, current.token, `${base}/files?path=${encodeURIComponent(path)}`),
+        fetch(`${at}/text`, guest).then((response) => {
+          if (response.status === 401 || response.status === 403) { stop(); throw new Error("Access to this invitation ended."); }
+          if (!response.ok) throw new Error(`Could not open the saved file (${response.status}).`);
+          return response.json();
+        }),
         readThread(current.token, candidateId, path),
       ]);
       if (credential()?.token !== current.token) return;
@@ -232,9 +243,7 @@ export default function SharedConversation() {
       if (file.kind === "text") {
         setOpenFile({ candidateId, path, content: file.content ?? "", kind: "text" });
       } else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(path)) {
-        const response = await fetch(`/sessions/${encodeURIComponent(current.conversationId)}${base}/files/raw?path=${encodeURIComponent(path)}`, {
-          headers: { Authorization: `Bearer ${current.token}` }, credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
-        });
+        const response = await fetch(`${at}/raw`, guest);
         if (response.status === 401 || response.status === 403) { stop(); throw new Error("Access to this invitation ended."); }
         if (!response.ok) throw new Error(`Could not open saved image (${response.status}).`);
         const imageUrl = URL.createObjectURL(await response.blob());

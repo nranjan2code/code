@@ -26,6 +26,7 @@ import {
   technicalDetails,
   health,
   sessions,
+  openInLibrary,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
@@ -645,7 +646,7 @@ function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: st
     setProblem(null);
     try {
       const { bytes, mime } = saved && sessionId
-        ? await api.readSandboxCandidateFileBytes(sessionId, saved.version_id, saved.path)
+        ? await api.draftReader(sessionId, saved.version_id).readFileBytes(saved.path)
         : executionId && sessionId
           ? await api.readExecutionArtifactBytes(sessionId, executionId, value)
           : await api.readFileBytes(value, sessionId ?? (() => { throw new Error("Open a conversation to save its files."); })());
@@ -664,7 +665,13 @@ function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: st
   };
   const canOpenWith = () => host.can("open-with") && Boolean(facts()) && !facts()!.macro_enabled;
   const flags = () => { const value = facts(); return value ? officeFlagsLabel(value) : null; };
-  return { path, facts, flags, problem, download, openWith, canOpenWith };
+  /** Opens the Library on the artifact a saved draft is a version of. */
+  const inLibrary = saved && sessionId
+    ? () => void api.versionOf(sessionId, saved.version_id, saved.path)
+        .then((at) => openInLibrary(at.artifact))
+        .catch((cause) => setProblem(cause instanceof Error ? cause.message : String(cause)))
+    : null;
+  return { path, facts, flags, problem, download, openWith, canOpenWith, inLibrary };
 }
 
 /** Opens a file where it can be seen: a saved draft version in Canvas as
@@ -742,7 +749,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
     const saved = status && status.state !== "in_folder" ? status.saved_as : null;
     const run = status?.state === "in_folder" ? undefined : props.item.provenance?.tool_call_id;
     const reader: ArtifactPreviewReader = saved
-      ? { readFile: (file) => api.readSandboxCandidateFile(props.sessionId, saved.version_id, file), readFileRaw: (file) => api.readSandboxCandidateFileRaw(props.sessionId, saved.version_id, file) }
+      ? api.draftReader(props.sessionId, saved.version_id)
       : run
         ? { readFile: (file) => api.readExecutionArtifact(props.sessionId, run, file), readFileRaw: (file) => api.readExecutionArtifactRaw(props.sessionId, run, file) }
       : api.workspaceReader(props.sessionId);
@@ -851,6 +858,7 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
         <Show when={file.path()}><button type="button" class="btn" onClick={() => openFile(props.item, props.sessionId)}>Open</button></Show>
         <Show when={!words()?.waiting && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.download(value())}>Download</button>}</Show>
         <Show when={file.canOpenWith() && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.openWith(value())}>Open with…</button>}</Show>
+        <Show when={file.inLibrary}>{(open) => <button type="button" class="btn" onClick={open()}>Open in Library</button>}</Show>
         <Show when={props.askForChanges && props.resultId}><button type="button" class="result-card-link" onClick={askForChanges}>Ask for changes</button></Show>
       </div>
     </article>
