@@ -138,6 +138,10 @@ typed_id!(ExecutionId, "exe");
 typed_id!(ArtifactId, "art");
 typed_id!(VersionId, "ver");
 typed_id!(
+    /// One comment on an artifact version (plan M8.4c-b).
+    CommentId, "cmt"
+);
+typed_id!(
     /// What started a run: a message, a schedule, a channel request.
     TriggerId, "trg"
 );

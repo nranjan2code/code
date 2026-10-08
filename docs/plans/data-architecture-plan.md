@@ -1712,6 +1712,26 @@ of that conversation. The session's candidate routes still stand; M8.4c-c
 deletes them with the client calls that use them. Test
 `review_by_artifact_version`.
 
+M8.4c-b (2026-10-08): a version has one thread.
+`GET` and `POST /library/{id}/versions/{version}/comments` read it and
+write in it, for the owner and for a guest of the conversation the version
+is reviewed in (the guest's invitation must allow reading, and commenting
+to write). A comment has an id (`cmt_`) and may point at lines of a text
+file or an anchor in an Office file or PDF.
+`POST /library/{id}/comments/{comment}/revise` asks Vak to revise the
+version the comment is on, and the revision is a version made from it. An
+artifact share's guest still writes through `/shared/artifact/comments`,
+into the same thread. So that every reviewed file has a thread, putting a
+file up for Review declares it: each file of a candidate is an artifact,
+where M8.1 took only files a call had declared. The session's candidate
+comment routes, their handlers and the client calls are deleted; the
+client's Review, Canvas and shared conversation find the version from the
+`artifacts` list of the sandbox records. The ledger's `candidate_comment`
+activity kind still decodes, because ledgers are never rewritten, and
+nothing writes or reads it. Tests `one_comment_thread_per_version`, and
+`human_feedback_produces_new_candidate_without_workspace_write` for the
+revision's parent.
+
 Investigating the live failures of M8.3b and M8.4b found faults in
 Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):
 - `emit_table_card` refused a correct flat `{columns, rows}` table

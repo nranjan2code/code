@@ -1,5 +1,6 @@
 import { createSignal, For, onCleanup, Show } from "solid-js";
 import type { Message, OutputItem, OutputTimeline } from "../types";
+import type { VersionBinding } from "../api";
 import Icon from "./Icon";
 import { AdaptiveTreeView, StructuredView } from "./PresentationRenderer";
 import AgentMark from "./AgentMark";
@@ -39,6 +40,20 @@ export default function SharedConversation() {
   const [visibleCount, setVisibleCount] = createSignal(40);
   const [openFile, setOpenFile] = createSignal<{ candidateId: string; path: string; content?: string; imageUrl?: string; kind: string } | null>(null);
   const [comments, setComments] = createSignal<SharedComment[]>([]);
+  /** Which artifact version each draft file is: where its thread is read and written. */
+  const [bindings, setBindings] = createSignal<VersionBinding[]>([]);
+  const threadUrl = (candidateId: string, path: string) => {
+    const at = bindings().find((binding) => binding.candidate === candidateId && binding.path === path);
+    return at ? `/library/${encodeURIComponent(at.artifact)}/versions/${encodeURIComponent(at.version)}/comments` : null;
+  };
+  const readThread = async (token: string, candidateId: string, path: string): Promise<SharedComment[]> => {
+    const url = threadUrl(candidateId, path);
+    if (!url) return [];
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer" });
+    if (response.status === 401 || response.status === 403) { stop(); throw new Error("This invitation has expired or access was revoked. Ask the owner for a new invitation."); }
+    if (!response.ok) throw new Error(`Could not load the comments (${response.status}).`);
+    return (await response.json()).comments ?? [];
+  };
   const [fileError, setFileError] = createSignal<string | null>(null);
   const [participantName, setParticipantName] = createSignal("");
   const [participantId, setParticipantId] = createSignal("");
@@ -124,15 +139,16 @@ export default function SharedConversation() {
         author_name: transcript.entries?.[index]?.author_name,
       })).filter((message: Message) => message.role.toLowerCase() === "user" || message.role.toLowerCase() === "assistant"));
       setCandidates((records.records ?? []).filter((item: SharedCandidate) => item.kind === "Candidate"));
+      setBindings(records.artifacts ?? []);
       setSharedResults(((presentation as OutputTimeline).items ?? []).filter((item) =>
         item.status !== "running" && (item.content.type === "structured" || item.content.type === "adaptive")
       ));
       setApprovals(pending.approvals ?? []);
       const selected = openFile();
       if (selected) {
-        const history = await read(current.conversationId, current.token, `/sandbox/candidates/${encodeURIComponent(selected.candidateId)}/comments`);
+        const history = await readThread(current.token, selected.candidateId, selected.path);
         if (credential()?.token !== current.token) return;
-        setComments(history.comments ?? []);
+        setComments(history);
       }
       setUpdatedAt(new Date());
       setError(null);
@@ -201,7 +217,7 @@ export default function SharedConversation() {
     setOpenFile(null);
     if (isDocumentPath(path)) {
       setOpenFile({ candidateId, path, kind: "office" });
-      try { const history = await read(current.conversationId, current.token, `/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`); if (credential()?.token === current.token) setComments(history.comments ?? []); }
+      try { const history = await readThread(current.token, candidateId, path); if (credential()?.token === current.token) setComments(history); }
       catch (cause) { setFileError(cause instanceof Error ? cause.message : String(cause)); }
       return;
     }
@@ -209,10 +225,10 @@ export default function SharedConversation() {
     try {
       const [file, history] = await Promise.all([
         read(current.conversationId, current.token, `${base}/files?path=${encodeURIComponent(path)}`),
-        read(current.conversationId, current.token, `${base}/comments`),
+        readThread(current.token, candidateId, path),
       ]);
       if (credential()?.token !== current.token) return;
-      setComments(history.comments ?? []);
+      setComments(history);
       if (file.kind === "text") {
         setOpenFile({ candidateId, path, content: file.content ?? "", kind: "text" });
       } else if (/\.(png|jpe?g|gif|webp|svg)$/i.test(path)) {
@@ -334,17 +350,19 @@ export default function SharedConversation() {
     setCommentBusy(true);
     setFileError(null);
     try {
-      const response = await fetch(`/sessions/${encodeURIComponent(current.conversationId)}/sandbox/candidates/${encodeURIComponent(file.candidateId)}/comments`, {
+      const thread = threadUrl(file.candidateId, file.path);
+      if (!thread) throw new Error("This draft has no version to comment on yet.");
+      const response = await fetch(thread, {
         method: "POST",
         headers: { Authorization: `Bearer ${current.token}`, "Content-Type": "application/json" },
         credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer",
-        body: JSON.stringify({ text: commentText().trim(), path: file.path, ...(file.kind === "office" && commentAnchor() ? { anchor: commentAnchor() } : { line_start: line }) }),
+        body: JSON.stringify({ text: commentText().trim(), ...(file.kind === "office" && commentAnchor() ? { anchor: commentAnchor() } : { line_start: line }) }),
       });
       if (response.status === 401 || response.status === 403) { stop(); throw new Error("Access to this invitation ended or commenting is not allowed."); }
       if (!response.ok) throw new Error(`Could not save comment (${response.status}).`);
-      const history = await read(current.conversationId, current.token, `/sandbox/candidates/${encodeURIComponent(file.candidateId)}/comments`);
+      const history = await readThread(current.token, file.candidateId, file.path);
       if (credential()?.token !== current.token) return;
-      setComments(history.comments ?? []);
+      setComments(history);
       setCommentText("");
       setCommentLine("");
       setCommentAnchor(null);

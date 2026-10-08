@@ -17,7 +17,9 @@ export type DraftSubject = Extract<CanvasSubject, { kind: "draft_file" }>;
  * keeps what is shown instead of clearing it and reading it again.
  */
 export function createDraftThread(draft: () => DraftSubject | undefined) {
-  const [comments, setComments] = createSignal<api.SandboxCandidateComment[]>([]);
+  const [comments, setComments] = createSignal<api.VersionComment[]>([]);
+  /** The artifact version this draft proposes: where its thread is written. */
+  const [binding, setBinding] = createSignal<api.VersionBinding | null>(null);
   const [records, setRecords] = createSignal<api.SandboxRecord[]>([]);
   /** Nothing could be read yet: offline, or the server refused. */
   const [unavailable, setUnavailable] = createSignal(false);
@@ -38,20 +40,27 @@ export function createDraftThread(draft: () => DraftSubject | undefined) {
 
   let loaded = false;
   const load = async (subject: DraftSubject, alive: () => boolean) => {
-    const [commentsResult, recordsResult] = await Promise.allSettled([
-      api.listSandboxCandidateComments(subject.sessionId, subject.candidateId),
-      api.listSessionSandboxRecords(subject.sessionId),
-    ]);
-    if (!alive()) return;
     // A failed refresh keeps what is already shown: offline is not an empty history.
-    if (commentsResult.status === "fulfilled") setComments(commentsResult.value.comments);
-    if (recordsResult.status === "fulfilled") setRecords(recordsResult.value.records);
-    if (commentsResult.status === "fulfilled" || recordsResult.status === "fulfilled") loaded = true;
+    try {
+      const listed = await api.listSessionSandboxRecords(subject.sessionId);
+      if (!alive()) return;
+      setRecords(listed.records);
+      loaded = true;
+      const found = api.proposedVersion(listed.artifacts ?? [], subject.candidateId, subject.path);
+      setBinding(found);
+      if (found) {
+        const thread = await api.versionComments(found.artifact, found.version);
+        if (!alive()) return;
+        setComments(thread.comments);
+      }
+    } catch { /* keep what is shown */ }
+    if (!alive()) return;
     setUnavailable(!loaded);
   };
 
   createEffect(on(identity, (key) => {
     setComments([]);
+    setBinding(null);
     setRecords([]);
     setUnavailable(false);
     loaded = false;
@@ -66,7 +75,7 @@ export function createDraftThread(draft: () => DraftSubject | undefined) {
 
   const refresh = (subject: DraftSubject) => load(subject, () => untrack(draft)?.candidateId === subject.candidateId);
 
-  return { comments, records, versions, version, newer, unavailable, refresh };
+  return { comments, binding, records, versions, version, newer, unavailable, refresh };
 }
 
 export type DraftThread = ReturnType<typeof createDraftThread>;

@@ -789,7 +789,9 @@ pub enum ActivityKind {
     PresentationProposal,
     /// User choice or feedback about a presentation projection.
     PresentationFeedback,
-    /// Human feedback anchored to an immutable candidate result and file.
+    /// Human feedback on a candidate, as ledgers written before plan
+    /// M8.4c-b hold it. Nothing writes or reads it as a comment now: a
+    /// comment is a `Commented` row on the artifact version.
     CandidateComment,
     /// A human-requested isolated Agent revision of a saved candidate.
     CandidateRevision,

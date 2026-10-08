@@ -48,11 +48,11 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
   const comments = () => props.thread.comments().filter((comment) => !comment.path || comment.path === subjectPath(subject()));
   const tabs = (): ContextPanel[] => (draft() ? ["discussion", "activity", "changes"] : ["discussion"]);
   const TAB_WORDS: Record<ContextPanel, string> = { discussion: "Discussion", activity: "Activity", changes: "Changes" };
-  const author = (comment: api.SandboxCandidateComment) =>
+  const author = (comment: api.VersionComment) =>
     comment.actor_id === "operator" ? "You" : comment.actor_name ?? (technicalDetails() ? comment.actor_id : "Someone else");
 
   /** Puts the reader where a comment was written. */
-  const goTo = (comment: api.SandboxCandidateComment) => {
+  const goTo = (comment: api.VersionComment) => {
     const place = selectionOfComment(comment);
     if (!place) return;
     const wantsSource = place.kind === "lines" && spec().selects(props.entry.view) !== "lines" && spec().views.some((choice) => choice.id === "source");
@@ -75,11 +75,13 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
     try {
       const version = draft();
       if (version) {
-        const saved = await api.commentOnSandboxCandidate(sessionId, version.candidateId, note, { path: version.path || undefined, ...place });
+        const at = props.thread.binding() ?? (await api.draftThread(sessionId, version.candidateId, version.path)).binding;
+        if (!at) throw new Error("this draft has no version to comment on yet");
+        const saved = await api.commentOnVersion(at.artifact, at.version, note, place);
         commentSaved = true;
         updateCanvasEntry({ draft: "" }, tab, conversation);
         void props.thread.refresh(version);
-        if (askAgent) await api.requestRevisionFromCandidateComment(sessionId, version.candidateId, saved.comment_id);
+        if (askAgent) await api.reviseFromComment(at.artifact, saved.comment_id);
         setState(askAgent ? "asked" : "commented");
       } else {
         await sendPrompt(

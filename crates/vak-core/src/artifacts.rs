@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use vak_config::scope::SharedScope;
 use vak_session::chain::RecordChain;
-use vak_session::ids::{ArtifactId, PrincipalId, VersionId};
+use vak_session::ids::{ArtifactId, CommentId, PrincipalId, VersionId};
 use vak_session::objects::{ObjectRef, Objects, TenantObjects};
 use vak_session::trace::TraceKey;
 
@@ -132,23 +132,46 @@ pub enum ArtifactStep {
     Downloaded {
         version: VersionId,
     },
-    /// A comment on a version, by the owner or through a share.
+    /// A comment on a version, by the owner, a guest of its conversation or
+    /// through a share: the one thread a version has (plan M8.4c-b).
     Commented {
         version: VersionId,
         /// Who wrote it: a principal id.
         author: String,
         author_name: String,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<CommentId>,
+        #[serde(flatten)]
+        at_place: Place,
     },
+}
+
+/// Where in the file a comment points: lines of a text file, or an anchor
+/// in an Office file or PDF (`Budget!B4`, `page:2/line:5`). Empty for a
+/// comment on the whole version.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Place {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_start: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_end: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
 }
 
 /// A comment on one version.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comment {
+    /// Absent on a comment recorded before comments had ids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<CommentId>,
     pub version: VersionId,
     pub author: String,
     pub author_name: String,
     pub text: String,
+    #[serde(flatten)]
+    pub at_place: Place,
     pub at: DateTime<Utc>,
 }
 
@@ -396,11 +419,15 @@ fn fold(state: &mut State, bytes: &[u8]) {
             author,
             author_name,
             text,
+            id,
+            at_place,
         } => artifact.comments.push(Comment {
+            id,
             version,
             author,
             author_name,
             text,
+            at_place,
             at: event.at,
         }),
         ArtifactStep::Renamed { title } => artifact.title = Some(title),

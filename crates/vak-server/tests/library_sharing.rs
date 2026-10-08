@@ -157,7 +157,7 @@ async fn a_share_opens_one_artifact_in_its_role_until_revoked() {
         Some(json!({"version": second.to_string(), "text": "Tighten slide two."})),
     )
     .await;
-    assert_eq!(status, 204);
+    assert_eq!(status, 201);
     let (_, detail, _) = call(Method::GET, format!("/library/{id}"), owner.clone(), None).await;
     assert_eq!(detail["comments"][0]["author_name"], "Ravi");
     assert_eq!(detail["comments"][0]["text"], "Tighten slide two.");

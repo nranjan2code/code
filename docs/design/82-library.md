@@ -383,7 +383,9 @@ Opening an entry shows, in this order:
    (doc 73 §10), shown side by side and reconciled through Review.
 4. **Conversations**: each conversation that touched it, opening at the
    exact turn.
-5. **Comments** (L1, read-only, from each version's `CandidateComment`
+5. **Comments** (one thread per version from plan M8.4c-b, written by
+   the owner, a guest of its conversation or a share's guest; in L1 they
+   were read-only, from each version's `CandidateComment`
    activities), **Sources** and **Related** (L3), **Sharing** (L5).
 
 **One lister.** The Library is the only place that lists artifacts across

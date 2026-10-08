@@ -788,32 +788,110 @@ pub fn gateway_router(core: Core) -> Router {
 fn router_with_state(state: AppState) -> Router {
     Router::new()
         .route("/mail-calendar/accounts", get(mail_calendar::list_accounts))
-        .route("/mail-calendar/accounts/{agent_id}/oauth", post(mail_calendar::begin_oauth))
-        .route("/mail-calendar/accounts/{agent_id}/icloud", post(mail_calendar::connect_app_password))
-        .route("/mail-calendar/accounts/{agent_id}/google-app-password", post(mail_calendar::connect_app_password))
-        .route("/mail-calendar/accounts/{agent_id}/microsoft-app-password", post(mail_calendar::connect_app_password))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/refresh", post(mail_calendar::refresh_account))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/mail-preview", post(mail_calendar::mail_preview))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/mail-folders", get(mail_calendar::mail_folders))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/attachment-preview", post(mail_calendar::attachment_preview))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/message-preview", post(mail_calendar::message_preview))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/thread-preview", post(mail_calendar::thread_preview))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/calendar-sources", get(mail_calendar::calendar_sources))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/calendar-preview", post(mail_calendar::calendar_preview))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/free-busy-preview", post(mail_calendar::free_busy_preview))
-        .route("/mail-calendar/accounts/{agent_id}/candidates", get(mail_calendar::list_candidates).post(mail_calendar::save_candidate))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/review-context", post(mail_calendar::candidate_review_context))
-        .route("/mail-calendar/accounts/{agent_id}/routines/{routine_id}/history", get(mail_calendar::routine_history))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/send", post(mail_calendar::send_mail_candidate))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/create-event", post(mail_calendar::send_mail_candidate))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/update-event", post(mail_calendar::send_mail_candidate))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/cancel-event", post(mail_calendar::send_mail_candidate))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/respond-event", post(mail_calendar::send_mail_candidate))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/reconcile-event", post(mail_calendar::reconcile_event_candidate))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/reconcile-mail", post(mail_calendar::reconcile_mail_candidate))
-        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}", axum::routing::delete(mail_calendar::delete_candidate))
-        .route("/mail-calendar/oauth/callback", get(mail_calendar::oauth_callback))
-        .route("/mail-calendar/accounts/{agent_id}/{account_id}/disconnect", post(mail_calendar::disconnect_account))
+        .route(
+            "/mail-calendar/accounts/{agent_id}/oauth",
+            post(mail_calendar::begin_oauth),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/icloud",
+            post(mail_calendar::connect_app_password),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/google-app-password",
+            post(mail_calendar::connect_app_password),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/microsoft-app-password",
+            post(mail_calendar::connect_app_password),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/refresh",
+            post(mail_calendar::refresh_account),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/mail-preview",
+            post(mail_calendar::mail_preview),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/mail-folders",
+            get(mail_calendar::mail_folders),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/attachment-preview",
+            post(mail_calendar::attachment_preview),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/message-preview",
+            post(mail_calendar::message_preview),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/thread-preview",
+            post(mail_calendar::thread_preview),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/calendar-sources",
+            get(mail_calendar::calendar_sources),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/calendar-preview",
+            post(mail_calendar::calendar_preview),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/free-busy-preview",
+            post(mail_calendar::free_busy_preview),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates",
+            get(mail_calendar::list_candidates).post(mail_calendar::save_candidate),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/review-context",
+            post(mail_calendar::candidate_review_context),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/routines/{routine_id}/history",
+            get(mail_calendar::routine_history),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/send",
+            post(mail_calendar::send_mail_candidate),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/create-event",
+            post(mail_calendar::send_mail_candidate),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/update-event",
+            post(mail_calendar::send_mail_candidate),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/cancel-event",
+            post(mail_calendar::send_mail_candidate),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/respond-event",
+            post(mail_calendar::send_mail_candidate),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/reconcile-event",
+            post(mail_calendar::reconcile_event_candidate),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/reconcile-mail",
+            post(mail_calendar::reconcile_mail_candidate),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}",
+            axum::routing::delete(mail_calendar::delete_candidate),
+        )
+        .route(
+            "/mail-calendar/oauth/callback",
+            get(mail_calendar::oauth_callback),
+        )
+        .route(
+            "/mail-calendar/accounts/{agent_id}/{account_id}/disconnect",
+            post(mail_calendar::disconnect_account),
+        )
         .route("/health", get(health))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/{id}/attach", post(attach_session))
@@ -847,7 +925,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/lineage/{id}", get(catalog_api::lineage))
         .route("/catalog", get(catalog_api::status))
         .route("/catalog/rebuild", post(catalog_api::rebuild))
-        .route("/catalog/sessions/{id}/nodes", get(catalog_api::session_nodes))
+        .route(
+            "/catalog/sessions/{id}/nodes",
+            get(catalog_api::session_nodes),
+        )
         .route("/flows/{name}/runs/{run}/graph", get(flow_run_graph))
         .route("/sessions/{id}/checkpoints", get(list_checkpoints))
         .route(
@@ -862,16 +943,42 @@ fn router_with_state(state: AppState) -> Router {
         .route("/social/connectors", get(list_social_connectors))
         .route(
             "/social/youtube/key",
-            get(youtube_key_status).put(save_youtube_key).delete(remove_youtube_key),
+            get(youtube_key_status)
+                .put(save_youtube_key)
+                .delete(remove_youtube_key),
         )
         .route("/social/youtube/search", post(youtube_search_preview))
-        .route("/social/reddit/client-id", get(social::preview::reddit_client_id_status).put(social::preview::reddit_client_id_save).delete(social::preview::reddit_client_id_remove))
-        .route("/social/reddit/search", post(social::preview::reddit_search))
-        .route("/social/x/token", get(social::preview::x_token_status).put(social::preview::x_token_save).delete(social::preview::x_token_remove))
-        .route("/social/x/usage", get(social::preview::x_usage_status).put(social::preview::x_usage_limit))
+        .route(
+            "/social/reddit/client-id",
+            get(social::preview::reddit_client_id_status)
+                .put(social::preview::reddit_client_id_save)
+                .delete(social::preview::reddit_client_id_remove),
+        )
+        .route(
+            "/social/reddit/search",
+            post(social::preview::reddit_search),
+        )
+        .route(
+            "/social/x/token",
+            get(social::preview::x_token_status)
+                .put(social::preview::x_token_save)
+                .delete(social::preview::x_token_remove),
+        )
+        .route(
+            "/social/x/usage",
+            get(social::preview::x_usage_status).put(social::preview::x_usage_limit),
+        )
         .route("/social/x/search", post(social::preview::x_search))
-        .route("/social/linkedin/client-id", get(social::linkedin::client_id_status).put(social::linkedin::save_client_id).delete(social::linkedin::remove_client_id))
-        .route("/social/linkedin/account", get(social::linkedin::account_status).delete(social::linkedin::disconnect))
+        .route(
+            "/social/linkedin/client-id",
+            get(social::linkedin::client_id_status)
+                .put(social::linkedin::save_client_id)
+                .delete(social::linkedin::remove_client_id),
+        )
+        .route(
+            "/social/linkedin/account",
+            get(social::linkedin::account_status).delete(social::linkedin::disconnect),
+        )
         .route("/social/linkedin/connect", post(social::linkedin::begin))
         .route(
             "/social/connectors/{id}/install",
@@ -980,7 +1087,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/workers/{child}/steer", post(steer_worker))
         .route("/sessions/{id}/workers/{child}/stop", post(stop_worker))
         .route("/sessions/{id}/questions", get(list_worker_questions))
-        .route("/sessions/{id}/questions/{qid}", post(answer_worker_question))
+        .route(
+            "/sessions/{id}/questions/{qid}",
+            post(answer_worker_question),
+        )
         // Backward-compatible aliases for the old `subagents` route names.
         .route("/sessions/{id}/subagents", get(list_workers))
         .route("/sessions/{id}/subagents/{child}/steer", post(steer_worker))
@@ -1034,14 +1144,6 @@ fn router_with_state(state: AppState) -> Router {
             get(read_sandbox_candidate_office_projection),
         )
         .route(
-            "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
-            get(list_sandbox_candidate_comments).post(comment_on_sandbox_candidate),
-        )
-        .route(
-            "/sessions/{id}/sandbox/candidates/{candidate_id}/comments/{comment_id}/request-revision",
-            post(request_revision_from_candidate_comment),
-        )
-        .route(
             "/sessions/{id}/sandbox/promote",
             post(promote_sandbox_candidate),
         )
@@ -1075,10 +1177,7 @@ fn router_with_state(state: AppState) -> Router {
             get(list_coworking_invitations).post(create_coworking_invitation),
         )
         .route("/sessions/{id}/coworking/me", get(coworking_me))
-        .route(
-            "/sessions/{id}/coworking/presence",
-            get(coworking_presence),
-        )
+        .route("/sessions/{id}/coworking/presence", get(coworking_presence))
         .route(
             "/sessions/{id}/coworking/messages",
             post(create_coworking_message),
@@ -1096,9 +1195,18 @@ fn router_with_state(state: AppState) -> Router {
             post(delegate_coworking_approval),
         )
         .route("/sessions/{id}/coworking/updates", get(coworking_updates))
-        .route("/sessions/{id}/office-workspaces", get(office_workspace::list).post(office_workspace::create))
-        .route("/sessions/{id}/office-workspaces/{room_id}", post(office_workspace::mutate))
-        .route("/sessions/{id}/office-workspaces/{room_id}/presence", post(office_workspace::focus))
+        .route(
+            "/sessions/{id}/office-workspaces",
+            get(office_workspace::list).post(office_workspace::create),
+        )
+        .route(
+            "/sessions/{id}/office-workspaces/{room_id}",
+            post(office_workspace::mutate),
+        )
+        .route(
+            "/sessions/{id}/office-workspaces/{room_id}/presence",
+            post(office_workspace::focus),
+        )
         .route(
             "/sessions/{id}/coworking/invitations/{grant_id}/revoke",
             post(revoke_coworking_invitation),
@@ -1180,7 +1288,10 @@ fn router_with_state(state: AppState) -> Router {
                 .put(put_bus_config)
                 .delete(delete_bus_config),
         )
-        .route("/config/server", get(get_server_web_config).put(put_server_web_config))
+        .route(
+            "/config/server",
+            get(get_server_web_config).put(put_server_web_config),
+        )
         // The approval policy: whether an `Ask` raised on an unattended
         // chat surface reaches a human at all. Read-only everywhere until
         // now, which made `vak_core::reach`'s own printed remedy an action
@@ -1278,12 +1389,21 @@ fn router_with_state(state: AppState) -> Router {
         .route("/auth/passkey/start", post(auth_identity::passkey_start))
         .route("/auth/passkey/finish", post(auth_identity::passkey_finish))
         .route("/auth/recovery", post(auth_identity::recovery))
-        .route("/auth/recovery/rotate/start", post(auth_identity::rotate_recovery_start))
-        .route("/auth/recovery/rotate/finish", post(auth_identity::rotate_recovery_finish))
+        .route(
+            "/auth/recovery/rotate/start",
+            post(auth_identity::rotate_recovery_start),
+        )
+        .route(
+            "/auth/recovery/rotate/finish",
+            post(auth_identity::rotate_recovery_finish),
+        )
         .route("/auth/passkey/add/start", post(auth_identity::add_start))
         .route("/auth/passkey/add/finish", post(auth_identity::add_finish))
         .route("/auth/account", get(auth_identity::account))
-        .route("/auth/sessions/revoke-all", post(auth_identity::revoke_all_sessions))
+        .route(
+            "/auth/sessions/revoke-all",
+            post(auth_identity::revoke_all_sessions),
+        )
         .route("/auth/logout", post(web::logout))
         .route("/auth/session", get(web::session_status))
         // ---- the workspace client's own host surface --------------------
@@ -3620,6 +3740,14 @@ fn participant_read_route_allowed(
     principal: &coworking::VerifiedPrincipal,
 ) -> bool {
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let can = |capability: &str| principal.capabilities.iter().any(|held| held == capability);
+    // The thread of a version reviewed in the guest's conversation; the
+    // handler checks that it is (`library::discusser`).
+    if let ["library", _, "versions", _, "comments"] = segments.as_slice() {
+        return can("read")
+            && (method == axum::http::Method::GET
+                || (method == axum::http::Method::POST && can("comment")));
+    }
     let ["sessions", conversation_id, rest @ ..] = segments.as_slice() else {
         return false;
     };
@@ -3652,11 +3780,7 @@ fn participant_read_route_allowed(
                 .iter()
                 .any(|capability| capability == "edit");
         }
-        return principal
-            .capabilities
-            .iter()
-            .any(|capability| capability == "comment")
-            && matches!(*rest, ["sandbox", "candidates", _, "comments"]);
+        return false;
     }
     if method != axum::http::Method::GET
         || !principal
@@ -3677,7 +3801,6 @@ fn participant_read_route_allowed(
             | ["sandbox", "candidates", _, "files", "raw"]
             | ["sandbox", "candidates", _, "office-review"]
             | ["sandbox", "candidates", _, "office"]
-            | ["sandbox", "candidates", _, "comments"]
             | ["coworking", "me"]
             | ["coworking", "presence"]
             | ["coworking", "approvals"]
@@ -11956,7 +12079,16 @@ pub(crate) fn session_agent_scope(
     state: &AppState,
     session_id: &str,
 ) -> vak_config::scope::AgentScope {
-    let agent = state
+    state
+        .core
+        .shared_scope()
+        .agent(&session_agent_name(state, session_id))
+}
+
+/// The id of the Agent a session belongs to: its live handle's, else its
+/// header's, else the built-in Agent.
+pub(crate) fn session_agent_name(state: &AppState, session_id: &str) -> String {
+    state
         .get(session_id)
         .and_then(|handle| handle.core.agent_identity().map(|agent| agent.id.clone()))
         .or_else(|| {
@@ -11964,8 +12096,7 @@ pub(crate) fn session_agent_scope(
                 .and_then(|header| header.agent)
                 .map(|agent| agent.id)
         })
-        .unwrap_or_else(|| "vak".to_string());
-    state.core.shared_scope().agent(&agent)
+        .unwrap_or_else(|| "vak".to_string())
 }
 
 fn sandbox_records_path(state: &AppState, session_id: &str) -> std::path::PathBuf {
@@ -13129,263 +13260,6 @@ async fn read_sandbox_candidate_file_raw(
     (headers, bytes).into_response()
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct CandidateCommentBody {
-    text: String,
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default)]
-    line_start: Option<u32>,
-    #[serde(default)]
-    line_end: Option<u32>,
-    /// Where in an Office file the comment points (`Budget!B4`,
-    /// `p:1A2B3C4D`, `slide:256/shape:3`), in place of line numbers, which
-    /// mean nothing in a package (docs/design/72, F9).
-    #[serde(default)]
-    anchor: Option<String>,
-    #[serde(default)]
-    request_id: Option<String>,
-}
-
-async fn list_sandbox_candidate_comments(
-    State(state): State<AppState>,
-    Path((session_id, candidate_id)): Path<(String, String)>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let records = match crate::sandbox_records::load(&sandbox_records_path(&state, &session_id)) {
-        Ok(records) => records,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    if !records.iter().any(|record| {
-        matches!(record,
-        vak_sandbox::DurableRecord::Candidate(saved)
-            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id)
-    }) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let mut comments = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    if let Some(log) = find_session_on_disk(&state.core, &session_id) {
-        for (_, timestamp, activity) in log.activities() {
-            if activity.kind == vak_session::ActivityKind::CandidateComment
-                && activity.data.get("candidate_id") == Some(&candidate_id)
-            {
-                seen.insert(activity.activity_id.clone());
-                comments.push(serde_json::json!({
-                    "comment_id": activity.activity_id,
-                    "actor_id": activity.data.get("actor_id").map(String::as_str).unwrap_or("operator"),
-                    "actor_name": activity.data.get("actor_name").map(String::as_str).unwrap_or("You"),
-                    "text": activity.data.get("comment").cloned().unwrap_or_default(),
-                    "path": activity.data.get("path"),
-                    "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
-                    "line_end": activity.data.get("line_end").and_then(|value| value.parse::<u32>().ok()),
-                    "anchor": activity.data.get("anchor"),
-                    "created_at": timestamp.to_rfc3339(),
-                }));
-            }
-        }
-    }
-    if let Some(handle) = state.get(&session_id) {
-        let buffered = handle
-            .activity_buffer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for activity in buffered.iter() {
-            if activity.kind == vak_session::ActivityKind::CandidateComment
-                && activity.data.get("candidate_id") == Some(&candidate_id)
-                && seen.insert(activity.activity_id.clone())
-            {
-                comments.push(serde_json::json!({
-                    "comment_id": activity.activity_id,
-                    "actor_id": activity.data.get("actor_id").map(String::as_str).unwrap_or("operator"),
-                    "actor_name": activity.data.get("actor_name").map(String::as_str).unwrap_or("You"),
-                    "text": activity.data.get("comment").cloned().unwrap_or_default(),
-                    "path": activity.data.get("path"),
-                    "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
-                    "line_end": activity.data.get("line_end").and_then(|value| value.parse::<u32>().ok()),
-                    "anchor": activity.data.get("anchor"),
-                    "created_at": serde_json::Value::Null,
-                }));
-            }
-        }
-    }
-    Json(serde_json::json!({ "comments": comments })).into_response()
-}
-
-async fn comment_on_sandbox_candidate(
-    State(state): State<AppState>,
-    Path((session_id, candidate_id)): Path<(String, String)>,
-    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
-    Json(body): Json<CandidateCommentBody>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let text = body.text.trim();
-    if text.is_empty() || text.len() > 32 * 1024 {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    if body.line_start.is_some_and(|line| line == 0)
-        || body.line_end.is_some_and(|line| line == 0)
-        || (body.line_end.is_some() && body.line_start.is_none())
-        || matches!((body.line_start, body.line_end), (Some(start), Some(end)) if end < start)
-    {
-        return StatusCode::BAD_REQUEST.into_response();
-    }
-    let records = match crate::sandbox_records::load(&sandbox_records_path(&state, &session_id)) {
-        Ok(records) => records,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    let Some(saved) = records.iter().rev().find_map(|record| match record {
-        vak_sandbox::DurableRecord::Candidate(saved)
-            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id =>
-        {
-            Some(saved)
-        }
-        _ => None,
-    }) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if let AuthenticatedPrincipal::Participant(participant) = &principal
-        && conversation_audience(&state, &session_id).as_deref()
-            != Some(participant.audience_id.as_str())
-    {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    let path = body
-        .path
-        .as_deref()
-        .map(str::trim)
-        .filter(|path| !path.is_empty());
-    if path.is_some_and(|path| !saved.candidate.files.iter().any(|file| file.path == path)) {
-        return (StatusCode::BAD_REQUEST, "comment path is not in candidate").into_response();
-    }
-    if (body.line_start.is_some() || body.line_end.is_some()) && path.is_none() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "line anchor requires a candidate path",
-        )
-            .into_response();
-    }
-    let anchor = body
-        .anchor
-        .as_deref()
-        .map(str::trim)
-        .filter(|anchor| !anchor.is_empty());
-    let office = path.is_some_and(is_document_path);
-    if office && body.line_start.is_some() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "line numbers mean nothing in an Office file or PDF; point at a cell, paragraph, slide or PDF line with anchor",
-        )
-            .into_response();
-    }
-    if let Some(anchor) = anchor {
-        if !office {
-            return (
-                StatusCode::BAD_REQUEST,
-                "anchor requires an Office or PDF file path; use line numbers for text files",
-            )
-                .into_response();
-        }
-        if !path.is_some_and(|path| is_document_anchor(path, anchor)) {
-            return (
-                StatusCode::BAD_REQUEST,
-                "anchor is not a cell, paragraph, slide, shape or PDF page or line anchor",
-            )
-                .into_response();
-        }
-    }
-    let Some(handle) = state.get(&session_id) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let request_id = body
-        .request_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("candidate-comment-{}", uuid::Uuid::now_v7()));
-    let request_id = match &principal {
-        AuthenticatedPrincipal::ArtifactGuest(_) => return StatusCode::FORBIDDEN.into_response(),
-        AuthenticatedPrincipal::Operator => request_id,
-        AuthenticatedPrincipal::Participant(_) => {
-            format!("candidate-comment-{}", uuid::Uuid::now_v7())
-        }
-    };
-    let mut data = std::collections::BTreeMap::new();
-    data.insert("request_id".into(), request_id.clone());
-    match &principal {
-        AuthenticatedPrincipal::ArtifactGuest(_) => return StatusCode::FORBIDDEN.into_response(),
-        AuthenticatedPrincipal::Operator => {
-            data.insert("actor_id".into(), "operator".into());
-            data.insert("actor_name".into(), "You".into());
-        }
-        AuthenticatedPrincipal::Participant(participant) => {
-            data.insert("actor_id".into(), participant.principal_id.clone());
-            data.insert("actor_name".into(), participant.display_name.clone());
-            data.insert("grant_id".into(), participant.grant_id.clone());
-        }
-    }
-    data.insert("candidate_id".into(), candidate_id.clone());
-    data.insert("candidate_digest".into(), saved.candidate_digest.clone());
-    data.insert("result_id".into(), saved.result_id.clone());
-    data.insert("execution_id".into(), saved.execution_id.clone());
-    if let Some(path) = path {
-        data.insert("path".into(), path.to_string());
-    }
-    if let Some(line) = body.line_start {
-        data.insert("line_start".into(), line.to_string());
-    }
-    if let Some(line) = body.line_end {
-        data.insert("line_end".into(), line.to_string());
-    }
-    if let Some(anchor) = anchor {
-        data.insert("anchor".into(), anchor.to_string());
-    }
-    data.insert("comment".into(), text.to_string());
-    let comment = vak_session::ActivityRecord {
-        activity_id: format!("comment-{request_id}"),
-        kind: vak_session::ActivityKind::CandidateComment,
-        status: vak_session::ActivityStatus::Succeeded,
-        label: "Candidate comment".into(),
-        detail: None,
-        data,
-    };
-    // A comment receipt must not claim success if its append-only record failed.
-    let recorded = match handle.session.lock() {
-        Ok(mut session) => match session.as_mut() {
-            Some(session) if session.is_read_only() => {
-                let path = session.path().to_path_buf();
-                vak_session::SessionLog::open(path)
-                    .and_then(|mut writable| writable.append_activity(comment))
-                    .is_ok()
-            }
-            Some(session) => session.append_activity(comment).is_ok(),
-            None => handle
-                .activity_buffer
-                .lock()
-                .map(|mut buffer| buffer.push(comment))
-                .is_ok(),
-        },
-        Err(_) => false,
-    };
-    if !recorded {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    let _ = handle.coworking_comments_tx.send(());
-    if matches!(principal, AuthenticatedPrincipal::Participant(_)) {
-        return (
-            StatusCode::CREATED,
-            Json(serde_json::json!({ "comment_id": format!("comment-{request_id}"), "intervention": false })),
-        )
-            .into_response();
-    }
-    (
-        StatusCode::CREATED,
-        Json(serde_json::json!({ "comment_id": format!("comment-{request_id}"), "intervention": false })),
-    )
-        .into_response()
-}
-
 fn append_candidate_revision_activity(
     handle: &Arc<SessionHandle>,
     revision_id: &str,
@@ -13835,82 +13709,6 @@ async fn dispatch_candidate_revision(
 
 /// Owner decision: make one saved human comment an Agent revision request.
 /// The comment itself stays feedback until this explicit control action.
-async fn request_revision_from_candidate_comment(
-    State(state): State<AppState>,
-    Path((session_id, candidate_id, comment_id)): Path<(String, String, String)>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let records = match crate::sandbox_records::load(&sandbox_records_path(&state, &session_id)) {
-        Ok(records) => records,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    let Some(saved) = records.iter().rev().find_map(|record| match record {
-        vak_sandbox::DurableRecord::Candidate(saved)
-            if saved.session_id == session_id && saved.candidate.candidate_id == candidate_id =>
-        {
-            Some(saved)
-        }
-        _ => None,
-    }) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let from_log = find_session_on_disk(&state.core, &session_id).and_then(|log| {
-        log.activities().into_iter().find_map(|(_, _, activity)| {
-            (activity.activity_id == comment_id
-                && activity.kind == vak_session::ActivityKind::CandidateComment
-                && activity.data.get("candidate_id") == Some(&candidate_id))
-            .then_some(activity)
-        })
-    });
-    let comment = from_log.or_else(|| {
-        state.get(&session_id).and_then(|handle| {
-            handle.activity_buffer.lock().ok().and_then(|buffer| {
-                buffer
-                    .iter()
-                    .find(|activity| {
-                        activity.activity_id == comment_id
-                            && activity.kind == vak_session::ActivityKind::CandidateComment
-                            && activity.data.get("candidate_id") == Some(&candidate_id)
-                    })
-                    .cloned()
-            })
-        })
-    });
-    let Some(comment) = comment else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    if comment.data.get("candidate_digest") != Some(&saved.candidate_digest) {
-        return StatusCode::CONFLICT.into_response();
-    }
-    let Some(body) = comment.data.get("comment") else {
-        return StatusCode::CONFLICT.into_response();
-    };
-    let location = comment_location(&comment.data);
-    dispatch_candidate_revision(
-        state,
-        saved.clone(),
-        comment_id.clone(),
-        format!("Revise candidate {candidate_id} for result {}{location}. Owner selected comment {comment_id} by {} as feedback: {body}", saved.result_id, comment.data.get("actor_name").map(String::as_str).unwrap_or("a participant")),
-    ).await
-}
-
-/// Where a candidate comment points, as the revision request states it: an
-/// Office anchor (`Budget!B4`) or a line range, after the file.
-fn comment_location(data: &std::collections::BTreeMap<String, String>) -> String {
-    match (
-        data.get("path"),
-        data.get("anchor"),
-        data.get("line_start"),
-        data.get("line_end"),
-    ) {
-        (Some(path), Some(anchor), _, _) => format!(" file {path}, at {anchor}"),
-        (Some(path), None, Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
-        (Some(path), None, Some(start), None) => format!(" file {path}, line {start}"),
-        (Some(path), None, None, _) => format!(" file {path}"),
-        _ => String::new(),
-    }
-}
-
 #[derive(Debug, serde::Deserialize)]
 struct SandboxPromotionBody {
     candidate_id: String,
@@ -21781,6 +21579,29 @@ mod sandbox_promotion_tests {
         record
     }
 
+    /// The artifact and version `candidate` proposes for `path`.
+    fn proposed_version(state: &AppState, candidate: &str, path: &str) -> (String, String) {
+        state
+            .core
+            .artifacts()
+            .list()
+            .into_iter()
+            .filter(|artifact| artifact.path == path)
+            .find_map(|artifact| {
+                artifact
+                    .versions
+                    .iter()
+                    .find(|version| {
+                        version
+                            .proposed
+                            .as_ref()
+                            .is_some_and(|proposal| proposal.candidate == candidate)
+                    })
+                    .map(|version| (artifact.id.to_string(), version.id.to_string()))
+            })
+            .expect("the candidate proposes a version of the file")
+    }
+
     /// A ledger in which the Agent made `calls` (`office_apply` id and
     /// arguments), each succeeding, then answered.
     fn seed_office_calls(core: &Core, session_id: &str, calls: &[(&str, serde_json::Value)]) {
@@ -22038,17 +21859,15 @@ mod sandbox_promotion_tests {
             let candidate_id = candidate_id.clone();
             let anchor = anchor.map(str::to_string);
             async move {
-                comment_on_sandbox_candidate(
-                    State(state),
-                    Path(("session-1".into(), candidate_id)),
+                library::add_comment(
+                    State(state.clone()),
+                    Path(proposed_version(&state, &candidate_id, "budget.xlsx")),
                     axum::Extension(AuthenticatedPrincipal::Operator),
-                    Json(CandidateCommentBody {
+                    Json(library::NewComment {
                         text: "Keep the old figure here".into(),
-                        path: Some("budget.xlsx".into()),
                         line_start: line,
                         line_end: None,
                         anchor,
-                        request_id: None,
                     }),
                 )
                 .await
@@ -22066,9 +21885,10 @@ mod sandbox_promotion_tests {
             "line numbers mean nothing in a package"
         );
         let listed = body_json(
-            list_sandbox_candidate_comments(
+            library::thread(
                 State(state.clone()),
-                Path(("session-1".into(), candidate_id.clone())),
+                Path(proposed_version(&state, &candidate_id, "budget.xlsx")),
+                axum::Extension(AuthenticatedPrincipal::Operator),
             )
             .await,
         )
@@ -22822,37 +22642,6 @@ mod sandbox_promotion_tests {
         );
     }
 
-    #[test]
-    fn a_revision_request_names_the_cell_or_lines_a_comment_points_at() {
-        let data = |pairs: &[(&str, &str)]| {
-            pairs
-                .iter()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect::<std::collections::BTreeMap<_, _>>()
-        };
-        assert_eq!(
-            comment_location(&data(&[
-                ("path", "budget.xlsx"),
-                ("anchor", "'Q4 plan'!B4")
-            ])),
-            " file budget.xlsx, at 'Q4 plan'!B4"
-        );
-        assert_eq!(
-            comment_location(&data(&[
-                ("path", "a.txt"),
-                ("line_start", "3"),
-                ("line_end", "5")
-            ])),
-            " file a.txt, lines 3-5"
-        );
-        assert_eq!(
-            comment_location(&data(&[("path", "a.txt"), ("line_start", "3")])),
-            " file a.txt, line 3"
-        );
-        assert_eq!(comment_location(&data(&[("path", "a.txt")])), " file a.txt");
-        assert_eq!(comment_location(&data(&[])), "");
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_draft_changed_after_office_apply_is_offered_only_whole() {
         vak_config::paths::isolate_home_for_tests();
@@ -23353,48 +23142,42 @@ mod sandbox_promotion_tests {
         .await;
         assert_eq!(tampered.status(), StatusCode::CONFLICT);
         tokio::fs::write(&saved_file, "reviewed").await.unwrap();
-        let invalid_comment = comment_on_sandbox_candidate(
-            State(state.clone()),
-            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
-            axum::Extension(AuthenticatedPrincipal::Operator),
-            Json(CandidateCommentBody {
+        let (artifact_id, version_id) =
+            proposed_version(&state, &candidate.candidate.candidate_id, "result.txt");
+        let comment = |version: String, draft: library::NewComment| {
+            library::add_comment(
+                State(state.clone()),
+                Path((artifact_id.clone(), version)),
+                axum::Extension(AuthenticatedPrincipal::Operator),
+                Json(draft),
+            )
+        };
+        let unknown_version = comment(
+            vak_session::ids::VersionId::new().to_string(),
+            library::NewComment {
                 text: "Change this".into(),
-                path: Some("not-reviewed.txt".into()),
-                line_start: None,
-                line_end: None,
-                anchor: None,
-                request_id: Some("invalid-comment".into()),
-            }),
+                ..Default::default()
+            },
         )
         .await;
-        assert_eq!(invalid_comment.status(), StatusCode::BAD_REQUEST);
-        let invalid_range = comment_on_sandbox_candidate(
-            State(state.clone()),
-            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
-            axum::Extension(AuthenticatedPrincipal::Operator),
-            Json(CandidateCommentBody {
+        assert_eq!(unknown_version.status(), StatusCode::NOT_FOUND);
+        let invalid_range = comment(
+            version_id.clone(),
+            library::NewComment {
                 text: "Change this line".into(),
-                path: Some("result.txt".into()),
-                line_start: None,
                 line_end: Some(2),
-                anchor: None,
-                request_id: Some("invalid-range".into()),
-            }),
+                ..Default::default()
+            },
         )
         .await;
         assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
-        let anchor_on_text = comment_on_sandbox_candidate(
-            State(state.clone()),
-            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
-            axum::Extension(AuthenticatedPrincipal::Operator),
-            Json(CandidateCommentBody {
+        let anchor_on_text = comment(
+            version_id.clone(),
+            library::NewComment {
                 text: "Change this cell".into(),
-                path: Some("result.txt".into()),
-                line_start: None,
-                line_end: None,
                 anchor: Some("Budget!B2".into()),
-                request_id: Some("anchor-on-text".into()),
-            }),
+                ..Default::default()
+            },
         )
         .await;
         assert_eq!(
@@ -23402,33 +23185,20 @@ mod sandbox_promotion_tests {
             StatusCode::BAD_REQUEST,
             "a text file is commented on by line"
         );
-        let ledger_path = find_session_on_disk(&state.core, "session-1")
-            .unwrap()
-            .path()
-            .to_path_buf();
-        let mut ledger = vak_session::SessionLog::open(ledger_path).unwrap();
-        ledger
-            .append_activity(vak_session::ActivityRecord {
-                activity_id: "comment-history-1".into(),
-                kind: vak_session::ActivityKind::CandidateComment,
-                status: vak_session::ActivityStatus::Succeeded,
-                label: "Candidate comment".into(),
-                detail: None,
-                data: std::collections::BTreeMap::from([
-                    ("actor_id".into(), "operator".into()),
-                    (
-                        "candidate_id".into(),
-                        candidate.candidate.candidate_id.clone(),
-                    ),
-                    ("comment".into(), "Keep this reviewed wording".into()),
-                    ("path".into(), "result.txt".into()),
-                    ("line_start".into(), "1".into()),
-                ]),
-            })
-            .unwrap();
-        let history = list_sandbox_candidate_comments(
+        let kept = comment(
+            version_id.clone(),
+            library::NewComment {
+                text: "Keep this reviewed wording".into(),
+                line_start: Some(1),
+                ..Default::default()
+            },
+        )
+        .await;
+        assert_eq!(kept.status(), StatusCode::CREATED);
+        let history = library::thread(
             State(state.clone()),
-            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            Path((artifact_id.clone(), version_id.clone())),
+            axum::Extension(AuthenticatedPrincipal::Operator),
         )
         .await;
         assert_eq!(history.status(), StatusCode::OK);
@@ -23438,6 +23208,7 @@ mod sandbox_promotion_tests {
                 .unwrap(),
         )
         .unwrap();
+        assert_eq!(history["comments"].as_array().unwrap().len(), 1);
         assert_eq!(history["comments"][0]["text"], "Keep this reviewed wording");
         assert_eq!(history["comments"][0]["line_start"], 1);
         let response = promote_sandbox_candidate(
@@ -23478,32 +23249,27 @@ mod sandbox_promotion_tests {
             .join("sessions")
             .join(vak_config::spaces::key(core.cwd()))
             .join("session-1");
-        let comment_id = "comment-from-asha";
-        let mut log = SessionLog::open(session_path.clone()).unwrap();
-        log.append_activity(vak_session::ActivityRecord {
-            activity_id: comment_id.into(),
-            kind: vak_session::ActivityKind::CandidateComment,
-            status: vak_session::ActivityStatus::Succeeded,
-            label: "Candidate comment".into(),
-            detail: None,
-            data: std::collections::BTreeMap::from([
-                ("actor_id".into(), "person-2".into()),
-                ("actor_name".into(), "Asha".into()),
-                (
-                    "candidate_id".into(),
-                    candidate.candidate.candidate_id.clone(),
-                ),
-                (
-                    "candidate_digest".into(),
-                    candidate.candidate_digest.clone(),
-                ),
-                ("comment".into(), "Please make the opening warmer".into()),
-                ("path".into(), "result.txt".into()),
-                ("line_start".into(), "1".into()),
-            ]),
-        })
-        .unwrap();
-        drop(log);
+        let (artifact_id, version_id) =
+            proposed_version(&state, &candidate.candidate.candidate_id, "result.txt");
+        let comment_id = vak_session::ids::CommentId::new();
+        core.artifacts()
+            .record(
+                vak_session::ids::ArtifactId::parse(&artifact_id).unwrap(),
+                vak_core::artifacts::ArtifactStep::Commented {
+                    version: vak_session::ids::VersionId::parse(&version_id).unwrap(),
+                    author: "person-2".into(),
+                    author_name: "Asha".into(),
+                    text: "Please make the opening warmer".into(),
+                    id: Some(comment_id),
+                    at_place: vak_core::artifacts::Place {
+                        line_start: Some(1),
+                        ..Default::default()
+                    },
+                },
+                None,
+                None,
+            )
+            .unwrap();
         let historical = SessionLog::open_read_only(session_path.clone()).unwrap();
         register_handle(
             &state,
@@ -23513,13 +23279,10 @@ mod sandbox_promotion_tests {
             core.clone(),
         );
         core.set_route("no-such-provider".into(), "no-such-model".into());
-        let response = request_revision_from_candidate_comment(
+        let response = library::revise(
             State(state.clone()),
-            Path((
-                "session-1".into(),
-                candidate.candidate.candidate_id.clone(),
-                comment_id.into(),
-            )),
+            Path((artifact_id, comment_id.to_string())),
+            axum::Extension(AuthenticatedPrincipal::Operator),
         )
         .await;
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -23535,7 +23298,7 @@ mod sandbox_promotion_tests {
         assert!(
             !SessionLog::open_read_only(session_path)
                 .unwrap()
-                .has_request_admission("revision-from-comment-from-asha")
+                .has_request_admission(&format!("revision-from-{comment_id}"))
                 .unwrap()
         );
     }
@@ -23595,11 +23358,32 @@ mod sandbox_promotion_tests {
             core.clone(),
         );
 
-        let response = dispatch_candidate_revision(
-            state.clone(),
-            first.clone(),
-            "comment-1".into(),
-            "Replace the text with version two".into(),
+        let (artifact_id, first_version) =
+            proposed_version(&state, &first.candidate.candidate_id, "result.txt");
+        let commented = library::add_comment(
+            State(state.clone()),
+            Path((artifact_id.clone(), first_version.clone())),
+            axum::Extension(AuthenticatedPrincipal::Operator),
+            Json(library::NewComment {
+                text: "Replace the text with version two".into(),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert_eq!(commented.status(), StatusCode::CREATED);
+        let comment_id = serde_json::from_slice::<serde_json::Value>(
+            &axum::body::to_bytes(commented.into_body(), 64 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap()["comment_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let response = library::revise(
+            State(state.clone()),
+            Path((artifact_id.clone(), comment_id.clone())),
+            axum::Extension(AuthenticatedPrincipal::Operator),
         )
         .await;
         assert_eq!(response.status(), StatusCode::ACCEPTED);
@@ -23621,7 +23405,7 @@ mod sandbox_promotion_tests {
                 }
                 if let Some(failed) = records.iter().rev().find_map(|record| match record {
                     vak_sandbox::DurableRecord::CandidateRevision(revision)
-                        if revision.comment_id == "comment-1"
+                        if revision.comment_id == comment_id
                             && revision.status == vak_sandbox::CandidateRevisionStatus::Failed =>
                     {
                         Some(revision.clone())
@@ -23650,6 +23434,27 @@ mod sandbox_promotion_tests {
             "revision must not touch the original workspace"
         );
         assert!(newer.revision_session_id.is_some());
+        // The revision is a version made from the one commented on.
+        let revised = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let artifact = core.artifacts().get(&artifact_id).unwrap();
+                if let Some(version) = artifact.versions.iter().find(|version| {
+                    version
+                        .proposed
+                        .as_ref()
+                        .is_some_and(|proposal| proposal.candidate == newer.candidate.candidate_id)
+                }) {
+                    break version.clone();
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            revised.parent.map(|parent| parent.to_string()),
+            Some(first_version)
+        );
         let accepted = promote_sandbox_candidate(
             State(state.clone()),
             Path("session-1".into()),
@@ -24226,7 +24031,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/candidates/candidate-1/files/raw",
             "/sessions/session-1/sandbox/candidates/candidate-1/office-review",
             "/sessions/session-1/sandbox/candidates/candidate-1/office",
-            "/sessions/session-1/sandbox/candidates/candidate-1/comments",
+            "/library/art-1/versions/ver-1/comments",
             "/sessions/session-1/coworking/updates",
             "/sessions/session-1/coworking/presence",
             "/sessions/session-1/office-workspaces",
@@ -24243,6 +24048,10 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/run",
             "/sessions/session-1/sandbox/executions",
             "/sessions/session-1/sandbox/promote",
+            "/sessions/session-1/sandbox/candidates/candidate-1/comments",
+            "/library",
+            "/library/art-1",
+            "/library/art-1/versions/ver-1",
             "/fs/file",
             "/fs/office",
             "/config",
@@ -24255,10 +24064,15 @@ mod sandbox_promotion_tests {
         }
         assert!(!participant_read_route_allowed(
             &axum::http::Method::POST,
-            "/sessions/session-1/sandbox/candidates/candidate-1/comments",
+            "/library/art-1/versions/ver-1/comments",
             &principal
         ));
         assert!(participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/library/art-1/versions/ver-1/comments",
+            &participant(&["read", "comment"])
+        ));
+        assert!(!participant_read_route_allowed(
             &axum::http::Method::POST,
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             &participant(&["read", "comment"])
@@ -24310,7 +24124,7 @@ mod sandbox_promotion_tests {
         ));
         assert!(!participant_read_route_allowed(
             &axum::http::Method::POST,
-            "/sessions/session-1/sandbox/candidates/candidate-1/comments/comment-1/request-revision",
+            "/library/art-1/comments/cmt-1/revise",
             &participant(&["read", "comment"])
         ));
         assert!(!participant_read_route_allowed(
@@ -24796,7 +24610,9 @@ mod sandbox_promotion_tests {
     }
 
     #[tokio::test]
-    async fn participant_comment_is_shared_and_revocation_blocks_access() {
+    /// Plan M8.4c-b: the owner and a guest of the conversation write in
+    /// the one thread a version has; a guest who may only read cannot.
+    async fn one_comment_thread_per_version() {
         use futures::StreamExt;
         use tower::ServiceExt;
 
@@ -24846,14 +24662,13 @@ mod sandbox_promotion_tests {
             },
         )
         .unwrap();
-        let comments_path = format!(
-            "/sessions/session-1/sandbox/candidates/{}/comments",
-            candidate.candidate.candidate_id
-        );
+        let (artifact_id, version_id) =
+            proposed_version(&state, &candidate.candidate.candidate_id, "result.txt");
+        let comments_path = format!("/library/{artifact_id}/versions/{version_id}/comments");
         let app = Router::new()
             .route(
-                "/sessions/{id}/sandbox/candidates/{candidate_id}/comments",
-                get(list_sandbox_candidate_comments).post(comment_on_sandbox_candidate),
+                "/library/{id}/versions/{version}/comments",
+                get(library::thread).post(library::add_comment),
             )
             .route("/sessions/{id}/coworking/updates", get(coworking_updates))
             .with_state(state)
@@ -24880,9 +24695,15 @@ mod sandbox_promotion_tests {
                 .body(axum::body::Body::from(body))
                 .unwrap()
         };
-        let posted = app.clone().oneshot(request(axum::http::Method::POST, token,
-            serde_json::json!({"text":"Please make this clearer", "path":"result.txt", "line_start":1}).to_string()))
-            .await.unwrap();
+        let posted = app
+            .clone()
+            .oneshot(request(
+                axum::http::Method::POST,
+                token,
+                serde_json::json!({"text":"Please make this clearer", "line_start":1}).to_string(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(posted.status(), StatusCode::CREATED);
         let receipt: serde_json::Value = serde_json::from_slice(
             &axum::body::to_bytes(posted.into_body(), 64 * 1024)
@@ -24890,7 +24711,17 @@ mod sandbox_promotion_tests {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(receipt["intervention"], false);
+        assert!(receipt["comment_id"].as_str().unwrap().starts_with("cmt_"));
+        let owner_posted = app
+            .clone()
+            .oneshot(request(
+                axum::http::Method::POST,
+                "operator-secret",
+                serde_json::json!({"text":"Agreed, the opening too"}).to_string(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(owner_posted.status(), StatusCode::CREATED);
         let participant_read = app
             .clone()
             .oneshot(request(axum::http::Method::GET, token, String::new()))
@@ -24922,6 +24753,8 @@ mod sandbox_promotion_tests {
         assert_eq!(body["comments"][0]["actor_id"], "person-2");
         assert_eq!(body["comments"][0]["actor_name"], "Asha");
         assert_eq!(body["comments"][0]["path"], "result.txt");
+        assert_eq!(body["comments"][1]["actor_name"], "You");
+        assert_eq!(body["comments"].as_array().unwrap().len(), 2);
         assert_eq!(participant_body["comments"], body["comments"]);
         coworking::invite(
             &grants,
@@ -24980,7 +24813,7 @@ mod sandbox_promotion_tests {
                 .oneshot(request(
                     axum::http::Method::POST,
                     token,
-                    serde_json::json!({"text":"One more note", "path":"result.txt"}).to_string()
+                    serde_json::json!({"text":"One more note"}).to_string()
                 ))
                 .await
                 .unwrap()

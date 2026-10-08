@@ -14,12 +14,12 @@ use vak_core::artifacts::{ArtifactStep, NewVersion, VersionSource};
 use crate::AppState;
 
 /// Records what a Review record means for the artifacts it touches. Each
-/// file of a candidate that is already a declared deliverable gets the
-/// candidate's bytes as a version, made from the version its parent
+/// file of a candidate is an artifact (declared here when nothing declared
+/// it before) and gets the candidate's bytes as a version, made from the version its parent
 /// candidate proposed, and that version is recorded as what the candidate
 /// proposes (the same bytes as the current version propose that one). A
 /// promotion marks the versions of the files it applied, and its undo
-/// unmarks them. A file nobody declared stays out (doc 82 §3).
+/// unmarks them.
 pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord) {
     let artifacts = state.core.artifacts();
     let warn = |error: vak_core::artifacts::ArtifactError| {
@@ -57,10 +57,32 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
                     continue;
                 }
                 let id = vak_core::artifacts::artifact_id(&space, &file.path);
-                let Some(artifact) = artifacts.get(&id.to_string()) else {
+                let Ok(bytes) = std::fs::read(manifest.source_root.join(&file.path)) else {
                     continue;
                 };
-                let Ok(bytes) = std::fs::read(manifest.source_root.join(&file.path)) else {
+                // Putting a file up for Review declares it: a person is
+                // asked to decide it, and its thread and versions need an
+                // artifact to belong to (plan M8.4c-b).
+                if artifacts.get(&id.to_string()).is_none()
+                    && let Err(error) = artifacts.declare(
+                        &space,
+                        &crate::session_agent_name(state, &candidate.session_id),
+                        &file.path,
+                        if crate::is_document_path(&file.path) {
+                            vak_core::artifacts::ArtifactKind::Document
+                        } else {
+                            vak_core::artifacts::ArtifactKind::File
+                        },
+                        None,
+                        None,
+                        candidate.trace.as_ref(),
+                        candidate.actor,
+                    )
+                {
+                    warn(error);
+                    continue;
+                }
+                let Some(artifact) = artifacts.get(&id.to_string()) else {
                     continue;
                 };
                 let parent = candidate.parent_candidate_id.as_ref().and_then(|parent| {
@@ -1051,16 +1073,26 @@ async fn unshare(
     }
 }
 
-#[derive(serde::Deserialize)]
-struct CommentDraft {
-    version: String,
-    text: String,
+/// A comment as a person writes it: its text and, when it points
+/// somewhere, lines of a text file or an anchor in an Office file or PDF.
+#[derive(Debug, Default, serde::Deserialize)]
+pub(crate) struct NewComment {
+    pub text: String,
+    #[serde(default)]
+    pub line_start: Option<u32>,
+    #[serde(default)]
+    pub line_end: Option<u32>,
+    #[serde(default)]
+    pub anchor: Option<String>,
 }
 
+/// Records one comment in the version's thread: the one thread a version
+/// has, whoever writes in it (plan M8.4c-b).
 fn comment(
     state: &AppState,
     artifact: &vak_core::artifacts::Artifact,
-    draft: &CommentDraft,
+    version: &str,
+    draft: &NewComment,
     author: String,
     author_name: String,
 ) -> Response {
@@ -1074,43 +1106,229 @@ fn comment(
     let Some(version) = artifact
         .versions
         .iter()
-        .find(|version| version.id.to_string() == draft.version)
-        .map(|version| version.id)
+        .find(|known| known.id.to_string() == version)
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    let anchor = draft
+        .anchor
+        .as_deref()
+        .map(str::trim)
+        .filter(|anchor| !anchor.is_empty());
+    let document = crate::is_document_path(&artifact.path);
+    let refusal = if draft.line_start == Some(0)
+        || draft.line_end == Some(0)
+        || (draft.line_end.is_some() && draft.line_start.is_none())
+        || matches!((draft.line_start, draft.line_end), (Some(start), Some(end)) if end < start)
+    {
+        Some("lines are counted from 1, and a range ends at or after its start")
+    } else if document && draft.line_start.is_some() {
+        Some(
+            "line numbers mean nothing in an Office file or PDF; point at a cell, paragraph, slide or PDF line with anchor",
+        )
+    } else if anchor.is_some() && !document {
+        Some("an anchor points into an Office file or PDF; use line numbers for a text file")
+    } else if anchor.is_some_and(|anchor| !crate::is_document_anchor(&artifact.path, anchor)) {
+        Some("anchor is not a cell, paragraph, slide, shape or PDF page or line anchor")
+    } else {
+        None
+    };
+    if let Some(message) = refusal {
+        return share_error(StatusCode::BAD_REQUEST, message);
+    }
+    let id = vak_session::ids::CommentId::new();
     match state.core.artifacts().record(
         artifact.id,
         ArtifactStep::Commented {
-            version,
+            version: version.id,
             author,
             author_name,
             text: text.to_string(),
+            id: Some(id),
+            at_place: vak_core::artifacts::Place {
+                line_start: draft.line_start,
+                line_end: draft.line_end,
+                anchor: anchor.map(str::to_string),
+            },
         },
         None,
         None,
     ) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            // People watching the conversation this version is reviewed in
+            // see the thread change.
+            if let Some(proposal) = &version.proposed
+                && let Some(handle) = state.get(&proposal.session)
+            {
+                let _ = handle.coworking_comments_tx.send(());
+            }
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({ "comment_id": id })),
+            )
+                .into_response()
+        }
         Err(error) => share_error(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()),
     }
 }
 
-/// `POST /library/{id}/comments`: the owner comments on a version.
-async fn owner_comment(
+/// Who a request speaks as in a version's thread: the owner, or a guest of
+/// the conversation the version is being reviewed in. An artifact share's
+/// guest uses `/shared/artifact`.
+fn discusser(
+    state: &AppState,
+    principal: &crate::AuthenticatedPrincipal,
+    version: &vak_core::artifacts::Version,
+) -> Result<(String, String), StatusCode> {
+    match principal {
+        crate::AuthenticatedPrincipal::Operator => {
+            Ok((crate::request_actor(state).to_string(), "You".into()))
+        }
+        crate::AuthenticatedPrincipal::Participant(guest) => {
+            let reviewed_there = version.proposed.as_ref().is_some_and(|proposal| {
+                proposal.session == guest.conversation_id
+                    && crate::conversation_audience(state, &proposal.session).as_deref()
+                        == Some(guest.audience_id.as_str())
+            });
+            if reviewed_there {
+                Ok((guest.principal_id.clone(), guest.display_name.clone()))
+            } else {
+                Err(StatusCode::FORBIDDEN)
+            }
+        }
+        crate::AuthenticatedPrincipal::ArtifactGuest(_) => Err(StatusCode::FORBIDDEN),
+    }
+}
+
+fn thread_entry(
+    artifact: &vak_core::artifacts::Artifact,
+    comment: &vak_core::artifacts::Comment,
+) -> serde_json::Value {
+    serde_json::json!({
+        "comment_id": comment.id,
+        "version": comment.version,
+        "actor_id": comment.author,
+        "actor_name": comment.author_name,
+        "text": comment.text,
+        "path": artifact.path,
+        "line_start": comment.at_place.line_start,
+        "line_end": comment.at_place.line_end,
+        "anchor": comment.at_place.anchor,
+        "created_at": comment.at,
+    })
+}
+
+fn version_of<'a>(
+    artifact: &'a vak_core::artifacts::Artifact,
+    version: &str,
+) -> Option<&'a vak_core::artifacts::Version> {
+    artifact
+        .versions
+        .iter()
+        .find(|known| known.id.to_string() == version)
+}
+
+/// `GET /library/{id}/versions/{version}/comments`: the version's thread.
+pub(crate) async fn thread(
     State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(draft): Json<CommentDraft>,
+    Path((id, version)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
 ) -> Response {
     let Some(artifact) = state.core.artifacts().get(&id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    comment(
-        &state,
-        &artifact,
-        &draft,
-        crate::request_actor(&state).to_string(),
-        "You".into(),
-    )
+    let Some(found) = version_of(&artifact, &version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if let Err(status) = discusser(&state, &principal, found) {
+        return status.into_response();
+    }
+    let comments: Vec<_> = artifact
+        .comments
+        .iter()
+        .filter(|comment| comment.version == found.id)
+        .map(|comment| thread_entry(&artifact, comment))
+        .collect();
+    Json(serde_json::json!({ "comments": comments })).into_response()
+}
+
+/// `POST /library/{id}/versions/{version}/comments`: a comment in the
+/// version's thread, by the owner or a guest of its conversation who may
+/// comment.
+pub(crate) async fn add_comment(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+    Json(draft): Json<NewComment>,
+) -> Response {
+    let Some(artifact) = state.core.artifacts().get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(found) = version_of(&artifact, &version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let (author, author_name) = match discusser(&state, &principal, found) {
+        Ok(who) => who,
+        Err(status) => return status.into_response(),
+    };
+    comment(&state, &artifact, &version, &draft, author, author_name)
+}
+
+/// Where a comment points, as a revision request states it: an Office
+/// anchor (`Budget!B4`) or a line range, after the file.
+fn comment_location(path: &str, place: &vak_core::artifacts::Place) -> String {
+    match (&place.anchor, place.line_start, place.line_end) {
+        (Some(anchor), _, _) => format!(" file {path}, at {anchor}"),
+        (None, Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
+        (None, Some(start), None) => format!(" file {path}, line {start}"),
+        (None, None, _) => format!(" file {path}"),
+    }
+}
+
+/// `POST /library/{id}/comments/{comment}/revise`: the owner asks Vak to
+/// revise the version a comment is on. The revision is a new version made
+/// from that one, and it waits for Review like any other.
+pub(crate) async fn revise(
+    State(state): State<AppState>,
+    Path((id, comment)): Path<(String, String)>,
+    axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
+) -> Response {
+    if !matches!(principal, crate::AuthenticatedPrincipal::Operator) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(artifact) = state.core.artifacts().get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(found) = artifact
+        .comments
+        .iter()
+        .find(|known| known.id.is_some_and(|known| known.to_string() == comment))
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let review = match in_review(&state, &id, &found.version.to_string()) {
+        Ok(review) => review,
+        Err(response) => return *response,
+    };
+    let saved = match crate::saved_candidate(&state, &review.session, &review.candidate) {
+        Ok(saved) => saved,
+        Err(status) => return status.into_response(),
+    };
+    let prompt = format!(
+        "Revise candidate {} for result {}{}. Owner selected comment {comment} by {} as feedback: {}",
+        review.candidate,
+        saved.result_id,
+        comment_location(&review.path, &found.at_place),
+        found.author_name,
+        found.text,
+    );
+    crate::dispatch_candidate_revision(state, saved, comment, prompt).await
+}
+
+#[derive(serde::Deserialize)]
+struct SharedComment {
+    version: String,
+    text: String,
 }
 
 /// The grant a guest request carries, and its artifact while the grant
@@ -1227,7 +1445,7 @@ async fn shared_bytes(
 async fn shared_comment(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<crate::AuthenticatedPrincipal>,
-    Json(draft): Json<CommentDraft>,
+    Json(draft): Json<SharedComment>,
 ) -> Response {
     let (grant, artifact) = match guest(&state, &principal) {
         Ok(found) => found,
@@ -1245,7 +1463,11 @@ async fn shared_comment(
     comment(
         &state,
         &artifact,
-        &draft,
+        &draft.version,
+        &NewComment {
+            text: draft.text,
+            ..NewComment::default()
+        },
         grant.principal.clone(),
         grant.display_name.clone(),
     )
@@ -1286,7 +1508,11 @@ pub(crate) fn routes() -> Router<AppState> {
             "/library/{id}/shares/{grant}",
             axum::routing::delete(unshare),
         )
-        .route("/library/{id}/comments", post(owner_comment))
+        .route(
+            "/library/{id}/versions/{version}/comments",
+            get(thread).post(add_comment),
+        )
+        .route("/library/{id}/comments/{comment}/revise", post(revise))
         .route("/library/{id}/{action}", post(change))
         .route("/shared/artifact", get(shared_view))
         .route("/shared/artifact/versions/{version}", get(shared_bytes))
@@ -1297,6 +1523,31 @@ pub(crate) fn routes() -> Router<AppState> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_revision_request_names_the_cell_or_lines_a_comment_points_at() {
+        let place = |line_start, line_end, anchor: Option<&str>| vak_core::artifacts::Place {
+            line_start,
+            line_end,
+            anchor: anchor.map(str::to_string),
+        };
+        assert_eq!(
+            comment_location("budget.xlsx", &place(None, None, Some("'Q4 plan'!B4"))),
+            " file budget.xlsx, at 'Q4 plan'!B4"
+        );
+        assert_eq!(
+            comment_location("a.txt", &place(Some(3), Some(5), None)),
+            " file a.txt, lines 3-5"
+        );
+        assert_eq!(
+            comment_location("a.txt", &place(Some(3), None, None)),
+            " file a.txt, line 3"
+        );
+        assert_eq!(
+            comment_location("a.txt", &place(None, None, None)),
+            " file a.txt"
+        );
+    }
     use vak_core::artifacts::ArtifactKind;
 
     #[test]

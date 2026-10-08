@@ -1841,33 +1841,46 @@ export async function readSandboxCandidateFileRaw(sessionId: string, candidateId
   return URL.createObjectURL(await response.blob());
 }
 
-/** `anchor.anchor` points into an Office file (`Budget!B4`, `p:1A2B3C4D`,
- *  `slide:256/shape:3`); line numbers are for text files only. */
-export function commentOnSandboxCandidate(sessionId: string, candidateId: string, text: string, anchor?: { path?: string; lineStart?: number; lineEnd?: number; anchor?: string }): Promise<{ comment_id: string; intervention: boolean }> {
-  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`, {
+/** Which artifact and version a conversation's candidate file or declared
+ *  file is: Review reads, comments and decides by these. */
+export type VersionBinding = { artifact: string; version: string; path: string; candidate?: string | null; promoted: boolean };
+
+/** One comment in a version's thread. `anchor` points into an Office file
+ *  or PDF (`Budget!B4`, `p:1A2B3C4D`, `slide:256/shape:3`); line numbers
+ *  are for text files only. */
+export type VersionComment = { comment_id: string | null; version: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number; anchor?: string; created_at?: string };
+export type CommentPlace = { lineStart?: number; lineEnd?: number; anchor?: string };
+
+export function versionComments(artifact: string, version: string): Promise<{ comments: VersionComment[] }> {
+  return req(`/library/${encodeURIComponent(artifact)}/versions/${encodeURIComponent(version)}/comments`);
+}
+
+export function commentOnVersion(artifact: string, version: string, text: string, place?: CommentPlace): Promise<{ comment_id: string }> {
+  return req(`/library/${encodeURIComponent(artifact)}/versions/${encodeURIComponent(version)}/comments`, {
     method: "POST",
-    body: JSON.stringify({
-      text,
-      path: anchor?.path,
-      line_start: anchor?.lineStart,
-      line_end: anchor?.lineEnd,
-      anchor: anchor?.anchor,
-      request_id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    }),
+    body: JSON.stringify({ text, line_start: place?.lineStart, line_end: place?.lineEnd, anchor: place?.anchor }),
   });
 }
 
-export type SandboxCandidateComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number; anchor?: string; created_at?: string };
-
-export function listSandboxCandidateComments(sessionId: string, candidateId: string): Promise<{ comments: SandboxCandidateComment[] }> {
-  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`);
+export function reviseFromComment(artifact: string, commentId: string): Promise<InterventionReceipt> {
+  return req(`/library/${encodeURIComponent(artifact)}/comments/${encodeURIComponent(commentId)}/revise`, { method: "POST" });
 }
 
-export function requestRevisionFromCandidateComment(sessionId: string, candidateId: string, commentId: string): Promise<InterventionReceipt> {
-  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments/${encodeURIComponent(commentId)}/request-revision`, { method: "POST" });
+/** The version a draft proposes for `path`, or null when the server has
+ *  not recorded one. */
+export function proposedVersion(bindings: VersionBinding[], candidateId: string, path: string): VersionBinding | null {
+  return bindings.find((binding) => binding.candidate === candidateId && binding.path === path) ?? null;
 }
 
-export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[] }> {
+/** The thread of the version a draft proposes for `path`. */
+export async function draftThread(sessionId: string, candidateId: string, path: string): Promise<{ binding: VersionBinding | null; comments: VersionComment[] }> {
+  const { artifacts } = await listSessionSandboxRecords(sessionId);
+  const binding = proposedVersion(artifacts ?? [], candidateId, path);
+  if (!binding) return { binding: null, comments: [] };
+  return { binding, comments: (await versionComments(binding.artifact, binding.version)).comments };
+}
+
+export function listSessionSandboxRecords(sessionId: string): Promise<{ records: SandboxRecord[]; artifacts?: VersionBinding[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/records`);
 }
 
@@ -2396,9 +2409,6 @@ export function librarySaveCard(session: string, presentation: string): Promise<
   return req("/library/cards", { method: "POST", body: JSON.stringify({ session, presentation }) });
 }
 
-export function libraryComment(id: string, version: string, text: string): Promise<void> {
-  return req(`/library/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ version, text }) });
-}
 
 export function library(): Promise<{ artifacts: ArtifactSummary[] }> {
   return req("/library");

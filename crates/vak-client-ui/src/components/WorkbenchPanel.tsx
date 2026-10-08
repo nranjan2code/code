@@ -222,7 +222,16 @@ export default function WorkbenchPanel() {
   };
   const workspaceCheckReceipts = (candidateId: string) => sandboxRecords().flatMap((record) => record.kind === "WorkspaceCheck" && record.record.candidate_id === candidateId ? [record.record] : []);
 
-  const [candidateComments, setCandidateComments] = createSignal<api.SandboxCandidateComment[]>([]);
+  const [candidateComments, setCandidateComments] = createSignal<api.VersionComment[]>([]);
+  /** The artifact version the file under review is: where its thread is written. */
+  const [reviewedVersion, setReviewedVersion] = createSignal<api.VersionBinding | null>(null);
+  const loadThread = async (sessionId: string, candidateId: string, path: string | null | undefined) => {
+    if (!path) return;
+    const thread = await api.draftThread(sessionId, candidateId, path);
+    if (candidate()?.candidate.candidate_id !== candidateId || reviewedPath() !== path) return;
+    setReviewedVersion(thread.binding);
+    setCandidateComments(thread.comments);
+  };
   const [controlError, setControlError] = createSignal<string | null>(null);
   const [pulse, setPulse] = createSignal(0);
 
@@ -485,10 +494,8 @@ export default function WorkbenchPanel() {
     setAfterContent(null);
     setReviewCommentMessage(null);
     setCandidateComments([]);
-    void api.listSandboxCandidateComments(prepared.session_id, prepared.candidate.candidate_id)
-      .then(({ comments }) => {
-        if (candidate()?.candidate.candidate_id === prepared.candidate.candidate_id) setCandidateComments(comments);
-      })
+    setReviewedVersion(null);
+    void loadThread(prepared.session_id, prepared.candidate.candidate_id, prepared.candidate.files[0]?.path)
       .catch(() => { /* Review remains usable if comment history is unavailable. */ });
   }
 
@@ -497,11 +504,10 @@ export default function WorkbenchPanel() {
     const sessionId = activeId();
     if (!reviewOpen() || !prepared || !sessionId || prepared.session_id !== sessionId) return;
     let disposed = false;
+    // The thread is the reviewed file's: it follows the file being read.
+    const path = reviewedPath();
     const refresh = () => {
-      void api.listSandboxCandidateComments(sessionId, prepared.candidate.candidate_id)
-        .then(({ comments }) => {
-          if (!disposed && candidate()?.candidate.candidate_id === prepared.candidate.candidate_id) setCandidateComments(comments);
-        })
+      void loadThread(sessionId, prepared.candidate.candidate_id, path)
         .catch(() => { /* Keep the last known comments during a connection failure. */ });
       void loadSandboxRecords(sessionId)
         .then((records) => {
@@ -691,12 +697,14 @@ export default function WorkbenchPanel() {
     setReviewCommentBusy(true);
     setReviewCommentMessage(null);
     try {
-      await api.commentOnSandboxCandidate(id, prepared.candidate.candidate_id, comment, { path: reviewedPath() ?? undefined, anchor: commentAnchor() ?? undefined });
+      const path = reviewedPath();
+      const at = reviewedVersion() ?? (path ? (await api.draftThread(id, prepared.candidate.candidate_id, path)).binding : null);
+      if (!at) throw new Error("this draft has no version to comment on yet");
+      await api.commentOnVersion(at.artifact, at.version, comment, { anchor: commentAnchor() ?? undefined });
       setReviewComment("");
       setCommentAnchor(null);
       setReviewCommentMessage("Comment saved on this draft. Agent revision will be available after isolated draft editing is ready.");
-      void api.listSandboxCandidateComments(id, prepared.candidate.candidate_id)
-        .then(({ comments }) => setCandidateComments(comments))
+      void loadThread(id, prepared.candidate.candidate_id, path)
         .catch(() => { /* The accepted comment remains durable. */ });
     } catch (error) {
       setReviewCommentMessage(`Could not send feedback: ${error instanceof Error ? error.message : String(error)}`);
@@ -712,7 +720,9 @@ export default function WorkbenchPanel() {
     setReviewCommentBusy(true);
     setReviewCommentMessage(null);
     try {
-      await api.requestRevisionFromCandidateComment(id, prepared.candidate.candidate_id, commentId);
+      const at = reviewedVersion();
+      if (!at) throw new Error("this draft has no version yet");
+      await api.reviseFromComment(at.artifact, commentId);
       setReviewCommentMessage("The Agent is preparing a new version in its isolated draft. The saved version stays available for review.");
     } catch (error) {
       setReviewCommentMessage(`Could not request a revision: ${error instanceof Error ? error.message : String(error)}`);
@@ -882,7 +892,7 @@ export default function WorkbenchPanel() {
                     <For each={candidateComments()}>{(comment) => <article>
                       <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.anchor ? ` · ${comment.anchor}` : ""}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
                       <p>{comment.text}</p>
-                      <button type="button" class="btn" disabled={reviewCommentBusy()} onClick={() => void requestRevisionFromComment(comment.comment_id)}>Ask Agent to address this</button>
+                      <Show when={comment.comment_id}>{(id) => <button type="button" class="btn" disabled={reviewCommentBusy()} onClick={() => void requestRevisionFromComment(id())}>Ask Agent to address this</button>}</Show>
                     </article>}</For>
                   </div>
                 </Show>

@@ -348,7 +348,7 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
                   const text = note().trim();
                   if (!text) return;
                   setNote("");
-                  void act(() => api.libraryComment(found().id, at(), text));
+                  void act(() => api.commentOnVersion(found().id, at(), text));
                 }}
               >
                 <input placeholder="Add a comment on this version" value={note()} onInput={(e) => setNote(e.currentTarget.value)} aria-label="Comment" />
