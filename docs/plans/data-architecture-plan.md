@@ -1693,6 +1693,25 @@ The steps, each shipped whole:
    comment → revise, recorded under `docs/audits/`. M8 is done when it
    passes; erase waits for M7a.
 
+M8.4c-a (2026-10-08): a version records the Review candidate that
+proposes it (a `Proposed` row; `Version::proposed`), because the bytes of
+an Office draft are usually already the current version and made no
+version of their own. A candidate made from another (narrowed, revised, or
+edited in a shared workspace) is a version made from the one its parent
+proposed, and every writer of a candidate record notes it. Under
+`/library/{id}/versions/{version}`: `text` reads any version; `document`,
+`review` and `narrow` read and narrow an Office or PDF version in Review
+through the worker; `accept`, `undo` and `checks` act on it through the
+one promotion path. An unknown version is not found, a version nobody
+proposed is a conflict, and a version whose conversation is in the trash
+is not found. A promotion marks only the versions of the files it
+applied, and an undo unmarks them (`PromotionUndone`).
+`GET /sessions/{id}/sandbox/records` also returns `artifacts`: the
+artifact, version and path of each candidate file and each declared file
+of that conversation. The session's candidate routes still stand; M8.4c-c
+deletes them with the client calls that use them. Test
+`review_by_artifact_version`.
+
 Investigating the live failures of M8.3b and M8.4b found faults in
 Vak's own contract, each now fixed (AGENTS.md "Investigating a failure"):
 - `emit_table_card` refused a correct flat `{columns, rows}` table

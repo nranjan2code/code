@@ -520,6 +520,11 @@ the sidebar and the Canvas. `docs/plans/data-architecture-blast-radius.md`
 lists what M6 and M8 remove of it, so the prototype is deleted rather than
 kept for compatibility (invariant 30).
 
+From plan M8.4c-a a version in Review is read and decided under
+`/library/{id}/versions/{version}` (`text`, `document`, `review`,
+`narrow`, `accept`, `undo`, `checks`), and a conversation's sandbox
+records name the artifact and version of each candidate file.
+
 The API (`GET /library`, `GET /library/{key}`) keeps its shape across
 phases; the key's format changes at M8. A turn request names artifacts by
 key the way it names inbox files, and the server renders their blocks at

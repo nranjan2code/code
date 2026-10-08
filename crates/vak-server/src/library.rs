@@ -13,12 +13,41 @@ use vak_core::artifacts::{ArtifactStep, NewVersion, VersionSource};
 
 use crate::AppState;
 
-/// Records what a Review record means for the artifacts it touches: each
+/// Records what a Review record means for the artifacts it touches. Each
 /// file of a candidate that is already a declared deliverable gets the
-/// candidate's bytes as a version, and a promotion marks the versions of
-/// its candidate promoted. A file nobody declared stays out (doc 82 §3).
+/// candidate's bytes as a version, made from the version its parent
+/// candidate proposed, and that version is recorded as what the candidate
+/// proposes (the same bytes as the current version propose that one). A
+/// promotion marks the versions of the files it applied, and its undo
+/// unmarks them. A file nobody declared stays out (doc 82 §3).
 pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord) {
     let artifacts = state.core.artifacts();
+    let warn = |error: vak_core::artifacts::ArtifactError| {
+        tracing::warn!(kind = "artifact", error_kind = %vak_telemetry::error_kind(&error), "a review record was not recorded on its artifact");
+    };
+    // The versions `candidate` proposes, limited to `paths` when given.
+    let proposed_by = |candidate: &str, paths: Option<&[String]>| {
+        let mut found = Vec::new();
+        for artifact in artifacts.list() {
+            if let Some(paths) = paths
+                && !paths
+                    .iter()
+                    .any(|path| vak_core::artifacts::normalize(path) == artifact.path)
+            {
+                continue;
+            }
+            for version in &artifact.versions {
+                if version
+                    .proposed
+                    .as_ref()
+                    .is_some_and(|proposal| proposal.candidate == candidate)
+                {
+                    found.push((artifact.id, version.id, version.promoted));
+                }
+            }
+        }
+        found
+    };
     match record {
         vak_sandbox::DurableRecord::Candidate(candidate) => {
             let manifest = &candidate.candidate;
@@ -28,16 +57,29 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
                     continue;
                 }
                 let id = vak_core::artifacts::artifact_id(&space, &file.path);
-                if artifacts.get(&id.to_string()).is_none() {
+                let Some(artifact) = artifacts.get(&id.to_string()) else {
                     continue;
-                }
+                };
                 let Ok(bytes) = std::fs::read(manifest.source_root.join(&file.path)) else {
                     continue;
                 };
-                if let Err(error) = artifacts.version(
+                let parent = candidate.parent_candidate_id.as_ref().and_then(|parent| {
+                    artifact
+                        .versions
+                        .iter()
+                        .rev()
+                        .find(|version| {
+                            version
+                                .proposed
+                                .as_ref()
+                                .is_some_and(|proposal| proposal.candidate == *parent)
+                        })
+                        .map(|version| version.id)
+                });
+                let version = match artifacts.version(
                     id,
                     NewVersion {
-                        parent: None,
+                        parent,
                         bytes: &bytes,
                         source: VersionSource::Candidate {
                             session: candidate.session_id.clone(),
@@ -47,33 +89,293 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
                     candidate.trace.as_ref(),
                     candidate.actor,
                 ) {
-                    tracing::warn!(kind = "artifact", error_kind = %vak_telemetry::error_kind(&error), "a candidate was not recorded as a version");
+                    Ok(version) => version,
+                    Err(error) => {
+                        warn(error);
+                        continue;
+                    }
+                };
+                if let Err(error) = artifacts.record(
+                    id,
+                    ArtifactStep::Proposed {
+                        version,
+                        session: candidate.session_id.clone(),
+                        candidate: manifest.candidate_id.clone(),
+                    },
+                    candidate.trace.as_ref(),
+                    candidate.actor,
+                ) {
+                    warn(error);
                 }
             }
         }
         vak_sandbox::DurableRecord::Promotion(promotion) => {
-            for artifact in artifacts.list() {
-                for version in &artifact.versions {
-                    let of_candidate = matches!(&version.source,
-                        VersionSource::Candidate { candidate, .. } if *candidate == promotion.candidate_id);
-                    if of_candidate
-                        && !version.promoted
-                        && let Err(error) = artifacts.record(
-                            artifact.id,
-                            ArtifactStep::Promoted {
-                                version: version.id,
-                            },
-                            promotion.trace.as_ref(),
-                            promotion.actor,
-                        )
-                    {
-                        tracing::warn!(kind = "artifact", error_kind = %vak_telemetry::error_kind(&error), "a promotion was not recorded on its version");
-                    }
+            for (artifact, version, promoted) in
+                proposed_by(&promotion.candidate_id, Some(&promotion.receipt.applied))
+            {
+                if !promoted
+                    && let Err(error) = artifacts.record(
+                        artifact,
+                        ArtifactStep::Promoted { version },
+                        promotion.trace.as_ref(),
+                        promotion.actor,
+                    )
+                {
+                    warn(error);
+                }
+            }
+        }
+        vak_sandbox::DurableRecord::PromotionUndo(undo) => {
+            for (artifact, version, promoted) in proposed_by(&undo.candidate_id, None) {
+                if promoted
+                    && let Err(error) = artifacts.record(
+                        artifact,
+                        ArtifactStep::PromotionUndone { version },
+                        None,
+                        Some(crate::request_actor(state)),
+                    )
+                {
+                    warn(error);
                 }
             }
         }
         _ => {}
     }
+}
+
+/// The artifacts and versions a conversation's Review and declared files
+/// are: what its sandbox records name them by (plan M8.4c-a).
+pub(crate) fn bindings(state: &AppState, session: &str) -> Vec<serde_json::Value> {
+    let mut found = Vec::new();
+    for artifact in state.core.artifacts().list() {
+        for version in &artifact.versions {
+            let candidate = version
+                .proposed
+                .as_ref()
+                .filter(|proposal| proposal.session == session)
+                .map(|proposal| proposal.candidate.clone());
+            let declared_here = matches!(&version.source,
+                VersionSource::Call { session: from, .. } if from == session);
+            if candidate.is_some() || declared_here {
+                found.push(serde_json::json!({
+                    "artifact": artifact.id,
+                    "version": version.id,
+                    "path": artifact.path,
+                    "candidate": candidate,
+                    "promoted": version.promoted,
+                }));
+            }
+        }
+    }
+    found
+}
+
+/// The Review candidate a version is, and the file in it.
+struct InReview {
+    session: String,
+    candidate: String,
+    path: String,
+}
+
+fn refuse(status: StatusCode, message: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": message }))).into_response()
+}
+
+/// Resolves an artifact version to the candidate that proposes it. An
+/// unknown artifact or version is not found; a version nobody proposed for
+/// review is a conflict; a version whose conversation is in the trash is
+/// not found, as everything of a trashed conversation is.
+fn in_review(state: &AppState, id: &str, version: &str) -> Result<InReview, Box<Response>> {
+    let missing = || Box::new(refuse(StatusCode::NOT_FOUND, "no such version"));
+    let version = vak_session::ids::VersionId::parse(version).map_err(|_| missing())?;
+    let artifact = state.core.artifacts().get(id).ok_or_else(missing)?;
+    let found = artifact
+        .versions
+        .iter()
+        .find(|known| known.id == version)
+        .ok_or_else(missing)?;
+    let Some(proposal) = &found.proposed else {
+        return Err(Box::new(refuse(
+            StatusCode::CONFLICT,
+            "this version is not waiting for review",
+        )));
+    };
+    if vak_core::trash::is_trashed(&state.core.shared_scope(), &proposal.session) {
+        return Err(Box::new(refuse(
+            StatusCode::NOT_FOUND,
+            "its conversation is in the trash",
+        )));
+    }
+    let saved = crate::saved_candidate(state, &proposal.session, &proposal.candidate)
+        .map_err(|status| Box::new(status.into_response()))?;
+    let manifest = &saved.candidate;
+    let space = vak_session::trace::local::space(&manifest.destination_root).to_string();
+    let path = manifest
+        .files
+        .iter()
+        .find(|file| vak_core::artifacts::artifact_id(&space, &file.path) == artifact.id)
+        .map(|file| file.path.clone())
+        .ok_or_else(missing)?;
+    Ok(InReview {
+        session: proposal.session.clone(),
+        candidate: proposal.candidate.clone(),
+        path,
+    })
+}
+
+/// `GET /library/{id}/versions/{version}/text`: a version as text, or its
+/// size when it is not text. Never a download, and never recorded as one.
+pub(crate) async fn version_text(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+) -> Response {
+    let Ok(version) = vak_session::ids::VersionId::parse(&version) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let artifacts = state.core.artifacts();
+    let read = tokio::task::spawn_blocking(move || {
+        let artifact = artifacts.get(&id)?;
+        let bytes = artifacts.bytes(&artifact, &version).ok()?;
+        Some((artifact.path, bytes))
+    })
+    .await;
+    match read {
+        Ok(Some((path, bytes))) => {
+            let size = bytes.len();
+            let content = String::from_utf8(bytes).ok();
+            Json(serde_json::json!({
+                "path": path,
+                "kind": if content.is_some() { "text" } else { "binary" },
+                "bytes": size,
+                "content": content,
+                "editable": false,
+            }))
+            .into_response()
+        }
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// `GET /library/{id}/versions/{version}/document`: the Office or PDF
+/// projection of a version in Review, parsed in the worker.
+async fn version_document(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+    axum::extract::Query(mut query): axum::extract::Query<crate::OfficeProjectionQuery>,
+) -> Response {
+    let review = match in_review(&state, &id, &version) {
+        Ok(review) => review,
+        Err(response) => return *response,
+    };
+    query.path = review.path;
+    crate::read_sandbox_candidate_office_projection(
+        State(state),
+        Path((review.session, review.candidate)),
+        axum::extract::Query(query),
+    )
+    .await
+}
+
+/// `GET /library/{id}/versions/{version}/review`: what a version in
+/// Review changes in the file as the workspace holds it.
+pub(crate) async fn version_review(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+) -> Response {
+    let review = match in_review(&state, &id, &version) {
+        Ok(review) => review,
+        Err(response) => return *response,
+    };
+    crate::read_sandbox_candidate_office_review(
+        State(state),
+        Path((review.session, review.candidate)),
+        axum::extract::Query(crate::FileQuery {
+            path: review.path,
+            session: None,
+        }),
+    )
+    .await
+}
+
+#[derive(serde::Deserialize)]
+struct Narrow {
+    keep: Vec<String>,
+}
+
+/// `POST /library/{id}/versions/{version}/narrow`: a new version that
+/// keeps only the chosen changes of this one.
+async fn version_narrow(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+    Json(body): Json<Narrow>,
+) -> Response {
+    let review = match in_review(&state, &id, &version) {
+        Ok(review) => review,
+        Err(response) => return *response,
+    };
+    crate::narrow_sandbox_candidate_office(
+        State(state),
+        Path((review.session, review.candidate)),
+        Json(crate::OfficeNarrowBody {
+            path: review.path,
+            keep: body.keep,
+        }),
+    )
+    .await
+}
+
+/// `POST /library/{id}/versions/{version}/accept`: the version becomes the
+/// file in the workspace, through the one promotion path.
+pub(crate) async fn version_accept(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+) -> Response {
+    let review = match in_review(&state, &id, &version) {
+        Ok(review) => review,
+        Err(response) => return *response,
+    };
+    crate::promote_sandbox_candidate(
+        State(state),
+        Path(review.session),
+        Json(crate::SandboxPromotionBody {
+            candidate_id: review.candidate,
+            files: vec![review.path],
+        }),
+    )
+    .await
+}
+
+/// `POST /library/{id}/versions/{version}/undo`: the workspace gets back
+/// what it held before this version was accepted.
+pub(crate) async fn version_undo(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+) -> Response {
+    let review = match in_review(&state, &id, &version) {
+        Ok(review) => review,
+        Err(response) => return *response,
+    };
+    crate::undo_sandbox_promotion(State(state), Path((review.session, review.candidate))).await
+}
+
+/// `POST /library/{id}/versions/{version}/checks`: run one planned
+/// workspace check of an accepted version.
+async fn version_check(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+    Json(body): Json<crate::WorkspaceCheckBody>,
+) -> Response {
+    let review = match in_review(&state, &id, &version) {
+        Ok(review) => review,
+        Err(response) => return *response,
+    };
+    crate::run_sandbox_workspace_check(
+        State(state),
+        Path((review.session, review.candidate)),
+        Json(body),
+    )
+    .await
 }
 
 /// What a turn request names to attach (plan M8.3b).
@@ -955,6 +1257,28 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route("/library/{id}/versions/{version}/save", post(save))
+        .route("/library/{id}/versions/{version}/text", get(version_text))
+        .route(
+            "/library/{id}/versions/{version}/document",
+            get(version_document),
+        )
+        .route(
+            "/library/{id}/versions/{version}/review",
+            get(version_review),
+        )
+        .route(
+            "/library/{id}/versions/{version}/narrow",
+            post(version_narrow),
+        )
+        .route(
+            "/library/{id}/versions/{version}/accept",
+            post(version_accept),
+        )
+        .route("/library/{id}/versions/{version}/undo", post(version_undo))
+        .route(
+            "/library/{id}/versions/{version}/checks",
+            post(version_check),
+        )
         .route("/library/cards", post(save_card))
         .route("/library/{id}/versions", post(person_version))
         .route("/library/{id}/shares", get(shares).post(share))

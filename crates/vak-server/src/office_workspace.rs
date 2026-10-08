@@ -750,15 +750,14 @@ async fn create_revision(
         revision_session_id: None,
         narrowed: None,
     };
-    if crate::sandbox_records::append(
-        &super::sandbox_records_path(state, &session_id),
-        &vak_sandbox::DurableRecord::Candidate(saved.clone()),
-    )
-    .is_err()
+    let record = vak_sandbox::DurableRecord::Candidate(saved.clone());
+    if crate::sandbox_records::append(&super::sandbox_records_path(state, &session_id), &record)
+        .is_err()
     {
         let _ = vak_sandbox::remove_frozen_candidate(&frozen_root);
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    crate::library::note_review(state, &record);
     room.branches[branch_pos].head_candidate_id = id.clone();
     room.revisions.push(OfficeRevision {
         candidate_id: id,

@@ -11616,6 +11616,9 @@ pub(crate) fn is_document_anchor(path: &str, anchor: &str) -> bool {
 
 #[derive(Debug, serde::Deserialize)]
 struct OfficeProjectionQuery {
+    /// Absent on a route that names the file another way (an artifact
+    /// version); an empty path is refused as not a document.
+    #[serde(default)]
     path: String,
     /// The conversation whose workspace holds the file (`resolve_read_path`).
     #[serde(default)]
@@ -12185,7 +12188,10 @@ async fn list_session_sandbox_records(
                     vak_sandbox::DurableRecord::CandidateRevision(value) => value.session_id == id,
                 })
                 .collect::<Vec<_>>();
-            Json(serde_json::json!({ "records": records })).into_response()
+            // Which artifact and version each candidate and declared file
+            // is, so a client addresses Review through the Library.
+            let artifacts = library::bindings(&state, &id);
+            Json(serde_json::json!({ "records": records, "artifacts": artifacts })).into_response()
         }
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -13738,11 +13744,10 @@ async fn dispatch_candidate_revision(
                                     revision_session_id: Some(child_session_id.clone()),
                                     narrowed: None,
                                 };
-                                match crate::sandbox_records::append(
-                                    &records_path,
-                                    &vak_sandbox::DurableRecord::Candidate(record),
-                                ) {
+                                let record = vak_sandbox::DurableRecord::Candidate(record);
+                                match crate::sandbox_records::append(&records_path, &record) {
                                     Ok(()) => {
+                                        library::note_review(&state, &record);
                                         let answer = response.text_content();
                                         detail = Some(if answer.trim().is_empty() {
                                             format!("New draft version {id} is ready for review")
@@ -14190,6 +14195,7 @@ async fn undo_sandbox_promotion(
         )
             .into_response();
     }
+    library::note_review(&state, &durable);
     (StatusCode::OK, Json(durable)).into_response()
 }
 
@@ -23025,6 +23031,119 @@ mod sandbox_promotion_tests {
                 .len(),
             3
         );
+    }
+
+    /// Plan M8.4c-a: a candidate of a declared file is read, accepted and
+    /// undone by its artifact id and version, and the conversation's
+    /// sandbox records name that artifact and version.
+    #[tokio::test]
+    async fn review_by_artifact_version() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core);
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("result.json"), r#"{"ready":true}"#)
+            .await
+            .unwrap();
+        let artifacts = state.core.artifacts();
+        let space = vak_session::trace::local::space(state.core.cwd()).to_string();
+        let id = artifacts
+            .declare(
+                &space,
+                "vak",
+                "result.json",
+                vak_core::artifacts::ArtifactKind::File,
+                Some("Result".into()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let earlier = artifacts
+            .version(
+                id,
+                vak_core::artifacts::NewVersion {
+                    parent: None,
+                    bytes: b"{}",
+                    source: vak_core::artifacts::VersionSource::Person,
+                },
+                None,
+                None,
+            )
+            .unwrap();
+
+        let candidate = export_candidate(&state).await;
+        let candidate_id = candidate.candidate.candidate_id.clone();
+        let artifact = artifacts.get(&id.to_string()).unwrap();
+        assert_eq!(artifact.versions.len(), 2);
+        let proposed = artifact.versions[1].clone();
+        assert_eq!(proposed.parent, Some(earlier));
+        assert_eq!(
+            proposed.proposed,
+            Some(vak_core::artifacts::Proposal {
+                session: "session-1".into(),
+                candidate: candidate_id.clone(),
+            })
+        );
+        let at = |version: vak_session::ids::VersionId| Path((id.to_string(), version.to_string()));
+        let json = |response: axum::response::Response| async {
+            serde_json::from_slice::<serde_json::Value>(
+                &axum::body::to_bytes(response.into_body(), 64 * 1024)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+
+        let records = json(
+            list_session_sandbox_records(State(state.clone()), Path("session-1".into())).await,
+        )
+        .await;
+        assert_eq!(
+            records["artifacts"],
+            serde_json::json!([{
+                "artifact": id,
+                "version": proposed.id,
+                "path": "result.json",
+                "candidate": candidate_id,
+                "promoted": false,
+            }])
+        );
+
+        let text = json(library::version_text(State(state.clone()), at(proposed.id)).await).await;
+        assert_eq!(text["content"], r#"{"ready":true}"#);
+
+        let unknown =
+            library::version_accept(State(state.clone()), at(vak_session::ids::VersionId::new()))
+                .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let not_in_review = library::version_accept(State(state.clone()), at(earlier)).await;
+        assert_eq!(not_in_review.status(), StatusCode::CONFLICT);
+        assert!(!dir.path().join("result.json").exists());
+
+        let accepted = library::version_accept(State(state.clone()), at(proposed.id)).await;
+        assert_eq!(accepted.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(dir.path().join("result.json"))
+                .await
+                .unwrap(),
+            r#"{"ready":true}"#
+        );
+        assert!(artifacts.get(&id.to_string()).unwrap().versions[1].promoted);
+
+        let undone = library::version_undo(State(state.clone()), at(proposed.id)).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert!(!dir.path().join("result.json").exists());
+        assert!(!artifacts.get(&id.to_string()).unwrap().versions[1].promoted);
+
+        vak_core::trash::set(&state.core.shared_scope(), &["session-1".to_string()], true).unwrap();
+        let trashed = library::version_accept(State(state.clone()), at(proposed.id)).await;
+        assert_eq!(trashed.status(), StatusCode::NOT_FOUND);
+        assert!(!dir.path().join("result.json").exists());
     }
 
     #[tokio::test]

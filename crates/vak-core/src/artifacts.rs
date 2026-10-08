@@ -96,8 +96,21 @@ pub enum ArtifactStep {
         #[serde(flatten)]
         source: VersionSource,
     },
+    /// A Review candidate proposes this version for the file: how Review
+    /// reads and decides a candidate by artifact and version (plan
+    /// M8.4c-a). The same bytes proposed again name the newer candidate.
+    Proposed {
+        version: VersionId,
+        session: String,
+        candidate: String,
+    },
     /// A candidate version was promoted into the space's working tree.
     Promoted {
+        version: VersionId,
+    },
+    /// The promotion of this version was undone: the working tree holds
+    /// what it held before.
+    PromotionUndone {
         version: VersionId,
     },
     Renamed {
@@ -139,6 +152,13 @@ pub struct Comment {
     pub at: DateTime<Utc>,
 }
 
+/// The Review candidate that proposes a version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proposal {
+    pub session: String,
+    pub candidate: String,
+}
+
 /// One version as the rollup holds it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Version {
@@ -158,6 +178,9 @@ pub struct Version {
     pub promoted: bool,
     #[serde(default)]
     pub saved: bool,
+    /// The candidate in Review that proposes this version, if one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed: Option<Proposal>,
 }
 
 /// An artifact's current state.
@@ -323,6 +346,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
                     actor: event.actor,
                     promoted: false,
                     saved: false,
+                    proposed: None,
                 });
             }
         }
@@ -333,6 +357,28 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 .find(|known| known.id == version)
             {
                 found.promoted = true;
+            }
+        }
+        ArtifactStep::Proposed {
+            version,
+            session,
+            candidate,
+        } => {
+            if let Some(found) = artifact
+                .versions
+                .iter_mut()
+                .find(|known| known.id == version)
+            {
+                found.proposed = Some(Proposal { session, candidate });
+            }
+        }
+        ArtifactStep::PromotionUndone { version } => {
+            if let Some(found) = artifact
+                .versions
+                .iter_mut()
+                .find(|known| known.id == version)
+            {
+                found.promoted = false;
             }
         }
         ArtifactStep::Saved { version } => {
