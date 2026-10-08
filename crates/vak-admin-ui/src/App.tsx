@@ -5987,7 +5987,7 @@ export function Settings() {
     setProbing(true);
     const start = performance.now();
     try {
-      const res = await api.models(prov, selectedAgentIdOrUndefined());
+      const res = await api.models(prov, selectedAgentIdOrUndefined(), true);
       if (prov !== selectedProvider() || mod !== selectedModel()) return;
       const latency = Math.round(performance.now() - start);
       const models = res.models ?? [];
@@ -6077,14 +6077,14 @@ export function Settings() {
     setProviderKeyInput("");
     setProbeResult(null);
   });
-  const discover = async (provider: string) => {
+  const discover = async (provider: string, fresh = false) => {
     const revision = ++discoveryRevision;
     setLoadingModels(true);
     setModelError("");
     setDiscoveredModels([]);
     const current = () => revision === discoveryRevision && provider === selectedProvider();
     try {
-      const res = await api.models(provider, selectedAgentIdOrUndefined());
+      const res = await api.models(provider, selectedAgentIdOrUndefined(), fresh);
       if (!current()) return;
       const models = res.models ?? [];
       setDiscoveredModels(models);
@@ -6458,7 +6458,7 @@ export function Settings() {
                   >
                     Save Model Route
                   </button>
-                  <button class="ghost small" disabled={loadingModels()} onClick={() => void discover(selectedProvider())}>
+                  <button class="ghost small" disabled={loadingModels()} onClick={() => void discover(selectedProvider(), true)}>
                     {loadingModels() ? "Checking…" : `Refresh list (${discoveredModels().length})`}
                   </button>
                 </div>

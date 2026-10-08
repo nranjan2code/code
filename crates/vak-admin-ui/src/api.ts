@@ -601,8 +601,11 @@ export const api = {
   providers: (agent?: string): Promise<ProviderListResponse> =>
     fetch(withAgent("/providers", agent)).then((r) => handle(r)),
 
-  models: (providerName: string, agent?: string): Promise<DiscoveredModelsResponse> =>
-    fetch(withAgent(`/providers/${encodeURIComponent(providerName)}/models`, agent)).then((r) => handle(r)),
+  /** `fresh` asks the service now, for a connection test or a refresh a person asked for. */
+  models: (providerName: string, agent?: string, fresh = false): Promise<DiscoveredModelsResponse> =>
+    fetch(
+      withAgent(`/providers/${encodeURIComponent(providerName)}/models${fresh ? "?fresh=true" : ""}`, agent),
+    ).then((r) => handle(r)),
 
   /** Reads every connected service's model list and proposes which ids name `model` (`provider/model`). */
   sameModelSuggestions: (model: string, agent?: string): Promise<SameModelSuggestions> =>

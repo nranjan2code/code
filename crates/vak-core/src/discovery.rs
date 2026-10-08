@@ -672,6 +672,32 @@ mod tests {
     /// fallback until something runs discovery, and planning never runs it.
     /// Before this module the only callers were a person opening a model
     /// list, on the one Core that served the list.
+    /// Testing a connection asks the provider, whatever catalogue is kept:
+    /// a key revoked a minute ago must not read as reachable.
+    #[tokio::test]
+    async fn a_connection_test_asks_the_provider_despite_a_kept_catalogue() {
+        shared_endpoint();
+        let anthropic = ModelsEndpoint::serving(&[MODEL]);
+        let workspace = Workspace::new(&anthropic, &[("ANTHROPIC_API_KEY", "sk-ant-probe")]);
+        let core = workspace.core();
+
+        assert!(core.discover_models("anthropic").await.is_ok());
+        let asked = anthropic.requests();
+        assert!(core.discover_models("anthropic").await.is_ok());
+        assert_eq!(anthropic.requests(), asked, "a picker reads the kept list");
+
+        anthropic.answer(Reply::Status(401));
+        assert!(
+            core.discover_models("anthropic").await.is_ok(),
+            "the kept list still answers a picker"
+        );
+        assert!(
+            core.probe_models("anthropic").await.is_err(),
+            "a test of the connection reports the refusal"
+        );
+        assert_eq!(anthropic.requests(), asked + 1);
+    }
+
     #[tokio::test]
     async fn a_ladder_has_no_fallback_until_discovery_has_run() {
         shared_endpoint();

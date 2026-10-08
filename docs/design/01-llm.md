@@ -171,6 +171,14 @@ the user's key, so `models.rs` asks the provider and
 `Core::discover_models` memoises the answer for 5 minutes (invalidated
 whenever a key is stored or revoked).
 
+A person testing a connection or refreshing the list is asking the
+provider, not the memo: `Core::probe_models` (`GET
+/providers/{name}/models?fresh=true`, the admin console's Test Provider
+Connection and Refresh list) always calls the provider and records what
+it answered. Found 2026-10-08: both buttons read the kept catalogue and
+answered in a few milliseconds, so a key the provider had refused still
+tested as reachable.
+
 | shape | providers | request | response |
 |---|---|---|---|
 | OpenAI listing | `openai`, `openai-responses`, `openrouter`, `openrouter-responses`, compatible gateways, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |

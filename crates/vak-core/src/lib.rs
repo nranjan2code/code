@@ -4795,6 +4795,17 @@ impl Core {
     /// without asking again because pickers poll this; it is the same one
     /// route planning reads, which the background refresh keeps warm.
     pub async fn discover_models(&self, provider: &str) -> Result<Vec<String>, CoreError> {
+        self.list_models(provider, false).await
+    }
+
+    /// As `discover_models`, always asking the provider: what a person
+    /// means by testing a connection or refreshing the list. A kept
+    /// catalogue would answer "reachable" for a key revoked a minute ago.
+    pub async fn probe_models(&self, provider: &str) -> Result<Vec<String>, CoreError> {
+        self.list_models(provider, true).await
+    }
+
+    async fn list_models(&self, provider: &str, ask: bool) -> Result<Vec<String>, CoreError> {
         let pool = self.provider_auth_pool_for(provider)?;
         let catalogues = self.model_catalogues();
         let mut all = Vec::new();
@@ -4804,7 +4815,7 @@ impl Core {
                 provider.to_string(),
                 auth.credential_id.clone().unwrap_or_default(),
             );
-            if let Some(models) = catalogues.fresh(&key, std::time::Instant::now()) {
+            if !ask && let Some(models) = catalogues.fresh(&key, std::time::Instant::now()) {
                 all.extend(models.iter().cloned());
                 continue;
             }

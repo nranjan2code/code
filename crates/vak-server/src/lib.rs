@@ -14806,6 +14806,7 @@ async fn discover_models(
     State(state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
     Query(query): Query<AgentScopeQuery>,
+    Query(asked): Query<DiscoverModelsQuery>,
 ) -> axum::response::Response {
     if !Core::provider_known(&name) {
         return (
@@ -14819,7 +14820,12 @@ async fn discover_models(
     } else {
         state.core.clone()
     };
-    match core.discover_models(&name).await {
+    let listed = if asked.fresh {
+        core.probe_models(&name).await
+    } else {
+        core.discover_models(&name).await
+    };
+    match listed {
         Ok(models) => {
             let capabilities = voice::voice_model_capabilities(&name, &models);
             Json(serde_json::json!({ "provider": name, "models": models, "capabilities": capabilities })).into_response()
@@ -14830,6 +14836,14 @@ async fn discover_models(
             (StatusCode::BAD_GATEWAY, Json(body)).into_response()
         }
     }
+}
+
+#[derive(serde::Deserialize, Default)]
+struct DiscoverModelsQuery {
+    /// Ask the provider now rather than serve the kept catalogue: a
+    /// connection test or a refresh a person asked for.
+    #[serde(default)]
+    fresh: bool,
 }
 
 #[derive(serde::Deserialize, Default)]
