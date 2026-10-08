@@ -34,6 +34,7 @@ import { PageHeader, confirmDestructive } from "./display";
 import { navigate, pushToast, selectedAgentId, setAuthed, setSelectedAgentId } from "./store";
 import { clock, timeAgo } from "./time";
 import { LineageTab } from "./Lineage";
+import { ConversationTrash, LifecycleTab } from "./ConversationLifecycle";
 
 function shortId(id?: string | null, len: number = 8): string {
   if (!id) return "";
@@ -1121,7 +1122,7 @@ export function SessionsList() {
   };
 
   const removeSession = async (s: SessionListItem) => {
-    if (!confirmDestructive(`Move session “${s.session_id}” to the trash? It will be hidden everywhere, search included. Nothing is erased; it can be restored from the workspace client's Archived tasks page.`)) return;
+    if (!confirmDestructive(`Move “${s.title || "this conversation"}” to the trash? It will be hidden everywhere, search included. It can be restored from the Trash below for 30 days; after that it is erased.`)) return;
     setBusySession(s.session_id);
     try {
       await api.trashSession(s.session_id);
@@ -1136,7 +1137,7 @@ export function SessionsList() {
 
   const deleteAllArchived = async () => {
     const count = archivedCount();
-    if (!confirmDestructive(`Move all ${count} archived sessions in this workspace to the trash? They will be hidden everywhere, search included. Nothing is erased.`)) return;
+    if (!confirmDestructive(`Move all ${count} archived sessions in this workspace to the trash? They will be hidden everywhere, search included. Each can be restored for 30 days; after that it is erased.`)) return;
     setBulkBusy(true);
     try {
       const res = await api.trashAllArchived();
@@ -1420,6 +1421,7 @@ export function SessionsList() {
           </Show>
         </Show>
       </div>
+      <ConversationTrash onChanged={() => void refetch()} />
     </div>
   );
 }
@@ -1428,7 +1430,7 @@ export function SessionsList() {
 
 export function SessionForensics(props: { sessionId: string }) {
   const [activeTab, setActiveTab] = createSignal<
-    "dag" | "log" | "drift" | "receipts" | "checkpoints" | "lineage"
+    "dag" | "log" | "drift" | "receipts" | "checkpoints" | "lineage" | "lifecycle"
   >("dag");
   const [selectedTurnIndex, setSelectedTurnIndex] = createSignal<number>(1);
   const [selectedNodeId, setSelectedNodeId] = createSignal<string>("ingress");
@@ -1868,6 +1870,14 @@ export function SessionForensics(props: { sessionId: string }) {
           onClick={() => setActiveTab("lineage")}
         >
           Lineage
+        </button>
+        <button
+          type="button"
+          class="forensics-tab-btn"
+          classList={{ active: activeTab() === "lifecycle" }}
+          onClick={() => setActiveTab("lifecycle")}
+        >
+          Lifecycle
         </button>
       </div>
 
@@ -2420,6 +2430,10 @@ export function SessionForensics(props: { sessionId: string }) {
         {/* TAB 5: CHECKPOINTS & DIFFS */}
         <Match when={activeTab() === "lineage"}>
           <LineageTab sessionId={props.sessionId} />
+        </Match>
+
+        <Match when={activeTab() === "lifecycle"}>
+          <LifecycleTab sessionId={props.sessionId} />
         </Match>
 
         <Match when={activeTab() === "checkpoints"}>

@@ -262,6 +262,18 @@ async fn a_draft_is_trashed_and_restored_and_a_saved_version_is_not() {
         .unwrap();
     assert_eq!(unsigned.status(), 401);
 
+    // A draft nobody keeps says the day it goes to the trash.
+    let detail: Value = client
+        .get(format!("http://{addr}/library/{id}"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(detail["history"][0]["draft_until"].is_string(), "{detail}");
+
     assert!(listed(false).await && !listed(true).await);
     assert_eq!(trash(true).await.unwrap().status(), 204);
     assert!(!listed(false).await && listed(true).await);

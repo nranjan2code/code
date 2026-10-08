@@ -4218,6 +4218,7 @@ body.is-resizing .split-divider {
 .library-versions li.chosen .library-version { border-color: var(--accent); }
 .library-version { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: var(--space-2) 10px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
 .library-version span { font-size: var(--fs-caption); color: var(--text-soft); }
+.library-version .library-fade { flex-basis: 100%; color: var(--faint); }
 .inbox-back { flex: none; }
 .inbox-head h2 { flex: none; margin: 0; font-size: var(--fs-section); font-weight: 600; letter-spacing: -.02em; }
 .inbox-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }

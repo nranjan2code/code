@@ -953,6 +953,7 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/conversations/{id}/hold", put(hold_conversation))
         .route("/conversations/{id}/gone", get(conversation_gone))
+        .route("/conversations/{id}/lifecycle", get(conversation_lifecycle))
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/skills", get(list_skills))
         .route("/social/connectors", get(list_social_connectors))
@@ -10337,11 +10338,47 @@ async fn hold_conversation(
 
 /// The signed receipt of every erasure.
 async fn erasure_receipts(State(state): State<AppState>) -> axum::response::Response {
-    data_read(
-        state,
-        |core| serde_json::json!({ "receipts": core.erasure_receipts() }),
-    )
+    data_read(state, |core| {
+        let receipts: Vec<serde_json::Value> = core
+            .erasure_receipts()
+            .iter()
+            .map(|receipt| {
+                let mut row = serde_json::json!(receipt);
+                row["verifies"] = serde_json::json!(receipt.verifies());
+                row
+            })
+            .collect();
+        serde_json::json!({ "receipts": receipts })
+    })
     .await
+}
+
+/// Where a conversation is in its life: archived, in the trash and until
+/// when, on hold, and what the retention rule is.
+async fn conversation_lifecycle(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    if !find_session_in_cwd(&state.core, &id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let core = state.core.clone();
+    let read = tokio::task::spawn_blocking(move || {
+        let lifecycle = vak_core::trash::state(&core.shared_scope(), &id).unwrap_or_default();
+        let window = vak_core::lifecycle::trash_window();
+        serde_json::json!({
+            "archived": lifecycle.archived,
+            "trashed_at": lifecycle.trashed_at,
+            "erase_on": lifecycle.trashed_at.map(|at| at + window),
+            "held": core.conversation_held(&id),
+            "trash_days": window.num_days(),
+        })
+    })
+    .await;
+    match read {
+        Ok(lifecycle) => Json(lifecycle).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 async fn delete_all_archived(State(state): State<AppState>) -> axum::response::Response {

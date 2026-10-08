@@ -54,6 +54,17 @@ pub fn trash_window() -> chrono::Duration {
     )
 }
 
+/// How long a draft nobody accepted, saved, starred or shared is kept
+/// before it goes to the trash, under the default label.
+pub fn draft_window() -> chrono::Duration {
+    chrono::Duration::seconds(
+        Label::default_tenant()
+            .rule(DataClass::DraftVersion)
+            .and_then(|rule| rule.delete_after_secs)
+            .unwrap_or(0),
+    )
+}
+
 /// A Document's id in a lifecycle item: a digest, because its name is a
 /// path and paths are content.
 fn document_id(name: &str) -> String {

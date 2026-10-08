@@ -1,7 +1,7 @@
 //! The records the catalog reads, found under a data home: every session
 //! ledger, the shared `runs/` and `effects/` chains, each Agent's
-//! commitments chain, the trigger, memory and intake source Documents, and
-//! the `intake/` chain.
+//! commitments chain, the trigger, memory and intake source Documents, the
+//! `intake/` chain, and the `lifecycle/` and `erasures/` chains.
 
 use std::path::{Path, PathBuf};
 use vak_session::tail::{self, Position};
@@ -31,6 +31,10 @@ pub enum Source {
     Artifacts(PathBuf),
     /// The grant records.
     Grants(PathBuf),
+    /// The reconciler's transitions.
+    Lifecycle(PathBuf),
+    /// The erasure receipts.
+    Erasures(PathBuf),
 }
 
 impl Source {
@@ -48,6 +52,8 @@ impl Source {
             Self::Intake { dir, .. } => ("intake", dir),
             Self::Artifacts(dir) => ("artifacts", dir),
             Self::Grants(dir) => ("grants", dir),
+            Self::Lifecycle(dir) => ("lifecycle", dir),
+            Self::Erasures(dir) => ("erasures", dir),
         };
         format!("{kind}:{}", path.display())
     }
@@ -59,6 +65,8 @@ impl Source {
             Self::Commitments { dir, .. }
             | Self::Intake { dir, .. }
             | Self::Artifacts(dir)
+            | Self::Lifecycle(dir)
+            | Self::Erasures(dir)
             | Self::Grants(dir) => chain_has_more(dir, from),
             Self::Trigger(path)
             | Self::IntakeSource(path)
@@ -121,6 +129,12 @@ pub fn discover(data: &Path) -> Vec<Source> {
     }
     if shared.grants().is_dir() {
         found.push(Source::Grants(shared.grants()));
+    }
+    if shared.lifecycle().is_dir() {
+        found.push(Source::Lifecycle(shared.lifecycle()));
+    }
+    if shared.erasures().is_dir() {
+        found.push(Source::Erasures(shared.erasures()));
     }
     if shared.intake().is_dir() {
         found.push(Source::Intake {

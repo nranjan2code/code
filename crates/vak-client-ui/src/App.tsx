@@ -396,6 +396,28 @@ let pendingRoute: string | null = null;
  * Used by the hash route on load (a bookmark, or a notification click that
  * reopened the tab) and by a notification arriving in a live tab.
  */
+/**
+ * "Why is this gone?" (doc 74 §6.3, C3): a link to a conversation that was
+ * deleted for good says when and why, never what it held, and lands on the
+ * Agent's current conversation. False when the conversation was not erased.
+ */
+async function explainGone(sessionId: string): Promise<boolean> {
+  let gone: api.ConversationGone;
+  try {
+    gone = await api.conversationGone(sessionId);
+  } catch {
+    return false;
+  }
+  const when = new Date(gone.erased_at).toLocaleDateString(undefined, { dateStyle: "long" });
+  const why = gone.cause === "policy"
+    ? "after 30 days in the trash"
+    : gone.cause === "person" ? "because someone asked for it" : "";
+  const receipt = gone.receipt?.verifies ? " A signed record of the deletion is kept." : "";
+  setNotice({ kind: "info", text: `That conversation was deleted for good on ${when}${why ? ` ${why}` : ""}. Nothing of it can be shown.${receipt}` });
+  await openAgentChat(activeAgentId() || "vak");
+  return true;
+}
+
 export async function applyRoute(hash: string) {
   const match = /^#\/s\/([^?]+)(?:\?(.*))?$/.exec(hash);
   if (!match) return;
@@ -407,6 +429,7 @@ export async function applyRoute(hash: string) {
     if (narrowViewport()) setSidebarOpen(false);
   } else {
     if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
+    if (!sessions().some((s) => s.session_id === sessionId) && await explainGone(sessionId)) return;
     await activate(sessionId);
   }
   const approval = new URLSearchParams(query ?? "").get("approval");

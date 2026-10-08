@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-e's first two parts (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1971,10 +1971,49 @@ gone.**
 - Test: `a_conversation_is_erased_from_the_trash_with_its_title_typed`
   now also checks the trash row, the title and `gone`.
 
-Still to do in M7a-e: the rest of the screens (the conversation menu C1,
-"Why is this gone?" C3 on a link or search hit, Workbench states C8,
-admin A2 and A3), and the lifecycle and erasure chains as catalog
-sources. `gc_keeps_everything_reachable`,
+**Part 5b, done 2026-10-08: the rest of the screens, and the catalog.
+M7a-e is done.**
+- The catalog reads the `lifecycle/` and `erasures/` chains
+  (`Source::Lifecycle`, `Source::Erasures`). A transition is a
+  `transition` node whose status is its last row; a receipt is an
+  `erasure` node. Where an erased conversation was (or an artifact, when
+  a draft's erasure took the whole of it) there is an `erased` tombstone
+  with no title, text or location, traced to its receipt by `caused_by`,
+  so `lineage` of an erased conversation ends at the receipt. A rebuild
+  from the records gives the same.
+- Client, the conversation's More menu (C1): Archive conversation and
+  Move to trash. The Agent's next conversation opens in its place. The
+  client had no way to archive or trash a conversation before this.
+- Client, "Why is this gone?" (C3): a link to an erased conversation
+  says when and why it was deleted and that a signed record is kept,
+  then opens the Agent's current conversation. A notice now stays long
+  enough to read its length.
+- Client, draft expiry (C8): the Library's version list says when a
+  draft nobody keeps goes to the trash (`draft_until` on
+  `GET /library/{id}`, from `lifecycle::draft_window`), with Move to
+  trash and, for one in the trash, Restore.
+- Admin, Conversations (A2): a Trash panel (since when, erased on, On
+  hold; Restore, Hold, Erase with the title typed) and the erasure
+  receipts with whether each signature verifies
+  (`GET /data/erasure/receipts` now says so).
+- Admin, conversation detail (A3): a Lifecycle tab
+  (`GET /conversations/{id}/lifecycle`): its state, how long it is kept,
+  the rule, and its hold.
+- Not built: Export and "Ask an admin" in the client menu (one owner, no
+  second person to ask); a label badge and the label's inheritance chain
+  (labels are M7b); a search hit on an erased conversation (search
+  returns none: its rows are removed); execution states in the Workbench.
+- Checked in the browser on a throwaway data home with the local model,
+  at 1440 × 900: the admin Trash (hold, erase, receipt), the Lifecycle
+  tab, the More menu's Move to trash, and the dead link's notice. Draft
+  expiry in the Library was not seen in the browser: nothing in that
+  home made an artifact.
+- Tests: `erasure_follows_lineage` (tombstone, lineage, rebuild),
+  `an_old_draft_goes_to_the_trash_and_is_erased_when_its_time_there_ends`
+  (catalog rows), `a_conversation_is_erased_from_the_trash_with_its_title_typed`
+  (lifecycle route, verified receipts),
+  `a_draft_is_trashed_and_restored_and_a_saved_version_is_not`
+  (`draft_until`). `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

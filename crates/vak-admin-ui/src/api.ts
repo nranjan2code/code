@@ -1,4 +1,8 @@
 import type {
+  ConversationLifecycle,
+  ErasurePreview,
+  ErasureReceipt,
+  TrashedSession,
   RunRecord,
   DataPlan,
   DataStatus,
@@ -536,13 +540,44 @@ export const api = {
     }).then((r) => handle(r)),
 
   /** Moves an archived, idle session to the trash, which hides it
-   * everywhere, search included. Nothing is erased: the ledger is untouched
-   * and `POST /sessions/{id}/restore` brings it back. */
+   * everywhere, search included. `restoreSession` brings it back for 30
+   * days; after that it is erased. */
   trashSession: (sessionId: string): Promise<{ trashed: string }> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).then((r) => handle(r)),
 
   trashAllArchived: (): Promise<{ trashed: number }> =>
     fetch("/sessions/archived", { method: "DELETE" }).then((r) => handle(r)),
+
+  /** The trash, each conversation with the day it is erased. */
+  trashedSessions: (): Promise<{ sessions: TrashedSession[] }> =>
+    fetch("/sessions?trash=true").then((r) => handle(r)),
+
+  restoreSession: (sessionId: string): Promise<{ restored: string }> =>
+    fetch(`/sessions/${encodeURIComponent(sessionId)}/restore`, { method: "POST" }).then((r) => handle(r)),
+
+  /** What erasing would reach, and the title to type. */
+  erasurePreview: (sessionId: string): Promise<{ preview: ErasurePreview; confirm: string }> =>
+    fetch(`/conversations/${encodeURIComponent(sessionId)}/erasure`).then((r) => handle(r)),
+
+  eraseConversation: (sessionId: string, digest: string, confirm: string): Promise<{ receipt: ErasureReceipt }> =>
+    fetch(`/conversations/${encodeURIComponent(sessionId)}/erasure`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ digest, confirm }),
+    }).then((r) => handle(r)),
+
+  holdConversation: (sessionId: string, held: boolean): Promise<{ held: boolean }> =>
+    fetch(`/conversations/${encodeURIComponent(sessionId)}/hold`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ held }),
+    }).then((r) => handle(r)),
+
+  conversationLifecycle: (sessionId: string): Promise<ConversationLifecycle> =>
+    fetch(`/conversations/${encodeURIComponent(sessionId)}/lifecycle`).then((r) => handle(r)),
+
+  erasureReceipts: (): Promise<{ receipts: ErasureReceipt[] }> =>
+    fetch("/data/erasure/receipts").then((r) => handle(r)),
 
   runPrompt: (sessionId: string, prompt: string): Promise<void> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/run`, {

@@ -210,6 +210,16 @@ fn an_old_draft_goes_to_the_trash_and_is_erased_when_its_time_there_ends() {
         .unwrap();
     assert_eq!((part.artifacts, part.keys_destroyed), (0, 0));
 
+    // The catalog traces each move and each erasure, and a file that went
+    // whole leaves a tombstone.
+    let catalog = core.catalog().unwrap();
+    catalog.catch_up().unwrap();
+    let counts = catalog.counts().unwrap();
+    assert_eq!(counts.get("erasure"), Some(&3), "{counts:?}");
+    assert!(counts.get("transition").is_some_and(|count| *count >= 7));
+    let tombstone = catalog.open_node(&only.to_string()).unwrap().unwrap();
+    assert_eq!(tombstone.kind, "erased");
+
     // Erasing is final, and a second pass finds nothing to do.
     assert!(artifacts.trash_version(plan, draft, false, None).is_err());
     let again = core.lifecycle_tick_at(true, later);

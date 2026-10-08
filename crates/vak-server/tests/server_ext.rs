@@ -2601,6 +2601,13 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
             .json(&serde_json::json!({ "held": held }))
     };
     assert_eq!(send(hold(true)).await.0, 200);
+    let (status, life) = send(client.get(url("lifecycle"))).await;
+    assert_eq!(status, 200, "{life}");
+    assert_eq!(
+        (life["held"].clone(), life["trash_days"].clone()),
+        (true.into(), 30.into())
+    );
+    assert!(life["erase_on"].is_string());
     let (status, refused) = send(erase(&digest, &confirm)).await;
     assert_eq!((status, refused["reason"].as_str()), (409, Some("held")));
     assert_eq!(send(hold(false)).await.0, 200);
@@ -2618,6 +2625,7 @@ async fn a_conversation_is_erased_from_the_trash_with_its_title_typed() {
 
     let (_, kept) = send(client.get(format!("{base}/data/erasure/receipts"))).await;
     assert_eq!(kept["receipts"].as_array().unwrap().len(), 1);
+    assert_eq!(kept["receipts"][0]["verifies"], true);
     let (status, again) = send(erase(&digest, &confirm)).await;
     assert!(
         status == 404 || again["reason"] == "already_erased",

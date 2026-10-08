@@ -1555,3 +1555,44 @@ export interface DataPlan {
   unobserved: string[];
   reclaimable_bytes: number;
 }
+
+/** A conversation in the trash, and the day it is erased. */
+export interface TrashedSession {
+  session_id: string;
+  title?: string | null;
+  agent?: { id: string; name: string } | null;
+  trashed_at?: string | null;
+  erase_on?: string | null;
+  held?: boolean;
+}
+
+/** What erasing a conversation would reach. */
+export interface ErasurePreview {
+  digest: string;
+  held: boolean;
+  conversations: string[];
+  artifacts: string[];
+  memory_notes: number;
+  sent_outside: number;
+}
+
+/** The signed record an erasure leaves: counts and ids, never content. */
+export interface ErasureReceipt {
+  id: string;
+  at: string;
+  scope: string;
+  subject: string;
+  cause: string;
+  keys_destroyed: number;
+  objects_deleted: number;
+  verifies?: boolean;
+}
+
+/** Where a conversation is in its life. */
+export interface ConversationLifecycle {
+  archived: boolean;
+  trashed_at?: string | null;
+  erase_on?: string | null;
+  held: boolean;
+  trash_days: number;
+}

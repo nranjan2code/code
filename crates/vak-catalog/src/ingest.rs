@@ -195,6 +195,8 @@ pub(crate) fn source(
         }
         Source::Artifacts(dir) => walk(dir, &mut rows, &mut |_, bytes| artifact_row(tx, bytes)),
         Source::Grants(dir) => walk(dir, &mut rows, &mut |_, bytes| grant_row(tx, bytes)),
+        Source::Lifecycle(dir) => walk(dir, &mut rows, &mut |_, bytes| transition_row(tx, bytes)),
+        Source::Erasures(dir) => walk(dir, &mut rows, &mut |_, bytes| erasure_row(tx, bytes)),
         Source::IntakeSource(path) => {
             let versions = vak_session::documents::version_count(path) as u64;
             if versions > from.frames {
@@ -1143,6 +1145,106 @@ fn granted_node(object: &Value) -> Option<String> {
 
 /// One row of the `grants/` chain (plan M8.2): what it opens, to whom,
 /// until when, and which objects no longer inherit.
+/// A transition the reconciler made: a node that says what it did to
+/// which class and how it ended. Its last row is its state. A draft it
+/// moved to the trash is traced to the transition.
+fn transition_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
+    let Ok(row) = serde_json::from_slice::<Value>(bytes) else {
+        return Ok(());
+    };
+    let field = |key: &str| row.get(key).and_then(Value::as_str);
+    let (Some(key), Some(class), Some(state)) = (field("key"), field("class"), field("state"))
+    else {
+        return Ok(());
+    };
+    let id = format!("lct_{key}");
+    upsert(
+        tx,
+        Upsert {
+            id: &id,
+            kind: "transition",
+            cause: Some("policy".to_string()),
+            title: Some(class.to_string()),
+            created_at: field("at").map(str::to_string),
+            ..Upsert::default()
+        },
+    )?;
+    tx.execute(
+        "UPDATE nodes SET status = ?2 WHERE id = ?1",
+        params![id, state],
+    )?;
+    if class == "draft_version"
+        && let Some((artifact, _)) = field("item").and_then(|item| item.split_once('/'))
+    {
+        edge(tx, &id, "acted_on", artifact)?;
+    }
+    Ok(())
+}
+
+/// An erasure receipt: a node of its own, and a tombstone where the
+/// conversation (or the artifact, when a draft's erasure took the whole
+/// of it) was, which says only that it was erased, when and why, and is
+/// traced to the receipt. Neither holds content.
+fn erasure_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
+    let Ok(row) = serde_json::from_slice::<Value>(bytes) else {
+        return Ok(());
+    };
+    let field = |key: &str| row.get(key).and_then(Value::as_str);
+    let (Some(id), Some(scope), Some(subject)) = (field("id"), field("scope"), field("subject"))
+    else {
+        return Ok(());
+    };
+    let cause = field("cause").map(str::to_string);
+    let at = field("at").map(str::to_string);
+    upsert(
+        tx,
+        Upsert {
+            id,
+            kind: "erasure",
+            actor: field("actor").map(str::to_string),
+            cause: cause.clone(),
+            title: Some(scope.to_string()),
+            status: Some("completed".to_string()),
+            created_at: at.clone(),
+            ..Upsert::default()
+        },
+    )?;
+    let whole = row.get("artifacts").and_then(Value::as_u64) == Some(1);
+    let gone = match scope {
+        "conversation" => Some(session_node(subject)),
+        "draft" => subject.split_once('/').map(|(artifact, _)| {
+            if whole {
+                artifact.to_string()
+            } else {
+                String::new()
+            }
+        }),
+        _ => None,
+    };
+    match gone {
+        Some(gone) if !gone.is_empty() => {
+            upsert(
+                tx,
+                Upsert {
+                    id: &gone,
+                    kind: "erased",
+                    cause,
+                    status: Some("erased".to_string()),
+                    created_at: at,
+                    ..Upsert::default()
+                },
+            )?;
+            edge(tx, &gone, "caused_by", id)?;
+        }
+        _ => {
+            if let Some((artifact, _)) = subject.split_once('/') {
+                edge(tx, id, "acted_on", artifact)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn grant_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
     let Ok(row) = serde_json::from_slice::<Value>(bytes) else {
         return Ok(());

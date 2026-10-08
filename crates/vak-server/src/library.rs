@@ -773,10 +773,39 @@ async fn list(State(state): State<AppState>) -> Response {
 /// `GET /library/{id}`: one artifact with every version.
 async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let artifacts = state.core.artifacts();
-    match tokio::task::spawn_blocking(move || artifacts.get(&id)).await {
-        Ok(Some(artifact)) => {
+    let grants = vak_core::grants::Grants::at(&state.core.shared_scope());
+    let found = tokio::task::spawn_blocking(move || {
+        let artifact = artifacts.get(&id)?;
+        let shared = grants
+            .on(&vak_core::grants::GrantObject::Artifact(artifact.id))
+            .ok()
+            .is_some_and(|held| {
+                held.iter().any(|held| {
+                    held.status(chrono::Utc::now()) == vak_core::grants::GrantStatus::Active
+                })
+            });
+        Some((artifact, shared))
+    })
+    .await;
+    match found {
+        Ok(Some((artifact, shared))) => {
             let mut value = summary(&artifact);
-            value["history"] = serde_json::json!(artifact.versions);
+            // A draft nobody keeps says the day it goes to the trash.
+            let kept = artifact.starred || shared;
+            let window = vak_core::lifecycle::draft_window();
+            let history: Vec<serde_json::Value> = artifact
+                .versions
+                .iter()
+                .map(|version| {
+                    let mut row = serde_json::json!(version);
+                    if !kept && version.is_draft() && version.is_present() {
+                        row["draft_until"] =
+                            serde_json::json!(version.restored_at.unwrap_or(version.at) + window);
+                    }
+                    row
+                })
+                .collect();
+            value["history"] = serde_json::json!(history);
             value["comments"] = serde_json::json!(artifact.comments);
             Json(value).into_response()
         }

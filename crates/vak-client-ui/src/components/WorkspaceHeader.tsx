@@ -11,6 +11,7 @@ import {
   isStopping,
   retryOf,
   sessions,
+  setSessions,
   setBestOfOpen,
   setDockTab,
   setHistoryOpen,
@@ -34,7 +35,8 @@ import {
   technicalDetails,
 } from "../store";
 import * as api from "../api";
-import { toggleSplit } from "../App";
+import { closeSplit, openAgentChat, refreshSessions, toggleSplit } from "../App";
+import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
 import CoworkingShare from "./CoworkingShare";
 import Icon, { type IconName } from "./Icon";
 import AgentPresence from "./AgentPresence";
@@ -84,6 +86,47 @@ export default function WorkspaceHeader() {
 
   // Closing hides the item that has focus, so focus goes back to the menu's
   // button; a sheet opened from the menu then returns focus there.
+  const [confirmConfig, setConfirmConfig] = createSignal<ConfirmConfig | null>(null);
+  // Archiving or trashing the conversation on screen leaves it: the Agent's
+  // next conversation opens in its place.
+  const putAway = async (id: string, trash: boolean) => {
+    const agent = activeAgentId();
+    await api.setArchived(id, true);
+    if (trash) await api.trashSession(id);
+    setSessions((current) => current.filter((item) => item.session_id !== id));
+    if (splitId() === id) closeSplit();
+    if (activeId() === id) await openAgentChat(agent || "vak", true);
+    await refreshSessions();
+  };
+  const archiveConversation = async () => {
+    const id = activeId();
+    if (!id) return;
+    try {
+      await putAway(id, false);
+      setNotice({ kind: "info", text: "Conversation archived. Find it in Settings, under Privacy and safety." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not archive this conversation: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+  const trashConversation = () => {
+    const id = activeId();
+    if (!id) return;
+    setConfirmConfig({
+      title: "Move this conversation to the trash?",
+      description: "It will be hidden everywhere, including search and what the agent can recall. You can restore it for 30 days; after that it is deleted for good.",
+      confirmLabel: "Move to trash",
+      cancelLabel: "Cancel",
+      isDanger: true,
+      onConfirm: async () => {
+        try {
+          await putAway(id, true);
+          setNotice({ kind: "info", text: "Conversation moved to the trash. Restore it from Settings, under Privacy and safety." });
+        } catch (error) {
+          setNotice({ kind: "error", text: `Could not move this conversation to the trash: ${error instanceof Error ? error.message : String(error)}` });
+        }
+      },
+    });
+  };
   const closeMoreMenu = (event: MouseEvent) => {
     const menu = event.currentTarget instanceof HTMLElement ? event.currentTarget.closest("details") : null;
     menu?.removeAttribute("open");
@@ -248,10 +291,12 @@ export default function WorkspaceHeader() {
               <Show when={technicalDetails()}><button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity log</button></Show>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><Icon name="sync" />Background tasks</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void exportTranscript(); }} disabled={exporting()}><Icon name="download" />Download transcript</button>
+              <button type="button" role="menuitem" disabled={isRunning(activeId() ?? "")} onClick={(event) => { closeMoreMenu(event); void archiveConversation(); }}><Icon name="archive" />Archive conversation</button>
+              <button type="button" role="menuitem" disabled={isRunning(activeId() ?? "")} onClick={(event) => { closeMoreMenu(event); trashConversation(); }}><Icon name="trash" />Move to trash</button>
             </Show>
           </div>
         </details>
       </div>
-    </header><Show when={sharing() && activeId()}>{(id) => <CoworkingShare sessionId={id()} onClose={() => setSharing(false)} />}</Show></>
+    </header><ConfirmModal config={confirmConfig()} onClose={() => setConfirmConfig(null)} /><Show when={sharing() && activeId()}>{(id) => <CoworkingShare sessionId={id()} onClose={() => setSharing(false)} />}</Show></>
   );
 }

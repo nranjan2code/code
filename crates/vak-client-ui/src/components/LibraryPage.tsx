@@ -117,6 +117,13 @@ function SharePanel(props: { artifact: ArtifactDetail; onClose: () => void }) {
 }
 
 /** Who made a version, read from its record (doc 82 §5). */
+/** When a draft nobody keeps goes to the trash. */
+function fadesIn(until: string): string {
+  const days = Math.ceil((new Date(until).getTime() - Date.now()) / 86_400_000);
+  if (days <= 0) return "Goes to the trash soon unless you keep it";
+  return `Goes to the trash in ${days} day${days === 1 ? "" : "s"} unless you keep it`;
+}
+
 function maker(version: ArtifactVersion): string {
   return version.from === "person" ? "You" : "Vakyartha";
 }
@@ -148,7 +155,8 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
     async ([id, at]) => new TextDecoder().decode(await api.libraryVersionBytes(id, at)),
   );
   const siblings = createMemo(() => {
-    const history = detail()?.history ?? [];
+    // A version in the trash or deleted is not one of the current ones.
+    const history = (detail()?.history ?? []).filter((v) => !v.trashed_at && !v.erased);
     return new Set(history.filter((v) => !history.some((child) => child.parent === v.id)).map((v) => v.id));
   });
 
@@ -312,9 +320,18 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
                       <Show when={siblings().has(v.id) && siblings().size > 1}><span class="badge">Side by side</span></Show>
                       <Show when={v.promoted}><span class="badge">Accepted</span></Show><Show when={v.removed}><span class="badge">File removed</span></Show>
                       <Show when={v.saved}><span class="badge">Kept</span></Show>
+                      <Show when={v.erased}><span class="badge">Deleted for good</span></Show>
+                      <Show when={v.trashed_at && !v.erased}><span class="badge">In the trash</span></Show>
+                      <Show when={v.draft_until}>{(until) => <span class="library-fade">{fadesIn(until())}</span>}</Show>
                     </button>
-                    <Show when={!v.saved}>
+                    <Show when={v.trashed_at && !v.erased}>
+                      <button class="btn sm" onClick={() => void act(() => api.setDraftTrashed(found().id, v.id, false))}>Restore</button>
+                    </Show>
+                    <Show when={!v.saved && !v.erased && !v.trashed_at}>
                       <button class="btn sm" onClick={() => void act(() => api.librarySave(found().id, v.id))}>Keep</button>
+                    </Show>
+                    <Show when={v.draft_until}>
+                      <button class="icon-button subtle danger has-tooltip" data-tooltip="Move to trash" aria-label={`Move version ${number} to the trash`} onClick={() => void act(() => api.setDraftTrashed(found().id, v.id, true))}><Icon name="trash" size={14} /></button>
                     </Show>
                   </li>
                 );

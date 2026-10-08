@@ -6,7 +6,8 @@ function ToastItem(props: { item: { kind: "error" | "info"; text: string }; inde
   createEffect(() => {
     const timer = window.setTimeout(
       () => dismissNotice(props.index),
-      props.item.kind === "error" ? 7000 : 4000,
+      // Long enough to read: a longer message stays longer.
+      Math.max(props.item.kind === "error" ? 7000 : 4000, props.item.text.length * 70),
     );
     onCleanup(() => window.clearTimeout(timer));
   });

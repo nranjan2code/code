@@ -195,6 +195,33 @@ async fn erasure_follows_lineage() {
             .contains("zephyrine")
     );
 
+    // The catalog says it was erased, traced to the receipt, and says the
+    // same after it is rebuilt from the records. It holds no content.
+    let catalog = core.catalog().unwrap();
+    catalog.catch_up().unwrap();
+    let traced = |catalog: &vak_catalog::Catalog| {
+        let tombstone = catalog.open_node(&gone).unwrap().expect("a tombstone");
+        assert_eq!(
+            (tombstone.kind.as_str(), tombstone.status.as_deref()),
+            ("erased", Some("erased"))
+        );
+        assert!(tombstone.title.is_none() && tombstone.locator.is_none());
+        let lineage = catalog.lineage(&gone).unwrap().unwrap();
+        assert!(
+            lineage
+                .path
+                .iter()
+                .any(|node| node.kind == "erasure" && node.id == receipt.id),
+            "{:?}",
+            lineage.path
+        );
+        assert!(catalog.session_dir(&gone).unwrap().is_none());
+    };
+    traced(&catalog);
+    catalog.rebuild().unwrap();
+    traced(&catalog);
+    assert!(!indexed(&core, "zephyrine"));
+
     // Erased is final.
     assert!(matches!(
         core.erase_conversation(&gone, None, Cause::Person, None),

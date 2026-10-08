@@ -1460,6 +1460,18 @@ export function eraseConversation(id: string, digest: string, confirm: string): 
   return req(`/conversations/${encodeURIComponent(id)}/erasure`, { method: "POST", body: JSON.stringify({ digest, confirm }) });
 }
 
+/** Why a conversation is gone: when it was deleted for good, and by whom. */
+export interface ConversationGone {
+  erased_at: string;
+  cause?: "person" | "policy" | null;
+  receipt?: { id: string; at: string; verifies: boolean; not_reached: string[] } | null;
+}
+
+/** Rejects with a 404 for a conversation that was not deleted for good. */
+export function conversationGone(id: string): Promise<ConversationGone> {
+  return req(`/conversations/${encodeURIComponent(id)}/gone`);
+}
+
 /** A draft in the trash, and the day it is deleted. */
 export interface TrashedDraft {
   artifact: string;
@@ -2431,6 +2443,12 @@ export interface ArtifactVersion {
   saved: boolean;
   /** The file is gone in this version: what a draft that deletes it proposes. */
   removed?: boolean;
+  /** A draft nobody keeps goes to the trash on this day. */
+  draft_until?: string | null;
+  /** In the trash since then; restorable until it is deleted for good. */
+  trashed_at?: string | null;
+  /** Deleted for good: only the record that it existed is left. */
+  erased?: boolean;
 }
 
 export interface ArtifactComment {
