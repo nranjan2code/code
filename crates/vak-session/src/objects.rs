@@ -94,6 +94,8 @@ pub struct TenantObjects {
     scopes: vak_storage::scopes::ScopeKeys,
     /// Scope keys this process has unwrapped, by scope.
     unwrapped: Mutex<HashMap<String, vak_storage::records::ScopeKey>>,
+    /// The tenant's receipt-signing key (Ed25519, PKCS#8).
+    signing: Vec<u8>,
     writer_epoch: crate::fence::WriterEpoch,
 }
 
@@ -137,6 +139,7 @@ impl TenantObjects {
         )
         .map_err(objects_error)?;
         let id_key = authority.id_key().map_err(objects_error)?;
+        let signing = authority.signing_key().map_err(objects_error)?;
         let _ = lock.unlock();
         let authority: Arc<dyn vak_storage::keys::KeyAuthority> = Arc::new(authority);
         let scopes = vak_storage::scopes::ScopeKeys::open(&keys.join("scopes"), authority.clone())
@@ -148,6 +151,7 @@ impl TenantObjects {
             store: Arc::new(store),
             scopes,
             unwrapped: Default::default(),
+            signing,
             writer_epoch,
         })
     }
@@ -183,6 +187,37 @@ impl TenantObjects {
         let key = self.scopes.get(scope).map_err(|e| scope_error(scope, e))?;
         self.remember(scope, &key);
         Ok(key)
+    }
+
+    /// Signs `message` as this tenant: the signature and the public key
+    /// that checks it, both as hex.
+    pub fn sign(&self, message: &[u8]) -> Result<(String, String), SessionError> {
+        let hex = |bytes: Vec<u8>| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        vak_storage::keys::sign(&self.signing, message)
+            .map(|(signature, public)| (hex(signature), hex(public)))
+            .map_err(objects_error)
+    }
+
+    /// Every scope with a key whose name starts with `prefix`.
+    pub fn scopes_with_prefix(&self, prefix: &str) -> Result<Vec<String>, SessionError> {
+        self.scopes.with_prefix(prefix).map_err(objects_error)
+    }
+
+    /// Puts `scope` on hold: its key cannot be destroyed until released.
+    pub fn hold_scope(&self, scope: &str) -> Result<(), SessionError> {
+        crate::fence::check()?;
+        self.scopes.hold(scope).map_err(|e| scope_error(scope, e))
+    }
+
+    pub fn release_scope(&self, scope: &str) -> Result<(), SessionError> {
+        crate::fence::check()?;
+        self.scopes
+            .release(scope)
+            .map_err(|e| scope_error(scope, e))
+    }
+
+    pub fn scope_held(&self, scope: &str) -> bool {
+        self.scopes.is_held(scope)
     }
 
     /// Whether `scope`'s key was destroyed.

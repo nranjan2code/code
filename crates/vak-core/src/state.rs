@@ -427,6 +427,14 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
+        path: "erasures",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: None,
+        class: Class::Record,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
         path: "lifecycle",
         root: Root::Data,
         owner: "vak-core",

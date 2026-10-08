@@ -448,6 +448,69 @@ impl Catalog {
         Ok(rows.filter_map(Result::ok).collect())
     }
 
+    /// The sessions `session` caused: the workers it delegated to.
+    pub fn session_children(&self, session: &str) -> Result<Vec<String>, CatalogError> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT e.src FROM edges e JOIN nodes n ON n.id = e.src
+             WHERE e.kind = 'caused_by' AND e.dst = ?1 AND n.kind = 'session'",
+        )?;
+        let rows = statement.query_map([ingest::session_node(session)], |row| {
+            row.get::<_, String>(0)
+        })?;
+        Ok(rows.filter_map(Result::ok).collect())
+    }
+
+    /// Removes everything the catalog holds of `sessions` and of the
+    /// other `nodes` (erased artifacts): their rows, text, edges and turn
+    /// history, with the freed pages overwritten, the database rewritten
+    /// and the write-ahead log emptied, so no derived copy of the text
+    /// outlives its erasure (docs/design/74 §4). Returns how many nodes
+    /// were removed.
+    pub fn erase(&self, sessions: &[String], nodes: &[String]) -> Result<u64, CatalogError> {
+        let mut conn = self.conn();
+        conn.execute_batch("PRAGMA secure_delete = ON;")?;
+        let mut removed = 0u64;
+        {
+            let tx = conn.transaction()?;
+            let mut ids: Vec<String> = nodes.to_vec();
+            for session in sessions {
+                let node = ingest::session_node(session);
+                {
+                    let mut statement =
+                        tx.prepare("SELECT id FROM nodes WHERE session = ?1 OR id = ?1")?;
+                    let found: Vec<String> = statement
+                        .query_map([&node], |row| row.get::<_, String>(0))?
+                        .filter_map(Result::ok)
+                        .collect();
+                    ids.extend(found);
+                }
+                for table in ["entries", "jumps", "turn_records"] {
+                    tx.execute(
+                        &format!("DELETE FROM {table} WHERE session = ?1 OR session = ?2"),
+                        [session, &node],
+                    )?;
+                }
+            }
+            for id in &ids {
+                tx.execute("DELETE FROM texts WHERE node = ?1", [id])?;
+                tx.execute("DELETE FROM calls WHERE node = ?1", [id])?;
+                tx.execute("DELETE FROM broken WHERE node = ?1", [id])?;
+                tx.execute("DELETE FROM grants WHERE node = ?1", [id])?;
+                tx.execute("DELETE FROM edges WHERE src = ?1 OR dst = ?1", [id])?;
+                removed += tx.execute("DELETE FROM nodes WHERE id = ?1", [id])? as u64;
+            }
+            tx.commit()?;
+        }
+        conn.execute_batch(
+            "INSERT INTO texts_fts (texts_fts) VALUES ('optimize');
+             INSERT INTO turn_records_fts (turn_records_fts) VALUES ('optimize');
+             VACUUM;
+             PRAGMA wal_checkpoint(TRUNCATE);",
+        )?;
+        Ok(removed)
+    }
+
     /// Every row, sorted, as text: for tests that compare two catalogs.
     #[doc(hidden)]
     pub fn dump(&self) -> Result<Vec<String>, CatalogError> {

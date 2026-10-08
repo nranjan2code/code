@@ -19,6 +19,7 @@ pub mod data_engine;
 pub mod digest;
 pub mod discovery;
 pub mod entities;
+pub mod erasure;
 pub mod file_mentions;
 pub mod files;
 pub mod finops;

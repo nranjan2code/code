@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-e's first part (2026-10-08: the trash and the archive are one state ref per conversation), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-e's first two parts (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -1850,10 +1850,49 @@ state.**
   Nothing carries that action out yet: it is erasure, part 2.
 - Test: `the_trash_window_starts_once_and_the_archive_survives_a_restore`.
 
-Still to do in M7a-e: conversation erasure with its preview, lineage walk
-and signed receipt; conversation holds; drafts moving to the trash; the
-screens (admin A2 and A3, client C1, C2, C3 and C8); `vak data erase`;
-and the `/workspaces/forget` route. `gc_keeps_everything_reachable`,
+**Part 2, done 2026-10-08: erasing a conversation.**
+- `Core::erasure_preview` gathers what an erasure would reach and gives
+  it a digest; `Core::erase_conversation` acts only on a conversation in
+  the trash, only when nothing in reach is on hold, and, for a person's
+  request, only when the digest they confirmed still matches. The end of
+  the trash window calls the same function with cause `policy`: the trash
+  class is now in `lifecycle::COMMITTED`, and a held conversation is kept
+  back (`Guard::Held`).
+- Reach (the lineage walk): the conversation and every worker session it
+  caused, by the catalog's `caused_by` edges; each one's conversation key
+  and its contributor keys; drafts made there that nobody accepted,
+  saved, starred or shared, with their artifact and comment keys; memory
+  notes written from those conversations; effects already sent.
+- What it does, in order: forgets the memory notes; removes the
+  conversations' and artifacts' rows, text, edges and turn history from
+  the catalog with `secure_delete` on, then rewrites the database and
+  empties its write-ahead log (`Catalog::erase`); destroys the keys; marks
+  each conversation erased, which is final; forgets the artifact and
+  commitment rollups so they fold again without the erased rows; deletes
+  objects no scope holds. No ledger byte changes.
+- The receipt (`erasure::Receipt`, a row of the `erasures/` chain) holds
+  ids and counts, never content: what was destroyed, a digest of the key
+  scopes, what was sent outside and stays sent, and a fixed list of what
+  the erasure did not reach. It is signed with the tenant's Ed25519 key
+  (`VaultKeyAuthority::signing_key`, in the key vault) over the receipt
+  including its public key, and `Receipt::verifies` checks it with that
+  key alone.
+- `Core::hold_conversation` sets or releases a hold on a conversation's
+  key scope (`ScopeKeys::hold`).
+- Not reached, and said so in every receipt: copies held by the AI
+  services, what was already delivered, older backups, entities and
+  skills derived from the conversation (not examined), and what an Agent
+  wrote elsewhere from what it learned. Memory notes' stored bytes are
+  deleted when their last grant goes; a shared-chain row of the
+  conversation stays as ids with unreadable content.
+- Tests: `erasure_follows_lineage` (which also checks the ledger's bytes
+  are unchanged, the receipt and its signature) and
+  `stale_preview_cannot_authorise` (which also checks the hold).
+
+Still to do in M7a-e: routes and CLI for preview, erase and hold
+(`vak data erase --scope conversation`); drafts moving to the trash; the
+screens (admin A2 and A3, client C1, C2, C3 and C8); the lifecycle and
+erasure chains as catalog sources; and the `/workspaces/forget` route. `gc_keeps_everything_reachable`,
   `quota_refuses_admission_not_records`.
 
 ### M7b — Lifecycle: governance (L, after M7a)

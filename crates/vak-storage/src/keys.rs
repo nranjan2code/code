@@ -61,6 +61,25 @@ pub trait KeyAuthority: Send + Sync {
 }
 
 /// A fresh random 256-bit key, wrapped for `scope`.
+/// Signs `message` with the PKCS#8 Ed25519 key `pkcs8`; returns the
+/// signature and the public key that checks it.
+pub fn sign(pkcs8: &[u8], message: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+    use ring::signature::KeyPair;
+    let pair = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8)
+        .map_err(|_| StorageError::Crypto("signing key"))?;
+    Ok((
+        pair.sign(message).as_ref().to_vec(),
+        pair.public_key().as_ref().to_vec(),
+    ))
+}
+
+/// Whether `signature` is `public_key`'s over `message`.
+pub fn verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key)
+        .verify(message, signature)
+        .is_ok()
+}
+
 pub fn new_scope_key(a: &dyn KeyAuthority, scope: &str) -> Result<([u8; KEY_LEN], WrappedKey)> {
     let k: [u8; KEY_LEN] = seal::random()?;
     let w = a.wrap(scope, &k)?;
@@ -257,6 +276,33 @@ impl VaultKeyAuthority {
             }
         };
         Ok(crate::objects::IdKey::new(&bytes))
+    }
+
+    /// The tenant's receipt-signing key (Ed25519, PKCS#8), minted into the
+    /// vault on first use: what signs an erasure receipt, so one can be
+    /// checked with the public key alone (plan M7a-e).
+    pub fn signing_key(&self) -> Result<Vec<u8>> {
+        const NAME: &str = "receipt-signing-key";
+        let unhex = |hex: &str| -> Result<Vec<u8>> {
+            let hex = hex.trim();
+            if !hex.len().is_multiple_of(2) || !hex.is_ascii() {
+                return Err(StorageError::Malformed("signing key"));
+            }
+            (0..hex.len() / 2)
+                .map(|i| {
+                    u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
+                        .map_err(|_| StorageError::Malformed("signing key"))
+                })
+                .collect()
+        };
+        if let Some(hex) = self.vault.get(NAME) {
+            return unhex(&hex);
+        }
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng)
+            .map_err(|_| StorageError::Crypto("signing key generation"))?;
+        self.vault.set(NAME, &seal::hex(pkcs8.as_ref()))?;
+        Ok(pkcs8.as_ref().to_vec())
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, MemState>> {

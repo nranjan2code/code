@@ -31,6 +31,7 @@ pub const OBSERVED: &[DataClass] = &[
 /// place with no grace: nothing else refers to an environment after its
 /// run settled or to a rotated log (doc 74 §5).
 pub const COMMITTED: &[DataClass] = &[
+    DataClass::Trash,
     DataClass::Execution,
     DataClass::Checkpoint,
     DataClass::Environment,
@@ -463,13 +464,14 @@ impl Core {
             .into_iter()
             .filter(|(_, state)| state.erased_at.is_none())
             .filter_map(|(id, state)| {
+                let held = self.conversation_held(&id);
                 Some(Item {
                     id,
                     class: DataClass::Trash,
                     since: state.trashed_at?,
                     bytes: 0,
                     files: 0,
-                    guard: None,
+                    guard: held.then_some(Guard::Held),
                     group: None,
                     rank: 0,
                 })
@@ -773,6 +775,12 @@ impl Core {
                         .map_err(|error| std::io::Error::other(error.to_string())),
                 )
             }
+            // The end of the trash window is an erasure, with its receipt.
+            DataClass::Trash => Some(
+                self.erase_conversation(&action.item, None, crate::erasure::Cause::Policy, None)
+                    .map(|_| ())
+                    .map_err(|error| std::io::Error::other(error.to_string())),
+            ),
             DataClass::DocumentHistory => {
                 let name = vak_session::documents::names()
                     .into_iter()

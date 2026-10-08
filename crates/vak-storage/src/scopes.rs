@@ -74,6 +74,19 @@ impl ScopeKeys {
         Ok(out)
     }
 
+    /// Every scope with a key whose name starts with `prefix`.
+    pub fn with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        for e in fs::read_dir(self.root.join("keys"))? {
+            let name = e?.file_name().to_string_lossy().into_owned();
+            if let Some(scope) = unhex(&name).filter(|scope| scope.starts_with(prefix)) {
+                out.push(scope);
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
     /// Creates the scope's key, or returns the existing one. A shredded scope
     /// can never be created again.
     pub fn create(&self, scope: &str) -> Result<ScopeKey> {

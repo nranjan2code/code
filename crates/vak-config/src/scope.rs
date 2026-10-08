@@ -342,6 +342,11 @@ impl SharedScope {
 
     /// The rollup Document of [`SharedScope::artifacts`]: each artifact's
     /// current state.
+    /// The signed receipts of every erasure (plan M7a-e).
+    pub fn erasures(&self) -> PathBuf {
+        self.root.join("erasures")
+    }
+
     /// The lifecycle reconciler's transition records (plan M7a-d).
     pub fn lifecycle(&self) -> PathBuf {
         self.root.join("lifecycle")
