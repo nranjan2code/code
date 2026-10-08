@@ -41,6 +41,13 @@ fn tree(roots: &[PathBuf]) -> BTreeMap<PathBuf, (u64, SystemTime)> {
 fn reconciler_observe_only_commits_nothing() {
     vak_config::paths::isolate_home_for_tests();
     let work = tempfile::tempdir().unwrap();
+    // This install asks retention only to watch.
+    std::fs::create_dir_all(work.path().join(".vak")).unwrap();
+    std::fs::write(
+        work.path().join(".vak/config.toml"),
+        "[lifecycle]\nmode = \"observe\"\n",
+    )
+    .unwrap();
     let core = Core::new_with_trust(work.path().to_path_buf(), true).unwrap();
     let data = vak_config::paths::data_home();
     let logs = vak_config::paths::logs_dir();

@@ -370,8 +370,9 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<InboxAction>,
     },
-    /// What Vak keeps and what its retention would remove: status / usage /
-    /// plan. Nothing is removed; the plan is shown.
+    /// What Vak keeps and how it is kept: status, usage, the retention
+    /// plan and a pass (gc), erasure and its receipts, holds, an
+    /// integrity check (verify), and a plain view (cat, grep).
     Data {
         #[command(subcommand)]
         action: Option<DataAction>,
@@ -644,6 +645,29 @@ pub(crate) enum DataAction {
     },
     /// The signed receipt of every erasure
     Receipts,
+    /// Check that nothing stored was changed or lost: every conversation
+    /// and record chain, the keys, the receipts, and whether search is
+    /// behind. Changes nothing
+    Verify {
+        /// Print the report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Rebuild search and lineage from the records
+    RebuildCatalog,
+    /// Print a conversation as plain text
+    Cat {
+        /// The conversation's id
+        session: String,
+    },
+    /// Search everything Vak keeps, as plain text
+    Grep {
+        /// What to look for
+        text: String,
+        /// How many results to print
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// What retention would remove or move to the trash now (a dry run)
     Plan {
         /// Print the plan as JSON

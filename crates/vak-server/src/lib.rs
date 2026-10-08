@@ -961,6 +961,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/data/erasure/accounts/{account}", post(erase_account))
         .route("/conversations/{id}/lifecycle", get(conversation_lifecycle))
         .route("/data/erasure/receipts", get(erasure_receipts))
+        .route("/data/integrity", get(data_integrity))
         .route("/skills", get(list_skills))
         .route("/social/connectors", get(list_social_connectors))
         .route(
@@ -10364,6 +10365,13 @@ async fn hold_conversation(
         Ok(()) => Json(serde_json::json!({ "held": body.held })).into_response(),
         Err(error) => erasure_refused(&error),
     }
+}
+
+/// Whether what the data home holds is intact: every conversation and
+/// record chain verified, the keys, the receipts and search. Reads every
+/// stored record once and changes nothing.
+async fn data_integrity(State(state): State<AppState>) -> axum::response::Response {
+    data_read(state, |core| core.data_integrity()).await
 }
 
 /// The signed receipt of every erasure.

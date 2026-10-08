@@ -584,8 +584,8 @@ pub struct ProbeSettings {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct LifecycleSettings {
-    /// "observe" (default) computes and shows the plan and removes
-    /// nothing; "commit" also carries out the kinds whose commit is built.
+    /// "commit" (the default) carries out the plan; "observe" computes
+    /// and shows it and removes nothing.
     pub mode: Option<String>,
     /// The most this install may store, in gigabytes; unset means no
     /// limit. At the limit new work is refused; records are never removed
@@ -1652,7 +1652,7 @@ impl Default for Config {
                 hosted: "none".into(),
             },
             lifecycle: LifecycleResolved {
-                commit: false,
+                commit: true,
                 quota_bytes: None,
             },
             intent: IntentResolved {
@@ -3094,9 +3094,12 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .map(|h| h.to_ascii_lowercase())
         .collect();
 
+    // Retention acts unless an install asks it only to watch (the default
+    // since plan M7a-i). A word it does not know is not taken as leave to
+    // remove anything.
     cfg.lifecycle.commit = match merged.lifecycle.mode.as_deref() {
-        None | Some("observe") => false,
-        Some("commit") => true,
+        Some("observe") => false,
+        None | Some("commit") => true,
         Some(other) => {
             cfg.warnings.push(format!(
                 "unknown lifecycle.mode '{other}'; using 'observe' (valid: observe | commit)"

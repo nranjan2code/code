@@ -7154,9 +7154,13 @@ const operationsTab = () => {
 const DATA_TABS = [
   { hash: "#/data", label: "Retention" },
   { hash: "#/data/storage", label: "Storage" },
+  { hash: "#/data/integrity", label: "Integrity" },
 ] as const;
 
-const dataTab = () => ((route().split("?", 1)[0] || "").startsWith("#/data/storage") ? "#/data/storage" : "#/data");
+const dataTab = () => {
+  const at = route().split("?", 1)[0] || "";
+  return at.startsWith("#/data/storage") ? "#/data/storage" : at.startsWith("#/data/integrity") ? "#/data/integrity" : "#/data";
+};
 
 const SETTINGS_TABS = [
   { hash: "#/settings", label: "Models & keys" },
@@ -7862,7 +7866,7 @@ export default function App() {
               <Match when={currentRoute() === "#/runs"}>
                 <Runs id={route().split("?", 1)[0].startsWith("#/runs/") ? decodeURIComponent(route().split("?", 1)[0].slice("#/runs/".length)) : undefined} />
               </Match>
-              <Match when={currentRoute() === "#/data"}><Data section={dataTab() === "#/data/storage" ? "storage" : "retention"} /></Match>
+              <Match when={currentRoute() === "#/data"}><Data section={dataTab() === "#/data/storage" ? "storage" : dataTab() === "#/data/integrity" ? "integrity" : "retention"} /></Match>
               <Match when={currentRoute() === "#/diagnostics"}><Diagnostics /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
               <Match when={currentRoute() === "#/prompts"}><PromptsPage /></Match>

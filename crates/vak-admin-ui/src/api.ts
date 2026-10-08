@@ -1,4 +1,5 @@
 import type {
+  DataIntegrity,
   ConversationLifecycle,
   ErasurePreview,
   ErasureReceipt,
@@ -188,6 +189,8 @@ export const api = {
 
   health: () => fetch("/health").then((r) => handle<HealthInfo>(r)),
   dataStatus: (): Promise<DataStatus> => fetch("/data/status").then((r) => handle(r)),
+  /** Verifies every stored record. Reads the whole data home once. */
+  dataIntegrity: (): Promise<DataIntegrity> => fetch("/data/integrity").then((r) => handle(r)),
   dataUsage: (): Promise<DataUsage> => fetch("/data/usage").then((r) => handle(r)),
   dataPlan: (): Promise<DataPlan> => fetch("/data/lifecycle/plan").then((r) => handle(r)),
   dataTransitions: (): Promise<{ transitions: DataTransition[] }> =>

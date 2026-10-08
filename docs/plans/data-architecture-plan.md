@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-h (2026-10-08: a restore applies every recorded erasure again and moves the writer epoch), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-i (2026-10-08: integrity, the soak, the acceptance run, and retention on by default), so M7a is done; M7a-h (2026-10-08: a restore applies every recorded erasure again and moves the writer epoch), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -2149,6 +2149,45 @@ joined through a link the owner shared. Both erasures are the owner's.
   `backup_roundtrip_reapplies_erasures_and_rejects_self_backup` through
   the real router. Each has a test binary of its own, because a restore
   fences the process.
+
+**M7a-i, done 2026-10-08: integrity, the soak, acceptance, and retention
+on by default. M7a is done.**
+- `Core::data_integrity` verifies every conversation ledger and record
+  chain from its stored bytes with no key (`vak_session::verify`: each
+  segment's hash chain, chaining from the sealed head before it), so an
+  erased conversation verifies too and one changed byte is found and
+  named by its place. It also counts keys in use, destroyed and held,
+  checks every receipt's signature, and says whether search is behind.
+  It reads every record once and changes nothing: `GET /data/integrity`,
+  `vak data verify`, the admin console's Operate › Data › Integrity
+  (A9, with Rebuild search), and Home › Data health (A1, links and
+  `/data/status`'s numbers).
+- `vak data rebuild-catalog`, `vak data cat <conversation>` (a plain
+  transcript, refused for one in the trash) and `vak data grep <text>`
+  (search). `vak export` already writes a conversation out, so there is
+  no `vak data export` beside it (invariant 30).
+- The soak, `thirty_day_soak_stays_within_budget`: thirty simulated days
+  each leave an environment, an execution and a rotated log, with a
+  committing pass each day. What is left is what the rules keep (at most
+  the rule's days plus one of each), every removal is a recorded
+  transition, a second pass does nothing, the conversation made on day
+  one reads back, and the home verifies.
+- **Retention acts by default.** `[lifecycle] mode` is `commit` unless an
+  install sets `observe`; an unknown word still means observe. The server
+  runs the pass every ten minutes. This is the first build that removes
+  things on an install that asked for nothing, the dev machine's real
+  data home included.
+- AGENTS.md: invariant 42 (deletion), invariant 19 names `vak data
+  verify` and `rebuild-catalog`, and the Pending section's rules.
+- The acceptance run: `docs/audits/acceptance-m7a-lifecycle-2026-10-08.md`.
+  Guest erasure, draft expiry, Delete saved copies and the restore
+  confirmation have test evidence only.
+- Not built: sampled and scheduled verification (it runs when asked),
+  object-by-object verification of the store, undeclared-path incidents
+  on the Integrity screen, the per-screen "no value without an API
+  source" test, and docs 23 and 46 Part VII from §5's list.
+- Tests: `a_changed_byte_is_found_and_an_erased_conversation_still_verifies`,
+  `thirty_day_soak_stays_within_budget`.
 
 ### M7b — Lifecycle: governance (L, after M7a)
 

@@ -814,6 +814,51 @@ function MoneyPanel(props: { finops: FinOpsStatus | null; error: boolean }) {
 
 // ---- Home ------------------------------------------------------------------
 
+const dataSize = (bytes: number) => {
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${bytes} B` : `${value.toFixed(1)} ${units[unit]}`;
+};
+
+/// Home › Data health (docs/design/74 §6.2 A1): what is kept, whether
+/// retention is acting, and what is waiting. Links only; every number is
+/// `/data/status`'s. Integrity reads every record, so it is a link, not a
+/// number shown here.
+function DataHealth() {
+  const [status] = createResource(() => api.dataStatus());
+  const QUOTA: Record<string, string> = { none: "No limit set", ok: "Within its limit", soft: "Close to its limit", hard: "Over its limit: new work is refused" };
+  return (
+    <section class="panel home-data">
+      <div class="panel-title-row">
+        <div>
+          <h2>Data health</h2>
+          <p class="dim">What Vakyartha keeps on this machine, and what its retention is doing.</p>
+        </div>
+        <a class="button small ghost" href="#/data/integrity">Check integrity</a>
+      </div>
+      <Show when={!status.error} fallback={<p class="dim">Could not read the data home: {`${status.error}`}</p>}>
+        <Show when={status()} fallback={<p class="dim">Reading the data home…</p>}>
+          {(now) => (
+            <dl class="lifecycle-facts">
+              <dt>Kept</dt>
+              <dd><a href="#/data/storage">{dataSize(now().bytes)} in {now().files} files</a>. {QUOTA[now().quota.state] ?? now().quota.state}.</dd>
+              <dt>Retention</dt>
+              <dd><a href="#/data">{now().mode === "commit" ? "Removing what is past its keep time" : "Watching only: nothing is removed"}</a>. {now().due} due now, {now().guarded} kept back.</dd>
+              <dt>Trash and erasure</dt>
+              <dd><a href="#/sessions">Open the trash and the erasure receipts</a>.</dd>
+            </dl>
+          )}
+        </Show>
+      </Show>
+    </section>
+  );
+}
+
 export function Home() {
   // One heavy poller. `/ops/center` is the control plane's coherent sample —
   // health checks, incidents, runs, sent messages, tasks, pool, services, security
@@ -1493,6 +1538,8 @@ export function Home() {
         <PulsePanel />
         <MoneyPanel finops={finops() ?? null} error={!finops.loading && finops() == null} />
       </div>
+
+      <DataHealth />
 
       <div class="home-bottom-grid">
         <section class="panel home-history">

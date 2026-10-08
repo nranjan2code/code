@@ -237,6 +237,11 @@ impl TenantObjects {
         Ok(removed)
     }
 
+    /// How many scopes are on hold.
+    pub fn held_count(&self) -> usize {
+        self.scopes.held_scopes().map_or(0, |held| held.len())
+    }
+
     /// How many scopes have a key, and how many were destroyed.
     pub fn scope_counts(&self) -> (usize, usize) {
         self.scopes.counts()

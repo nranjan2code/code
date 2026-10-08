@@ -6,7 +6,7 @@
 
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
-import type { DataPlan, DataStatus, DataTransition, DataUsage } from "./types";
+import type { DataIntegrity, DataPlan, DataStatus, DataTransition, DataUsage } from "./types";
 
 function size(bytes: number): string {
   const units = ["B", "KB", "MB", "GB"];
@@ -237,10 +237,92 @@ function Storage() {
   );
 }
 
-export default function Data(props: { section: "retention" | "storage" }) {
+const SEARCH: Record<string, string> = {
+  current: "Up to date with the records.",
+  behind: "Behind the records. Rebuild search brings it up to date.",
+  unreadable: "Could not be read. Rebuild search makes it again from the records.",
+};
+
+/// Operate › Data › Integrity (docs/design/74 §6.2 A9). Checking reads
+/// every stored record once, so it runs when asked, never on a timer.
+function Integrity() {
+  const [report, { refetch }] = createResource<DataIntegrity>(() => api.dataIntegrity());
+  const [rebuilding, setRebuilding] = createSignal(false);
+  const [said, setSaid] = createSignal("");
+  const rebuild = async () => {
+    setRebuilding(true);
+    setSaid("");
+    try {
+      await api.rebuild();
+      setSaid("Search was rebuilt from the records.");
+      void refetch();
+    } catch (error) {
+      setSaid(`Could not rebuild search: ${error}`);
+    } finally {
+      setRebuilding(false);
+    }
+  };
+  return (
+    <section class="panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>Integrity</h2>
+          <p class="dim">Every conversation and record is checked against a running fingerprint of what was written, without reading what it says. A changed, missing or reordered record is found and named.</p>
+        </div>
+        <div class="lifecycle-actions">
+          <button class="ghost small" disabled={report.loading} onClick={() => void refetch()}>{report.loading ? "Checking…" : "Check again"}</button>
+          <button class="ghost small" disabled={rebuilding()} onClick={() => void rebuild()}>{rebuilding() ? "Rebuilding…" : "Rebuild search"}</button>
+        </div>
+      </div>
+      <Show when={said()}><p role="status">{said()}</p></Show>
+      <Show when={!report.error} fallback={<p class="dim">Could not check the data home: {`${report.error}`}</p>}>
+        <Show when={report()} fallback={<p class="dim">Checking every stored record…</p>}>
+          {(found) => (
+            <>
+              <p>
+                <strong>{found().broken.length === 0 && found().receipts_unverified === 0 ? "Nothing is damaged." : "Something is damaged."}</strong>{" "}
+                {found().conversations} conversations and {found().chains} other record logs were checked: {found().records} records, as of {day(found().at)}.
+              </p>
+              <Show when={found().broken.length > 0}>
+                <div class="ops-table-wrap">
+                  <table class="ops-table">
+                    <thead><tr><th>Damaged</th><th>Part</th></tr></thead>
+                    <tbody>
+                      <For each={found().broken}>{(broken) => <tr><td class="mono">{broken.at}</td><td>{broken.segment}</td></tr>}</For>
+                    </tbody>
+                  </table>
+                </div>
+              </Show>
+              <dl class="lifecycle-facts">
+                <dt>Keys</dt>
+                <dd>{found().keys} in use, {found().keys_destroyed} destroyed by an erasure, {found().keys_held} on hold.</dd>
+                <dt>Erasure receipts</dt>
+                <dd>{found().receipts} kept{found().receipts_unverified > 0 ? `; ${found().receipts_unverified} with a signature that does not verify` : found().receipts > 0 ? ", every signature verifies" : ""}.</dd>
+                <dt>Search</dt>
+                <dd>{SEARCH[found().search] ?? found().search}</dd>
+                <Show when={found().torn_tails > 0}>
+                  <dt>Unfinished writes</dt>
+                  <dd>{found().torn_tails}, left by a stop mid-write. The next write trims them; nothing is lost.</dd>
+                </Show>
+                <Show when={found().fenced}>
+                  <dt>Restored</dt>
+                  <dd>This data home was restored from a backup. Start Vakyartha again before it writes.</dd>
+                </Show>
+              </dl>
+            </>
+          )}
+        </Show>
+      </Show>
+    </section>
+  );
+}
+
+export default function Data(props: { section: "retention" | "storage" | "integrity" }) {
   return (
     <div class="data-page">
-      <Show when={props.section === "storage"} fallback={<Retention />}><Storage /></Show>
+      <Show when={props.section !== "integrity"} fallback={<Integrity />}>
+        <Show when={props.section === "storage"} fallback={<Retention />}><Storage /></Show>
+      </Show>
     </div>
   );
 }

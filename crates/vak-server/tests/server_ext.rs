@@ -2458,7 +2458,7 @@ async fn data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only() {
         }
     };
     let status = read("/data/status").await;
-    assert_eq!(status["mode"], "observe");
+    assert_eq!(status["mode"], "commit", "retention acts by default");
     assert_eq!(status["label"]["id"], "default");
     assert!(
         status["observed"]
@@ -2470,8 +2470,8 @@ async fn data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only() {
     assert!(usage["rows"].is_array() && usage["bytes"].is_u64());
     let plan = read("/data/lifecycle/plan").await;
     assert!(plan["actions"].is_array());
-    // A pass asked for over HTTP does what the install's mode allows and
-    // no more: this one observes.
+    // A pass asked for over HTTP does what the install's mode allows:
+    // this one commits, and nothing here is past its time.
     let anon = client
         .post(format!("{base}/data/lifecycle/tick"))
         .send()
@@ -2487,7 +2487,7 @@ async fn data_routes_report_usage_and_the_dry_run_plan_to_the_owner_only() {
         .json()
         .await
         .unwrap();
-    assert_eq!(tick["mode"], "observe");
+    assert_eq!(tick["mode"], "commit");
     assert_eq!(tick["committed"], serde_json::json!([]));
     let made = read("/data/lifecycle/transitions").await;
     assert_eq!(made["transitions"], serde_json::json!([]));

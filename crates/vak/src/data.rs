@@ -311,6 +311,130 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 }
             }
         }
+        crate::cli::DataAction::Verify { json } => {
+            let report = core.data_integrity();
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).unwrap_or_default()
+                );
+                return i32::from(!report.sound());
+            }
+            println!(
+                "{} conversations and {} record chains checked: {} records in {} segments",
+                report.conversations, report.chains, report.records, report.segments
+            );
+            for broken in &report.broken {
+                println!("  DAMAGED  {} (segment {})", broken.at, broken.segment);
+            }
+            if report.torn_tails > 0 {
+                println!(
+                    "  {} unfinished record(s) at the end of a segment, left by a stop mid-write; the next write trims them",
+                    report.torn_tails
+                );
+            }
+            println!(
+                "keys      {} in use, {} destroyed, {} on hold",
+                report.keys, report.keys_destroyed, report.keys_held
+            );
+            println!(
+                "receipts  {} ({} with a signature that does not verify)",
+                report.receipts, report.receipts_unverified
+            );
+            println!(
+                "search    {}",
+                match report.search {
+                    "current" => "up to date",
+                    "behind" =>
+                        "behind the records; `vak data rebuild-catalog` brings it up to date",
+                    _ => "could not be read",
+                }
+            );
+            if report.fenced {
+                println!(
+                    "This data home was restored; start Vakyartha again before writing to it."
+                );
+            }
+            println!(
+                "{}",
+                if report.sound() {
+                    "Nothing is damaged."
+                } else {
+                    "Something is damaged: see above."
+                }
+            );
+            i32::from(!report.sound())
+        }
+        crate::cli::DataAction::RebuildCatalog => {
+            match core.catalog().and_then(|catalog| Ok(catalog.rebuild()?)) {
+                Ok(rebuilt) => {
+                    println!("search and lineage rebuilt from {} records", rebuilt.rows);
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
+        }
+        crate::cli::DataAction::Cat { session } => {
+            if vak_core::trash::is_trashed(&core.shared_scope(), &session) {
+                eprintln!("error: that conversation is in the trash or was erased");
+                return 1;
+            }
+            let ledger = core
+                .catalog()
+                .ok()
+                .and_then(|catalog| catalog.session_dir(&session).ok().flatten());
+            let Some(ledger) = ledger else {
+                eprintln!("error: no conversation {session}");
+                return 1;
+            };
+            match vak_session::SessionLog::open_read_only(ledger) {
+                Ok(log) => {
+                    print!(
+                        "{}",
+                        vak_core::transcript_md::render_markdown(&log.derive_messages())
+                    );
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
+        }
+        crate::cli::DataAction::Grep { text, limit } => {
+            let audience = vak_catalog::Audience {
+                exclude_sessions: vak_core::trash::search_exclusions(&core.shared_scope(), None),
+                held: true,
+                ..Default::default()
+            };
+            let found = core.catalog().and_then(|catalog| {
+                let _ = catalog.catch_up();
+                Ok(catalog.search(&text, &audience, &vak_catalog::Scope::default(), limit)?)
+            });
+            match found {
+                Ok(hits) => {
+                    if hits.is_empty() {
+                        println!("nothing found");
+                    }
+                    for hit in hits {
+                        println!(
+                            "{}  {}  {}",
+                            hit.node.kind,
+                            hit.node.session.as_deref().unwrap_or(&hit.node.id),
+                            hit.snippet.replace('\n', " ")
+                        );
+                    }
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
+        }
         crate::cli::DataAction::Receipts => {
             let receipts = core.erasure_receipts();
             if receipts.is_empty() {

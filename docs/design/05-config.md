@@ -70,8 +70,9 @@ The supported surface is discoverable through `vak config dump`:
 (`docs/design/47-commitment-kernel.md`), `[probe]` (`hosted = "none"|"full"`,
 gating whether a hosted model's bound profile gets the full background
 horizon-ladder probe — local models are always eligible;
-docs/design/68-context-engine.md §1), `[lifecycle]` (`mode = "observe"|"commit"`:
-whether retention only shows its plan or also carries it out; `quota_gb`:
+docs/design/68-context-engine.md §1), `[lifecycle]` (`mode = "commit"|"observe"`:
+whether retention carries its plan out, the default since plan M7a-i, or
+only shows it; `quota_gb`:
 the most the install may store, unset for no limit; privileged, so a
 project cannot set either; data-architecture plan M7a-d), and per-provider `[providers.*]`
 sections such as `[providers.ollama]` (`keep_alive`/`num_ctx`) and

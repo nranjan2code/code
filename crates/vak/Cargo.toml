@@ -16,6 +16,7 @@ vak-agent = { workspace = true }
 async-trait = { workspace = true }
 vak-config = { workspace = true }
 vak-commit = { workspace = true }
+vak-catalog = { workspace = true }
 vak-core = { workspace = true }
 vak-lifecycle = { workspace = true }
 vak-intent = { workspace = true }

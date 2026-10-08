@@ -1596,3 +1596,21 @@ export interface ConversationLifecycle {
   held: boolean;
   trash_days: number;
 }
+
+/** Whether what the data home holds is intact. */
+export interface DataIntegrity {
+  at: string;
+  conversations: number;
+  chains: number;
+  segments: number;
+  records: number;
+  torn_tails: number;
+  broken: { at: string; segment: number }[];
+  keys: number;
+  keys_destroyed: number;
+  keys_held: number;
+  receipts: number;
+  receipts_unverified: number;
+  search: "current" | "behind" | "unreadable";
+  fenced: boolean;
+}

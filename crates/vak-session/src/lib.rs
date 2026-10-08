@@ -23,6 +23,7 @@ pub mod text;
 pub mod trace;
 pub mod turns;
 pub mod types;
+pub mod verify;
 pub mod work;
 
 pub use log::{SessionLog, SessionPath, TailSections};
