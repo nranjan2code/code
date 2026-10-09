@@ -973,6 +973,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/data/integrity", get(data_integrity))
         .route("/data/holds", get(data_holds))
+        .route("/data/keys", get(data_keys))
+        .route("/data/keys/rotate", post(rotate_data_keys))
         .route("/data/rules", get(data_rules).put(set_data_rules))
         .route("/data/rules/preview", post(preview_data_rules))
         .route("/skills", get(list_skills))
@@ -10392,6 +10394,35 @@ async fn hold_conversation(
 /// the hold is released.
 async fn data_holds(State(state): State<AppState>) -> axum::response::Response {
     data_read(state, |core| serde_json::json!({ "holds": core.holds() })).await
+}
+
+/// Where the keys are kept, which version is in use, and every rotation.
+/// No key material.
+async fn data_keys(State(state): State<AppState>) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.key_status()).await {
+        Ok(Ok(status)) => Json(status).into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Starts a new key and wraps every stored key under it. Everything
+/// stays readable.
+async fn rotate_data_keys(State(state): State<AppState>) -> axum::response::Response {
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.rotate_keys(Some(actor))).await {
+        Ok(Ok(rotation)) => Json(serde_json::json!({ "rotation": rotation })).into_response(),
+        Ok(Err(_)) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "the keys could not be rotated; nothing was lost",
+                "reason": "failed",
+            })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// The install's retention rules, and the defaults they were changed from.

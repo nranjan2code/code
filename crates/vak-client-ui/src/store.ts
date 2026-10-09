@@ -744,6 +744,7 @@ export type SettingsPageId =
   | "mail-calendar"
   | "social"
   | "privacy"
+  | "your-data"
   | "agent"
   | "models"
   | "reliability"

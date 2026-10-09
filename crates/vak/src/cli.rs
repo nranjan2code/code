@@ -648,6 +648,12 @@ pub(crate) enum DataAction {
     },
     /// The signed receipt of every erasure
     Receipts,
+    /// Where the keys that protect your data are kept and which is in
+    /// use; --rotate starts a new one and re-protects everything under it
+    Keys {
+        #[arg(long)]
+        rotate: bool,
+    },
     /// Check that nothing stored was changed or lost: every conversation
     /// and record chain, the keys, the receipts, and whether search is
     /// behind. Changes nothing

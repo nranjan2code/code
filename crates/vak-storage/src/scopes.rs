@@ -172,6 +172,51 @@ impl ScopeKeys {
         }
     }
 
+    /// Starts a new KEK version and wraps every scope's key under it.
+    /// Returns the version and how many keys it wrapped again. A key
+    /// whose scope was destroyed is left as it is.
+    pub fn rotate(&self) -> Result<(u32, usize)> {
+        let version = self.authority.rotate()?;
+        Ok((version, self.rewrap()?))
+    }
+
+    /// Wraps again every key not under the current KEK version.
+    pub fn rewrap(&self) -> Result<usize> {
+        let current = self.authority.version()?;
+        let mut wrapped = 0;
+        for entry in fs::read_dir(self.root.join("keys"))? {
+            let path = entry?.path();
+            let old = WrappedKey::decode(&fs::read(&path)?)?;
+            if old.version == current {
+                continue;
+            }
+            let key = match self.authority.unwrap(&old) {
+                Ok(key) => key,
+                Err(StorageError::Revoked(_)) => continue,
+                Err(error) => return Err(error),
+            };
+            let new = self.authority.wrap(&old.scope, &key)?;
+            self.write_atomic(&path, &new.encode())?;
+            wrapped += 1;
+        }
+        Ok(wrapped)
+    }
+
+    /// The KEK version new keys are wrapped under.
+    pub fn current_version(&self) -> Result<u32> {
+        self.authority.version()
+    }
+
+    /// The oldest KEK version any key here is still wrapped under.
+    pub fn oldest_version(&self) -> Result<Option<u32>> {
+        let mut oldest = None;
+        for entry in fs::read_dir(self.root.join("keys"))? {
+            let wrapped = WrappedKey::decode(&fs::read(entry?.path())?)?;
+            oldest = Some(oldest.map_or(wrapped.version, |v: u32| v.min(wrapped.version)));
+        }
+        Ok(oldest)
+    }
+
     /// Destroys the scope. Refused while it is held.
     pub fn shred(&self, scope: &str) -> Result<()> {
         if self.is_held(scope) {

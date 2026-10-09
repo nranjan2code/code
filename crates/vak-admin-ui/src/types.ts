@@ -1619,6 +1619,25 @@ export interface DataIntegrity {
   fenced: boolean;
 }
 
+/** One finished rotation of the keys. */
+export interface KeyRotation {
+  id: string;
+  at: string;
+  version: number;
+  rewrapped: number;
+}
+
+/** Where the keys are kept and which is in use. Never key material. */
+export interface KeyStatus {
+  kept_in: "keychain" | "encrypted_file";
+  version: number;
+  oldest_in_use: number;
+  keys: number;
+  destroyed: number;
+  held: number;
+  rotations: KeyRotation[];
+}
+
 /** What changing the keep times would do. */
 export interface DataRulesPreview {
   digest: string;

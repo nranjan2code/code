@@ -6,7 +6,7 @@
 
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
-import type { DataIntegrity, DataPlan, DataStatus, DataTransition, DataUsage, ErasureReceipt } from "./types";
+import type { DataIntegrity, DataPlan, DataStatus, DataTransition, DataUsage, ErasureReceipt, KeyStatus } from "./types";
 
 function size(bytes: number): string {
   const units = ["B", "KB", "MB", "GB"];
@@ -462,11 +462,80 @@ function Integrity() {
   );
 }
 
-export default function Data(props: { section: "retention" | "storage" | "integrity" }) {
+/// Operate › Data › Keys (docs/design/74 §6.2 A12, plan M7b-g): where the
+/// keys that protect everything are kept, and rotation. No key is shown.
+function Keys() {
+  const [status, { refetch }] = createResource<KeyStatus>(() => api.dataKeys());
+  const [busy, setBusy] = createSignal(false);
+  const [said, setSaid] = createSignal("");
+  const rotate = async () => {
+    if (!window.confirm("Start a new key and protect everything again under it? Nothing is lost, and everything stays readable. Earlier keys are kept so that older backups still open.")) return;
+    setBusy(true);
+    setSaid("");
+    try {
+      const { rotation } = await api.rotateDataKeys();
+      setSaid(`Done. Key ${rotation.version + 1} is in use; ${rotation.rewrapped} stored keys were protected again under it.`);
+      void refetch();
+    } catch (error) {
+      setSaid(`${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section class="panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>Keys</h2>
+          <p class="dim">Everything Vakyartha stores is encrypted. Each conversation and file has a key of its own, and one main key protects those. Rotating starts a new main key and protects every other key again under it.</p>
+        </div>
+        <div class="lifecycle-actions">
+          <button class="ghost small" disabled={busy() || status.loading} onClick={() => void rotate()}>{busy() ? "Rotating…" : "Rotate the key"}</button>
+        </div>
+      </div>
+      <Show when={said()}><p role="status">{said()}</p></Show>
+      <Show when={!status.error} fallback={<p class="dim">Could not read the keys: {`${status.error}`}</p>}>
+        <Show when={status()} fallback={<p class="dim">Reading…</p>}>
+          {(found) => (
+            <>
+              <dl class="lifecycle-facts">
+                <dt>Kept in</dt>
+                <dd>{found().kept_in === "keychain"
+                  ? "This computer's keychain."
+                  : "An encrypted file in the data home, because no keychain could be reached. Anyone who can read the data home and that file can read your data, so keep both private."}</dd>
+                <dt>Main key in use</dt>
+                <dd>Key {found().version + 1}{found().oldest_in_use < found().version ? `; some things are still protected by key ${found().oldest_in_use + 1}, and rotating again moves them` : ""}.</dd>
+                <dt>Keys it protects</dt>
+                <dd>{found().keys} in use, {found().destroyed} destroyed by an erasure, {found().held} on hold.</dd>
+                <dt>Last rotated</dt>
+                <dd>{found().rotations.length === 0 ? "Never." : `${day(found().rotations[found().rotations.length - 1].at)} (${found().rotations.length} ${found().rotations.length === 1 ? "time" : "times"} in all).`}</dd>
+              </dl>
+              <Show when={found().rotations.length > 0}>
+                <div class="ops-table-wrap">
+                  <table class="ops-table">
+                    <thead><tr><th>Rotated</th><th>Key</th><th>Keys protected again</th></tr></thead>
+                    <tbody>
+                      <For each={[...found().rotations].reverse()}>{(rotation) => <tr><td>{day(rotation.at)}</td><td>{rotation.version + 1}</td><td>{rotation.rewrapped}</td></tr>}</For>
+                    </tbody>
+                  </table>
+                </div>
+              </Show>
+            </>
+          )}
+        </Show>
+      </Show>
+      <p class="dim">No key is ever shown here or sent anywhere.</p>
+    </section>
+  );
+}
+
+export default function Data(props: { section: "retention" | "storage" | "integrity" | "keys" }) {
   return (
     <div class="data-page">
-      <Show when={props.section !== "integrity"} fallback={<Integrity />}>
-        <Show when={props.section === "storage"} fallback={<Retention />}><Storage /></Show>
+      <Show when={props.section !== "keys"} fallback={<Keys />}>
+        <Show when={props.section !== "integrity"} fallback={<Integrity />}>
+          <Show when={props.section === "storage"} fallback={<Retention />}><Storage /></Show>
+        </Show>
       </Show>
     </div>
   );

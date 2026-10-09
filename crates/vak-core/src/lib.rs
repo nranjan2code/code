@@ -31,6 +31,7 @@ pub mod intake;
 pub mod intake_alerts;
 pub mod integrity;
 pub mod intent;
+pub mod keys;
 pub mod learning;
 pub mod lifecycle;
 pub mod memory;

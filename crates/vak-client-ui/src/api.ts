@@ -2807,3 +2807,51 @@ export function selectPresentationForSemantic(sessionId: string, semanticType: s
     body: JSON.stringify({ spec_id: "", revision: 0, semantic_type: semanticType, lifetime: "use_once", presentation_id: presentationId }),
   });
 }
+
+/** What Vakyartha has stored, counted: the page Settings › Your data reads. */
+export interface YourDataSummary {
+  conversations: number;
+  artifacts: number;
+  held: number;
+  digest: string;
+  confirm: string;
+  bytes: number;
+  keep: { class: string; days: number }[];
+  keys: { kept_in: "keychain" | "encrypted_file"; version: number; rotations: { at: string }[] };
+}
+
+export async function yourData(): Promise<YourDataSummary> {
+  const [erasure, usage, rules, keys] = await Promise.all([
+    req<{ confirm: string; preview: { digest: string; held: number; conversations: number; artifacts: number } }>("/data/erasure/install"),
+    req<{ bytes: number }>("/data/usage"),
+    req<{ label: { rules: { class: string; delete_after_secs?: number }[] } }>("/data/rules"),
+    req<YourDataSummary["keys"]>("/data/keys"),
+  ]);
+  return {
+    ...erasure.preview,
+    confirm: erasure.confirm,
+    bytes: usage.bytes,
+    keep: rules.label.rules
+      .filter((rule) => rule.delete_after_secs)
+      .map((rule) => ({ class: rule.class, days: Math.round((rule.delete_after_secs ?? 0) / 86400) })),
+    keys,
+  };
+}
+
+/** Starts a new key and protects everything again under it. */
+export function rotateKeys(): Promise<{ rotation: { version: number; rewrapped: number } }> {
+  return req("/data/keys/rotate", { method: "POST" });
+}
+
+/** The signed record erasing everything leaves. */
+export interface InstallErasureReceipt {
+  id: string;
+  conversations: number;
+  keys_destroyed: number;
+  not_reached: string[];
+}
+
+/** Erases everything Vakyartha stored, with the words typed. It stops afterwards. */
+export function eraseEverything(digest: string, confirm: string): Promise<{ receipt: InstallErasureReceipt }> {
+  return req("/data/erasure/install", { method: "POST", body: JSON.stringify({ digest, confirm }) });
+}

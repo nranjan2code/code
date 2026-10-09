@@ -1,4 +1,5 @@
 import { trapFocus } from "../focusTrap";
+import YourData from "./YourData";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
 import { host } from "../host";
 import { canOfferSyntheticMailCalendar, setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../mailCalendarDemo";
@@ -67,6 +68,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string; group: Nav
   { id: "connections", label: "Capabilities", icon: "grid", hint: "discover skills plugins marketplace connections tools chat bots telegram discord slack mcp hooks", group: "Everyday" },
   { id: "social", label: "Social accounts", icon: "spark", hint: "social youtube linkedin reddit x twitter api key client id accounts", group: "Everyday" },
   { id: "privacy", label: "Privacy and safety", icon: "shield", hint: "permissions access approvals memory remembers archived trash history", group: "Everyday" },
+  { id: "your-data", label: "Your data", icon: "archive", hint: "data stored kept retention keys encrypted erase everything delete backup", group: "Everyday" },
   { id: "models", label: "Models and routing", icon: "layers", hint: "route ladder fallbacks", group: "Advanced" },
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "Advanced" },
   { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona", group: "Advanced" },
@@ -2771,6 +2773,7 @@ export default function Settings() {
               </div>
             </Show>
 
+            <Show when={page() === "your-data"}><YourData open={selectPage} /></Show>
             <Show when={page() === "storage"}>
               <header><h1>Storage and backup</h1><p>Where Vakyartha keeps its files, and how to back them up.</p></header>
               <Group title="Paths">

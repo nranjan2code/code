@@ -38,7 +38,7 @@ pub enum ErasureError {
 /// during another's rebuild would reach less than it should.
 static ERASING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn one_at_a_time() -> std::sync::MutexGuard<'static, ()> {
     ERASING
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

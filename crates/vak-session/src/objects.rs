@@ -253,6 +253,28 @@ impl TenantObjects {
         self.scopes.held_scopes().map_or(0, |held| held.len())
     }
 
+    /// Starts a new tenant key and wraps every scope key and every object
+    /// grant under it. Earlier keys stay in the credential store, so a
+    /// backup made before still opens. Returns the new version and how
+    /// many keys it wrapped again.
+    pub fn rotate_keys(&self) -> Result<(u32, usize), SessionError> {
+        crate::fence::check()?;
+        let (version, scopes) = self.scopes.rotate().map_err(objects_error)?;
+        let grants = self.store.rewrap_grants().map_err(objects_error)?;
+        if let Ok(mut unwrapped) = self.unwrapped.lock() {
+            unwrapped.clear();
+        }
+        Ok((version, scopes + grants))
+    }
+
+    /// The tenant key version new keys are wrapped under, and the oldest
+    /// one any scope key is still under.
+    pub fn key_versions(&self) -> Result<(u32, u32), SessionError> {
+        let current = self.scopes.current_version().map_err(objects_error)?;
+        let oldest = self.scopes.oldest_version().map_err(objects_error)?;
+        Ok((current, oldest.unwrap_or(current)))
+    }
+
     /// How many scopes have a key, and how many were destroyed.
     pub fn scope_counts(&self) -> (usize, usize) {
         self.scopes.counts()

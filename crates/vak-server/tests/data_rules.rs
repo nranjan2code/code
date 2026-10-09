@@ -202,3 +202,59 @@ async fn erasing_everything_is_previewed_and_needs_the_words() {
     let refused: Value = refused.json().await.unwrap();
     assert_eq!(refused["reason"], "confirmation");
 }
+
+/// The keys are the owner's to see and rotate, and no key material is
+/// ever returned (plan M7b-g).
+#[tokio::test]
+async fn the_owner_sees_the_keys_and_rotates_them() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+    let (router, token) = vak_server::secured_router(core);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = reqwest::Client::new();
+    let url = |path: &str| format!("http://{addr}{path}");
+    assert_eq!(reqwest::get(url("/data/keys")).await.unwrap().status(), 401);
+    assert_eq!(
+        client
+            .post(url("/data/keys/rotate"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let read = || async {
+        client
+            .get(url("/data/keys"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap()
+    };
+    let before = read().await;
+    let version = before["version"].as_u64().unwrap();
+    let rotated = client
+        .post(url("/data/keys/rotate"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rotated.status(), 200);
+    let rotated: Value = rotated.json().await.unwrap();
+    assert_eq!(rotated["rotation"]["version"], version + 1);
+    let after = read().await;
+    assert_eq!(after["version"], version + 1);
+    assert_eq!(after["oldest_in_use"], version + 1);
+    assert_eq!(
+        after["rotations"].as_array().unwrap().len(),
+        before["rotations"].as_array().unwrap().len() + 1
+    );
+    let text = after.to_string();
+    assert!(!text.contains("pkcs") && !text.contains("kek"), "{text}");
+}

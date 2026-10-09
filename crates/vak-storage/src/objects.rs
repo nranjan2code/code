@@ -275,6 +275,38 @@ impl LocalObjectStore {
         Ok(out)
     }
 
+    /// Wraps again every grant not under the current KEK version (after a
+    /// rotation). A grant of a destroyed scope is left as it is. Returns
+    /// how many it wrapped.
+    pub fn rewrap(&self) -> Result<usize> {
+        let current = self.authority.version()?;
+        let Ok(objects) = fs::read_dir(self.root.join("grants")) else {
+            return Ok(0);
+        };
+        let mut wrapped = 0;
+        for object in objects {
+            let Ok(grants) = fs::read_dir(object?.path()) else {
+                continue;
+            };
+            for grant in grants {
+                let path = grant?.path();
+                let old = WrappedKey::decode(&fs::read(&path)?)?;
+                if old.version == current {
+                    continue;
+                }
+                let key = match self.authority.unwrap(&old) {
+                    Ok(key) => key,
+                    Err(StorageError::Revoked(_)) => continue,
+                    Err(error) => return Err(error),
+                };
+                let new = self.authority.wrap(&old.scope, &key)?;
+                self.write_atomic(&path, &new.encode())?;
+                wrapped += 1;
+            }
+        }
+        Ok(wrapped)
+    }
+
     /// Removes every object with no live grant. Returns how many.
     pub fn gc(&self) -> Result<usize> {
         self.gc_holding(&|_| false)

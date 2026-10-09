@@ -133,13 +133,19 @@ fn store() -> &'static dyn CredentialStore {
     static STORE: OnceLock<Box<dyn CredentialStore>> = OnceLock::new();
     STORE
         .get_or_init(|| {
-            if os_keyring_reachable_with_timeout() {
+            if os_keyring_reachable_cached() {
                 Box::new(OsKeyringStore) as Box<dyn CredentialStore>
             } else {
                 Box::new(EncryptedFileStore) as Box<dyn CredentialStore>
             }
         })
         .as_ref()
+}
+
+/// The probe's answer, asked once in a process.
+fn os_keyring_reachable_cached() -> bool {
+    static REACHABLE: OnceLock<bool> = OnceLock::new();
+    *REACHABLE.get_or_init(os_keyring_reachable_with_timeout)
 }
 
 /// A brand-new keychain item can trigger a native OS permission dialog
@@ -213,6 +219,16 @@ pub fn remove(scope_hint: &Path, var: &str) -> io::Result<()> {
     store().remove(&scope, var)?;
     index_mark_absent(&scope, var);
     Ok(())
+}
+
+/// Which store holds the secrets on this machine: `keychain` (the OS
+/// secret service) or `encrypted_file` (the fallback in the data home).
+pub fn backend() -> &'static str {
+    if crate::paths::home_is_isolated_for_tests() || !os_keyring_reachable_cached() {
+        "encrypted_file"
+    } else {
+        "keychain"
+    }
 }
 
 /// Removes every stored secret, in every scope: the erasure of the whole

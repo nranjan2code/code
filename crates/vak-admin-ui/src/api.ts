@@ -4,6 +4,8 @@ import type {
   ConversationLifecycle,
   ErasurePreview,
   ErasureReceipt,
+  KeyRotation,
+  KeyStatus,
   TrashedSession,
   RunRecord,
   DataPlan,
@@ -209,6 +211,10 @@ export const api = {
     }).then((r) => handle(r)),
   /** Verifies every stored record. Reads the whole data home once. */
   dataIntegrity: (): Promise<DataIntegrity> => fetch("/data/integrity").then((r) => handle(r)),
+  dataKeys: (): Promise<KeyStatus> => fetch("/data/keys").then((r) => handle(r)),
+  /** Starts a new key and protects everything again under it. */
+  rotateDataKeys: (): Promise<{ rotation: KeyRotation }> =>
+    fetch("/data/keys/rotate", { method: "POST" }).then((r) => handle(r)),
   dataUsage: (): Promise<DataUsage> => fetch("/data/usage").then((r) => handle(r)),
   dataPlan: (): Promise<DataPlan> => fetch("/data/lifecycle/plan").then((r) => handle(r)),
   dataTransitions: (): Promise<{ transitions: DataTransition[] }> =>

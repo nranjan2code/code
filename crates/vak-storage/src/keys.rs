@@ -55,6 +55,8 @@ pub trait KeyAuthority: Send + Sync {
     /// Starts a new KEK version for future wraps; returns it. Old versions
     /// still unwrap.
     fn rotate(&self) -> Result<u32>;
+    /// The KEK version new wraps use.
+    fn version(&self) -> Result<u32>;
     /// Destroys a scope: nothing wrapped under it can be unwrapped again.
     fn revoke(&self, scope: &str) -> Result<()>;
     fn health(&self) -> Result<()>;
@@ -167,6 +169,10 @@ impl KeyAuthority for MemoryKeyAuthority {
         let mut s = self.live()?;
         s.keks.push(seal::random()?);
         Ok((s.keks.len() - 1) as u32)
+    }
+
+    fn version(&self) -> Result<u32> {
+        Ok((self.live()?.keks.len() - 1) as u32)
     }
 
     fn revoke(&self, scope: &str) -> Result<()> {
@@ -328,9 +334,17 @@ impl KeyAuthority for VaultKeyAuthority {
     }
 
     fn unwrap(&self, w: &WrappedKey) -> Result<Vec<u8>> {
-        let s = self.lock()?;
+        let mut s = self.lock()?;
         if s.revoked.contains(&w.scope) {
             return Err(StorageError::Revoked(w.scope.clone()));
+        }
+        // Another process may have rotated since this one opened the
+        // vault: read the versions it added.
+        while (s.keks.len() as u32) <= w.version {
+            let Some(hex) = self.vault.get(&kek_name(s.keks.len() as u32)) else {
+                break;
+            };
+            s.keks.push(decode_key(&hex)?);
         }
         let kek = s
             .keks
@@ -347,6 +361,10 @@ impl KeyAuthority for VaultKeyAuthority {
         self.vault.set(KEK_CURRENT, &version.to_string())?;
         s.keks.push(next);
         Ok(version)
+    }
+
+    fn version(&self) -> Result<u32> {
+        Ok((self.lock()?.keks.len() - 1) as u32)
     }
 
     fn revoke(&self, scope: &str) -> Result<()> {

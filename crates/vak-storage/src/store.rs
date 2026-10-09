@@ -177,6 +177,11 @@ impl LocalStore {
             meta: Meta::new(Box::new(SqliteRefStore::open(&root.join("refs.db"))?)),
         })
     }
+
+    /// Wraps again every object grant not under the current KEK version.
+    pub fn rewrap_grants(&self) -> Result<usize> {
+        self.objects.rewrap()
+    }
 }
 
 impl Store for LocalStore {

@@ -353,6 +353,11 @@ impl SharedScope {
         self.root.join("erasures")
     }
 
+    /// The record of every rotation of the tenant's key (plan M7b-g).
+    pub fn key_rotations(&self) -> PathBuf {
+        self.root.join("key-rotations")
+    }
+
     /// The Document that holds the install's own retention rules (plan
     /// M7b-a): the keep times the owner changed from the defaults.
     pub fn retention_rules(&self) -> PathBuf {

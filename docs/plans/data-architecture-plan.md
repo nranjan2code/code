@@ -2409,6 +2409,40 @@ Telegram, Discord, Slack or a webhook, never another user of Vakyartha.
   erasure (20 files to the 1 receipt), the server stopping, and after a
   restart no conversations, the receipt listed and verifying.
 
+**M7b-g, done 2026-10-09: key rotation, the Keys screen and Your data.**
+- A rotation was only "start a new key": every stored key stayed under
+  the old one. `TenantObjects::rotate_keys` now starts the new tenant key
+  and wraps again every scope key (`ScopeKeys::rotate`, `rewrap`) and
+  every object grant (`LocalObjectStore::rewrap`) under it, leaving a
+  destroyed scope's as they are. `KeyAuthority::version` names the key in
+  use, and a process that opened the vault before another one rotated
+  reads the versions it lacks when it meets one.
+- Earlier tenant keys stay in the credential store, so a backup made
+  before a rotation still opens. Retiring them is not built.
+- `Core::rotate_keys` records each rotation in the `key-rotations/`
+  chain; `Core::key_status` says where the keys are kept
+  (`vak_config::credentials::backend`: the keychain, or the encrypted
+  file with what that means), the key in use, the oldest still
+  protecting anything, the counts, and every rotation. No key material
+  is returned anywhere.
+- `GET /data/keys`, `POST /data/keys/rotate`; `vak data keys [--rotate]`;
+  the admin console's Operate › Data › Keys (A12, under Data rather than
+  a Security group, which the console does not have).
+- The client's Settings › Your data (C7): how many conversations and
+  Library files are kept and the space they use, the keep time of each
+  kind a person meets, where the key is kept and Change the key, the way
+  to Archive and trash and to Storage and backup, and Erase everything
+  with the words typed, which shows the receipt and offers it as a file.
+- Not built: escrow bundles, retiring an earlier key, a KMS authority,
+  and "what Vak keeps about this person" per person (there is one
+  owner).
+- Tests: `rotation_keeps_everything_readable` (a conversation, a Library
+  file, an erased conversation that stays erased, two rotations, the
+  integrity check), `the_owner_sees_the_keys_and_rotates_them` through
+  the real router. Seen in a browser in a throwaway home: the Keys
+  screen and a rotation, the Your data page, Change the key, and Erase
+  everything from it after two rotations (the receipt still signed).
+
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office

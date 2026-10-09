@@ -639,6 +639,55 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 }
             }
         }
+        crate::cli::DataAction::Keys { rotate } => {
+            if rotate {
+                match core.rotate_keys(None) {
+                    Ok(rotation) => println!(
+                        "Rotated. Key {} is in use; {} stored keys were protected again under it.",
+                        rotation.version + 1,
+                        rotation.rewrapped
+                    ),
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        return 1;
+                    }
+                }
+            }
+            match core.key_status() {
+                Ok(status) => {
+                    println!(
+                        "kept in: {}",
+                        if status.kept_in == "keychain" {
+                            "this computer's keychain"
+                        } else {
+                            "an encrypted file in the data home (no keychain was reachable)"
+                        }
+                    );
+                    println!(
+                        "key in use: {} (oldest still protecting something: {})",
+                        status.version + 1,
+                        status.oldest_in_use + 1
+                    );
+                    println!(
+                        "{} keys, {} destroyed, {} on hold",
+                        status.keys, status.destroyed, status.held
+                    );
+                    match status.rotations.last() {
+                        Some(last) => println!(
+                            "rotated {} times, last {}",
+                            status.rotations.len(),
+                            last.at.format("%Y-%m-%d %H:%M")
+                        ),
+                        None => println!("never rotated"),
+                    }
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
+        }
         crate::cli::DataAction::Receipts => {
             let receipts = core.erasure_receipts();
             if receipts.is_empty() {
