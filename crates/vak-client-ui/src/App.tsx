@@ -53,6 +53,7 @@ import {
   setSidebarOpen,
   setSidebarWidth,
   narrowViewport,
+  OVERLAY_QUERY,
   setNarrowViewport,
   sidebarOpen,
   sidebarWidth,
@@ -1384,17 +1385,22 @@ export default function App() {
     // Rotating a phone, or dragging a window across the breakpoint,
     // changes which layout is in force — the sidebar goes from column to
     // overlay — so the panel's open state has to follow, or a rotation
-    // leaves an overlay covering the transcript.
-    const narrow = matchMedia("(max-width: 900px)");
-    const syncWidth = (e: MediaQueryListEvent) => {
-      setNarrowViewport(e.matches);
-      setSidebarOpen(!e.matches);
+    // leaves an overlay covering the transcript. Checked against the
+    // layout on every resize, not only on the query's change event: a
+    // missed event left an open overlay as a strip at the window's edge.
+    const narrow = matchMedia(OVERLAY_QUERY);
+    const syncWidth = () => {
+      if (narrow.matches === narrowViewport()) return;
+      setNarrowViewport(narrow.matches);
+      setSidebarOpen(!narrow.matches);
     };
     narrow.addEventListener("change", syncWidth);
+    window.addEventListener("resize", syncWidth);
 
     onCleanup(() => {
       query.removeEventListener("change", sync);
       narrow.removeEventListener("change", syncWidth);
+      window.removeEventListener("resize", syncWidth);
     });
   });
 

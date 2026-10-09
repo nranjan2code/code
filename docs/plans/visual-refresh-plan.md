@@ -1156,3 +1156,15 @@ what was not.
   could not send mouse input to a native window. The gesture rules are
   covered by `tests/title-bar.mjs` and the setting's values by a unit test
   in `vak-desktop`.
+- 2026-10-09: one overlay width. Between 901 and 1100px the stylesheet
+  floated the sidebar (the 1100px rule) while the 2026-09-27 change started
+  the three-column 1200px rule at 901px, and a 1000px rule set the grid too,
+  so the conversation sat in a 220px column under the open drawer and the
+  page looked empty but for the sidebar. The 1200px rule now starts at
+  1101px, the 1000px rule no longer sets the grid, and the client reads the
+  same width (`OVERLAY_QUERY` in `store.ts`, 1100px, was 900px), checked on
+  every resize as well as on the query's change. Checked in the browser at
+  1440, 1150, 1000 and 390: the conversation fills the width at 1000 and
+  390, and the two-column layout returns at 1150 and 1440. The browser
+  pane's emulated resize sent no resize or change events after a fresh
+  load, which is how an open drawer had stayed open as a strip at the edge.

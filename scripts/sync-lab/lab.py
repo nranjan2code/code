@@ -143,6 +143,10 @@ def large_home(holder):
     other = "away" if holder == "desk" else "desk"
     for m in (holder, other):
         kill_server(m, "-TERM")
+    # Start from one settled copy: whatever the other machine wrote while it
+    # contended for the work (section 12) is dropped, as the owner is told.
+    vak(holder, "sync", "now", timeout=600)
+    vak(other, "sync", "pull", "--discard", timeout=600)
     # A standing body of work that every push carries: about 240 MB.
     sh(holder, "sh", "-c", f"mkdir -p {BULK}/base && for i in $(seq 1 1200); do head -c 204800 /dev/urandom > {BULK}/base/f$i.bin; done", timeout=900)
     rc, out, seconds = timed(holder, "sync", "now")
@@ -446,6 +450,20 @@ def main():
     sys.exit(1 if bad else 0)
 
 
+def finish():
+    print()
+    bad = [r for r in RESULTS if not r[1]]
+    print(f"{len(RESULTS) - len(bad)} of {len(RESULTS)} checks passed")
+    for name, _, detail in bad:
+        print("  FAILED:", name, "|", detail)
+    sys.exit(1 if bad else 0)
+
+
 if __name__ == "__main__":
     random.seed(7)
+    if sys.argv[1:] == ["13"]:
+        # Section 13 alone, on machines a full run left up.
+        holder = next(m for m in ("desk", "away") if "holds the work" in vak(m, "sync", "status")[1])
+        large_home(holder)
+        finish()
     main()

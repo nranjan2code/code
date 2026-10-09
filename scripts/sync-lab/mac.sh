@@ -33,7 +33,7 @@ linux() { docker exec -i -w /work lab-linux vak "$@"; }
 # 1. A real turn on the Mac, pushed to the folder.
 mac exec --trust "Reply in one short sentence: the marigold budget is due Monday." > "$ROOT/turn1.txt" 2>&1
 check "1a a real turn on the Mac" $? "$(head -c 80 "$ROOT/turn1.txt" | tr '\n' ' ')"
-SID=$(mac sessions 2>/dev/null | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | head -1)
+SID=$(mac sessions 2>/dev/null | awk '/^[0-9a-f]{8}-/ {print $1; exit}')
 mac sync setup "$ROOT/remote" >/dev/null 2>&1
 OUT=$(mac sync now 2>&1); check "1b the Mac pushes to a folder" $? "$(echo "$OUT" | head -1)"
 
@@ -52,7 +52,7 @@ OUT=$(mac sync handover 2>&1); check "3a the Mac hands over" $? "$(echo "$OUT" |
 OUT=$(linux sync takeover 2>&1); check "3b Linux takes over" $? "$(echo "$OUT" | head -1)"
 docker exec -i -w /work lab-linux vak exec --trust "Reply in one short sentence: the juniper order ships Tuesday." > "$ROOT/turn2.txt" 2>&1
 check "3c a real turn on Linux" $? "$(head -c 80 "$ROOT/turn2.txt" | tr '\n' ' ')"
-SID2=$(linux sessions 2>/dev/null | grep -oE '[0-9a-f]{8}-[0-9a-f-]{27}' | grep -v "$SID" | head -1)
+SID2=$(linux sessions 2>/dev/null | awk '/^[0-9a-f]{8}-/ {print $1}' | grep -v "$SID" | head -1)
 OUT=$(linux sync now 2>&1); check "3d Linux pushes" $? "$(echo "$OUT" | head -1)"
 
 # 4. The Mac takes the work back and reads what Linux did.

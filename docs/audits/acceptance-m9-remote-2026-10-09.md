@@ -94,3 +94,30 @@ as cut for one owner (plan §M9 "M9 design").
   others stay.
 - Provider keys and bot tokens do not travel; the lab gave both machines
   the same local model by configuration.
+
+## Rerun, later on 2026-10-09
+
+Three of the gaps above were closed and checked again.
+
+- **A large data home** (lab section 13): a 240 MB home of 1,200 files
+  in an Agent's workspace pushed in 30 to 36 s and pulled whole. Each
+  round then added 60 MB of new files; 10 of 10 pushes were killed
+  part-way (at 5% to 95% of a round's push time) and the other machine
+  pulled a whole, verified copy every time, and 8 of 8 pulls were killed
+  part-way and the next pull left the same verified bytes every time.
+- **A Mac with a Linux machine** (`scripts/sync-lab/mac.sh`, 15 of 15):
+  a real turn on the Mac against a throwaway home, a push to a folder on
+  the Mac that a Linux container mounts, the key file carried by hand, a
+  pull and a read on Linux, a hand-over, a real turn on Linux, a hand-back
+  and a read on the Mac of both conversations, both copies verifying, and
+  no two remote files that differ only by case.
+- **Starting again after a pull**: `vak serve` now starts itself again
+  under the same process id (plan §9).
+
+Found and fixed on the way: an idle holder pushed on every scheduler
+tick, because its liveness ref and the store's commit counter travelled
+in the refs file (lab check 9b, plan §9); `vak sessions` listed nothing
+since ledgers became directories (`sessions_list`); and a `kill -0`
+probe printed "No such process" into `vak exec`'s output.
+
+Still not run: a real network share or cloud-synced folder as the remote.

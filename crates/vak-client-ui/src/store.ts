@@ -329,7 +329,10 @@ export { canvasDevice, setCanvasDevice, canvasStacks, setCanvasStacks };
  *  conversation's. "" is the Canvas of no conversation, kept on this device. */
 export const canvasConversation = () => activeId() ?? "";
 
-const narrowNow = () => window.matchMedia("(max-width: 1100px)").matches;
+/** The width at and below which the sidebar and dock float over the
+ *  conversation (styles.css, `@media (max-width: 1100px)`). */
+export const OVERLAY_QUERY = "(max-width: 1100px)";
+const narrowNow = () => window.matchMedia(OVERLAY_QUERY).matches;
 export const freshCanvasEntry = (subject: CanvasSubject) => freshEntry(subject, narrowNow());
 
 /** Told about each change that the other surfaces should see (`canvasSync.ts`). */
@@ -567,9 +570,10 @@ export const [settingsScope, setSettingsScope] = createSignal<"user" | "workspac
 export const [hydratingId, setHydratingId] = createSignal<string | null>(null);
 /** Viewport narrow enough that the sidebar and dock are overlays rather
  *  than columns (docs/design/48-web-client.md §7.2). Kept as a signal, not
- *  read ad hoc, so every component agrees about which layout is in force. */
+ *  read ad hoc, so every component agrees about which layout is in force.
+ *  The stylesheet's overlay rule uses the same width. */
 export const [narrowViewport, setNarrowViewport] = createSignal(
-  typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches,
+  typeof window !== "undefined" && window.matchMedia(OVERLAY_QUERY).matches,
 );
 // Open on a desktop, closed on a phone: at that width the sidebar covers
 // the transcript, so starting open would greet a phone with a file list

@@ -2915,8 +2915,6 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 }
 
 @media (max-width: 1000px) {
-  .app { --sidebar-width: 220px !important; --dock-width: 340px !important; grid-template-columns: var(--sidebar-width) minmax(360px, 1fr) auto; }
-  .app.sidebar-collapsed { grid-template-columns: 0 minmax(360px, 1fr) auto; }
   .workspace-actions .tool-preview, .workspace-actions .tool-editor, .workspace-actions .tool-pr { display: none; }
   .settings-shell { grid-template-columns: 240px minmax(0, 1fr); }
   .settings-content { width: calc(100% - 40px); padding-top: 40px; }
@@ -3442,7 +3440,7 @@ body.is-resizing .split-divider { background: var(--accent); }
 .pane:not(.focused) { opacity: .86; transition: opacity var(--dur-fast) var(--ease); }
 .pane.focused { background: color-mix(in srgb, var(--surface) 22%, transparent); }
 
-@media (min-width: 901px) and (max-width: 1200px) {
+@media (min-width: 1101px) and (max-width: 1200px) {
   .app { --sidebar-width: 236px; --dock-width: 390px; grid-template-columns: var(--sidebar-width) minmax(360px, 1fr) auto; }
   .dock { max-width: 42vw; }
 }

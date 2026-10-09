@@ -1860,34 +1860,39 @@ fn run_sessions_list(cwd: PathBuf) {
         }
     }
     let trashed = vak_core::trash::trashed(&vak_config::scope::SharedScope::new(&shared));
-    let mut rows: Vec<(std::time::SystemTime, u64, String)> = Vec::new();
+    // A session is a ledger directory of record segments, named by its id.
+    let mut rows: Vec<(std::time::SystemTime, String)> = Vec::new();
     for dir in &session_dirs {
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let maybe_row = (name.ends_with(".jsonl")
-                    && !trashed.contains(name.trim_end_matches(".jsonl"))
-                    && !rows.iter().any(|(_, _, n)| n == &name))
-                .then(|| {
-                    entry
-                        .metadata()
-                        .ok()
-                        .and_then(|meta| meta.modified().ok().map(|m| (m, meta.len())))
-                })
-                .flatten();
-                if let Some((mtime, len)) = maybe_row {
-                    rows.push((mtime, len, name));
-                }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(header) = vak_session::SessionLog::read_header(&path) else {
+                continue;
+            };
+            let id = header.session_id;
+            if trashed.contains(&id) || rows.iter().any(|(_, known)| known == &id) {
+                continue;
             }
+            let modified = std::fs::read_dir(&path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|file| file.metadata().ok()?.modified().ok())
+                .max()
+                .unwrap_or(std::time::UNIX_EPOCH);
+            rows.push((modified, id));
         }
     }
-    rows.sort_by_key(|(mtime, _, _)| std::cmp::Reverse(*mtime));
+    rows.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
     if rows.is_empty() {
         println!("no sessions yet ({})", direct.display());
         return;
     }
-    for (_mtime, size, name) in rows {
-        println!("{name}  {size:>10} bytes");
+    for (modified, id) in rows {
+        let at: chrono::DateTime<chrono::Local> = modified.into();
+        println!("{id}  {}", at.format("%Y-%m-%d %H:%M"));
     }
 }
 

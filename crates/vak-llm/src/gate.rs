@@ -156,8 +156,12 @@ fn stale_lease(path: &std::path::Path) -> bool {
     else {
         return true;
     };
+    // A probe: its "No such process" is an answer, not a message for the
+    // person at the terminal.
     std::process::Command::new("kill")
         .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .map(|status| !status.success())
         .unwrap_or(true)
