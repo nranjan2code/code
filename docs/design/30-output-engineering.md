@@ -110,26 +110,17 @@ includes, tools, filesystem lookup, network access, or expression language.
 An untrusted project output file is ignored. Agent proposals remain inactive
 until explicitly activated.
 
-## Engagement posture
+## When a packet goes out
 
-`DeliveryProfile` carries a `DeliveryPosture` (cadence × urgency) that the
-session or task sets. The posture decides **when** a packet goes out, never
-**what** it says — the renderer and packet contents are untouched.
-
-- `Disposition::Send` — render and deliver immediately (the pre-kernel default).
-- `Disposition::HoldUntilComplete` — prepared as an effect with
-  `hold = "until_complete"`; replay never takes a held effect.
-- `Disposition::HoldForDigest` — prepared as an effect with `hold = "digest"`.
-
-Nothing releases a held effect yet: no turn-completion or digest flush has
-been built, so a held packet waits in the effects chain, visible as "Waiting
-for the digest".
-
-Two rules override the cadence: an `Interrupt` urgency always sends (an
-irreversible step's confirmation must not wait), and any packet needing a
-person (`DeliveryKind::Approval`, `Alert`) always sends because a held gate is
-a stopped run. A held effect is never dispatchable, so it burns no retry
-budget.
+Every delivery is prepared as an effect and sent at once
+(`delivery::deliver`). There is no held state. A delivery posture (cadence ×
+urgency) once let a packet wait for the end of its work or for a digest, but
+nothing ever released a held packet, and in practice nothing could be held:
+the only kinds delivered as effects are a routine's summary and an approval,
+one per run, and every adapter's posture was live. It was removed on
+2026-10-09 (data-architecture plan §9). A digest that bundles several runs'
+summaries into one message would be a new design, with its own trigger and
+release step, not a revival of the hold.
 
 Every block receives an ID and a coverage disposition. Unknown structures stay
 in the exact fallback even when the target cannot render them richly. Silent

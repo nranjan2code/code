@@ -1646,9 +1646,7 @@ pub fn action_state(effect: &vak_session::effects::EffectRecord) -> crate::Actio
     use crate::ActionState;
     use vak_session::effects::EffectStatus;
     match effect.status {
-        EffectStatus::Held | EffectStatus::Queued | EffectStatus::Sending => {
-            ActionState::Dispatching
-        }
+        EffectStatus::Queued | EffectStatus::Sending => ActionState::Dispatching,
         EffectStatus::Sent if effect.confirmed => ActionState::Confirmed,
         EffectStatus::Sent => ActionState::ProviderAccepted,
         EffectStatus::Retrying | EffectStatus::Failed => ActionState::Failed,

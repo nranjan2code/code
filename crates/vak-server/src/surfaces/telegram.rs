@@ -1223,7 +1223,6 @@ mod tests {
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         };
         let mut batches: Vec<String> = Vec::new();
         for (index, (title, answer)) in samples.iter().enumerate() {

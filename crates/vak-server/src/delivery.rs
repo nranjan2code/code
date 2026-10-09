@@ -500,7 +500,6 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         },
         "discord" => DeliveryProfile {
             surface: surface.into(),
@@ -511,7 +510,6 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         },
         "slack" => DeliveryProfile {
             surface: surface.into(),
@@ -522,7 +520,6 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         },
         "desktop" | "tui" => DeliveryProfile {
             surface: surface.into(),
@@ -533,7 +530,6 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: true,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         },
         "background" => DeliveryProfile {
             surface: surface.into(),
@@ -544,10 +540,6 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: vak_delivery::DeliveryPosture {
-                cadence: vak_delivery::Cadence::Digest,
-                urgency: vak_delivery::Urgency::Quiet,
-            },
         },
         _ => DeliveryProfile {
             surface: surface.into(),
@@ -558,7 +550,6 @@ fn built_in_surface_profile(surface: &str) -> DeliveryProfile {
             supports_links: false,
             supports_actions: false,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         },
     }
 }
@@ -620,20 +611,10 @@ pub(crate) async fn render_response(
     provenance: Option<std::collections::BTreeMap<String, String>>,
     bot_id: Option<&str>,
     session_id: Option<&str>,
-    intent_posture: Option<vak_intent::DeliveryPosture>,
     cards: Vec<vak_delivery::StructuredOutput>,
 ) -> Result<DeliveryPacket, String> {
     let runtime = runtime(core);
-    let mut profile = profile_for_surface(core, surface, requested);
-    // The engagement decides *when* a packet goes out (docs/design/47,
-    // delivery posture): an unattended run rolls up into the digest, an
-    // irreversible step's confirmation breaks through.
-    if let Some(posture) = intent_posture {
-        profile.posture = vak_delivery::DeliveryPosture::from_intent_labels(
-            posture.cadence.as_str(),
-            posture.urgency.as_str(),
-        );
-    }
+    let profile = profile_for_surface(core, surface, requested);
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),
         target: bot_id
@@ -671,8 +652,7 @@ pub(crate) async fn render_response(
 }
 
 /// Delivers `content` to `target` as an effect of the run `trace` names:
-/// prepared before anything is sent, then sent now unless its posture
-/// holds it.
+/// prepared before anything is sent, then sent.
 pub(crate) async fn deliver(
     core: &Core,
     trace: Option<&vak_session::trace::TraceKey>,
@@ -686,23 +666,15 @@ pub(crate) async fn deliver(
     let (adapter, _) = runtime.adapters.resolve(target)?;
     let profile = apply_preferences(core, adapter.profile());
     let content = enrich_provenance(core, content);
-    // Posture decides WHEN a packet goes out, never what it says. A held
-    // packet is a prepared effect with its hold.
-    let disposition = profile.posture.disposition(kind);
     let job = DeliveryJob {
         job_id: uuid::Uuid::now_v7().to_string(),
         target: target.into(),
         kind,
         content,
-        profile: profile.clone(),
+        profile,
         skill_registry: Some(merged_presentation_skills(core)),
         trace: trace.cloned(),
         actor: trace.and_then(|trace| trace.actor),
-    };
-    let hold = match disposition {
-        vak_delivery::Disposition::Send => None,
-        vak_delivery::Disposition::HoldUntilComplete => Some("until_complete".to_string()),
-        vak_delivery::Disposition::HoldForDigest => Some("digest".to_string()),
     };
     let payload = serde_json::to_vec(&job).map_err(|error| error.to_string())?;
     let record = core
@@ -712,29 +684,10 @@ pub(crate) async fn deliver(
             target: target.into(),
             trace: trace.cloned(),
             payload,
-            hold: hold.clone(),
             supersedes: None,
         })
         .map_err(|error| error.to_string())?;
-    match hold {
-        None => runtime.dispatch(core, record.id, Dispatch::Fresh).await,
-        Some(hold) => Ok(vak_delivery::DeliveryPacket {
-            schema_version: vak_delivery::DELIVERY_SCHEMA_VERSION,
-            job_id: record.id.to_string(),
-            target: job.target.clone(),
-            surface: job.profile.surface.clone(),
-            kind: job.kind,
-            payload: vak_delivery::DeliveryPayload::Text(String::new()),
-            fallback_markdown: String::new(),
-            chunks: Vec::new(),
-            actions: Vec::new(),
-            coverage: Vec::new(),
-            diagnostics: vec![format!("delivery held: {hold}")],
-            presentation: None,
-            trace: job.trace.clone(),
-            actor: job.actor,
-        }),
-    }
+    runtime.dispatch(core, record.id, Dispatch::Fresh).await
 }
 
 /// Attach the immutable ownership envelope before a generic task, schedule, or
@@ -886,7 +839,6 @@ impl DeliveryRuntime {
                     Resent::New(next.id),
                 )
             }
-            S::Held => return Err("it is waiting for its digest".into()),
             S::Sending => return Err("it is being sent now".into()),
             S::Sent => return Err("it was sent".into()),
             S::Superseded => return Err("it was already sent again".into()),
@@ -913,7 +865,6 @@ impl ChannelAdapter for LogAdapter {
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         }
     }
 
@@ -962,7 +913,6 @@ impl ChannelAdapter for WebhookAdapter {
             supports_links: true,
             supports_actions: true,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         }
     }
 
@@ -1037,7 +987,6 @@ impl ChannelAdapter for TelegramAdapter {
             // renders `packet.actions` as inline-keyboard buttons below.
             supports_actions: true,
             template: None,
-            posture: vak_delivery::DeliveryPosture::default(),
         }
     }
 
@@ -1703,7 +1652,6 @@ mod tests {
                 target: target.into(),
                 trace: None,
                 payload: serde_json::to_vec(&job).unwrap(),
-                hold: None,
                 supersedes: None,
             })
             .unwrap();
@@ -1770,7 +1718,6 @@ mod tests {
                 target: target.into(),
                 trace: None,
                 payload: serde_json::to_vec(&job).unwrap(),
-                hold: None,
                 supersedes: None,
             })
             .unwrap();

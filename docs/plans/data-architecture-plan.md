@@ -3104,9 +3104,11 @@ The working tracker was deleted when the plan closed (2026-10-09); its
 step rows are in git history and each milestone's section above. What it
 still carried, checked against the code on 2026-10-09:
 
-- **Held effects are never released.** An effect prepared with a `hold`
-  (a digest or until-complete packet) has status `Held`, and no
-  `EffectStep` moves it on: there is no release and no flush.
+- **The engagement's delivery cadence and urgency decide nothing.**
+  `vak-intent` still computes them, records them in the intent entry and
+  shows them (`vak intent explain`, the admin Commitments screen), but
+  delivery stopped reading them when holding was removed (below). Either
+  remove them from `vak-intent` or give them a consumer.
 - **A deleted trigger's claim ref stays.** `trg/<id>/claim` is left
   behind because refs have no delete. The lifecycle reconciler should
   remove it once refs can be deleted.
@@ -3128,6 +3130,18 @@ still carried, checked against the code on 2026-10-09:
 Closed since the tracker listed it: a copy environment orphaned by a
 crash is now aged from its last write and removed by the reconciler
 (`environment_items` in `vak_core::lifecycle`, M7a-d).
+
+Closed on 2026-10-09: **held effects are gone.** Nothing released a held
+effect, and nothing could be held: only a routine's summary and an
+approval are delivered as effects, one per run, every adapter's posture
+was live, and the run's intent posture never reached `deliver`. The
+maintainer chose removal over building a digest: `EffectStep::Prepared`
+has no `hold`, `EffectStatus::Held` and `Prepare::hold` are gone, as are
+`vak-delivery`'s `DeliveryPosture`, `Cadence`, `Urgency` and
+`Disposition` and `DeliveryProfile::posture`, the gateway's posture
+lookup, and the admin "Waiting for the digest" state. Every delivery is
+prepared and sent at once (doc 30-output-engineering, "When a packet goes
+out").
 
 The handover for the session after the plan
 (`docs/plans/handover-2026-10-09.md`) lists the product limits and the

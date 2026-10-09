@@ -556,9 +556,9 @@ requests, regardless of which model or provider produced the original output.
    `RecipeCatalog::register()`. Signal extraction merges builtin + plugin
    signal matchers.
 
-3. **Delivery posture integration** (Gap 7).
-   `DeliveryPosture` (cadence × urgency) now consulted by `render_response()`
-   before it prepares or sends, holding the effect when appropriate.
+3. **Delivery posture integration** (Gap 7). Removed on 2026-10-09: no held
+   delivery could be released, and none could occur
+   (`30-output-engineering.md`, "When a packet goes out").
 
 4. **`DeliveryContent::{Text, Progress, ToolResult}` go through markup conversion** (Gap 5).
    Previously these bypassed the markup converters entirely. Now all content
@@ -577,7 +577,6 @@ requests, regardless of which model or provider produced the original output.
 | Structured projection | `project_structured_fences_replaces_vak_blocks`, `project_structured_fences_leaves_plain_code_intact`, `structured_markdown_renders_all_known_types`, `project_structured_fences_never_panics_on_malformed` |
 | Markup converters | Telegram: `converts_links_to_angle_pipe_form`, `rewrites_links_with_a_visible_suppressed_url`, `split_html_chunks_balances_tags`, `passes_through_native_markdown`; Slack: `bold_and_italic_converted`, `links_as_angle_pipe`, `tables_as_code_block`; Discord: `links_wrap_url`, `tables_as_code_block` |
 | Chunking | `chunking_is_unicode_safe_and_prefers_line_boundaries`, `split_html_chunks_closes_and_reopens_tags`, `chunk_markdown_preserving_fences_reopens_fences` |
-| Posture | `approval_always_sends`, `interrupt_overrides_all_cadences`, `alerts_never_held_for_digest`, `on_completion_holds_progress` |
 | Integration | `persistent_worker_renders_multiple_jobs` (worker process test), golden fixtures for cross-surface rendering of a representative document |
 | Coverage | Every `project_structured_fences` call adds `Coverage::Rendered` entries for the replaced blocks |
 

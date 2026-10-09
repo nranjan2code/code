@@ -16,7 +16,7 @@ there.
 | I4 | capability slicing (progressive disclosure) | stage-4 exclusion for a confident reading; the tool surface (core vs. deferred) for every reading |
 | I5 | envelopes: `vak grant` / `vak revoke`; a live grant narrows the strands that serve its commitment and pre-authorizes, one gate at a time, the actions it covers; revocation honoured on read | `vak_intent::apply_envelopes` → `intent::permission_mode` → `cfg.mode` and `spend_ceiling_usd` → the run cap; `intent::envelope_check` → `AgentConfig::envelope_check` |
 | I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
-| I7 | server endpoints, admin portfolio, composer strip, the `commitments` capability, per-channel autonomy ceiling, delivery cadence/urgency | the gateway reads `posture.delivery` from the turn's intent entry |
+| I7 | server endpoints, admin portfolio, composer strip, the `commitments` capability, per-channel autonomy ceiling | delivery cadence/urgency were read here until 2026-10-09; delivery no longer holds a packet |
 | I8 | misread evidence: escalation-as-measurement, restatement, per-cell accuracy | scoped to the turn's own tool calls; `vak intent show` reports weak cells |
 | **I9** | **tiers 2/3**: a `Classify` dispatch on a weak reading — spend-gated, watchdogged, fail-open | `[intent] escalate = local \| cloud`, `classify_model` |
 | **I10** | **control plane**: authority from the channel, explicit commands, no text heuristics | `ControlSource`, `parse_command`, `evaluate_intervention` |
@@ -581,13 +581,13 @@ highest ranked runnable commitment.
 
 ### Delivery posture
 
-`DeliveryPosture` decides *when* a packet goes out, never what it says: the
-semantic contract and the renderer are untouched. Two rules
-override the cadence, and both are about not losing something that matters —
-an `Interrupt` urgency always sends, because an irreversible step's
-confirmation must not sit in a digest until morning; and an approval always
-sends, because a held gate is a stopped run and batching it would turn a
-question into a hang.
+The engagement's `DeliveryPosture` carries the answer's `shape`, which is
+used, and a cadence and urgency, which are recorded in the intent entry and
+shown by `vak intent explain` and the admin Commitments screen. Delivery no
+longer reads the cadence or urgency: holding a packet for its work's end or
+a digest was removed on 2026-10-09, because nothing released a held packet
+and nothing could be held (`30-output-engineering.md`, "When a packet goes
+out"). Every delivery is sent at once.
 
 ### Per-channel autonomy
 
@@ -788,8 +788,8 @@ fixes:
 * `assisted` capped every stakes level at `approve-safe`, indistinguishable
   from `autonomous` on costly work. The table above is now the code.
 * Tiers 2/3 were configuration without a call site; they are wired (I9).
-* Modality, permission and spend ceilings, HIL `Defer`, delivery posture,
-  the stop and context profiles and the checkpoint decision were computed and
+* Modality, permission and spend ceilings, HIL `Defer`, delivery posture
+  (its cadence and urgency unwired again on 2026-10-09), the stop and context profiles and the checkpoint decision were computed and
   never consumed; they are wired. The session's first checkpoint is always
   taken (it is the baseline the workspace delta is measured against); later
   ones only when the reading expects an effect.

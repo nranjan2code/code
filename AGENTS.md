@@ -1375,9 +1375,8 @@ in progress, and the rest of V4 follows it.
     drops repeats of the key (Discord's `nonce` with `enforce_nonce`)
     takes it again as the same effect, and anywhere else the owner sends
     it again as a new effect that supersedes it, or says whether it was
-    sent (`Effects::reconcile`, recorded with who said so). A held packet
-    is a prepared effect with its `hold`. Readers fail on an effect row
-    they cannot decode.
+    sent (`Effects::reconcile`, recorded with who said so). Readers fail
+    on an effect row they cannot decode.
 
 42. **Deletion is recorded, yields to holds, follows lineage, and never
     rewrites a record** (data-architecture plan M7a,
@@ -1708,11 +1707,6 @@ crates/vak-storage   the storage substrate, NO vak dependencies (docs/design/
                      object); fuzz targets with a committed corpus and a
                      stable mutation gate (tests/fuzz_corpus.rs)
 crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
-                     delivery posture (cadence x urgency) deciding WHEN a
-                     packet goes out and never what it says; an approval and
-                     an interrupt-urgency packet are never batched, because a
-                     held gate is a stopped run
-                     (docs/design/47-commitment-kernel.md),
                      closed AST/compiler, capability projection, safe templates,
                      exact Markdown fallback, ordered chunks, Telegram HTML,
                      and isolated renderer worker; durable delivery is an

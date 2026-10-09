@@ -34,7 +34,6 @@ use vak_delivery::DeliveryJob;
 use vak_delivery::DeliveryKind;
 use vak_delivery::DeliveryPacket;
 use vak_delivery::DeliveryPayload;
-use vak_delivery::DeliveryPosture;
 use vak_delivery::DeliveryProfile;
 use vak_delivery::Markup;
 use vak_delivery::render;
@@ -77,7 +76,6 @@ fn make_job(source: &str, markup: Markup, surface: &str) -> DeliveryJob {
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: DeliveryPosture::default(),
         },
         skill_registry: None,
         trace: None,

@@ -100,9 +100,7 @@ fn delivery_state(
             EffectStatus::Unknown => (4, "unknown", true),
             EffectStatus::Failed => (3, "failed", true),
             EffectStatus::Retrying => (2, "pending", true),
-            EffectStatus::Queued | EffectStatus::Sending | EffectStatus::Held => {
-                (1, "pending", false)
-            }
+            EffectStatus::Queued | EffectStatus::Sending => (1, "pending", false),
             EffectStatus::Sent | EffectStatus::Superseded => continue,
         };
         if rank > worst.0 {

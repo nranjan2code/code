@@ -221,7 +221,6 @@ pub(crate) fn operations_view(state: &AppState) -> serde_json::Value {
             };
             serde_json::json!({
                 "waiting": count(&[EffectStatus::Queued, EffectStatus::Sending, EffectStatus::Retrying]),
-                "held": count(&[EffectStatus::Held]),
                 "unknown": count(&[EffectStatus::Unknown]),
                 "failed": count(&[EffectStatus::Failed]),
                 "records": effects.into_iter().take(200).collect::<Vec<_>>(),
@@ -229,7 +228,7 @@ pub(crate) fn operations_view(state: &AppState) -> serde_json::Value {
             })
         }
         Err(failure) => serde_json::json!({
-            "waiting": 0, "held": 0, "unknown": 0, "failed": 0,
+            "waiting": 0, "unknown": 0, "failed": 0,
             "records": [],
             "error": failure.to_string(),
         }),

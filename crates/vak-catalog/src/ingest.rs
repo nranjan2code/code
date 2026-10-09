@@ -549,13 +549,7 @@ fn effect_row(tx: &Transaction<'_>, bytes: &[u8]) -> rusqlite::Result<()> {
     };
     let effect = event.effect.to_string();
     let status = match &event.step {
-        EffectStep::Prepared { hold, .. } => {
-            if hold.is_some() {
-                "held"
-            } else {
-                "queued"
-            }
-        }
+        EffectStep::Prepared { .. } => "queued",
         EffectStep::Dispatched { .. } => "sending",
         EffectStep::Accepted { .. } | EffectStep::Confirmed { .. } => "sent",
         _ => {

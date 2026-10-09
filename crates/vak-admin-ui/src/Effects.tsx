@@ -9,7 +9,6 @@ import { pushToast } from "./store";
 import type { EffectRecord, EffectStatus } from "./types";
 
 export const EFFECT_WORDS: Record<EffectStatus, string> = {
-  held: "Waiting for the digest",
   queued: "Sending",
   sending: "Sending",
   retrying: "Sending",
@@ -20,7 +19,6 @@ export const EFFECT_WORDS: Record<EffectStatus, string> = {
 };
 
 const EFFECT_TONE: Record<EffectStatus, string> = {
-  held: "",
   queued: "chip-tone-info",
   sending: "chip-tone-info",
   retrying: "chip-tone-warning",

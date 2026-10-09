@@ -18,8 +18,7 @@
 
 //! Deep audit harness for `vak-delivery`: 500+ scenarios covering the render
 //! pipeline, markup conversion, templates, skill registry, recipes, signals,
-//! posture disposition matrix, and worker subprocess
-//! protocol.
+//! and worker subprocess protocol.
 //!
 //! Each scenario is a self-contained closure that panics on invariant
 //! violation. The harness counts pass/fail so the test report proves breadth.
@@ -36,14 +35,14 @@ use vak_delivery::slack;
 use vak_delivery::telegram;
 use vak_delivery::worker::{WORKER_PROTOCOL_VERSION, WorkerRequest, WorkerResponse, process_line};
 use vak_delivery::{
-    AnswerDraft, AnswerResult, ApprovalPayload, ArtifactRef, Cadence, CalloutTone, Citation,
+    AnswerDraft, AnswerResult, ApprovalPayload, ArtifactRef, CalloutTone, Citation,
     DELIVERY_SCHEMA_VERSION, DeliveryAction, DeliveryContent, DeliveryError, DeliveryJob,
-    DeliveryKind, DeliveryPayload, DeliveryPosture, DeliveryProfile, Disposition, DocumentBlock,
-    DocumentCoverage, DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem,
-    OutputKind, OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputStreamFrame,
+    DeliveryKind, DeliveryPayload, DeliveryProfile, DocumentBlock, DocumentCoverage,
+    DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem, OutputKind,
+    OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputStreamFrame,
     OutputTimeline, PRESENTATION_SCHEMA_VERSION, PresentationDocument, ResultOutcome,
     SurfaceCapabilities, TemplateActivation, TemplateNode, TemplateOrigin, TemplateRegistry,
-    TemplateSlot, TemplateSpec, Urgency,
+    TemplateSlot, TemplateSpec,
 };
 use vak_delivery::{
     adapters::{built_in_adapters, structured_outputs_from_tool_result},
@@ -113,7 +112,6 @@ fn answer_job(
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: DeliveryPosture::default(),
         },
         skill_registry: None,
         trace: None,
@@ -593,7 +591,6 @@ fn audit_delivery_profiles() {
                 supports_links: true,
                 supports_actions: false,
                 template: None,
-                posture: DeliveryPosture::default(),
             };
             let caps = p.capabilities();
             assert_eq!(caps.max_chars, None);
@@ -616,7 +613,6 @@ fn audit_delivery_profiles() {
                 supports_links: true,
                 supports_actions: true,
                 template: None,
-                posture: DeliveryPosture::default(),
             };
             let caps = p.capabilities();
             assert!(caps.structured_blocks);
@@ -640,7 +636,6 @@ fn audit_delivery_profiles() {
                 supports_links: true,
                 supports_actions: false,
                 template: None,
-                posture: DeliveryPosture::default(),
             };
             let caps = p.capabilities();
             assert!(!caps.structured_blocks);
@@ -1143,114 +1138,6 @@ fn audit_templates() {
     }));
 
     run("templates", scenarios);
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 7. POSTURE DISPOSITION MATRIX
-// ════════════════════════════════════════════════════════════════════
-
-#[test]
-fn audit_posture_matrix() {
-    let mut scenarios: Vec<Scenario> = vec![];
-
-    let cadences = [Cadence::Live, Cadence::OnCompletion, Cadence::Digest];
-    let urgencies = [Urgency::Interrupt, Urgency::Notify, Urgency::Quiet];
-    let kinds = [
-        DeliveryKind::Assistant,
-        DeliveryKind::TaskSummary,
-        DeliveryKind::Alert,
-        DeliveryKind::User,
-        DeliveryKind::Approval,
-        DeliveryKind::Progress,
-        DeliveryKind::ToolResult,
-        DeliveryKind::System,
-        DeliveryKind::Developer,
-        DeliveryKind::Internal,
-        DeliveryKind::ToolCall,
-        DeliveryKind::Steering,
-    ];
-
-    for cadence in cadences {
-        for urgency in urgencies {
-            for kind in kinds {
-                let c = cadence;
-                let u = urgency;
-                let k = kind;
-                let label = format!("disposition_{:?}_{:?}_{:?}", c, u, k);
-                scenarios.push(tc(&label, move || {
-                    let posture = DeliveryPosture {
-                        cadence: c,
-                        urgency: u,
-                    };
-                    let disp = posture.disposition(k);
-                    // Interrupt always sends
-                    if u == Urgency::Interrupt {
-                        assert_eq!(disp, Disposition::Send);
-                    }
-                    // Approval always sends
-                    if k == DeliveryKind::Approval {
-                        assert_eq!(disp, Disposition::Send);
-                    }
-                    // Alert under Digest always sends
-                    if k == DeliveryKind::Alert && c == Cadence::Digest {
-                        assert_eq!(disp, Disposition::Send);
-                    }
-                    // Live + non-interrupt sends everything
-                    if c == Cadence::Live && u != Urgency::Interrupt {
-                        if k != DeliveryKind::Approval {
-                            assert_eq!(disp, Disposition::Send);
-                        }
-                    }
-                    // Digest + Quiet + non-alert + non-approval → hold for digest
-                    if c == Cadence::Digest
-                        && u == Urgency::Quiet
-                        && k != DeliveryKind::Alert
-                        && k != DeliveryKind::Approval
-                    {
-                        assert_eq!(disp, Disposition::HoldForDigest);
-                    }
-                    // OnCompletion + Notify: progress/tool chatter held
-                    if c == Cadence::OnCompletion && u == Urgency::Notify {
-                        match k {
-                            DeliveryKind::Progress
-                            | DeliveryKind::ToolResult
-                            | DeliveryKind::ToolCall => {
-                                assert_eq!(disp, Disposition::HoldUntilComplete);
-                            }
-                            _ => {
-                                assert_eq!(disp, Disposition::Send);
-                            }
-                        }
-                    }
-                }));
-            }
-        }
-    }
-
-    // Default posture sends everything
-    scenarios.push(tc("default_posture_sends_all", || {
-        let default = DeliveryPosture::default();
-        for kind in [
-            DeliveryKind::Assistant,
-            DeliveryKind::Progress,
-            DeliveryKind::Alert,
-            DeliveryKind::Approval,
-            DeliveryKind::ToolResult,
-        ] {
-            assert_eq!(default.disposition(kind), Disposition::Send);
-        }
-    }));
-
-    // Cadence variants serialize
-    for cadence in cadences {
-        scenarios.push(tc(&format!("serde_cadence_{cadence:?}"), move || {
-            let bytes = serde_json::to_vec(&cadence).expect("serialize");
-            let deserialized: Cadence = serde_json::from_slice(&bytes).expect("deserialize");
-            assert_eq!(deserialized, cadence);
-        }));
-    }
-
-    run("posture_matrix", scenarios);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2796,7 +2683,6 @@ fn audit_packet_structure() {
                 supports_links: true,
                 supports_actions: false,
                 template: None,
-                posture: DeliveryPosture::default(),
             },
             skill_registry: None,
             trace: None,
@@ -2832,7 +2718,6 @@ fn audit_packet_structure() {
                 supports_links: true,
                 supports_actions: true,
                 template: None,
-                posture: DeliveryPosture::default(),
             },
             skill_registry: None,
             trace: None,
@@ -3101,7 +2986,6 @@ fn audit_serialization_roundtrip() {
                 supports_links: true,
                 supports_actions: false,
                 template: None,
-                posture: DeliveryPosture::default(),
             };
             let bytes = serde_json::to_vec(&p).expect("serialize");
             let deserialized: DeliveryProfile =
@@ -3109,30 +2993,6 @@ fn audit_serialization_roundtrip() {
             assert_eq!(deserialized.markup, p.markup);
             assert_eq!(deserialized.max_chars, p.max_chars);
             assert_eq!(deserialized.surface, p.surface);
-        }));
-    }
-
-    for (i, cadence) in [Cadence::Live, Cadence::OnCompletion, Cadence::Digest]
-        .iter()
-        .enumerate()
-    {
-        let c = *cadence;
-        scenarios.push(tc(&format!("serde_cadence_{i}"), move || {
-            let bytes = serde_json::to_vec(&c).expect("serialize");
-            let d: Cadence = serde_json::from_slice(&bytes).expect("deserialize");
-            assert_eq!(d, c);
-        }));
-    }
-
-    for (i, urgency) in [Urgency::Interrupt, Urgency::Notify, Urgency::Quiet]
-        .iter()
-        .enumerate()
-    {
-        let u = *urgency;
-        scenarios.push(tc(&format!("serde_urgency_{i}"), move || {
-            let bytes = serde_json::to_vec(&u).expect("serialize");
-            let d: Urgency = serde_json::from_slice(&bytes).expect("deserialize");
-            assert_eq!(d, u);
         }));
     }
 
@@ -3228,10 +3088,6 @@ fn audit_serialization_roundtrip() {
                 activation: TemplateActivation::Active,
                 nodes: vec![TemplateNode::Literal { text: "x".into() }],
             }),
-            posture: DeliveryPosture {
-                cadence: Cadence::Digest,
-                urgency: Urgency::Quiet,
-            },
         };
         let bytes = serde_json::to_vec(&p).expect("serialize");
         let d: DeliveryProfile = serde_json::from_slice(&bytes).expect("deserialize");
@@ -3317,7 +3173,6 @@ fn audit_content_kind_markup_matrix() {
                         supports_links: true,
                         supports_actions: false,
                         template: None,
-                        posture: DeliveryPosture::default(),
                     },
                     ..job
                 };

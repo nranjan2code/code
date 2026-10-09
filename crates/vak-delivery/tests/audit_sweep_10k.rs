@@ -51,9 +51,8 @@ use vak_delivery::slack;
 use vak_delivery::telegram;
 use vak_delivery::worker::{WORKER_PROTOCOL_VERSION, WorkerRequest, WorkerResponse, process_line};
 use vak_delivery::{
-    AnswerDraft, AnswerResult, ApprovalPayload, Cadence, DeliveryAction, DeliveryContent,
-    DeliveryError, DeliveryJob, DeliveryKind, DeliveryPayload, DeliveryPosture, DeliveryProfile,
-    Disposition, OutputContent, OutputStatus, Urgency,
+    AnswerDraft, AnswerResult, ApprovalPayload, DeliveryAction, DeliveryContent, DeliveryError,
+    DeliveryJob, DeliveryKind, DeliveryPayload, DeliveryProfile, OutputContent, OutputStatus,
 };
 use vak_delivery::{compile_markdown, render};
 
@@ -99,7 +98,6 @@ fn answer_job(source: &str, markup: Markup, surface: &str) -> DeliveryJob {
             supports_links: true,
             supports_actions: false,
             template: None,
-            posture: DeliveryPosture::default(),
         },
         skill_registry: None,
         trace: None,
@@ -673,7 +671,6 @@ fn blue_team_error_paths_never_panic() {
                         supports_links: true,
                         supports_actions: false,
                         template: None,
-                        posture: DeliveryPosture::default(),
                     },
                     skill_registry: None,
                     trace: None,
@@ -708,7 +705,6 @@ fn blue_team_error_paths_never_panic() {
                     supports_links: true,
                     supports_actions: false,
                     template: None,
-                    posture: DeliveryPosture::default(),
                 },
                 skill_registry: None,
                 trace: None,
@@ -889,7 +885,6 @@ fn blue_team_profile_capability_validation() {
                                 supports_links: links,
                                 supports_actions: actions,
                                 template: None,
-                                posture: DeliveryPosture::default(),
                             };
                             let caps = profile.capabilities();
                             assert_eq!(caps.tables, tables);
@@ -926,7 +921,6 @@ fn blue_team_profile_capability_validation() {
                 supports_links: true,
                 supports_actions: false,
                 template: None,
-                posture: DeliveryPosture::default(),
             };
             let caps = profile.capabilities();
             assert!(caps.max_chars.is_some());

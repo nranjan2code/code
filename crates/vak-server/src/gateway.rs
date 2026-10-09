@@ -3296,31 +3296,6 @@ async fn gateway_inbound(
             let cards = reply.cards;
             let (text, files) =
                 return_drafts(&core, reply.text, &reply.drafts, accepts_files).await;
-            // The turn's delivery posture, from its intent entry: the
-            // session ledger when the run has handed it back, else the
-            // handle's last known record.
-            let intent_posture = binding_session(&state, &key)
-                .as_deref()
-                .and_then(|session_id| state.get(session_id))
-                .and_then(|handle| {
-                    let from_ledger = handle.session.lock().ok().and_then(|guard| {
-                        guard.as_ref().and_then(|session| {
-                            session.chain_to_root().iter().rev().find_map(|entry| {
-                                match &entry.payload {
-                                    vak_session::EntryPayload::Intent(record) => {
-                                        Some(record.engagement.posture.delivery)
-                                    }
-                                    _ => None,
-                                }
-                            })
-                        })
-                    });
-                    from_ledger.or_else(|| {
-                        handle.intent.lock().ok().and_then(|guard| {
-                            guard.as_ref().map(|record| record.engagement.posture.delivery)
-                        })
-                    })
-                });
             let outcome_metadata = binding_session(&state, &key)
                 .as_deref()
                 .and_then(|session_id| state.get(session_id))
@@ -3365,7 +3340,6 @@ async fn gateway_inbound(
                 ])),
                 body.bot_id.as_deref(),
                 session_id.as_deref(),
-                intent_posture,
                 cards,
             )
             .await
@@ -3966,7 +3940,6 @@ pub(crate) async fn deliver_and_record(
         None,
     )
     .await
-    .map(|_| ())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3980,7 +3953,7 @@ pub(crate) async fn deliver_and_record_with_result(
     session_id: Option<&str>,
     task_id: Option<&str>,
     result_id: Option<&str>,
-) -> Result<&'static str, String> {
+) -> Result<(), String> {
     let dedupe_key = result_id.map(|result| format!("{target}|{result}|{}", inbox_kind as u8));
     let _ = vak_core::inbox::record_with_result_and_key(
         &vak_config::scope::AgentScope::new(core.shared_scope().into_root()),
@@ -4011,17 +3984,7 @@ pub(crate) async fn deliver_and_record_with_result(
         DeliveryContent::Answer(answer),
     )
     .await
-    .map(|packet| {
-        if packet
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.starts_with("delivery held:"))
-        {
-            "queued"
-        } else {
-            "delivered"
-        }
-    })
+    .map(|_| ())
 }
 
 #[allow(clippy::too_many_arguments)]

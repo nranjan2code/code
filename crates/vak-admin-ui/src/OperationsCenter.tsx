@@ -140,7 +140,6 @@ export function scopeOperations(data: OperationsSnapshot, scopeFilter: string, w
     effects: {
       ...data.effects,
       waiting: records.filter((record) => ["queued", "sending", "retrying"].includes(record.status)).length,
-      held: records.filter((record) => record.status === "held").length,
       unknown: records.filter((record) => record.status === "unknown").length,
       failed: records.filter((record) => record.status === "failed").length,
       records,

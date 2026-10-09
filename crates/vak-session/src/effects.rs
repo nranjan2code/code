@@ -107,9 +107,6 @@ pub enum EffectStep {
         payload_digest: String,
         target: String,
         payload: ObjectRef,
-        /// Why it waits instead of going out now (a digest).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        hold: Option<String>,
         /// The effect the owner chose to send again by this one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         supersedes: Option<EffectId>,
@@ -166,8 +163,6 @@ crate::impl_traced!(EffectEvent, "effect_event");
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectStatus {
-    /// Prepared and waiting for a digest or the end of its work.
-    Held,
     /// Prepared, not yet sent.
     Queued,
     /// A process is sending it.
@@ -195,7 +190,6 @@ pub struct EffectRecord {
     pub idempotency_key: String,
     pub payload_digest: String,
     pub payload: ObjectRef,
-    pub hold: Option<String>,
     pub supersedes: Option<EffectId>,
     pub superseded_by: Option<EffectId>,
     pub status: EffectStatus,
@@ -255,7 +249,6 @@ impl EffectRecord {
             payload_digest,
             target,
             payload,
-            hold,
             supersedes,
         } = step
         else {
@@ -263,11 +256,7 @@ impl EffectRecord {
         };
         Some(Self {
             id: effect,
-            status: if hold.is_some() {
-                EffectStatus::Held
-            } else {
-                EffectStatus::Queued
-            },
+            status: EffectStatus::Queued,
             kind,
             run,
             trace,
@@ -275,7 +264,6 @@ impl EffectRecord {
             idempotency_key,
             payload_digest,
             payload,
-            hold,
             supersedes,
             superseded_by: None,
             attempts: 0,
@@ -367,12 +355,11 @@ pub struct Prepare {
     pub target: String,
     pub trace: Option<TraceKey>,
     pub payload: Vec<u8>,
-    pub hold: Option<String>,
     pub supersedes: Option<EffectId>,
 }
 
 impl Prepare {
-    /// An effect with no hold and nothing it supersedes.
+    /// An effect that supersedes nothing.
     pub fn new(
         kind: EffectKind,
         target: impl Into<String>,
@@ -384,7 +371,6 @@ impl Prepare {
             target: target.into(),
             trace,
             payload,
-            hold: None,
             supersedes: None,
         }
     }
@@ -552,7 +538,6 @@ impl Effects {
             payload_digest,
             target: prepare.target,
             payload,
-            hold: prepare.hold,
             supersedes: prepare.supersedes,
         };
         let at = Utc::now();
@@ -790,7 +775,6 @@ impl Effects {
             target: record.target.clone(),
             trace: record.trace.clone(),
             payload,
-            hold: None,
             supersedes: Some(effect),
         })?;
         self.append(effect, None, None, EffectStep::Superseded { by: next.id })?;
@@ -981,7 +965,6 @@ mod tests {
                 target: "discord:chan:bot".into(),
                 trace: Some(trace.clone()),
                 payload: text.as_bytes().to_vec(),
-                hold: None,
                 supersedes: None,
             })
             .expect("prepare")

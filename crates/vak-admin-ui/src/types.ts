@@ -657,7 +657,6 @@ export interface OperationsSnapshot {
   };
   effects: {
     waiting: number;
-    held: number;
     unknown: number;
     failed: number;
     error?: string | null;
@@ -1418,7 +1417,7 @@ export interface RunCause {
 }
 
 /** Where an action outside Vakyartha stands (plan M4.5). */
-export type EffectStatus = "held" | "queued" | "sending" | "sent" | "retrying" | "failed" | "unknown" | "superseded";
+export type EffectStatus = "queued" | "sending" | "sent" | "retrying" | "failed" | "unknown" | "superseded";
 
 /** One action Vakyartha took outside itself: a delivery to a channel, an email sent or a calendar change. */
 export interface EffectRecord {
@@ -1429,7 +1428,6 @@ export interface EffectRecord {
   run?: string | null;
   target: string;
   idempotency_key: string;
-  hold?: string | null;
   supersedes?: string | null;
   superseded_by?: string | null;
   status: EffectStatus;
