@@ -12,7 +12,65 @@ import { confirmDestructive } from "./display";
 const day = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "";
 const CAUSE: Record<string, string> = { person: "A person asked", policy: "Its time in the trash ended" };
-const SCOPE: Record<string, string> = { conversation: "Conversation", draft: "Draft", guest: "A guest's messages", account: "A connected account's data" };
+const SCOPE: Record<string, string> = { conversation: "Conversation", draft: "Draft", guest: "A guest's messages", account: "A connected account's data", agent: "An agent's data", project: "A project's data", person: "A person who wrote to a bot" };
+
+/// Erasing one person who wrote to the owner's bots (plan M7b-e): their
+/// id on a channel, what it would remove, then the erasure.
+function ErasePerson(props: { onDone: () => void }) {
+  const [surface, setSurface] = createSignal("telegram");
+  const [sender, setSender] = createSignal("");
+  const [busy, setBusy] = createSignal(false);
+  const run = async () => {
+    const who = sender().trim();
+    if (!who || busy()) return;
+    setBusy(true);
+    try {
+      const { preview } = await api.personErasurePreview(surface(), who);
+      if (preview.held) {
+        pushToast("alert", "One of their conversations is on hold. Release the hold first.");
+        return;
+      }
+      if (preview.conversations === 0) {
+        pushToast("info", preview.shared_conversations > 0
+          ? `They wrote only in ${preview.shared_conversations} conversation${preview.shared_conversations === 1 ? "" : "s"} shared with other people, which cannot be erased for one person.`
+          : "Nothing from that id is kept.");
+        return;
+      }
+      const shared = preview.shared_conversations > 0
+        ? ` ${preview.shared_conversations} conversation${preview.shared_conversations === 1 ? "" : "s"} they share with other people will not be touched.`
+        : "";
+      if (!confirmDestructive(`Erase ${preview.conversations} conversation${preview.conversations === 1 ? "" : "s"} that ${preview.conversations === 1 ? "is" : "are"} this person's alone, for good, and refuse them from now on?${shared} This cannot be undone.`)) return;
+      await api.erasePerson(surface(), who, preview.digest);
+      setSender("");
+      pushToast("info", "They were erased. The receipt is listed below, without their id.");
+      props.onDone();
+    } catch (err) {
+      pushToast("alert", told(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section class="panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>Erase a person</h2>
+          <p class="dim">Someone who wrote to one of your bots. Their own conversations are erased across every bot and agent, and they are refused from then on. A group conversation they share with others stays whole.</p>
+        </div>
+      </div>
+      <div class="lifecycle-actions">
+        <select aria-label="Channel" value={surface()} onChange={(event) => setSurface(event.currentTarget.value)}>
+          <option value="telegram">Telegram</option>
+          <option value="discord">Discord</option>
+          <option value="slack">Slack</option>
+          <option value="webhook">Webhook</option>
+        </select>
+        <input class="rules-days lifecycle-sender" aria-label="Their id on that channel" placeholder="Their id on that channel" autocomplete="off" spellcheck={false} value={sender()} onInput={(event) => setSender(event.currentTarget.value)} />
+        <button class="button small danger ghost" disabled={busy() || !sender().trim()} onClick={() => void run()}>{busy() ? "Checking…" : "Erase…"}</button>
+      </div>
+    </section>
+  );
+}
 const told = (err: unknown) => String(err instanceof Error ? err.message : err);
 
 /** The typed confirmation: erasing needs the conversation's title. */
@@ -136,6 +194,7 @@ export function ConversationTrash(props: { onChanged?: () => void }) {
           </Show>
         </Show>
       </section>
+      <ErasePerson onDone={changed} />
       <section class="panel">
         <div class="panel-title-row">
           <div>

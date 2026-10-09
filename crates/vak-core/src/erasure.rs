@@ -157,6 +157,28 @@ const AGENT_NOT_REACHED: &[&str] = &[
     "Backups made before this erasure: they still hold the encrypted records until they expire.",
 ];
 
+const PERSON_NOT_REACHED: &[&str] = &[
+    "Conversations this person shared with other people (a group chat): what they wrote there is part of that conversation and cannot be separated from it. Erase the conversation to remove it.",
+    "What an Agent wrote elsewhere from what it learned from them, and memory notes it kept: they are not examined by this erasure.",
+    "Messages already delivered to them or to anyone else: they stay with whoever received them.",
+    "Copies the AI services received when they answered: they are held by those services under their own terms.",
+    "Backups made before this erasure: they still hold the encrypted records until they expire.",
+];
+
+/// What erasing one person would destroy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PersonPreview {
+    pub digest: String,
+    pub held: bool,
+    /// Conversations that are theirs alone: erased whole.
+    pub conversations: Vec<String>,
+    /// Conversations they share with other people: not touched.
+    pub shared_conversations: u64,
+    /// Which of the identities asked about have a conversation of their
+    /// own, so the caller can drop the chat each belongs to.
+    pub alone: Vec<String>,
+}
+
 const PROJECT_NOT_REACHED: &[&str] = &[
     "The project's own folder, its files and its settings: Vakyartha never deletes from a folder you own.",
     "Run, cost and delivery records: they hold ids, times and numbers, with nothing readable of what was said.",
@@ -834,6 +856,192 @@ impl Core {
             })
             .count() as u64;
         self.destroy_and_record(&tenant, &reach.scopes, receipt)
+    }
+
+    /// Sorts the conversations in which any of `principals` caused a run
+    /// into theirs alone and shared with other people, with the keys an
+    /// erasure of theirs would destroy.
+    fn person_reach(
+        &self,
+        principals: &[String],
+    ) -> Result<(PersonPreview, Vec<String>), ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
+        let shared = self.shared_scope();
+        let tenant = self.tenant_objects()?;
+        let catalog = self.catalog().map_err(|error| failed(error.to_string()))?;
+        let _ = catalog.catch_up();
+        // Whoever else may cause a run in a person's own conversation
+        // without being another person: the owner, the system, an Agent.
+        let mut neutral: BTreeSet<String> = [
+            vak_session::trace::local::local_owner().to_string(),
+            vak_session::trace::local::system_principal().to_string(),
+            vak_session::trace::local::agent_principal("vak").to_string(),
+        ]
+        .into();
+        for (agent, _) in vak_session_agent_homes(&shared) {
+            neutral.insert(vak_session::trace::local::agent_principal(&agent).to_string());
+        }
+        let mut conversations = Vec::new();
+        let mut alone = Vec::new();
+        let mut shared_with_others: BTreeSet<String> = BTreeSet::new();
+        for principal in principals {
+            for session in catalog
+                .sessions_of_actor(principal)
+                .map_err(|error| failed(error.to_string()))?
+            {
+                let erased = crate::trash::state(&shared, &session)
+                    .is_ok_and(|state| state.erased_at.is_some());
+                if erased {
+                    continue;
+                }
+                let others = catalog
+                    .run_actors(&session)
+                    .map_err(|error| failed(error.to_string()))?
+                    .into_iter()
+                    .any(|actor| !principals.contains(&actor) && !neutral.contains(&actor));
+                if others {
+                    shared_with_others.insert(session);
+                } else {
+                    if !alone.contains(principal) {
+                        alone.push(principal.clone());
+                    }
+                    if !conversations.contains(&session) {
+                        conversations.push(session);
+                    }
+                }
+            }
+        }
+        conversations.sort();
+        let mut scopes = Vec::new();
+        for conversation in &conversations {
+            for prefix in [
+                conversation_scope(conversation),
+                contributor_scope(conversation, ""),
+            ] {
+                scopes.extend(
+                    tenant
+                        .scopes_with_prefix(&prefix)
+                        .map_err(|error| failed(error.to_string()))?
+                        .into_iter()
+                        .filter(|found| {
+                            found == &conversation_scope(conversation)
+                                || found.starts_with(&contributor_scope(conversation, ""))
+                        }),
+                );
+            }
+        }
+        // What they wrote as a guest anywhere is under a key of their own.
+        for scope in tenant
+            .scopes_with_prefix("contributor:")
+            .map_err(|error| failed(error.to_string()))?
+        {
+            let theirs = vak_session::objects::contributor_of(&scope)
+                .is_some_and(|who| principals.iter().any(|principal| principal == who));
+            if theirs {
+                scopes.push(scope);
+            }
+        }
+        scopes.sort();
+        scopes.dedup();
+        let mut digest = Sha256::new();
+        for part in conversations.iter().chain(&scopes) {
+            digest.update(part.as_bytes());
+            digest.update([0]);
+        }
+        let held = scopes.iter().any(|scope| tenant.scope_held(scope));
+        Ok((
+            PersonPreview {
+                digest: digest
+                    .finalize()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect(),
+                held,
+                conversations,
+                shared_conversations: shared_with_others.len() as u64,
+                alone,
+            },
+            scopes,
+        ))
+    }
+
+    /// What erasing the person behind `principals` (one identity for each
+    /// chat they wrote in) would destroy.
+    pub fn person_erasure_preview(
+        &self,
+        principals: &[String],
+    ) -> Result<PersonPreview, ErasureError> {
+        let _turn = one_at_a_time();
+        Ok(self.person_reach(principals)?.0)
+    }
+
+    /// Erases one person: every conversation that is theirs alone, whole,
+    /// and whatever they wrote as a guest in someone else's. A
+    /// conversation they share with other people is not touched, and the
+    /// receipt says how many there are. `fingerprint` names them in the
+    /// receipt without saying who they are. Refused when they have nothing
+    /// that can be erased, while anything in reach is on hold, and when a
+    /// confirmation's digest no longer matches.
+    pub fn erase_person(
+        &self,
+        fingerprint: &str,
+        principals: &[String],
+        digest: Option<&str>,
+        cause: Cause,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Result<Receipt, ErasureError> {
+        let _turn = one_at_a_time();
+        let failed = |error: String| ErasureError::Failed(error);
+        vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
+        let (preview, scopes) = self.person_reach(principals)?;
+        if preview.conversations.is_empty() && scopes.is_empty() {
+            return Err(ErasureError::NotFound(fingerprint.to_string()));
+        }
+        if preview.held {
+            return Err(ErasureError::Held);
+        }
+        if digest.is_some_and(|digest| digest != preview.digest) {
+            return Err(ErasureError::StalePreview);
+        }
+        let tenant = self.tenant_objects()?;
+        let shared = self.shared_scope();
+        crate::trash::mark_erased(&shared, &preview.conversations)
+            .map_err(|error| failed(error.to_string()))?;
+        for (_, home) in vak_session_agent_homes(&shared) {
+            let agent = vak_config::scope::AgentScope::new(home);
+            let _ = vak_session::documents::forget(&agent.commitments_rollup());
+        }
+        let mut not_reached: Vec<String> =
+            PERSON_NOT_REACHED.iter().map(ToString::to_string).collect();
+        if preview.shared_conversations > 0 {
+            not_reached.insert(
+                0,
+                format!(
+                    "{} conversation(s) they share with other people were not touched.",
+                    preview.shared_conversations
+                ),
+            );
+        }
+        let receipt = Receipt {
+            id: format!("ers_{}", uuid::Uuid::now_v7()),
+            at: Utc::now(),
+            scope: "person".into(),
+            subject: fingerprint.to_string(),
+            cause,
+            actor,
+            conversations: preview.conversations.len() as u64,
+            artifacts: 0,
+            keys_destroyed: 0,
+            keys_digest: String::new(),
+            memory_notes_removed: 0,
+            search_rows_removed: 0,
+            objects_deleted: 0,
+            sent_outside: 0,
+            not_reached,
+            public_key: String::new(),
+            signature: String::new(),
+        };
+        self.destroy_and_record(&tenant, &scopes, receipt)
     }
 
     fn project_reach(&self, space: &str) -> Result<AgentReach, ErasureError> {

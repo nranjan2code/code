@@ -624,6 +624,22 @@ export const api = {
     }).then((r) => handle(r));
   },
 
+  /** What erasing one person who wrote to the bots would remove. */
+  personErasurePreview: (surface: string, sender: string): Promise<{ preview: { digest: string; held: boolean; conversations: number; shared_conversations: number } }> =>
+    fetch("/data/erasure/people/preview", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ surface, sender }),
+    }).then((r) => handle(r)),
+
+  /** Erases them. Their id travels in the body, never the address. */
+  erasePerson: (surface: string, sender: string, digest: string): Promise<{ receipt: ErasureReceipt }> =>
+    fetch("/data/erasure/people", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ surface, sender, digest }),
+    }).then((r) => handle(r)),
+
   /** Everything on hold. */
   dataHolds: (): Promise<{ holds: { kind: string; id: string; name?: string | null }[] }> =>
     fetch("/data/holds").then((r) => handle(r)),

@@ -959,6 +959,8 @@ fn router_with_state(state: AppState) -> Router {
             get(guest_erasure_preview).post(erase_guest),
         )
         .route("/data/erasure/accounts/{account}", post(erase_account))
+        .route("/data/erasure/people/preview", post(person_erasure_preview))
+        .route("/data/erasure/people", post(erase_person))
         .route(
             "/data/erasure/projects/{space}",
             get(project_erasure_preview).post(erase_project),
@@ -10582,6 +10584,120 @@ async fn erase_account(
     .await;
     match erased {
         Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct PersonBody {
+    /// The transport they wrote on: telegram, discord or slack.
+    surface: String,
+    /// Their id on it. In the body, never the address: it names a person.
+    sender: String,
+    #[serde(default)]
+    digest: Option<String>,
+}
+
+/// One identity for each chat the gateway knows on the surface: a channel
+/// sender's principal is made from the surface, the chat and their id.
+fn person_principals(state: &AppState, body: &PersonBody) -> Vec<(String, String)> {
+    state
+        .gateway
+        .chats_on(body.surface.trim())
+        .into_iter()
+        .map(|(key, chat)| {
+            let principal = vak_session::trace::local::channel_sender(
+                body.surface.trim(),
+                &chat,
+                body.sender.trim(),
+            );
+            (key, principal.to_string())
+        })
+        .collect()
+}
+
+/// What erasing one person who wrote to the owner's bots would destroy.
+async fn person_erasure_preview(
+    State(state): State<AppState>,
+    Json(body): Json<PersonBody>,
+) -> axum::response::Response {
+    let mut principals: Vec<String> = person_principals(&state, &body)
+        .into_iter()
+        .map(|(_, principal)| principal)
+        .collect();
+    principals.sort();
+    principals.dedup();
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.person_erasure_preview(&principals)).await {
+        Ok(Ok(preview)) => Json(serde_json::json!({
+            "preview": {
+                "digest": preview.digest,
+                "held": preview.held,
+                "conversations": preview.conversations.len(),
+                "shared_conversations": preview.shared_conversations,
+            },
+        }))
+        .into_response(),
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Erases one person: every conversation that is theirs alone, their
+/// chats' entries in the allowlist, and a fingerprint that refuses them
+/// from now on. A conversation they share with others is left, and the
+/// receipt says so.
+async fn erase_person(
+    State(state): State<AppState>,
+    Json(body): Json<PersonBody>,
+) -> axum::response::Response {
+    let Some(digest) = body.digest.clone() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "look at what this would erase first",
+                "reason": "confirmation",
+            })),
+        )
+            .into_response();
+    };
+    let chats = person_principals(&state, &body);
+    let mut principals: Vec<String> = chats
+        .iter()
+        .map(|(_, principal)| principal.clone())
+        .collect();
+    principals.sort();
+    principals.dedup();
+    let fingerprint = gateway::person_fingerprint(&body.surface, &body.sender);
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    let (named, asked) = (fingerprint.clone(), principals.clone());
+    let erased = tokio::task::spawn_blocking(move || {
+        let preview = core.person_erasure_preview(&asked)?;
+        let receipt = core.erase_person(
+            &named,
+            &asked,
+            Some(&digest),
+            vak_core::erasure::Cause::Person,
+            Some(actor),
+        )?;
+        Ok::<_, vak_core::erasure::ErasureError>((preview, receipt))
+    })
+    .await;
+    match erased {
+        Ok(Ok((preview, receipt))) => {
+            // The chats that were theirs alone leave the allowlist and
+            // their binding; a shared chat stays, for the others in it.
+            for (key, principal) in &chats {
+                if preview.alone.contains(principal) {
+                    state.gateway.forget_chat(&state.core, key);
+                }
+            }
+            let remembered = gateway::remember_erased_person(&state.core, &fingerprint).is_ok();
+            Json(serde_json::json!({ "receipt": receipt, "refused_from_now_on": remembered }))
+                .into_response()
+        }
         Ok(Err(error)) => erasure_refused(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }

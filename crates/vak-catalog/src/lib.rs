@@ -277,6 +277,46 @@ impl Catalog {
         self.catch_up()
     }
 
+    /// The conversations in which `actor` caused a run, by plain id. A
+    /// run names its conversation on its own node when it was known at
+    /// admission, and otherwise by the edge its `Session` step leaves.
+    pub fn sessions_of_actor(&self, actor: &str) -> Result<Vec<String>, CatalogError> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT session FROM nodes
+               WHERE kind = 'run' AND actor = ?1 AND session IS NOT NULL
+             UNION
+             SELECT e.src FROM edges e JOIN nodes n ON n.id = e.dst
+               WHERE e.kind = 'caused_by' AND n.kind = 'run' AND n.actor = ?1
+                 AND e.src LIKE 'ses_%'",
+        )?;
+        let rows = statement.query_map([actor], |row| row.get::<_, String>(0))?;
+        let mut found: Vec<String> = rows
+            .filter_map(Result::ok)
+            .map(|id| id.strip_prefix("ses_").map(str::to_string).unwrap_or(id))
+            .collect();
+        found.sort();
+        found.dedup();
+        Ok(found)
+    }
+
+    /// Everyone who caused a run in `session`.
+    pub fn run_actors(&self, session: &str) -> Result<Vec<String>, CatalogError> {
+        let conn = self.conn();
+        let mut statement = conn.prepare(
+            "SELECT actor FROM nodes
+               WHERE kind = 'run' AND (session = ?1 OR session = ?2) AND actor IS NOT NULL
+             UNION
+             SELECT n.actor FROM edges e JOIN nodes n ON n.id = e.dst
+               WHERE e.kind = 'caused_by' AND e.src = ?2 AND n.kind = 'run'
+                 AND n.actor IS NOT NULL",
+        )?;
+        let rows = statement.query_map([session, &ingest::session_node(session)], |row| {
+            row.get::<_, String>(0)
+        })?;
+        Ok(rows.filter_map(Result::ok).collect())
+    }
+
     /// Rebuilds after a key was destroyed, so that nothing a row said of
     /// what that key protected is left: every row is deleted with
     /// `secure_delete` on and replayed from the records, which now read as

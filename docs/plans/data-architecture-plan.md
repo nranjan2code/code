@@ -2339,6 +2339,41 @@ hold.
   `a_projects_data_is_erased_and_its_folder_is_left` through the real
   router.
 
+**M7b-e, done 2026-10-09: erasing one person who wrote to a bot.** A
+person here is someone outside who messages the owner's bots on
+Telegram, Discord, Slack or a webhook, never another user of Vakyartha.
+- What the records hold of a channel sender is the run each message
+  caused, whose actor is their principal for that chat
+  (`trace::local::channel_sender(surface, chat, sender)`). The message
+  itself is the conversation's, under the conversation's key, so one
+  sender's lines cannot be separated out of a group chat.
+- `Core::erase_person(fingerprint, principals, …)` therefore sorts the
+  conversations in which they caused a run (`Catalog::sessions_of_actor`,
+  `run_actors`) into theirs alone, which are erased whole across every
+  bot and Agent, and shared with other people, which are not touched.
+  The owner, the system and the Agents do not count as other people.
+  Anything they wrote as a guest elsewhere goes too. The preview and the
+  receipt say how many shared conversations there were.
+- The server makes one principal per chat the gateway knows on that
+  surface (`GatewayState::chats_on`), drops the allowlist entry and the
+  binding of each chat that was theirs alone (`forget_chat`), and keeps
+  a fingerprint, the hash of the surface and their id
+  (`gateway::person_fingerprint`, `gateway/erased-people.json`). A
+  message from a fingerprinted sender is refused before any chat is
+  looked up, even when the allowlist is open, and never comes back for
+  review. The receipt's subject is the fingerprint, never the id.
+- `POST /data/erasure/people/preview` and `POST /data/erasure/people`
+  take the surface and the id in the body, never the address; the admin
+  console's Conversations has Erase a person.
+- Not built: a way to lift the refusal; erasing one sender's lines from
+  a shared conversation (it needs channel messages kept per sender, as a
+  guest's are); memory notes an Agent kept about them are not examined.
+  The panel was not seen in a browser.
+- Test: `person_erasure_spans_agents_and_chats`, through the gateway
+  with real turns: two chats of her own erased, the group chat kept,
+  her next message refused in an old chat and a new one, the other
+  person untouched, and neither the receipt nor the kept list naming her.
+
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office

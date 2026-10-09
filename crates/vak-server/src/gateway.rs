@@ -181,6 +181,60 @@ fn allowlist_path(home: &std::path::Path) -> PathBuf {
     vak_config::scope::SharedScope::new(home).gateway_allowlist()
 }
 
+/// The people the owner erased (plan M7b-e), each as a fingerprint: a
+/// hash of the surface and their id there, so the list says nothing about
+/// who they are. A message from one is refused before any chat is looked
+/// up, and never shows up for review again.
+fn erased_people_path(home: &std::path::Path) -> PathBuf {
+    allowlist_path(home).with_file_name("erased-people.json")
+}
+
+/// The fingerprint of a person on a surface.
+pub(crate) fn person_fingerprint(surface: &str, sender: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(format!("person:{}:{}", surface.trim(), sender.trim()).as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn erased_people(home: &std::path::Path) -> Vec<String> {
+    std::fs::read(erased_people_path(home))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+/// Whether the owner erased this person.
+pub(crate) fn person_is_erased(core: &Core, surface: &str, sender: &str) -> bool {
+    let home = core.shared_scope().into_root();
+    if !erased_people_path(&home).exists() {
+        return false;
+    }
+    erased_people(&home).contains(&person_fingerprint(surface, sender))
+}
+
+/// Records that a person was erased, atomically.
+pub(crate) fn remember_erased_person(core: &Core, fingerprint: &str) -> std::io::Result<()> {
+    let home = core.shared_scope().into_root();
+    let mut people = erased_people(&home);
+    if people.iter().any(|known| known == fingerprint) {
+        return Ok(());
+    }
+    people.push(fingerprint.to_string());
+    people.sort();
+    let path = erased_people_path(&home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(
+        &temp,
+        serde_json::to_vec_pretty(&people).map_err(std::io::Error::other)?,
+    )?;
+    std::fs::rename(temp, path)
+}
+
 fn bots_path(home: &std::path::Path) -> PathBuf {
     vak_config::scope::SharedScope::new(home).gateway_bots()
 }
@@ -1210,6 +1264,45 @@ impl GatewayState {
         drop(bindings);
         persist_bindings(core, self);
         true
+    }
+
+    /// The chat of every key the gateway knows on `surface`: the allowlist's
+    /// entries and the bindings. A key is `surface:chat` or
+    /// `surface:chat:bot` (invariant 24).
+    pub(crate) fn chats_on(&self, surface: &str) -> Vec<(String, String)> {
+        let mut keys: Vec<String> = self
+            .allowlist_snapshot()
+            .into_iter()
+            .map(|entry| entry.key)
+            .chain(self.bindings_snapshot().into_iter().map(|(key, _)| key))
+            .collect();
+        keys.sort();
+        keys.dedup();
+        keys.into_iter()
+            .filter_map(|key| {
+                let mut parts = key.splitn(3, ':');
+                let chat = match (parts.next(), parts.next()) {
+                    (Some(on), Some(chat)) if on == surface => chat.to_string(),
+                    _ => return None,
+                };
+                Some((key, chat))
+            })
+            .collect()
+    }
+
+    /// Drops everything the gateway keeps about one chat key: its
+    /// allowlist entry, whatever its status, and its binding.
+    pub(crate) fn forget_chat(&self, core: &Core, key: &str) {
+        let removed = self
+            .allowlist
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(key)
+            .is_some();
+        if removed {
+            persist_allowlist(core, self);
+        }
+        self.unbind(core, key);
     }
 
     pub(crate) fn unbind(&self, core: &Core, key: &str) -> bool {
@@ -2594,6 +2687,29 @@ async fn gateway_inbound(
         Some(bot_id) => format!("{}:{}:{bot_id}", body.surface.trim(), body.chat.trim()),
         None => format!("{}:{}", body.surface.trim(), body.chat.trim()),
     };
+    // A person the owner erased is refused before any chat is looked up,
+    // whatever the allowlist says and even when it is open: nothing of
+    // theirs is recorded again, and they never return for review.
+    if let Some(sender) = body.sender.as_deref().map(str::trim)
+        && !sender.is_empty()
+        && person_is_erased(&state.core, body.surface.trim(), sender)
+    {
+        vak_core::security_events::record(
+            &state.core.scope(),
+            vak_core::security_events::EventKind::ChatDenied,
+            "erased_person_denied",
+            &format!("surface={}", body.surface.trim()),
+            None,
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "this sender was erased by the operator",
+                "state": "denied",
+            })),
+        )
+            .into_response();
+    }
     // 0c-01/0c-02/docs/design/34: chat allowlist — reject messages from
     // unknown chats, but record a reviewable *pending* entry instead of a
     // flat rejection so the operator has a forward path to "let it

@@ -89,7 +89,7 @@ Known slow tests (each over 60 s, not failures):
 | 14b | M7b-b holds in one place, on artifacts too | `hold_blocks_every_destructive_transition` | **Done 2026-10-09** (`Core::hold_artifact`, `Core::holds`, `/data/holds`, the Library's Hold, the admin On hold list) |
 | 14c | M7b-c erasing an Agent's data | `agent_erasure_takes_what_it_owns_and_nothing_else` | **Done 2026-10-09** (`Core::erase_agent`, `agent_erasure_preview`; `/agents/{agent}/erasure`; `vak data erase <agent> --scope agent`; Delete everything it holds in the agent picker) |
 | 14d | M7b-d erasing a project's data | `project_erasure_leaves_the_folder` | **Done 2026-10-09** (`Core::erase_project`, `project_erasure_preview`; `/data/erasure/projects/{space}`; `vak data erase <space> --scope project`; Erase its data on the admin Projects screen) |
-| 14e | M7b-e erasing one person across chats | `person_erasure_spans_agents_and_chats` | |
+| 14e | M7b-e erasing one person across chats | `person_erasure_spans_agents_and_chats` | **Done 2026-10-09** (`Core::erase_person`, `Catalog::sessions_of_actor`; `/data/erasure/people`; the gateway's hashed list of erased people; Erase a person in the admin console) |
 | 14f | M7b-f erasing everything | `install_erasure_leaves_a_receipt_and_nothing_else` | |
 | 14g | M7b-g key rotation, Keys screen, Your data | `rotation_keeps_everything_readable` | |
 | 14h | M7b-h acceptance | the run | |
