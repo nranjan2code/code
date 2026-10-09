@@ -113,6 +113,80 @@ def wait_for(pred, seconds, every=3):
     return False
 
 
+BULK = "/data/vak/tenants/ten_00000000-0000-7602-9145-b8d712473797/workspaces/spc_lab/agt_bulk"
+
+
+def bulk_batch(machine, round_no, files=300, kib=200):
+    """Replaces the bulk Agent workspace's batch with fresh random files,
+    so the next push has about files * kib of new bytes to copy."""
+    sh(machine, "sh", "-c", f"rm -rf {BULK}/batch-*; mkdir -p {BULK}/batch-{round_no} && "
+       f"for i in $(seq 1 {files}); do head -c {kib * 1024} /dev/urandom > {BULK}/batch-{round_no}/f$i.bin; done",
+       timeout=600)
+
+
+def bulk_digest(machine):
+    return sh(machine, "sh", "-c", f"cd {BULK} 2>/dev/null && find . -type f | sort | xargs cat | sha256sum", timeout=300)[1]
+
+
+def timed(machine, *args):
+    started = time.time()
+    rc, out = vak(machine, *args, timeout=900)
+    return rc, out, time.time() - started
+
+
+def large_home(holder):
+    other = "away" if holder == "desk" else "desk"
+    for m in (holder, other):
+        kill_server(m, "-TERM")
+    # A standing body of work that every push carries: about 240 MB.
+    sh(holder, "sh", "-c", f"mkdir -p {BULK}/base && for i in $(seq 1 1200); do head -c 204800 /dev/urandom > {BULK}/base/f$i.bin; done", timeout=900)
+    rc, out, seconds = timed(holder, "sync", "now")
+    check("13a a 240 MB data home pushes", rc == 0, f"{seconds:.1f}s; {out.splitlines()[0] if out else ''}")
+    rc, out, pull_seconds = timed(other, "sync", "pull")
+    same = bulk_digest(holder) == bulk_digest(other)
+    check("13b and pulls whole on the other machine", rc == 0 and same, f"{pull_seconds:.1f}s; same bytes {same}")
+    # How long one round's push and pull take, unkilled.
+    bulk_batch(holder, 0)
+    rc, _, push_t = timed(holder, "sync", "now")
+    rc, _, pull_t = timed(other, "sync", "pull")
+    print(f"   one 60 MB round: push {push_t:.1f}s, pull {pull_t:.1f}s", flush=True)
+    killed = good = 0
+    for i, f in enumerate([0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95]):
+        bulk_batch(holder, i + 1)
+        ms = max(push_t * f, 0.02)
+        rc, out = sh(holder, "sh", "-c", f"vak sync now >/tmp/p 2>&1 & p=$!; sleep {ms:.2f}; kill -9 $p 2>/dev/null && echo KILLED; wait $p 2>/dev/null; true", timeout=900)
+        killed += "KILLED" in out
+        rc, pull = vak(other, "sync", "pull", timeout=900)
+        rc2, ver = vak(other, "data", "verify", timeout=600)
+        # Whatever the remote held was whole: the other machine has either
+        # the previous round or this one, never a mix.
+        ok = rc == 0 and rc2 == 0
+        good += ok
+        if not ok:
+            print("   large push-kill", f, "->", pull[:160], "|", ver[:120], flush=True)
+    vak(holder, "sync", "now", timeout=900)
+    rc, _ = vak(other, "sync", "pull", timeout=900)
+    same = bulk_digest(holder) == bulk_digest(other)
+    check("13c a push killed mid-copy on a large home never leaves the remote unusable", good == 10 and same,
+          f"{killed} of 10 pushes were killed; the other machine pulled a whole, verified copy {good} of 10 times; same bytes after a clean push: {same}")
+    killed = good = 0
+    for i, f in enumerate([0.05, 0.2, 0.35, 0.5, 0.65, 0.8, 0.9, 0.97]):
+        bulk_batch(holder, 20 + i)
+        vak(holder, "sync", "now", timeout=900)
+        ms = max(pull_t * f, 0.02)
+        rc, out = sh(other, "sh", "-c", f"vak sync pull >/tmp/p 2>&1 & p=$!; sleep {ms:.2f}; kill -9 $p 2>/dev/null && echo KILLED; wait $p 2>/dev/null; true", timeout=900)
+        killed += "KILLED" in out
+        rc, pull = vak(other, "sync", "pull", timeout=900)
+        rc2, ver = vak(other, "data", "verify", timeout=600)
+        same = bulk_digest(holder) == bulk_digest(other)
+        ok = rc == 0 and rc2 == 0 and same
+        good += ok
+        if not ok:
+            print("   large pull-kill", f, "->", pull[:160], "|", ver[:120], f"same {same}", flush=True)
+    check("13d a pull killed mid-copy on a large home is finished by the next pull", good == 8,
+          f"{killed} of 8 pulls were killed; the next pull left the same, verified bytes {good} of 8 times")
+
+
 def main():
     S = {}
     # ---- 1. First copy: a real turn on the desk, push, key file, pull ----
@@ -355,6 +429,9 @@ def main():
     losers = [o for rc, o in pushes if rc != 0]
     check("12 when both take over at once, exactly one may push", len(winners) == 1 and all("took the work over" in o or "standing by" in o for o in losers),
           f"winner: {winners}; the other was told: {(losers[0][:70] if losers else '-')}")
+
+    # ---- 13. A large data home: pushes and pulls killed mid-copy ----
+    large_home(winners[0] if winners else "desk")
 
     print()
     bad = [r for r in RESULTS if not r[1]]
