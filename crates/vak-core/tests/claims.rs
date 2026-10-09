@@ -13,8 +13,14 @@ use vak_core::triggers::{
 use vak_session::ids::{ProcessId, TriggerId};
 use vak_session::runs::{ActiveRun, RunOutcome, RunStatus, Runs, Slot};
 
+fn shared() -> vak_config::scope::SharedScope {
+    vak_config::scope::SharedScope::new(vak_config::paths::data_home())
+}
+
+/// A trigger due every minute from `anchor`, saved, because only a saved
+/// trigger is claimed.
 fn trigger(cwd: &Path, anchor: DateTime<Utc>, on_crash: OnCrash) -> Trigger {
-    Trigger {
+    let trigger = Trigger {
         id: TriggerId::new(),
         name: "every minute".into(),
         agent: "vak".into(),
@@ -35,7 +41,9 @@ fn trigger(cwd: &Path, anchor: DateTime<Utc>, on_crash: OnCrash) -> Trigger {
         scope: None,
         created_at: anchor,
         created_by: None,
-    }
+    };
+    triggers::create(&shared(), &trigger).unwrap();
+    trigger
 }
 
 const CATCH_UP: CatchUp = CatchUp {
@@ -70,7 +78,7 @@ impl Setup {
 
     fn claim(&self, runs: &Runs, trigger: &Trigger, now: DateTime<Utc>) -> Claimed {
         let cwd = self.dir.path().to_path_buf();
-        triggers::claim_due(runs, trigger, now, CATCH_UP, None, |slot| {
+        triggers::claim_due(&shared(), runs, trigger, now, CATCH_UP, None, |slot| {
             trigger.trace_for(slot, &cwd)
         })
         .unwrap()
@@ -307,7 +315,7 @@ fn catch_up_off_skips_missed_slots() {
         missed: false,
         floor: now,
     };
-    let claimed = triggers::claim_due(&runs, &trigger, now, off, None, |slot| {
+    let claimed = triggers::claim_due(&shared(), &runs, &trigger, now, off, None, |slot| {
         trigger.trace_for(slot, &cwd)
     })
     .unwrap();
@@ -318,4 +326,52 @@ fn catch_up_off_skips_missed_slots() {
     assert_eq!(missed.from, now - Duration::seconds(90));
     assert_eq!(missed.through, now - Duration::seconds(30));
     assert!(starts(&runs, &trigger).is_empty());
+}
+
+/// The claim ref of `trigger` as stored, `None` once it is gone.
+fn claim_ref(setup: &Setup, trigger: &Trigger) -> Option<vak_storage::refs::RefValue> {
+    vak_session::objects::TenantObjects::for_tenant(&setup.tenant_home)
+        .unwrap()
+        .store()
+        .get_ref(&format!("trg/{}/claim", trigger.id))
+        .unwrap()
+}
+
+#[test]
+fn deleting_a_trigger_removes_its_claim() {
+    let setup = Setup::new();
+    let now = Utc::now();
+    let trigger = trigger(
+        setup.dir.path(),
+        now - Duration::seconds(150),
+        OnCrash::Skip,
+    );
+    let runs = setup.runs();
+    let Claimed::Started(started) = setup.claim(&runs, &trigger, now) else {
+        panic!("the due slot starts");
+    };
+    assert!(claim_ref(&setup, &trigger).is_some());
+    assert!(triggers::delete(&shared(), &runs, &trigger.id.to_string()).unwrap());
+    assert!(claim_ref(&setup, &trigger).is_none());
+    // The run that held it settles as usual and writes no claim back.
+    drop(started);
+    assert!(claim_ref(&setup, &trigger).is_none());
+    assert!(!triggers::delete(&shared(), &runs, &trigger.id.to_string()).unwrap());
+}
+
+#[test]
+fn a_deleted_trigger_is_never_claimed_again() {
+    let setup = Setup::new();
+    let now = Utc::now();
+    let trigger = trigger(
+        setup.dir.path(),
+        now - Duration::seconds(150),
+        OnCrash::Skip,
+    );
+    let runs = setup.runs();
+    triggers::delete(&shared(), &runs, &trigger.id.to_string()).unwrap();
+    // A tick that read the trigger before it was deleted.
+    assert!(matches!(setup.claim(&runs, &trigger, now), Claimed::Idle));
+    assert!(claim_ref(&setup, &trigger).is_none());
+    assert!(runs.of_trigger(&trigger.id).unwrap().is_empty());
 }

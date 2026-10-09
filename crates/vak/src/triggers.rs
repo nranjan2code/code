@@ -95,20 +95,22 @@ pub fn run_triggers(cwd: std::path::PathBuf, action: crate::cli::TriggersAction)
                 }
             }
         }
-        crate::cli::TriggersAction::Remove { id } => match triggers::delete(&shared, &id) {
-            Ok(true) => {
-                println!("removed automation {id}");
-                0
+        crate::cli::TriggersAction::Remove { id } => {
+            match triggers::delete(&shared, &core.runs(), &id) {
+                Ok(true) => {
+                    println!("removed automation {id}");
+                    0
+                }
+                Ok(false) => {
+                    eprintln!("error: no automation '{id}'");
+                    2
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    1
+                }
             }
-            Ok(false) => {
-                eprintln!("error: no automation '{id}'");
-                2
-            }
-            Err(e) => {
-                eprintln!("error: {e}");
-                1
-            }
-        },
+        }
         crate::cli::TriggersAction::Enable { id } => set_enabled(&shared, &id, true),
         crate::cli::TriggersAction::Disable { id } => set_enabled(&shared, &id, false),
     }

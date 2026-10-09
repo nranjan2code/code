@@ -543,9 +543,22 @@ pub fn update(
     }
 }
 
-/// Forgets a trigger; returns whether it existed. Its runs stay.
-pub fn delete(shared: &vak_config::scope::SharedScope, id: &str) -> Result<bool, TriggerError> {
-    vak_session::documents::forget(&trigger_path(shared, id)).map_err(TriggerError::Store)
+/// Forgets a trigger and then its claim in `runs`; returns whether it existed. Its
+/// runs stay. The claim goes second, and `claim_due` checks the trigger
+/// before it writes one, so a tick racing the delete cannot leave a claim
+/// behind.
+pub fn delete(
+    shared: &vak_config::scope::SharedScope,
+    runs: &vak_session::runs::Runs,
+    id: &str,
+) -> Result<bool, TriggerError> {
+    let existed =
+        vak_session::documents::forget(&trigger_path(shared, id)).map_err(TriggerError::Store)?;
+    if let Ok(trigger) = vak_session::ids::TriggerId::parse(id) {
+        runs.forget_claim(&trigger)
+            .map_err(|error| TriggerError::Store(error.to_string()))?;
+    }
+    Ok(existed)
 }
 
 /// The triggers of the space the folder `cwd` is bound to.
@@ -794,8 +807,11 @@ pub enum Claimed {
 /// Claims what is due of `trigger` at `now` and records it: the claim moves
 /// by CAS first, then the run opens (minted by `mint` for its slot), then
 /// the abandoned, coalesced and skipped records are written. At most one
-/// process starts a slot, because only one moves the claim past it.
+/// process starts a slot, because only one moves the claim past it. A
+/// trigger no longer in `shared` is claimed by nobody, so a deleted one
+/// gets no claim again.
 pub fn claim_due(
+    shared: &vak_config::scope::SharedScope,
     runs: &vak_session::runs::Runs,
     trigger: &Trigger,
     now: DateTime<Utc>,
@@ -805,7 +821,11 @@ pub fn claim_due(
 ) -> Result<Claimed, vak_session::SessionError> {
     use vak_session::runs::ActiveRun;
     runs.renew()?;
+    let id = trigger.id.to_string();
     let moved = runs.move_claim(&trigger.id, now, |claim, holding| {
+        if !matches!(get(shared, &id), Ok(Some(_))) {
+            return None;
+        }
         let mut decision = due(trigger, claim, holding, now, catch_up, run_now.clone());
         if decision.is_idle(claim) {
             return None;
@@ -1311,7 +1331,9 @@ mod tests {
             })
             .is_err()
         );
-        assert!(delete(&shared, &id).unwrap());
+        let runs =
+            vak_session::runs::Runs::at(shared.runs(), vak_config::paths::local_tenant_home());
+        assert!(delete(&shared, &runs, &id).unwrap());
         assert_eq!(get(&shared, &id).unwrap(), None);
         assert!(list(&shared).unwrap().is_empty());
     }

@@ -840,7 +840,7 @@ impl Core {
             documents += u64::from(vak_session::documents::forget(document).unwrap_or(false));
         }
         for trigger in &reach.triggers {
-            let _ = crate::triggers::delete(&shared, trigger);
+            let _ = crate::triggers::delete(&shared, &self.runs(), trigger);
         }
         for workspace in &reach.workspaces {
             std::fs::remove_dir_all(workspace).map_err(|error| failed(error.to_string()))?;

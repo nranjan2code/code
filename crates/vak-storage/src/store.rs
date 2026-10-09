@@ -42,6 +42,8 @@ pub trait Store: Send + Sync {
         epoch: u64,
         target: &[u8],
     ) -> Result<RefValue>;
+    /// Removes a ref whose name is never reused; refused like `cas_ref`.
+    fn remove_ref(&self, name: &str, expected: u64, epoch: u64) -> Result<()>;
     /// Count of committed mutations; strictly increasing, survives reopen.
     fn commit_generation(&self) -> Result<u64>;
     fn epoch(&self) -> Result<u64>;
@@ -141,6 +143,19 @@ impl Meta {
         let v = self.refs.cas(name, expected, epoch, target)?;
         self.committed()?;
         Ok(v)
+    }
+
+    fn remove_ref(&self, name: &str, expected: u64, epoch: u64) -> Result<()> {
+        user_ref(name)?;
+        let current = counter(self.refs.as_ref(), EPOCH_REF)?;
+        if epoch < current {
+            return Err(StorageError::StaleEpoch {
+                presented: epoch,
+                current,
+            });
+        }
+        self.refs.remove(name, expected, epoch)?;
+        self.committed().map(|_| ())
     }
 
     fn restore(&self) -> Result<u64> {
@@ -316,6 +331,10 @@ impl Store for LocalStore {
         self.meta.cas_ref(name, expected, epoch, target)
     }
 
+    fn remove_ref(&self, name: &str, expected: u64, epoch: u64) -> Result<()> {
+        self.meta.remove_ref(name, expected, epoch)
+    }
+
     fn commit_generation(&self) -> Result<u64> {
         counter(self.meta.refs.as_ref(), COMMIT_REF)
     }
@@ -451,6 +470,10 @@ impl Store for MemoryStore {
         self.meta.cas_ref(name, expected, epoch, target)
     }
 
+    fn remove_ref(&self, name: &str, expected: u64, epoch: u64) -> Result<()> {
+        self.meta.remove_ref(name, expected, epoch)
+    }
+
     fn commit_generation(&self) -> Result<u64> {
         counter(self.meta.refs.as_ref(), COMMIT_REF)
     }
@@ -533,7 +556,14 @@ mod tests {
                 s.cas_ref("other", None, old, b"2"),
                 Err(StorageError::StaleEpoch { .. })
             ));
-            s.cas_ref("head", Some(v.generation), new, b"3").unwrap();
+            let v = s.cas_ref("head", Some(v.generation), new, b"3").unwrap();
+            assert!(matches!(
+                s.remove_ref("head", v.generation, old),
+                Err(StorageError::StaleEpoch { .. })
+            ));
+            s.remove_ref("head", v.generation, new).unwrap();
+            assert!(s.get_ref("head").unwrap().is_none());
+            assert!(s.remove_ref("_store/epoch", 1, new).is_err());
         }
     }
 

@@ -132,6 +132,26 @@ pub(crate) fn swap_ref(
     }
 }
 
+/// Removes the ref `name` under this process's writer epoch, whatever it
+/// holds; returns whether it was there. Only for refs whose name is never
+/// reused, because a name made again starts over at generation 1.
+pub(crate) fn remove_ref(tenant_home: &Path, name: &str) -> Result<bool, SessionError> {
+    check()?;
+    let tenant = TenantObjects::for_tenant(tenant_home)?;
+    let store = tenant.store();
+    let mut attempts = 0;
+    loop {
+        let Some(current) = store.get_ref(name).map_err(objects_error)? else {
+            return Ok(false);
+        };
+        match store.remove_ref(name, current.generation, tenant.writer_epoch().0) {
+            Ok(()) => return Ok(true),
+            Err(vak_storage::StorageError::Conflict { .. }) if attempts < 8 => attempts += 1,
+            Err(error) => return Err(cas_error(error)),
+        }
+    }
+}
+
 /// A ref move refused for a stale epoch is this process being fenced.
 pub(crate) fn cas_error(error: vak_storage::StorageError) -> SessionError {
     match error {

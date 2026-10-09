@@ -67,6 +67,7 @@ fn intake_item_has_trace_and_provenance() {
     // A poll is a run its trigger's claim opens.
     let runs = vak_session::runs::Runs::at(shared.runs(), &tenant);
     let claimed = triggers::claim_due(
+        &shared,
         &runs,
         &trigger,
         now,

@@ -3104,9 +3104,6 @@ The working tracker was deleted when the plan closed (2026-10-09); its
 step rows are in git history and each milestone's section above. What it
 still carried, checked against the code on 2026-10-09:
 
-- **A deleted trigger's claim ref stays.** `trg/<id>/claim` is left
-  behind because refs have no delete. The lifecycle reconciler should
-  remove it once refs can be deleted.
 - **The mail vault keeps its own routine run history**
   (`list_routine_runs` in `vak-mail-calendar`'s vault), beside the run
   records. It was justified at M4.7b because it binds a run to an account
@@ -3125,6 +3122,16 @@ still carried, checked against the code on 2026-10-09:
 Closed since the tracker listed it: a copy environment orphaned by a
 crash is now aged from its last write and removed by the reconciler
 (`environment_items` in `vak_core::lifecycle`, M7a-d).
+
+Closed on 2026-10-09: **a deleted trigger's claim goes with it.** Refs
+can be removed (`RefStore::remove`, `Store::remove_ref`), under the same
+generation and writer-epoch rules as a CAS, and only for names never
+reused. `triggers::delete` forgets the trigger's Document and then its
+claim (`Runs::forget_claim`), and `claim_due` takes the shared scope and
+claims nothing for a trigger no longer there, so a tick racing the delete
+cannot write the claim back (`deleting_a_trigger_removes_its_claim`,
+`a_deleted_trigger_is_never_claimed_again`). It is part of deleting the
+trigger, not a retention rule, so it is no lifecycle class.
 
 Closed on 2026-10-09: **held effects are gone.** Nothing released a held
 effect, and nothing could be held: only a routine's summary and an

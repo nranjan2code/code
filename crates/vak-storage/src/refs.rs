@@ -20,6 +20,10 @@ pub trait RefStore: Send + Sync {
     /// `expected` is the generation the caller read (`None` to create).
     fn cas(&self, name: &str, expected: Option<u64>, epoch: u64, target: &[u8])
     -> Result<RefValue>;
+    /// Removes the ref, under the same generation and epoch rules as `cas`.
+    /// A name that is created again later starts over at generation 1, so
+    /// remove only refs whose name is never reused.
+    fn remove(&self, name: &str, expected: u64, epoch: u64) -> Result<()>;
     /// Names starting with `prefix`, sorted.
     fn names(&self, prefix: &str) -> Result<Vec<String>>;
     /// Makes the store hold exactly `rows`, generations and epochs as
@@ -101,6 +105,13 @@ impl RefStore for MemoryRefStore {
         };
         m.insert(name.into(), v.clone());
         Ok(v)
+    }
+
+    fn remove(&self, name: &str, expected: u64, epoch: u64) -> Result<()> {
+        let mut m = self.lock()?;
+        decide(m.get(name), Some(expected), epoch)?;
+        m.remove(name);
+        Ok(())
     }
 }
 
@@ -218,6 +229,19 @@ impl RefStore for SqliteRefStore {
             target: target.to_vec(),
         })
     }
+
+    fn remove(&self, name: &str, expected: u64, epoch: u64) -> Result<()> {
+        let mut c = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
+        let tx = c.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let cur = Self::read(&tx, name)?;
+        decide(cur.as_ref(), Some(expected), epoch)?;
+        tx.execute("DELETE FROM refs WHERE name=?1", params![name])?;
+        tx.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -244,6 +268,21 @@ mod tests {
         ));
         assert_eq!(s.get("head").unwrap().unwrap().target, b"b");
         assert!(s.get("none").unwrap().is_none());
+        assert!(matches!(
+            s.remove("head", 2, 1),
+            Err(StorageError::StaleEpoch { .. })
+        ));
+        assert!(matches!(
+            s.remove("head", 1, 2),
+            Err(StorageError::Conflict { .. })
+        ));
+        s.remove("head", 2, 2).unwrap();
+        assert!(s.get("head").unwrap().is_none());
+        assert!(s.names("head").unwrap().is_empty());
+        assert!(matches!(
+            s.remove("head", 2, 2),
+            Err(StorageError::Conflict { current: None, .. })
+        ));
     }
 
     #[test]

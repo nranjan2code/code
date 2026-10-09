@@ -686,6 +686,13 @@ impl Runs {
         }
     }
 
+    /// Removes the claim of a deleted `trigger`; returns whether it had one.
+    /// A run that held it settles as usual: releasing a claim that is gone
+    /// writes nothing.
+    pub fn forget_claim(&self, trigger: &TriggerId) -> Result<bool, SessionError> {
+        crate::fence::remove_ref(&self.tenant_home, &claim_ref(trigger))
+    }
+
     /// Clears the claim of `trigger` if it still names `run`.
     pub fn release_claim(&self, trigger: &TriggerId, run: RunId) -> Result<(), SessionError> {
         crate::fence::swap_ref(&self.tenant_home, &claim_ref(trigger), |target| {

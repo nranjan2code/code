@@ -429,7 +429,7 @@ pub(crate) async fn delete_trigger(
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
     }
-    match triggers::delete(&shared(&state), &id) {
+    match triggers::delete(&shared(&state), &state.core.runs(), &id) {
         Ok(true) => {
             let _ = vak_core::worktree::remove_runs_with_prefix(
                 state.core.cwd(),
@@ -555,9 +555,15 @@ pub(crate) async fn claim_and_fire(
 ) -> Result<Option<String>, NotFired> {
     let runs = state.core.runs();
     let cwd = state.core.cwd().clone();
-    let claimed = triggers::claim_due(&runs, &trigger, now, catch_up(state), run_now, |slot| {
-        trigger.trace_for(slot, &cwd)
-    });
+    let claimed = triggers::claim_due(
+        &shared(state),
+        &runs,
+        &trigger,
+        now,
+        catch_up(state),
+        run_now,
+        |slot| trigger.trace_for(slot, &cwd),
+    );
     match claimed {
         Ok(triggers::Claimed::Idle) => Ok(None),
         Ok(triggers::Claimed::Spent) => Err(NotFired::Busy),

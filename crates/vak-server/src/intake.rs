@@ -340,7 +340,7 @@ async fn create_source(State(state): State<AppState>, Json(draft): Json<SourceDr
         return error_response(StatusCode::UNPROCESSABLE_ENTITY, error);
     }
     if let Err(error) = intake::create(&shared(&state), &source) {
-        let _ = triggers::delete(&shared(&state), &trigger.id.to_string());
+        let _ = triggers::delete(&shared(&state), &state.core.runs(), &trigger.id.to_string());
         return intake_error(error);
     }
     (
@@ -436,7 +436,11 @@ async fn delete_source(State(state): State<AppState>, Path(id): Path<String>) ->
     if let Err(error) = intake::delete(&shared(&state), &id) {
         return intake_error(error);
     }
-    if let Err(error) = triggers::delete(&shared(&state), &source.trigger.to_string()) {
+    if let Err(error) = triggers::delete(
+        &shared(&state),
+        &state.core.runs(),
+        &source.trigger.to_string(),
+    ) {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, error);
     }
     StatusCode::NO_CONTENT.into_response()

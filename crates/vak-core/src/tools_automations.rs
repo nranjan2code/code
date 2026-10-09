@@ -303,7 +303,7 @@ impl vak_tools::Tool for AutomationsTool {
                             "automation {id} polls an intake source; remove the source instead"
                         ));
                     }
-                    return match triggers::delete(&self.shared, &id) {
+                    return match triggers::delete(&self.shared, &self.runs, &id) {
                         Ok(_) => vak_tools::ToolOutput::ok(format!("removed automation {id}")),
                         Err(e) => vak_tools::ToolOutput::error(e.to_string()),
                     };

@@ -458,8 +458,11 @@ unasked.
   `vak_core::triggers::Trigger` (plan M4.3), a Document; docs 76, 80 and 81
   use that model. Start a trigger's work only through
   `triggers::claim_due` (plan M4.4), never with a lock, lease or in-memory
-  set of your own. Nothing about a run is written back onto a trigger: its
-  last run, delivery and check time are queries over its run records.
+  set of your own, and remove one only through `triggers::delete`, which
+  takes its claim with it. Nothing about a run is written back onto a
+  trigger: its last run, delivery and check time are queries over its run
+  records. Remove a ref (`Store::remove_ref`) only when its name is never
+  reused, because a name made again starts over at generation 1.
 - Build no second identity for "the root of this work": durable accounting
   keys by M1's `RunId` (the reliable-work plan's E1 waits for it).
 - Resolve every new path through `vak_config::paths` and `vak_config::scope`,
