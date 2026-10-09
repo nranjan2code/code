@@ -2866,6 +2866,52 @@ on its own.
   `handoff_at_turn_boundary`, `lease_prevents_dual_writer`.
 - `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss`.
 
+#### M9 design (agreed with the maintainer 2026-10-09)
+
+Vak has one owner. M9 is cut to what one owner with two machines uses.
+
+Decisions:
+
+1. **The remote is a folder** (`FileRemote`): an external drive, a
+   network share, or a folder another tool syncs. S3 and Postgres are not
+   built, and neither is the hosted-tenancy key-escrow doc; both wait for
+   a hosted service.
+2. **Two machines take turns.** One machine holds the lease and writes;
+   the other stands by and begins no turn. Work moves at a turn boundary:
+   the holder hands over (nothing running, a last push, the lease
+   released) and the other takes over (a pull, the lease, a new writer
+   epoch). A lost machine is taken over from by force, which the owner
+   confirms; when it comes back it is fenced and says what it never
+   pushed. Two machines that both wrote are never merged.
+3. **The remote carries exactly what a backup without secrets carries**
+   (the registry's backup targets), as files checked by a signed-off
+   index: a pull verifies every file against the index before it changes
+   anything. Erasures travel with it: a pull destroys again every key the
+   remote says is destroyed, so nothing erased on one machine comes back
+   on the other.
+4. **Secrets never sync.** A second machine reads the remote with a key
+   file the owner exports under a passphrase and carries there by hand.
+   Vak never puts it on the remote. Provider keys and bot tokens are
+   entered again on the second machine.
+5. **Syncing is automatic and on demand.** The holder pushes after work
+   settles; a push that cannot reach the folder is tried again later and
+   loses nothing; Sync now and `vak sync` do it by hand.
+
+Steps, each shipped whole and in this order:
+
+| Step | What | Exit tests |
+|---|---|---|
+| M9-a | The folder remote: the index, push, pull, `vak sync setup`, `now` and `status` | `push_pull_roundtrip_identical_derive_messages` |
+| M9-b | The key file: export under a passphrase, import on another machine | `key_file_opens_the_remote_on_another_machine` |
+| M9-c | The lease: standing by, handing over, taking over, fencing the machine that lost it | `handoff_at_turn_boundary`, `lease_prevents_dual_writer` |
+| M9-d | Erasures, holds and receipts travel both ways | `erasure_propagates_and_cannot_resurrect` |
+| M9-e | Automatic push with retry; `/sync`; the admin Sync screen (A18); the client's line in Your data | `sync_survives_network_loss` |
+| M9-f | Doc 56 superseded, doc 31's sync plane, the acceptance run | the run |
+
+Not built, by decisions 1 and 2: `S3Remote`, Postgres refs, region
+pinning, key escrow and release, handing over one live conversation while
+others keep running, and merging.
+
 ## 5. AGENTS.md and design-doc changes
 
 | When | Change |
