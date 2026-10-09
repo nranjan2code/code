@@ -80,13 +80,28 @@ pub fn build_tool_surface(
 
 /// The prompt's catalogue of the admitted tools that are not always loaded:
 /// one line each, name and first sentence, no schema. `entries` are
-/// `(name, description)` pairs. It depends only on what is admitted — never
-/// on the turn's reading — so it stays byte-stable in the cached prefix while
-/// the loaded set moves. Empty when nothing can defer.
-pub fn tool_catalogue<'a>(entries: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+/// `(name, description, fields)`: `fields` are the argument names of a
+/// tool the model is told to call by name (a card tool), empty for others.
+/// The prompt says to present a card through the matching `emit_*_card`
+/// tool while a card the request does not predict is deferred, and a model
+/// shown only the name called it at once with argument names it guessed
+/// (live 2026-10-09: 13 of 24 runs, none calling `find_tools` first). It
+/// depends only on what is admitted — never on the turn's reading — so it
+/// stays byte-stable in the cached prefix while the loaded set moves. Empty
+/// when nothing can defer.
+pub fn tool_catalogue<'a>(
+    entries: impl IntoIterator<Item = (&'a str, &'a str, Vec<String>)>,
+) -> String {
     let mut lines: Vec<String> = entries
         .into_iter()
-        .map(|(name, description)| format!("- {name} — {}", first_sentence(description)))
+        .map(|(name, description, fields)| {
+            let line = format!("- {name} — {}", first_sentence(description));
+            if fields.is_empty() {
+                return line;
+            }
+            let fields: Vec<String> = fields.iter().map(|field| format!("`{field}`")).collect();
+            format!("{line} Takes {}.", fields.join(", "))
+        })
         .collect();
     if lines.is_empty() {
         return String::new();
@@ -242,19 +257,27 @@ mod tests {
     /// prefix does not move when the reading does.
     #[test]
     fn the_catalogue_is_stable_sorted_and_schema_free() {
-        let entries = [
+        let entries = vec![
             (
                 "webfetch",
                 "Fetch a URL. Long detail nobody needs up front.",
+                Vec::new(),
             ),
-            ("bash", "Run a command."),
+            ("bash", "Run a command.", Vec::new()),
+            (
+                "emit_metric_card",
+                "Emit a metric card. Prefer it.",
+                vec!["label".to_string(), "value".to_string()],
+            ),
         ];
-        let catalogue = tool_catalogue(entries);
+        let catalogue = tool_catalogue(entries.clone());
         let mut reversed = entries;
         reversed.reverse();
         assert_eq!(catalogue, tool_catalogue(reversed));
-        assert!(catalogue.contains("- bash — Run a command.\n- webfetch — Fetch a URL.\n"));
+        assert!(catalogue.contains(
+            "- bash — Run a command.\n- emit_metric_card — Emit a metric card. Takes `label`, `value`.\n- webfetch — Fetch a URL.\n"
+        ));
         assert!(!catalogue.contains("nobody needs"));
-        assert!(tool_catalogue([]).is_empty());
+        assert!(tool_catalogue(Vec::new()).is_empty());
     }
 }

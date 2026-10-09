@@ -3419,15 +3419,31 @@ impl Core {
             .into_iter()
             .filter(|tool| admitted.contains(tool.name()) && !tool.always_loaded())
             .collect();
-        let mut entries: Vec<(&str, &str)> = tools
+        let mut entries: Vec<(&str, &str, Vec<String>)> = tools
             .iter()
-            .map(|tool| (tool.name(), tool.description()))
+            .map(|tool| {
+                let fields = if tool.presents_cards() {
+                    tool.schema()["properties"]
+                        .as_object()
+                        .map(|properties| {
+                            properties
+                                .keys()
+                                .filter(|key| key.as_str() != "semantic_type")
+                                .cloned()
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                (tool.name(), tool.description(), fields)
+            })
             .collect();
         if admitted.contains("task") {
-            entries.push(("task", vak_agent::TaskTool::DESCRIPTION));
+            entries.push(("task", vak_agent::TaskTool::DESCRIPTION, Vec::new()));
         }
         if admitted.contains("workers") {
-            entries.push(("workers", vak_agent::WorkersTool::DESCRIPTION));
+            entries.push(("workers", vak_agent::WorkersTool::DESCRIPTION, Vec::new()));
         }
         capability::tool_catalogue(entries)
     }

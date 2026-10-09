@@ -337,7 +337,14 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
 - **Catalogue** ("More tools"), one line per admitted tool that is not
   always loaded (`name — first sentence`), sorted, in the stable prefix. It
   depends on the admitted set only, never on the reading, so it does not move
-  when the loaded set does. No schemas.
+  when the loaded set does. No schemas, but a card tool's line ends with its
+  argument names ("Takes `label`, `value`, …"): the prompt tells the
+  model to present a card by calling the matching `emit_*_card` tool, and a
+  model shown only the name called it at once with names it guessed. Measured
+  2026-10-09 on local `gemma4:e2b-mlx` ("Verify that the sum of 17 and 25 is
+  42…", 8 runs each): 3 of 5 card-using runs had a refused first call before,
+  0 of 7 calls after; telling the model in the seed to call `find_tools`
+  first made it worse (8 of 8 runs refused at least once, none called it).
 - **`find_tools({ query })`** returns full schemas for matching deferred
   tools and promotes them to loaded definitions for the rest of the turn on
   every provider (`vak_agent::load_discovered`). Its result reports how many

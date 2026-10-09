@@ -7286,15 +7286,99 @@ fn normalize_mcp_call(
 /// It cannot make an invalid payload valid, discard sibling fields, or weaken
 /// the authorization boundary: the canonical value is still validated again
 /// by `authorize` before dispatch.
+///
+/// Two more shapes are recovered the same way, both found live on a card a
+/// model called while its schema was still withheld (2026-10-09, 8 of 13
+/// refused `emit_metric_card` calls): the tool's fields wrapped once under
+/// an invented key beside a field the tool does take
+/// (`{"metric_data": {"label": …, "value": …}, "semantic_type": "metric"}`),
+/// and a number or boolean where the schema asks for a string
+/// (`"value": 42`), which is its text.
 fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) -> PendingToolCall {
     let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) else {
         return call;
     };
     let schema = tool.schema();
-    if let Some(input) = unwrapped_schema_input(&schema, &call.name, &call.input) {
-        call.input = input;
-    }
+    let input = with_scalar_strings(&schema, &call.input);
+    call.input = if let Some(input) = unwrapped_schema_input(&schema, &call.name, &input) {
+        with_scalar_strings(&schema, &input)
+    } else if let Some(input) = merged_wrapper(&schema, &input) {
+        input
+    } else {
+        input
+    };
     call
+}
+
+/// `input` with a number or boolean given for a string property written as
+/// its text, through nested objects and lists of records. Nothing else
+/// changes: a value of any other wrong type is left for validation to name.
+fn with_scalar_strings(schema: &Value, input: &Value) -> Value {
+    let (Some(properties), Some(object)) = (
+        schema.get("properties").and_then(Value::as_object),
+        input.as_object(),
+    ) else {
+        return input.clone();
+    };
+    let fixed = object
+        .iter()
+        .map(|(key, value)| {
+            let Some(property) = properties.get(key) else {
+                return (key.clone(), value.clone());
+            };
+            let fixed = match (property.get("type").and_then(Value::as_str), value) {
+                (Some("string"), Value::Number(number)) => Value::String(number.to_string()),
+                (Some("string"), Value::Bool(flag)) => Value::String(flag.to_string()),
+                (Some("object"), Value::Object(_)) => with_scalar_strings(property, value),
+                (Some("array"), Value::Array(items)) => match property.get("items") {
+                    Some(item_schema) => Value::Array(
+                        items
+                            .iter()
+                            .map(|item| with_scalar_strings(item_schema, item))
+                            .collect(),
+                    ),
+                    None => value.clone(),
+                },
+                _ => value.clone(),
+            };
+            (key.clone(), fixed)
+        })
+        .collect();
+    Value::Object(fixed)
+}
+
+/// The arguments with one wrapper lifted beside the fields given with it:
+/// exactly one key the schema does not know, holding an object made only
+/// of fields the schema does know and none already given, and the result
+/// valid. Anything less certain is left for validation to name.
+fn merged_wrapper(schema: &Value, input: &Value) -> Option<Value> {
+    let properties = schema.get("properties").and_then(Value::as_object)?;
+    let object = input.as_object()?;
+    let unknown: Vec<(&String, &Value)> = object
+        .iter()
+        .filter(|(key, _)| !properties.contains_key(key.as_str()))
+        .collect();
+    let [(key, Value::Object(inner))] = unknown.as_slice() else {
+        return None;
+    };
+    if inner.is_empty()
+        || inner
+            .keys()
+            .any(|field| !properties.contains_key(field) || object.contains_key(field))
+    {
+        return None;
+    }
+    let mut merged = object.clone();
+    merged.remove(key.as_str());
+    merged.extend(
+        inner
+            .iter()
+            .map(|(field, value)| (field.clone(), value.clone())),
+    );
+    let merged = with_scalar_strings(schema, &Value::Object(merged));
+    vak_tools::validate_input(schema, &merged)
+        .is_ok()
+        .then_some(merged)
 }
 
 /// A card call is identified by its `semantic_type`, which every card tool
@@ -8899,6 +8983,74 @@ mod tool_recovery_tests {
         let unknown = serde_json::json!({"semantic_type": "recipe"});
         assert_eq!(routed("emit_ui_preview_card", &unknown), None);
         assert_eq!(routed("emit_recipe_card", &serde_json::json!({})), None);
+    }
+
+    /// The metric card's schema as a card tool declares it: only
+    /// `semantic_type` is required, and unknown keys are not refused by it.
+    fn metric_schema() -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "semantic_type": {"type": "string", "enum": ["metric"]},
+                "label": {"type": "string"},
+                "value": {"type": "string"},
+                "unit": {"type": "string"},
+                "readings": {"type": "array", "items": {"type": "object",
+                    "properties": {"label": {"type": "string"}, "value": {"type": "string"}},
+                    "required": ["label", "value"]}}
+            },
+            "required": ["semantic_type"]
+        })
+    }
+
+    #[test]
+    fn a_wrapper_beside_the_cards_type_is_lifted_and_numbers_are_text() {
+        use super::{merged_wrapper, with_scalar_strings};
+        let schema = metric_schema();
+        let flat = serde_json::json!({"semantic_type": "metric", "label": "Sum", "value": "42"});
+        // Live 2026-10-09, the schema still withheld.
+        for wrapped in [
+            serde_json::json!({"metric_data": {"label": "Sum", "value": 42}, "semantic_type": "metric"}),
+            serde_json::json!({"metric": {"label": "Sum", "value": "42"}, "semantic_type": "metric"}),
+        ] {
+            assert_eq!(
+                merged_wrapper(&schema, &wrapped),
+                Some(flat.clone()),
+                "{wrapped}"
+            );
+        }
+        assert_eq!(
+            with_scalar_strings(
+                &schema,
+                &serde_json::json!({"semantic_type": "metric", "label": "Sum", "value": 42})
+            ),
+            flat
+        );
+        assert_eq!(
+            with_scalar_strings(
+                &schema,
+                &serde_json::json!({"readings": [{"label": "a", "value": 1.5}]})
+            ),
+            serde_json::json!({"readings": [{"label": "a", "value": "1.5"}]})
+        );
+        // What the wrapper holds is not the card's fields, or collides with
+        // what is beside it, or there are two unknown keys: nothing is lifted.
+        for refused in [
+            serde_json::json!({"data": {"label": "Sum", "metric": 42}, "semantic_type": "metric"}),
+            serde_json::json!({"metric_data": {"label": "Sum", "value": "42"}, "label": "Other", "semantic_type": "metric"}),
+            serde_json::json!({"metric_data": {"label": "Sum"}, "title": "x", "semantic_type": "metric"}),
+            serde_json::json!({"metric_data": [{"label": "Sum", "value": "42"}], "semantic_type": "metric"}),
+        ] {
+            assert_eq!(merged_wrapper(&schema, &refused), None, "{refused}");
+        }
+        // A missing label is never invented.
+        assert_eq!(
+            merged_wrapper(
+                &schema,
+                &serde_json::json!({"semantic_type": "metric", "value": "42"})
+            ),
+            None
+        );
     }
 
     #[test]
