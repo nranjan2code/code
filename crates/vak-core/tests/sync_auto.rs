@@ -69,4 +69,17 @@ async fn sync_survives_network_loss() {
     assert_eq!(status.remote_generation, Some(pushed.generation));
     assert!(core.sync_auto().is_none());
     assert!(core.data_integrity().broken.is_empty());
+
+    // An idle holder renews its liveness every tick; that is this machine's
+    // alone, so nothing is owed and nothing is pushed for it.
+    let tenant = vak_config::paths::local_tenant_home();
+    for _ in 0..3 {
+        vak_session::fence::renew_liveness(
+            &tenant,
+            chrono::Utc::now() + chrono::Duration::seconds(60),
+        )
+        .unwrap();
+        assert_eq!(core.sync_status().unwrap().unpushed, 0);
+        assert!(core.sync_auto().is_none());
+    }
 }

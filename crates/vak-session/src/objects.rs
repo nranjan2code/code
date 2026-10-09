@@ -328,7 +328,9 @@ impl TenantObjects {
     /// Every ref of the tenant's store as one portable file
     /// (`LocalStore::export_refs`).
     pub fn export_refs(&self) -> Result<Vec<u8>, SessionError> {
-        self.store.export_refs().map_err(objects_error)
+        self.store
+            .export_refs(&[crate::fence::LIVENESS_PREFIX])
+            .map_err(objects_error)
     }
 
     /// Replaces the store's refs with those of a remote's file, and
@@ -336,7 +338,9 @@ impl TenantObjects {
     /// and it ends by moving this store's epoch past it.
     pub fn import_refs(&self, file: &[u8]) -> Result<u64, SessionError> {
         crate::fence::check()?;
-        self.store.import_refs(file).map_err(objects_error)
+        self.store
+            .import_refs(file, &[crate::fence::LIVENESS_PREFIX])
+            .map_err(objects_error)
     }
 
     /// The tenant key version new keys are wrapped under, and the oldest

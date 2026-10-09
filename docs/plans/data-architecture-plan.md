@@ -3232,6 +3232,18 @@ asking the person to start Vakyartha again. Seen live on a throwaway
 home: a restore over HTTP, the same process back unfenced in 2 seconds,
 and a new conversation accepted.
 
+Closed on 2026-10-09: **an idle holder no longer pushes on every tick.**
+The lab's large-home run found an idle machine's sync generation climbing
+by one every scheduler tick: its liveness ref (`proc/…`) and the store's
+commit counter (`_store/commit`) changed each tick and travelled in the
+portable refs file, so the remote always looked one change behind and
+`Core::sync_auto` pushed again. Both belong to one machine:
+`LocalStore::export_refs` leaves them out and `import_refs` keeps this
+machine's own, so a pull no longer brings the other machine's liveness
+refs either (its runs are swept as abandoned here, as they were once its
+liveness lapsed). Test: `sync_survives_network_loss` renews liveness
+three times and finds nothing owed.
+
 The handover for the session after the plan
 (`docs/plans/handover-2026-10-09.md`) lists the product limits and the
 checks not yet run in a browser or live.

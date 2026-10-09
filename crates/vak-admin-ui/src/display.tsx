@@ -231,8 +231,10 @@ export function PathCell(props: { path: string; budget?: number }) {
 
 // ---- page furniture --------------------------------------------------------
 
+/** Asks before a destructive action. The message says itself whether it
+ *  can be undone: a trash move can, an erasure cannot. */
 export function confirmDestructive(message: string): boolean {
-  return window.confirm(`${message}\n\nThis cannot be undone from the admin console.`);
+  return window.confirm(message);
 }
 
 export function PageHeader(props: { title: string; description: string; actions?: import("solid-js").JSX.Element }) {

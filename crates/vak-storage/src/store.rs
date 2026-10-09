@@ -195,10 +195,17 @@ impl LocalStore {
 
     /// Every ref as one portable file: a line each of the name in hex, its
     /// generation, its epoch and its target in hex, sorted by name. What a
-    /// remote holds in place of the refs database (plan M9).
-    pub fn export_refs(&self) -> Result<Vec<u8>> {
+    /// remote holds in place of the refs database (plan M9). A ref whose
+    /// name starts with one of `local` belongs to this machine alone and
+    /// is left out: a liveness ref renewed every tick would otherwise make
+    /// the remote look one change behind for ever.
+    pub fn export_refs(&self, local: &[&str]) -> Result<Vec<u8>> {
         let mut out = String::new();
         for name in self.meta.refs.names("")? {
+            // The commit counter counts this store's own writes.
+            if name == COMMIT_REF || local.iter().any(|prefix| name.starts_with(prefix)) {
+                continue;
+            }
             if let Some(value) = self.meta.refs.get(&name)? {
                 out.push_str(&format!(
                     "{} {} {} {}\n",
@@ -212,12 +219,13 @@ impl LocalStore {
         Ok(out.into_bytes())
     }
 
-    /// Makes this store's refs those of an [`export_refs`] file, keeping
+    /// Makes this store's refs those of an [`export_refs`] file, apart
+    /// from this machine's own refs under `local`, which stay; keeping
     /// this store's own writer epoch: each ref is stamped with an epoch
     /// no newer than it, so the process that imports can still finish
     /// what the import needs. Returns the epoch the file's store had; the
     /// caller ends by moving this store's epoch past it.
-    pub fn import_refs(&self, file: &[u8]) -> Result<u64> {
+    pub fn import_refs(&self, file: &[u8], local: &[&str]) -> Result<u64> {
         let bad = || StorageError::Malformed("refs file");
         let unhex = |hex: &str| -> Result<Vec<u8>> {
             if !hex.len().is_multiple_of(2) || !hex.is_ascii() {
@@ -248,7 +256,19 @@ impl LocalStore {
         let here = counter(self.meta.refs.as_ref(), EPOCH_REF)?;
         let mut theirs = 0;
         let mut kept = Vec::with_capacity(rows.len());
+        let is_local =
+            |name: &str| name == COMMIT_REF || local.iter().any(|prefix| name.starts_with(prefix));
+        for name in self.meta.refs.names("")? {
+            if is_local(&name)
+                && let Some(value) = self.meta.refs.get(&name)?
+            {
+                kept.push((name, value));
+            }
+        }
         for (name, mut value) in rows {
+            if is_local(&name) {
+                continue;
+            }
             if name == EPOCH_REF {
                 let bytes: [u8; 8] = value
                     .target

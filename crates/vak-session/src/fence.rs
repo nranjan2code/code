@@ -64,7 +64,8 @@ pub fn process() -> ProcessId {
     *PROCESS.get_or_init(ProcessId::new)
 }
 
-const LIVENESS_PREFIX: &str = "proc/";
+/// The refs that name one process on one machine; they never travel.
+pub(crate) const LIVENESS_PREFIX: &str = "proc/";
 
 /// The target of a liveness ref.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
