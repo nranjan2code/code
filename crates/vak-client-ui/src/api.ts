@@ -2864,6 +2864,8 @@ export interface SecondCopy {
   role?: "unset" | "holder" | "standing_by" | "lost";
   last_error?: string | null;
   held_elsewhere?: boolean;
+  /** The machine named in the lease handed the work over, so this one can take it. */
+  released?: boolean;
 }
 
 export function secondCopy(): Promise<SecondCopy> {

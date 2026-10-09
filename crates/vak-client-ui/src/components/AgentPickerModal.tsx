@@ -35,6 +35,7 @@ export default function AgentPickerModal() {
   const [loading, setLoading] = createSignal(false);
   const [switching, setSwitching] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [notice, setNotice] = createSignal("");
   const [lifecycleFilter, setLifecycleFilter] = createSignal<LifecycleFilter>("active");
   const [lifecycleBusy, setLifecycleBusy] = createSignal<string | null>(null);
   const [revoking, setRevoking] = createSignal<api.Agent | null>(null);
@@ -220,6 +221,11 @@ export default function AgentPickerModal() {
           <Show when={error()}>
             <div style="background: var(--rose-wash); color: var(--red); padding: 8px 12px; border-radius: var(--radius-sm); font-size: var(--fs-meta); margin-bottom: 12px;">
               {error()}
+            </div>
+          </Show>
+          <Show when={notice()}>
+            <div role="status" style="background: var(--accent-wash); color: var(--text); padding: 8px 12px; border-radius: var(--radius-sm); font-size: var(--fs-meta); margin-bottom: 12px;">
+              {notice()}
             </div>
           </Show>
 
@@ -450,7 +456,7 @@ export default function AgentPickerModal() {
               <Show when={technicalDetails()}><p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p></Show>
           </Sheet>
         }</Show>
-        <Show when={erasing()}>{(agent) => <EraseAgentSheet agent={agent()} onClose={() => setErasing(null)} onErased={() => { setError(""); void loadData(); }} />}</Show>
+        <Show when={erasing()}>{(agent) => <EraseAgentSheet agent={agent()} onClose={() => setErasing(null)} onErased={() => { setError(""); setNotice(`Everything ${agent().name} held is deleted. A signed receipt records what was deleted.`); void loadData(); }} />}</Show>
         <Show when={revoking()}>{(agent) => <RevokeAgentSheet agent={agent()} onClose={() => setRevoking(null)} onRevoked={(left) => { setError(left.length ? `Revoked, but some sign-in details could not be removed here: ${left.join(", ")}. Remove them where they are set.` : ""); setAgentsEpoch((n) => n + 1); void loadData(); }} />}</Show>
       </>
     </Show>

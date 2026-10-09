@@ -229,6 +229,6 @@ async fn push_pull_roundtrip_identical_derive_messages() {
     let c = |args: &[&str], passphrase: Option<&str>| vak(&home_c, &work, args, passphrase);
     ok(&c(&["sync", "key", "import", &key_path], Some(PASSPHRASE)));
     ok(&c(&["sync", "setup", &folder], None));
-    assert!(refused(&c(&["sync", "pull"], None)).contains("do not match its index"));
+    assert!(refused(&c(&["sync", "pull"], None)).contains("not matching its index"));
     assert!(!home_c.join("agents").exists(), "nothing was written");
 }

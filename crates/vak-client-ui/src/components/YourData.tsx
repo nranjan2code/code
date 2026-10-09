@@ -34,10 +34,11 @@ export default function YourData(props: { open: (page: SettingsPageId) => void }
   const [copy, { refetch: refetchCopy }] = createResource(() => api.secondCopy().catch(() => ({ configured: false }) as api.SecondCopy));
   const copyLine = (found: api.SecondCopy) => {
     if (found.role === "standing_by" && !found.held_elsewhere) return "This machine handed the work over and is standing by. Take over on your other machine, or take it back here.";
+    if (found.role === "standing_by" && found.released) return "Your other machine handed the work over. Take over here to work on this machine.";
     if (found.role === "standing_by") return "Your other machine holds the work. This one is standing by, and nothing can be started here until you take over.";
     if (found.role === "lost") return "Your other machine took the work over. Taking over here replaces what this machine never copied.";
     const when = found.synced_at ? `Last copied ${new Date(found.synced_at).toLocaleString()}.` : "Nothing has been copied yet.";
-    const owed = (found.unpushed ?? 0) > 0 ? ` ${count(found.unpushed ?? 0, "file has", "files have")} changed since; they are copied between tasks.` : "";
+    const owed = (found.unpushed ?? 0) > 0 ? ` ${count(found.unpushed ?? 0, "file has", "files have")} changed since; ${found.unpushed === 1 ? "it is" : "they are"} copied between tasks.` : "";
     const trouble = found.last_error ? " The folder could not be reached last time; nothing is lost, and it is tried again." : "";
     return `${when}${owed}${trouble}`;
   };

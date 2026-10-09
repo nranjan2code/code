@@ -624,10 +624,10 @@ function Sync() {
                     ? "This machine handed the work over and is standing by. Take over on your other machine, or take it back here."
                     : `${STANDS[found().role ?? "unset"]}${found().role === "standing_by" && found().released ? " It has handed over, so this machine can take over." : ""}`}</dd>
                   <dt>Last copied</dt>
-                  <dd>{found().synced_at ? `${day(found().synced_at as string)}.` : "Never."}{(found().unpushed ?? 0) > 0 ? ` ${found().unpushed} files have changed here since.` : found().synced_at ? " Nothing has changed here since." : ""}</dd>
+                  <dd>{found().synced_at ? `${day(found().synced_at as string)}.` : "Never."}{(found().unpushed ?? 0) > 0 ? ` ${found().unpushed === 1 ? "1 file has" : `${found().unpushed} files have`} changed here since.` : found().synced_at ? " Nothing has changed here since." : ""}</dd>
                   <Show when={found().last_error}>
                     <dt>Last try</dt>
-                    <dd>It did not go through: {found().last_error} Nothing is lost; it is tried again.</dd>
+                    <dd>It did not go through: {`${(found().last_error as string).replace(/\.?\s*$/, "")}.`} Nothing is lost; it is tried again.</dd>
                   </Show>
                 </dl>
                 <p><button class="ghost small" disabled={busy()} onClick={() => { if (window.confirm("Stop using this folder? Nothing in it is touched.")) void act(() => api.syncDo("forget"), "This machine no longer uses a folder."); }}>Stop using this folder</button></p>

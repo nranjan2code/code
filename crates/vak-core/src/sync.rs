@@ -40,15 +40,20 @@ pub enum SyncError {
     #[error("the remote holds nothing yet; push from the machine that has the data")]
     Empty,
     #[error(
-        "the remote is incomplete or damaged ({0} files do not match its index); push again from the other machine"
+        "the remote is incomplete or damaged ({} not matching its index); push again from the other machine",
+        files(*.0)
     )]
     Damaged(usize),
-    #[error("this machine holds {0} files that were never pushed; pulling would replace them")]
+    #[error(
+        "this machine holds work in {} that was never pushed; pulling would replace it",
+        files(*.0)
+    )]
     Unpushed(usize),
     #[error("another machine holds the work; this one is standing by. Take over to work here")]
     NotHolder,
     #[error(
-        "another machine took the work over from this one. {0} files here were never pushed; pull to stand by again"
+        "another machine took the work over from this one. Work in {} here was never pushed; pull to stand by again",
+        files(*.0)
     )]
     Lost(usize),
     #[error(
@@ -228,6 +233,15 @@ fn list_files(root: &Path, out: &mut Vec<PathBuf>) {
 /// Whether a path under the data home travels. Locks, scratch, the open
 /// refs database (it travels as [`REFS`]) and the index of which secrets
 /// exist on this machine do not.
+/// "1 file" or "N files", for a message a person reads.
+fn files(count: usize) -> String {
+    if count == 1 {
+        "1 file".into()
+    } else {
+        format!("{count} files")
+    }
+}
+
 fn travels(relative: &Path) -> bool {
     let name = relative
         .file_name()
@@ -526,6 +540,8 @@ impl Core {
         let mut local = self.sync_local()?;
         Self::write_lease(&local.remote, &local.machine, false)?;
         local.role = Role::Holder;
+        local.failures = 0;
+        local.last_error = None;
         self.save_sync_local(&local)?;
         Ok(report.or(Some(SyncReport {
             generation: local.generation,
@@ -834,6 +850,8 @@ impl Core {
         local.synced = index.files.clone();
         local.role = Role::StandingBy;
         local.seen.clear();
+        local.failures = 0;
+        local.last_error = None;
         self.save_sync_local(&local)?;
         self.settle_imported(past).map_err(SyncError::Failed)?;
         let _ = std::fs::remove_file(&marker);
