@@ -1498,6 +1498,26 @@ export function revokeAgent(agent: string, confirm: string): Promise<{ bot_token
   return req(`/agents/${encodeURIComponent(agent)}/revoke`, { method: "POST", body: JSON.stringify({ confirm }) });
 }
 
+/** What deleting everything an Agent holds would remove. */
+export interface AgentErasurePreview {
+  digest: string;
+  held: boolean;
+  conversations: number;
+  documents: number;
+  artifacts: number;
+  automations: number;
+  workspace_files: number;
+}
+
+export function agentErasurePreview(agent: string): Promise<{ preview: AgentErasurePreview; confirm: string }> {
+  return req(`/agents/${encodeURIComponent(agent)}/erasure`);
+}
+
+/** Deletes everything a revoked or archived Agent holds, for good. */
+export function eraseAgent(agent: string, digest: string, confirm: string): Promise<{ receipt: { id: string } }> {
+  return req(`/agents/${encodeURIComponent(agent)}/erasure`, { method: "POST", body: JSON.stringify({ digest, confirm }) });
+}
+
 /** A draft in the trash, and the day it is deleted. */
 export interface TrashedDraft {
   artifact: string;

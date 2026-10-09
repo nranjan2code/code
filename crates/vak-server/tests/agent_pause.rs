@@ -382,4 +382,34 @@ async fn revoke_cuts_endpoints_within_one_tick() {
         ),
         (json!("revoked"), json!(0), json!(0))
     );
+
+    // Revoked, what it holds can be erased: previewed, its name typed.
+    let (status, looked) = call(&app, "GET", "/agents/newsy/erasure", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{looked}");
+    assert_eq!(looked["confirm"], "Newsy");
+    assert_eq!(looked["preview"]["conversations"], 1);
+    let digest = looked["preview"]["digest"].as_str().unwrap().to_owned();
+    let (status, refused) = call(
+        &app,
+        "POST",
+        "/agents/newsy/erasure",
+        json!({"digest": digest, "confirm": "yes"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    let (status, refused) = call(&app, "GET", "/agents/other/erasure", json!({})).await;
+    assert_eq!(
+        (status, refused["reason"].as_str()),
+        (StatusCode::CONFLICT, Some("agent_in_use"))
+    );
+    let (status, done) = call(
+        &app,
+        "POST",
+        "/agents/newsy/erasure",
+        json!({"digest": digest, "confirm": "Newsy"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["receipt"]["scope"], "agent");
+    assert_eq!(done["receipt"]["conversations"], 1);
 }

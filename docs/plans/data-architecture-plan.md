@@ -2293,6 +2293,29 @@ hold.
   expiry and erasure, and a conversation that would take a held file;
   then each goes ahead once released), and the Library route test.
 
+**M7b-c, done 2026-10-09: erasing an Agent's data.**
+- `Core::erase_agent` erases everything a saved Agent holds, once it is
+  archived or revoked (an active or paused one is refused,
+  `ErasureError::AgentInUse`; the built-in Agent is never erased this
+  way): every conversation in its home, by destroying each one's keys
+  and its guests' keys, with no stop in the trash; its memory, entities
+  and other Documents; the drafts it made that nobody accepted, saved,
+  starred or shared; its automations; and the workspace Vakyartha keeps
+  for it in the data home.
+- Not taken, and said in the receipt: files of its work a person kept,
+  anything it wrote into a folder the owner made, its run, cost and
+  delivery records (ids, times and numbers), and what it already sent.
+- It is previewed with counts (`Core::agent_erasure_preview`), refused
+  while anything in its reach is on hold or when the preview is stale,
+  ends with search rebuilt from the records, and leaves a signed receipt
+  with scope `agent`. Its definition stays, archived or revoked.
+- `GET|POST /agents/{agent}/erasure` (the digest and the Agent's name
+  typed); `vak data erase <agent> --scope agent`; the client's agent
+  picker has Delete everything it holds on an archived or revoked Agent.
+- The sheet was not seen in a browser.
+- Tests: `agent_erasure_takes_what_it_owns_and_nothing_else`, and the
+  revoke route test, which now erases the revoked Agent.
+
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office

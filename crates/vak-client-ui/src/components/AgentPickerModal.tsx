@@ -24,6 +24,7 @@ import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
 import RevokeAgentSheet from "./RevokeAgentSheet";
+import EraseAgentSheet from "./EraseAgentSheet";
 
 type LifecycleFilter = "active" | "all" | "paused" | "archived" | "revoked";
 
@@ -37,6 +38,7 @@ export default function AgentPickerModal() {
   const [lifecycleFilter, setLifecycleFilter] = createSignal<LifecycleFilter>("active");
   const [lifecycleBusy, setLifecycleBusy] = createSignal<string | null>(null);
   const [revoking, setRevoking] = createSignal<api.Agent | null>(null);
+  const [erasing, setErasing] = createSignal<api.Agent | null>(null);
   const [editing, setEditing] = createSignal<api.Agent | null>(null);
   const [editName, setEditName] = createSignal("");
   const [editCharacter, setEditCharacter] = createSignal<AgentCharacter>("mira");
@@ -338,6 +340,17 @@ export default function AgentPickerModal() {
                               Resume
                             </button>
                           </Show>
+                          <Show when={agent.lifecycle === "revoked" || agent.lifecycle === "archived"}>
+                            <button
+                              type="button"
+                              class="icon-button subtle danger has-tooltip"
+                              data-tooltip="Delete everything it holds"
+                              aria-label={`Delete everything ${agent.name} holds`}
+                              onClick={(e) => { e.stopPropagation(); setErasing(agent); }}
+                            >
+                              <Icon name="trash" size={14} />
+                            </button>
+                          </Show>
                           <Show when={agent.lifecycle !== "revoked"}>
                             <button
                               type="button"
@@ -437,6 +450,7 @@ export default function AgentPickerModal() {
               <Show when={technicalDetails()}><p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p></Show>
           </Sheet>
         }</Show>
+        <Show when={erasing()}>{(agent) => <EraseAgentSheet agent={agent()} onClose={() => setErasing(null)} onErased={() => { setError(""); void loadData(); }} />}</Show>
         <Show when={revoking()}>{(agent) => <RevokeAgentSheet agent={agent()} onClose={() => setRevoking(null)} onRevoked={(left) => { setError(left.length ? `Revoked, but some sign-in details could not be removed here: ${left.join(", ")}. Remove them where they are set.` : ""); setAgentsEpoch((n) => n + 1); void loadData(); }} />}</Show>
       </>
     </Show>

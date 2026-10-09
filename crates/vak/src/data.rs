@@ -180,6 +180,37 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                     1
                 }
             };
+            if scope == "agent" {
+                let preview = match core.agent_erasure_preview(&session) {
+                    Ok(preview) => preview,
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        return 1;
+                    }
+                };
+                println!("This erases everything the Agent {session} holds, for good:");
+                println!("  conversations      {}", preview.conversations);
+                println!("  memory and notes   {}", preview.documents);
+                println!("  unkept drafts      {}", preview.artifacts);
+                println!("  automations        {}", preview.automations);
+                println!("  workspace files    {}", preview.workspace_files);
+                if preview.held {
+                    println!("Something of it is on hold; release the hold first.");
+                    return 1;
+                }
+                println!("Type the Agent's id to erase it:");
+                let mut typed = String::new();
+                if std::io::stdin().read_line(&mut typed).is_err() || typed.trim() != session {
+                    println!("Not erased.");
+                    return 1;
+                }
+                return report(core.erase_agent(
+                    &session,
+                    Some(&preview.digest),
+                    vak_core::erasure::Cause::Person,
+                    None,
+                ));
+            }
             if scope == "account" {
                 if !sure(&format!(
                     "This erases what account {session} returned, from every conversation that read it. The conversations stay."
@@ -233,7 +264,7 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 ));
             }
             if scope != "conversation" {
-                eprintln!("error: --scope is conversation, guest or account");
+                eprintln!("error: --scope is conversation, guest, account or agent");
                 return 2;
             }
             let preview = match core.erasure_preview(&session) {

@@ -1346,6 +1346,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/agents/{agent}/resume", post(resume_agent))
         .route("/agents/{agent}/revoke", post(revoke_agent))
         .route("/agents/{agent}/lifecycle", get(agent_lifecycle))
+        .route(
+            "/agents/{agent}/erasure",
+            get(agent_erasure_preview).post(erase_agent),
+        )
         .route("/agents/templates", get(list_agent_templates))
         .route("/agents/instantiate", post(instantiate_agent_template))
         .route("/previews", post(create_preview))
@@ -10209,9 +10213,12 @@ fn erasure_refused(error: &vak_core::erasure::ErasureError) -> axum::response::R
     use vak_core::erasure::ErasureError as E;
     let status = match error {
         E::NotFound(_) => StatusCode::NOT_FOUND,
-        E::NotInTrash | E::AlreadyErased | E::Held | E::StalePreview | E::StillConnected => {
-            StatusCode::CONFLICT
-        }
+        E::NotInTrash
+        | E::AlreadyErased
+        | E::Held
+        | E::StalePreview
+        | E::StillConnected
+        | E::AgentInUse => StatusCode::CONFLICT,
         E::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let reason = match error {
@@ -10221,6 +10228,7 @@ fn erasure_refused(error: &vak_core::erasure::ErasureError) -> axum::response::R
         E::Held => "held",
         E::StalePreview => "stale_preview",
         E::StillConnected => "still_connected",
+        E::AgentInUse => "agent_in_use",
         E::Failed(_) => "failed",
     };
     (
@@ -15221,6 +15229,61 @@ async fn agent_lifecycle(
         "open_conversations": running,
     }))
     .into_response()
+}
+
+/// What erasing everything a revoked or archived Agent holds would
+/// destroy, and the name to type.
+async fn agent_erasure_preview(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let confirm = saved_agent(&state, &agent).map_or_else(|| agent.clone(), |saved| saved.name);
+    let core = state.active_core();
+    match tokio::task::spawn_blocking(move || core.agent_erasure_preview(&agent)).await {
+        Ok(Ok(preview)) => {
+            Json(serde_json::json!({ "preview": preview, "confirm": confirm })).into_response()
+        }
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Erases everything a revoked or archived Agent holds, with its name
+/// typed and the preview's digest.
+async fn erase_agent(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+    Json(body): Json<EraseBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let name = saved_agent(&state, &agent).map_or_else(|| agent.clone(), |saved| saved.name);
+    if body.confirm.trim() != name.trim() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "type the Agent's name to erase what it holds",
+                "reason": "confirmation",
+            })),
+        )
+            .into_response();
+    }
+    let actor = request_actor(&state);
+    let core = state.active_core();
+    let erased = tokio::task::spawn_blocking(move || {
+        core.erase_agent(
+            &agent,
+            Some(&body.digest),
+            vak_core::erasure::Cause::Person,
+            Some(actor),
+        )
+    })
+    .await;
+    match erased {
+        Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 #[derive(serde::Deserialize)]
