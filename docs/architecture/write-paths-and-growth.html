@@ -257,9 +257,9 @@
 
 <header class="masthead">
   <div class="wrap masthead-inner">
-    <p class="eyebrow">Write Paths &amp; Growth · v3.5.1</p>
+    <p class="eyebrow">Write Paths &amp; Growth · v3.5.1, remeasured on 7.0</p>
     <h1>What vak writes, why, and how it holds up as history grows</h1>
-    <p class="lede">Historical measurement from the v3.5.1 workspace, retained for comparison with the data architecture plan. It traces the session ledger, checkpoints, evidence ledgers and search index as they existed then. Figures marked <i>measured</i> came from a development data home; they are not current capacity estimates. Recheck the current storage code and remeasure before sizing a deployment. Since the 7.0 data baseline, ledgers are record segments with group commit, large payloads are encrypted tenant objects, and a turn's cost is held by tests (<code>bytes_per_turn_budget</code>, <code>fsyncs_per_turn_budget</code>: about 6&nbsp;KB and 6 syncs per turn); the layout is in docs/design/46 and 73. A growth remeasure on a 7.0 home with real use is still open.</p>
+    <p class="lede">Historical measurement from the v3.5.1 workspace, retained for comparison with the data architecture plan. It traces the session ledger, checkpoints, evidence ledgers and search index as they existed then. Figures marked <i>measured</i> came from a development data home; they are not current capacity estimates. Recheck the current storage code and remeasure before sizing a deployment. Since the 7.0 data baseline, ledgers are record segments with group commit, large payloads are encrypted tenant objects, and a turn's cost is held by tests (<code>bytes_per_turn_budget</code>, <code>fsyncs_per_turn_budget</code>: about 6&nbsp;KB and 6 syncs per turn); the layout is in docs/design/46 and 73. The 7.0 remeasure is the first section below.</p>
     <div class="meta-row">
       <span class="tag"><span class="swatch sw-ledger"></span>Append-only ledger</span>
       <span class="tag"><span class="swatch sw-rewrite"></span>Atomic rewrite (tmp + rename)</span>
@@ -270,6 +270,51 @@
 </header>
 
 <main>
+
+<!-- 7.0 REMEASURE -->
+<section>
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="sec-kicker">Measured on 7.0 · 2026-10-09 · a throwaway home, one conversation, 30 turns</p>
+      <h2>Per turn: about 19 ledger entries and 11.5 KB of ledger; the search catalog writes four times that</h2>
+      <p>A disposable data home (<code class="p">VAK_HOME</code> under <code class="p">/tmp</code>) on local <code class="p">gemma4:e2b-mlx</code> ran 30 turns in one conversation through <code class="p">vak exec --session</code>, cycling plain answers, a folder listing, an append to a file, a table card, a shell count and a metric card. Bytes and files were measured after every turn for every path under the home; turn 1, which sets the home up, is left out of the means (n&nbsp;=&nbsp;29). This is scripted use, not years of a person's history, and fsyncs were not counted. All 30 turns completed.</p>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="n">19</div><div class="l">ledger entries <b>per turn</b><br>569 in the catalog over 30 turns</div></div>
+      <div class="stat"><div class="n">11.5 KB</div><div class="l">ledger bytes <b>per turn</b><br>sealed frames, 604 B an entry (66 KB in v3.5.1)</div></div>
+      <div class="stat"><div class="n">53 KB</div><div class="l">search catalog <b>per turn</b><br>derived, rebuilt from records, never backed up</div></div>
+      <div class="stat"><div class="n">2.5 KB</div><div class="l">tenant objects <b>per turn</b><br>5.4 new objects a turn</div></div>
+      <div class="stat"><div class="n">5 KB</div><div class="l">side chains <b>together</b><br>cost, activity, routing, intent, runs</div></div>
+    </div>
+
+    <figure>
+      <p class="fig-title">Mean bytes written per turn, by place</p>
+      <p class="fig-sub">Turns 2 to 30 · measured</p>
+      <div class="bars">
+        <div class="lbl">catalog (catalog.db)</div><div class="track"><div class="fill" style="width:100%"></div></div><div class="val">53.3 KB</div>
+        <div class="lbl">tenant store WAL (refs.db-wal)</div><div class="track"><div class="fill" style="width:76.8%"></div></div><div class="val">40.9 KB</div>
+        <div class="lbl">session ledger segment</div><div class="track"><div class="fill" style="width:20.8%"></div></div><div class="val">11.1 KB</div>
+        <div class="lbl">telemetry logs</div><div class="track"><div class="fill" style="width:8.4%"></div></div><div class="val">4.5 KB</div>
+        <div class="lbl">tenant objects (cas)</div><div class="track"><div class="fill" style="width:4.7%"></div></div><div class="val">2.5 KB</div>
+        <div class="lbl">side chains</div><div class="track"><div class="fill" style="width:8.8%"></div></div><div class="val">4.7 KB</div>
+      </div>
+    </figure>
+
+    <div class="note">
+      <span class="lbl">Since v3.5.1</span>
+      <p><b>What changed since v3.5.1.</b> The ledger turn is a sixth of its old size: the capability binding no longer rides in every turn, and large payloads are tenant objects. The tenant store's growth is SQLite's write-ahead log, which checkpoints at about 4 MB and so is bounded. The test budget (<code>bytes_per_turn_budget</code>, about 6 KB) holds a synthetic turn; a real turn with tool calls and cards wrote about twice that.</p>
+    </div>
+    <div class="note">
+      <span class="lbl">Finding</span>
+      <p><b>The finding: the catalog's ancestor index grows as n·log&nbsp;n per conversation.</b> Of the catalog's 1.5 MB after 30 turns, 1.05 MB is the <code>jumps</code> table and its primary-key index: about 8 rows for every ledger entry (binary lifting over a conversation's depth), each row three UUIDs stored as text, repeated by the index — about 1.8 KB an entry, rising with log<sub>2</sub> of the conversation's length. Estimated, not measured: one conversation of 10 000 turns (about 190 000 entries, 17–18 levels) would hold some 750 MB of <code>jumps</code> alone. It is derived and can be rebuilt or dropped, but it is the one place a long conversation's cost grows faster than its history. Storing the ids compactly, or keeping jumps only where a branch makes them necessary, would bound it; that is an open item, not a change made here.</p>
+    </div>
+    <div class="note">
+      <span class="lbl">Projection</span>
+      <p><b>Projection for the records that are kept</b> (ledger, objects, side chains; about 19 KB a turn): roughly 19 MB at 1 000 turns, 190 MB at 10 000 and 1.9 GB at 100 000, before retention removes expired side-chain segments and old checkpoints. Logs are rotated and capped by the retention rules.</p>
+    </div>
+  </div>
+</section>
 
 <!-- MEASURED HEADLINE -->
 <section>

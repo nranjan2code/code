@@ -3104,13 +3104,26 @@ The working tracker was deleted when the plan closed (2026-10-09); its
 step rows are in git history and each milestone's section above. What it
 still carried, checked against the code on 2026-10-09:
 
-- **Write-path growth on a used 7.0 home** has not been remeasured (§M3b;
-  `docs/architecture/write-paths-and-growth.html` is still the v3.5.1
-  measurement).
+- **The catalog's ancestor index grows as n·log n per conversation.** The
+  7.0 remeasure (below) found the `jumps` table and its primary-key index
+  holding 1.05 MB of a 1.5 MB catalog after one 30-turn conversation:
+  about 8 rows per ledger entry, three UUIDs as text in each, repeated by
+  the index. Estimated, a 10,000-turn conversation would hold some 750 MB
+  of it. It is derived and rebuildable; compact ids, or jumps kept only
+  where a branch needs them, would bound it.
 
 Closed since the tracker listed it: a copy environment orphaned by a
 crash is now aged from its last write and removed by the reconciler
 (`environment_items` in `vak_core::lifecycle`, M7a-d).
+
+Closed on 2026-10-09: **write-path growth was remeasured on 7.0**, by the
+maintainer's choice in a throwaway home rather than the real one: 30
+turns of scripted mixed use in one conversation on local
+`gemma4:e2b-mlx`, bytes and files measured per path after each turn
+(`docs/architecture/write-paths-and-growth.html`, its first section).
+About 19 ledger entries and 11.5 KB of ledger per turn (66 KB in
+v3.5.1), 2.5 KB of objects, 5 KB of side chains, and 53 KB of search
+catalog, most of it the ancestor index above. Fsyncs were not counted.
 
 Closed on 2026-10-09: **the Workspace data class has a backup policy.**
 By the maintainer's choice, a backup and a sync push carry every Agent
