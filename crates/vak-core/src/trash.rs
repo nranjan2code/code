@@ -39,7 +39,7 @@ pub(crate) fn mark_erased(
     for id in session_ids {
         conversation_state::update(&tenant(shared), id, |state| {
             state.trashed_at = state.trashed_at.or(Some(now));
-            state.erased_at = Some(now);
+            state.erased_at = state.erased_at.or(Some(now));
         })
         .map_err(std::io::Error::other)?;
     }

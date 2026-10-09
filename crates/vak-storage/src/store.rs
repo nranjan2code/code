@@ -277,6 +277,11 @@ impl LocalStore {
     pub fn rewrap_grants(&self) -> Result<usize> {
         self.objects.rewrap()
     }
+
+    /// The oldest KEK version any object grant is still wrapped under.
+    pub fn oldest_grant_version(&self) -> Result<Option<u32>> {
+        self.objects.oldest_version()
+    }
 }
 
 impl Store for LocalStore {

@@ -60,7 +60,10 @@ export default function YourData(props: { open: (page: SettingsPageId) => void }
     setSaid("");
     try {
       const done = await api.takeOverHere(discard);
-      setSaid(done.restart_required ? "This machine holds the work now. Close Vakyartha and open it again before using it." : "This machine holds the work now.");
+      setSaid(done.restarting
+        ? "This machine holds the work now. Vakyartha is starting again; this page reloads when it is back."
+        : done.restart_required ? "This machine holds the work now. Close Vakyartha and open it again before using it." : "This machine holds the work now.");
+      if (done.restarting) api.reloadWhenBack();
       void refetchCopy();
     } catch (error) {
       setSaid(`${error instanceof Error ? error.message : error}`);
@@ -144,7 +147,7 @@ export default function YourData(props: { open: (page: SettingsPageId) => void }
                 <section class="settings-group">
                   <h2>How it is protected</h2>
                   <div class="settings-card">
-                    <div class="setting-row"><div class="setting-copy"><strong>Encrypted on this computer</strong><span>{found().keys.kept_in === "keychain" ? "The key is in this computer's keychain." : "The key is in an encrypted file beside the data, because no keychain could be reached."} {found().keys.rotations.length === 0 ? "It has never been changed." : `It was last changed on ${new Date(found().keys.rotations[found().keys.rotations.length - 1].at).toLocaleDateString()}.`}</span></div><button type="button" class="settings-button" disabled={busy()} onClick={() => void rotate()}>Change the key</button></div>
+                    <div class="setting-row"><div class="setting-copy"><strong>Encrypted on this computer</strong><span>{found().keys.kept_in === "keychain" ? "The key is in this computer's keychain." : "The key is in an encrypted file beside the data, because no keychain could be reached."} {(() => { const changed = found().keys.rotations.filter((row) => !row.retired); return changed.length === 0 ? "It has never been changed." : `It was last changed on ${new Date(changed[changed.length - 1].at).toLocaleDateString()}.`; })()}</span></div><button type="button" class="settings-button" disabled={busy()} onClick={() => void rotate()}>Change the key</button></div>
                     <Show when={copy()?.configured} fallback={<div class="setting-row"><div class="setting-copy"><strong>Second copy</strong><span>Not set up. A folder can hold a second, encrypted copy so another of your machines can take the work over. It is set up in the admin console, under Data.</span></div></div>}>
                       <div class="setting-row"><div class="setting-copy"><strong>Second copy</strong><span>{copyLine(copy() as api.SecondCopy)}</span></div>
                         <Show when={copy()?.role === "holder" || copy()?.role === "unset"}><button type="button" class="settings-button" disabled={busy()} onClick={() => void copyNow()}>Copy now</button></Show>

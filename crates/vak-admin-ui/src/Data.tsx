@@ -469,7 +469,7 @@ function Keys() {
   const [busy, setBusy] = createSignal(false);
   const [said, setSaid] = createSignal("");
   const rotate = async () => {
-    if (!window.confirm("Start a new key and protect everything again under it? Nothing is lost, and everything stays readable. Earlier keys are kept so that older backups still open.")) return;
+    if (!window.confirm("Start a new key and protect everything again under it? Nothing is lost, and everything stays readable. Earlier keys are kept so that older backups still open, until you retire them.")) return;
     setBusy(true);
     setSaid("");
     try {
@@ -482,6 +482,25 @@ function Keys() {
       setBusy(false);
     }
   };
+  const retire = async () => {
+    if (!window.confirm("Destroy every earlier main key? Everything this install holds stays readable. A backup or key file made before the last rotation will no longer open here. This cannot be undone.")) return;
+    setBusy(true);
+    setSaid("");
+    try {
+      const { retirement } = await api.retireDataKeys();
+      setSaid(`Done. ${retirement.retired} earlier ${retirement.retired === 1 ? "key was" : "keys were"} destroyed.`);
+      void refetch();
+    } catch (error) {
+      setSaid(`${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const rotations = () => (status()?.rotations ?? []).filter((row) => !row.retired);
+  const canRetire = () => {
+    const found = status();
+    return !!found && found.version > found.retired;
+  };
   return (
     <section class="panel">
       <div class="panel-title-row">
@@ -490,7 +509,10 @@ function Keys() {
           <p class="dim">Everything Vakyartha stores is encrypted. Each conversation and file has a key of its own, and one main key protects those. Rotating starts a new main key and protects every other key again under it.</p>
         </div>
         <div class="lifecycle-actions">
-          <button class="ghost small" disabled={busy() || status.loading} onClick={() => void rotate()}>{busy() ? "Rotating…" : "Rotate the key"}</button>
+          <button class="ghost small" disabled={busy() || status.loading} onClick={() => void rotate()}>{busy() ? "Working…" : "Rotate the key"}</button>
+          <Show when={canRetire()}>
+            <button class="ghost small danger" disabled={busy() || status.loading} onClick={() => void retire()}>Retire earlier keys</button>
+          </Show>
         </div>
       </div>
       <Show when={said()}><p role="status">{said()}</p></Show>
@@ -508,14 +530,16 @@ function Keys() {
                 <dt>Keys it protects</dt>
                 <dd>{found().keys} in use, {found().destroyed} destroyed by an erasure, {found().held} on hold.</dd>
                 <dt>Last rotated</dt>
-                <dd>{found().rotations.length === 0 ? "Never." : `${day(found().rotations[found().rotations.length - 1].at)} (${found().rotations.length} ${found().rotations.length === 1 ? "time" : "times"} in all).`}</dd>
+                <dd>{rotations().length === 0 ? "Never." : `${day(rotations()[rotations().length - 1].at)} (${rotations().length} ${rotations().length === 1 ? "time" : "times"} in all).`}</dd>
+                <dt>Earlier keys</dt>
+                <dd>{found().version === 0 ? "None." : found().retired >= found().version ? "All destroyed. Backups made before the last rotation no longer open here." : `${found().version - found().retired} kept, so that older backups still open.`}</dd>
               </dl>
               <Show when={found().rotations.length > 0}>
                 <div class="ops-table-wrap">
                   <table class="ops-table">
-                    <thead><tr><th>Rotated</th><th>Key</th><th>Keys protected again</th></tr></thead>
+                    <thead><tr><th>When</th><th>Key</th><th>What happened</th></tr></thead>
                     <tbody>
-                      <For each={[...found().rotations].reverse()}>{(rotation) => <tr><td>{day(rotation.at)}</td><td>{rotation.version + 1}</td><td>{rotation.rewrapped}</td></tr>}</For>
+                      <For each={[...found().rotations].reverse()}>{(rotation) => <tr><td>{day(rotation.at)}</td><td>{rotation.version + 1}</td><td>{rotation.retired ? `${rotation.retired} earlier ${rotation.retired === 1 ? "key" : "keys"} destroyed` : `Rotated; ${rotation.rewrapped} keys protected again`}</td></tr>}</For>
                     </tbody>
                   </table>
                 </div>
@@ -547,12 +571,15 @@ function Sync() {
   const [passphrase, setPassphrase] = createSignal("");
   const [keyFile, setKeyFile] = createSignal("");
   const [incoming, setIncoming] = createSignal("");
-  const act = async (what: () => Promise<{ restart_required?: boolean } | void>, done: string) => {
+  const act = async (what: () => Promise<{ restart_required?: boolean; restarting?: boolean } | void>, done: string) => {
     setBusy(true);
     setSaid("");
     try {
       const result = await what();
-      setSaid(result && result.restart_required ? `${done} Start Vakyartha again before using it.` : done);
+      setSaid(result && result.restarting
+        ? `${done} Vakyartha is starting again; this page reloads when it is back.`
+        : result && result.restart_required ? `${done} Start Vakyartha again before using it.` : done);
+      if (result && result.restarting) api.reloadWhenBack();
       void refetch();
     } catch (error) {
       setSaid(`${error instanceof Error ? error.message : error}`);

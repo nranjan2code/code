@@ -641,7 +641,20 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 }
             }
         }
-        crate::cli::DataAction::Keys { rotate } => {
+        crate::cli::DataAction::Keys { rotate, retire } => {
+            if retire {
+                match core.retire_keys(None) {
+                    Ok(row) => println!(
+                        "Retired {} earlier key{}. A backup or key file made before the last rotation no longer opens here.",
+                        row.retired,
+                        if row.retired == 1 { "" } else { "s" }
+                    ),
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        return 1;
+                    }
+                }
+            }
             if rotate {
                 match core.rotate_keys(None) {
                     Ok(rotation) => println!(
@@ -674,13 +687,21 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                         "{} keys, {} destroyed, {} on hold",
                         status.keys, status.destroyed, status.held
                     );
-                    match status.rotations.last() {
+                    let rotations: Vec<_> = status
+                        .rotations
+                        .iter()
+                        .filter(|row| row.retired == 0)
+                        .collect();
+                    match rotations.last() {
                         Some(last) => println!(
                             "rotated {} times, last {}",
-                            status.rotations.len(),
+                            rotations.len(),
                             last.at.format("%Y-%m-%d %H:%M")
                         ),
                         None => println!("never rotated"),
+                    }
+                    if status.retired > 0 {
+                        println!("{} earlier keys retired", status.retired);
                     }
                     0
                 }

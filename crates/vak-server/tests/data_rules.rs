@@ -257,4 +257,25 @@ async fn the_owner_sees_the_keys_and_rotates_them() {
     );
     let text = after.to_string();
     assert!(!text.contains("pkcs") && !text.contains("kek"), "{text}");
+
+    // Retiring the earlier keys needs the owner's confirmation.
+    let retire = |body: Value| {
+        client
+            .post(url("/data/keys/retire"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+    };
+    assert_eq!(retire(serde_json::json!({})).await.unwrap().status(), 400);
+    let retired = retire(serde_json::json!({ "confirmed": true }))
+        .await
+        .unwrap();
+    assert_eq!(retired.status(), 200);
+    let retired: Value = retired.json().await.unwrap();
+    assert_eq!(retired["retirement"]["retired"], version + 1);
+    assert_eq!(read().await["retired"], version + 1);
+    let again = retire(serde_json::json!({ "confirmed": true }))
+        .await
+        .unwrap();
+    assert_eq!(again.status(), 409);
 }

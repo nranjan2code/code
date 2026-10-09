@@ -15,8 +15,16 @@ pub struct KeyRotation {
     pub version: u32,
     /// How many stored keys were wrapped again under it.
     pub rewrapped: u64,
+    /// How many earlier keys this row destroyed: a retirement, not a
+    /// rotation, when it is more than none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub retired: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<vak_session::ids::PrincipalId>,
+}
+
+fn is_zero(count: &u64) -> bool {
+    *count == 0
 }
 
 /// What the Keys screen shows.
@@ -28,6 +36,8 @@ pub struct KeyStatus {
     pub version: u32,
     /// The oldest version any stored key is still under.
     pub oldest_in_use: u32,
+    /// How many earlier keys were destroyed.
+    pub retired: u64,
     pub keys: u64,
     pub destroyed: u64,
     pub held: u64,
@@ -41,6 +51,8 @@ impl Core {
         let tenant = self.tenant_objects().map_err(|error| error.to_string())?;
         let (version, oldest_in_use) = tenant.key_versions().map_err(|error| error.to_string())?;
         let (keys, destroyed) = tenant.scope_counts();
+        let rotations: Vec<KeyRotation> =
+            vak_session::chain::RecordChain::at(self.shared_scope().key_rotations()).read();
         Ok(KeyStatus {
             kept_in: vak_config::credentials::backend(),
             version,
@@ -48,8 +60,8 @@ impl Core {
             keys: keys as u64,
             destroyed: destroyed as u64,
             held: tenant.held_count() as u64,
-            rotations: vak_session::chain::RecordChain::at(self.shared_scope().key_rotations())
-                .read(),
+            retired: rotations.iter().map(|row| row.retired).sum(),
+            rotations,
         })
     }
 
@@ -84,7 +96,14 @@ impl Core {
         if !tenant.holds_nothing() {
             let held = vak_session::objects::TenantObjects::key_material(&self.tenant_home())
                 .map_err(|error| error.to_string())?;
-            if held.id_key != material.id_key || !material.keks.starts_with(&held.keks) {
+            // A key the other machine retired is in its file as a marker.
+            let same = |(newer, older): (&String, &String)| {
+                newer == older || newer.trim() == vak_storage::keys::RETIRED
+            };
+            if held.id_key != material.id_key
+                || material.keks.len() < held.keks.len()
+                || !material.keks.iter().zip(&held.keks).all(same)
+            {
                 return Err(
                     "this install already holds data under its own keys; a key file is for a new install"
                         .into(),
@@ -100,7 +119,7 @@ impl Core {
     /// Starts a new tenant key and wraps every stored key under it, then
     /// records the rotation. Everything stays readable; what was erased
     /// stays erased. Earlier keys are kept in the credential store, so a
-    /// backup made before still opens.
+    /// backup made before still opens, until they are retired.
     pub fn rotate_keys(
         &self,
         actor: Option<vak_session::ids::PrincipalId>,
@@ -113,6 +132,7 @@ impl Core {
             at: Utc::now(),
             version,
             rewrapped: rewrapped as u64,
+            retired: 0,
             actor,
         };
         vak_session::chain::RecordChain::at(self.shared_scope().key_rotations())
@@ -125,6 +145,46 @@ impl Core {
             "the tenant key was rotated"
         );
         Ok(rotation)
+    }
+}
+
+impl Core {
+    /// Destroys every earlier tenant key, after wrapping everything again
+    /// under the current one, and records it. What this install holds stays
+    /// readable; a backup or key file made before the last rotation can no
+    /// longer be opened here, and a key file made before still opens what
+    /// it opened anywhere else. Refused when there is no earlier key.
+    pub fn retire_keys(
+        &self,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Result<KeyRotation, String> {
+        let _turn = crate::erasure::one_at_a_time();
+        let tenant = self.tenant_objects().map_err(|error| error.to_string())?;
+        let (version, _) = tenant.key_versions().map_err(|error| error.to_string())?;
+        let retired = tenant
+            .retire_earlier_keys()
+            .map_err(|error| error.to_string())?;
+        if retired == 0 {
+            return Err("there is no earlier key to retire; rotate first".into());
+        }
+        let row = KeyRotation {
+            id: format!("rot_{}", uuid::Uuid::now_v7()),
+            at: Utc::now(),
+            version,
+            rewrapped: 0,
+            retired: retired as u64,
+            actor,
+        };
+        vak_session::chain::RecordChain::at(self.shared_scope().key_rotations())
+            .append(&row)
+            .map_err(|error| error.to_string())?;
+        tracing::info!(
+            kind = "key_rotation",
+            outcome = "retired",
+            count = row.retired,
+            "earlier tenant keys were retired"
+        );
+        Ok(row)
     }
 }
 

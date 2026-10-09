@@ -50,12 +50,28 @@ function ErasePerson(props: { onDone: () => void }) {
       setBusy(false);
     }
   };
+  const allow = async () => {
+    const who = sender().trim();
+    if (!who || busy()) return;
+    setBusy(true);
+    try {
+      const { allowed_again } = await api.allowPerson(surface(), who);
+      setSender("");
+      pushToast("info", allowed_again
+        ? "They can write again. Their next message waits for your review, like anyone new. What was erased stays erased."
+        : "That id was not refused.");
+    } catch (err) {
+      pushToast("alert", told(err));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <section class="panel">
       <div class="panel-title-row">
         <div>
           <h2>Erase a person</h2>
-          <p class="dim">Someone who wrote to one of your bots. Their own conversations are erased across every bot and agent, and they are refused from then on. A group conversation they share with others stays whole.</p>
+          <p class="dim">Someone who wrote to one of your bots. Their own conversations are erased across every bot and agent, and they are refused from then on, until you let them write again. A group conversation they share with others stays whole.</p>
         </div>
       </div>
       <div class="lifecycle-actions">
@@ -67,6 +83,7 @@ function ErasePerson(props: { onDone: () => void }) {
         </select>
         <input class="rules-days lifecycle-sender" aria-label="Their id on that channel" placeholder="Their id on that channel" autocomplete="off" spellcheck={false} value={sender()} onInput={(event) => setSender(event.currentTarget.value)} />
         <button class="button small danger ghost" disabled={busy() || !sender().trim()} onClick={() => void run()}>{busy() ? "Checking…" : "Erase…"}</button>
+        <button class="button small ghost" disabled={busy() || !sender().trim()} onClick={() => void allow()}>Let them write again</button>
       </div>
     </section>
   );

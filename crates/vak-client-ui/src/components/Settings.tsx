@@ -1651,16 +1651,17 @@ export default function Settings() {
     setBackupBusy(false);
     setConfirmConfig({
       title: "Restore this backup?",
-      description: `Nothing you have now is overwritten or deleted. ${again > 0 ? `${again} thing${again === 1 ? "" : "s"} you deleted for good since this backup ${again === 1 ? "stays" : "stay"} deleted. ` : ""}Vakyartha must be started again afterwards.`,
+      description: `Nothing you have now is overwritten or deleted. ${again > 0 ? `${again} thing${again === 1 ? "" : "s"} you deleted for good since this backup ${again === 1 ? "stays" : "stay"} deleted. ` : ""}Vakyartha starts again afterwards.`,
       confirmLabel: "Restore backup",
       onConfirm: async () => {
         setBackupBusy(true);
         try {
-          const { report } = await api.backupImport(src, conflict());
+          const { report, restarting } = await api.backupImport(src, conflict());
           setNotice({
             kind: "info",
-            text: `Restored: ${report.copied} copied, ${report.renamed} renamed, ${report.skipped} already here. Quit and start Vakyartha again to continue.`,
+            text: `Restored: ${report.copied} copied, ${report.renamed} renamed, ${report.skipped} already here. ${restarting ? "Vakyartha is starting again; this page reloads when it is back." : "Quit and start Vakyartha again to continue."}`,
           });
+          if (restarting) api.reloadWhenBack();
         } catch (error) {
           setNotice({ kind: "error", text: `Restore failed: ${error instanceof Error ? error.message : String(error)}` });
         } finally {

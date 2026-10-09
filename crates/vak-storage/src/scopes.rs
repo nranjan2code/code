@@ -87,6 +87,19 @@ impl ScopeKeys {
         Ok(out)
     }
 
+    /// Every shredded scope whose name starts with `prefix`.
+    pub fn shredded_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        for e in fs::read_dir(self.root.join("tombstones"))? {
+            let name = e?.file_name().to_string_lossy().into_owned();
+            if let Some(scope) = unhex(&name).filter(|scope| scope.starts_with(prefix)) {
+                out.push(scope);
+            }
+        }
+        out.sort();
+        Ok(out)
+    }
+
     /// Creates the scope's key, or returns the existing one. A shredded scope
     /// can never be created again.
     pub fn create(&self, scope: &str) -> Result<ScopeKey> {
@@ -217,6 +230,22 @@ impl ScopeKeys {
         Ok(oldest)
     }
 
+    /// Destroys every KEK version below the current one, once no key here
+    /// is wrapped under one. Returns how many versions were destroyed.
+    pub fn retire_earlier(&self, grants_oldest: Option<u32>) -> Result<usize> {
+        let current = self.authority.version()?;
+        let oldest = [self.oldest_version()?, grants_oldest]
+            .into_iter()
+            .flatten()
+            .min();
+        if oldest.is_some_and(|oldest| oldest < current) {
+            return Err(StorageError::Crypto(
+                "a key is still wrapped under an earlier version",
+            ));
+        }
+        self.authority.retire_before(current)
+    }
+
     /// Destroys the scope. Refused while it is held.
     pub fn shred(&self, scope: &str) -> Result<()> {
         if self.is_held(scope) {
@@ -305,6 +334,29 @@ mod tests {
         assert_eq!(k.0, again.0);
         let on_disk = fs::read(d.path().join("keys").join(seal::hex(b"conv"))).unwrap();
         assert!(!on_disk.windows(KEY_LEN).any(|w| w == k.0));
+    }
+
+    /// Retiring waits until nothing is wrapped under an earlier key, and a
+    /// key under a retired one never unwraps again.
+    #[test]
+    fn earlier_keys_retire_only_once_nothing_is_under_them() {
+        let a = Arc::new(MemoryKeyAuthority::new().unwrap());
+        let d = tempfile::tempdir().unwrap();
+        let scopes = keys(d.path(), &a);
+        let k = scopes.create("conv").unwrap();
+        let stale = fs::read(d.path().join("keys").join(seal::hex(b"conv"))).unwrap();
+        a.rotate().unwrap();
+        assert!(scopes.retire_earlier(None).is_err(), "conv is under key 0");
+        assert!(scopes.retire_earlier(Some(0)).is_err());
+        scopes.rewrap().unwrap();
+        assert!(
+            scopes.retire_earlier(Some(0)).is_err(),
+            "a grant is under key 0"
+        );
+        assert_eq!(scopes.retire_earlier(Some(1)).unwrap(), 1);
+        assert_eq!(scopes.retire_earlier(None).unwrap(), 0);
+        assert_eq!(scopes.get("conv").unwrap().0, k.0);
+        assert!(a.unwrap(&WrappedKey::decode(&stale).unwrap()).is_err());
     }
 
     #[test]

@@ -222,8 +222,26 @@ pub(crate) fn remember_erased_person(core: &Core, fingerprint: &str) -> std::io:
         return Ok(());
     }
     people.push(fingerprint.to_string());
+    write_erased_people(&home, people)
+}
+
+/// Lets a person the owner erased write again: their next message is a
+/// chat for review like anyone new. What was erased stays erased.
+/// Returns whether they were refused before.
+pub(crate) fn allow_erased_person(core: &Core, fingerprint: &str) -> std::io::Result<bool> {
+    let home = core.shared_scope().into_root();
+    let mut people = erased_people(&home);
+    let before = people.len();
+    people.retain(|known| known != fingerprint);
+    if people.len() == before {
+        return Ok(false);
+    }
+    write_erased_people(&home, people).map(|()| true)
+}
+
+fn write_erased_people(home: &std::path::Path, mut people: Vec<String>) -> std::io::Result<()> {
     people.sort();
-    let path = erased_people_path(&home);
+    let path = erased_people_path(home);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

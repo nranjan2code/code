@@ -1621,6 +1621,8 @@ export interface KeyRotation {
   at: string;
   version: number;
   rewrapped: number;
+  /** How many earlier keys this row destroyed; absent for a rotation. */
+  retired?: number;
 }
 
 /** Where the keys are kept and which is in use. Never key material. */
@@ -1631,6 +1633,8 @@ export interface KeyStatus {
   keys: number;
   destroyed: number;
   held: number;
+  /** How many earlier main keys were destroyed. */
+  retired: number;
   rotations: KeyRotation[];
 }
 

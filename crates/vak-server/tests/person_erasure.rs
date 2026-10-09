@@ -262,4 +262,20 @@ async fn person_erasure_spans_agents_and_chats() {
     // What is kept to refuse her is a fingerprint, not her id.
     let kept = std::fs::read_to_string(cwd.join("home/gateway/erased-people.json")).unwrap();
     assert!(kept.len() > 60 && !kept.contains("dana"), "{kept}");
+
+    // The owner lets her back in: she is a new chat for review, and what
+    // was erased stays erased.
+    let lift = dana.clone();
+    let (status, allowed) = post("/data/erasure/people/allow", lift.clone()).await;
+    assert_eq!(
+        (status, &allowed["allowed_again"]),
+        (200, &serde_json::json!(true))
+    );
+    let (_, again) = post("/data/erasure/people/allow", lift).await;
+    assert_eq!(again["allowed_again"], false);
+    let res = inbound(&client, &base, say("dana-dm", "dana", "back again")).await;
+    let answer = res.text().await.unwrap();
+    assert!(!answer.contains("erased by the operator"), "{answer}");
+    assert_eq!(gone("dana-dm").await, 200);
+    assert!(!search("zephyrine").await);
 }

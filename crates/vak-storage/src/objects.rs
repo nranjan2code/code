@@ -312,6 +312,24 @@ impl LocalObjectStore {
         Ok(wrapped)
     }
 
+    /// The oldest KEK version any grant is still wrapped under.
+    pub fn oldest_version(&self) -> Result<Option<u32>> {
+        let Ok(objects) = fs::read_dir(self.root.join("grants")) else {
+            return Ok(None);
+        };
+        let mut oldest: Option<u32> = None;
+        for object in objects {
+            let Ok(grants) = fs::read_dir(object?.path()) else {
+                continue;
+            };
+            for grant in grants {
+                let version = WrappedKey::decode(&fs::read(grant?.path())?)?.version;
+                oldest = Some(oldest.map_or(version, |v| v.min(version)));
+            }
+        }
+        Ok(oldest)
+    }
+
     /// Removes every object with no live grant. Returns how many.
     pub fn gc(&self) -> Result<usize> {
         self.gc_holding(&|_| false)

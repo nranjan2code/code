@@ -2365,7 +2365,11 @@ Telegram, Discord, Slack or a webhook, never another user of Vakyartha.
 - `POST /data/erasure/people/preview` and `POST /data/erasure/people`
   take the surface and the id in the body, never the address; the admin
   console's Conversations has Erase a person.
-- Not built: a way to lift the refusal; erasing one sender's lines from
+- The owner lets a person write again with `POST
+  /data/erasure/people/allow` (the admin's Let them write again, added
+  2026-10-09): the fingerprint goes, their next message is a chat for
+  review like anyone new, and what was erased stays erased.
+- Not built: erasing one sender's lines from
   a shared conversation (it needs channel messages kept per sender, as a
   guest's are); memory notes an Agent kept about them are not examined.
   The panel was not seen in a browser.
@@ -2418,7 +2422,8 @@ Telegram, Discord, Slack or a webhook, never another user of Vakyartha.
   use, and a process that opened the vault before another one rotated
   reads the versions it lacks when it meets one.
 - Earlier tenant keys stay in the credential store, so a backup made
-  before a rotation still opens. Retiring them is not built.
+  before a rotation still opens, until the owner retires them
+  (2026-10-09, below).
 - `Core::rotate_keys` records each rotation in the `key-rotations/`
   chain; `Core::key_status` says where the keys are kept
   (`vak_config::credentials::backend`: the keychain, or the encrypted
@@ -2433,7 +2438,7 @@ Telegram, Discord, Slack or a webhook, never another user of Vakyartha.
   kind a person meets, where the key is kept and Change the key, the way
   to Archive and trash and to Storage and backup, and Erase everything
   with the words typed, which shows the receipt and offers it as a file.
-- Not built: escrow bundles, retiring an earlier key, a KMS authority,
+- Not built: escrow bundles, a KMS authority,
   and "what Vak keeps about this person" per person (there is one
   owner).
 - Tests: `rotation_keeps_everything_readable` (a conversation, a Library
@@ -3188,6 +3193,44 @@ The engagement's delivery cadence and urgency in `vak-intent`, which
 nothing read once holding was gone, were removed the same day: its
 `DeliveryPosture` is the answer's `shape` alone, and `vak intent explain`
 and the admin Commitments screen show that shape.
+
+Closed on 2026-10-09: **earlier main keys can be retired.**
+`Core::retire_keys` wraps every scope key and object grant again under
+the current tenant key, refuses while anything is still under an
+earlier one (`ScopeKeys::retire_earlier`), and then destroys every
+earlier version (`KeyAuthority::retire_before`); the vault keeps the
+marker `retired` in its place so the numbers after it hold, and a key
+file carries the marker too, which a second machine's import accepts.
+A process wraps under the newest version even when another process
+rotated after it opened the vault. The retirement is a `key-rotations/`
+row with `retired`; `POST /data/keys/retire` (with `confirmed`), `vak
+data keys --retire` and the admin's Retire earlier keys. A backup or key
+file made before the last rotation no longer opens on that install
+(`rotation_keeps_everything_readable`,
+`earlier_keys_retire_only_once_nothing_is_under_them`).
+
+Closed on 2026-10-09: **an erased channel sender can be let back in**
+(M7b-e above).
+
+Closed on 2026-10-09: **a restore lists every conversation whose key is
+destroyed as erased.** It read only single-conversation receipts; it now
+reads the destroyed `conversation:` scopes themselves, so what an
+Agent's, a project's or a person's erasure reached is marked too
+(`a_restore_lists_an_erased_agents_conversations_as_erased`). Within one
+data home the state was already kept, since a restore never overwrites
+the refs; the change makes the rule one rule.
+
+Closed on 2026-10-09: **a fenced server starts again by itself.** A
+`vak serve` that a restore, a take-over that pulled, or a key file fenced
+lets its answer reach the person, drains, and replaces itself with the
+same command under the same process id (`restart.rs`), so a service
+manager sees nothing stop and starts no second copy (invariant 25).
+Erasing everything still stops it for good. The answers say `restarting`,
+and the admin console and the client reload once `/health` answers
+unfenced. The desktop shell and `vak setup` embed the server and keep
+asking the person to start Vakyartha again. Seen live on a throwaway
+home: a restore over HTTP, the same process back unfenced in 2 seconds,
+and a new conversation accepted.
 
 The handover for the session after the plan
 (`docs/plans/handover-2026-10-09.md`) lists the product limits and the

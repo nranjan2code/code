@@ -231,6 +231,13 @@ impl TenantObjects {
         self.scopes.with_prefix(prefix).map_err(objects_error)
     }
 
+    /// Every destroyed scope whose name starts with `prefix`.
+    pub fn destroyed_with_prefix(&self, prefix: &str) -> Result<Vec<String>, SessionError> {
+        self.scopes
+            .shredded_with_prefix(prefix)
+            .map_err(objects_error)
+    }
+
     /// Puts `scope` on hold: its key cannot be destroyed until released.
     pub fn hold_scope(&self, scope: &str) -> Result<(), SessionError> {
         crate::fence::check()?;
@@ -293,6 +300,22 @@ impl TenantObjects {
             unwrapped.clear();
         }
         Ok((version, scopes + grants))
+    }
+
+    /// Wraps every key again under the current tenant key, then destroys
+    /// every earlier tenant key. Returns how many were destroyed. A key
+    /// file or backup made before still holds what it held; this install
+    /// can no longer open what was wrapped under one only.
+    pub fn retire_earlier_keys(&self) -> Result<usize, SessionError> {
+        crate::fence::check()?;
+        self.scopes.rewrap().map_err(objects_error)?;
+        self.store.rewrap_grants().map_err(objects_error)?;
+        let grants = self.store.oldest_grant_version().map_err(objects_error)?;
+        let retired = self.scopes.retire_earlier(grants).map_err(objects_error)?;
+        if let Ok(mut unwrapped) = self.unwrapped.lock() {
+            unwrapped.clear();
+        }
+        Ok(retired)
     }
 
     /// Whether anything is stored under this tenant's keys: a scope key,

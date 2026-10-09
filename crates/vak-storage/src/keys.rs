@@ -57,6 +57,10 @@ pub trait KeyAuthority: Send + Sync {
     fn rotate(&self) -> Result<u32>;
     /// The KEK version new wraps use.
     fn version(&self) -> Result<u32>;
+    /// Destroys every KEK version below `version`: nothing wrapped under
+    /// one unwraps again. Returns how many were destroyed by this call.
+    /// The caller has first wrapped everything again under a newer one.
+    fn retire_before(&self, version: u32) -> Result<usize>;
     /// Destroys a scope: nothing wrapped under it can be unwrapped again.
     fn revoke(&self, scope: &str) -> Result<()>;
     fn health(&self) -> Result<()>;
@@ -95,7 +99,8 @@ fn aad(scope: &str, version: u32) -> Vec<u8> {
 }
 
 struct MemState {
-    keks: Vec<[u8; KEY_LEN]>,
+    /// Every KEK version, oldest first; `None` once retired.
+    keks: Vec<Option<[u8; KEY_LEN]>>,
     revoked: HashSet<String>,
     healthy: bool,
 }
@@ -108,7 +113,7 @@ impl MemoryKeyAuthority {
     pub fn new() -> Result<Self> {
         Ok(Self {
             state: Mutex::new(MemState {
-                keks: vec![seal::random()?],
+                keks: vec![Some(seal::random()?)],
                 revoked: HashSet::new(),
                 healthy: true,
             }),
@@ -144,7 +149,7 @@ impl KeyAuthority for MemoryKeyAuthority {
             return Err(StorageError::Revoked(scope.into()));
         }
         let version = (s.keks.len() - 1) as u32;
-        let kek = s.keks[version as usize];
+        let kek = newest(&s.keks)?;
         let bytes = seal::seal(&kek, &aad(scope, version), key)?;
         Ok(WrappedKey {
             version,
@@ -158,21 +163,23 @@ impl KeyAuthority for MemoryKeyAuthority {
         if s.revoked.contains(&w.scope) {
             return Err(StorageError::Revoked(w.scope.clone()));
         }
-        let kek = s
-            .keks
-            .get(w.version as usize)
-            .ok_or(StorageError::Crypto("unknown kek version"))?;
-        seal::open(kek, &aad(&w.scope, w.version), &w.bytes)
+        let kek = kek_at(&s.keks, w.version)?;
+        seal::open(&kek, &aad(&w.scope, w.version), &w.bytes)
     }
 
     fn rotate(&self) -> Result<u32> {
         let mut s = self.live()?;
-        s.keks.push(seal::random()?);
+        s.keks.push(Some(seal::random()?));
         Ok((s.keks.len() - 1) as u32)
     }
 
     fn version(&self) -> Result<u32> {
         Ok((self.live()?.keks.len() - 1) as u32)
+    }
+
+    fn retire_before(&self, version: u32) -> Result<usize> {
+        let mut s = self.live()?;
+        Ok(retire(&mut s.keks, version))
     }
 
     fn revoke(&self, scope: &str) -> Result<()> {
@@ -194,6 +201,40 @@ pub trait KekVault: Send + Sync {
 
 const KEK_CURRENT: &str = "VAK_TENANT_KEK_CURRENT";
 const ID_KEY: &str = "VAK_TENANT_OBJECT_ID_KEY";
+
+/// What the vault holds in place of a retired KEK version, so the
+/// versions after it keep their numbers.
+pub const RETIRED: &str = "retired";
+
+fn newest(keks: &[Option<[u8; KEY_LEN]>]) -> Result<[u8; KEY_LEN]> {
+    keks.last()
+        .copied()
+        .flatten()
+        .ok_or(StorageError::Crypto("no kek version"))
+}
+
+fn kek_at(keks: &[Option<[u8; KEY_LEN]>], version: u32) -> Result<[u8; KEY_LEN]> {
+    match keks.get(version as usize) {
+        Some(Some(kek)) => Ok(*kek),
+        Some(None) => Err(StorageError::Crypto("retired kek version")),
+        None => Err(StorageError::Crypto("unknown kek version")),
+    }
+}
+
+fn retire(keks: &mut [Option<[u8; KEY_LEN]>], version: u32) -> usize {
+    let below = (version as usize).min(keks.len().saturating_sub(1));
+    keks[..below]
+        .iter_mut()
+        .filter_map(|kek| kek.take())
+        .count()
+}
+
+fn decode_kek(hex: &str) -> Result<Option<[u8; KEY_LEN]>> {
+    if hex.trim() == RETIRED {
+        return Ok(None);
+    }
+    decode_key(hex).map(Some)
+}
 
 fn kek_name(version: u32) -> String {
     format!("VAK_TENANT_KEK_{version}")
@@ -253,8 +294,11 @@ impl KeyMaterial {
         if self.keks.is_empty() {
             return Err(StorageError::Malformed("key file"));
         }
+        if self.keks.last().is_some_and(|kek| kek.trim() == RETIRED) {
+            return Err(StorageError::Malformed("key file"));
+        }
         for (version, kek) in self.keks.iter().enumerate() {
-            decode_key(kek)?;
+            decode_kek(kek)?;
             vault.set(&kek_name(version as u32), kek)?;
         }
         decode_key(&self.id_key)?;
@@ -370,7 +414,7 @@ impl VaultKeyAuthority {
                         vault
                             .get(&kek_name(v))
                             .ok_or_else(|| unavailable("a kek version is missing"))
-                            .and_then(|hex| decode_key(&hex))
+                            .and_then(|hex| decode_kek(&hex))
                     })
                     .collect::<Result<Vec<_>>>()?
             }
@@ -378,7 +422,7 @@ impl VaultKeyAuthority {
                 let first: [u8; KEY_LEN] = seal::random()?;
                 vault.set(&kek_name(0), &seal::hex(&first))?;
                 vault.set(KEK_CURRENT, "0")?;
-                vec![first]
+                vec![Some(first)]
             }
         };
         let revoked = match fs::read_to_string(revoked_path) {
@@ -441,6 +485,18 @@ impl VaultKeyAuthority {
         Ok(pkcs8.as_ref().to_vec())
     }
 
+    /// Reads the versions another process added since this one opened
+    /// the vault, up to `upto`.
+    fn catch_up(&self, s: &mut MemState, upto: u32) -> Result<()> {
+        while (s.keks.len() as u32) <= upto {
+            let Some(hex) = self.vault.get(&kek_name(s.keks.len() as u32)) else {
+                break;
+            };
+            s.keks.push(decode_kek(&hex)?);
+        }
+        Ok(())
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, MemState>> {
         self.state
             .lock()
@@ -450,12 +506,15 @@ impl VaultKeyAuthority {
 
 impl KeyAuthority for VaultKeyAuthority {
     fn wrap(&self, scope: &str, key: &[u8]) -> Result<WrappedKey> {
-        let s = self.lock()?;
+        let mut s = self.lock()?;
         if s.revoked.contains(scope) {
             return Err(StorageError::Revoked(scope.into()));
         }
+        // Wrap under the newest version, even one another process made
+        // after this one opened the vault: an older one may be retired.
+        self.catch_up(&mut s, u32::MAX)?;
         let version = (s.keks.len() - 1) as u32;
-        let bytes = seal::seal(&s.keks[version as usize], &aad(scope, version), key)?;
+        let bytes = seal::seal(&newest(&s.keks)?, &aad(scope, version), key)?;
         Ok(WrappedKey {
             version,
             scope: scope.into(),
@@ -470,31 +529,47 @@ impl KeyAuthority for VaultKeyAuthority {
         }
         // Another process may have rotated since this one opened the
         // vault: read the versions it added.
-        while (s.keks.len() as u32) <= w.version {
-            let Some(hex) = self.vault.get(&kek_name(s.keks.len() as u32)) else {
-                break;
-            };
-            s.keks.push(decode_key(&hex)?);
-        }
-        let kek = s
-            .keks
-            .get(w.version as usize)
-            .ok_or(StorageError::Crypto("unknown kek version"))?;
-        seal::open(kek, &aad(&w.scope, w.version), &w.bytes)
+        self.catch_up(&mut s, w.version)?;
+        let kek = kek_at(&s.keks, w.version)?;
+        seal::open(&kek, &aad(&w.scope, w.version), &w.bytes)
     }
 
     fn rotate(&self) -> Result<u32> {
         let mut s = self.lock()?;
+        self.catch_up(&mut s, u32::MAX)?;
         let next: [u8; KEY_LEN] = seal::random()?;
         let version = s.keks.len() as u32;
         self.vault.set(&kek_name(version), &seal::hex(&next))?;
         self.vault.set(KEK_CURRENT, &version.to_string())?;
-        s.keks.push(next);
+        s.keks.push(Some(next));
         Ok(version)
     }
 
     fn version(&self) -> Result<u32> {
-        Ok((self.lock()?.keks.len() - 1) as u32)
+        let mut s = self.lock()?;
+        self.catch_up(&mut s, u32::MAX)?;
+        Ok((s.keks.len() - 1) as u32)
+    }
+
+    fn retire_before(&self, version: u32) -> Result<usize> {
+        let mut s = self.lock()?;
+        self.catch_up(&mut s, u32::MAX)?;
+        let below = (version as usize).min(s.keks.len().saturating_sub(1));
+        let mut retired = 0;
+        for v in 0..below {
+            if self
+                .vault
+                .get(&kek_name(v as u32))
+                .as_deref()
+                .map(str::trim)
+                != Some(RETIRED)
+            {
+                self.vault.set(&kek_name(v as u32), RETIRED)?;
+                retired += 1;
+            }
+        }
+        retire(&mut s.keks, version);
+        Ok(retired)
     }
 
     fn revoke(&self, scope: &str) -> Result<()> {

@@ -192,6 +192,23 @@ export const api = {
     ),
 
   health: () => fetch("/health").then((r) => handle<HealthInfo>(r)),
+  /** Reloads once a server starting again by itself answers unfenced. */
+  reloadWhenBack: (): void => {
+    const started = Date.now();
+    const check = async () => {
+      try {
+        const answer = await fetch("/health").then((r) => (r.ok ? r.json() : null));
+        if (answer && answer.fenced === false) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // Not back yet.
+      }
+      if (Date.now() - started < 120_000) window.setTimeout(() => void check(), 1000);
+    };
+    window.setTimeout(() => void check(), 1500);
+  },
   dataStatus: (): Promise<DataStatus> => fetch("/data/status").then((r) => handle(r)),
   /** The install's keep times, and the defaults they were changed from. */
   dataRules: (): Promise<{ label: DataStatus["label"]; defaults: DataStatus["label"]; max_days: number }> =>
@@ -215,16 +232,19 @@ export const api = {
   dataKeys: (): Promise<KeyStatus> => fetch("/data/keys").then((r) => handle(r)),
   syncStatus: (): Promise<SyncStatus> => fetch("/sync").then((r) => handle(r)),
   /** One of the second copy's actions: setup, now, handover, takeover, forget. */
-  syncDo: (verb: "setup" | "now" | "handover" | "takeover" | "forget", body?: unknown): Promise<{ restart_required?: boolean }> =>
+  syncDo: (verb: "setup" | "now" | "handover" | "takeover" | "forget", body?: unknown): Promise<{ restart_required?: boolean; restarting?: boolean }> =>
     fetch(`/sync/${verb}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }).then((r) => handle(r)),
   /** The key file for the other machine, sealed under the passphrase. Stored nowhere. */
   syncKeyExport: (passphrase: string): Promise<{ file: string }> =>
     fetch("/sync/key/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase }) }).then((r) => handle(r)),
-  syncKeyImport: (file: string, passphrase: string): Promise<{ restart_required: boolean }> =>
+  syncKeyImport: (file: string, passphrase: string): Promise<{ restart_required: boolean; restarting?: boolean }> =>
     fetch("/sync/key/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file, passphrase }) }).then((r) => handle(r)),
   /** Starts a new key and protects everything again under it. */
   rotateDataKeys: (): Promise<{ rotation: KeyRotation }> =>
     fetch("/data/keys/rotate", { method: "POST" }).then((r) => handle(r)),
+  /** Destroys the earlier main keys, once confirmed. */
+  retireDataKeys: (): Promise<{ retirement: KeyRotation }> =>
+    fetch("/data/keys/retire", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirmed: true }) }).then((r) => handle(r)),
   dataUsage: (): Promise<DataUsage> => fetch("/data/usage").then((r) => handle(r)),
   dataPlan: (): Promise<DataPlan> => fetch("/data/lifecycle/plan").then((r) => handle(r)),
   dataTransitions: (): Promise<{ transitions: DataTransition[] }> =>
@@ -666,6 +686,14 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ surface, sender, digest }),
+    }).then((r) => handle(r)),
+
+  /** Lets a person who was erased write to the bots again. */
+  allowPerson: (surface: string, sender: string): Promise<{ allowed_again: boolean }> =>
+    fetch("/data/erasure/people/allow", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ surface, sender }),
     }).then((r) => handle(r)),
 
   /** Everything on hold. */

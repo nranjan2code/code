@@ -1234,6 +1234,25 @@ export function answerQuestion(id: string, questionId: string, text: string): Pr
   });
 }
 
+/** Reloads the page once a server that is starting again by itself
+ *  answers unfenced. Gives up after two minutes. */
+export function reloadWhenBack(): void {
+  const started = Date.now();
+  const check = async () => {
+    try {
+      const answer = await fetch("/health").then((r) => (r.ok ? r.json() : null));
+      if (answer && answer.fenced === false) {
+        window.location.reload();
+        return;
+      }
+    } catch {
+      // Not back yet.
+    }
+    if (Date.now() - started < 120_000) window.setTimeout(() => void check(), 1000);
+  };
+  window.setTimeout(() => void check(), 1500);
+}
+
 export function health(): Promise<Health> {
   // /health is intentionally open; still send the header for consistency.
   return req("/health");
@@ -2360,7 +2379,7 @@ export function backupRestorePreview(srcDir: string): Promise<{ preview: { manif
 }
 
 /** Restores a backup. Vakyartha must be started again afterwards. */
-export function backupImport(srcDir: string, conflict: "skip" | "rename"): Promise<{ report: ImportReportShape; restart_required: boolean }> {
+export function backupImport(srcDir: string, conflict: "skip" | "rename"): Promise<{ report: ImportReportShape; restart_required: boolean; restarting?: boolean }> {
   return req("/data/backups/restore", {
     method: "POST",
     body: JSON.stringify({ src_dir: srcDir, conflict }),
@@ -2816,7 +2835,7 @@ export interface YourDataSummary {
   confirm: string;
   bytes: number;
   keep: { class: string; days: number }[];
-  keys: { kept_in: "keychain" | "encrypted_file"; version: number; rotations: { at: string }[] };
+  keys: { kept_in: "keychain" | "encrypted_file"; version: number; rotations: { at: string; retired?: number }[] };
 }
 
 export async function yourData(): Promise<YourDataSummary> {
@@ -2878,6 +2897,6 @@ export function copyNow(): Promise<unknown> {
 }
 
 /** Takes the work over on this machine. It must be started again when `restart_required`. */
-export function takeOverHere(discard: boolean): Promise<{ restart_required: boolean }> {
+export function takeOverHere(discard: boolean): Promise<{ restart_required: boolean; restarting?: boolean }> {
   return req("/sync/takeover", { method: "POST", body: JSON.stringify({ discard }) });
 }

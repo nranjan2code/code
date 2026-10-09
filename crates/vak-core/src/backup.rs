@@ -334,11 +334,15 @@ impl crate::Core {
             .reapply_destroyed_keys()
             .map_err(|error| error.to_string())?;
         let shared = self.shared_scope();
-        let erased: Vec<String> = self
-            .erasure_receipts()
+        // Every conversation whose key is destroyed, whichever erasure
+        // destroyed it: one conversation's, an Agent's, a project's or a
+        // person's.
+        let prefix = vak_session::objects::conversation_scope("");
+        let erased: Vec<String> = tenant
+            .destroyed_with_prefix(&prefix)
+            .map_err(|error| error.to_string())?
             .into_iter()
-            .filter(|receipt| receipt.scope == "conversation")
-            .map(|receipt| receipt.subject)
+            .filter_map(|scope| scope.strip_prefix(&prefix).map(str::to_string))
             .collect();
         crate::trash::mark_erased(&shared, &erased).map_err(|error| error.to_string())?;
         let _ = vak_session::documents::forget(&shared.artifacts_rollup());

@@ -78,6 +78,7 @@ mod operations;
 mod preview;
 mod projection;
 mod rate_limit;
+mod restart;
 mod sandbox_output;
 mod sandbox_records;
 mod service_control;
@@ -1026,6 +1027,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/data/erasure/accounts/{account}", post(erase_account))
         .route("/data/erasure/people/preview", post(person_erasure_preview))
         .route("/data/erasure/people", post(erase_person))
+        .route("/data/erasure/people/allow", post(allow_person))
         .route(
             "/data/erasure/projects/{space}",
             get(project_erasure_preview).post(erase_project),
@@ -1048,6 +1050,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sync/key/import", post(sync_key_import))
         .route("/data/keys", get(data_keys))
         .route("/data/keys/rotate", post(rotate_data_keys))
+        .route("/data/keys/retire", post(retire_data_keys))
         .route("/data/rules", get(data_rules).put(set_data_rules))
         .route("/data/rules/preview", post(preview_data_rules))
         .route("/skills", get(list_skills))
@@ -3444,19 +3447,27 @@ pub async fn serve_with(
         say("gateway: ENABLED (--gateway overrides config)");
     }
     let (draining_tx, draining_rx) = oneshot::channel();
+    restart::enable();
+    let again = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let fenced = again.clone();
     let server = std::future::IntoFuture::into_future(
         axum::serve(
             listener,
             app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-            say("\n[shutting down: draining connections]");
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => say("\n[shutting down: draining connections]"),
+                () = restart::when_fenced(), if restart::self_restarts() => {
+                    say("\n[this server was fenced: starting again]");
+                    fenced.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
             let _ = draining_tx.send(());
         }),
     );
     tokio::pin!(server);
-    tokio::select! {
+    let ended = tokio::select! {
         result = &mut server => result,
         _ = draining_rx => {
             // EventSource streams can remain open indefinitely. A restart
@@ -3472,7 +3483,11 @@ pub async fn serve_with(
                 }
             }
         }
+    };
+    if again.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(restart::exec_again());
     }
+    ended
 }
 
 fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
@@ -9605,7 +9620,11 @@ async fn backup_import(
         // from here on and says so, so the person starts it again.
         Ok(Ok(report)) => (
             StatusCode::OK,
-            Json(serde_json::json!({ "report": report, "restart_required": true })),
+            Json(serde_json::json!({
+                "report": report,
+                "restart_required": true,
+                "restarting": restart::self_restarts(),
+            })),
         )
             .into_response(),
         Ok(Err(e)) => (
@@ -10598,6 +10617,7 @@ async fn sync_takeover(
         Ok(serde_json::json!({
             "report": report,
             "restart_required": vak_session::fence::is_fenced(),
+            "restarting": vak_session::fence::is_fenced() && restart::self_restarts(),
         }))
     })
     .await
@@ -10651,7 +10671,11 @@ async fn sync_key_import(
     match tokio::task::spawn_blocking(move || core.import_key_file(&body.file, &body.passphrase))
         .await
     {
-        Ok(Ok(())) => Json(serde_json::json!({ "restart_required": true })).into_response(),
+        Ok(Ok(())) => Json(serde_json::json!({
+            "restart_required": true,
+            "restarting": restart::self_restarts(),
+        }))
+        .into_response(),
         Ok(Err(error)) => key_file_refused(error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -10680,6 +10704,41 @@ async fn rotate_data_keys(State(state): State<AppState>) -> axum::response::Resp
                 "error": "the keys could not be rotated; nothing was lost",
                 "reason": "failed",
             })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct RetireBody {
+    #[serde(default)]
+    confirmed: bool,
+}
+
+/// Destroys every earlier key, once the owner confirmed that a backup or
+/// key file made before the last rotation will no longer open here.
+async fn retire_data_keys(
+    State(state): State<AppState>,
+    Json(body): Json<RetireBody>,
+) -> axum::response::Response {
+    if !body.confirmed {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "confirm that older backups will no longer open here",
+                "reason": "confirmation",
+            })),
+        )
+            .into_response();
+    }
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.retire_keys(Some(actor))).await {
+        Ok(Ok(row)) => Json(serde_json::json!({ "retirement": row })).into_response(),
+        Ok(Err(error)) => (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": error, "reason": "failed" })),
         )
             .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -11026,6 +11085,19 @@ async fn erase_person(
     }
 }
 
+/// Lets a person the owner erased write to the bots again. Their id
+/// travels in the body; nothing they wrote comes back.
+async fn allow_person(
+    State(state): State<AppState>,
+    Json(body): Json<PersonBody>,
+) -> axum::response::Response {
+    let fingerprint = gateway::person_fingerprint(&body.surface, &body.sender);
+    match gateway::allow_erased_person(&state.core, &fingerprint) {
+        Ok(allowed) => Json(serde_json::json!({ "allowed_again": allowed })).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 /// What erasing the whole install would destroy, and the words to type.
 async fn install_erasure_preview(State(state): State<AppState>) -> axum::response::Response {
     let core = state.core.clone();
@@ -11071,6 +11143,8 @@ async fn erase_install(
     }
     let actor = request_actor(&state);
     let core = state.core.clone();
+    // Erasing everything fences this process; it stops, never starts again.
+    restart::stopping(true);
     let erased = tokio::task::spawn_blocking(move || {
         core.erase_install(
             Some(&body.digest),
@@ -11079,6 +11153,9 @@ async fn erase_install(
         )
     })
     .await;
+    if !matches!(erased, Ok(Ok(_))) {
+        restart::stopping(false);
+    }
     match erased {
         Ok(Ok(receipt)) => {
             let core = state.core.clone();
