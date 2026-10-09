@@ -2374,6 +2374,41 @@ Telegram, Discord, Slack or a webhook, never another user of Vakyartha.
   her next message refused in an old chat and a new one, the other
   person untouched, and neither the receipt nor the kept list naming her.
 
+**M7b-f, done 2026-10-09: erasing everything.**
+- `Core::erase_install` destroys every scope key, removes every stored
+  secret (`vak_config::credentials::forget_all`, which reads the presence
+  index because the OS store cannot be listed: the tenant's keys, the
+  receipt-signing key, provider keys and bot tokens), and empties the
+  data, cache, log and runtime directories
+  (`vak_core::state::remove_wholesale`, the one removal the purge uses
+  too). Folders a person owns, the Vakyartha folder and its settings
+  included, are never touched.
+- All it leaves is the signed receipt, one file under the data home's
+  `erased/` (`SharedScope::install_receipts`, declared in the registry).
+  The receipt carries its public key, so it checks after the key that
+  signed it is gone. A home that holds only that file starts as a first
+  run, and `Core::erasure_receipts` lists it before the new install's own.
+- It is previewed (`Core::install_erasure_preview`: conversations, files,
+  keys, how much is on hold), refused while anything is on hold or the
+  preview is stale, and confirmed by typing `erase everything`.
+- `GET|POST /data/erasure/install`, refused while work is running. The
+  server stops two seconds after it answers, because nothing it holds
+  open exists any more; a service manager starts it again as new.
+  `vak data erase everything --scope install`; the admin console's
+  Operate › Data has Erase everything, which shows the receipt and
+  offers it as a file.
+- It differs from `vak self uninstall --purge`: the purge removes the
+  install and leaves nothing; this keeps the install and leaves the
+  receipt.
+- Not reached, and said so in the receipt: a person's own folders, what
+  was sent outside, what the AI services received, and backups made
+  earlier (one that holds the keys can still be restored).
+- Tests: `install_erasure_leaves_a_receipt_and_nothing_else` (3 of 3
+  runs), `erasing_everything_is_previewed_and_needs_the_words` through
+  the real router. Seen in a browser in a throwaway home: the panel, the
+  erasure (20 files to the 1 receipt), the server stopping, and after a
+  restart no conversations, the receipt listed and verifying.
+
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office

@@ -6,7 +6,7 @@
 
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
-import type { DataIntegrity, DataPlan, DataStatus, DataTransition, DataUsage } from "./types";
+import type { DataIntegrity, DataPlan, DataStatus, DataTransition, DataUsage, ErasureReceipt } from "./types";
 
 function size(bytes: number): string {
   const units = ["B", "KB", "MB", "GB"];
@@ -128,6 +128,70 @@ function Rules(props: { status?: DataStatus; onSaved: () => void }) {
         )}
       </Show>
       <p class="dim">Conversations and their files have no keep time: they stay until a person removes them.</p>
+    </section>
+  );
+}
+
+// Erasing everything Vakyartha stored (plan M7b-f): the counts first, then
+// the words typed. The server checks both again, and stops once it has
+// answered, so the receipt is shown here and offered as a file.
+function EraseEverything() {
+  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const [busy, setBusy] = createSignal(false);
+  const [said, setSaid] = createSignal("");
+  const [receipt, setReceipt] = createSignal<ErasureReceipt | null>(null);
+  const erase = async () => {
+    if (busy()) return;
+    setBusy(true);
+    setSaid("");
+    try {
+      const { preview, confirm } = await api.installErasurePreview();
+      if (preview.held > 0) {
+        setSaid(`${preview.held} ${preview.held === 1 ? "thing is" : "things are"} on hold. Release every hold first.`);
+        return;
+      }
+      const typed = window.prompt(
+        `Erase everything Vakyartha has stored on this machine? ${count(preview.conversations, "conversation", "conversations")}, ${count(preview.artifacts, "file", "files")} in the Library, every Agent, automation, connected account and saved key. Your own folders are not touched. This cannot be undone. Type “${confirm}” to go on.`,
+      );
+      if (typed === null) return;
+      if (typed.trim().toLowerCase() !== confirm) {
+        setSaid("Not erased: the words did not match.");
+        return;
+      }
+      setReceipt((await api.eraseInstall(preview.digest, typed.trim())).receipt);
+    } catch (error) {
+      setSaid(`${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const file = () => `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(receipt(), null, 2))}`;
+  return (
+    <section class="panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>Erase everything</h2>
+          <p class="dim">Removes all that Vakyartha has stored on this machine: conversations, files, memory, Agents, automations, connected accounts and saved keys. Your own folders are never touched. It leaves one signed receipt.</p>
+        </div>
+        <Show when={!receipt()}>
+          <div class="lifecycle-actions">
+            <button class="ghost small danger" disabled={busy()} onClick={() => void erase()}>{busy() ? "Working…" : "Erase everything…"}</button>
+          </div>
+        </Show>
+      </div>
+      <Show when={said()}><p role="status">{said()}</p></Show>
+      <Show when={receipt()}>
+        {(done) => (
+          <div role="status">
+            <p>Everything was erased, and Vakyartha has stopped. Start it again to set it up as new.</p>
+            <p class="dim">{count(done().conversations, "conversation", "conversations")} and {count(done().keys_destroyed, "key", "keys")} were destroyed.</p>
+            <p><a class="ghost small" href={file()} download={`vakyartha-erasure-${done().id}.json`}>Save the receipt</a></p>
+            <ul class="dim">
+              <For each={done().not_reached}>{(line) => <li>Not reached: {line}</li>}</For>
+            </ul>
+          </div>
+        )}
+      </Show>
     </section>
   );
 }
@@ -255,6 +319,7 @@ function Retention() {
         </section>
       </Show>
       <Rules status={status()} onSaved={() => { void refetchStatus(); void refetch(); }} />
+      <EraseEverything />
     </>
   );
 }

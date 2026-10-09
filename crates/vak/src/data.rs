@@ -180,6 +180,65 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                     1
                 }
             };
+            if scope == "install" {
+                if session != "everything" {
+                    eprintln!(
+                        "error: to erase the whole install, run: vak data erase everything --scope install"
+                    );
+                    return 2;
+                }
+                let preview = match core.install_erasure_preview() {
+                    Ok(preview) => preview,
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        return 1;
+                    }
+                };
+                if preview.held > 0 {
+                    println!("{} on hold. Release every hold first.", preview.held);
+                    return 1;
+                }
+                println!(
+                    "This erases everything Vakyartha has stored on this machine, for good: {} conversations, {} files in the Library, every Agent, automation, connected account and saved key. Your own folders are not touched.",
+                    preview.conversations, preview.artifacts
+                );
+                println!("Stop Vakyartha first if it is running.");
+                println!("Type {} to go on:", vak_core::erasure::INSTALL_CONFIRMATION);
+                let mut typed = String::new();
+                if std::io::stdin().read_line(&mut typed).is_err()
+                    || typed.trim() != vak_core::erasure::INSTALL_CONFIRMATION
+                {
+                    println!("Not erased.");
+                    return 1;
+                }
+                return match core.erase_install(
+                    Some(&preview.digest),
+                    vak_core::erasure::Cause::Person,
+                    None,
+                ) {
+                    Ok(receipt) => {
+                        println!(
+                            "Erased. Receipt {} ({} keys destroyed).",
+                            receipt.id, receipt.keys_destroyed
+                        );
+                        println!(
+                            "The receipt is kept at {}",
+                            vak_config::paths::data_home()
+                                .join("erased")
+                                .join(format!("{}.json", receipt.id))
+                                .display()
+                        );
+                        for line in &receipt.not_reached {
+                            println!("  not reached: {line}");
+                        }
+                        0
+                    }
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        1
+                    }
+                };
+            }
             if scope == "agent" || scope == "project" {
                 let project = scope == "project";
                 let looked = if project {
@@ -276,7 +335,9 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 ));
             }
             if scope != "conversation" {
-                eprintln!("error: --scope is conversation, guest, account, agent or project");
+                eprintln!(
+                    "error: --scope is conversation, guest, account, agent, project or install"
+                );
                 return 2;
             }
             let preview = match core.erasure_preview(&session) {

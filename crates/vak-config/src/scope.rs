@@ -340,6 +340,12 @@ impl SharedScope {
         self.root.join("artifacts")
     }
 
+    /// The receipts of an erasure of the whole install, one file each:
+    /// all that such an erasure leaves (data-architecture plan M7b-f).
+    pub fn install_receipts(&self) -> PathBuf {
+        self.root.join("erased")
+    }
+
     /// The rollup Document of [`SharedScope::artifacts`]: each artifact's
     /// current state.
     /// The signed receipts of every erasure (plan M7a-e).

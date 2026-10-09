@@ -413,6 +413,18 @@ export const api = {
       body: JSON.stringify({ digest, confirm }),
     }).then((r) => handle(r)),
 
+  /** What erasing everything Vakyartha stored would remove, and the words to type. */
+  installErasurePreview: (): Promise<{ confirm: string; preview: { digest: string; held: number; conversations: number; artifacts: number; keys: number } }> =>
+    fetch("/data/erasure/install").then((r) => handle(r)),
+
+  /** Erases everything, with the words typed. Vakyartha stops once it has answered. */
+  eraseInstall: (digest: string, confirm: string): Promise<{ receipt: ErasureReceipt }> =>
+    fetch("/data/erasure/install", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ digest, confirm }),
+    }).then((r) => handle(r)),
+
   patchProject: (id: string, patch: { name?: string; hidden?: boolean }): Promise<{ id: string }> =>
     fetch(`/admin/api/projects/${encodeURIComponent(id)}`, {
       method: "PATCH",

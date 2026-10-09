@@ -90,7 +90,7 @@ Known slow tests (each over 60 s, not failures):
 | 14c | M7b-c erasing an Agent's data | `agent_erasure_takes_what_it_owns_and_nothing_else` | **Done 2026-10-09** (`Core::erase_agent`, `agent_erasure_preview`; `/agents/{agent}/erasure`; `vak data erase <agent> --scope agent`; Delete everything it holds in the agent picker) |
 | 14d | M7b-d erasing a project's data | `project_erasure_leaves_the_folder` | **Done 2026-10-09** (`Core::erase_project`, `project_erasure_preview`; `/data/erasure/projects/{space}`; `vak data erase <space> --scope project`; Erase its data on the admin Projects screen) |
 | 14e | M7b-e erasing one person across chats | `person_erasure_spans_agents_and_chats` | **Done 2026-10-09** (`Core::erase_person`, `Catalog::sessions_of_actor`; `/data/erasure/people`; the gateway's hashed list of erased people; Erase a person in the admin console) |
-| 14f | M7b-f erasing everything | `install_erasure_leaves_a_receipt_and_nothing_else` | |
+| 14f | M7b-f erasing everything | `install_erasure_leaves_a_receipt_and_nothing_else` | **Done 2026-10-09** (`Core::erase_install`, `credentials::forget_all`; `/data/erasure/install`, after which the server stops; `vak data erase everything --scope install`; Erase everything in the admin console's Data; seen in a browser in a throwaway home) |
 | 14g | M7b-g key rotation, Keys screen, Your data | `rotation_keeps_everything_readable` | |
 | 14h | M7b-h acceptance | the run | |
 | 15 | M8 design (only declared deliverables, optional title, versions as an `artifacts/` chain with a rollup) | plan §M8 design | Done (`52c470d01`) |

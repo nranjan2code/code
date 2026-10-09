@@ -628,9 +628,10 @@ pub(crate) enum DataAction {
     Erase {
         /// The conversation's id; the account's with --scope account; the
         /// Agent's with --scope agent; the project's (spc_…) with --scope
-        /// project
+        /// project; the word `everything` with --scope install
         session: String,
-        /// What is erased: conversation, guest, account, agent or project
+        /// What is erased: conversation, guest, account, agent, project or
+        /// install (everything Vakyartha stored on this machine)
         #[arg(long, default_value = "conversation")]
         scope: String,
         /// With --scope guest: the guest whose contributions are erased

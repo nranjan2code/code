@@ -1583,8 +1583,12 @@ export interface ErasureReceipt {
   scope: string;
   subject: string;
   cause: string;
+  conversations: number;
+  artifacts: number;
   keys_destroyed: number;
   objects_deleted: number;
+  /** What the erasure did not reach, in plain words. */
+  not_reached: string[];
   verifies?: boolean;
 }
 

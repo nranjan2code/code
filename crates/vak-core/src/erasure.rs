@@ -187,6 +187,27 @@ const PROJECT_NOT_REACHED: &[&str] = &[
     "Backups made before this erasure: they still hold the encrypted records until they expire.",
 ];
 
+const INSTALL_NOT_REACHED: &[&str] = &[
+    "Your project folders and your Vakyartha folder, with their files and settings: Vakyartha never deletes from a folder you own.",
+    "Messages and changes already sent outside Vakyartha: they stay with whoever received them.",
+    "Copies the AI services received when they answered: they are held by those services under their own terms.",
+    "Backups made before this erasure: one that holds your keys can still be restored.",
+];
+
+/// The words a person types to erase the whole install.
+pub const INSTALL_CONFIRMATION: &str = "erase everything";
+
+/// What erasing the whole install would destroy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct InstallPreview {
+    pub digest: String,
+    /// How many things are on hold; anything on hold refuses the erasure.
+    pub held: u64,
+    pub conversations: u64,
+    pub artifacts: u64,
+    pub keys: u64,
+}
+
 /// What erasing an Agent's data, or a project's, would destroy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AgentPreview {
@@ -285,9 +306,12 @@ impl Core {
         .map_err(|error| ErasureError::Failed(error.to_string()))
     }
 
-    /// The receipts of every erasure, oldest first.
+    /// The receipts of every erasure, oldest first: what an erasure of
+    /// the whole install left, then this install's own.
     pub fn erasure_receipts(&self) -> Vec<Receipt> {
-        vak_session::chain::RecordChain::at(self.shared_scope().erasures()).read()
+        let mut receipts = self.install_receipts();
+        receipts.extend(vak_session::chain::RecordChain::at(self.shared_scope().erasures()).read());
+        receipts
     }
 
     fn reach(&self, session_id: &str) -> Result<Reach, ErasureError> {
@@ -1529,13 +1553,144 @@ impl Core {
         Ok(receipt)
     }
 
-    /// Signs a receipt with the tenant's key and appends it to the
-    /// erasures chain. The public key is part of what is signed.
-    fn sign_and_record(
+    fn install_scopes(tenant: &TenantObjects) -> Result<Vec<String>, ErasureError> {
+        tenant
+            .scopes_with_prefix("")
+            .map_err(|error| ErasureError::Failed(error.to_string()))
+    }
+
+    fn install_preview_of(tenant: &TenantObjects, scopes: &[String]) -> InstallPreview {
+        let mut digest = Sha256::new();
+        for scope in scopes {
+            digest.update(scope.as_bytes());
+            digest.update([0]);
+        }
+        let count = |prefix: &str| {
+            scopes
+                .iter()
+                .filter(|scope| scope.starts_with(prefix))
+                .count() as u64
+        };
+        InstallPreview {
+            digest: digest
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+            held: tenant.held_count() as u64,
+            conversations: count("conversation:"),
+            artifacts: count("artifact:"),
+            keys: scopes.len() as u64,
+        }
+    }
+
+    /// What erasing the whole install would destroy. Reads only.
+    pub fn install_erasure_preview(&self) -> Result<InstallPreview, ErasureError> {
+        let tenant = self.tenant_objects()?;
+        let scopes = Self::install_scopes(&tenant)?;
+        Ok(Self::install_preview_of(&tenant, &scopes))
+    }
+
+    /// Erases everything Vakyartha stored: every key is destroyed, every
+    /// stored secret is removed, and the data, cache, log and runtime
+    /// directories are emptied. All it leaves is a signed receipt, one
+    /// file under the data home's `erased/`. Folders a person owns are
+    /// not touched. Refused while anything is on hold. The process must
+    /// stop afterwards: nothing it holds open exists any more.
+    pub fn erase_install(
         &self,
-        tenant: &TenantObjects,
-        mut receipt: Receipt,
+        digest: Option<&str>,
+        cause: Cause,
+        actor: Option<vak_session::ids::PrincipalId>,
     ) -> Result<Receipt, ErasureError> {
+        let _turn = one_at_a_time();
+        let failed = |error: String| ErasureError::Failed(error);
+        vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
+        let tenant = self.tenant_objects()?;
+        let scopes = Self::install_scopes(&tenant)?;
+        let preview = Self::install_preview_of(&tenant, &scopes);
+        if preview.held > 0 {
+            return Err(ErasureError::Held);
+        }
+        if digest.is_some_and(|digest| digest != preview.digest) {
+            return Err(ErasureError::StalePreview);
+        }
+        for scope in &scopes {
+            tenant
+                .destroy_scope_key(scope)
+                .map_err(|error| failed(error.to_string()))?;
+        }
+        vak_config::credentials::forget_all();
+        let keep = vak_config::paths::default_workspace();
+        let mut roots = vec![self.shared_root()];
+        for root in crate::state::Root::ALL {
+            let path = crate::state::root_path(root);
+            if root.is_owned() && !roots.contains(&path) {
+                roots.push(path);
+            }
+        }
+        let mut not_reached: Vec<String> = INSTALL_NOT_REACHED
+            .iter()
+            .map(|line| line.to_string())
+            .collect();
+        let left = roots
+            .iter()
+            .filter(|root| crate::state::remove_wholesale(root, &keep).is_err())
+            .count();
+        if left > 0 {
+            not_reached.push(format!(
+                "Files in {left} of Vakyartha's own directories could not be removed. Their keys are destroyed, so nothing in them can be read."
+            ));
+        }
+        let receipt = Self::sign(
+            &tenant,
+            Receipt {
+                id: format!("ers_{}", uuid::Uuid::now_v7()),
+                at: Utc::now(),
+                scope: "install".into(),
+                subject: "everything".into(),
+                cause,
+                actor,
+                conversations: preview.conversations,
+                artifacts: preview.artifacts,
+                keys_destroyed: preview.keys,
+                keys_digest: preview.digest,
+                memory_notes_removed: 0,
+                search_rows_removed: 0,
+                objects_deleted: 0,
+                sent_outside: 0,
+                not_reached,
+                public_key: String::new(),
+                signature: String::new(),
+            },
+        )?;
+        let kept = self.shared_scope().install_receipts();
+        std::fs::create_dir_all(&kept).map_err(|error| failed(error.to_string()))?;
+        let bytes =
+            serde_json::to_vec_pretty(&receipt).map_err(|error| failed(error.to_string()))?;
+        std::fs::write(kept.join(format!("{}.json", receipt.id)), bytes)
+            .map_err(|error| failed(error.to_string()))?;
+        Ok(receipt)
+    }
+
+    /// The receipts earlier erasures of the whole install left, oldest
+    /// first.
+    fn install_receipts(&self) -> Vec<Receipt> {
+        let kept = self.shared_scope().install_receipts();
+        let mut receipts: Vec<Receipt> = std::fs::read_dir(kept)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| std::fs::read(entry.path()).ok())
+            .filter_map(|bytes| serde_json::from_slice(&bytes).ok())
+            .collect();
+        receipts.sort_by(|a, b| a.id.cmp(&b.id));
+        receipts
+    }
+
+    /// Signs a receipt with the tenant's key. The public key is part of
+    /// what is signed.
+    fn sign(tenant: &TenantObjects, mut receipt: Receipt) -> Result<Receipt, ErasureError> {
         let failed = |error: String| ErasureError::Failed(error);
         let (_, public_key) = tenant
             .sign(b"")
@@ -1545,6 +1700,18 @@ impl Core {
             .sign(&receipt.signed_bytes())
             .map_err(|error| failed(error.to_string()))?;
         receipt.signature = signature;
+        Ok(receipt)
+    }
+
+    /// Signs a receipt with the tenant's key and appends it to the
+    /// erasures chain. The public key is part of what is signed.
+    fn sign_and_record(
+        &self,
+        tenant: &TenantObjects,
+        receipt: Receipt,
+    ) -> Result<Receipt, ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
+        let receipt = Self::sign(tenant, receipt)?;
         vak_session::chain::RecordChain::at(self.shared_scope().erasures())
             .append(&receipt)
             .map_err(|error| failed(error.to_string()))?;

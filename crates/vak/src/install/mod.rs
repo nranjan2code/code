@@ -1143,78 +1143,6 @@ fn remove_dangling_cli_symlink(prefix: &Path) {
     }
 }
 
-/// Gives the owner write permission on every directory under `dir`, so a
-/// frozen Review candidate (write-protected on purpose) can be removed.
-/// Symlinks are not followed.
-fn make_writable(dir: &std::path::Path) {
-    let Ok(meta) = std::fs::symlink_metadata(dir) else {
-        return;
-    };
-    if !meta.is_dir() {
-        return;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = meta.permissions();
-        permissions.set_mode(permissions.mode() | 0o700);
-        let _ = std::fs::set_permissions(dir, permissions);
-    }
-    #[cfg(not(unix))]
-    {
-        let mut permissions = meta.permissions();
-        permissions.set_readonly(false);
-        let _ = std::fs::set_permissions(dir, permissions);
-    }
-    for child in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        make_writable(&child.path());
-    }
-}
-
-/// Removes the Vak-owned root `root` wholesale, except the path down to
-/// `keep` when `keep` lies inside it (the Shared layer under a `VAK_HOME`
-/// override). A symlinked root is refused rather than followed.
-fn remove_wholesale(root: &std::path::Path, keep: &std::path::Path) -> std::io::Result<()> {
-    if std::fs::symlink_metadata(root).is_ok_and(|meta| meta.file_type().is_symlink()) {
-        return Err(std::io::Error::other(
-            "is a symlink; remove it by hand if you meant to",
-        ));
-    }
-    if !keep.starts_with(root) {
-        make_writable(root);
-        return match std::fs::remove_dir_all(root) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
-        };
-    }
-    if keep == root {
-        return Ok(());
-    }
-    let mut refused = Vec::new();
-    for child in std::fs::read_dir(root)? {
-        let path = child?.path();
-        if path.is_symlink() {
-            // Following it could delete a directory Vak does not own.
-            refused.push(path.display().to_string());
-        } else if keep.starts_with(&path) {
-            remove_wholesale(&path, keep)?;
-        } else if path.is_dir() {
-            make_writable(&path);
-            std::fs::remove_dir_all(&path)?;
-        } else {
-            std::fs::remove_file(&path)?;
-        }
-    }
-    if refused.is_empty() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(format!(
-            "refused {}: a symlink; remove it by hand if you meant to",
-            refused.join(", ")
-        )))
-    }
-}
-
 /// Everything the state registry says a purge removes.
 ///
 /// Derived from `vak_core::state`, not from a list kept here, and framed
@@ -1278,7 +1206,7 @@ fn purge_state(yes: bool) -> i32 {
 
     let mut failed = false;
     for path in &owned {
-        match remove_wholesale(path, &shared_root) {
+        match vak_core::state::remove_wholesale(path, &shared_root) {
             Ok(()) => println!("  removed {}", path.display()),
             Err(e) => {
                 eprintln!("  warning: {}: {e}", path.display());
@@ -1413,7 +1341,7 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod purge_tests {
-    use super::remove_wholesale;
+    use vak_core::state::remove_wholesale;
 
     #[test]
     fn purge_removes_owned_roots_wholesale() {

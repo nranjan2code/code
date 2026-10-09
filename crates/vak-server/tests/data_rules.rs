@@ -154,3 +154,51 @@ async fn a_projects_data_is_erased_and_its_folder_is_left() {
         "what was erased is not offered again: {again}"
     );
 }
+
+/// Erasing everything is the owner's alone, previewed, and refused until
+/// the words are typed (plan M7b-f). The erasure itself stops the
+/// process, so it is exercised in vak-core's `erasure_install`.
+#[tokio::test]
+async fn erasing_everything_is_previewed_and_needs_the_words() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+    let (router, token) = vak_server::secured_router(core);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/data/erasure/install");
+    assert_eq!(reqwest::get(&url).await.unwrap().status(), 401);
+    assert_eq!(
+        client
+            .post(&url)
+            .json(&json!({ "digest": "", "confirm": "erase everything" }))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let looked: Value = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(looked["confirm"], "erase everything");
+    assert!(looked["preview"]["digest"].is_string(), "{looked}");
+    let refused = client
+        .post(&url)
+        .bearer_auth(&token)
+        .json(&json!({ "digest": looked["preview"]["digest"], "confirm": "yes" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 400);
+    let refused: Value = refused.json().await.unwrap();
+    assert_eq!(refused["reason"], "confirmation");
+}

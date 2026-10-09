@@ -215,6 +215,22 @@ pub fn remove(scope_hint: &Path, var: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// Removes every stored secret, in every scope: the erasure of the whole
+/// install (data-architecture plan M7b-f). The presence index names them,
+/// because the OS store cannot be listed. Returns how many it removed.
+pub fn forget_all() -> usize {
+    let mut removed = 0;
+    for entry in index_entries() {
+        if let Some((scope, var)) = entry.split_once('\0')
+            && store().remove(scope, var).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    index_write(&[]);
+    removed
+}
+
 pub fn list(scope_hint: &Path) -> Vec<(String, String)> {
     store().list(&scope_key_for(scope_hint))
 }

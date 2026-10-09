@@ -965,6 +965,10 @@ fn router_with_state(state: AppState) -> Router {
             "/data/erasure/projects/{space}",
             get(project_erasure_preview).post(erase_project),
         )
+        .route(
+            "/data/erasure/install",
+            get(install_erasure_preview).post(erase_install),
+        )
         .route("/conversations/{id}/lifecycle", get(conversation_lifecycle))
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/data/integrity", get(data_integrity))
@@ -10697,6 +10701,88 @@ async fn erase_person(
             let remembered = gateway::remember_erased_person(&state.core, &fingerprint).is_ok();
             Json(serde_json::json!({ "receipt": receipt, "refused_from_now_on": remembered }))
                 .into_response()
+        }
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// What erasing the whole install would destroy, and the words to type.
+async fn install_erasure_preview(State(state): State<AppState>) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.install_erasure_preview()).await {
+        Ok(Ok(preview)) => Json(serde_json::json!({
+            "preview": preview,
+            "confirm": vak_core::erasure::INSTALL_CONFIRMATION,
+        }))
+        .into_response(),
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Erases everything Vakyartha stored, with the words typed, and answers
+/// with the receipt. Refused while any work is running. Nothing this
+/// process holds open exists afterwards, so it stops once it has
+/// answered; started again, it is a first run.
+async fn erase_install(
+    State(state): State<AppState>,
+    Json(body): Json<EraseBody>,
+) -> axum::response::Response {
+    let refuse = |status: StatusCode, error: &str, reason: &str| {
+        (
+            status,
+            Json(serde_json::json!({ "error": error, "reason": reason })),
+        )
+            .into_response()
+    };
+    if !body
+        .confirm
+        .trim()
+        .eq_ignore_ascii_case(vak_core::erasure::INSTALL_CONFIRMATION)
+    {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "type the words shown to erase everything",
+            "confirmation",
+        );
+    }
+    let running = state
+        .sessions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .any(|handle| {
+            handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        });
+    if running {
+        return refuse(
+            StatusCode::CONFLICT,
+            "work is running; let it finish or stop it first",
+            "in_use",
+        );
+    }
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    let erased = tokio::task::spawn_blocking(move || {
+        core.erase_install(
+            Some(&body.digest),
+            vak_core::erasure::Cause::Person,
+            Some(actor),
+        )
+    })
+    .await;
+    match erased {
+        Ok(Ok(receipt)) => {
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                std::process::exit(0);
+            });
+            Json(serde_json::json!({ "receipt": receipt, "stopping": true })).into_response()
         }
         Ok(Err(error)) => erasure_refused(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
