@@ -248,10 +248,9 @@ export interface MailCalendarEventPreview {
   can_respond?: boolean;
 }
 export interface MailCalendarBusySlot { starts_at: string; ends_at: string }
+/** One run record of a routine, as its history shows it. */
 export interface MailCalendarRoutineRun {
   run_id: string;
-  routine_id: string;
-  account_id: string;
   session_id: string | null;
   trigger: "manual" | "scheduled";
   status: "running" | "complete" | "failed" | "no_changes" | "interrupted";

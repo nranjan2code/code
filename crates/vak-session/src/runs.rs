@@ -87,6 +87,9 @@ pub enum RunStep {
     },
     /// A ledger the run writes or spawns.
     Session { session_id: String },
+    /// How many items a connected account returned to the run's brokered
+    /// reads: a count, never what they were.
+    ItemsUsed { items: u32 },
     Settled {
         #[serde(flatten)]
         outcome: RunOutcome,
@@ -153,6 +156,9 @@ pub struct RunRecord {
     pub holder: Option<ProcessId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<String>,
+    /// How many items a connected account returned to it, when it read one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub items_used: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_id: Option<String>,
     /// Why it failed or was skipped.
@@ -181,6 +187,7 @@ impl RunRecord {
             attempt: 1,
             holder: None,
             sessions: Vec::new(),
+            items_used: None,
             result_id: None,
             reason: None,
             coalesced_into: None,
@@ -235,6 +242,7 @@ impl RunRecord {
                     self.sessions.push(session_id);
                 }
             }
+            RunStep::ItemsUsed { items } => self.items_used = Some(items),
             RunStep::Settled { outcome, result_id } => {
                 self.status = match &outcome {
                     RunOutcome::Completed => RunStatus::Completed,
@@ -430,6 +438,11 @@ impl Runs {
                 session_id: session_id.to_string(),
             },
         )
+    }
+
+    /// Records how many items a connected account returned to `run`.
+    pub fn items_used(&self, run: RunId, items: u32) -> Result<(), SessionError> {
+        self.append(run, RunStep::ItemsUsed { items })
     }
 
     pub fn settle(

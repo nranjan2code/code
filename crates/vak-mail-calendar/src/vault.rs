@@ -19,9 +19,6 @@ const WORK_AREA_KEY: &str = "vak_mail_calendar_work_area";
 const MAX_WORK_AREA_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WORK_AREA_CANDIDATES: usize = 32;
 const ROUTINES_STREAM: &str = "routines";
-const ROUTINE_HISTORY_KEY: &str = "vak_mail_calendar_routine_history";
-const MAX_ROUTINE_HISTORY: usize = 256;
-const MAX_ROUTINE_HISTORY_BYTES: usize = 256 * 1024;
 const MAX_ROUTINE_CURSORS: usize = 128;
 const MAX_ROUTINE_SEEN_IDS: usize = 512;
 const MAX_ROUTINE_PENDING_IDS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
@@ -55,43 +52,6 @@ pub enum VaultError {
 /// Keep it alive until the rotated secret and ledger metadata are committed.
 pub struct AccountRefreshLease {
     _lock_file: File,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RoutineRunTrigger {
-    Manual,
-    Scheduled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RoutineRunStatus {
-    Running,
-    Complete,
-    Failed,
-    NoChanges,
-    Interrupted,
-}
-
-/// Content-free execution history for one Agent-owned routine. Source data
-/// and model output stay in the Agent session; this record contains only
-/// lifecycle metadata needed to review past runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RoutineRunRecord {
-    pub run_id: String,
-    pub routine_id: String,
-    pub account_id: String,
-    pub session_id: Option<String>,
-    pub trigger: RoutineRunTrigger,
-    pub status: RoutineRunStatus,
-    pub started_at: chrono::DateTime<chrono::Utc>,
-    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Count of provider items actually returned by brokered reads, excluding
-    /// content. Older encrypted records default to zero.
-    #[serde(default)]
-    pub items_returned: u8,
 }
 
 /// Secret material accepted from a provider setup flow. Keep this type out of
@@ -422,8 +382,7 @@ impl AccountVault {
         let key = Self::credential_ref(account_id)?;
         vak_config::remove_env_file_key(&self.scope_hint, &key)?;
         self.remove_candidates_for_account(account_id)?;
-        self.remove_routine_cursors_for_account(account_id)?;
-        self.remove_routine_history_for_account(account_id)
+        self.remove_routine_cursors_for_account(account_id)
     }
 
     /// Queue observed message IDs without consuming them. The encrypted
@@ -1202,79 +1161,6 @@ impl AccountVault {
         Err(VaultError::Conflict)
     }
 
-    fn with_routine_history<T>(
-        &self,
-        operation: impl FnOnce(Vec<RoutineRunRecord>) -> Result<T, VaultError>,
-    ) -> Result<T, VaultError> {
-        let agent_home = self
-            .scope_hint
-            .parent()
-            .ok_or(VaultError::InvalidReference)?;
-        let work_dir = agent_home.join("mail-calendar");
-        ensure_agent_directory(&work_dir, true)?;
-        let lock_path = work_dir.join(".routine-history.lock");
-        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
-            && (metadata.file_type().is_symlink() || !metadata.is_file())
-        {
-            return Err(VaultError::InvalidReference);
-        }
-        let mut options = OpenOptions::new();
-        options.create(true).truncate(false).read(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-        }
-        let lock = options.open(&lock_path).map_err(VaultError::Store)?;
-        lock.lock_exclusive().map_err(VaultError::Store)?;
-        let result = (|| {
-            let Some(encoded) =
-                vak_config::read_env_file_var(&self.scope_hint, ROUTINE_HISTORY_KEY)
-            else {
-                return operation(Vec::new());
-            };
-            let encoded = Zeroizing::new(encoded);
-            if encoded.len() > MAX_ROUTINE_HISTORY_BYTES {
-                return Err(VaultError::TooLarge);
-            }
-            let runs: Vec<RoutineRunRecord> =
-                serde_json::from_str(&encoded).map_err(|_| VaultError::Unavailable)?;
-            if runs.len() > MAX_ROUTINE_HISTORY
-                || runs
-                    .iter()
-                    .any(|run| validate_routine_run_record(run).is_err())
-                || runs.iter().enumerate().any(|(index, run)| {
-                    runs[index + 1..]
-                        .iter()
-                        .any(|next| next.run_id == run.run_id)
-                })
-            {
-                return Err(VaultError::InvalidReference);
-            }
-            operation(runs)
-        })();
-        let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
-        unlock_result?;
-        result
-    }
-
-    fn write_routine_history(&self, runs: &[RoutineRunRecord]) -> Result<(), VaultError> {
-        if runs.len() > MAX_ROUTINE_HISTORY
-            || runs
-                .iter()
-                .any(|run| validate_routine_run_record(run).is_err())
-        {
-            return Err(VaultError::InvalidReference);
-        }
-        let encoded =
-            Zeroizing::new(serde_json::to_string(runs).map_err(|_| VaultError::Unavailable)?);
-        if encoded.len() > MAX_ROUTINE_HISTORY_BYTES {
-            return Err(VaultError::TooLarge);
-        }
-        vak_config::upsert_env_file(&self.scope_hint, ROUTINE_HISTORY_KEY, &encoded)
-            .map_err(VaultError::Store)
-    }
-
     fn with_work_area<T>(
         &self,
         operation: impl FnOnce(Vec<ActionCandidate>) -> Result<T, VaultError>,
@@ -1448,214 +1334,6 @@ impl AccountVault {
         self.load(account_id)
             .is_ok_and(|material| material.app_login.is_some() && material.app_password.is_some())
     }
-
-    /// Record a content-free run start in this Agent's encrypted vault.
-    pub fn start_routine_run(
-        &self,
-        routine_id: &str,
-        account_id: &str,
-        trigger: RoutineRunTrigger,
-        started_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<RoutineRunRecord, VaultError> {
-        validate_routine_mail_ids(routine_id, account_id, &[])?;
-        let record = RoutineRunRecord {
-            run_id: Uuid::now_v7().to_string(),
-            routine_id: routine_id.to_owned(),
-            account_id: account_id.to_owned(),
-            session_id: None,
-            trigger,
-            status: RoutineRunStatus::Running,
-            started_at,
-            finished_at: None,
-            items_returned: 0,
-        };
-        validate_routine_run_record(&record)?;
-        self.with_routine_history(|mut runs| {
-            // The caller's run holds this routine's trigger claim. Any
-            // still-running record therefore belongs to a process that
-            // exited before it could settle the run.
-            for previous in runs.iter_mut().filter(|previous| {
-                previous.routine_id == routine_id && previous.status == RoutineRunStatus::Running
-            }) {
-                previous.status = RoutineRunStatus::Interrupted;
-                previous.finished_at = Some(started_at.max(previous.started_at));
-            }
-            if runs.iter().any(|run| run.run_id == record.run_id) {
-                return Err(VaultError::Conflict);
-            }
-            if runs.len() >= MAX_ROUTINE_HISTORY {
-                let Some(oldest_terminal) = runs
-                    .iter()
-                    .position(|run| run.status != RoutineRunStatus::Running)
-                else {
-                    return Err(VaultError::TooLarge);
-                };
-                runs.remove(oldest_terminal);
-            }
-            runs.push(record.clone());
-            self.write_routine_history(&runs)?;
-            Ok(record)
-        })
-    }
-
-    /// Attach the Agent session created for a model-backed routine run.
-    pub fn attach_routine_run_session(
-        &self,
-        routine_id: &str,
-        account_id: &str,
-        run_id: &str,
-        session_id: &str,
-    ) -> Result<(), VaultError> {
-        validate_routine_mail_ids(routine_id, account_id, &[])?;
-        validate_account_id(run_id)?;
-        validate_account_id(session_id)?;
-        self.with_routine_history(|mut runs| {
-            let Some(run) = runs.iter_mut().find(|run| {
-                run.run_id == run_id && run.routine_id == routine_id && run.account_id == account_id
-            }) else {
-                return Err(VaultError::InvalidReference);
-            };
-            if run.status != RoutineRunStatus::Running
-                || run
-                    .session_id
-                    .as_deref()
-                    .is_some_and(|existing| existing != session_id)
-            {
-                return Err(VaultError::Conflict);
-            }
-            run.session_id = Some(session_id.to_owned());
-            self.write_routine_history(&runs)
-        })
-    }
-
-    /// Settle one run once its terminal outcome is known.
-    pub fn finish_routine_run(
-        &self,
-        routine_id: &str,
-        account_id: &str,
-        run_id: &str,
-        status: RoutineRunStatus,
-        finished_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), VaultError> {
-        validate_routine_mail_ids(routine_id, account_id, &[])?;
-        validate_account_id(run_id)?;
-        if matches!(status, RoutineRunStatus::Running) {
-            return Err(VaultError::InvalidReference);
-        }
-        self.with_routine_history(|mut runs| {
-            let Some(run) = runs.iter_mut().find(|run| {
-                run.run_id == run_id && run.routine_id == routine_id && run.account_id == account_id
-            }) else {
-                return Ok(());
-            };
-            if run.status == status {
-                return Ok(());
-            }
-            if run.status != RoutineRunStatus::Running {
-                return Err(VaultError::Conflict);
-            }
-            run.status = status;
-            run.finished_at = Some(finished_at);
-            self.write_routine_history(&runs)
-        })
-    }
-
-    /// Record content-free result usage for a live run before it is settled.
-    pub fn record_routine_run_items(
-        &self,
-        routine_id: &str,
-        account_id: &str,
-        run_id: &str,
-        items_returned: u8,
-    ) -> Result<(), VaultError> {
-        validate_routine_mail_ids(routine_id, account_id, &[])?;
-        validate_account_id(run_id)?;
-        if items_returned > 20 {
-            return Err(VaultError::InvalidReference);
-        }
-        self.with_routine_history(|mut runs| {
-            let Some(run) = runs.iter_mut().find(|run| {
-                run.run_id == run_id && run.routine_id == routine_id && run.account_id == account_id
-            }) else {
-                return Err(VaultError::InvalidReference);
-            };
-            if run.status != RoutineRunStatus::Running {
-                return Err(VaultError::Conflict);
-            }
-            run.items_returned = items_returned;
-            self.write_routine_history(&runs)
-        })
-    }
-
-    /// Mark a run interrupted when startup recovery sees its session still
-    /// recorded as working after the previous service process exited.
-    pub fn interrupt_routine_run_session(
-        &self,
-        routine_id: &str,
-        account_id: &str,
-        session_id: &str,
-        finished_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), VaultError> {
-        validate_routine_mail_ids(routine_id, account_id, &[])?;
-        validate_account_id(session_id)?;
-        self.with_routine_history(|mut runs| {
-            let Some(run) = runs.iter_mut().find(|run| {
-                run.routine_id == routine_id
-                    && run.account_id == account_id
-                    && run.session_id.as_deref() == Some(session_id)
-            }) else {
-                return Ok(());
-            };
-            if run.status == RoutineRunStatus::Interrupted {
-                return Ok(());
-            }
-            if run.status != RoutineRunStatus::Running {
-                return Err(VaultError::Conflict);
-            }
-            run.status = RoutineRunStatus::Interrupted;
-            run.finished_at = Some(finished_at);
-            self.write_routine_history(&runs)
-        })
-    }
-
-    /// Return newest first, scoped to one routine and its selected account.
-    pub fn list_routine_runs(
-        &self,
-        routine_id: &str,
-        account_id: &str,
-    ) -> Result<Vec<RoutineRunRecord>, VaultError> {
-        validate_routine_mail_ids(routine_id, account_id, &[])?;
-        self.with_routine_history(|runs| {
-            let mut selected = runs
-                .into_iter()
-                .filter(|run| run.routine_id == routine_id && run.account_id == account_id)
-                .collect::<Vec<_>>();
-            selected.sort_by_key(|run| std::cmp::Reverse(run.started_at));
-            Ok(selected)
-        })
-    }
-
-    /// Remove run metadata together with an account's credential and cursor.
-    pub fn remove_routine_history_for_account(&self, account_id: &str) -> Result<(), VaultError> {
-        validate_account_id(account_id)?;
-        self.with_routine_history(|mut runs| {
-            runs.retain(|run| run.account_id != account_id);
-            self.write_routine_history(&runs)
-        })
-    }
-
-    /// Remove run metadata when its routine is deleted.
-    pub fn remove_routine_history(
-        &self,
-        routine_id: &str,
-        account_id: &str,
-    ) -> Result<(), VaultError> {
-        validate_routine_mail_ids(routine_id, account_id, &[])?;
-        self.with_routine_history(|mut runs| {
-            runs.retain(|run| run.routine_id != routine_id);
-            self.write_routine_history(&runs)
-        })
-    }
 }
 
 fn ensure_agent_directory(path: &std::path::Path, private: bool) -> Result<(), VaultError> {
@@ -1695,25 +1373,6 @@ fn validate_account_id(value: &str) -> Result<(), VaultError> {
     } else {
         Err(VaultError::InvalidReference)
     }
-}
-
-fn validate_routine_run_record(record: &RoutineRunRecord) -> Result<(), VaultError> {
-    validate_account_id(&record.run_id)?;
-    validate_account_id(&record.routine_id)?;
-    validate_account_id(&record.account_id)?;
-    if record
-        .session_id
-        .as_ref()
-        .is_some_and(|session_id| validate_account_id(session_id).is_err())
-        || (record.status == RoutineRunStatus::Running) != record.finished_at.is_none()
-        || record.items_returned > 20
-        || record
-            .finished_at
-            .is_some_and(|finished_at| finished_at < record.started_at)
-    {
-        return Err(VaultError::InvalidReference);
-    }
-    Ok(())
 }
 
 fn validate_routine_mail_ids(
@@ -1760,9 +1419,8 @@ fn validate_calendar_occurrence_keys(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountSecretMaterial, AccountVault, MAX_ROUTINE_PENDING_IDS, ROUTINES_STREAM,
-        RoutineRunRecord, RoutineRunStatus, RoutineRunTrigger, Uuid, VaultError,
-        routine_cursor_store,
+        AccountSecretMaterial, AccountVault, MAX_ROUTINE_PENDING_IDS, ROUTINES_STREAM, Uuid,
+        VaultError, routine_cursor_store,
     };
     use crate::{ActionCandidate, MailAddress, MailDraft, ProposedAction, SourceRef};
 
@@ -1841,147 +1499,6 @@ mod tests {
         let remaining = vault.list_candidates().unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].account_id, other_account);
-    }
-
-    #[test]
-    fn routine_history_is_agent_vaulted_bounded_in_shape_and_removed_with_owner_data() {
-        vak_config::paths::isolate_home_for_tests();
-        let agent_id = format!("mailcal-history-{}", Uuid::now_v7());
-        let other_agent_id = format!("mailcal-history-other-{}", Uuid::now_v7());
-        let account_id = Uuid::now_v7().to_string();
-        let other_account_id = Uuid::now_v7().to_string();
-        let routine_id = Uuid::now_v7().to_string();
-        let other_routine_id = Uuid::now_v7().to_string();
-        let session_id = Uuid::now_v7().to_string();
-        let vault = AccountVault::for_agent(&agent_id).unwrap();
-        let other_agent = AccountVault::for_agent(&other_agent_id).unwrap();
-
-        let started = chrono::Utc::now();
-        let run = vault
-            .start_routine_run(&routine_id, &account_id, RoutineRunTrigger::Manual, started)
-            .unwrap();
-        let mut legacy_record = serde_json::to_value(&run).unwrap();
-        legacy_record
-            .as_object_mut()
-            .unwrap()
-            .remove("items_returned");
-        assert_eq!(
-            serde_json::from_value::<RoutineRunRecord>(legacy_record)
-                .unwrap()
-                .items_returned,
-            0
-        );
-        vault
-            .attach_routine_run_session(&routine_id, &account_id, &run.run_id, &session_id)
-            .unwrap();
-        assert!(
-            other_agent
-                .list_routine_runs(&routine_id, &account_id)
-                .unwrap()
-                .is_empty()
-        );
-        let reopened = AccountVault::for_agent(&agent_id).unwrap();
-        assert_eq!(
-            reopened
-                .list_routine_runs(&routine_id, &account_id)
-                .unwrap()[0]
-                .session_id,
-            Some(session_id.clone())
-        );
-        reopened
-            .record_routine_run_items(&routine_id, &account_id, &run.run_id, 4)
-            .unwrap();
-        reopened
-            .finish_routine_run(
-                &routine_id,
-                &account_id,
-                &run.run_id,
-                RoutineRunStatus::Complete,
-                started + chrono::Duration::seconds(2),
-            )
-            .unwrap();
-        assert_eq!(
-            reopened
-                .list_routine_runs(&routine_id, &account_id)
-                .unwrap()[0]
-                .items_returned,
-            4
-        );
-        assert!(matches!(
-            reopened.finish_routine_run(
-                &routine_id,
-                &account_id,
-                &run.run_id,
-                RoutineRunStatus::Failed,
-                started + chrono::Duration::seconds(3),
-            ),
-            Err(VaultError::Conflict)
-        ));
-
-        let interrupted = reopened
-            .start_routine_run(
-                &routine_id,
-                &account_id,
-                RoutineRunTrigger::Scheduled,
-                started + chrono::Duration::seconds(4),
-            )
-            .unwrap();
-        let interrupted_session = Uuid::now_v7().to_string();
-        reopened
-            .attach_routine_run_session(
-                &routine_id,
-                &account_id,
-                &interrupted.run_id,
-                &interrupted_session,
-            )
-            .unwrap();
-        reopened
-            .interrupt_routine_run_session(
-                &routine_id,
-                &account_id,
-                &interrupted_session,
-                started + chrono::Duration::seconds(5),
-            )
-            .unwrap();
-
-        let other = reopened
-            .start_routine_run(
-                &other_routine_id,
-                &other_account_id,
-                RoutineRunTrigger::Scheduled,
-                started,
-            )
-            .unwrap();
-        reopened
-            .finish_routine_run(
-                &other_routine_id,
-                &other_account_id,
-                &other.run_id,
-                RoutineRunStatus::NoChanges,
-                started + chrono::Duration::seconds(1),
-            )
-            .unwrap();
-
-        let runs = reopened
-            .list_routine_runs(&routine_id, &account_id)
-            .unwrap();
-        assert_eq!(runs.len(), 2);
-        assert_eq!(runs[0].status, RoutineRunStatus::Interrupted);
-        assert_eq!(runs[1].status, RoutineRunStatus::Complete);
-        reopened.remove(&account_id).unwrap();
-        assert!(
-            reopened
-                .list_routine_runs(&routine_id, &account_id)
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            reopened
-                .list_routine_runs(&other_routine_id, &other_account_id)
-                .unwrap()
-                .len(),
-            1
-        );
     }
 
     #[test]

@@ -857,8 +857,10 @@ fn valid_sender_identity(identity: &str) -> bool {
         && !identity.chars().any(char::is_whitespace)
 }
 
-/// Return content-free run metadata for one routine, scoped to its owning
-/// Agent. Run output itself remains in the Agent's session history.
+/// The routine's run records, newest first, as content-free history:
+/// when it ran, whether someone asked for it, how it ended, its result's
+/// session and how many items its account returned. Run output itself
+/// stays in the Agent's session.
 pub(super) async fn routine_history(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
@@ -870,18 +872,43 @@ pub(super) async fn routine_history(
     if !registered_agent(&state, &agent_id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Some(scope) = crate::automations::routine(&state, &agent_id, &routine_id)
-        .and_then(|routine| routine.scope)
-    else {
+    let Some(routine) = crate::automations::routine(&state, &agent_id, &routine_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Ok(vault) = AccountVault::for_agent(&agent_id) else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
-    };
-    match vault.list_routine_runs(&scope.routine_id, &scope.account_id) {
-        Ok(runs) => Json(serde_json::json!({ "runs": runs })).into_response(),
+    match state.core.runs().of_trigger(&routine.id) {
+        Ok(runs) => {
+            let runs: Vec<_> = runs.iter().filter_map(routine_run_view).collect();
+            Json(serde_json::json!({ "runs": runs })).into_response()
+        }
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
+}
+
+/// One run of a routine as its history shows it; a skipped or coalesced
+/// record is no run of its own. A completed run that started no session
+/// found nothing new.
+pub(crate) fn routine_run_view(run: &vak_session::runs::RunRecord) -> Option<serde_json::Value> {
+    use vak_session::runs::{RunStatus, Slot};
+    if run.coalesced_into.is_some() {
+        return None;
+    }
+    let status = match run.status {
+        RunStatus::Skipped => return None,
+        RunStatus::Running => "running",
+        RunStatus::Completed if run.sessions.is_empty() => "no_changes",
+        RunStatus::Completed => "complete",
+        RunStatus::Failed => "failed",
+        RunStatus::Cancelled | RunStatus::Abandoned => "interrupted",
+    };
+    Some(serde_json::json!({
+        "run_id": run.id.to_string(),
+        "session_id": run.sessions.first(),
+        "trigger": if matches!(run.slot, Some(Slot::Event { .. })) { "manual" } else { "scheduled" },
+        "status": status,
+        "started_at": run.opened_at,
+        "finished_at": run.settled_at,
+        "items_returned": run.items_used.unwrap_or(0),
+    }))
 }
 
 pub(super) async fn save_candidate(

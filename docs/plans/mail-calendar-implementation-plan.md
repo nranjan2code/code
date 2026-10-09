@@ -776,6 +776,16 @@ restart persistence, settlement, interruption, and deletion. This metadata
 cleanup does not erase content already copied into append-only sessions; M7
 remains the deletion gate.
 
+**Superseded (2026-10-09):** the vault's history store, its lock file and
+its API are gone. A routine's history is its run records
+(`vak_session::runs`): the history endpoint reads the trigger's runs and
+shows each one's time, manual or scheduled (a Run now slot is an event),
+outcome (a completed run that started no session found nothing new), its
+session and the `ItemsUsed` count the scheduler records. Run records stay
+after an account is disconnected, like every other run, and age under the
+retention rules; what the account returned is still erased by Delete saved
+copies (`Core::erase_account`).
+
 **Implemented increment (2026-10-01):** opening a cited message now follows
 the provider's continuation cursor within the same selected account and
 conversation until the target is loaded, the provider is exhausted, or 20
@@ -2603,3 +2613,8 @@ remains open.
   checks. No provider or credential endpoint was contacted. Afterward, removed
   this worktree's generated Cargo target cache (9.7 GiB); the primary checkout's
   active workspace test and `vak-home` data were left untouched.
+- 2026-10-09: Folded routine run history into run records: the vault's
+  encrypted history list, `.routine-history.lock` and its seven methods are
+  deleted; `RunStep::ItemsUsed` records the results-used count; the history
+  endpoint maps the routine's run records. Run records stay after a
+  disconnect (the owner's decision).

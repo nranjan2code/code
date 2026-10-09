@@ -3104,11 +3104,6 @@ The working tracker was deleted when the plan closed (2026-10-09); its
 step rows are in git history and each milestone's section above. What it
 still carried, checked against the code on 2026-10-09:
 
-- **The mail vault keeps its own routine run history**
-  (`list_routine_runs` in `vak-mail-calendar`'s vault), beside the run
-  records. It was justified at M4.7b because it binds a run to an account
-  and is removed on disconnect; run records can now be erased (M7a), so it
-  can fold into them.
 - **Write-path growth on a used 7.0 home** has not been remeasured (§M3b;
   `docs/architecture/write-paths-and-growth.html` is still the v3.5.1
   measurement).
@@ -3122,6 +3117,14 @@ still carried, checked against the code on 2026-10-09:
 Closed since the tracker listed it: a copy environment orphaned by a
 crash is now aged from its last write and removed by the reconciler
 (`environment_items` in `vak_core::lifecycle`, M7a-d).
+
+Closed on 2026-10-09: **the mail vault's routine run history is run
+records.** The vault's encrypted history list, its lock file and its API
+are gone. The scheduler records the results-used count as
+`RunStep::ItemsUsed`, and the routine history endpoint maps the trigger's
+run records (`routine_run_view`). Run records stay after a disconnect, by
+the maintainer's choice: they hold no content, and what an account
+returned is erased by `Core::erase_account`.
 
 Closed on 2026-10-09: **a deleted trigger's claim goes with it.** Refs
 can be removed (`RefStore::remove`, `Store::remove_ref`), under the same

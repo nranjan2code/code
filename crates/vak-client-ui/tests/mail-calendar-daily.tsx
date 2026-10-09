@@ -81,7 +81,7 @@ window.fetch = async (input, init) => {
     }
     if (url.pathname.endsWith("/run") && url.pathname.startsWith("/triggers/") && init?.method === "POST") return json({ started: true });
     if (url.pathname === "/sessions/fixture-active-session/cancel" && init?.method === "POST") return json({ cancelled: true });
-    if (url.pathname.startsWith("/mail-calendar/accounts/fixture-owner/routines/") && url.pathname.endsWith("/history")) return json({ runs: [{ run_id: "fixture-routine-run", routine_id: "fixture-routine-0", account_id: "g-account-0", session_id: "fixture-routine-session", trigger: "manual", status: "complete", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), items_returned: 4 }] });
+    if (url.pathname.startsWith("/mail-calendar/accounts/fixture-owner/routines/") && url.pathname.endsWith("/history")) return json({ runs: [{ run_id: "fixture-routine-run", session_id: "fixture-routine-session", trigger: "manual", status: "complete", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), items_returned: 4 }] });
     if (url.pathname.startsWith("/triggers/") && init?.method === "DELETE") {
       const id = decodeURIComponent(url.pathname.split("/").at(-1)!);
       const index = routines.findIndex((task) => task.id === id);

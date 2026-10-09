@@ -20396,7 +20396,6 @@ fn background_work_allowed(state: &AppState) -> bool {
 fn sweep_abandoned_runs(state: &AppState) {
     match state.core.runs().sweep_abandoned(chrono::Utc::now()) {
         Ok(abandoned) => {
-            automations::note_abandoned(state, &abandoned);
             for run in abandoned {
                 tracing::warn!(run = %run, "a run was abandoned by a process that stopped");
             }
@@ -26910,18 +26909,13 @@ mod scheduler_state_tests {
         assert_eq!(completed.status, vak_session::runs::RunStatus::Completed);
         let session = completed.sessions.first().cloned();
         assert!(session.is_some());
-        let runs = vault.list_routine_runs(&routine_id, &account_id).unwrap();
-        assert_eq!(runs.len(), 1);
-        assert_eq!(
-            runs[0].trigger,
-            vak_mail_calendar::vault::RoutineRunTrigger::Scheduled
-        );
-        assert_eq!(
-            runs[0].status,
-            vak_mail_calendar::vault::RoutineRunStatus::Complete
-        );
-        assert_eq!(runs[0].session_id, session);
-        assert_eq!(runs[0].items_returned, 0);
+        // Its history is its run record: no second log in the vault.
+        assert_eq!(completed.items_used, Some(0));
+        let view = crate::mail_calendar::routine_run_view(&completed).unwrap();
+        assert_eq!(view["trigger"], "scheduled");
+        assert_eq!(view["status"], "complete");
+        assert_eq!(view["session_id"].as_str(), session.as_deref());
+        assert_eq!(view["items_returned"], 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

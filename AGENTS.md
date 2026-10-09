@@ -317,9 +317,8 @@ are the cursor `cur/agent/<agent>/mail-calendar/routines`, its backlog
 an encrypted tenant object moved by CAS with the provider positions, in
 place of a credential-store blob behind a lock file; a reader holds a
 decompressed object in a buffer its own size, and identical bytes put
-by two scopes at once stay readable by both. The vault keeps its
-private routine run history (account binding and item counts, removed
-on disconnect) until M7a can erase run records. M4.8 is done
+by two scopes at once stay readable by both. A routine's run history
+is its run records (2026-10-09); the vault keeps none. M4.8 is done
 (2026-10-06), and with it M4: a scheduled run on a folder that is not a
 git repository works in a copy environment
 (`vak_sandbox::copy::CopyEnvironment`, the run's

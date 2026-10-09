@@ -108,7 +108,7 @@ window.fetch = async (input, init) => {
     task = { ...task, ...body };
     return json(task);
   }
-  if (url.pathname.includes("/routines/") && url.pathname.endsWith("/history")) return json({ runs: [{ run_id: "fixture-run-1", routine_id: "routine-event-fixture", account_id: account.id, trigger: "manual", status: "complete", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), session_id: "fixture-preview-session" }] });
+  if (url.pathname.includes("/routines/") && url.pathname.endsWith("/history")) return json({ runs: [{ run_id: "fixture-run-1", trigger: "manual", status: "complete", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), session_id: "fixture-preview-session", items_returned: 0 }] });
   if (url.pathname === "/agents") return json({ agents: [agent] });
   if (url.pathname === "/providers") return json({ providers: [] });
   if (url.pathname === "/config" || url.pathname.startsWith("/config?")) return json({ provider: "", model: "", max_turns: 8, paths: { cwd: "/tmp/vak-mail-review-fixture" }, permissions: { allow: [], ask: [], deny: [] }, memory: { search_enabled: true, write_enabled: true, reflection: false, skill_proposals: true } });

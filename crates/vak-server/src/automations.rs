@@ -422,9 +422,6 @@ pub(crate) async fn delete_trigger(
         if vault
             .remove_routine_cursor(&scope.routine_id, &scope.account_id)
             .is_err()
-            || vault
-                .remove_routine_history(&scope.routine_id, &scope.account_id)
-                .is_err()
         {
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
@@ -525,26 +522,6 @@ fn refuse(state: &AppState, trigger: &Trigger, run: &mut OpenRun, reason: String
     NotFired::Refused
 }
 
-fn finish_routine_history(
-    vault: Option<&vak_mail_calendar::vault::AccountVault>,
-    run: Option<&vak_mail_calendar::vault::RoutineRunRecord>,
-    scope: Option<&vak_mail_calendar::RoutineScope>,
-    status: vak_mail_calendar::vault::RoutineRunStatus,
-) -> bool {
-    match (vault, run, scope) {
-        (Some(vault), Some(run), Some(scope)) => vault
-            .finish_routine_run(
-                &scope.routine_id,
-                &scope.account_id,
-                &run.run_id,
-                status,
-                Utc::now(),
-            )
-            .is_ok(),
-        _ => true,
-    }
-}
-
 /// Claims what is due of `trigger` at `now` (a slot, or with `run_now`
 /// the run someone asked for) and does it.
 pub(crate) async fn claim_and_fire(
@@ -618,57 +595,10 @@ async fn fire(
         crate::intake::fire_poll(state, &trigger, source, run, trace).await;
         return Ok(id);
     }
-    let routine_vault = match scope.as_ref() {
-        Some(_) => match vak_mail_calendar::vault::AccountVault::for_agent(&trigger.agent) {
-            Ok(vault) => Some(vault),
-            Err(_) => {
-                return Err(refuse(
-                    state,
-                    &trigger,
-                    &mut run,
-                    "The Agent's mail and calendar vault is unavailable.".into(),
-                ));
-            }
-        },
-        None => None,
-    };
-    let routine_run = if let (Some(vault), Some(scope)) = (routine_vault.as_ref(), scope.as_ref()) {
-        match vault.start_routine_run(
-            &scope.routine_id,
-            &scope.account_id,
-            if force_mail_watch_run {
-                vak_mail_calendar::vault::RoutineRunTrigger::Manual
-            } else {
-                vak_mail_calendar::vault::RoutineRunTrigger::Scheduled
-            },
-            Utc::now(),
-        ) {
-            Ok(run) => Some(run),
-            Err(_) => {
-                return Err(refuse(
-                    state,
-                    &trigger,
-                    &mut run,
-                    "The routine could not safely record its run history.".into(),
-                ));
-            }
-        }
-    } else {
-        None
-    };
-    let history_failed = |status| {
-        finish_routine_history(
-            routine_vault.as_ref(),
-            routine_run.as_ref(),
-            scope.as_ref(),
-            status,
-        )
-    };
     if let Some(scope) = scope.as_ref()
         && let Err(error) =
             crate::mail_calendar::prepare_routine_account(state, &trigger.agent, scope).await
     {
-        history_failed(vak_mail_calendar::vault::RoutineRunStatus::Failed);
         return Err(refuse(state, &trigger, &mut run, error));
     }
     if !force_mail_watch_run
@@ -701,20 +631,11 @@ async fn fire(
         };
         match check {
             Ok(Some(false)) => {
-                if !history_failed(vak_mail_calendar::vault::RoutineRunStatus::NoChanges) {
-                    return Err(refuse(
-                        state,
-                        &trigger,
-                        &mut run,
-                        "The routine could not settle its run history.".into(),
-                    ));
-                }
                 run.settle_with(RunOutcome::Completed, None);
                 return Ok(id);
             }
             Ok(_) => {}
             Err(error) => {
-                history_failed(vak_mail_calendar::vault::RoutineRunStatus::Failed);
                 return Err(refuse(state, &trigger, &mut run, error));
             }
         }
@@ -722,7 +643,6 @@ async fn fire(
     let provider = match state.core.provider() {
         Ok(provider) => provider,
         Err(error) => {
-            history_failed(vak_mail_calendar::vault::RoutineRunStatus::Failed);
             return Err(refuse(
                 state,
                 &trigger,
@@ -819,7 +739,6 @@ async fn fire(
     )
     .await
     .map_err(|error| {
-        history_failed(vak_mail_calendar::vault::RoutineRunStatus::Failed);
         if let Some(plan) = &copy_plan {
             let _ = copy_environments().remove(&plan.id);
         } else if temporary_worktree {
@@ -833,25 +752,6 @@ async fn fire(
         )
     })?;
 
-    if let (Some(vault), Some(history), Some(scope)) =
-        (routine_vault.as_ref(), routine_run.as_ref(), scope.as_ref())
-        && vault
-            .attach_routine_run_session(
-                &scope.routine_id,
-                &scope.account_id,
-                &history.run_id,
-                &child_id,
-            )
-            .is_err()
-    {
-        history_failed(vak_mail_calendar::vault::RoutineRunStatus::Failed);
-        return Err(refuse(
-            state,
-            &trigger,
-            &mut run,
-            "The routine could not link its private run history to the Agent session.".into(),
-        ));
-    }
     // A one-shot trigger has spent its only slot.
     if matches!(
         trigger.schedule(),
@@ -876,9 +776,6 @@ async fn fire(
         let run_trace = trace.clone();
         let mail_calendar_task = scope.is_some();
         let copy_plan = copy_plan.clone();
-        let routine_history_vault = routine_vault.clone();
-        let routine_history_run = routine_run.clone();
-        let routine_history_scope = scope.clone();
         let rx = h.events_tx.subscribe();
         // The run holds the trigger's claim until the child settles; one
         // that ends without finishing failed.
@@ -901,6 +798,13 @@ async fn fire(
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .as_ref()
                         .and_then(vak_core::last_answer_id);
+                    if mail_calendar_task {
+                        let items = child_handle.core.mail_calendar_routine_items_used();
+                        let _ = st
+                            .core
+                            .runs()
+                            .items_used(run.id(), u32::try_from(items).unwrap_or(u32::MAX));
+                    }
                     run.settle_with(
                         if is_error {
                             RunOutcome::Failed {
@@ -919,30 +823,6 @@ async fn fire(
                     );
                     if let Some(plan) = &copy_plan {
                         record_copy_candidate(&st, &child_session, plan, answer, &run_trace).await;
-                    }
-                    if let (Some(vault), Some(run), Some(scope)) = (
-                        routine_history_vault.as_ref(),
-                        routine_history_run.as_ref(),
-                        routine_history_scope.as_ref(),
-                    ) {
-                        let items_returned = child_handle.core.mail_calendar_routine_items_used();
-                        let _ = vault.record_routine_run_items(
-                            &scope.routine_id,
-                            &scope.account_id,
-                            &run.run_id,
-                            items_returned.min(20) as u8,
-                        );
-                        let _ = vault.finish_routine_run(
-                            &scope.routine_id,
-                            &scope.account_id,
-                            &run.run_id,
-                            if is_error {
-                                vak_mail_calendar::vault::RoutineRunStatus::Failed
-                            } else {
-                                vak_mail_calendar::vault::RoutineRunStatus::Complete
-                            },
-                            Utc::now(),
-                        );
                     }
                     // Mail/calendar output may contain personal content: it
                     // stays only in the owning Agent's append-only session,
@@ -1197,33 +1077,6 @@ pub(crate) async fn tick(state: &AppState) {
     };
     for trigger in triggers {
         let _ = claim_and_fire(state, trigger, Utc::now(), None).await;
-    }
-}
-
-/// When a mail routine's run is found abandoned, its private run history
-/// says so too.
-pub(crate) fn note_abandoned(state: &AppState, abandoned: &[vak_session::ids::RunId]) {
-    if abandoned.is_empty() {
-        return;
-    }
-    let runs = state.core.runs().list().unwrap_or_default();
-    for run in runs.iter().filter(|run| abandoned.contains(&run.id)) {
-        let (Some(trigger_id), Some(session_id)) = (run.trigger, run.sessions.first()) else {
-            continue;
-        };
-        let Ok(Some(trigger)) = triggers::get(&shared(state), &trigger_id.to_string()) else {
-            continue;
-        };
-        if let Some(scope) = trigger.scope.as_ref()
-            && let Ok(vault) = vak_mail_calendar::vault::AccountVault::for_agent(&trigger.agent)
-        {
-            let _ = vault.interrupt_routine_run_session(
-                &scope.routine_id,
-                &scope.account_id,
-                session_id,
-                Utc::now(),
-            );
-        }
     }
 }
 
