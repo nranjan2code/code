@@ -340,12 +340,7 @@ fn explain(
     println!("  clarify      {}", posture.clarify.as_str());
     println!("  stop when    {}", posture.stop.as_str());
     println!("  context      {}", posture.context.as_str());
-    println!(
-        "  deliver      {} / {} / {}",
-        posture.delivery.shape.as_str(),
-        posture.delivery.cadence.as_str(),
-        posture.delivery.urgency.as_str()
-    );
+    println!("  deliver      {}", posture.delivery.shape.as_str());
     println!(
         "  demand       reasoning={} evidence={} structured={}",
         posture.demand.reasoning_required,

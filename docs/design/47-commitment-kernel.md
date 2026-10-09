@@ -16,7 +16,7 @@ there.
 | I4 | capability slicing (progressive disclosure) | stage-4 exclusion for a confident reading; the tool surface (core vs. deferred) for every reading |
 | I5 | envelopes: `vak grant` / `vak revoke`; a live grant narrows the strands that serve its commitment and pre-authorizes, one gate at a time, the actions it covers; revocation honoured on read | `vak_intent::apply_envelopes` → `intent::permission_mode` → `cfg.mode` and `spend_ceiling_usd` → the run cap; `intent::envelope_check` → `AgentConfig::envelope_check` |
 | I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
-| I7 | server endpoints, admin portfolio, composer strip, the `commitments` capability, per-channel autonomy ceiling | delivery cadence/urgency were read here until 2026-10-09; delivery no longer holds a packet |
+| I7 | server endpoints, admin portfolio, composer strip, the `commitments` capability, per-channel autonomy ceiling | delivery cadence/urgency were read here until 2026-10-09, when both were removed |
 | I8 | misread evidence: escalation-as-measurement, restatement, per-cell accuracy | scoped to the turn's own tool calls; `vak intent show` reports weak cells |
 | **I9** | **tiers 2/3**: a `Classify` dispatch on a weak reading — spend-gated, watchdogged, fail-open | `[intent] escalate = local \| cloud`, `classify_model` |
 | **I10** | **control plane**: authority from the channel, explicit commands, no text heuristics | `ControlSource`, `parse_command`, `evaluate_intervention` |
@@ -105,11 +105,11 @@ subsystem.
 |---|---|---|
 | `act` | `converse` `answer` `locate` `analyze` `author` `modify` `operate` `verify` `orchestrate` `govern` | which admitted tools are loaded, output shape, stop profile |
 | `horizon` | `immediate` `turn` `session` `durable` | managed admission, commitment promotion, context profile |
-| `stakes` | `inert` `reversible` `costly` `irreversible` | approval ceiling, checkpoint-before, delivery urgency |
+| `stakes` | `inert` `reversible` `costly` `irreversible` | approval ceiling, checkpoint-before |
 | `evidence` | `none` `cited` `verified` `audited` | **minimum satisfaction strength to close** |
 | `clarity` | `clear` `underspecified` `ambiguous` | ask vs. state-an-assumption |
 | `modality` | `text` `image` `audio` `video` `screen` `data` `stream` | ladder filtering, delivery format |
-| `attendance` | `interactive` `supervised` `unattended` | HIL mode, delivery cadence, gate answerability |
+| `attendance` | `interactive` `supervised` `unattended` | HIL mode, gate answerability |
 
 No axis collapses into another. A long task can be closely watched and a
 ten-second automation unattended, so `horizon` is not `attendance`. Work can be
@@ -581,13 +581,12 @@ highest ranked runnable commitment.
 
 ### Delivery posture
 
-The engagement's `DeliveryPosture` carries the answer's `shape`, which is
-used, and a cadence and urgency, which are recorded in the intent entry and
-shown by `vak intent explain` and the admin Commitments screen. Delivery no
-longer reads the cadence or urgency: holding a packet for its work's end or
-a digest was removed on 2026-10-09, because nothing released a held packet
-and nothing could be held (`30-output-engineering.md`, "When a packet goes
-out"). Every delivery is sent at once.
+The engagement's `DeliveryPosture` carries only the answer's `shape`. It
+once carried a cadence and an urgency that could hold a packet for its
+work's end or a digest; both were removed on 2026-10-09, because nothing
+released a held packet and nothing could be held
+(`30-output-engineering.md`, "When a packet goes out"). Every delivery is
+sent at once.
 
 ### Per-channel autonomy
 
@@ -789,7 +788,7 @@ fixes:
   from `autonomous` on costly work. The table above is now the code.
 * Tiers 2/3 were configuration without a call site; they are wired (I9).
 * Modality, permission and spend ceilings, HIL `Defer`, delivery posture
-  (its cadence and urgency unwired again on 2026-10-09), the stop and context profiles and the checkpoint decision were computed and
+  (its cadence and urgency removed on 2026-10-09), the stop and context profiles and the checkpoint decision were computed and
   never consumed; they are wired. The session's first checkpoint is always
   taken (it is the baseline the workspace delta is measured against); later
   ones only when the reading expects an effect.

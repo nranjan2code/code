@@ -15,7 +15,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::authority::{Authority, Autonomy, GateFallback};
-use crate::axes::{Act, Attendance, Clarity, EpistemicStance, Evidence, Horizon, Modality, Stakes};
+use crate::axes::{Act, Clarity, EpistemicStance, Evidence, Horizon, Modality, Stakes};
 use crate::limits::Limits;
 use crate::reading::Reading;
 
@@ -126,75 +126,10 @@ impl OutputShape {
     }
 }
 
-/// When results reach the human.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Cadence {
-    /// Stream as it happens.
-    Live,
-    /// One delivery when the unit of work finishes.
-    OnCompletion,
-    /// Roll up into the next digest. What overnight work should do rather
-    /// than sending forty notifications nobody reads.
-    Digest,
-}
-
-impl Cadence {
-    /// Least batched first. Composition takes the *least* batched, because
-    /// a held packet is the one that can be lost.
-    pub fn immediacy_rank(self) -> u8 {
-        match self {
-            Cadence::Digest => 0,
-            Cadence::OnCompletion => 1,
-            Cadence::Live => 2,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Cadence::Live => "live",
-            Cadence::OnCompletion => "on-completion",
-            Cadence::Digest => "digest",
-        }
-    }
-}
-
-/// How hard a delivery may push for attention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Urgency {
-    /// Break through: this needs somebody now.
-    Interrupt,
-    /// Normal notification.
-    Notify,
-    /// Silent; it will be read when the human looks.
-    Quiet,
-}
-
-impl Urgency {
-    pub fn rank(self) -> u8 {
-        match self {
-            Urgency::Quiet => 0,
-            Urgency::Notify => 1,
-            Urgency::Interrupt => 2,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Urgency::Interrupt => "interrupt",
-            Urgency::Notify => "notify",
-            Urgency::Quiet => "quiet",
-        }
-    }
-}
-
 /// How results should be delivered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeliveryPosture {
     pub shape: OutputShape,
-    pub cadence: Cadence,
-    pub urgency: Urgency,
 }
 
 /// Facts about this turn's difficulty, for the route ladder's demand scoring.
@@ -336,8 +271,6 @@ impl Engagement {
                 clarify: ClarifyPolicy::Proceed,
                 delivery: DeliveryPosture {
                     shape: OutputShape::Prose,
-                    cadence: Cadence::Live,
-                    urgency: Urgency::Notify,
                 },
                 demand: DemandHint {
                     reasoning_required: false,
@@ -435,18 +368,6 @@ impl Posture {
                 delivery: DeliveryPosture {
                     // The primary strand's shape; shapes have no order.
                     shape: a.delivery.shape,
-                    cadence: if b.delivery.cadence.immediacy_rank()
-                        > a.delivery.cadence.immediacy_rank()
-                    {
-                        b.delivery.cadence
-                    } else {
-                        a.delivery.cadence
-                    },
-                    urgency: if b.delivery.urgency.rank() > a.delivery.urgency.rank() {
-                        b.delivery.urgency
-                    } else {
-                        a.delivery.urgency
-                    },
                 },
                 demand: DemandHint {
                     reasoning_required: a.demand.reasoning_required || b.demand.reasoning_required,
@@ -773,23 +694,7 @@ fn derive_delivery(reading: &Reading) -> DeliveryPosture {
         Act::Verify => OutputShape::Matrix,
         Act::Orchestrate => OutputShape::Report,
     };
-    let cadence = match reading.attendance {
-        Attendance::Interactive => Cadence::Live,
-        Attendance::Supervised => Cadence::OnCompletion,
-        // Overnight work sends one roll-up, not a stream nobody is reading.
-        Attendance::Unattended => Cadence::Digest,
-    };
-    let urgency = match (reading.stakes, reading.attendance) {
-        (Stakes::Irreversible, _) => Urgency::Interrupt,
-        (Stakes::Costly, Attendance::Unattended) => Urgency::Notify,
-        (_, Attendance::Unattended) => Urgency::Quiet,
-        _ => Urgency::Notify,
-    };
-    DeliveryPosture {
-        shape,
-        cadence,
-        urgency,
-    }
+    DeliveryPosture { shape }
 }
 
 fn derive_stop(reading: &Reading) -> StopProfile {
@@ -1104,15 +1009,6 @@ mod tests {
     }
 
     #[test]
-    fn unattended_work_rolls_up_instead_of_pinging() {
-        let mut r = reading(Act::Verify, Horizon::Durable, Stakes::Inert, Evidence::None);
-        r.attendance = Attendance::Unattended;
-        let delivery = derive(&r, &Authority::default(), true).posture.delivery;
-        assert_eq!(delivery.cadence, Cadence::Digest);
-        assert_eq!(delivery.urgency, Urgency::Quiet);
-    }
-
-    #[test]
     fn irreversible_work_always_interrupts_and_says_so_in_the_prompt() {
         let r = reading(
             Act::Operate,
@@ -1122,7 +1018,6 @@ mod tests {
         );
         let engagement = derive(&r, &Authority::default(), true);
         assert_eq!(engagement.posture.hil, HilMode::Interrupt);
-        assert_eq!(engagement.posture.delivery.urgency, Urgency::Interrupt);
         assert!(
             engagement
                 .posture

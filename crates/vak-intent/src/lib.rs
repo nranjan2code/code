@@ -77,8 +77,8 @@ pub use axes::{
     Act, Attendance, Clarity, EpistemicStance, Evidence, Horizon, Modality, Satisfaction, Stakes,
 };
 pub use engage::{
-    Cadence, ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode,
-    OutputShape, Posture, StopProfile, Urgency, apply_authority, derive,
+    ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode, OutputShape,
+    Posture, StopProfile, apply_authority, derive,
 };
 pub use engage::{DOMAIN_VOCABULARY, FLOOR_DOMAINS};
 pub use goal::{

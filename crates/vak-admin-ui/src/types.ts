@@ -1278,8 +1278,6 @@ export interface Posture {
   clarify: "proceed" | "state-assumption" | "ask";
   delivery: {
     shape: string;
-    cadence: "live" | "on-completion" | "digest";
-    urgency: "interrupt" | "notify" | "quiet";
   };
   demand: {
     reasoning_required: boolean;

@@ -25,8 +25,7 @@ use vak_intent::axes::{
     Act, Attendance, Clarity, Evidence, Horizon, Modality, Satisfaction, Stakes,
 };
 use vak_intent::engage::{
-    Cadence, ClarifyPolicy, ContextProfile, Engagement, HilMode, OutputShape, StopProfile, Urgency,
-    derive,
+    ClarifyPolicy, ContextProfile, Engagement, HilMode, OutputShape, StopProfile, derive,
 };
 use vak_intent::goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate};
 use vak_intent::limits::{DomainSet, Limits};
@@ -1676,37 +1675,6 @@ fn engagement_demand_hints_populated() {
     );
     let engagement = derive(&r, &Authority::default(), true);
     assert!(engagement.posture.demand.structured_output);
-}
-
-#[test]
-fn engagement_delivery_posture_by_attendance_and_stakes() {
-    for attendance in Attendance::ALL {
-        let r = reading_simple(
-            Act::Operate,
-            Horizon::Turn,
-            Stakes::Irreversible,
-            Evidence::None,
-        );
-        // Delivery urgency derives from reading.stakes (not authority.attendance):
-        // Irreversible stakes always Interrupt regardless of attendance.
-        let r = Reading { attendance, ..r };
-        let engagement = derive(&r, &authority_of(Autonomy::Assisted, attendance), true);
-        assert_eq!(engagement.posture.delivery.urgency, Urgency::Interrupt);
-    }
-
-    let mut r = reading_simple(Act::Verify, Horizon::Durable, Stakes::Inert, Evidence::None);
-    r.attendance = Attendance::Unattended;
-    let engagement = derive(
-        &r,
-        &authority_of(Autonomy::Assisted, Attendance::Unattended),
-        true,
-    );
-    assert_eq!(engagement.posture.delivery.cadence, Cadence::Digest);
-    assert_eq!(engagement.posture.delivery.urgency, Urgency::Quiet);
-
-    let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
-    let engagement = derive(&r, &Authority::default(), true);
-    assert_eq!(engagement.posture.delivery.cadence, Cadence::Live);
 }
 
 #[test]

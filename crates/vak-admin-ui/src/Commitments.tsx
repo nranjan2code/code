@@ -938,7 +938,7 @@ function IntentSimulator() {
                 <div class="axis-card attendance">
                   <div class="axis-header">
                     <span class="axis-name">7. Attendance</span>
-                    <span class="axis-tag">Cadence</span>
+                    <span class="axis-tag">Categorical</span>
                   </div>
                   <div class="axis-val-row">
                     <span class="axis-val">{exp().reading.attendance}</span>
@@ -1078,10 +1078,8 @@ function IntentSimulator() {
                     <span class="spec-val mono">{exp().engagement.posture.context}</span>
                   </div>
                   <div class="spec-row">
-                    <span class="spec-label">Delivery Cadence:</span>
-                    <span class="spec-val">
-                      {exp().engagement.posture.delivery.cadence} ({exp().engagement.posture.delivery.urgency})
-                    </span>
+                    <span class="spec-label">Answer Shape:</span>
+                    <span class="spec-val mono">{exp().engagement.posture.delivery.shape}</span>
                   </div>
                 </div>
               </div>

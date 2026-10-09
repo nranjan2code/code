@@ -3104,11 +3104,6 @@ The working tracker was deleted when the plan closed (2026-10-09); its
 step rows are in git history and each milestone's section above. What it
 still carried, checked against the code on 2026-10-09:
 
-- **The engagement's delivery cadence and urgency decide nothing.**
-  `vak-intent` still computes them, records them in the intent entry and
-  shows them (`vak intent explain`, the admin Commitments screen), but
-  delivery stopped reading them when holding was removed (below). Either
-  remove them from `vak-intent` or give them a consumer.
 - **A deleted trigger's claim ref stays.** `trg/<id>/claim` is left
   behind because refs have no delete. The lifecycle reconciler should
   remove it once refs can be deleted.
@@ -3142,6 +3137,10 @@ has no `hold`, `EffectStatus::Held` and `Prepare::hold` are gone, as are
 lookup, and the admin "Waiting for the digest" state. Every delivery is
 prepared and sent at once (doc 30-output-engineering, "When a packet goes
 out").
+The engagement's delivery cadence and urgency in `vak-intent`, which
+nothing read once holding was gone, were removed the same day: its
+`DeliveryPosture` is the answer's `shape` alone, and `vak intent explain`
+and the admin Commitments screen show that shape.
 
 The handover for the session after the plan
 (`docs/plans/handover-2026-10-09.md`) lists the product limits and the
