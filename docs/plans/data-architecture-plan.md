@@ -3107,11 +3107,22 @@ still carried, checked against the code on 2026-10-09:
 - **Write-path growth on a used 7.0 home** has not been remeasured (§M3b;
   `docs/architecture/write-paths-and-growth.html` is still the v3.5.1
   measurement).
-- **The Workspace data class has no backup policy.**
 
 Closed since the tracker listed it: a copy environment orphaned by a
 crash is now aged from its last write and removed by the reconciler
 (`environment_items` in `vak_core::lifecycle`, M7a-d).
+
+Closed on 2026-10-09: **the Workspace data class has a backup policy.**
+By the maintainer's choice, a backup and a sync push carry every Agent
+workspace in the data home (with its `inbox/` of attachments) as files,
+within the copy environment's ignore rules (`vak_sandbox::copy::IGNORED`)
+and limits (`state::WORKSPACE_LIMITS`, 20,000 files or 512 MiB per
+entry); a backup's manifest counts and names what was over them
+(`workspace_files_skipped`, `workspace_skipped`). One list serves both
+(`state::backup_files`), so a backup and a push carry the same files, and
+`backup_targets` is gone. A run's environment is Ephemeral now, never
+carried. A person's own project folders were never in a backup and are
+not now.
 
 Closed on 2026-10-09: **the stop guard's "Please continue." echo was
 not reproduced.** No record of the original sighting survives beyond the

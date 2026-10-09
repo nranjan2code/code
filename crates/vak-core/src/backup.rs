@@ -66,7 +66,17 @@ pub struct BackupManifest {
     /// holds. An erasure recorded since is re-applied on restore.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub erasures: Vec<String>,
+    /// How many Agent workspace files were left out because their
+    /// workspace was over its limits (`state::WORKSPACE_LIMITS`), and the
+    /// first [`SKIPPED_LISTED`] of them, under the data home.
+    #[serde(default)]
+    pub workspace_files_skipped: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_skipped: Vec<String>,
 }
+
+/// How many skipped workspace files a manifest names.
+pub const SKIPPED_LISTED: usize = 100;
 
 impl Default for BackupManifest {
     fn default() -> Self {
@@ -82,6 +92,8 @@ impl Default for BackupManifest {
             scope_keys: 0,
             scopes_destroyed: 0,
             erasures: Vec::new(),
+            workspace_files_skipped: 0,
+            workspace_skipped: Vec::new(),
         }
     }
 }
@@ -182,26 +194,24 @@ pub fn export_to(
     let mut manifest = BackupManifest::default();
 
     let mut jobs: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for relative in crate::state::backup_targets(crate::state::Root::Data, home) {
-        let src = home.join(&relative);
-        if src.is_file() {
-            jobs.push((src, dest_dir.join(&relative)));
-            continue;
-        }
-        if !src.is_dir() {
-            continue;
-        }
-        for file in list_files(&src) {
-            let rel = file
-                .strip_prefix(home)
-                .map_err(|_| BackupError::InvalidBackup {
-                    path: file.clone(),
-                    reason: "file escaped home root".into(),
-                })?
-                .to_path_buf();
-            jobs.push((file, dest_dir.join(rel)));
-        }
+    let carried = crate::state::backup_files(crate::state::Root::Data, home);
+    for file in carried.files {
+        let rel = file
+            .strip_prefix(home)
+            .map_err(|_| BackupError::InvalidBackup {
+                path: file.clone(),
+                reason: "file escaped home root".into(),
+            })?
+            .to_path_buf();
+        jobs.push((file, dest_dir.join(rel)));
     }
+    manifest.workspace_files_skipped = carried.skipped.len() as u64;
+    manifest.workspace_skipped = carried
+        .skipped
+        .iter()
+        .take(SKIPPED_LISTED)
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect();
 
     for (from, to) in &jobs {
         manifest.total_bytes += copy_file(from, to)?;
@@ -541,6 +551,31 @@ mod tests {
         for rel in ["cost-log", "routing-evidence", "desktop.json"] {
             std::fs::write(home.join(rel), rel).unwrap();
         }
+    }
+
+    /// An Agent's workspace in the data home, with the attachments its
+    /// conversations name, is in the backup; a run's environment is not.
+    #[test]
+    fn export_carries_agent_workspaces_and_not_run_environments() {
+        let home = tempdir().unwrap();
+        let inbox = home
+            .path()
+            .join("tenants/t1/workspaces/spc_a/agt_b/inbox/photo.txt");
+        std::fs::create_dir_all(inbox.parent().unwrap()).unwrap();
+        std::fs::write(&inbox, b"bytes").unwrap();
+        let scratch = home.path().join("tenants/t1/environments/run_1/work.txt");
+        std::fs::create_dir_all(scratch.parent().unwrap()).unwrap();
+        std::fs::write(&scratch, b"scratch").unwrap();
+        let dest = tempdir().unwrap();
+        let manifest = export_to(home.path(), dest.path(), false).unwrap();
+        assert!(
+            dest.path()
+                .join("tenants/t1/workspaces/spc_a/agt_b/inbox/photo.txt")
+                .is_file()
+        );
+        assert!(!dest.path().join("tenants/t1/environments").exists());
+        assert_eq!(manifest.workspace_files_skipped, 0);
+        assert!(manifest.workspace_skipped.is_empty());
     }
 
     #[test]

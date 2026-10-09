@@ -74,13 +74,16 @@ pub enum Class {
     Desired,
     /// Credentials: never in an ordinary backup.
     Secret,
-    /// A working tree a person edits too.
+    /// A working tree in the data home that an Agent and a person both edit
+    /// (an Agent's workspace, with the attachments its conversations name in
+    /// `inbox/`). Backed up as files within fixed ignore rules and caps.
     Workspace,
     /// A piece's own storage (doc 81).
     Application,
     /// Rebuilt from records and objects; safe to lose.
     Derived,
-    /// Locks, sockets, scratch: meaningless after their process.
+    /// Locks, sockets, scratch, a run's environment: meaningless after the
+    /// process or run that made them.
     Ephemeral,
     /// Logs, spans, metrics.
     Telemetry,
@@ -102,8 +105,10 @@ impl Class {
     }
 
     /// Whether an ordinary backup copies a path of this class. Secrets only
-    /// on an explicit request; a workspace through its checkpoints; derived,
-    /// ephemeral and telemetry data never.
+    /// on an explicit request; a workspace within [`WORKSPACE_LIMITS`] and
+    /// the copy environment's ignore rules ([`backup_files`]); derived,
+    /// ephemeral and telemetry data never. Checkpoints do not stand in for a
+    /// workspace: they are pruned to a session's first and newest twenty.
     pub fn in_backup(self) -> bool {
         matches!(
             self,
@@ -113,6 +118,7 @@ impl Class {
                 | Class::Ref
                 | Class::Desired
                 | Class::Application
+                | Class::Workspace
         )
     }
 }
@@ -332,7 +338,7 @@ pub const REGISTRY: &[StateEntry] = &[
         schema: None,
         // One run's worktree, task copy or staging tree, by run id; candidates
         // are frozen out of it, so it is never the record of the work.
-        class: Class::Workspace,
+        class: Class::Ephemeral,
         on_purge: OnPurge::Remove,
     },
     StateEntry {
@@ -775,14 +781,75 @@ pub fn entries_for(root: Root) -> impl Iterator<Item = &'static StateEntry> {
     REGISTRY.iter().filter(move |e| e.root == root)
 }
 
-/// Paths, relative to `base`, that an ordinary backup of `root` copies:
-/// every declared entry present there, with each pattern entry expanded to
-/// the Agent homes that exist.
-pub fn backup_targets(root: Root, base: &Path) -> Vec<PathBuf> {
-    entries_for(root)
-        .filter(|e| e.in_backup())
-        .flat_map(|e| e.expand(base))
-        .collect()
+/// How much of one Workspace entry a backup or a sync push carries: the
+/// copy environment's limits (`vak_sandbox::copy::CopyLimits`).
+pub const WORKSPACE_LIMITS: (usize, u64) = (20_000, 512 * 1024 * 1024);
+
+/// The files an ordinary backup or a sync push of `root` carries, and the
+/// workspace files it left out because their entry was over its limits.
+#[derive(Debug, Default, PartialEq)]
+pub struct BackupFiles {
+    /// Absolute paths, in a stable order.
+    pub files: Vec<PathBuf>,
+    /// Paths relative to the base, over a workspace's limits.
+    pub skipped: Vec<PathBuf>,
+}
+
+/// Every file of every backed-up entry under `base`. A Workspace entry
+/// skips what a copy environment never copies (`vak_sandbox::copy::IGNORED`:
+/// version control, Vak's control state, dependency and build trees) and
+/// symlinks, and carries files until `limits` (files, bytes) is reached;
+/// the rest is listed in `skipped`, never dropped silently.
+pub fn backup_files_within(root: Root, base: &Path, limits: (usize, u64)) -> BackupFiles {
+    let mut out = BackupFiles::default();
+    for entry in entries_for(root).filter(|e| e.in_backup()) {
+        for relative in entry.expand(base) {
+            let path = base.join(&relative);
+            if path.is_file() {
+                out.files.push(path);
+                continue;
+            }
+            if !path.is_dir() {
+                continue;
+            }
+            let workspace = entry.class == Class::Workspace;
+            let walk = walkdir::WalkDir::new(&path)
+                .follow_links(false)
+                .sort_by_file_name()
+                .into_iter()
+                .filter_entry(|item| {
+                    !workspace
+                        || item.depth() == 0
+                        || !vak_sandbox::copy::IGNORED
+                            .iter()
+                            .any(|name| item.file_name() == std::ffi::OsStr::new(name))
+                });
+            let (mut files, mut bytes) = (0usize, 0u64);
+            for item in walk.flatten() {
+                if !item.file_type().is_file() {
+                    continue;
+                }
+                if workspace {
+                    let size = item.metadata().map_or(0, |meta| meta.len());
+                    if files + 1 > limits.0 || bytes + size > limits.1 {
+                        if let Ok(skipped) = item.path().strip_prefix(base) {
+                            out.skipped.push(skipped.to_path_buf());
+                        }
+                        continue;
+                    }
+                    files += 1;
+                    bytes += size;
+                }
+                out.files.push(item.into_path());
+            }
+        }
+    }
+    out
+}
+
+/// [`backup_files_within`] at [`WORKSPACE_LIMITS`].
+pub fn backup_files(root: Root, base: &Path) -> BackupFiles {
+    backup_files_within(root, base, WORKSPACE_LIMITS)
 }
 
 /// Remove the directories a pattern entry implies once they are empty:
@@ -1064,6 +1131,62 @@ mod tests {
             );
             seen.push(key);
         }
+    }
+
+    /// An Agent's workspace in the data home travels with a backup and a
+    /// push, within the copy environment's ignore rules and limits; a run's
+    /// environment never does.
+    #[test]
+    fn agent_workspaces_are_backed_up_within_limits_and_environments_are_not() {
+        let base = tempfile::tempdir().unwrap();
+        let tenant = base.path().join("tenants/ten_x");
+        let workspace = tenant.join("workspaces/spc_a/agt_b");
+        for (path, bytes) in [
+            ("inbox/photo.txt", 4usize),
+            ("notes.md", 4),
+            ("big.bin", 64),
+            ("node_modules/dep/index.js", 4),
+            (".git/HEAD", 4),
+        ] {
+            let file = workspace.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, vec![b'x'; bytes]).unwrap();
+        }
+        let environment = tenant.join("environments/run_1/work.txt");
+        std::fs::create_dir_all(environment.parent().unwrap()).unwrap();
+        std::fs::write(&environment, b"scratch").unwrap();
+
+        let relative = |files: &[PathBuf]| -> Vec<String> {
+            files
+                .iter()
+                .map(|file| {
+                    file.strip_prefix(base.path())
+                        .unwrap_or(file)
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect()
+        };
+        let all = backup_files_within(Root::Data, base.path(), (100, 1024));
+        let carried = relative(&all.files);
+        for kept in ["inbox/photo.txt", "notes.md", "big.bin"] {
+            assert!(
+                carried.iter().any(|path| path.ends_with(kept)),
+                "{kept} missing from {carried:?}"
+            );
+        }
+        assert!(!carried.iter().any(|path| path.contains("node_modules")));
+        assert!(!carried.iter().any(|path| path.contains(".git")));
+        assert!(!carried.iter().any(|path| path.contains("environments")));
+        assert!(all.skipped.is_empty());
+
+        // Over the byte limit: what does not fit is named, not dropped.
+        let capped = backup_files_within(Root::Data, base.path(), (100, 16));
+        assert_eq!(
+            relative(&capped.skipped),
+            vec!["tenants/ten_x/workspaces/spc_a/agt_b/big.bin".to_string()]
+        );
+        assert_eq!(capped.files.len() + 1, all.files.len());
     }
 
     #[test]

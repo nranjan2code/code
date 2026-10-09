@@ -294,20 +294,11 @@ impl Core {
     fn sync_files(&self) -> Vec<(String, PathBuf)> {
         let home = self.shared_scope().into_root();
         let mut found = Vec::new();
-        for target in crate::state::backup_targets(crate::state::Root::Data, &home) {
-            let path = home.join(&target);
-            let mut files = Vec::new();
-            if path.is_file() {
-                files.push(path);
-            } else {
-                list_files(&path, &mut files);
-            }
-            for file in files {
-                if let Ok(relative) = file.strip_prefix(&home)
-                    && travels(relative)
-                {
-                    found.push((key_of(relative), file.clone()));
-                }
+        for file in crate::state::backup_files(crate::state::Root::Data, &home).files {
+            if let Ok(relative) = file.strip_prefix(&home)
+                && travels(relative)
+            {
+                found.push((key_of(relative), file.clone()));
             }
         }
         found.sort();

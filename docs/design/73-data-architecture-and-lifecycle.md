@@ -395,10 +395,10 @@ locations*, not of file names.
 | **Ref** | artifact current version, session head, trigger claims, cursors, leases, bindings | pointer with a generation and a writer epoch | CAS-updated; a stale epoch is refused | with its owner | always | CAS sync |
 | **Desired** | config layers, Agents, triggers, endpoints, bots, allowlist, prompt layers, connections and their grants, sources, the owner record (`auth/`) | operator intent | versioned like a Document: each save a version, current a ref; additive schema | explicit | always | sync (no secrets) |
 | **Secret** | provider keys, bot tokens, connection credentials | credential store | operator only | explicit | opt-in | never plaintext; references only |
-| **Workspace** | a space's working tree, Agent workspaces, worktrees, task environments | projection of objects + human edits | mutable | Agent workspace: with its Space or Agent; worktree or environment: with its Run | via checkpoints → objects | via objects |
+| **Workspace** | Agent workspaces in the data home (with each `inbox/`) | projection of objects + human edits | mutable | with its Space or Agent | as files, within the copy environment's ignore rules and limits; what is over them is named in the manifest (2026-10-09; checkpoints were the cover before, but they are pruned) | the same files |
 | **Application** | a piece's KV, SQLite database, snapshots and time series (doc 81 §8) | the piece that owns it | mutable, by the piece's own code | with its piece or Space, or with an erased `derived_from` source; snapshots by the piece's label | always | as objects (snapshot) |
 | **Derived** | data catalog, FTS, embeddings, belief state, route aggregates, glimpses | rebuilt from records/objects | overwritten | any time | never | rebuilt remotely |
-| **Ephemeral** | scratch tmp, caches, locks, sockets, gates, browser profiles | none | anything | end of Execution/process, boot sweep | never | never |
+| **Ephemeral** | scratch tmp, caches, locks, sockets, gates, browser profiles, a run's worktree or environment | none | anything | end of Execution/process, boot sweep | never | never |
 | **Telemetry** | logs, spans, metrics | none (records win) | rotated | size/age | never | optional, allowlisted OTLP export; fleet receives no content (§11.2) |
 
 Five rules follow:
@@ -831,8 +831,9 @@ Doc 79 §8.1 specifies the degraded-mode disclosure and failure tests.
 pre-acknowledgement hook so this mode can be added without redesign, but
 three classes write around it: Workspace (tools write files directly),
 Secret (the credential store) and Application (a piece's own database).
-Until each joins the protocol, the mode's promise excludes it by name, and
-workspace files are covered only through checkpoints as objects.
+Until each joins the protocol, the mode's promise excludes it by name;
+workspace files are carried by an ordinary backup and push, within limits,
+not by this mode.
 The recovery manifest names the Desired-state revision, which exists
 because Desired state is versioned (§5).
 The old VM must be unable to resume schedules, channel polling, writes or
