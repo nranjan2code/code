@@ -2316,6 +2316,29 @@ hold.
 - Tests: `agent_erasure_takes_what_it_owns_and_nothing_else`, and the
   revoke route test, which now erases the revoked Agent.
 
+**M7b-d, done 2026-10-09: erasing a project's data.**
+- `Core::erase_project(space)` erases everything Vakyartha stored for
+  one project: every Agent's conversations there (keys destroyed), what
+  every Agent remembers of it (its space-keyed Documents), every copy of
+  its files in the Library, kept or not, its automations, its Agents'
+  workspaces in the data home and its executions' scratch files.
+- The project's own folder, its files and its `.vak` settings are never
+  touched. The project stays in the registry, hidden until it is opened
+  again.
+- Previewed with counts (`Core::project_erasure_preview`), refused under
+  a hold or with a stale preview, and receipted with scope `project`.
+  The server also refuses while work is running in the project.
+- An Agent's and a project's erasure share `erase_reach`, and both now
+  leave out a conversation that was already erased.
+- `GET|POST /data/erasure/projects/{space}` (the digest and the
+  project's name typed); `vak data erase <space> --scope project`; the
+  admin console's Projects has Erase its data, which shows the counts
+  and asks for the name.
+- The Projects action was not seen in a browser.
+- Tests: `project_erasure_leaves_the_folder`,
+  `a_projects_data_is_erased_and_its_folder_is_left` through the real
+  router.
+
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office

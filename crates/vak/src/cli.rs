@@ -627,9 +627,10 @@ pub(crate) enum DataAction {
     /// in a conversation, or what a disconnected account returned
     Erase {
         /// The conversation's id; the account's with --scope account; the
-        /// Agent's with --scope agent
+        /// Agent's with --scope agent; the project's (spc_…) with --scope
+        /// project
         session: String,
-        /// What is erased: conversation, guest, account or agent
+        /// What is erased: conversation, guest, account, agent or project
         #[arg(long, default_value = "conversation")]
         scope: String,
         /// With --scope guest: the guest whose contributions are erased

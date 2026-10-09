@@ -180,36 +180,48 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                     1
                 }
             };
-            if scope == "agent" {
-                let preview = match core.agent_erasure_preview(&session) {
+            if scope == "agent" || scope == "project" {
+                let project = scope == "project";
+                let looked = if project {
+                    core.project_erasure_preview(&session)
+                } else {
+                    core.agent_erasure_preview(&session)
+                };
+                let preview = match looked {
                     Ok(preview) => preview,
                     Err(error) => {
                         eprintln!("error: {error}");
                         return 1;
                     }
                 };
-                println!("This erases everything the Agent {session} holds, for good:");
+                if project {
+                    println!(
+                        "This erases everything Vakyartha keeps for the project {session}, for good. Its folder is not touched:"
+                    );
+                } else {
+                    println!("This erases everything the Agent {session} holds, for good:");
+                }
                 println!("  conversations      {}", preview.conversations);
                 println!("  memory and notes   {}", preview.documents);
-                println!("  unkept drafts      {}", preview.artifacts);
+                println!("  files              {}", preview.artifacts);
                 println!("  automations        {}", preview.automations);
                 println!("  workspace files    {}", preview.workspace_files);
                 if preview.held {
                     println!("Something of it is on hold; release the hold first.");
                     return 1;
                 }
-                println!("Type the Agent's id to erase it:");
+                println!("Type its id to erase it:");
                 let mut typed = String::new();
                 if std::io::stdin().read_line(&mut typed).is_err() || typed.trim() != session {
                     println!("Not erased.");
                     return 1;
                 }
-                return report(core.erase_agent(
-                    &session,
-                    Some(&preview.digest),
-                    vak_core::erasure::Cause::Person,
-                    None,
-                ));
+                let cause = vak_core::erasure::Cause::Person;
+                return report(if project {
+                    core.erase_project(&session, Some(&preview.digest), cause, None)
+                } else {
+                    core.erase_agent(&session, Some(&preview.digest), cause, None)
+                });
             }
             if scope == "account" {
                 if !sure(&format!(
@@ -264,7 +276,7 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 ));
             }
             if scope != "conversation" {
-                eprintln!("error: --scope is conversation, guest, account or agent");
+                eprintln!("error: --scope is conversation, guest, account, agent or project");
                 return 2;
             }
             let preview = match core.erasure_preview(&session) {

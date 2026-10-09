@@ -32,6 +32,30 @@ export default function Projects() {
     }
   };
 
+  // Erasing what Vakyartha keeps for a project (plan M7b-d): the counts
+  // first, then the project's name typed. The server checks both again.
+  const erase = async (project: Project) => {
+    if (busy()) return;
+    try {
+      const { preview, confirm } = await api.projectErasurePreview(project.id);
+      if (preview.held) {
+        pushToast("alert", "Something kept for this project is on hold. Release the hold first.");
+        return;
+      }
+      const typed = window.prompt(
+        `Erase everything Vakyartha keeps for “${confirm}”? ${preview.conversations} conversations, ${preview.documents} things remembered, ${preview.artifacts} files in the Library, ${preview.automations} automations and ${preview.workspace_files} working files are erased for good. The project's own folder is not touched. Type the project's name to go on.`,
+      );
+      if (typed === null) return;
+      if (typed.trim() !== confirm.trim()) {
+        pushToast("alert", "Not erased: the name did not match.");
+        return;
+      }
+      await act(() => api.eraseProject(project.id, preview.digest, typed.trim()), "Everything kept for the project was erased. The receipt is under Conversations.");
+    } catch (error) {
+      pushToast("alert", `${error instanceof Error ? error.message : error}`);
+    }
+  };
+
   const rename = (project: Project) =>
     act(async () => {
       await api.patchProject(project.id, { name: draft().trim() });
@@ -43,7 +67,7 @@ export default function Projects() {
       <header class="page-header">
         <div>
           <h1>Projects</h1>
-          <p class="dim">Each project keeps its conversations, memory and settings. Hiding one removes it from lists; nothing it holds is touched.</p>
+          <p class="dim">Each project keeps its conversations, memory and settings. Hiding one removes it from lists; nothing it holds is touched. Erasing its data removes what Vakyartha keeps for it, never the folder.</p>
         </div>
       </header>
       <section class="panel project-list">
@@ -81,6 +105,7 @@ export default function Projects() {
                       >
                         {project.hidden ? "Show" : "Hide"}
                       </button>
+                      <button class="ghost small danger" disabled={busy()} onClick={() => void erase(project)}>Erase its data…</button>
                     </div>
                   </Show>
                 </div>

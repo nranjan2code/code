@@ -82,3 +82,75 @@ async fn the_owner_changes_a_keep_time_and_a_shorter_one_is_confirmed() {
     .await;
     assert_eq!((status, refused["reason"].as_str()), (400, Some("invalid")));
 }
+
+/// The owner erases what is kept for a project, through the real router
+/// (plan M7b-d): previewed, its name typed, and its folder left alone.
+#[tokio::test]
+async fn a_projects_data_is_erased_and_its_folder_is_left() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("orchard");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("notes.md"), "the owner's notes").unwrap();
+    let core = vak_core::Core::new(folder.clone()).unwrap();
+    let mut log = core.start_session().await.unwrap();
+    log.append_message(vak_session::MessageRecord {
+        message: vak_llm::Message::user_text("plan the orchard walk"),
+        meta: None,
+    })
+    .unwrap();
+    drop(log);
+    let space = vak_config::spaces::bind(&folder).unwrap();
+
+    let (router, token) = vak_server::secured_router(core);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = reqwest::Client::new();
+    let send = |request: reqwest::RequestBuilder| {
+        let token = token.clone();
+        async move {
+            let response = request.bearer_auth(token).send().await.unwrap();
+            let status = response.status().as_u16();
+            (status, response.json::<Value>().await.unwrap_or_default())
+        }
+    };
+    let url = format!("http://{addr}/data/erasure/projects/{space}");
+    assert_eq!(reqwest::get(&url).await.unwrap().status(), 401);
+    let (status, _) =
+        send(client.get(format!("http://{addr}/data/erasure/projects/spc_unknown"))).await;
+    assert_eq!(status, 404);
+
+    let (status, looked) = send(client.get(&url)).await;
+    assert_eq!(status, 200, "{looked}");
+    assert_eq!(looked["confirm"], "orchard");
+    assert_eq!(looked["preview"]["conversations"], 1);
+    let digest = looked["preview"]["digest"].as_str().unwrap();
+    let (status, refused) = send(
+        client
+            .post(&url)
+            .json(&json!({ "digest": digest, "confirm": "yes" })),
+    )
+    .await;
+    assert_eq!(
+        (status, refused["reason"].as_str()),
+        (400, Some("confirmation"))
+    );
+    let (status, done) = send(
+        client
+            .post(&url)
+            .json(&json!({ "digest": digest, "confirm": "orchard" })),
+    )
+    .await;
+    assert_eq!(status, 200, "{done}");
+    assert_eq!(done["receipt"]["scope"], "project");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("notes.md")).unwrap(),
+        "the owner's notes"
+    );
+    let (_, again) = send(client.get(&url)).await;
+    assert_eq!(
+        again["preview"]["conversations"], 0,
+        "what was erased is not offered again: {again}"
+    );
+}

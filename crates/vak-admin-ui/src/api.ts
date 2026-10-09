@@ -401,6 +401,18 @@ export const api = {
   projects: (): Promise<{ projects: Project[] }> =>
     fetch("/admin/api/projects").then((r) => handle(r)),
 
+  /** What erasing everything kept for a project would remove. */
+  projectErasurePreview: (id: string): Promise<{ confirm: string; preview: { digest: string; held: boolean; conversations: number; documents: number; artifacts: number; automations: number; workspace_files: number } }> =>
+    fetch(`/data/erasure/projects/${encodeURIComponent(id)}`).then((r) => handle(r)),
+
+  /** Erases it, with the project's name typed. Its folder is not touched. */
+  eraseProject: (id: string, digest: string, confirm: string): Promise<{ receipt: ErasureReceipt }> =>
+    fetch(`/data/erasure/projects/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ digest, confirm }),
+    }).then((r) => handle(r)),
+
   patchProject: (id: string, patch: { name?: string; hidden?: boolean }): Promise<{ id: string }> =>
     fetch(`/admin/api/projects/${encodeURIComponent(id)}`, {
       method: "PATCH",

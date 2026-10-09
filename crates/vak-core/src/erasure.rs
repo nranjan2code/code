@@ -157,7 +157,15 @@ const AGENT_NOT_REACHED: &[&str] = &[
     "Backups made before this erasure: they still hold the encrypted records until they expire.",
 ];
 
-/// What erasing an Agent's data would destroy.
+const PROJECT_NOT_REACHED: &[&str] = &[
+    "The project's own folder, its files and its settings: Vakyartha never deletes from a folder you own.",
+    "Run, cost and delivery records: they hold ids, times and numbers, with nothing readable of what was said.",
+    "Messages and changes already sent outside Vakyartha: they stay with whoever received them.",
+    "Copies the AI services received when they answered: they are held by those services under their own terms.",
+    "Backups made before this erasure: they still hold the encrypted records until they expire.",
+];
+
+/// What erasing an Agent's data, or a project's, would destroy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AgentPreview {
     pub agent: String,
@@ -166,7 +174,8 @@ pub struct AgentPreview {
     pub conversations: u64,
     /// Its memory notes, entities and other Documents.
     pub documents: u64,
-    /// Drafts it made that nobody kept.
+    /// The files that go: an Agent's drafts nobody kept, or every copy
+    /// kept for a project.
     pub artifacts: u64,
     pub automations: u64,
     /// Files in the workspace Vakyartha keeps for it.
@@ -603,6 +612,10 @@ impl Core {
             }
         }
         conversations.sort();
+        // One already erased has nothing left to erase.
+        conversations.retain(|id| {
+            crate::trash::state(&shared, id).map_or(true, |state| state.erased_at.is_none())
+        });
         let mut scopes = Vec::new();
         for conversation in &conversations {
             for prefix in [
@@ -753,6 +766,22 @@ impl Core {
         if digest.is_some_and(|digest| digest != Self::agent_preview_of(agent, &reach).digest) {
             return Err(ErasureError::StalePreview);
         }
+        self.erase_reach(&reach, "agent", agent, AGENT_NOT_REACHED, cause, actor)
+    }
+
+    /// The part an Agent's and a project's erasure share, once the reach
+    /// is settled: the Documents, automations and folders in the data
+    /// home, then the keys, search and the receipt.
+    fn erase_reach(
+        &self,
+        reach: &AgentReach,
+        scope: &str,
+        subject: &str,
+        not_reached: &[&str],
+        cause: Cause,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Result<Receipt, ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
         let tenant = self.tenant_objects()?;
         let shared = self.shared_scope();
         let mut documents = 0;
@@ -767,13 +796,15 @@ impl Core {
         }
         crate::trash::mark_erased(&shared, &reach.conversations)
             .map_err(|error| failed(error.to_string()))?;
-        let scope = vak_config::scope::AgentScope::new(shared.agents_dir().join(agent));
-        let _ = vak_session::documents::forget(&scope.commitments_rollup());
+        for (_, home) in vak_session_agent_homes(&shared) {
+            let agent = vak_config::scope::AgentScope::new(home);
+            let _ = vak_session::documents::forget(&agent.commitments_rollup());
+        }
         let mut receipt = Receipt {
             id: format!("ers_{}", uuid::Uuid::now_v7()),
             at: Utc::now(),
-            scope: "agent".into(),
-            subject: agent.to_string(),
+            scope: scope.to_string(),
+            subject: subject.to_string(),
             cause,
             actor,
             conversations: reach.conversations.len() as u64,
@@ -784,7 +815,7 @@ impl Core {
             search_rows_removed: 0,
             objects_deleted: 0,
             sent_outside: 0,
-            not_reached: AGENT_NOT_REACHED.iter().map(ToString::to_string).collect(),
+            not_reached: not_reached.iter().map(ToString::to_string).collect(),
             public_key: String::new(),
             signature: String::new(),
         };
@@ -803,6 +834,147 @@ impl Core {
             })
             .count() as u64;
         self.destroy_and_record(&tenant, &reach.scopes, receipt)
+    }
+
+    fn project_reach(&self, space: &str) -> Result<AgentReach, ErasureError> {
+        let failed = |error: String| ErasureError::Failed(error);
+        let known = vak_config::spaces::all()
+            .into_iter()
+            .any(|record| record.id == space);
+        if !known || !space.starts_with("spc_") {
+            return Err(ErasureError::NotFound(space.to_string()));
+        }
+        let shared = self.shared_scope();
+        let tenant = self.tenant_objects()?;
+        // Every Agent's conversations in this project, and every Agent's
+        // Documents kept for it.
+        let mut conversations = Vec::new();
+        let mut documents = Vec::new();
+        for (_, home) in vak_session_agent_homes(&shared) {
+            let agent = vak_config::scope::AgentScope::new(&home);
+            for ledger in std::fs::read_dir(agent.sessions_root().join(space))
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                if let Some(id) = vak_config::scope::ledger_session_id(&ledger.path()) {
+                    conversations.push(id);
+                }
+            }
+            documents.extend(
+                vak_session::documents::under(&home)
+                    .into_iter()
+                    .filter(|path| path.components().any(|part| part.as_os_str() == space)),
+            );
+        }
+        conversations.sort();
+        // One already erased has nothing left to erase.
+        conversations.retain(|id| {
+            crate::trash::state(&shared, id).map_or(true, |state| state.erased_at.is_none())
+        });
+        let mut scopes = Vec::new();
+        for conversation in &conversations {
+            for prefix in [
+                conversation_scope(conversation),
+                contributor_scope(conversation, ""),
+            ] {
+                scopes.extend(
+                    tenant
+                        .scopes_with_prefix(&prefix)
+                        .map_err(|error| failed(error.to_string()))?
+                        .into_iter()
+                        .filter(|found| {
+                            found == &conversation_scope(conversation)
+                                || found.starts_with(&contributor_scope(conversation, ""))
+                        }),
+                );
+            }
+        }
+        // Every file Vakyartha kept a copy of for this project, kept or
+        // not: the project's own folder still has what was accepted.
+        let mut artifacts = Vec::new();
+        for artifact in self.artifacts().list() {
+            if artifact.space == space {
+                scopes.push(crate::artifacts::object_scope(&artifact.id));
+                scopes.extend(
+                    tenant
+                        .scopes_with_prefix(&contributor_scope(&artifact.id.to_string(), ""))
+                        .map_err(|error| failed(error.to_string()))?,
+                );
+                artifacts.push(artifact.id);
+            }
+        }
+        scopes.sort();
+        scopes.dedup();
+        let held = scopes.iter().any(|scope| tenant.scope_held(scope));
+        let triggers = crate::triggers::list(&shared)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|trigger| trigger.space == space)
+            .map(|trigger| trigger.id.to_string())
+            .collect();
+        // What is kept for the project in the data home and the runtime
+        // root: its Agents' workspaces and its executions' scratch files.
+        let tenant_home = vak_config::paths::tenant_home_at(
+            &shared.clone().into_root(),
+            vak_config::paths::LOCAL_TENANT,
+        );
+        let workspaces: Vec<std::path::PathBuf> = [
+            tenant_home.join("workspaces").join(space),
+            vak_config::paths::runtime_dir()
+                .join("executions")
+                .join(space),
+        ]
+        .into_iter()
+        .filter(|dir| dir.is_dir())
+        .collect();
+        let workspace_files = workspaces.iter().map(|dir| files_under(dir)).sum();
+        Ok(AgentReach {
+            conversations,
+            scopes,
+            artifacts,
+            documents,
+            triggers,
+            workspaces,
+            workspace_files,
+            held,
+        })
+    }
+
+    /// What erasing everything kept for the project `space` would destroy.
+    pub fn project_erasure_preview(&self, space: &str) -> Result<AgentPreview, ErasureError> {
+        let _turn = one_at_a_time();
+        Ok(Self::agent_preview_of(space, &self.project_reach(space)?))
+    }
+
+    /// Erases everything Vakyartha stored for one project: every Agent's
+    /// conversations there, what they remember of it, every copy of its
+    /// files in the Library, its automations, and its working folders in
+    /// the data home. The project's own folder, with its settings, is
+    /// never touched, and the project stays known, hidden until it is
+    /// opened again. Refused while anything in reach is on hold, and when
+    /// a confirmation's digest no longer matches.
+    pub fn erase_project(
+        &self,
+        space: &str,
+        digest: Option<&str>,
+        cause: Cause,
+        actor: Option<vak_session::ids::PrincipalId>,
+    ) -> Result<Receipt, ErasureError> {
+        let _turn = one_at_a_time();
+        let failed = |error: String| ErasureError::Failed(error);
+        vak_session::fence::check().map_err(|error| failed(error.to_string()))?;
+        let reach = self.project_reach(space)?;
+        if reach.held {
+            return Err(ErasureError::Held);
+        }
+        if digest.is_some_and(|digest| digest != Self::agent_preview_of(space, &reach).digest) {
+            return Err(ErasureError::StalePreview);
+        }
+        let receipt =
+            self.erase_reach(&reach, "project", space, PROJECT_NOT_REACHED, cause, actor)?;
+        let _ = vak_config::spaces::set_forgotten(space, true);
+        Ok(receipt)
     }
 
     /// Puts an artifact on hold or releases it: while held, its drafts do

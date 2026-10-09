@@ -959,6 +959,10 @@ fn router_with_state(state: AppState) -> Router {
             get(guest_erasure_preview).post(erase_guest),
         )
         .route("/data/erasure/accounts/{account}", post(erase_account))
+        .route(
+            "/data/erasure/projects/{space}",
+            get(project_erasure_preview).post(erase_project),
+        )
         .route("/conversations/{id}/lifecycle", get(conversation_lifecycle))
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/data/integrity", get(data_integrity))
@@ -10574,6 +10578,101 @@ async fn erase_account(
     let core = state.core.clone();
     let erased = tokio::task::spawn_blocking(move || {
         core.erase_account(&account, vak_core::erasure::Cause::Person, Some(actor))
+    })
+    .await;
+    match erased {
+        Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// What the owner knows a project as: the name they gave it, else its
+/// folder's name.
+fn project_name(space: &str) -> String {
+    vak_config::spaces::all()
+        .into_iter()
+        .find(|record| record.id == space)
+        .and_then(|record| {
+            record.name.or_else(|| {
+                record
+                    .folder
+                    .as_deref()
+                    .and_then(std::path::Path::file_name)
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+        })
+        .unwrap_or_else(|| space.to_string())
+}
+
+/// What erasing everything kept for a project would destroy, and the
+/// name to type.
+async fn project_erasure_preview(
+    State(state): State<AppState>,
+    Path(space): Path<String>,
+) -> axum::response::Response {
+    let confirm = project_name(&space);
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.project_erasure_preview(&space)).await {
+        Ok(Ok(preview)) => {
+            Json(serde_json::json!({ "preview": preview, "confirm": confirm })).into_response()
+        }
+        Ok(Err(error)) => erasure_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Erases everything Vakyartha stored for one project, with its name
+/// typed. Its folder is never touched. Refused while work is running in
+/// it.
+async fn erase_project(
+    State(state): State<AppState>,
+    Path(space): Path<String>,
+    Json(body): Json<EraseBody>,
+) -> axum::response::Response {
+    let refuse = |status: StatusCode, error: &str, reason: &str| {
+        (
+            status,
+            Json(serde_json::json!({ "error": error, "reason": reason })),
+        )
+            .into_response()
+    };
+    if body.confirm.trim() != project_name(&space).trim() {
+        return refuse(
+            StatusCode::BAD_REQUEST,
+            "type the project's name to erase what is kept for it",
+            "confirmation",
+        );
+    }
+    let running = state
+        .sessions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .any(|handle| {
+            let live = handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none();
+            live && vak_config::spaces::bound_space(handle.core.cwd()).as_deref() == Some(&space)
+        });
+    if running {
+        return refuse(
+            StatusCode::CONFLICT,
+            "work is running in this project; let it finish or stop it first",
+            "in_use",
+        );
+    }
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    let erased = tokio::task::spawn_blocking(move || {
+        core.erase_project(
+            &space,
+            Some(&body.digest),
+            vak_core::erasure::Cause::Person,
+            Some(actor),
+        )
     })
     .await;
     match erased {
