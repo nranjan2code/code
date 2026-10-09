@@ -13,8 +13,13 @@ RESULTS = []
 
 
 def sh(machine, *cmd, timeout=180, stdin=None):
-    p = subprocess.run(["docker", "exec", "-i", "-w", "/work", f"lab-{machine}", *cmd],
-                       capture_output=True, text=True, timeout=timeout, input=stdin)
+    try:
+        p = subprocess.run(["docker", "exec", "-i", "-w", "/work", f"lab-{machine}", *cmd],
+                           capture_output=True, text=True, timeout=timeout, input=stdin)
+    except subprocess.TimeoutExpired:
+        # A `docker exec` into a container that was just started can hang;
+        # it is a failed probe, not the end of the run.
+        return 124, "timed out"
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
