@@ -156,6 +156,34 @@ impl TenantObjects {
         })
     }
 
+    /// The tenant's keys as its vault holds them, for a key file. The
+    /// tenant must have been opened once, which is what mints them.
+    pub fn key_material(
+        tenant_home: &Path,
+    ) -> Result<vak_storage::keys::KeyMaterial, SessionError> {
+        Self::for_tenant(tenant_home)?;
+        vak_storage::keys::KeyMaterial::read(&CredentialVault(tenant_home.join("keys/vault")))
+            .map_err(objects_error)
+    }
+
+    /// Replaces the tenant's keys with `material`, from another machine's
+    /// key file. A process that already opened the tenant keeps the keys
+    /// it read, so it must stop before anything is written under them.
+    pub fn install_key_material(
+        tenant_home: &Path,
+        material: &vak_storage::keys::KeyMaterial,
+    ) -> Result<(), SessionError> {
+        let keys = tenant_home.join("keys");
+        std::fs::create_dir_all(&keys)?;
+        let lock = File::create(keys.join("LOCK"))?;
+        lock.lock()?;
+        let installed = material
+            .install(&CredentialVault(keys.join("vault")))
+            .map_err(objects_error);
+        let _ = lock.unlock();
+        installed
+    }
+
     /// The key of `scope`, created when the scope has none. A destroyed
     /// scope is never created again.
     pub fn create_scope_key(
@@ -265,6 +293,19 @@ impl TenantObjects {
             unwrapped.clear();
         }
         Ok((version, scopes + grants))
+    }
+
+    /// Every ref of the tenant's store as one portable file
+    /// (`LocalStore::export_refs`).
+    pub fn export_refs(&self) -> Result<Vec<u8>, SessionError> {
+        self.store.export_refs().map_err(objects_error)
+    }
+
+    /// Replaces the store's refs with those of a remote's file. Only a
+    /// pull does this, and it ends by moving the writer epoch.
+    pub fn import_refs(&self, file: &[u8]) -> Result<usize, SessionError> {
+        crate::fence::check()?;
+        self.store.import_refs(file).map_err(objects_error)
     }
 
     /// The tenant key version new keys are wrapped under, and the oldest

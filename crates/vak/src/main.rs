@@ -29,6 +29,7 @@ mod prompts;
 mod question_prompt;
 mod runs;
 mod setup;
+mod sync;
 mod triggers;
 mod update_check;
 
@@ -597,6 +598,7 @@ async fn main() {
         Some(Command::Triggers { action }) => triggers::run_triggers(cwd, action),
         Some(Command::Inbox { action }) => inbox::run_inbox(cwd, action),
         Some(Command::Data { action }) => data::run_data(cwd, action),
+        Some(Command::Sync { action }) => sync::run_sync(cwd, action),
         Some(Command::Runs { action }) => runs::run_runs(cwd, action),
         Some(Command::Effects { action }) => effects::run_effects(cwd, action),
         Some(Command::Plan {

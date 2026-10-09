@@ -53,6 +53,42 @@ impl Core {
         })
     }
 
+    /// The text of a key file: this install's keys sealed under
+    /// `passphrase`. A second machine imports it to read the same data
+    /// from a remote (data-architecture plan M9-b). It is as sensitive as
+    /// the passphrase is weak, and Vakyartha never puts it on a remote.
+    pub fn export_key_file(&self, passphrase: &str) -> Result<String, String> {
+        check_passphrase(passphrase)?;
+        vak_session::objects::TenantObjects::key_material(&self.tenant_home())
+            .and_then(|material| {
+                material
+                    .seal(passphrase)
+                    .map_err(|error| vak_session::SessionError::Objects(error.to_string()))
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    /// Takes another machine's keys from a key file. Refused once this
+    /// install holds anything under its own keys, which it could no
+    /// longer read. The process must stop afterwards.
+    pub fn import_key_file(&self, file: &str, passphrase: &str) -> Result<(), String> {
+        let material = vak_storage::keys::KeyMaterial::open(file, passphrase).map_err(|_| {
+            "the key file could not be opened: the passphrase is wrong or the file is damaged"
+                .to_string()
+        })?;
+        let status = self.key_status()?;
+        if status.keys + status.destroyed > 0 {
+            return Err(
+                "this install already holds data under its own keys; a key file is for a new install"
+                    .into(),
+            );
+        }
+        vak_session::objects::TenantObjects::install_key_material(&self.tenant_home(), &material)
+            .map_err(|error| error.to_string())?;
+        vak_session::fence::retire();
+        Ok(())
+    }
+
     /// Starts a new tenant key and wraps every stored key under it, then
     /// records the rotation. Everything stays readable; what was erased
     /// stays erased. Earlier keys are kept in the credential store, so a
@@ -82,4 +118,16 @@ impl Core {
         );
         Ok(rotation)
     }
+}
+
+/// The shortest passphrase a key file is sealed under.
+pub const MIN_PASSPHRASE: usize = 12;
+
+fn check_passphrase(passphrase: &str) -> Result<(), String> {
+    if passphrase.chars().count() < MIN_PASSPHRASE {
+        return Err(format!(
+            "the passphrase needs at least {MIN_PASSPHRASE} characters"
+        ));
+    }
+    Ok(())
 }

@@ -178,6 +178,59 @@ impl LocalStore {
         })
     }
 
+    /// Every ref as one portable file: a line each of the name in hex, its
+    /// generation, its epoch and its target in hex, sorted by name. What a
+    /// remote holds in place of the refs database (plan M9).
+    pub fn export_refs(&self) -> Result<Vec<u8>> {
+        let mut out = String::new();
+        for name in self.meta.refs.names("")? {
+            if let Some(value) = self.meta.refs.get(&name)? {
+                out.push_str(&format!(
+                    "{} {} {} {}\n",
+                    crate::seal::hex(name.as_bytes()),
+                    value.generation,
+                    value.epoch,
+                    crate::seal::hex(&value.target)
+                ));
+            }
+        }
+        Ok(out.into_bytes())
+    }
+
+    /// Makes this store's refs exactly those of an [`export_refs`] file.
+    /// Returns how many it holds afterwards.
+    pub fn import_refs(&self, file: &[u8]) -> Result<usize> {
+        let bad = || StorageError::Malformed("refs file");
+        let unhex = |hex: &str| -> Result<Vec<u8>> {
+            if !hex.len().is_multiple_of(2) || !hex.is_ascii() {
+                return Err(bad());
+            }
+            (0..hex.len() / 2)
+                .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| bad()))
+                .collect()
+        };
+        let text = std::str::from_utf8(file).map_err(|_| bad())?;
+        let mut rows = Vec::new();
+        for line in text.lines() {
+            let mut parts = line.split(' ');
+            let name =
+                String::from_utf8(unhex(parts.next().ok_or_else(bad)?)?).map_err(|_| bad())?;
+            let generation = parts.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
+            let epoch = parts.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
+            let target = unhex(parts.next().unwrap_or(""))?;
+            rows.push((
+                name,
+                RefValue {
+                    generation,
+                    epoch,
+                    target,
+                },
+            ));
+        }
+        self.meta.refs.replace_all(&rows)?;
+        Ok(rows.len())
+    }
+
     /// Wraps again every object grant not under the current KEK version.
     pub fn rewrap_grants(&self) -> Result<usize> {
         self.objects.rewrap()

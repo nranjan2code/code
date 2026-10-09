@@ -586,10 +586,12 @@ pub(crate) fn run_data(cwd: PathBuf, action: Option<crate::cli::DataAction>) -> 
                 eprintln!("error: that conversation is in the trash or was erased");
                 return 1;
             }
-            let ledger = core
-                .catalog()
-                .ok()
-                .and_then(|catalog| catalog.session_dir(&session).ok().flatten());
+            // No server may have run on this data home: read the records
+            // in before looking the conversation up.
+            let ledger = core.catalog().ok().and_then(|catalog| {
+                let _ = catalog.catch_up();
+                catalog.session_dir(&session).ok().flatten()
+            });
             let Some(ledger) = ledger else {
                 eprintln!("error: no conversation {session}");
                 return 1;

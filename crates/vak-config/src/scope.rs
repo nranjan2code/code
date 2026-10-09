@@ -353,6 +353,12 @@ impl SharedScope {
         self.root.join("erasures")
     }
 
+    /// What this machine knows about its remote copy (plan M9). Machine
+    /// local: never pushed, never backed up.
+    pub fn sync(&self) -> PathBuf {
+        self.root.join("sync")
+    }
+
     /// The record of every rotation of the tenant's key (plan M7b-g).
     pub fn key_rotations(&self) -> PathBuf {
         self.root.join("key-rotations")

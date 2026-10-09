@@ -377,6 +377,13 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: Option<DataAction>,
     },
+    /// Keep a second copy of your data in a folder, so another of your
+    /// machines can take the work over (shows where it stands when given
+    /// no verb)
+    Sync {
+        #[command(subcommand)]
+        action: Option<SyncAction>,
+    },
     /// Run records: every unit of work, whatever caused it (list / show)
     Runs {
         #[command(subcommand)]
@@ -607,6 +614,40 @@ pub(crate) enum SelfAction {
         #[arg(long)]
         dry_run: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum SyncAction {
+    /// Where this machine stands against its remote folder
+    Status,
+    /// Name the folder the copy is kept in (it must exist already)
+    Setup { folder: std::path::PathBuf },
+    /// Bring the remote copy up to date with this machine
+    Now,
+    /// Bring this machine up to the remote copy. Vakyartha must be
+    /// started again afterwards
+    Pull {
+        /// Replace work on this machine that was never pushed
+        #[arg(long)]
+        discard: bool,
+    },
+    /// Stop using the remote folder. Nothing in it is touched
+    Forget,
+    /// The key file a second machine needs to read the remote copy
+    Key {
+        #[command(subcommand)]
+        action: KeyFileAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum KeyFileAction {
+    /// Write this machine's keys to a file, protected by a passphrase
+    /// you choose. Carry it to the other machine yourself
+    Export { file: std::path::PathBuf },
+    /// Take the keys from a key file made on your other machine. Only on
+    /// a new install
+    Import { file: std::path::PathBuf },
 }
 
 #[derive(Subcommand, Debug)]

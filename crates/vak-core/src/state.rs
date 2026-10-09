@@ -436,6 +436,17 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
     },
     StateEntry {
+        // This machine's remote folder, its id and what it last synced.
+        // Derived, so that neither a backup nor a push carries one
+        // machine's identity to another; it is set up again there.
+        path: "sync",
+        root: Root::Data,
+        owner: "vak-core",
+        schema: None,
+        class: Class::Derived,
+        on_purge: OnPurge::Remove,
+    },
+    StateEntry {
         path: "key-rotations",
         root: Root::Data,
         owner: "vak-core",

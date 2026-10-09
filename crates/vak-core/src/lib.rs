@@ -57,6 +57,7 @@ pub mod session_search;
 pub mod skills;
 pub mod social;
 pub mod state;
+pub mod sync;
 pub mod trash;
 
 pub mod gateway_token;

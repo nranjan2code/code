@@ -22,6 +22,10 @@ pub trait RefStore: Send + Sync {
     -> Result<RefValue>;
     /// Names starting with `prefix`, sorted.
     fn names(&self, prefix: &str) -> Result<Vec<String>>;
+    /// Makes the store hold exactly `rows`, generations and epochs as
+    /// given: what a pull from a remote does (plan M9). Not a CAS; the
+    /// caller is the only writer.
+    fn replace_all(&self, rows: &[(String, RefValue)]) -> Result<()>;
 }
 
 fn decide(cur: Option<&RefValue>, expected: Option<u64>, epoch: u64) -> Result<u64> {
@@ -63,6 +67,11 @@ impl MemoryRefStore {
 impl RefStore for MemoryRefStore {
     fn get(&self, name: &str) -> Result<Option<RefValue>> {
         Ok(self.lock()?.get(name).cloned())
+    }
+
+    fn replace_all(&self, rows: &[(String, RefValue)]) -> Result<()> {
+        *self.lock()? = rows.iter().cloned().collect();
+        Ok(())
     }
 
     fn names(&self, prefix: &str) -> Result<Vec<String>> {
@@ -144,6 +153,28 @@ impl RefStore for SqliteRefStore {
             .lock()
             .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
         Self::read(&c, name)
+    }
+
+    fn replace_all(&self, rows: &[(String, RefValue)]) -> Result<()> {
+        let mut c = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::Malformed("ref state poisoned"))?;
+        let tx = c.transaction()?;
+        tx.execute("DELETE FROM refs", [])?;
+        for (name, value) in rows {
+            tx.execute(
+                "INSERT INTO refs(name, generation, epoch, target) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    name,
+                    value.generation as i64,
+                    value.epoch as i64,
+                    value.target
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     fn names(&self, prefix: &str) -> Result<Vec<String>> {

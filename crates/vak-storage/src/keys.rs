@@ -216,6 +216,136 @@ fn decode_key(hex: &str) -> Result<[u8; KEY_LEN]> {
     Ok(out)
 }
 
+const SIGNING_KEY: &str = "receipt-signing-key";
+
+/// Everything a tenant's vault holds, as the vault stores it: what a
+/// second machine needs to read the same data. Never logged, and written
+/// nowhere but a vault or a passphrase-sealed key file.
+#[derive(Clone, PartialEq, Eq)]
+pub struct KeyMaterial {
+    /// Every KEK version, oldest first.
+    pub keks: Vec<String>,
+    pub id_key: String,
+    pub signing_key: String,
+}
+
+impl KeyMaterial {
+    /// What `vault` holds. Fails when any part is missing.
+    pub fn read(vault: &dyn KekVault) -> Result<Self> {
+        let missing = || StorageError::AuthorityUnavailable("the vault is incomplete".into());
+        let current: u32 = vault
+            .get(KEK_CURRENT)
+            .ok_or_else(missing)?
+            .trim()
+            .parse()
+            .map_err(|_| StorageError::Malformed("kek version"))?;
+        Ok(Self {
+            keks: (0..=current)
+                .map(|v| vault.get(&kek_name(v)).ok_or_else(missing))
+                .collect::<Result<_>>()?,
+            id_key: vault.get(ID_KEY).ok_or_else(missing)?,
+            signing_key: vault.get(SIGNING_KEY).ok_or_else(missing)?,
+        })
+    }
+
+    /// Puts this material into `vault`, replacing what it held.
+    pub fn install(&self, vault: &dyn KekVault) -> Result<()> {
+        if self.keks.is_empty() {
+            return Err(StorageError::Malformed("key file"));
+        }
+        for (version, kek) in self.keks.iter().enumerate() {
+            decode_key(kek)?;
+            vault.set(&kek_name(version as u32), kek)?;
+        }
+        decode_key(&self.id_key)?;
+        vault.set(ID_KEY, &self.id_key)?;
+        vault.set(SIGNING_KEY, &self.signing_key)?;
+        vault.set(KEK_CURRENT, &(self.keks.len() - 1).to_string())?;
+        Ok(())
+    }
+
+    fn encode(&self) -> Vec<u8> {
+        let mut lines = vec![self.id_key.clone(), self.signing_key.clone()];
+        lines.extend(self.keks.iter().cloned());
+        lines.join("\n").into_bytes()
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self> {
+        let bad = || StorageError::Malformed("key file");
+        let text = std::str::from_utf8(bytes).map_err(|_| bad())?;
+        let mut lines = text.lines().map(str::to_string);
+        let id_key = lines.next().ok_or_else(bad)?;
+        let signing_key = lines.next().ok_or_else(bad)?;
+        let keks: Vec<String> = lines.collect();
+        if keks.is_empty() {
+            return Err(bad());
+        }
+        Ok(Self {
+            keks,
+            id_key,
+            signing_key,
+        })
+    }
+
+    const MAGIC: &'static str = "vakyartha-key-file-1";
+    const ITERATIONS: u32 = 600_000;
+
+    fn passphrase_key(passphrase: &str, salt: &[u8], iterations: u32) -> Result<[u8; KEY_LEN]> {
+        let iterations =
+            std::num::NonZeroU32::new(iterations).ok_or(StorageError::Malformed("key file"))?;
+        let mut key = [0u8; KEY_LEN];
+        ring::pbkdf2::derive(
+            ring::pbkdf2::PBKDF2_HMAC_SHA256,
+            iterations,
+            salt,
+            passphrase.as_bytes(),
+            &mut key,
+        );
+        Ok(key)
+    }
+
+    /// This material sealed under `passphrase` (PBKDF2-HMAC-SHA256, then
+    /// the store's AEAD), as the text of a key file.
+    pub fn seal(&self, passphrase: &str) -> Result<String> {
+        let salt: [u8; 16] = seal::random()?;
+        let key = Self::passphrase_key(passphrase, &salt, Self::ITERATIONS)?;
+        let sealed = seal::seal(&key, Self::MAGIC.as_bytes(), &self.encode())?;
+        Ok(format!(
+            "{}\n{}\n{}\n{}\n",
+            Self::MAGIC,
+            Self::ITERATIONS,
+            seal::hex(&salt),
+            seal::hex(&sealed)
+        ))
+    }
+
+    /// Opens a key file. A wrong passphrase and a damaged file read the
+    /// same: `Crypto`.
+    pub fn open(file: &str, passphrase: &str) -> Result<Self> {
+        let bad = || StorageError::Malformed("key file");
+        let unhex = |hex: &str| -> Result<Vec<u8>> {
+            if !hex.len().is_multiple_of(2) || !hex.is_ascii() {
+                return Err(bad());
+            }
+            (0..hex.len() / 2)
+                .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| bad()))
+                .collect()
+        };
+        let mut lines = file.lines();
+        if lines.next() != Some(Self::MAGIC) {
+            return Err(bad());
+        }
+        let iterations: u32 = lines.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
+        if !(100_000..=10_000_000).contains(&iterations) {
+            return Err(bad());
+        }
+        let salt = unhex(lines.next().ok_or_else(bad)?)?;
+        let sealed = unhex(lines.next().ok_or_else(bad)?)?;
+        let key = Self::passphrase_key(passphrase, &salt, iterations)?;
+        Self::decode(&seal::open(&key, Self::MAGIC.as_bytes(), &sealed)?)
+    }
+}
+
 /// The tenant KEKs held in a `KekVault`, with revocations recorded in a
 /// file beside the data. Opening creates version 0 when the vault holds
 /// none; the caller serialises opens of one tenant (a file lock), so two
@@ -288,7 +418,7 @@ impl VaultKeyAuthority {
     /// vault on first use: what signs an erasure receipt, so one can be
     /// checked with the public key alone (plan M7a-e).
     pub fn signing_key(&self) -> Result<Vec<u8>> {
-        const NAME: &str = "receipt-signing-key";
+        const NAME: &str = SIGNING_KEY;
         let unhex = |hex: &str| -> Result<Vec<u8>> {
             let hex = hex.trim();
             if !hex.len().is_multiple_of(2) || !hex.is_ascii() {
@@ -452,5 +582,31 @@ mod tests {
         assert_eq!(b.id_key().unwrap().id(b"x"), id);
         assert!(matches!(b.unwrap(&gone), Err(StorageError::Revoked(_))));
         b.health().unwrap();
+    }
+
+    #[test]
+    fn a_key_file_opens_only_with_its_passphrase() {
+        let vault = std::sync::Arc::new(MapVault(Mutex::new(Default::default())));
+        let dir = tempfile::tempdir().unwrap();
+        let a =
+            VaultKeyAuthority::open(Box::new(vault.clone()), &dir.path().join("revoked")).unwrap();
+        a.id_key().unwrap();
+        a.signing_key().unwrap();
+        a.rotate().unwrap();
+        let (key, wrapped) = new_scope_key(&a, "conv").unwrap();
+        let material = KeyMaterial::read(&vault).unwrap();
+        assert_eq!(material.keks.len(), 2);
+        let file = material.seal("correct horse battery").unwrap();
+        assert!(!file.contains(&material.keks[0]) && !file.contains(&material.id_key));
+        assert!(KeyMaterial::open(&file, "wrong horse battery").is_err());
+        assert!(KeyMaterial::open(&file.replace("a", "b"), "correct horse battery").is_err());
+        let opened = KeyMaterial::open(&file, "correct horse battery").unwrap();
+        assert!(opened == material);
+
+        // Installed in another vault, it unwraps what the first wrapped.
+        let other = std::sync::Arc::new(MapVault(Mutex::new(Default::default())));
+        opened.install(&other).unwrap();
+        let b = VaultKeyAuthority::open(Box::new(other), &dir.path().join("revoked-b")).unwrap();
+        assert_eq!(b.unwrap(&wrapped).unwrap(), key.to_vec());
     }
 }

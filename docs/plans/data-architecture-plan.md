@@ -2912,6 +2912,49 @@ Not built, by decisions 1 and 2: `S3Remote`, Postgres refs, region
 pinning, key escrow and release, handing over one live conversation while
 others keep running, and merging.
 
+**M9-a and M9-b, done 2026-10-09: the folder remote and the key file.**
+They ship together, because the round trip needs a second machine that
+holds the keys.
+- `vak_core::sync`: `Core::sync_setup(folder)` names the remote and mints
+  this machine's id; `sync_push` adds each new or changed file to the
+  remote under its SHA-256 (`blobs/`, never changing one that is there),
+  then replaces `index.json` (each path's size and digest, the push
+  generation, the store's writer epoch, the machine), which is what makes
+  the push count, and only then removes what the new index no longer
+  names, so a push stopped at any point leaves a whole copy; `sync_pull`
+  checks every file
+  against the index before it changes anything, refuses to replace work
+  that was never pushed unless told to discard it, and ends as a restore
+  does (`Core::settle_imported`: erasures applied again, search rebuilt,
+  the writer epoch moved), so the processes on that home start again;
+  `sync_status` counts what changed here since the last sync.
+- The remote holds the registry's backup targets under the data home,
+  less locks, scratch and `credential_index.json`. The refs database
+  never travels as a file: `LocalStore::export_refs` writes every ref to
+  a portable file and `import_refs` replaces them in one transaction
+  (`RefStore::replace_all`).
+- What this machine knows about its remote is `sync/local.json`, class
+  Derived, so neither a backup nor a push carries one machine's identity
+  to another.
+- The key file: `KeyMaterial` (every tenant key version, the object id
+  key and the receipt-signing key) sealed under a passphrase of at least
+  12 characters with PBKDF2-HMAC-SHA256 (600,000 rounds) and the store's
+  AEAD. `Core::export_key_file`, and `Core::import_key_file`, which is
+  refused once an install holds data under its own keys. Vakyartha never
+  writes it to the remote.
+- `vak sync` (status), `setup <folder>`, `now`, `pull [--discard]`,
+  `forget`, `key export|import <file>`. The passphrase is typed, or read
+  from `VAK_KEY_PASSPHRASE` for a script.
+- Found on the way: `vak data cat` found no conversation on a data home
+  no server had run on; it now reads the records in first.
+- Tests: `push_pull_roundtrip_identical_derive_messages` drives two
+  homes with the `vak` binary (nothing readable and no secret in the
+  remote; a second push copies nothing; a machine without the key file
+  reads nothing; with it both conversations read the same on both; a
+  remote file changed by one byte is refused whole; what an unfinished
+  push left is ignored by a pull and cleared by the next push), and
+  `a_key_file_opens_only_with_its_passphrase`.
+
 ## 5. AGENTS.md and design-doc changes
 
 | When | Change |

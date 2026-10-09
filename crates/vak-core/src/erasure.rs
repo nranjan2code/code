@@ -298,12 +298,17 @@ struct Reach {
 }
 
 impl Core {
-    pub(crate) fn tenant_objects(&self) -> Result<std::sync::Arc<TenantObjects>, ErasureError> {
-        TenantObjects::for_tenant(&vak_config::paths::tenant_home_at(
+    /// The local tenant's tree under this Core's data home.
+    pub(crate) fn tenant_home(&self) -> std::path::PathBuf {
+        vak_config::paths::tenant_home_at(
             &self.inner.sessions_home,
             vak_config::paths::LOCAL_TENANT,
-        ))
-        .map_err(|error| ErasureError::Failed(error.to_string()))
+        )
+    }
+
+    pub(crate) fn tenant_objects(&self) -> Result<std::sync::Arc<TenantObjects>, ErasureError> {
+        TenantObjects::for_tenant(&self.tenant_home())
+            .map_err(|error| ErasureError::Failed(error.to_string()))
     }
 
     /// The receipts of every erasure, oldest first: what an erasure of

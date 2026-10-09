@@ -311,6 +311,41 @@ impl crate::Core {
         })
     }
 
+    /// What every import of another copy's files ends with, a restore and
+    /// a pull alike: every key the copy brought back for a destroyed scope
+    /// is destroyed again, each erased conversation is marked erased, the
+    /// rollups and search are rebuilt from the records, what no key holds
+    /// is deleted, and the writer epoch moves, which fences this process.
+    /// Returns the keys removed, the objects deleted and the new epoch.
+    pub(crate) fn settle_imported(&self) -> Result<(usize, usize, u64), String> {
+        let tenant = self.local_tenant().map_err(|error| error.to_string())?;
+        let keys_removed = tenant
+            .reapply_destroyed_keys()
+            .map_err(|error| error.to_string())?;
+        let shared = self.shared_scope();
+        let erased: Vec<String> = self
+            .erasure_receipts()
+            .into_iter()
+            .filter(|receipt| receipt.scope == "conversation")
+            .map(|receipt| receipt.subject)
+            .collect();
+        crate::trash::mark_erased(&shared, &erased).map_err(|error| error.to_string())?;
+        let _ = vak_session::documents::forget(&shared.artifacts_rollup());
+        self.catalog()
+            .map_err(|error| error.to_string())?
+            .rebuild_after_erasure()
+            .map_err(|error| error.to_string())?;
+        let objects_deleted = {
+            use vak_session::objects::Objects;
+            tenant.collect().unwrap_or(0)
+        };
+        let writer_epoch = tenant
+            .store()
+            .restore()
+            .map_err(|error| error.to_string())?;
+        Ok((keys_removed, objects_deleted, writer_epoch))
+    }
+
     /// Backs the data home up into `dest_dir`: the records and objects as
     /// they are stored, which is encrypted, the wrapped keys, and a
     /// manifest that says where the store stood (its writer epoch and ref
@@ -379,31 +414,8 @@ impl crate::Core {
         let preview = self.restore_preview(src_dir)?;
         let home = self.shared_scope().into_root();
         let imported = import_from(src_dir, &home, conflict)?;
-        let tenant = self.local_tenant()?;
-        let keys_removed = tenant
-            .reapply_destroyed_keys()
-            .map_err(|error| failed(error.to_string()))?;
-        let shared = self.shared_scope();
-        let erased: Vec<String> = self
-            .erasure_receipts()
-            .into_iter()
-            .filter(|receipt| receipt.scope == "conversation")
-            .map(|receipt| receipt.subject)
-            .collect();
-        crate::trash::mark_erased(&shared, &erased).map_err(|error| failed(error.to_string()))?;
-        let _ = vak_session::documents::forget(&shared.artifacts_rollup());
-        self.catalog()
-            .map_err(|error| failed(error.to_string()))?
-            .rebuild_after_erasure()
-            .map_err(|error| failed(error.to_string()))?;
-        let objects_deleted = {
-            use vak_session::objects::Objects;
-            tenant.collect().unwrap_or(0)
-        };
-        let writer_epoch = tenant
-            .store()
-            .restore()
-            .map_err(|error| failed(error.to_string()))?;
+        let (keys_removed, objects_deleted, writer_epoch) =
+            self.settle_imported().map_err(failed)?;
         tracing::info!(
             kind = "backup",
             outcome = "restored",
