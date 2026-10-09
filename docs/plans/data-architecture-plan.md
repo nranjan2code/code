@@ -3097,3 +3097,38 @@ the new purge removes the owned roots wholesale. Data on a 6.x host,
 including the maintainer's EC2 host, does not cross the baseline: download
 what you want to keep as ordinary files (transcripts, documents) before
 upgrading it, because no 6.x backup restores into 7.0.
+
+## 9. Open items after the plan
+
+The working tracker was deleted when the plan closed (2026-10-09); its
+step rows are in git history and each milestone's section above. What it
+still carried, checked against the code on 2026-10-09:
+
+- **Held effects are never released.** An effect prepared with a `hold`
+  (a digest or until-complete packet) has status `Held`, and no
+  `EffectStep` moves it on: there is no release and no flush.
+- **A deleted trigger's claim ref stays.** `trg/<id>/claim` is left
+  behind because refs have no delete. The lifecycle reconciler should
+  remove it once refs can be deleted.
+- **The mail vault keeps its own routine run history**
+  (`list_routine_runs` in `vak-mail-calendar`'s vault), beside the run
+  records. It was justified at M4.7b because it binds a run to an account
+  and is removed on disconnect; run records can now be erased (M7a), so it
+  can fold into them.
+- **Write-path growth on a used 7.0 home** has not been remeasured (§M3b;
+  `docs/architecture/write-paths-and-growth.html` is still the v3.5.1
+  measurement).
+- **The Workspace data class has no backup policy.**
+- **The stop guard's "Please continue." was seen echoed back** in a
+  model's answer. Not investigated: the open question is what in the
+  guard's control message (`vak-agent` `stop_policy.rs`, the
+  `[stop-guard]` text) invites the copy and whether `clean_scaffolding`
+  reaches the place it showed up.
+
+Closed since the tracker listed it: a copy environment orphaned by a
+crash is now aged from its last write and removed by the reconciler
+(`environment_items` in `vak_core::lifecycle`, M7a-d).
+
+The handover for the session after the plan
+(`docs/plans/handover-2026-10-09.md`) lists the product limits and the
+checks not yet run in a browser or live.
