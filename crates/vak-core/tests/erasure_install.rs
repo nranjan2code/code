@@ -110,7 +110,19 @@ async fn install_erasure_leaves_a_receipt_and_nothing_else() {
         "the owner's own file"
     );
 
-    // A fresh start reads the home as new, and still shows the receipt.
+    // What the process writes before it stops is cleared too, and an
+    // earlier receipt is never among what is removed.
+    std::fs::create_dir_all(data.join("tenants/stray")).unwrap();
+    std::fs::write(data.join("tenants/stray/cache.db"), "x").unwrap();
+    std::fs::write(data.join(".credential_key"), "x").unwrap();
+    core.sweep_erased_install();
+    let left: Vec<_> = files_under(&data)
+        .into_iter()
+        .filter(|file| !file.starts_with(&shared))
+        .collect();
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert!(std::fs::read_to_string(shared.join("kept.md")).is_ok());
+
     assert!(vak_core::baseline::check_data_home(&data).is_ok());
     assert_eq!(core.erasure_receipts(), vec![receipt]);
 }

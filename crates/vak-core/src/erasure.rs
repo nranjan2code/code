@@ -1621,22 +1621,11 @@ impl Core {
                 .map_err(|error| failed(error.to_string()))?;
         }
         vak_config::credentials::forget_all();
-        let keep = vak_config::paths::default_workspace();
-        let mut roots = vec![self.shared_root()];
-        for root in crate::state::Root::ALL {
-            let path = crate::state::root_path(root);
-            if root.is_owned() && !roots.contains(&path) {
-                roots.push(path);
-            }
-        }
         let mut not_reached: Vec<String> = INSTALL_NOT_REACHED
             .iter()
             .map(|line| line.to_string())
             .collect();
-        let left = roots
-            .iter()
-            .filter(|root| crate::state::remove_wholesale(root, &keep).is_err())
-            .count();
+        let left = self.clear_install();
         if left > 0 {
             not_reached.push(format!(
                 "Files in {left} of Vakyartha's own directories could not be removed. Their keys are destroyed, so nothing in them can be read."
@@ -1670,7 +1659,61 @@ impl Core {
             serde_json::to_vec_pretty(&receipt).map_err(|error| failed(error.to_string()))?;
         std::fs::write(kept.join(format!("{}.json", receipt.id)), bytes)
             .map_err(|error| failed(error.to_string()))?;
+        vak_session::fence::retire();
         Ok(receipt)
+    }
+
+    /// Empties every directory Vakyartha owns, keeping the receipts of
+    /// install erasures and any folder a person owns that lies inside one
+    /// (the Vakyartha folder under a `VAK_HOME` override). Returns how many
+    /// of the directories still hold something it could not remove.
+    fn clear_install(&self) -> usize {
+        let keep = vak_config::paths::default_workspace();
+        let data = self.shared_root();
+        let receipts = self.shared_scope().install_receipts();
+        let mut roots = vec![data.clone()];
+        for root in crate::state::Root::ALL {
+            let path = crate::state::root_path(root);
+            if root.is_owned() && !roots.contains(&path) {
+                roots.push(path);
+            }
+        }
+        let mut left = 0;
+        for root in roots {
+            if root != data {
+                if !root.starts_with(&data) && crate::state::remove_wholesale(&root, &keep).is_err()
+                {
+                    left += 1;
+                }
+                continue;
+            }
+            let mut failed = false;
+            for child in std::fs::read_dir(&root).into_iter().flatten().flatten() {
+                let path = child.path();
+                if path == receipts {
+                    continue;
+                }
+                let removed = if path.is_dir() && !path.is_symlink() {
+                    crate::state::remove_wholesale(&path, &keep)
+                } else if keep.starts_with(&path) {
+                    Ok(())
+                } else {
+                    std::fs::remove_file(&path)
+                };
+                failed |= removed.is_err();
+            }
+            left += usize::from(failed);
+        }
+        left
+    }
+
+    /// Clears again what a process wrote between an erasure of the whole
+    /// install and its stop (a cache file, a lock). Only for the process
+    /// that ran `erase_install`, as the last thing before it exits.
+    pub fn sweep_erased_install(&self) {
+        if vak_session::fence::is_fenced() {
+            self.clear_install();
+        }
     }
 
     /// The receipts earlier erasures of the whole install left, oldest

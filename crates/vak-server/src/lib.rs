@@ -457,6 +457,71 @@ impl AppState {
 
     /// Drops a session's live handle, so a trashed session is not served
     /// from memory after it leaves every list.
+    /// Whether a turn is running in `id`: its runner holds the log.
+    fn is_running(&self, id: &str) -> bool {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(id)
+            .is_some_and(|handle| {
+                handle
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_none()
+            })
+    }
+
+    /// Whether a turn is running in any conversation.
+    fn any_running(&self) -> bool {
+        let ids: Vec<String> = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect();
+        ids.iter().any(|id| self.is_running(id))
+    }
+
+    /// Drops every idle live handle, so each conversation is read again
+    /// from its records the next time it is used. An erasure that removes
+    /// part of conversations that stay ends with this: a handle holds its
+    /// conversation as it read it, erased parts included.
+    fn reopen_idle_sessions(&self) {
+        let mut sessions = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        sessions.retain(|_, handle| {
+            handle
+                .session
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        });
+    }
+
+    /// Drops the live handle of every conversation that is now hidden
+    /// (erased, or in the trash). An erasure that takes conversations ends
+    /// with this: a handle holds its conversation readable in memory, so
+    /// one left open would go on serving what was erased.
+    fn forget_hidden_sessions(&self) {
+        let shared = self.core.shared_scope();
+        let hidden: Vec<String> = self
+            .sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .filter(|id| vak_core::trash::is_trashed(&shared, id))
+            .cloned()
+            .collect();
+        for id in hidden {
+            self.forget_session(&id);
+            self.core.forget_spend_gate(&id);
+        }
+    }
+
     fn forget_session(&self, id: &str) {
         self.sessions
             .lock()
@@ -10586,6 +10651,10 @@ async fn erase_guest(
     if !find_session_in_cwd(&state.core, &id) {
         return StatusCode::NOT_FOUND.into_response();
     }
+    if state.is_running(&id) {
+        return erasure_in_use();
+    }
+    let open = id.clone();
     let actor = request_actor(&state);
     let core = state.core.clone();
     let erased = tokio::task::spawn_blocking(move || {
@@ -10599,10 +10668,26 @@ async fn erase_guest(
     })
     .await;
     match erased {
-        Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Ok(receipt)) => {
+            state.forget_session(&open);
+            Json(serde_json::json!({ "receipt": receipt })).into_response()
+        }
         Ok(Err(error)) => erasure_refused(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+/// A turn holds its conversation as it read it, so what an erasure takes
+/// from a conversation would still be in front of the model.
+fn erasure_in_use() -> axum::response::Response {
+    (
+        StatusCode::CONFLICT,
+        Json(serde_json::json!({
+            "error": "work is running; let it finish or stop it first",
+            "reason": "in_use",
+        })),
+    )
+        .into_response()
 }
 
 /// Erases what a disconnected mail or calendar account returned, from
@@ -10611,6 +10696,9 @@ async fn erase_account(
     State(state): State<AppState>,
     Path(account): Path<String>,
 ) -> axum::response::Response {
+    if state.any_running() {
+        return erasure_in_use();
+    }
     let actor = request_actor(&state);
     let core = state.core.clone();
     let erased = tokio::task::spawn_blocking(move || {
@@ -10618,7 +10706,10 @@ async fn erase_account(
     })
     .await;
     match erased {
-        Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Ok(receipt)) => {
+            state.reopen_idle_sessions();
+            Json(serde_json::json!({ "receipt": receipt })).into_response()
+        }
         Ok(Err(error)) => erasure_refused(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -10722,6 +10813,7 @@ async fn erase_person(
     .await;
     match erased {
         Ok(Ok((preview, receipt))) => {
+            state.forget_hidden_sessions();
             // The chats that were theirs alone leave the allowlist and
             // their binding; a shared chat stays, for the others in it.
             for (key, principal) in &chats {
@@ -10778,24 +10870,8 @@ async fn erase_install(
             "confirmation",
         );
     }
-    let running = state
-        .sessions
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .values()
-        .any(|handle| {
-            handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_none()
-        });
-    if running {
-        return refuse(
-            StatusCode::CONFLICT,
-            "work is running; let it finish or stop it first",
-            "in_use",
-        );
+    if state.any_running() {
+        return erasure_in_use();
     }
     let actor = request_actor(&state);
     let core = state.core.clone();
@@ -10809,12 +10885,19 @@ async fn erase_install(
     .await;
     match erased {
         Ok(Ok(receipt)) => {
-            tokio::spawn(async {
+            let core = state.core.clone();
+            tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                core.sweep_erased_install();
                 std::process::exit(0);
             });
             Json(serde_json::json!({ "receipt": receipt, "stopping": true })).into_response()
         }
+        Ok(Err(vak_core::erasure::ErasureError::Held)) => refuse(
+            StatusCode::CONFLICT,
+            "something is on hold; release every hold first",
+            "held",
+        ),
         Ok(Err(error)) => erasure_refused(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -10909,7 +10992,10 @@ async fn erase_project(
     })
     .await;
     match erased {
-        Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Ok(receipt)) => {
+            state.forget_hidden_sessions();
+            Json(serde_json::json!({ "receipt": receipt })).into_response()
+        }
         Ok(Err(error)) => erasure_refused(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -15612,7 +15698,10 @@ async fn erase_agent(
     })
     .await;
     match erased {
-        Ok(Ok(receipt)) => Json(serde_json::json!({ "receipt": receipt })).into_response(),
+        Ok(Ok(receipt)) => {
+            state.forget_hidden_sessions();
+            Json(serde_json::json!({ "receipt": receipt })).into_response()
+        }
         Ok(Err(error)) => erasure_refused(&error),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }

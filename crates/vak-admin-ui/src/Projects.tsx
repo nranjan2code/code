@@ -43,7 +43,7 @@ export default function Projects() {
         return;
       }
       const typed = window.prompt(
-        `Erase everything Vakyartha keeps for “${confirm}”? ${preview.conversations} conversations, ${preview.documents} things remembered, ${preview.artifacts} files in the Library, ${preview.automations} automations and ${preview.workspace_files} working files are erased for good. The project's own folder is not touched. Type the project's name to go on.`,
+        `Erase everything Vakyartha keeps for “${confirm}”? ${preview.conversations} ${preview.conversations === 1 ? "conversation" : "conversations"}, ${preview.documents} things remembered, ${preview.artifacts} files in the Library, ${preview.automations} automations and ${preview.workspace_files} working files are erased for good. The project's own folder is not touched. Type the project's name to go on.`,
       );
       if (typed === null) return;
       if (typed.trim() !== confirm.trim()) {

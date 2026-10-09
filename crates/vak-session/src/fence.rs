@@ -44,6 +44,13 @@ pub fn check() -> Result<(), SessionError> {
     Ok(())
 }
 
+/// Fences this process for good, whatever the epochs say: the store it
+/// held was erased under it (data-architecture plan M7b-f), so nothing it
+/// would write has anywhere to go. It must stop.
+pub fn retire() {
+    let _ = FENCED.get_or_init(|| (0, 0));
+}
+
 /// Whether this process is fenced. An error reading an epoch is not an
 /// answer, so it reads as not fenced here; every write path calls
 /// [`check`] and fails on it.

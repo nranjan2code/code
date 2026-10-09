@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-i (2026-10-08: integrity, the soak, the acceptance run, and retention on by default), so M7a is done; M7a-h (2026-10-08: a restore applies every recorded erasure again and moves the writer epoch), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-i (2026-10-08: integrity, the soak, the acceptance run, and retention on by default), so M7a is done; M7a-h (2026-10-08: a restore applies every recorded erasure again and moves the writer epoch), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). M7a is done (2026-10-08) and M7b is done (2026-10-09, trimmed to one owner; acceptance in `docs/audits/acceptance-m7b-governance-2026-10-09.md`); only M9 remains. Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -2442,6 +2442,22 @@ Telegram, Discord, Slack or a webhook, never another user of Vakyartha.
   the real router. Seen in a browser in a throwaway home: the Keys
   screen and a rotation, the Your data page, Change the key, and Erase
   everything from it after two rotations (the receipt still signed).
+
+**M7b-h, done 2026-10-09: the acceptance run**, recorded in
+`docs/audits/acceptance-m7b-governance-2026-10-09.md`. With it M7b is
+done. It found four defects, each fixed with a test:
+- A conversation the server had open was still served after its Agent's,
+  project's or sender's data was erased; those erasures now drop the
+  handle of every hidden conversation.
+- An open conversation kept showing a guest's words or an account's data
+  after their erasure; the handles are dropped so each is read again, and
+  both erasures are refused while a turn that could hold the data runs.
+- Background work wrote files in the two seconds between erasing
+  everything and the stop; the process is fenced when the erasure ends
+  (`vak_session::fence::retire`) and clears again before it exits
+  (`Core::sweep_erased_install`).
+- A second erasure of everything removed the first one's receipt; the
+  receipts directory is never cleared.
 
 ### M8 — Artifacts, sharing, information architecture (L, after M6, beside M7a/M7b)
 

@@ -412,4 +412,23 @@ async fn revoke_cuts_endpoints_within_one_tick() {
     assert_eq!(status, StatusCode::OK, "{done}");
     assert_eq!(done["receipt"]["scope"], "agent");
     assert_eq!(done["receipt"]["conversations"], 1);
+
+    // The server had that conversation open. It no longer serves it, and
+    // the other Agent's is untouched.
+    let (status, gone) = call(
+        &app,
+        "GET",
+        &format!("/sessions/{newsy}/transcript"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{gone}");
+    let (status, _) = call(
+        &app,
+        "GET",
+        &format!("/sessions/{other}/transcript"),
+        json!({}),
+    )
+    .await;
+    assert_ne!(status, StatusCode::NOT_FOUND);
 }

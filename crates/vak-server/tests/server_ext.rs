@@ -2694,6 +2694,18 @@ async fn a_guests_contributions_are_erased_and_the_conversation_stays() {
     let erasure = format!("{base}/conversations/{id}/guests/guest:asha/erasure");
     assert_eq!(reqwest::get(&erasure).await.unwrap().status(), 401);
 
+    // The server has the conversation open, as it does for one in use.
+    let (status, _) = send(
+        client
+            .post(format!("{base}/sessions/{id}/attach"))
+            .json(&serde_json::json!({ "session_id": id })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let transcript = format!("{base}/sessions/{id}/transcript");
+    let (_, before) = send(client.get(&transcript)).await;
+    assert!(before.to_string().contains("lanterns"), "{before}");
+
     let (status, listed) = send(client.get(format!("{base}/conversations/{id}/guests"))).await;
     assert_eq!(status, 200, "{listed}");
     assert_eq!(listed["guests"][0]["principal"], "guest:asha");
@@ -2724,6 +2736,11 @@ async fn a_guests_contributions_are_erased_and_the_conversation_stays() {
     // The conversation is still there and is not in the trash.
     let (status, life) = send(client.get(format!("{base}/conversations/{id}/lifecycle"))).await;
     assert_eq!((status, life["trashed_at"].is_null()), (200, true));
+    // The open conversation no longer shows what the guest wrote.
+    let (status, after) = send(client.get(&transcript)).await;
+    assert_eq!(status, 200, "{after}");
+    assert!(after.to_string().contains("harvest supper"), "{after}");
+    assert!(!after.to_string().contains("lanterns"), "{after}");
 
     let (status, refused) =
         send(client.post(format!("{base}/data/erasure/accounts/acct-unknown"))).await;
