@@ -389,6 +389,10 @@ pub enum CoreError {
         "storage is full: {used_mb} MB kept of a {limit_mb} MB limit. Nothing was removed. Free space by deleting conversations or files you no longer need, or raise [lifecycle] quota_gb, then try again"
     )]
     OverQuota { used_mb: u64, limit_mb: u64 },
+    #[error(
+        "your other machine holds the work, and this one is standing by. Take over here (Settings, Your data, or `vak sync takeover`) to work on this machine"
+    )]
+    StandingBy,
 }
 
 /// Stats reported by a successful manual compaction.
@@ -6677,6 +6681,7 @@ impl Core {
         let admitted_agent = session.header().and_then(|header| header.agent.clone());
         self.refuse_inactive_agent(admitted_agent.as_ref())?;
         self.refuse_over_quota()?;
+        self.refuse_standing_by()?;
         self.agent_identity = admitted_agent.map(|admitted| self.live_agent_identity(admitted));
         // The approver that will actually serve this run is the authority on
         // whether its gates reach anyone. Whatever the host stamped earlier

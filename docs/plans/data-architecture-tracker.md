@@ -107,13 +107,13 @@ Known slow tests (each over 60 s, not failures):
 | 15d-c-d | M8.4c-d `SharedConversation` reads through the artifact routes under the conversation grant | `conversation_grant_reaches_its_artifacts_until_broken` | Done (2026-10-08) |
 | 15d-c-e | M8.4c-e navigation reconciliation, admin and client | browser check | Done (2026-10-08) |
 | 15d-c-f | M8.4c-f acceptance run create → review → promote → share → comment → revise (gpt-6-luna, then create and review on Ollama) | `docs/audits/` record | Done (2026-10-08), `docs/audits/acceptance-m8-library-2026-10-08.md`; M8 done |
-| 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | In progress (design agreed 2026-10-09, plan §M9 "M9 design": a folder remote, two machines taking turns) |
+| 16 | M9 cloud remote (last) | `push_pull_roundtrip_identical_derive_messages`, `handoff_at_turn_boundary`, `lease_prevents_dual_writer`, `erasure_propagates_and_cannot_resurrect`, `sync_survives_network_loss` | **Done 2026-10-09** (design: plan §M9 "M9 design", a folder remote, two machines taking turns) |
 | 16a | M9-a the folder remote: index, push, pull, `vak sync` | `push_pull_roundtrip_identical_derive_messages` | **Done 2026-10-09** (`vak_core::sync`, `LocalStore::export_refs`/`import_refs`, `vak sync setup|now|pull|status|forget`) |
 | 16b | M9-b the key file under a passphrase | `key_file_opens_the_remote_on_another_machine` | **Done 2026-10-09** (`KeyMaterial`, `Core::export_key_file`/`import_key_file`, `vak sync key`; covered by the round-trip test and `a_key_file_opens_only_with_its_passphrase`) |
-| 16c | M9-c the lease: standing by, handing over, taking over | `handoff_at_turn_boundary`, `lease_prevents_dual_writer` | |
-| 16d | M9-d erasures, holds and receipts travel both ways | `erasure_propagates_and_cannot_resurrect` | |
-| 16e | M9-e automatic push with retry; `/sync`; admin Sync; client line | `sync_survives_network_loss` | |
-| 16f | M9-f docs 56 and 31, the acceptance run | the run | |
+| 16c | M9-c the lease: standing by, handing over, taking over | `handoff_at_turn_boundary`, `lease_prevents_dual_writer` | **Done 2026-10-09** (`lease.json`, `sync::Role`, `Core::sync_handover`/`sync_takeover`, `CoreError::StandingBy`) |
+| 16d | M9-d erasures, holds and receipts travel both ways | `erasure_propagates_and_cannot_resurrect` | **Done 2026-10-09** (a pull removes dropped keys and applies recorded erasures again; a stale machine cannot push) |
+| 16e | M9-e automatic push with retry; `/sync`; admin Sync; client line | `sync_survives_network_loss` | **Done 2026-10-09** (`Core::sync_auto`, `/sync` routes, admin Data › Second copy, the client's Your data line; both screens seen in a browser) |
+| 16f | M9-f docs 56 and 31, the acceptance run | the run | **Done 2026-10-09** (`docs/audits/acceptance-m9-remote-2026-10-09.md`: `scripts/sync-lab`, 45 of 45 checks, nine defects fixed) |
 
 Some large steps may need more than one commit, as M3b did. Add sub-rows
 when you split one, and finish every part before you mark it done.

@@ -197,9 +197,12 @@ impl LocalStore {
         Ok(out.into_bytes())
     }
 
-    /// Makes this store's refs exactly those of an [`export_refs`] file.
-    /// Returns how many it holds afterwards.
-    pub fn import_refs(&self, file: &[u8]) -> Result<usize> {
+    /// Makes this store's refs those of an [`export_refs`] file, keeping
+    /// this store's own writer epoch: each ref is stamped with an epoch
+    /// no newer than it, so the process that imports can still finish
+    /// what the import needs. Returns the epoch the file's store had; the
+    /// caller ends by moving this store's epoch past it.
+    pub fn import_refs(&self, file: &[u8]) -> Result<u64> {
         let bad = || StorageError::Malformed("refs file");
         let unhex = |hex: &str| -> Result<Vec<u8>> {
             if !hex.len().is_multiple_of(2) || !hex.is_ascii() {
@@ -227,8 +230,32 @@ impl LocalStore {
                 },
             ));
         }
-        self.meta.refs.replace_all(&rows)?;
-        Ok(rows.len())
+        let here = counter(self.meta.refs.as_ref(), EPOCH_REF)?;
+        let mut theirs = 0;
+        let mut kept = Vec::with_capacity(rows.len());
+        for (name, mut value) in rows {
+            if name == EPOCH_REF {
+                let bytes: [u8; 8] = value
+                    .target
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| StorageError::Malformed("store counter"))?;
+                theirs = u64::from_le_bytes(bytes);
+                continue;
+            }
+            value.epoch = value.epoch.min(here);
+            kept.push((name, value));
+        }
+        if let Some(epoch) = self.meta.refs.get(EPOCH_REF)? {
+            kept.push((EPOCH_REF.to_string(), epoch));
+        }
+        self.meta.refs.replace_all(&kept)?;
+        Ok(theirs)
+    }
+
+    /// Whether the store holds no object.
+    pub fn holds_nothing(&self) -> bool {
+        self.objects.is_empty()
     }
 
     /// Wraps again every object grant not under the current KEK version.

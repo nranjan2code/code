@@ -80,6 +80,29 @@ surfaces pick it up whenever they next connect. Missed cron slots follow
 the same philosophy: per-tick evaluation fires each missed slot once
 after wake; boot-time catch-up covers full downtime.
 
+## The sync plane (data architecture M9)
+
+A fifth plane, added on 2026-10-09 with the folder remote
+(`vak_core::sync`; `docs/plans/data-architecture-plan.md` §M9). It follows
+the delivery plane's rule, store and forward:
+
+- The machine that holds the work pushes to its remote folder between
+  turns, never during one. A push that cannot reach the folder fails
+  whole and changes nothing there; the work stays on the machine and
+  the push is tried again, a minute later and then at doubling intervals
+  up to about half an hour (`Core::sync_auto`). Nothing is lost while
+  the folder is away, and the owner is told the push is owed
+  (`GET /sync`: `unpushed`, `last_error`).
+- A push adds files under their digests, replaces the index last, and
+  only then removes what the new index no longer names. Stopped at any
+  point, by a crash or a cable, the remote still holds the previous whole
+  copy.
+- A pull checks every file against the index before it changes anything
+  on the machine. One that is stopped part-way is finished by the next
+  pull.
+- Neither direction ever waits inside a turn, and no turn depends on the
+  remote being reachable.
+
 ## Non-goals
 
 - Platform network-state listeners (SCNetworkReachability et al): redundant

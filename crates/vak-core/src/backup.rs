@@ -315,9 +315,10 @@ impl crate::Core {
     /// a pull alike: every key the copy brought back for a destroyed scope
     /// is destroyed again, each erased conversation is marked erased, the
     /// rollups and search are rebuilt from the records, what no key holds
-    /// is deleted, and the writer epoch moves, which fences this process.
+    /// is deleted, and the writer epoch moves past `past`, which fences
+    /// this process.
     /// Returns the keys removed, the objects deleted and the new epoch.
-    pub(crate) fn settle_imported(&self) -> Result<(usize, usize, u64), String> {
+    pub(crate) fn settle_imported(&self, past: u64) -> Result<(usize, usize, u64), String> {
         let tenant = self.local_tenant().map_err(|error| error.to_string())?;
         let keys_removed = tenant
             .reapply_destroyed_keys()
@@ -339,10 +340,14 @@ impl crate::Core {
             use vak_session::objects::Objects;
             tenant.collect().unwrap_or(0)
         };
-        let writer_epoch = tenant
-            .store()
-            .restore()
-            .map_err(|error| error.to_string())?;
+        // The epoch ends past this store's own and past `past`, the
+        // epoch of the copy that was imported, so a process on either
+        // side that still holds an older one is fenced.
+        let bump = || tenant.store().restore().map_err(|error| error.to_string());
+        let mut writer_epoch = bump()?;
+        while writer_epoch <= past {
+            writer_epoch = bump()?;
+        }
         Ok((keys_removed, objects_deleted, writer_epoch))
     }
 
@@ -415,7 +420,7 @@ impl crate::Core {
         let home = self.shared_scope().into_root();
         let imported = import_from(src_dir, &home, conflict)?;
         let (keys_removed, objects_deleted, writer_epoch) =
-            self.settle_imported().map_err(failed)?;
+            self.settle_imported(0).map_err(failed)?;
         tracing::info!(
             kind = "backup",
             outcome = "restored",

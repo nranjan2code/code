@@ -631,6 +631,27 @@ pub(crate) enum SyncAction {
         #[arg(long)]
         discard: bool,
     },
+    /// Hand the work over to your other machine: a last push, then this
+    /// machine stands by. Refused while anything is running
+    Handover,
+    /// Take the work over on this machine. Vakyartha must be started
+    /// again afterwards
+    Takeover {
+        /// The other machine is lost and cannot hand over. What it never
+        /// pushed is not brought here
+        #[arg(long)]
+        force: bool,
+        /// Replace work on this machine that was never pushed
+        #[arg(long)]
+        discard: bool,
+    },
+    /// Say where a project made on your other machine is on this one
+    Place {
+        /// The project's id (spc_…) or its name
+        project: String,
+        /// Its folder on this machine
+        folder: std::path::PathBuf,
+    },
     /// Stop using the remote folder. Nothing in it is touched
     Forget,
     /// The key file a second machine needs to read the remote copy

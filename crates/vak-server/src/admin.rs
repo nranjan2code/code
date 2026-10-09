@@ -941,6 +941,9 @@ pub(crate) struct ProjectPatch {
     pub name: Option<String>,
     #[serde(default)]
     pub hidden: Option<bool>,
+    /// The project's folder on this machine, for one made on another.
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 async fn patch_project(
@@ -959,6 +962,10 @@ async fn patch_project(
     }
     if let Some(hidden) = body.hidden {
         vak_config::spaces::set_forgotten(&id, hidden).map_err(|e| (StatusCode::NOT_FOUND, e))?;
+    }
+    if let Some(folder) = body.folder.as_deref() {
+        vak_core::workspaces::place_project(&id, std::path::Path::new(folder.trim()))
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     }
     Ok(Json(serde_json::json!({ "id": id })))
 }

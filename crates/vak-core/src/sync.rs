@@ -29,6 +29,7 @@ const PULLING: &str = "pulling";
 /// The refs of the tenant's store, as a file in the remote.
 const REFS: &str = "refs.export";
 const LOCAL: &str = "local.json";
+const LEASE: &str = "lease.json";
 
 #[derive(Debug, thiserror::Error)]
 pub enum SyncError {
@@ -44,6 +45,22 @@ pub enum SyncError {
     Damaged(usize),
     #[error("this machine holds {0} files that were never pushed; pulling would replace them")]
     Unpushed(usize),
+    #[error("another machine holds the work; this one is standing by. Take over to work here")]
+    NotHolder,
+    #[error(
+        "another machine took the work over from this one. {0} files here were never pushed; pull to stand by again"
+    )]
+    Lost(usize),
+    #[error(
+        "the other machine has not handed over. Hand over there first, or take over by force if it is lost"
+    )]
+    HeldElsewhere,
+    #[error("work is running; let it finish or stop it first")]
+    Busy,
+    #[error(
+        "the keys were changed on the other machine; export a new key file there and import it here"
+    )]
+    KeysChanged,
     #[error("{0}")]
     Failed(String),
 }
@@ -71,7 +88,39 @@ pub struct Index {
     /// The machine that pushed it.
     pub machine: String,
     pub at: DateTime<Utc>,
+    /// The tenant key version the pusher wraps under. A machine whose
+    /// key file is older cannot read what was wrapped since.
+    #[serde(default)]
+    pub key_version: u32,
     pub files: BTreeMap<String, Entry>,
+}
+
+/// The remote's `lease.json`: which machine may write. One machine works
+/// at a time; the other stands by.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lease {
+    pub holder: String,
+    pub since: DateTime<Utc>,
+    /// The holder handed over: nothing is running there, its last push
+    /// is in, and the other machine may take over.
+    #[serde(default)]
+    pub released: bool,
+}
+
+/// Where a machine stands with its remote.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Role {
+    /// A remote is named and nothing was synced yet.
+    #[default]
+    Unset,
+    /// This machine works and pushes.
+    Holder,
+    /// The other machine works; this one begins no turn.
+    StandingBy,
+    /// The other machine took over by force while this one held the
+    /// work. It begins no turn until it pulls.
+    Lost,
 }
 
 /// What this machine knows about its remote. Machine-local: it is never
@@ -81,6 +130,8 @@ pub struct Local {
     pub remote: PathBuf,
     /// This machine's id, minted at setup.
     pub machine: String,
+    #[serde(default)]
+    pub role: Role,
     /// The remote generation this machine last pushed or pulled.
     #[serde(default)]
     pub generation: u64,
@@ -89,6 +140,15 @@ pub struct Local {
     /// What this machine and the remote both held after that sync.
     #[serde(default)]
     pub synced: BTreeMap<String, Entry>,
+    /// Automatic pushes that failed in a row, and when the last one was
+    /// tried: what paces the next try.
+    #[serde(default)]
+    pub failures: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tried_at: Option<DateTime<Utc>>,
+    /// Why the last push did not go through, in plain words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
     /// File digests by size and modified time, so an unchanged file is
     /// not read again.
     #[serde(default)]
@@ -118,6 +178,13 @@ pub struct SyncStatus {
     pub synced_at: Option<DateTime<Utc>>,
     /// Files here that differ from what was last synced.
     pub unpushed: u64,
+    pub role: Role,
+    /// Why the last push did not go through; it is tried again.
+    pub last_error: Option<String>,
+    /// Whether the machine that holds the work handed it over.
+    pub released: bool,
+    /// Whether another machine holds the work.
+    pub held_elsewhere: bool,
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -198,9 +265,15 @@ impl Core {
         self.shared_scope().sync().join(LOCAL)
     }
 
+    /// This machine's note, whether or not a remote is named in it.
+    fn sync_note(&self) -> Option<Local> {
+        serde_json::from_slice(&std::fs::read(self.sync_local_path()).ok()?).ok()
+    }
+
     fn sync_local(&self) -> Result<Local, SyncError> {
-        let bytes = std::fs::read(self.sync_local_path()).map_err(|_| SyncError::NotSetUp)?;
-        serde_json::from_slice(&bytes).map_err(failed)
+        self.sync_note()
+            .filter(|local| !local.remote.as_os_str().is_empty())
+            .ok_or(SyncError::NotSetUp)
     }
 
     fn save_sync_local(&self, local: &Local) -> Result<(), SyncError> {
@@ -300,6 +373,178 @@ impl Core {
         }
     }
 
+    fn read_lease(remote: &Path) -> Result<Option<Lease>, SyncError> {
+        if !remote.is_dir() {
+            return Err(SyncError::Unreachable);
+        }
+        match std::fs::read(remote.join(LEASE)) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failed),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err(SyncError::Unreachable),
+        }
+    }
+
+    /// Writes the lease and reads it back: on a shared folder the last
+    /// writer wins, so the machine that reads its own name holds it.
+    fn write_lease(remote: &Path, machine: &str, released: bool) -> Result<(), SyncError> {
+        let lease = Lease {
+            holder: machine.to_string(),
+            since: Utc::now(),
+            released,
+        };
+        let bytes = serde_json::to_vec_pretty(&lease).map_err(failed)?;
+        write_atomic(&remote.join(LEASE), &bytes).map_err(|_| SyncError::Unreachable)?;
+        match Self::read_lease(remote)? {
+            Some(read) if read.holder == machine => Ok(()),
+            _ => Err(SyncError::NotHolder),
+        }
+    }
+
+    fn unpushed(local: &Local, held: &BTreeMap<String, Entry>) -> usize {
+        held.iter()
+            .filter(|(key, entry)| local.synced.get(*key) != Some(entry))
+            .count()
+            + local
+                .synced
+                .keys()
+                .filter(|key| !held.contains_key(*key))
+                .count()
+    }
+
+    /// Refuses a new turn on a machine that is standing by, or that lost
+    /// the work to the other machine: what it wrote would never reach the
+    /// remote. Reads only this machine's own note of where it stands.
+    pub(crate) fn refuse_standing_by(&self) -> Result<(), crate::CoreError> {
+        match self.sync_local().map(|local| local.role) {
+            Ok(Role::StandingBy) | Ok(Role::Lost) => Err(crate::CoreError::StandingBy),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether any run is open under a process that is still alive.
+    fn work_in_flight(&self) -> bool {
+        let runs = self.runs();
+        let now = Utc::now();
+        runs.list().is_ok_and(|records| {
+            records.iter().any(|record| {
+                record.is_open()
+                    && record
+                        .holder
+                        .is_some_and(|holder| runs.is_alive(&holder, now).unwrap_or(true))
+            })
+        })
+    }
+
+    /// Whether this machine may begin work of its own accord: not while
+    /// it stands by, and not once it has lost the work.
+    pub fn sync_may_work(&self) -> bool {
+        self.refuse_standing_by().is_ok()
+    }
+
+    /// The scheduler's push: when this machine holds the work, something
+    /// changed since the last sync, and the last failure is old enough
+    /// (a minute, doubling to about half an hour). A push that cannot
+    /// reach the folder loses nothing; it is tried again. `None` when
+    /// there was nothing to do.
+    pub fn sync_auto(&self) -> Option<Result<SyncReport, SyncError>> {
+        let mut local = self.sync_local().ok()?;
+        if local.role != Role::Holder {
+            return None;
+        }
+        if let Some(tried) = local.tried_at
+            && local.failures > 0
+        {
+            let wait = chrono::Duration::seconds(60 << local.failures.min(5));
+            if Utc::now() < tried + wait {
+                return None;
+            }
+        }
+        let (held, _) = self.sync_snapshot(&mut local).ok()?;
+        if Self::unpushed(&local, &held) == 0 {
+            return None;
+        }
+        let pushed = self.sync_push();
+        // The push saved what it learned; add how the try went.
+        let mut local = self.sync_local().ok()?;
+        local.tried_at = Some(Utc::now());
+        match &pushed {
+            Ok(_) => {
+                local.failures = 0;
+                local.last_error = None;
+            }
+            Err(error) => {
+                local.failures = local.failures.saturating_add(1);
+                local.last_error = Some(error.to_string());
+                tracing::warn!(
+                    kind = "sync",
+                    outcome = "failed",
+                    count = local.failures,
+                    "the remote copy could not be brought up to date; it will be tried again"
+                );
+            }
+        }
+        let _ = self.save_sync_local(&local);
+        Some(pushed)
+    }
+
+    /// Hands the work over: refused while anything is running, then a
+    /// last push, then the lease is released and this machine stands by.
+    /// The other machine takes over from there.
+    pub fn sync_handover(&self) -> Result<SyncReport, SyncError> {
+        if self.work_in_flight() {
+            return Err(SyncError::Busy);
+        }
+        let report = self.sync_push()?;
+        let mut local = self.sync_local()?;
+        Self::write_lease(&local.remote, &local.machine, true)?;
+        local.role = Role::StandingBy;
+        self.save_sync_local(&local)?;
+        Ok(report)
+    }
+
+    /// Takes the work over: pulls what the remote holds and takes the
+    /// lease. Refused until the other machine has handed over, unless
+    /// `force`, which is for a machine that is lost: whatever it never
+    /// pushed is not here, and it is fenced when it next reaches the
+    /// remote. `None` when this machine already held the work.
+    pub fn sync_takeover(
+        &self,
+        force: bool,
+        discard: bool,
+    ) -> Result<Option<SyncReport>, SyncError> {
+        let local = self.sync_local()?;
+        let lease = Self::read_lease(&local.remote)?;
+        let mine = lease
+            .as_ref()
+            .is_none_or(|lease| lease.holder == local.machine);
+        if mine && local.role == Role::Holder {
+            return Ok(None);
+        }
+        if !mine && !force && !lease.as_ref().is_some_and(|lease| lease.released) {
+            return Err(SyncError::HeldElsewhere);
+        }
+        let index = Self::read_index(&local.remote)?;
+        let behind = index
+            .as_ref()
+            .is_some_and(|index| index.generation != local.generation);
+        let report = if behind || local.role == Role::Lost {
+            Some(self.sync_pull(discard)?)
+        } else {
+            None
+        };
+        let mut local = self.sync_local()?;
+        Self::write_lease(&local.remote, &local.machine, false)?;
+        local.role = Role::Holder;
+        self.save_sync_local(&local)?;
+        Ok(report.or(Some(SyncReport {
+            generation: local.generation,
+            copied: 0,
+            removed: 0,
+            bytes: 0,
+            files: local.synced.len() as u64,
+        })))
+    }
+
     /// Names the folder this machine keeps its remote copy in. The folder
     /// must exist and must not be inside the data home.
     pub fn sync_setup(&self, remote: &Path) -> Result<Local, SyncError> {
@@ -313,27 +558,43 @@ impl Core {
                 "the remote folder cannot be inside Vakyartha's own data".into(),
             ));
         }
-        let mut local = self.sync_local().unwrap_or_default();
+        let mut local = self.sync_note().unwrap_or_default();
         if local.machine.is_empty() {
             local.machine = format!("mch_{}", uuid::Uuid::now_v7());
         }
         if local.remote != remote {
+            // The same copy at a new place (a drive mounted elsewhere)
+            // changes nothing but where it is. Any other folder is a
+            // remote this machine has not synced with.
+            let moved = Self::read_index(&remote)
+                .ok()
+                .flatten()
+                .is_some_and(|index| {
+                    index.generation == local.generation && index.files == local.synced
+                });
             local.remote = remote;
-            local.generation = 0;
-            local.synced_at = None;
-            local.synced.clear();
+            if !moved {
+                local.role = Role::Unset;
+                local.generation = 0;
+                local.synced_at = None;
+                local.synced.clear();
+            }
         }
         self.save_sync_local(&local)?;
         Ok(local)
     }
 
-    /// Forgets the remote. Nothing in the folder is touched.
+    /// Forgets the remote. Nothing in the folder is touched, and this
+    /// machine keeps its id, so the lease it held there is still its own
+    /// if the folder is set up again.
     pub fn sync_forget(&self) -> Result<(), SyncError> {
-        match std::fs::remove_file(self.sync_local_path()) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(failed(error)),
-        }
+        let Some(note) = self.sync_note() else {
+            return Ok(());
+        };
+        self.save_sync_local(&Local {
+            machine: note.machine,
+            ..Local::default()
+        })
     }
 
     /// Where this machine stands against its remote. Reads only.
@@ -350,7 +611,19 @@ impl Core {
                 .keys()
                 .filter(|key| !held.contains_key(*key))
                 .count();
+        let lease = Self::read_lease(&local.remote).ok().flatten();
+        let unpushed = if local.role == Role::StandingBy {
+            0
+        } else {
+            unpushed
+        };
         Ok(SyncStatus {
+            role: local.role,
+            last_error: local.last_error.clone(),
+            released: lease.as_ref().is_some_and(|lease| lease.released),
+            held_elsewhere: lease
+                .as_ref()
+                .is_some_and(|lease| lease.holder != local.machine),
             reachable: index.is_ok(),
             remote_generation: index.ok().flatten().map(|index| index.generation),
             remote: local.remote,
@@ -371,6 +644,24 @@ impl Core {
         let mut local = self.sync_local()?;
         let before = Self::read_index(&local.remote)?;
         let (held, refs) = self.sync_snapshot(&mut local)?;
+        match Self::read_lease(&local.remote)? {
+            Some(lease) if lease.holder != local.machine => {
+                // The other machine holds the work. A machine that
+                // thought it did has lost it, and says what it kept.
+                let lost = local.role == Role::Holder || local.role == Role::Lost;
+                local.role = if lost { Role::Lost } else { Role::StandingBy };
+                let kept = Self::unpushed(&local, &held);
+                self.save_sync_local(&local)?;
+                return Err(if lost {
+                    SyncError::Lost(kept)
+                } else {
+                    SyncError::NotHolder
+                });
+            }
+            Some(_) if local.role == Role::StandingBy => return Err(SyncError::NotHolder),
+            Some(_) => {}
+            None => Self::write_lease(&local.remote, &local.machine, false)?,
+        }
         let home = self.shared_scope().into_root();
         let refs_key = self.refs_key();
         let (mut copied, mut bytes) = (0, 0);
@@ -413,9 +704,23 @@ impl Core {
             epoch: tenant.store().epoch().map_err(failed)?,
             machine: local.machine.clone(),
             at: Utc::now(),
+            key_version: tenant.key_versions().map_err(failed)?.0,
             files: held,
         };
         let encoded = serde_json::to_vec_pretty(&index).map_err(failed)?;
+        // Look once more before the push counts: if the other machine took
+        // the work or pushed while the files were being sent, this push
+        // must not land on top of it.
+        let still_mine =
+            Self::read_lease(&local.remote)?.is_some_and(|lease| lease.holder == local.machine);
+        let unmoved = Self::read_index(&local.remote)?.map_or(0, |now| now.generation) + 1
+            == index.generation;
+        if !still_mine || !unmoved {
+            local.role = Role::Lost;
+            let kept = Self::unpushed(&local, &index.files);
+            self.save_sync_local(&local)?;
+            return Err(SyncError::Lost(kept));
+        }
         write_atomic(&local.remote.join(INDEX), &encoded).map_err(|_| SyncError::Unreachable)?;
         // Only now, with the new index in place, does anything leave.
         let named: std::collections::BTreeSet<&str> = index
@@ -439,6 +744,9 @@ impl Core {
         local.generation = index.generation;
         local.synced_at = Some(index.at);
         local.synced = index.files.clone();
+        local.role = Role::Holder;
+        local.failures = 0;
+        local.last_error = None;
         self.save_sync_local(&local)?;
         tracing::info!(
             kind = "sync",
@@ -466,6 +774,10 @@ impl Core {
         vak_session::fence::check().map_err(failed)?;
         let mut local = self.sync_local()?;
         let index = Self::read_index(&local.remote)?.ok_or(SyncError::Empty)?;
+        let tenant = self.tenant_objects().map_err(failed)?;
+        if index.key_version > tenant.key_versions().map_err(failed)?.0 {
+            return Err(SyncError::KeysChanged);
+        }
         let (held, _) = self.sync_snapshot(&mut local)?;
         let marker = self.shared_scope().sync().join(PULLING);
 
@@ -473,11 +785,11 @@ impl Core {
             .iter()
             .filter(|(key, entry)| local.synced.get(*key) != Some(entry))
             .count();
-        let fresh = local.synced.is_empty()
-            && self
-                .key_status()
-                .is_ok_and(|status| status.keys + status.destroyed == 0);
-        if mine > 0 && !fresh && !discard && !marker.exists() {
+        let fresh = local.synced.is_empty() && tenant.holds_nothing();
+        // A machine that was standing by did no work: what it wrote since
+        // (its own bookkeeping) is not work to keep.
+        let standing_by = local.role == Role::StandingBy;
+        if mine > 0 && !fresh && !discard && !standing_by && !marker.exists() {
             return Err(SyncError::Unpushed(mine));
         }
 
@@ -522,18 +834,17 @@ impl Core {
                 removed += 1;
             }
         }
+        let mut past = index.epoch;
         if let Some(refs) = refs {
-            self.tenant_objects()
-                .map_err(failed)?
-                .import_refs(&refs)
-                .map_err(failed)?;
+            past = past.max(tenant.import_refs(&refs).map_err(failed)?);
         }
         local.generation = index.generation;
         local.synced_at = Some(Utc::now());
         local.synced = index.files.clone();
+        local.role = Role::StandingBy;
         local.seen.clear();
         self.save_sync_local(&local)?;
-        self.settle_imported().map_err(SyncError::Failed)?;
+        self.settle_imported(past).map_err(SyncError::Failed)?;
         let _ = std::fs::remove_file(&marker);
         tracing::info!(
             kind = "sync",

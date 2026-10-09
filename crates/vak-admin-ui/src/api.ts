@@ -6,6 +6,7 @@ import type {
   ErasureReceipt,
   KeyRotation,
   KeyStatus,
+  SyncStatus,
   TrashedSession,
   RunRecord,
   DataPlan,
@@ -212,6 +213,15 @@ export const api = {
   /** Verifies every stored record. Reads the whole data home once. */
   dataIntegrity: (): Promise<DataIntegrity> => fetch("/data/integrity").then((r) => handle(r)),
   dataKeys: (): Promise<KeyStatus> => fetch("/data/keys").then((r) => handle(r)),
+  syncStatus: (): Promise<SyncStatus> => fetch("/sync").then((r) => handle(r)),
+  /** One of the second copy's actions: setup, now, handover, takeover, forget. */
+  syncDo: (verb: "setup" | "now" | "handover" | "takeover" | "forget", body?: unknown): Promise<{ restart_required?: boolean }> =>
+    fetch(`/sync/${verb}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) }).then((r) => handle(r)),
+  /** The key file for the other machine, sealed under the passphrase. Stored nowhere. */
+  syncKeyExport: (passphrase: string): Promise<{ file: string }> =>
+    fetch("/sync/key/export", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase }) }).then((r) => handle(r)),
+  syncKeyImport: (file: string, passphrase: string): Promise<{ restart_required: boolean }> =>
+    fetch("/sync/key/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file, passphrase }) }).then((r) => handle(r)),
   /** Starts a new key and protects everything again under it. */
   rotateDataKeys: (): Promise<{ rotation: KeyRotation }> =>
     fetch("/data/keys/rotate", { method: "POST" }).then((r) => handle(r)),
@@ -431,7 +441,7 @@ export const api = {
       body: JSON.stringify({ digest, confirm }),
     }).then((r) => handle(r)),
 
-  patchProject: (id: string, patch: { name?: string; hidden?: boolean }): Promise<{ id: string }> =>
+  patchProject: (id: string, patch: { name?: string; hidden?: boolean; folder?: string }): Promise<{ id: string }> =>
     fetch(`/admin/api/projects/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },

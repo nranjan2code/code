@@ -165,11 +165,17 @@ async fn push_pull_roundtrip_identical_derive_messages() {
                 .contains("A_SERVICE_KEY")
     );
 
-    // A machine that already holds data under its own keys takes no key file.
+    // A machine that holds data under keys of its own takes no key
+    // file; one that already holds these keys takes a newer file of them.
+    let home_e = dir.path().join("machine-e");
+    std::fs::create_dir_all(&home_e).unwrap();
+    let e = |args: &[&str], passphrase: Option<&str>| vak(&home_e, &work, args, passphrase);
+    ok(&e(&["data", "rules", "--set", "trash=45"], None));
     assert!(
-        refused(&a(&["sync", "key", "import", &key_path], Some(PASSPHRASE)))
+        refused(&e(&["sync", "key", "import", &key_path], Some(PASSPHRASE)))
             .contains("new install")
     );
+    ok(&b(&["sync", "key", "import", &key_path], Some(PASSPHRASE)));
 
     // A push that stopped before its index was replaced changes nothing
     // for a puller: blobs it added are extra, and the old index is whole.
@@ -188,6 +194,26 @@ async fn push_pull_roundtrip_identical_derive_messages() {
     // The next push clears what the unfinished one left.
     ok(&a(&["sync", "now"], None));
     assert!(!remote.join("blobs/zz/unfinished.part").exists());
+
+    // On machine D the project lives in another folder. Until D is told
+    // so, that folder is a project of its own with no conversations.
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let there = |args: &[&str]| vak(&home_d, &elsewhere, args, None);
+    let registry = || {
+        let tenants = std::fs::read_dir(home_d.join("tenants")).unwrap();
+        let tenant = tenants.flatten().next().unwrap().path();
+        std::fs::read_to_string(tenant.join("spaces.toml")).unwrap()
+    };
+    let projects = registry().matches("[spaces.").count();
+    assert!(!registry().contains("elsewhere"));
+    let place = elsewhere.to_string_lossy().into_owned();
+    assert!(refused(&there(&["sync", "place", "no-such-project", &place])).contains("0 projects"));
+    ok(&there(&["sync", "place", "work", &place]));
+    // The folder now belongs to the project that came from machine A,
+    // beside A's own folder for it; no second project was made.
+    assert!(registry().contains("elsewhere"));
+    assert_eq!(registry().matches("[spaces.").count(), projects);
 
     // A damaged remote is refused whole: nothing on the puller changes.
     let victim = in_remote

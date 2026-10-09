@@ -72,6 +72,20 @@ pub(crate) fn run_sync(cwd: PathBuf, action: Option<SyncAction>) -> i32 {
                     println!("the remote copy is newer (sync {remote})");
                 }
                 println!("changed here since then: {} files", status.unpushed);
+                println!(
+                    "{}",
+                    match status.role {
+                        vak_core::sync::Role::Holder => "this machine holds the work",
+                        vak_core::sync::Role::StandingBy if status.released =>
+                            "this machine is standing by; the work was handed over and can be taken over",
+                        vak_core::sync::Role::StandingBy =>
+                            "this machine is standing by; the other machine holds the work",
+                        vak_core::sync::Role::Lost =>
+                            "the other machine took the work over; pull to stand by again",
+                        vak_core::sync::Role::Unset =>
+                            "nothing has been synced from this machine yet",
+                    }
+                );
                 0
             }
             Err(error) => {
@@ -101,6 +115,66 @@ pub(crate) fn run_sync(cwd: PathBuf, action: Option<SyncAction>) -> i32 {
                 println!("Start Vakyartha again before using it.");
             }
             done
+        }
+        SyncAction::Handover => {
+            let done = report("Handed over", core.sync_handover());
+            if done == 0 {
+                println!("This machine is standing by. Take over on the other one.");
+            }
+            done
+        }
+        SyncAction::Takeover { force, discard } => match core.sync_takeover(force, discard) {
+            Ok(None) => {
+                println!("This machine already holds the work.");
+                0
+            }
+            Ok(Some(done)) => {
+                println!(
+                    "This machine holds the work now ({} files brought here).",
+                    done.copied
+                );
+                if done.copied + done.removed > 0 {
+                    println!("Start Vakyartha again before using it.");
+                }
+                0
+            }
+            Err(error) => {
+                eprintln!("error: {error}");
+                1
+            }
+        },
+        SyncAction::Place { project, folder } => {
+            // By id, by the name it was given, or by its folder's name,
+            // which is what a project is called until it is named.
+            let found: Vec<_> = vak_config::spaces::all()
+                .into_iter()
+                .filter(|space| {
+                    space.id == project
+                        || space.name.as_deref() == Some(&project)
+                        || space
+                            .folder
+                            .as_deref()
+                            .and_then(std::path::Path::file_name)
+                            .is_some_and(|name| name.to_string_lossy() == project)
+                })
+                .collect();
+            let [space] = found.as_slice() else {
+                eprintln!(
+                    "error: {} projects match '{project}'; name one by its id",
+                    found.len()
+                );
+                return 1;
+            };
+            match vak_core::workspaces::place_project(&space.id, &folder) {
+                Ok(()) => {
+                    println!("That project is {} on this machine.", folder.display());
+                    0
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    1
+                }
+            }
         }
         SyncAction::Forget => match core.sync_forget() {
             Ok(()) => {

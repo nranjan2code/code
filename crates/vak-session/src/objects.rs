@@ -295,15 +295,23 @@ impl TenantObjects {
         Ok((version, scopes + grants))
     }
 
+    /// Whether anything is stored under this tenant's keys: a scope key,
+    /// a destroyed one, or any object. A tenant that holds nothing can
+    /// take another machine's keys.
+    pub fn holds_nothing(&self) -> bool {
+        self.scopes.counts() == (0, 0) && self.store.holds_nothing()
+    }
+
     /// Every ref of the tenant's store as one portable file
     /// (`LocalStore::export_refs`).
     pub fn export_refs(&self) -> Result<Vec<u8>, SessionError> {
         self.store.export_refs().map_err(objects_error)
     }
 
-    /// Replaces the store's refs with those of a remote's file. Only a
-    /// pull does this, and it ends by moving the writer epoch.
-    pub fn import_refs(&self, file: &[u8]) -> Result<usize, SessionError> {
+    /// Replaces the store's refs with those of a remote's file, and
+    /// returns the writer epoch that store had. Only a pull does this,
+    /// and it ends by moving this store's epoch past it.
+    pub fn import_refs(&self, file: &[u8]) -> Result<u64, SessionError> {
         crate::fence::check()?;
         self.store.import_refs(file).map_err(objects_error)
     }

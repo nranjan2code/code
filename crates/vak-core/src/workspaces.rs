@@ -65,6 +65,26 @@ pub fn visible(discovered: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     out
 }
 
+/// Whether any Agent holds a conversation for the space `space` in the
+/// data home `home`.
+pub fn space_has_conversations(home: &std::path::Path, space: &str) -> bool {
+    std::fs::read_dir(home.join("agents"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|agent| {
+            std::fs::read_dir(agent.path().join("sessions").join(space))
+                .is_ok_and(|mut sessions| sessions.next().is_some())
+        })
+}
+
+/// Says that the project `space`, made on another machine, is the folder
+/// `folder` on this one (data-architecture plan M9).
+pub fn place_project(space: &str, folder: &std::path::Path) -> Result<(), String> {
+    let home = vak_config::paths::data_home();
+    vak_config::spaces::attach(space, folder, |other| space_has_conversations(&home, other))
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {

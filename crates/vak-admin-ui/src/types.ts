@@ -1638,6 +1638,21 @@ export interface KeyStatus {
   rotations: KeyRotation[];
 }
 
+/** Where this machine stands against its second copy. */
+export interface SyncStatus {
+  configured: boolean;
+  remote?: string;
+  reachable?: boolean;
+  generation?: number;
+  remote_generation?: number | null;
+  synced_at?: string | null;
+  unpushed?: number;
+  role?: "unset" | "holder" | "standing_by" | "lost";
+  last_error?: string | null;
+  released?: boolean;
+  held_elsewhere?: boolean;
+}
+
 /** What changing the keep times would do. */
 export interface DataRulesPreview {
   digest: string;

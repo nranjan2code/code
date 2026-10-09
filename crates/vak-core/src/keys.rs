@@ -69,19 +69,27 @@ impl Core {
     }
 
     /// Takes another machine's keys from a key file. Refused once this
-    /// install holds anything under its own keys, which it could no
-    /// longer read. The process must stop afterwards.
+    /// install holds anything under keys of its own, which it could no
+    /// longer read; a newer file of the keys it already holds is taken.
+    /// The process must stop afterwards.
     pub fn import_key_file(&self, file: &str, passphrase: &str) -> Result<(), String> {
         let material = vak_storage::keys::KeyMaterial::open(file, passphrase).map_err(|_| {
             "the key file could not be opened: the passphrase is wrong or the file is damaged"
                 .to_string()
         })?;
-        let status = self.key_status()?;
-        if status.keys + status.destroyed > 0 {
-            return Err(
-                "this install already holds data under its own keys; a key file is for a new install"
-                    .into(),
-            );
+        // A new install takes any key file. One that holds data takes only
+        // a newer file of the same keys: what its other machine made
+        // after it rotated.
+        let tenant = self.tenant_objects().map_err(|error| error.to_string())?;
+        if !tenant.holds_nothing() {
+            let held = vak_session::objects::TenantObjects::key_material(&self.tenant_home())
+                .map_err(|error| error.to_string())?;
+            if held.id_key != material.id_key || !material.keks.starts_with(&held.keks) {
+                return Err(
+                    "this install already holds data under its own keys; a key file is for a new install"
+                        .into(),
+                );
+            }
         }
         vak_session::objects::TenantObjects::install_key_material(&self.tenant_home(), &material)
             .map_err(|error| error.to_string())?;

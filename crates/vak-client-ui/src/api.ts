@@ -2855,3 +2855,28 @@ export interface InstallErasureReceipt {
 export function eraseEverything(digest: string, confirm: string): Promise<{ receipt: InstallErasureReceipt }> {
   return req("/data/erasure/install", { method: "POST", body: JSON.stringify({ digest, confirm }) });
 }
+
+/** Where this machine stands against its second copy (a folder). */
+export interface SecondCopy {
+  configured: boolean;
+  reachable?: boolean;
+  synced_at?: string | null;
+  unpushed?: number;
+  role?: "unset" | "holder" | "standing_by" | "lost";
+  last_error?: string | null;
+  held_elsewhere?: boolean;
+}
+
+export function secondCopy(): Promise<SecondCopy> {
+  return req("/sync");
+}
+
+/** Brings the second copy up to date now. */
+export function copyNow(): Promise<unknown> {
+  return req("/sync/now", { method: "POST", body: "{}" });
+}
+
+/** Takes the work over on this machine. It must be started again when `restart_required`. */
+export function takeOverHere(discard: boolean): Promise<{ restart_required: boolean }> {
+  return req("/sync/takeover", { method: "POST", body: JSON.stringify({ discard }) });
+}

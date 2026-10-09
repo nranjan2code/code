@@ -105,6 +105,18 @@ export default function Projects() {
                       >
                         {project.hidden ? "Show" : "Hide"}
                       </button>
+                      <Show when={!project.folder_here}>
+                        <button
+                          class="ghost small"
+                          disabled={busy()}
+                          onClick={() => {
+                            const folder = window.prompt(`Where is “${project.name ?? "this project"}” on this machine? Give its folder. It was made on your other machine, where its folder is somewhere else.`);
+                            if (folder && folder.trim()) void act(() => api.patchProject(project.id, { folder: folder.trim() }), "The project's folder on this machine is set.");
+                          }}
+                        >
+                          Its folder here…
+                        </button>
+                      </Show>
                       <button class="ghost small danger" disabled={busy()} onClick={() => void erase(project)}>Erase its data…</button>
                     </div>
                   </Show>

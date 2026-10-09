@@ -31,6 +31,42 @@ const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : 
 
 export default function YourData(props: { open: (page: SettingsPageId) => void }) {
   const [data, { refetch }] = createResource(() => api.yourData());
+  const [copy, { refetch: refetchCopy }] = createResource(() => api.secondCopy().catch(() => ({ configured: false }) as api.SecondCopy));
+  const copyLine = (found: api.SecondCopy) => {
+    if (found.role === "standing_by" && !found.held_elsewhere) return "This machine handed the work over and is standing by. Take over on your other machine, or take it back here.";
+    if (found.role === "standing_by") return "Your other machine holds the work. This one is standing by, and nothing can be started here until you take over.";
+    if (found.role === "lost") return "Your other machine took the work over. Taking over here replaces what this machine never copied.";
+    const when = found.synced_at ? `Last copied ${new Date(found.synced_at).toLocaleString()}.` : "Nothing has been copied yet.";
+    const owed = (found.unpushed ?? 0) > 0 ? ` ${count(found.unpushed ?? 0, "file has", "files have")} changed since; they are copied between tasks.` : "";
+    const trouble = found.last_error ? " The folder could not be reached last time; nothing is lost, and it is tried again." : "";
+    return `${when}${owed}${trouble}`;
+  };
+  const copyNow = async () => {
+    setBusy(true);
+    setSaid("");
+    try {
+      await api.copyNow();
+      setSaid("The second copy is up to date.");
+      void refetchCopy();
+    } catch (error) {
+      setSaid(`${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const takeOver = async (discard: boolean) => {
+    setBusy(true);
+    setSaid("");
+    try {
+      const done = await api.takeOverHere(discard);
+      setSaid(done.restart_required ? "This machine holds the work now. Close Vakyartha and open it again before using it." : "This machine holds the work now.");
+      void refetchCopy();
+    } catch (error) {
+      setSaid(`${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
   const [said, setSaid] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [erasing, setErasing] = createSignal(false);
@@ -108,6 +144,13 @@ export default function YourData(props: { open: (page: SettingsPageId) => void }
                   <h2>How it is protected</h2>
                   <div class="settings-card">
                     <div class="setting-row"><div class="setting-copy"><strong>Encrypted on this computer</strong><span>{found().keys.kept_in === "keychain" ? "The key is in this computer's keychain." : "The key is in an encrypted file beside the data, because no keychain could be reached."} {found().keys.rotations.length === 0 ? "It has never been changed." : `It was last changed on ${new Date(found().keys.rotations[found().keys.rotations.length - 1].at).toLocaleDateString()}.`}</span></div><button type="button" class="settings-button" disabled={busy()} onClick={() => void rotate()}>Change the key</button></div>
+                    <Show when={copy()?.configured} fallback={<div class="setting-row"><div class="setting-copy"><strong>Second copy</strong><span>Not set up. A folder can hold a second, encrypted copy so another of your machines can take the work over. It is set up in the admin console, under Data.</span></div></div>}>
+                      <div class="setting-row"><div class="setting-copy"><strong>Second copy</strong><span>{copyLine(copy() as api.SecondCopy)}</span></div>
+                        <Show when={copy()?.role === "holder" || copy()?.role === "unset"}><button type="button" class="settings-button" disabled={busy()} onClick={() => void copyNow()}>Copy now</button></Show>
+                        <Show when={copy()?.role === "standing_by"}><button type="button" class="settings-button" disabled={busy()} onClick={() => void takeOver(false)}>Take over here</button></Show>
+                        <Show when={copy()?.role === "lost"}><button type="button" class="settings-button danger" disabled={busy()} onClick={() => void takeOver(true)}>Take over and replace</button></Show>
+                      </div>
+                    </Show>
                     <div class="setting-row"><div class="setting-copy"><strong>Back up</strong><span>Copy everything to a folder you choose.</span></div><button type="button" class="settings-button" onClick={() => props.open("storage")}>Storage and backup</button></div>
                   </div>
                 </section>

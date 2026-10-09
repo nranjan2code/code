@@ -2,7 +2,7 @@
 
 Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
-(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-i (2026-10-08: integrity, the soak, the acceptance run, and retention on by default), so M7a is done; M7a-h (2026-10-08: a restore applies every recorded erasure again and moves the writer epoch), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). M7a is done (2026-10-08) and M7b is done (2026-10-09, trimmed to one owner; acceptance in `docs/audits/acceptance-m7b-governance-2026-10-09.md`); only M9 remains. Each step waits for the maintainer (see AGENTS.md,
+(2026-10-02). M2 is done (2026-10-06); M5 is done (2026-10-06); M6 is done (2026-10-06: M6.1 to M6.4), and so is M6.5 (2026-10-06); M3a is done (2026-10-03), M3b is done (2026-10-05) and M4 is done (M4.1 to M4.7 on 2026-10-05, M4.8 on 2026-10-06). M8 is done (2026-10-08: M8.1 to M8.4c-f). M7a's design was agreed on 2026-10-08 (§M7a "M7a design", steps M7a-a to M7a-i); M7a-a is done (2026-10-08), and M7a-c (2026-10-08: the reconciler observes and plans), M7a-i (2026-10-08: integrity, the soak, the acceptance run, and retention on by default), so M7a is done; M7a-h (2026-10-08: a restore applies every recorded erasure again and moves the writer epoch), M7a-g (2026-10-08: an Agent can be revoked, which cuts its bots, accounts and secrets at once), M7a-f (2026-10-08: the owner erases what a guest wrote or what a disconnected account returned), M7a-e (2026-10-08: the trash and the archive are one state ref per conversation; a conversation is erased from the trash by destroying its keys, with a signed receipt; old drafts go to the trash and are erased; the Trash, menu and admin screens; lifecycle and erasure records in the catalog), M7a-d (2026-10-08: a committing pass for executions, checkpoints, environments, rotated logs, expired chain segments and Document history, collection of what nothing names, and an install quota; retention acts only when `[lifecycle] mode = "commit"`), and so is M7a-b (2026-10-08: content in every shared chain is an object of its owner's scope; a guest's contributions are under their own key; what a connected account returned is under the account's key). M7a is done (2026-10-08) and M7b is done (2026-10-09, trimmed to one owner; acceptance in `docs/audits/acceptance-m7b-governance-2026-10-09.md`); and M9 is done (2026-10-09, a folder remote with two machines taking turns; acceptance in `docs/audits/acceptance-m9-remote-2026-10-09.md`), which completes the plan as cut for one owner. Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
@@ -2954,6 +2954,55 @@ holds the keys.
   remote file changed by one byte is refused whole; what an unfinished
   push left is ignored by a pull and cleared by the next push), and
   `a_key_file_opens_only_with_its_passphrase`.
+
+**M9-c, M9-d and M9-e, done 2026-10-09: the lease, erasures across
+machines, and the automatic push.**
+- The remote's `lease.json` names the machine that may write and whether
+  it has handed over. Each machine notes where it stands
+  (`sync::Role`: holder, standing by, lost) in `sync/local.json`. A
+  machine that stands by or has lost the work begins no turn
+  (`Core::refuse_standing_by`, `CoreError::StandingBy`; the run route
+  refuses at once) and runs no scheduled work.
+- `Core::sync_handover` is refused while any run is open under a live
+  process, then pushes, releases the lease and stands by.
+  `Core::sync_takeover` is refused until the other machine has handed
+  over unless forced; it pulls when the remote is ahead and takes the
+  lease. A machine that pushes and finds the lease is another's has lost
+  the work: its push is refused with how many files it never pushed, and
+  it pulls (told to discard them) to stand by again. The lease and the
+  generation are read once more just before a push counts.
+- The index carries the pusher's key version, and a pull is refused
+  before it changes anything when this machine's key file is older. A
+  key file made after a rotation is taken by a machine that already
+  holds the earlier keys.
+- An import keeps the puller's own writer epoch
+  (`LocalStore::import_refs` stamps each ref no newer than it) and
+  `Core::settle_imported(past)` ends by moving the epoch past both
+  machines'.
+- Erasures need nothing of their own: a push carries the tombstone and
+  drops the key, and a pull removes the key here and applies every
+  recorded erasure again. A machine with a stale copy cannot push it
+  back, and taking over, forced or not, pulls first.
+- `Core::sync_auto` is the scheduler's push: between turns, when this
+  machine holds the work and something changed, paced after a failure
+  from one minute to about half an hour. `GET /sync`, `POST
+  /sync/setup|now|handover|takeover|forget|key/export|key/import`; `vak
+  sync handover|takeover [--force] [--discard]|place`; the admin
+  console's Operate › Data › Second copy; the client's line in Your data.
+- A project made on the other machine is placed in its folder here with
+  `vak_config::spaces::attach` (`vak sync place`, Projects › Its folder
+  here), refused when that folder is already a project with
+  conversations.
+- Tests: `handoff_at_turn_boundary`, `lease_prevents_dual_writer`,
+  `erasure_propagates_and_cannot_resurrect`,
+  `sync_survives_network_loss`,
+  `the_owner_sets_up_copies_hands_over_and_takes_back`.
+
+**M9-f, done 2026-10-09: the acceptance run**, recorded in
+`docs/audits/acceptance-m9-remote-2026-10-09.md`: two machines in Docker
+(`scripts/sync-lab`), real turns, 45 of 45 checks on the third run, nine
+defects found and fixed on the way. Doc 56 is superseded and doc 31 has
+the sync plane. With it M9 is done, and with M9 the plan.
 
 ## 5. AGENTS.md and design-doc changes
 

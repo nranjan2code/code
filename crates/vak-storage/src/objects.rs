@@ -275,6 +275,11 @@ impl LocalObjectStore {
         Ok(out)
     }
 
+    /// Whether the store holds any object at all.
+    pub fn is_empty(&self) -> bool {
+        !fs::read_dir(self.root.join("grants")).is_ok_and(|mut grants| grants.next().is_some())
+    }
+
     /// Wraps again every grant not under the current KEK version (after a
     /// rotation). A grant of a destroyed scope is left as it is. Returns
     /// how many it wrapped.

@@ -1,7 +1,11 @@
 # 56 — Personal multi-machine vak
 
-Status: **proposed — implementation plan**, 2026-09-09. Source inspection only;
-this document does not certify deployed security or distributed capacity.
+Status: **superseded** (2026-10-09) by the data architecture's remote
+(`docs/plans/data-architecture-plan.md` §M9, "M9 design";
+`docs/design/73-data-architecture-and-lifecycle.md` §11): two of one
+owner's machines take turns on a folder remote under a lease
+(`vak_core::sync`, `vak sync`). What follows is the earlier proposal, kept
+for history; it was not built.
 
 ## Product contract
 

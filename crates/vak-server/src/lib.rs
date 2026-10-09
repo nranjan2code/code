@@ -1038,6 +1038,14 @@ fn router_with_state(state: AppState) -> Router {
         .route("/data/erasure/receipts", get(erasure_receipts))
         .route("/data/integrity", get(data_integrity))
         .route("/data/holds", get(data_holds))
+        .route("/sync", get(sync_status))
+        .route("/sync/setup", post(sync_setup))
+        .route("/sync/now", post(sync_now))
+        .route("/sync/handover", post(sync_handover))
+        .route("/sync/takeover", post(sync_takeover))
+        .route("/sync/forget", post(sync_forget))
+        .route("/sync/key/export", post(sync_key_export))
+        .route("/sync/key/import", post(sync_key_import))
         .route("/data/keys", get(data_keys))
         .route("/data/keys/rotate", post(rotate_data_keys))
         .route("/data/rules", get(data_rules).put(set_data_rules))
@@ -5568,6 +5576,18 @@ async fn run_prompt(
 ) -> axum::response::Response {
     refresh_control_plane(&state);
     use axum::response::IntoResponse;
+    // A machine that stands by says so at once, rather than starting a
+    // run that Core will refuse.
+    if !state.core.sync_may_work() {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": vak_core::CoreError::StandingBy.to_string(),
+                "reason": "standing_by",
+            })),
+        )
+            .into_response();
+    }
     let handle = match ensure_session_handle(&state, &id).await {
         Ok((_, handle)) => handle,
         Err(e) => {
@@ -10459,6 +10479,182 @@ async fn hold_conversation(
 /// the hold is released.
 async fn data_holds(State(state): State<AppState>) -> axum::response::Response {
     data_read(state, |core| serde_json::json!({ "holds": core.holds() })).await
+}
+
+fn sync_refused(error: &vak_core::sync::SyncError) -> axum::response::Response {
+    use vak_core::sync::SyncError;
+    let (status, reason) = match error {
+        SyncError::NotSetUp => (StatusCode::NOT_FOUND, "not_set_up"),
+        SyncError::Unreachable => (StatusCode::CONFLICT, "unreachable"),
+        SyncError::Empty => (StatusCode::CONFLICT, "empty"),
+        SyncError::Damaged(_) => (StatusCode::CONFLICT, "damaged"),
+        SyncError::Unpushed(_) => (StatusCode::CONFLICT, "unpushed"),
+        SyncError::NotHolder => (StatusCode::CONFLICT, "standing_by"),
+        SyncError::Lost(_) => (StatusCode::CONFLICT, "lost"),
+        SyncError::HeldElsewhere => (StatusCode::CONFLICT, "held_elsewhere"),
+        SyncError::Busy => (StatusCode::CONFLICT, "in_use"),
+        SyncError::KeysChanged => (StatusCode::CONFLICT, "keys_changed"),
+        SyncError::Failed(_) => (StatusCode::INTERNAL_SERVER_ERROR, "failed"),
+    };
+    let said = match error {
+        // The detail of an unexpected failure is for the log, not a screen.
+        SyncError::Failed(_) => "syncing failed".to_string(),
+        other => other.to_string(),
+    };
+    (
+        status,
+        Json(serde_json::json!({ "error": said, "reason": reason })),
+    )
+        .into_response()
+}
+
+async fn sync_call<T: serde::Serialize + Send + 'static>(
+    state: AppState,
+    call: impl FnOnce(&Core) -> Result<T, vak_core::sync::SyncError> + Send + 'static,
+) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || call(&core)).await {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(error)) => sync_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Where this machine stands against its remote folder; `configured` is
+/// false when none is set up.
+async fn sync_status(State(state): State<AppState>) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.sync_status()).await {
+        Ok(Ok(status)) => {
+            let mut body = serde_json::json!(status);
+            body["configured"] = serde_json::json!(true);
+            Json(body).into_response()
+        }
+        Ok(Err(vak_core::sync::SyncError::NotSetUp)) => {
+            Json(serde_json::json!({ "configured": false })).into_response()
+        }
+        Ok(Err(error)) => sync_refused(&error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SyncSetupBody {
+    folder: String,
+}
+
+/// Names the remote folder. Nothing is copied until the first push.
+async fn sync_setup(
+    State(state): State<AppState>,
+    Json(body): Json<SyncSetupBody>,
+) -> axum::response::Response {
+    sync_call(state, move |core| {
+        core.sync_setup(std::path::Path::new(body.folder.trim()))
+            .map(|local| serde_json::json!({ "remote": local.remote }))
+    })
+    .await
+}
+
+/// Brings the remote copy up to date now. Refused during a turn: what is
+/// pushed is a state a turn ended in.
+async fn sync_now(State(state): State<AppState>) -> axum::response::Response {
+    if state.any_running() {
+        return sync_refused(&vak_core::sync::SyncError::Busy);
+    }
+    sync_call(state, |core| core.sync_push()).await
+}
+
+/// Hands the work to the other machine: refused while anything runs,
+/// then a last push, then this machine stands by.
+async fn sync_handover(State(state): State<AppState>) -> axum::response::Response {
+    if state.any_running() {
+        return sync_refused(&vak_core::sync::SyncError::Busy);
+    }
+    sync_call(state, |core| core.sync_handover()).await
+}
+
+#[derive(serde::Deserialize, Default)]
+struct SyncTakeoverBody {
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    discard: bool,
+}
+
+/// Takes the work over on this machine. When that pulled anything, this
+/// server is fenced and must be started again.
+async fn sync_takeover(
+    State(state): State<AppState>,
+    Json(body): Json<SyncTakeoverBody>,
+) -> axum::response::Response {
+    if state.any_running() {
+        return sync_refused(&vak_core::sync::SyncError::Busy);
+    }
+    let sessions = state.clone();
+    sync_call(state, move |core| {
+        let report = core.sync_takeover(body.force, body.discard)?;
+        // What this server held open was read before the pull.
+        sessions.reopen_idle_sessions();
+        Ok(serde_json::json!({
+            "report": report,
+            "restart_required": vak_session::fence::is_fenced(),
+        }))
+    })
+    .await
+}
+
+/// Stops using the remote folder. Nothing in it is touched.
+async fn sync_forget(State(state): State<AppState>) -> axum::response::Response {
+    sync_call(state, |core| {
+        core.sync_forget()
+            .map(|()| serde_json::json!({ "configured": false }))
+    })
+    .await
+}
+
+#[derive(serde::Deserialize)]
+struct KeyFileBody {
+    passphrase: String,
+    #[serde(default)]
+    file: String,
+}
+
+fn key_file_refused(error: String) -> axum::response::Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": error, "reason": "key_file" })),
+    )
+        .into_response()
+}
+
+/// The key file a second machine needs, sealed under the passphrase the
+/// owner typed. It is returned to them and stored nowhere.
+async fn sync_key_export(
+    State(state): State<AppState>,
+    Json(body): Json<KeyFileBody>,
+) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.export_key_file(&body.passphrase)).await {
+        Ok(Ok(file)) => Json(serde_json::json!({ "file": file })).into_response(),
+        Ok(Err(error)) => key_file_refused(error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// Takes the keys from another machine's key file. This server must be
+/// started again afterwards.
+async fn sync_key_import(
+    State(state): State<AppState>,
+    Json(body): Json<KeyFileBody>,
+) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || core.import_key_file(&body.file, &body.passphrase))
+        .await
+    {
+        Ok(Ok(())) => Json(serde_json::json!({ "restart_required": true })).into_response(),
+        Ok(Err(error)) => key_file_refused(error),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// Where the keys are kept, which version is in use, and every rotation.
@@ -20128,8 +20324,13 @@ async fn scheduler_tick(state: &AppState) {
         .scheduler_last_tick_at
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(chrono::Utc::now());
-    automations::tick(state).await;
+    // A machine that stands by begins no scheduled work: the machine
+    // that holds the work runs it.
+    if state.core.sync_may_work() {
+        automations::tick(state).await;
+    }
     catch_up_catalog(state).await;
+    push_to_remote(state).await;
 }
 
 /// Takes into the data catalog whatever any process wrote since the last
@@ -20156,6 +20357,16 @@ const LIVENESS_HOLD_SECS: i64 = 60;
 /// Renews this process's liveness and says whether background work may
 /// run (plan M4.1). A fenced process stops its scheduler, pollers and
 /// dispatch for good: the store was restored after it started.
+/// The automatic push to the remote folder (plan M9-e): between turns,
+/// never during one, so what is pushed is a state a turn ended in.
+async fn push_to_remote(state: &AppState) {
+    if state.any_running() {
+        return;
+    }
+    let core = state.core.clone();
+    let _ = tokio::task::spawn_blocking(move || core.sync_auto()).await;
+}
+
 fn background_work_allowed(state: &AppState) -> bool {
     match state
         .core

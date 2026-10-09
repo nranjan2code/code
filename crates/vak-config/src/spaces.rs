@@ -117,13 +117,11 @@ fn mint() -> String {
     format!("{PREFIX}{}", uuid::Uuid::now_v7().hyphenated())
 }
 
-/// Change the space `path` is bound to (binding it first) under the
-/// registry lock, and write the registry back atomically.
-fn modify(
+/// Change the registry under its lock and write it back atomically.
+fn locked<T>(
     registry_file: &Path,
-    path: &Path,
-    change: impl FnOnce(&mut Space),
-) -> Result<String, String> {
+    apply: impl FnOnce(&mut Registry) -> Result<T, String>,
+) -> Result<T, String> {
     let dir = registry_file
         .parent()
         .ok_or("space registry has no directory")?;
@@ -136,12 +134,7 @@ fn modify(
         .map_err(|error| error.to_string())?;
     lock.lock().map_err(|error| error.to_string())?;
     let mut registry = load(registry_file)?;
-    let id = find(&registry, path).unwrap_or_else(mint);
-    let space = registry.spaces.entry(id.clone()).or_default();
-    if !space.bindings.iter().any(|bound| bound == path) {
-        space.bindings.push(path.to_path_buf());
-    }
-    change(space);
+    let done = apply(&mut registry)?;
     let text = toml::to_string(&registry).map_err(|error| error.to_string())?;
     let temp = dir.join(format!("spaces.toml.{}", std::process::id()));
     let mut file = std::fs::File::create(&temp).map_err(|error| error.to_string())?;
@@ -149,7 +142,65 @@ fn modify(
         .and_then(|()| file.sync_all())
         .map_err(|error| error.to_string())?;
     std::fs::rename(&temp, registry_file).map_err(|error| error.to_string())?;
-    Ok(id)
+    Ok(done)
+}
+
+/// Change the space `path` is bound to (binding it first) under the
+/// registry lock, and write the registry back atomically.
+fn modify(
+    registry_file: &Path,
+    path: &Path,
+    change: impl FnOnce(&mut Space),
+) -> Result<String, String> {
+    locked(registry_file, |registry| {
+        let id = find(registry, path).unwrap_or_else(mint);
+        let space = registry.spaces.entry(id.clone()).or_default();
+        if !space.bindings.iter().any(|bound| bound == path) {
+            space.bindings.push(path.to_path_buf());
+        }
+        change(space);
+        Ok(id)
+    })
+}
+
+/// Says that the existing space `id` is the folder `path` on this
+/// machine: a project made on another machine, whose folder is somewhere
+/// else here (data-architecture plan M9). The folder leaves whatever
+/// space it was bound to, which is refused when that space is another
+/// project that already has conversations (`in_use`).
+pub fn attach(id: &str, path: &Path, in_use: impl Fn(&str) -> bool) -> Result<(), String> {
+    if !path.is_dir() {
+        return Err("that folder does not exist on this machine".into());
+    }
+    let path = canonical(path);
+    let registry = registry_path();
+    locked(&registry, |spaces| {
+        if !spaces.spaces.contains_key(id) {
+            return Err(format!("no project {id}"));
+        }
+        if let Some(other) = find(spaces, &path)
+            && other != id
+        {
+            if in_use(&other) {
+                return Err(
+                    "that folder is already another project with its own conversations".into(),
+                );
+            }
+            if let Some(space) = spaces.spaces.get_mut(&other) {
+                space.bindings.retain(|bound| *bound != path);
+                if space.bindings.is_empty() {
+                    spaces.spaces.remove(&other);
+                }
+            }
+        }
+        let space = spaces.spaces.entry(id.to_string()).or_default();
+        space.bindings.retain(|bound| *bound != path);
+        space.bindings.insert(0, path.clone());
+        space.forgotten = false;
+        Ok(())
+    })?;
+    remember(&registry, &path, id);
+    Ok(())
 }
 
 /// The key of a run's environment (`paths::environment_dir`): `env-<run>`.
@@ -293,7 +344,14 @@ pub fn all() -> Vec<SpaceRecord> {
         .into_iter()
         .map(|(id, space)| SpaceRecord {
             id,
-            folder: space.bindings.into_iter().next(),
+            // A space made on another machine lists that machine's
+            // folder too: show the one that is here.
+            folder: space
+                .bindings
+                .iter()
+                .find(|bound| bound.is_dir())
+                .or(space.bindings.first())
+                .cloned(),
             name: space.name,
             forgotten: space.forgotten,
             last_opened: space.last_opened,

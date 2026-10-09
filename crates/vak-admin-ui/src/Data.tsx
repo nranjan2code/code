@@ -6,7 +6,7 @@
 
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
-import type { DataIntegrity, DataPlan, DataStatus, DataTransition, DataUsage, ErasureReceipt, KeyStatus } from "./types";
+import type { DataIntegrity, DataPlan, DataStatus, DataTransition, DataUsage, ErasureReceipt, KeyStatus, SyncStatus } from "./types";
 
 function size(bytes: number): string {
   const units = ["B", "KB", "MB", "GB"];
@@ -529,13 +529,144 @@ function Keys() {
   );
 }
 
-export default function Data(props: { section: "retention" | "storage" | "integrity" | "keys" }) {
+const STANDS: Record<string, string> = {
+  holder: "This machine holds the work. What it does is copied to the folder as it goes.",
+  standing_by: "This machine is standing by. Your other machine holds the work, and nothing can be started here until you take over.",
+  lost: "Your other machine took the work over from this one. Nothing can be started here until this machine is brought up to the copy.",
+  unset: "Nothing has been copied from this machine yet.",
+};
+
+/// Operate › Data › Second copy (docs/design/74 §6.2 A18, plan M9): the
+/// folder that holds a second copy of everything, which of two machines
+/// holds the work, and the key file the other machine reads the copy with.
+function Sync() {
+  const [status, { refetch }] = createResource<SyncStatus>(() => api.syncStatus());
+  const [busy, setBusy] = createSignal(false);
+  const [said, setSaid] = createSignal("");
+  const [folder, setFolder] = createSignal("");
+  const [passphrase, setPassphrase] = createSignal("");
+  const [keyFile, setKeyFile] = createSignal("");
+  const [incoming, setIncoming] = createSignal("");
+  const act = async (what: () => Promise<{ restart_required?: boolean } | void>, done: string) => {
+    setBusy(true);
+    setSaid("");
+    try {
+      const result = await what();
+      setSaid(result && result.restart_required ? `${done} Start Vakyartha again before using it.` : done);
+      void refetch();
+    } catch (error) {
+      setSaid(`${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const takeOver = (force: boolean) => {
+    const lost = status()?.role === "lost";
+    if (force && !window.confirm("Take over without a hand-over? Do this only when the other machine is lost or cannot be reached. Whatever it never copied to the folder is not brought here.")) return;
+    if (lost && !window.confirm("This machine holds work that was never copied to the folder. Taking over replaces it with the copy. Go on?")) return;
+    void act(() => api.syncDo("takeover", { force, discard: lost }), "This machine holds the work now.");
+  };
+  const exportKey = async () => {
+    setBusy(true);
+    setSaid("");
+    try {
+      setKeyFile((await api.syncKeyExport(passphrase())).file);
+      setPassphrase("");
+      setSaid("The key file is ready. Save it, carry it to the other machine yourself, and delete it once it is imported there.");
+    } catch (error) {
+      setSaid(`${error instanceof Error ? error.message : error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const fileHref = () => `data:text/plain;charset=utf-8,${encodeURIComponent(keyFile())}`;
+  return (
+    <>
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Second copy</h2>
+            <p class="dim">A folder that holds a second copy of everything Vakyartha stores, encrypted: an external drive, a network share, or a folder another tool keeps in step. Two of your machines can take turns on it. One holds the work; the other stands by.</p>
+          </div>
+          <Show when={status()?.configured}>
+            <div class="lifecycle-actions">
+              <Show when={status()?.role === "holder" || status()?.role === "unset"}>
+                <button class="ghost small" disabled={busy()} onClick={() => void act(() => api.syncDo("now"), "The copy is up to date.")}>Copy now</button>
+              </Show>
+              <Show when={status()?.role === "holder"}>
+                <button class="ghost small" disabled={busy()} onClick={() => void act(() => api.syncDo("handover"), "Handed over. This machine is standing by; take over on the other one.")}>Hand over</button>
+              </Show>
+              <Show when={status()?.role === "standing_by" || status()?.role === "lost"}>
+                <button class="ghost small" disabled={busy()} onClick={() => takeOver(false)}>Take over here</button>
+                <button class="ghost small danger" disabled={busy()} onClick={() => takeOver(true)}>Take over, the other is lost…</button>
+              </Show>
+            </div>
+          </Show>
+        </div>
+        <Show when={said()}><p role="status">{said()}</p></Show>
+        <Show when={!status.error} fallback={<p class="dim">Could not read the second copy: {`${status.error}`}</p>}>
+          <Show when={status()} fallback={<p class="dim">Reading…</p>}>
+            {(found) => (
+              <Show
+                when={found().configured}
+                fallback={
+                  <div class="lifecycle-actions">
+                    <input class="rules-days" style={{ width: "28rem" }} aria-label="Folder for the second copy" placeholder="A folder that already exists, for example /Volumes/Backup/vakyartha" value={folder()} onInput={(event) => setFolder(event.currentTarget.value)} />
+                    <button class="ghost small" disabled={busy() || !folder().trim()} onClick={() => void act(() => api.syncDo("setup", { folder: folder() }), "The folder is set. Copy now to make the first copy.")}>Use this folder</button>
+                  </div>
+                }
+              >
+                <dl class="lifecycle-facts">
+                  <dt>Folder</dt>
+                  <dd>{found().remote}{found().reachable ? "" : " (it cannot be reached right now)"}</dd>
+                  <dt>This machine</dt>
+                  <dd>{found().role === "standing_by" && !found().held_elsewhere
+                    ? "This machine handed the work over and is standing by. Take over on your other machine, or take it back here."
+                    : `${STANDS[found().role ?? "unset"]}${found().role === "standing_by" && found().released ? " It has handed over, so this machine can take over." : ""}`}</dd>
+                  <dt>Last copied</dt>
+                  <dd>{found().synced_at ? `${day(found().synced_at as string)}.` : "Never."}{(found().unpushed ?? 0) > 0 ? ` ${found().unpushed} files have changed here since.` : found().synced_at ? " Nothing has changed here since." : ""}</dd>
+                  <Show when={found().last_error}>
+                    <dt>Last try</dt>
+                    <dd>It did not go through: {found().last_error} Nothing is lost; it is tried again.</dd>
+                  </Show>
+                </dl>
+                <p><button class="ghost small" disabled={busy()} onClick={() => { if (window.confirm("Stop using this folder? Nothing in it is touched.")) void act(() => api.syncDo("forget"), "This machine no longer uses a folder."); }}>Stop using this folder</button></p>
+              </Show>
+            )}
+          </Show>
+        </Show>
+      </section>
+      <section class="panel">
+        <div class="panel-title-row">
+          <div>
+            <h2>Key file for your other machine</h2>
+            <p class="dim">The folder holds only encrypted data, and no key is ever put in it. Your other machine reads it with a key file you make here under a passphrase and carry there yourself. After the key is changed (Keys), make a new one.</p>
+          </div>
+        </div>
+        <div class="lifecycle-actions">
+          <input class="rules-days" style={{ width: "20rem" }} type="password" autocomplete="new-password" aria-label="Passphrase for the key file" placeholder="A passphrase of at least 12 characters" value={passphrase()} onInput={(event) => setPassphrase(event.currentTarget.value)} />
+          <button class="ghost small" disabled={busy() || passphrase().length < 12} onClick={() => void exportKey()}>Make a key file</button>
+          <Show when={keyFile()}><a class="ghost small" href={fileHref()} download="vakyartha-key-file.txt">Save the key file</a></Show>
+        </div>
+        <p class="dim">On a new machine, or after the key was changed on the other one: paste the key file and its passphrase.</p>
+        <div class="lifecycle-actions">
+          <textarea class="rules-days" style={{ width: "28rem", height: "4.5rem" }} aria-label="Key file from your other machine" placeholder="The key file's text" value={incoming()} onInput={(event) => setIncoming(event.currentTarget.value)} />
+          <button class="ghost small" disabled={busy() || !incoming().trim() || passphrase().length < 1} onClick={() => void act(async () => { const done = await api.syncKeyImport(incoming(), passphrase()); setIncoming(""); setPassphrase(""); return done; }, "This machine now holds your keys.")}>Take these keys</button>
+        </div>
+      </section>
+    </>
+  );
+}
+
+export default function Data(props: { section: "retention" | "storage" | "integrity" | "keys" | "sync" }) {
   return (
     <div class="data-page">
+      <Show when={props.section !== "sync"} fallback={<Sync />}>
       <Show when={props.section !== "keys"} fallback={<Keys />}>
         <Show when={props.section !== "integrity"} fallback={<Integrity />}>
           <Show when={props.section === "storage"} fallback={<Retention />}><Storage /></Show>
         </Show>
+      </Show>
       </Show>
     </div>
   );
