@@ -4,8 +4,8 @@
 //! "Now I'll write the tests") or finish without doing the work the request
 //! asked for. The dogfood campaign measured this at 5/7 runs on a free tier.
 //! This policy reuses the existing stop-hook continuation machinery (append
-//! "[stop-guard]: reason / Please continue.", emit StopHookContinuation) at
-//! most `max_blocks` times per run, so it can never trap a model in a loop.
+//! a `[stop-guard]` control message, emit StopHookContinuation) at most
+//! `max_blocks` times per run, so it can never trap a model in a loop.
 //!
 //! What completion needs comes from the admitted reading (`OutcomeSpec`) and
 //! the run's receipts, never from phrases in the request: a phrase list read
@@ -61,6 +61,23 @@ impl BlockReason {
             ),
         }
     }
+}
+
+/// The control message a stop-guard block appends: the reason alone. Every
+/// reason ends with what to do and the way out ("say plainly why"), so a
+/// fixed "Please continue." after it only repeated the first half of that
+/// and contradicted the second.
+pub fn guard_message(reason: &str) -> String {
+    format!("[stop-guard]: {reason}")
+}
+
+/// The control message a stop hook's demand appends. A hook's reason is
+/// its own text, so the message gives the instruction and the way out.
+pub fn hook_message(reason: &str) -> String {
+    format!(
+        "[stop-hook]: a stop hook asked for more work: {}. Do it now, or say plainly why you cannot.",
+        reason.trim().trim_end_matches('.')
+    )
 }
 
 /// Summary of tool execution receipts produced during a run.
@@ -499,6 +516,22 @@ pub fn is_substantive_command(command: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_continuation_ends_with_its_way_out_not_a_bare_imperative() {
+        let reason = BlockReason::UnresolvedToolFailure {
+            tool: "bash".into(),
+            error: "read-only mode denies 'bash'".into(),
+        }
+        .message();
+        for message in [
+            super::guard_message(&reason),
+            super::hook_message("tests fail"),
+        ] {
+            assert!(!message.contains("Please continue"), "{message}");
+            assert!(message.contains("plainly"), "{message}");
+        }
+    }
+
     use super::*;
 
     fn spec(act: vak_intent::Act, request: &str) -> vak_intent::OutcomeSpec {

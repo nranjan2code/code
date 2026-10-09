@@ -3108,15 +3108,25 @@ still carried, checked against the code on 2026-10-09:
   `docs/architecture/write-paths-and-growth.html` is still the v3.5.1
   measurement).
 - **The Workspace data class has no backup policy.**
-- **The stop guard's "Please continue." was seen echoed back** in a
-  model's answer. Not investigated: the open question is what in the
-  guard's control message (`vak-agent` `stop_policy.rs`, the
-  `[stop-guard]` text) invites the copy and whether `clean_scaffolding`
-  reaches the place it showed up.
 
 Closed since the tracker listed it: a copy environment orphaned by a
 crash is now aged from its last write and removed by the reconciler
 (`environment_items` in `vak_core::lifecycle`, M7a-d).
+
+Closed on 2026-10-09: **the stop guard's "Please continue." echo was
+not reproduced.** No record of the original sighting survives beyond the
+one-line note. Live (`vak exec`, read-only mode, a request to write and
+run a file, local `gemma4:e2b-mlx`, three runs) the guard fired once and
+no answer echoed it; after it the model repeated the refused `bash` call
+until its turn limit. A direct probe of that exchange, 30 calls each, gave
+no echo of the trailer or the `[stop-guard]` marker with either text, and
+28 against 27 replies that reported the error plainly; a probe without the
+system prompt, tools and tool result had the model quote the whole guard
+message back as if the person had pasted an error, which is not how Vak
+sends it. The trailer was removed anyway as a cleanup, because each reason
+already gives the instruction and the way out (`stop_policy::guard_message`,
+`hook_message`), and `strip_control_blocks` lost its search for a phrase
+no producer writes. An echo seen again needs the exchange that produced it.
 
 Closed on 2026-10-09: **the mail vault's routine run history is run
 records.** The vault's encrypted history list, its lock file and its API

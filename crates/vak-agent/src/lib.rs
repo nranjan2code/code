@@ -2909,7 +2909,7 @@ impl Agent {
                                 .await
                                 .append_message(MessageRecord::control(
                                     vak_intent::control::ControlKind::StopHook,
-                                    format!("[stop-hook]: {reason}\nPlease continue."),
+                                    stop_policy::hook_message(&reason),
                                 ))
                         {
                             return nudge_write_failed(error);
@@ -4958,7 +4958,7 @@ impl Agent {
             .await
             .append_message(MessageRecord::control(
                 vak_intent::control::ControlKind::StopGuard,
-                format!("[stop-guard]: {reason}\nPlease continue."),
+                stop_policy::guard_message(&reason),
             ))?;
         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
         Ok(true)

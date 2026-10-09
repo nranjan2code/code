@@ -156,13 +156,21 @@ returning `Completed`:
   once accepted as a report and let a false success through.
 
 On a hit, the gate reuses the stop-hook continuation machinery: emits
-`StopHookContinuation`, appends `[stop-guard]: <reason> / Please continue.`
-as a user message (model-visible ⇒ logged), and continues within max_turns.
+`StopHookContinuation`, appends `[stop-guard]: <reason>` as a user message
+(model-visible ⇒ logged), and continues within max_turns. The reason is the
+whole message: each one says what to do and gives the way out ("say plainly
+why") (`stop_policy::guard_message`, `hook_message`). Until 2026-10-09 a
+fixed `Please continue.` followed it, repeating half of that and
+contradicting the rest. Removing it was measured on 2026-10-09 against
+local `gemma4:e2b-mlx` (30 calls each, the real exchange of a refused
+`bash` call): neither text was echoed, and 28 against 27 replies reported
+the error, so the change is a cleanup, not a fix for a measured failure.
 Hard cap `stop_policy.max_blocks` (default 2) per run — the gate can nudge,
 never trap. Config (`[stop_policy]`): `enabled/marker_gate/verify_gate/
 max_blocks`; unknown keys warn, `enabled = false` restores old behavior.
 External Stop hooks still run first and keep their own `[stop-hook]`
-prefix, so operator logs can tell them apart.
+prefix, so operator logs can tell them apart; a hook's reason is its own
+text, so its message adds the instruction and the way out itself.
 
 The explicit `/until-done …` command (`vak_intent::Command::UntilDone`)
 uses a separate user-completion gate. It is the only way to hold completion

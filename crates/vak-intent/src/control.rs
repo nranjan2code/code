@@ -145,7 +145,7 @@ impl InlineHint {
 
     /// Everything from the marker to the end of the text is the hint (its
     /// body can run over several lines), as opposed to a hint that ends at
-    /// "Please continue.".
+    /// the end of its line.
     pub const fn runs_to_end(self) -> bool {
         matches!(self, InlineHint::Recovery)
     }
@@ -193,8 +193,9 @@ pub fn is_scaffolding_line(line: &str) -> bool {
 }
 
 /// Removes `<tag>…</tag>` context blocks (an unterminated one runs to the end
-/// of the text) and the `[marker]: … Please continue.` spans that stop hooks,
-/// stop guards and tool-result hints embed in other text.
+/// of the text) and the inline hints a tool result carries: a `[recovery]`
+/// hint to the end of the text, a `[post-tool-use hook]:` line to the end of
+/// its line.
 pub fn strip_control_blocks(text: &str) -> String {
     let mut out = text.to_string();
     for tag in CONTEXT_BLOCK_TAGS {
@@ -226,13 +227,7 @@ pub fn strip_control_blocks(text: &str) -> String {
                 out.truncate(start);
                 break;
             }
-            if let Some(end_offset) = remainder.find("Please continue.") {
-                let end = start + end_offset + "Please continue.".len();
-                out.replace_range(start..end, "");
-            } else if let Some(end_offset) = remainder.find("Please continue") {
-                let end = start + end_offset + "Please continue".len();
-                out.replace_range(start..end, "");
-            } else if let Some(newline_offset) = remainder.find('\n') {
+            if let Some(newline_offset) = remainder.find('\n') {
                 let end = start + newline_offset + 1;
                 out.replace_range(start..end, "");
             } else {
