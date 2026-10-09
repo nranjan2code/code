@@ -50,8 +50,19 @@ pub enum VaultError {
 
 /// Cross-process exclusive claim for one Agent account's OAuth rotation.
 /// Keep it alive until the rotated secret and ledger metadata are committed.
+/// Dropping it unlocks explicitly: a child process being spawned holds a
+/// duplicate of every descriptor until it execs, and a lock released only
+/// by closing its descriptor stayed with such a child, so the next refresh
+/// was refused while nothing held the account (as a session ledger's lock,
+/// docs/design/02-sessions.md).
 pub struct AccountRefreshLease {
-    _lock_file: File,
+    lock_file: File,
+}
+
+impl Drop for AccountRefreshLease {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.lock_file);
+    }
 }
 
 /// Secret material accepted from a provider setup flow. Keep this type out of
@@ -316,7 +327,7 @@ impl AccountVault {
         }
         let file = options.open(lock_path).map_err(VaultError::Store)?;
         match file.try_lock_exclusive() {
-            Ok(()) => Ok(Some(AccountRefreshLease { _lock_file: file })),
+            Ok(()) => Ok(Some(AccountRefreshLease { lock_file: file })),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
             Err(error) => Err(VaultError::Store(error)),
         }
@@ -1905,13 +1916,17 @@ mod tests {
             "a second process cannot rotate the same provider credential"
         );
 
+        // What a child being spawned holds until it execs.
+        let duplicate = lease.lock_file.try_clone().unwrap();
         drop(lease);
         assert!(
             second_vault
                 .try_acquire_account_refresh_lease(&account_id)
                 .unwrap()
-                .is_some()
+                .is_some(),
+            "the dropped lease stayed with a duplicate of its file"
         );
+        drop(duplicate);
     }
 
     #[test]

@@ -249,6 +249,11 @@ inspection while another process owns the writable session. The lock is
 explicitly released when the writable handle drops; relying on descriptor
 close would keep the lock alive while duplicated descriptors remain open in
 spawned child processes.
+Every file lock Vak holds follows the same rule: a ledger's writer lock
+(`segments::WriterLock`), a workspace acceptance (`vak_sandbox`'s
+`AcceptanceLock`) and a mail account's refresh lease
+(`AccountRefreshLease`) each unlock explicitly on drop, and each has a test
+that drops it while a duplicate of its file is still open.
 
 ```mermaid
 sequenceDiagram

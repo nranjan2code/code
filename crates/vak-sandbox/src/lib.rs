@@ -1124,30 +1124,30 @@ fn load_transaction(path: &Path) -> Result<PromotionTransaction, Error> {
         .map_err(|error| Error::InvalidPlan(format!("journal parse failed: {error}")))
 }
 
-/// How long a workspace acceptance waits for the lock before it reports
-/// another acceptance in progress.
-const ACCEPTANCE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+/// The workspace acceptance lock, released by an explicit unlock when it
+/// is dropped. A flock belongs to the open file, and a child process being
+/// spawned by any thread holds a duplicate of every descriptor until it
+/// execs, so a lock released only by closing its descriptor stayed with
+/// such a child: the next acceptance or undo found "another workspace
+/// acceptance in progress" while nothing held it (the same fix as a
+/// session ledger's lock, docs/design/02-sessions.md).
+struct AcceptanceLock(fs::File);
 
-/// Takes the workspace acceptance lock on `file`. A flock belongs to the
-/// open file, so a child process forked by any thread between the previous
-/// holder's open and its exec keeps the lock until that exec, after the
-/// holder let go. A short wait rides that out; an acceptance that really
-/// holds the lock holds it far longer and is still refused.
-fn acceptance_lock(file: &fs::File) -> Result<(), Error> {
-    let deadline = std::time::Instant::now() + ACCEPTANCE_LOCK_WAIT;
-    loop {
+impl AcceptanceLock {
+    fn take(file: fs::File) -> Result<Self, Error> {
         match file.try_lock() {
-            Ok(()) => return Ok(()),
-            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            Err(std::fs::TryLockError::WouldBlock) => {
-                return Err(Error::Conflict(
-                    "another workspace acceptance is in progress".into(),
-                ));
-            }
-            Err(std::fs::TryLockError::Error(error)) => return Err(Error::Io(error)),
+            Ok(()) => Ok(Self(file)),
+            Err(std::fs::TryLockError::WouldBlock) => Err(Error::Conflict(
+                "another workspace acceptance is in progress".into(),
+            )),
+            Err(std::fs::TryLockError::Error(error)) => Err(Error::Io(error)),
         }
+    }
+}
+
+impl Drop for AcceptanceLock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
     }
 }
 
@@ -1300,7 +1300,7 @@ pub fn promote_recoverable(
         .write(true)
         .open(&lock_path)
         .map_err(Error::Io)?;
-    acceptance_lock(&lock_file)?;
+    let _lock = AcceptanceLock::take(lock_file)?;
     let directory = transaction_directory(transaction_root, &candidate.candidate_id)?;
     let journal_path = directory.join("journal.json");
     let selected_digest = candidate_digest(candidate)?;
@@ -1495,7 +1495,7 @@ pub fn undo_promotion(candidate_id: &str, transaction_root: &Path) -> Result<Und
         .read(true)
         .write(true)
         .open(transaction_root.join(format!("{workspace_key}.lock")))?;
-    acceptance_lock(&lock_file)?;
+    let _lock = AcceptanceLock::take(lock_file)?;
     transaction = load_transaction(&journal_path)?;
     if transaction.candidate_id != candidate_id {
         return Err(Error::InvalidPlan(
@@ -1632,7 +1632,7 @@ mod tests {
     }
 
     #[test]
-    fn acceptance_lock_waits_out_a_brief_holder() {
+    fn a_dropped_acceptance_lock_is_free_while_a_duplicate_lives() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("w.lock");
         let open = || {
@@ -1644,36 +1644,17 @@ mod tests {
                 .open(&path)
                 .unwrap()
         };
-        // What a forked child does to a lock its parent just released.
-        let holder = open();
-        holder.try_lock().unwrap();
-        let release = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(100));
-            drop(holder);
-        });
-        acceptance_lock(&open()).unwrap();
-        release.join().unwrap();
-    }
-
-    #[test]
-    fn acceptance_lock_still_refuses_a_real_acceptance() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("w.lock");
-        let open = || {
-            fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .open(&path)
-                .unwrap()
-        };
-        let holder = open();
-        holder.try_lock().unwrap();
-        let started = std::time::Instant::now();
-        assert!(matches!(acceptance_lock(&open()), Err(Error::Conflict(_))));
-        assert!(started.elapsed() >= ACCEPTANCE_LOCK_WAIT);
-        drop(holder);
+        let first = AcceptanceLock::take(open()).unwrap();
+        assert!(matches!(
+            AcceptanceLock::take(open()),
+            Err(Error::Conflict(_))
+        ));
+        // What a child being spawned holds until it execs.
+        let duplicate = first.0.try_clone().unwrap();
+        drop(first);
+        let second = AcceptanceLock::take(open());
+        drop(duplicate);
+        assert!(second.is_ok(), "the dropped lock stayed with a duplicate");
     }
     #[test]
     fn promotion_is_compare_before_write() {
