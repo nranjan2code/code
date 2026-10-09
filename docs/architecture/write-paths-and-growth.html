@@ -283,7 +283,7 @@
     <div class="stats">
       <div class="stat"><div class="n">19</div><div class="l">ledger entries <b>per turn</b><br>569 in the catalog over 30 turns</div></div>
       <div class="stat"><div class="n">11.5 KB</div><div class="l">ledger bytes <b>per turn</b><br>sealed frames, 604 B an entry (66 KB in v3.5.1)</div></div>
-      <div class="stat"><div class="n">53 KB</div><div class="l">search catalog <b>per turn</b><br>derived, rebuilt from records, never backed up</div></div>
+      <div class="stat"><div class="n">12 KB</div><div class="l">search catalog <b>per turn</b><br>53 KB before the jump-pointer fix; derived, never backed up</div></div>
       <div class="stat"><div class="n">2.5 KB</div><div class="l">tenant objects <b>per turn</b><br>5.4 new objects a turn</div></div>
       <div class="stat"><div class="n">5 KB</div><div class="l">side chains <b>together</b><br>cost, activity, routing, intent, runs</div></div>
     </div>
@@ -306,8 +306,8 @@
       <p><b>What changed since v3.5.1.</b> The ledger turn is a sixth of its old size: the capability binding no longer rides in every turn, and large payloads are tenant objects. The tenant store's growth is SQLite's write-ahead log, which checkpoints at about 4 MB and so is bounded. The test budget (<code>bytes_per_turn_budget</code>, about 6 KB) holds a synthetic turn; a real turn with tool calls and cards wrote about twice that.</p>
     </div>
     <div class="note">
-      <span class="lbl">Finding</span>
-      <p><b>The finding: the catalog's ancestor index grows as n·log&nbsp;n per conversation.</b> Of the catalog's 1.5 MB after 30 turns, 1.05 MB is the <code>jumps</code> table and its primary-key index: about 8 rows for every ledger entry (binary lifting over a conversation's depth), each row three UUIDs stored as text, repeated by the index — about 1.8 KB an entry, rising with log<sub>2</sub> of the conversation's length. Estimated, not measured: one conversation of 10 000 turns (about 190 000 entries, 17–18 levels) would hold some 750 MB of <code>jumps</code> alone. It is derived and can be rebuilt or dropped, but it is the one place a long conversation's cost grows faster than its history. Storing the ids compactly, or keeping jumps only where a branch makes them necessary, would bound it; that is an open item, not a change made here.</p>
+      <span class="lbl">Finding, fixed</span>
+      <p><b>The catalog's ancestor index grew as n·log&nbsp;n per conversation; it is linear now.</b> Of the catalog's 1.5 MB after 30 turns, 1.05 MB was the <code>jumps</code> table and its key index: about 8 rows for every ledger entry (a jump to each 2<sup>k</sup>-th ancestor), each row three UUIDs as text, repeated by the index; one conversation of 10 000 turns would have held some 750 MB of it. Each entry now keeps one skew-binary jump pointer beside its parent (<code>vak-catalog</code> <code>history.rs</code>), which answers "is A on the branch ending at B" in O(log&nbsp;n) reads with one extra column. The same 30-turn run, repeated: the catalog is 483 KB for 593 entries (12.3 KB a turn, about 0.8 KB an entry, against 53 KB and 2.6 KB), the <code>jumps</code> table is gone, and the whole home is 2.56 MB instead of 3.7 MB.</p>
     </div>
     <div class="note">
       <span class="lbl">Projection</span>

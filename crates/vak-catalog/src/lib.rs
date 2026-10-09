@@ -47,7 +47,7 @@ pub const FILE_NAME: &str = "catalog.db";
 
 /// The schema this build writes. A catalog stamped with another is dropped
 /// and rebuilt, never adapted: it is derived.
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -265,7 +265,6 @@ impl Catalog {
                 "calls",
                 "cursors",
                 "entries",
-                "jumps",
                 "turn_records",
                 "grants",
                 "broken",
@@ -542,7 +541,7 @@ impl Catalog {
                         .collect();
                     ids.extend(found);
                 }
-                for table in ["entries", "jumps", "turn_records"] {
+                for table in ["entries", "turn_records"] {
                     tx.execute(
                         &format!("DELETE FROM {table} WHERE session = ?1 OR session = ?2"),
                         [session, &node],
@@ -586,8 +585,8 @@ impl Catalog {
             "SELECT 'broken|' || node FROM broken",
             "SELECT 'text|' || node || '|' || body FROM texts",
             "SELECT 'entry|' || session || '|' || entry_id || '|' || segment || '|' || frame || '|' ||
-             IFNULL(parent,'') || '|' || depth || '|' || IFNULL(reset,'') FROM entries",
-            "SELECT 'jump|' || session || '|' || entry_id || '|' || level || '|' || ancestor FROM jumps",
+             IFNULL(parent,'') || '|' || depth || '|' || IFNULL(reset,'') || '|' ||
+             IFNULL(jump,'') || '|' || IFNULL(jump_depth,'') FROM entries",
             "SELECT 'turn|' || session || '|' || entry_id || '|' || turn_id || '|' || record FROM turn_records",
         ] {
             let mut statement = conn.prepare(sql)?;
@@ -658,10 +657,8 @@ fn connect(path: &Path) -> Result<Connection, CatalogError> {
          CREATE TABLE IF NOT EXISTS entries (
              session TEXT NOT NULL, entry_id TEXT NOT NULL, segment INTEGER NOT NULL,
              frame INTEGER NOT NULL, parent TEXT, depth INTEGER NOT NULL, reset TEXT,
+             jump TEXT, jump_depth INTEGER,
              PRIMARY KEY (session, entry_id));
-         CREATE TABLE IF NOT EXISTS jumps (
-             session TEXT NOT NULL, entry_id TEXT NOT NULL, level INTEGER NOT NULL,
-             ancestor TEXT NOT NULL, PRIMARY KEY (session, entry_id, level));
          CREATE TABLE IF NOT EXISTS turn_records (
              session TEXT NOT NULL, entry_id TEXT NOT NULL, turn_id TEXT NOT NULL,
              record TEXT NOT NULL, recorded_at TEXT NOT NULL,

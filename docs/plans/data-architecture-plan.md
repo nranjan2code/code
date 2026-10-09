@@ -3104,17 +3104,20 @@ The working tracker was deleted when the plan closed (2026-10-09); its
 step rows are in git history and each milestone's section above. What it
 still carried, checked against the code on 2026-10-09:
 
-- **The catalog's ancestor index grows as n·log n per conversation.** The
-  7.0 remeasure (below) found the `jumps` table and its primary-key index
-  holding 1.05 MB of a 1.5 MB catalog after one 30-turn conversation:
-  about 8 rows per ledger entry, three UUIDs as text in each, repeated by
-  the index. Estimated, a 10,000-turn conversation would hold some 750 MB
-  of it. It is derived and rebuildable; compact ids, or jumps kept only
-  where a branch needs them, would bound it.
 
 Closed since the tracker listed it: a copy environment orphaned by a
 crash is now aged from its last write and removed by the reconciler
 (`environment_items` in `vak_core::lifecycle`, M7a-d).
+
+Closed on 2026-10-09: **the catalog's ancestor index is linear.** The
+remeasure below found the `jumps` table (a jump to every 2^k-th ancestor,
+about 8 rows of three text UUIDs per ledger entry) holding 1.05 MB of a
+1.5 MB catalog after one 30-turn conversation, growing as n log n. Each
+entry now keeps one skew-binary jump pointer beside its parent (`jump`,
+`jump_depth` on `entries`, `vak-catalog` `history.rs`), which answers
+branch membership in O(log n) reads; the catalog schema is version 3, so
+an older catalog is rebuilt from the records, as a derived store is. The
+same run repeated: 483 KB for 593 entries (12.3 KB a turn, against 53 KB).
 
 Closed on 2026-10-09: **write-path growth was remeasured on 7.0**, by the
 maintainer's choice in a throwaway home rather than the real one: 30

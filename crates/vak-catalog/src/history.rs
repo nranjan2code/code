@@ -3,9 +3,13 @@
 //! each settled turn, searchable. These address and rank; the caller loads
 //! the canonical entry and checks it before anything reaches a model.
 //!
-//! Branch membership is logarithmic: each entry keeps jumps to its 2^k-th
-//! ancestor, so "is A on the branch ending at B" is a handful of lookups
-//! however long the history is.
+//! Branch membership is logarithmic in lookups and constant in storage:
+//! besides its parent, each entry keeps one skew-binary jump pointer
+//! (Myers' "applicative random-access stack"), so "is A on the branch
+//! ending at B" walks O(log n) entries however long the history is. It
+//! replaced a table of jumps to every 2^k-th ancestor, which held about
+//! eight rows per entry and grew as n log n (measured 2026-10-09: 1.05 MB
+//! of a 1.5 MB catalog after one 30-turn conversation).
 
 use crate::{Catalog, CatalogError, ingest};
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -70,24 +74,33 @@ pub(crate) fn index_entry(
     at: Position,
     entry: &Entry,
 ) -> rusqlite::Result<()> {
-    let parent: Option<(u64, Option<String>)> = match &entry.parent_id {
-        Some(id) => tx
-            .query_row(
-                "SELECT depth, reset FROM entries WHERE session = ?1 AND entry_id = ?2",
-                params![session, id],
-                |row| Ok((row.get::<_, i64>(0)? as u64, row.get(1)?)),
-            )
-            .optional()?,
+    let parent = match &entry.parent_id {
+        Some(id) => node(tx, session, id)?.map(|node| (id.clone(), node)),
         None => None,
     };
-    let depth = parent.as_ref().map_or(0, |(depth, _)| depth + 1);
+    let depth = parent.as_ref().map_or(0, |(_, node)| node.depth + 1);
     let reset = match &entry.payload {
         EntryPayload::Compaction(record) if record.reset_all => Some(entry.id.clone()),
-        _ => parent.and_then(|(_, reset)| reset),
+        _ => parent.as_ref().and_then(|(_, node)| node.reset.clone()),
+    };
+    // The jump: two equal hops back from the parent when the parent's jump
+    // and its jump's jump span equal distances, else the parent itself.
+    let jump = match &parent {
+        Some((id, up)) => {
+            let skip = match (&up.jump, up.jump_depth) {
+                (Some(jump), Some(jump_depth)) => node(tx, session, jump)?
+                    .and_then(|over| Some((over.jump?, over.jump_depth?)))
+                    .filter(|(_, far)| up.depth - jump_depth == jump_depth - far),
+                _ => None,
+            };
+            Some(skip.unwrap_or((id.clone(), up.depth)))
+        }
+        None => None,
     };
     tx.execute(
-        "INSERT OR IGNORE INTO entries (session, entry_id, segment, frame, parent, depth, reset)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT OR IGNORE INTO entries
+         (session, entry_id, segment, frame, parent, depth, reset, jump, jump_depth)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             session,
             entry.id,
@@ -95,33 +108,11 @@ pub(crate) fn index_entry(
             at.frames as i64,
             entry.parent_id,
             depth as i64,
-            reset
+            reset,
+            jump.as_ref().map(|(id, _)| id.clone()),
+            jump.as_ref().map(|(_, depth)| *depth as i64)
         ],
     )?;
-    if let Some(parent) = &entry.parent_id {
-        tx.execute(
-            "INSERT OR IGNORE INTO jumps (session, entry_id, level, ancestor) VALUES (?1, ?2, 0, ?3)",
-            params![session, entry.id, parent],
-        )?;
-        let mut previous = parent.clone();
-        for level in 1..63 {
-            let next: Option<String> = tx
-                .query_row(
-                    "SELECT ancestor FROM jumps WHERE session = ?1 AND entry_id = ?2 AND level = ?3",
-                    params![session, previous, level - 1],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            let Some(next) = next else {
-                break;
-            };
-            tx.execute(
-                "INSERT OR IGNORE INTO jumps (session, entry_id, level, ancestor) VALUES (?1, ?2, ?3, ?4)",
-                params![session, entry.id, level, next],
-            )?;
-            previous = next;
-        }
-    }
     if let EntryPayload::TurnCard(record) = &entry.payload {
         tx.execute(
             "INSERT OR IGNORE INTO turn_records (session, entry_id, turn_id, record, recorded_at)
@@ -138,45 +129,75 @@ pub(crate) fn index_entry(
     Ok(())
 }
 
+/// One entry's place in its session's tree.
+struct Node {
+    depth: u64,
+    parent: Option<String>,
+    reset: Option<String>,
+    jump: Option<String>,
+    jump_depth: Option<u64>,
+}
+
+fn node(conn: &rusqlite::Connection, session: &str, id: &str) -> rusqlite::Result<Option<Node>> {
+    conn.query_row(
+        "SELECT depth, parent, reset, jump, jump_depth FROM entries
+         WHERE session = ?1 AND entry_id = ?2",
+        params![session, id],
+        |row| {
+            Ok(Node {
+                depth: row.get::<_, i64>(0)? as u64,
+                parent: row.get(1)?,
+                reset: row.get(2)?,
+                jump: row.get(3)?,
+                jump_depth: row.get::<_, Option<i64>>(4)?.map(|depth| depth as u64),
+            })
+        },
+    )
+    .optional()
+}
+
+/// The ancestor of `leaf` at `depth`, and how many entries the walk read:
+/// it takes the jump while that does not overshoot, else the parent.
+fn ancestor_at(
+    conn: &rusqlite::Connection,
+    session: &str,
+    leaf: &str,
+    depth: u64,
+) -> rusqlite::Result<(Option<String>, usize)> {
+    let mut cursor = leaf.to_string();
+    let mut steps = 0;
+    loop {
+        steps += 1;
+        let Some(here) = node(conn, session, &cursor)? else {
+            return Ok((None, steps));
+        };
+        if here.depth == depth {
+            return Ok((Some(cursor), steps));
+        }
+        if here.depth < depth {
+            return Ok((None, steps));
+        }
+        cursor = match (here.jump, here.jump_depth) {
+            (Some(jump), Some(jump_depth)) if jump_depth >= depth => jump,
+            _ => match here.parent {
+                Some(parent) => parent,
+                None => return Ok((None, steps)),
+            },
+        };
+    }
+}
+
 fn is_ancestor(
     conn: &rusqlite::Connection,
     session: &str,
     ancestor: &str,
     leaf: &str,
 ) -> rusqlite::Result<bool> {
-    let depth = |id: &str| -> rusqlite::Result<Option<u64>> {
-        conn.query_row(
-            "SELECT depth FROM entries WHERE session = ?1 AND entry_id = ?2",
-            params![session, id],
-            |row| Ok(row.get::<_, i64>(0)? as u64),
-        )
-        .optional()
-    };
-    let (Some(target), Some(current)) = (depth(ancestor)?, depth(leaf)?) else {
+    let Some(target) = node(conn, session, ancestor)? else {
         return Ok(false);
     };
-    if target > current {
-        return Ok(false);
-    }
-    let difference = current - target;
-    let mut cursor = leaf.to_string();
-    for level in 0..63 {
-        if difference & (1u64 << level) == 0 {
-            continue;
-        }
-        let next: Option<String> = conn
-            .query_row(
-                "SELECT ancestor FROM jumps WHERE session = ?1 AND entry_id = ?2 AND level = ?3",
-                params![session, cursor, level],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let Some(next) = next else {
-            return Ok(false);
-        };
-        cursor = next;
-    }
-    Ok(cursor == ancestor)
+    let (found, _) = ancestor_at(conn, session, leaf, target.depth)?;
+    Ok(found.as_deref() == Some(ancestor))
 }
 
 impl Catalog {
@@ -378,15 +399,33 @@ mod tests {
         assert!(catalog.is_ancestor("s", &ids[2], &sibling).unwrap());
         assert!(!catalog.is_ancestor("s", &ids[3], &sibling).unwrap());
         assert!(!catalog.is_ancestor("s", &sibling, &ids[2047]).unwrap());
-        // A distant lookup uses logarithmic jumps, not one row per ancestor.
-        let jumps: i64 = catalog
-            .conn()
+        // Every pair on the chain agrees with a plain walk up the parents,
+        // in a logarithmic number of reads, and each entry is one row.
+        let conn = catalog.conn();
+        let mut longest = 0;
+        for leaf in [5usize, 100, 1023, 1024, 2047] {
+            for target in [0usize, 1, 2, 3, 511, 512, 1000, leaf] {
+                if target > leaf {
+                    continue;
+                }
+                let (found, steps) =
+                    ancestor_at(&conn, "ses_s", &ids[leaf], target as u64).unwrap();
+                assert_eq!(
+                    found.as_deref(),
+                    Some(ids[target].as_str()),
+                    "{leaf} -> {target}"
+                );
+                longest = longest.max(steps);
+            }
+        }
+        assert!(longest <= 3 * 11 + 2, "{longest} reads for 2048 entries");
+        let rows: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM jumps WHERE entry_id = ?1",
-                [&ids[2047]],
+                "SELECT COUNT(*) FROM entries WHERE session = 'ses_s'",
+                [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(jumps <= 12);
+        assert_eq!(rows, 2049);
     }
 }

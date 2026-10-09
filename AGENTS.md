@@ -1675,7 +1675,8 @@ crates/vak-catalog   the data catalog (plan M6, docs/design/73 §9): one
                      (`vak_session::tail`), rebuilt from the records alone;
                      `search` filters by audience before ranking, `lineage`
                      walks from anything to its run and cause; it also
-                     holds each session's entry locations, branch jumps and
+                     holds each session's entry locations, one skew-binary
+                     jump pointer per entry for branch membership, and
                      turn records for the turn recall (history.rs). Every
                      search (`/search`, admin, `session_search`, recall)
                      and every "where is session X" goes through it
