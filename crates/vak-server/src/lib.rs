@@ -12902,7 +12902,7 @@ struct OfficeProjectionQuery {
 }
 
 impl OfficeProjectionQuery {
-    fn view(&self) -> vak_tools::broker::OfficeView {
+    pub(crate) fn view(&self) -> vak_tools::broker::OfficeView {
         use vak_tools::broker::OfficeView;
         match (self.view.as_deref(), &self.at) {
             (Some("structure"), _) => OfficeView::Structure,

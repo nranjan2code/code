@@ -7,6 +7,7 @@ import { relAgo } from "../time";
 import { activate, openAgentChat } from "../App";
 import { attachArtifact } from "../attachFiles";
 import Icon from "./Icon";
+import OfficeView from "./OfficeView";
 
 /** Plain words for an artifact's kind (doc 75 §7). */
 const KIND: Record<ArtifactSummary["kind"], string> = {
@@ -133,6 +134,11 @@ function isText(artifact: ArtifactSummary): boolean {
   return artifact.kind === "file"
     && (artifact.size ?? 0) <= 256 * 1024
     && /\.(md|txt|csv|tsv|json|ya?ml|toml|html?|css|js|ts|tsx|py|rs|go|sh|sql|xml|ini)$/i.test(artifact.path);
+}
+
+/** An Office file or PDF, which the Library previews as a document. */
+function isDocument(artifact: ArtifactSummary): boolean {
+  return /\.(docx|docm|dotx|xlsx|xlsm|xltx|pptx|pptm|potx|vsdx|pdf)$/i.test(artifact.path);
 }
 
 function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => void }) {
@@ -302,7 +308,21 @@ function ArtifactPage(props: { id: string; onBack: () => void; onChanged: () => 
             </form>
           </Show>
           <Show when={editing() === null}>
-          <Show when={isText(found())} fallback={<div class="library-preview dock-empty">Download to open this {KIND[found().kind].toLowerCase()}.</div>}>
+          <Show
+            when={isText(found())}
+            fallback={
+              <Show
+                when={isDocument(found()) && version()}
+                fallback={<div class="library-preview dock-empty">Download to open this {KIND[found().kind].toLowerCase()}.</div>}
+              >
+                {(at) => (
+                  <div class="library-preview library-document">
+                    <OfficeView source={{ path: found().path, version: { artifact: found().id, version: at() } }} fileName={found().path.split("/").pop() ?? found().path} />
+                  </div>
+                )}
+              </Show>
+            }
+          >
             <pre class="library-preview">{text() ?? "Loading…"}</pre>
           </Show>
           </Show>

@@ -74,10 +74,13 @@ pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
     }
 }
 
-/// Validates a `recall` call's arguments: exactly one of `query`, `turn_id`,
-/// `turn`, `presentation`, or `id` must be present; `range` is only meaningful with
-/// `id` but is not rejected when present alongside another field (the
-/// resolver simply ignores it) — the one-of check is what actually matters.
+/// Validates a `recall` call's arguments: one of `query`, `turn_id`, `turn`,
+/// `presentation`, or `id` names what to recall; `range` is only meaningful
+/// with `id` but is not rejected when present alongside another field (the
+/// resolver simply ignores it). A `query` beside a precise target (`id`,
+/// `presentation`, `turn`) is the reason for the recall, not a second
+/// target: the target is recalled. Refusing it left a model that named the
+/// evidence it wanted, and why, with nothing (found live, 2026-10-10).
 fn parse_target(args: &Value) -> Result<RecallRequest, String> {
     // Some providers materialize every optional schema property with an
     // empty default. Treat those placeholders as absent while retaining the
@@ -112,10 +115,8 @@ fn parse_target(args: &Value) -> Result<RecallRequest, String> {
         }
         return Ok(RecallRequest::TurnId(turn_id.into()));
     }
-    if let Some(query) = query {
-        if turn.is_some() || presentation.is_some() || id.is_some() {
-            return Err("query cannot be combined with a recall target".into());
-        }
+    let precise = turn.is_some() || presentation.is_some() || id.is_some();
+    if let Some(query) = query.filter(|_| !precise) {
         if query.chars().count() > 2048 {
             return Err("query must be at most 2048 characters".into());
         }
@@ -339,6 +340,21 @@ mod tests {
         );
     }
 
+    /// The call a model made on a deployed host: every property filled,
+    /// a real evidence id and a query saying what it wanted from it.
+    #[test]
+    fn a_query_beside_an_evidence_id_recalls_the_evidence() {
+        let call = json!({
+            "chars": {"end": 10000, "start": 0}, "conversation": "", "id": "call_GX",
+            "limit": 8, "presentation": "", "query": "NIFTY Bank daily OHLC values",
+            "range": {"end": 0, "start": 0}, "turn": 0, "turn_id": ""
+        });
+        match parse_recall_args(&call).unwrap() {
+            RecallRequest::Id { id, .. } => assert_eq!(id, "call_GX"),
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
     fn a_character_range_reaches_inside_one_long_line() {
         assert_eq!(
@@ -385,7 +401,11 @@ mod tests {
                 limit: 20
             }
         );
-        assert!(parse_recall_args(&json!({"query": "weather", "turn": 1})).is_err());
+        // A query beside a precise target is its reason, not a second target.
+        assert_eq!(
+            parse_recall_args(&json!({"query": "weather", "turn": 1})).unwrap(),
+            RecallRequest::Turn(1)
+        );
         assert!(parse_recall_args(&json!({"query": "x".repeat(2049)})).is_err());
         assert!(parse_recall_args(&json!({"query": " "})).is_err());
     }

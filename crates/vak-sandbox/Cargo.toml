@@ -26,6 +26,8 @@ vak-pdf = { workspace = true, features = ["fixtures"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = { workspace = true }
+seccompiler = { workspace = true }
+libc = { workspace = true }
 
 [lints]
 workspace = true

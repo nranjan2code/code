@@ -55,3 +55,27 @@ export function chartGeometry(data: ChartData) {
   };
   return { keys, minY, maxY, x, y, valueAt, segments };
 }
+
+/** A payload's `series`, whatever shape it came in, as chart series. */
+export function normalizeSeries(raw: unknown): ChartSeries[] {
+  const rawSeries: any[] = Array.isArray(raw) ? raw : [];
+  return rawSeries
+    .filter((s: any) => s && typeof s === "object")
+    .map((s: any) => {
+      const rawPoints: any[] = Array.isArray(s.points) ? s.points : [];
+      const points: ChartPoint[] = rawPoints
+        .map((pt: any): ChartPoint | null => {
+          if (Array.isArray(pt) && pt.length >= 2) {
+            return { x: typeof pt[0] === "number" ? pt[0] : String(pt[0] ?? ""), y: typeof pt[1] === "number" ? pt[1] : null };
+          }
+          if (pt && typeof pt === "object") {
+            const x = pt.x ?? pt.label ?? pt.key;
+            if (x === undefined || x === null) return null;
+            return { x: typeof x === "number" ? x : String(x), y: typeof pt.y === "number" ? pt.y : typeof pt.value === "number" ? pt.value : null };
+          }
+          return null;
+        })
+        .filter((pt): pt is ChartPoint => pt !== null);
+      return { name: String(s.name ?? s.label ?? "Series"), points };
+    });
+}

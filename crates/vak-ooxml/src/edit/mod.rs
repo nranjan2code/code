@@ -700,6 +700,25 @@ pub fn apply(
         .collect();
     // A later op that sets a paragraph's whole text supersedes what an
     // earlier op promised about that paragraph.
+    // A later op that formats the same part of the same cell decides it: a
+    // block formatted first and a sub-range refined after is one request,
+    // not a broken promise (found live, 2026-10-10).
+    let formatted_later: Vec<Vec<(String, Vec<String>, sheet::Format)>> = (0..outcomes.len())
+        .map(|position| {
+            outcomes[position + 1..]
+                .iter()
+                .flat_map(|(_, _, outcome)| &outcome.expect)
+                .filter_map(|expect| match expect {
+                    Expect::CellFormat {
+                        sheet,
+                        cells,
+                        format,
+                    } => Some((sheet.clone(), cells.clone(), format.clone())),
+                    _ => None,
+                })
+                .collect()
+        })
+        .collect();
     let rewritten_later: Vec<Vec<String>> = (0..outcomes.len())
         .map(|position| {
             outcomes[position + 1..]
@@ -755,10 +774,27 @@ pub fn apply(
             }) {
                 continue;
             }
-            check(&document, &mut written, expect).map_err(|message| EditError {
+            let failed = |message: String| EditError {
                 op: Some((index, name)),
                 message: format!("postcondition failed after writing: {message}"),
-            })?;
+            };
+            if let Expect::CellFormat {
+                sheet: on,
+                cells,
+                format,
+            } = expect
+            {
+                for cell in cells {
+                    let left = format.without_later(on, cell, &formatted_later[position]);
+                    if !left.is_empty() {
+                        let package = written.package().map_err(failed)?;
+                        sheet::check_format(package, on, std::slice::from_ref(cell), &left)
+                            .map_err(failed)?;
+                    }
+                }
+                continue;
+            }
+            check(&document, &mut written, expect).map_err(failed)?;
         }
         results.push(OpResult {
             op: name.to_string(),

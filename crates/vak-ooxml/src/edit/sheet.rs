@@ -804,7 +804,39 @@ pub(crate) struct Format {
 }
 
 impl Format {
-    fn is_empty(&self) -> bool {
+    /// What is left of this format for `cell` once every later op that
+    /// formats the same part of it has had its say.
+    pub(super) fn without_later(
+        &self,
+        sheet: &str,
+        cell: &str,
+        later: &[(String, Vec<String>, Format)],
+    ) -> Format {
+        let mut left = self.clone();
+        for (on, cells, format) in later {
+            if on != sheet || !cells.iter().any(|other| other.eq_ignore_ascii_case(cell)) {
+                continue;
+            }
+            if format.bold.is_some() {
+                left.bold = None;
+            }
+            if format.italic.is_some() {
+                left.italic = None;
+            }
+            if format.number_format.is_some() {
+                left.number_format = None;
+            }
+            if format.fill.is_some() {
+                left.fill = None;
+            }
+            if format.wrap.is_some() {
+                left.wrap = None;
+            }
+        }
+        left
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
         self.bold.is_none()
             && self.italic.is_none()
             && self.number_format.is_none()

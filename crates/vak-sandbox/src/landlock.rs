@@ -205,28 +205,88 @@ impl Sandbox for Landlock {
 }
 
 /// Applies the ruleset to the CURRENT process. Read+execute only under
-/// `read_paths`; writes only under `write_paths` unless `read_only`. ALL TCP bind/connect
-/// is denied in every sandboxed mode — parity with Seatbelt, whose
-/// deny-default profile leaves no network allowance — and the call FAILS
-/// CLOSED when the kernel cannot enforce that denial (needs ABI v4).
+/// `read_paths`; writes only under `write_paths` unless `read_only`. Every
+/// IPv4 and IPv6 socket is refused in every sandboxed mode -- parity with
+/// Seatbelt, whose deny-default profile leaves no network allowance -- and
+/// the call FAILS CLOSED when the kernel cannot enforce either half.
+///
+/// Landlock handles files (ABI v3, so truncation is a governed right, not a
+/// way around a denied write). It cannot deny UDP, so the network is denied
+/// by a seccomp filter instead: `socket()` for `AF_INET`/`AF_INET6` returns
+/// EPERM, which covers TCP, UDP and raw sockets alike, and io_uring, which
+/// can open sockets without calling `socket()`, is refused outright. Unix
+/// sockets stay available to local tools.
 pub fn apply(
     read_paths: &[PathBuf],
     write_paths: &[PathBuf],
     read_only: bool,
 ) -> Result<(), String> {
-    let _ = (read_paths, write_paths, read_only);
+    use landlock::{
+        Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+        path_beneath_rules,
+    };
 
-    // ABI v3 adds TRUNCATE, which must be handled explicitly or a process can
-    // truncate files outside its granted write paths even when WRITE_FILE is
-    // denied. ABI v4 is the minimum network ABI; it handles TCP connect/bind.
     let fs_abi = ABI::V3;
-    // This vendored Landlock API reaches ABI v9 (TCP only). UDP has no
-    // restriction right in that API, so claiming a blanket no-network policy
-    // on Linux would be false. Refuse closed until the API supports the
-    // required network ABI rather than silently allowing UDP egress.
-    return Err(format!(
-        "landlock: UDP network denial is unavailable in the pinned Landlock API (fs ABI {fs_abi:?}, network policy requires ABI v10+)"
-    ));
+    let created = Ruleset::default()
+        .handle_access(AccessFs::from_all(fs_abi))
+        .and_then(|r| r.create())
+        .map_err(|e| format!("landlock: {e}"))?;
+    let created = created
+        .add_rules(path_beneath_rules(read_paths, AccessFs::from_read(fs_abi)))
+        .map_err(|e| format!("landlock: {e}"))?;
+    let restricted = if read_only {
+        created.restrict_self()
+    } else {
+        created
+            .add_rules(path_beneath_rules(write_paths, AccessFs::from_all(fs_abi)))
+            .and_then(|r| r.restrict_self())
+    }
+    .map_err(|e| format!("landlock: {e}"))?;
+    if restricted.ruleset != RulesetStatus::FullyEnforced {
+        return Err(
+            "landlock: full enforcement unavailable (the kernel needs Landlock ABI v3, Linux 6.2+)"
+                .to_string(),
+        );
+    }
+    deny_network()
+}
+
+/// The seccomp half of [`apply`]: no IPv4 or IPv6 socket and no io_uring
+/// for this process and everything it executes.
+fn deny_network() -> Result<(), String> {
+    use seccompiler::{
+        BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
+        SeccompRule, TargetArch,
+    };
+    let fail = |e: &dyn std::fmt::Display| format!("seccomp: {e}");
+    let domain = |family: libc::c_int| {
+        SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, family as u64)
+            .and_then(|condition| SeccompRule::new(vec![condition]))
+    };
+    let socket_rules = vec![
+        domain(libc::AF_INET).map_err(|e| fail(&e))?,
+        domain(libc::AF_INET6).map_err(|e| fail(&e))?,
+    ];
+    let rules = [
+        (libc::SYS_socket, socket_rules),
+        (libc::SYS_io_uring_setup, Vec::new()),
+        (libc::SYS_io_uring_enter, Vec::new()),
+        (libc::SYS_io_uring_register, Vec::new()),
+    ]
+    .into_iter()
+    .collect();
+    let arch = TargetArch::try_from(std::env::consts::ARCH).map_err(|e| fail(&e))?;
+    let filter = SeccompFilter::new(
+        rules,
+        SeccompAction::Allow,
+        SeccompAction::Errno(libc::EPERM as u32),
+        arch,
+    )
+    .map_err(|e| fail(&e))?;
+    let program: BpfProgram = filter
+        .try_into()
+        .map_err(|e: seccompiler::BackendError| fail(&e))?;
+    seccompiler::apply_filter(&program).map_err(|e| fail(&e))
 }
 
 fn shell_quote(s: &str) -> String {

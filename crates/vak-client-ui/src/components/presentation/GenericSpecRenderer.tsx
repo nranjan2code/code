@@ -1,6 +1,6 @@
 import { For, Show, createContext, createEffect, createMemo, createSignal, onCleanup, useContext } from "solid-js";
 import type { AdaptiveRenderNode } from "../../types";
-import { chartGeometry, downloadCsv, type ChartData, type ChartPoint, type ChartSeries } from "./data";
+import { chartGeometry, downloadCsv, normalizeSeries, type ChartData, type ChartPoint, type ChartSeries } from "./data";
 import { previewSandbox, safeUrl, sandboxedSrcdoc } from "../../safeUrl";
 import { activeId, openInEditor, openArtifactCanvas, openArtifactFile, technicalDetails, uiPreferences } from "../../store";
 import { inlineTitle } from "../../canvasSubject";
@@ -1064,16 +1064,10 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
 function chartDataOf(node: AdaptiveRenderNode): ChartData {
   const rawType = str(node.props, "chart_type");
   const chart_type: ChartData["chart_type"] = rawType === "bar" || rawType === "area" ? rawType : "line";
-  const series: ChartSeries[] = (Array.isArray(node.children) ? node.children : [])
-    .filter((c): c is AdaptiveRenderNode => !!c && typeof c === "object")
-    .map((c) => {
-      const p = c.props && typeof c.props === "object" ? c.props : {};
-      const rawPoints = Array.isArray(p["points"]) ? (p["points"] as unknown[]) : [];
-      return {
-        name: str(p, "name") ?? "Series",
-        points: rawPoints.filter((pt): pt is ChartPoint => !!pt && typeof pt === "object" && "x" in (pt as object)),
-      };
-    });
+  // The host's `chart` primitive carries its series in `props.series`
+  // (vak_presentation has no series primitive); a pack-compiled card arrives
+  // that way, and `buildChartSpec` builds the same shape.
+  const series = normalizeSeries(node.props?.["series"]);
   return {
     chart_type,
     title: str(node.props, "title"),
@@ -1999,37 +1993,19 @@ export function buildTerminalSpec(data: unknown): AdaptiveRenderNode {
  */
 export function buildChartSpec(data: unknown, chartTypeOverride?: "line" | "area" | "bar"): AdaptiveRenderNode {
   const d = data && typeof data === "object" && !Array.isArray(data) ? (data as any) : null;
-  const rawSeries: any[] = d && Array.isArray(d.series) ? d.series : [];
-  const series: AdaptiveRenderNode[] = rawSeries
-    .filter((s: any) => s && typeof s === "object")
-    .map((s: any) => {
-      const rawPoints: any[] = Array.isArray(s.points) ? s.points : [];
-      const points: ChartPoint[] = rawPoints
-        .map((pt: any): ChartPoint | null => {
-          if (Array.isArray(pt) && pt.length >= 2) {
-            return { x: typeof pt[0] === "number" ? pt[0] : String(pt[0] ?? ""), y: typeof pt[1] === "number" ? pt[1] : null };
-          }
-          if (pt && typeof pt === "object") {
-            const x = pt.x ?? pt.label ?? pt.key;
-            if (x === undefined || x === null) return null;
-            return { x: typeof x === "number" ? x : String(x), y: typeof pt.y === "number" ? pt.y : typeof pt.value === "number" ? pt.value : null };
-          }
-          return null;
-        })
-        .filter((pt): pt is ChartPoint => pt !== null);
-      return { primitive: "series", props: { name: String(s.name ?? s.label ?? "Series"), points }, children: [] };
-    });
+  const series = normalizeSeries(d?.series);
 
   const rawType = d && typeof d.chart_type === "string" ? d.chart_type : undefined;
   const props: Record<string, unknown> = {
     chart_type: chartTypeOverride ?? (rawType === "bar" || rawType === "area" || rawType === "line" ? rawType : "line"),
     accessible_summary: d && typeof d.accessible_summary === "string" ? d.accessible_summary : "",
+    series,
   };
   if (d && typeof d.title === "string") props.title = d.title;
   if (d && typeof d.x_label === "string") props.x_label = d.x_label;
   if (d && typeof d.y_label === "string") props.y_label = d.y_label;
 
-  return { primitive: "chart", props, children: series };
+  return { primitive: "chart", props, children: [] };
 }
 
 /**

@@ -4198,6 +4198,7 @@ body.is-resizing .split-divider {
 .library-rename { display: flex; gap: 6px; flex: 1; min-width: 0; }
 .library-rename input { flex: 1; min-width: 0; }
 .library-preview { margin: 0 0 16px; max-height: 420px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-control); }
+.library-document { max-height: 640px; padding: 0; white-space: normal; overflow-wrap: normal; }
 .library-note { font-size: var(--fs-control); color: var(--text-soft); }
 .presentation-save { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .library-edit { margin: 0 0 16px; }

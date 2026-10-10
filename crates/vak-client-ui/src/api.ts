@@ -1858,7 +1858,9 @@ export type OfficeStructure = {
 };
 
 /** Where an Office file lives: the workspace, or a saved candidate. */
-export type OfficeSource = { path: string; sessionId?: string; candidateId?: string; executionId?: string; token?: string };
+/** Where an Office file or PDF is read from: a Library version by its id
+ *  (`version`), a saved draft, an execution's output, or the folder. */
+export type OfficeSource = { path: string; version?: VersionRef; sessionId?: string; candidateId?: string; executionId?: string; token?: string };
 
 export type OfficeEditOp =
   | { op: "replace_paragraph_text"; anchor: string; text: string }
@@ -1881,6 +1883,7 @@ async function officeReq<T>(source: OfficeSource, url: string, init?: RequestIni
 }
 
 async function officeUrl(source: OfficeSource, query: string): Promise<string> {
+  if (source.version) return `${versionUrl(source.version)}/document?${query}`;
   // A saved draft is read as the artifact version it proposes.
   if (source.candidateId && source.sessionId)
     return `${versionUrl(await versionOf(source.sessionId, source.candidateId, source.path, source.token))}/document?${query}`;

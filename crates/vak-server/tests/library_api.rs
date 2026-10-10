@@ -162,3 +162,63 @@ async fn library_lists_artifacts_and_their_versions() {
         404
     );
 }
+
+/// A saved Office version outside Review previews from its stored bytes,
+/// parsed in the worker; the Library page offered only a download before.
+#[tokio::test]
+async fn a_saved_workbook_previews_from_its_stored_bytes() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+    core.set_tool_worker_exe(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_vak-tool-worker"
+    )));
+    let artifacts = core.artifacts();
+    let id = artifacts
+        .declare(
+            "spc_lib",
+            "vak",
+            "reports/budget.xlsx",
+            ArtifactKind::File,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let workbook = vak_ooxml::fixtures::xlsx();
+    let version = artifacts
+        .version(
+            id,
+            NewVersion {
+                parent: None,
+                bytes: &workbook,
+                source: VersionSource::Person,
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+    let (router, token) = vak_server::secured_router(core);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let res = reqwest::Client::new()
+        .get(format!(
+            "http://{addr}/library/{id}/versions/{version}/document"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["path"], "reports/budget.xlsx");
+    assert!(body.to_string().contains("Budget"), "{body}");
+    let previews = vak_config::paths::runtime_dir().join("library-previews");
+    let left = std::fs::read_dir(&previews)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(left, 0, "the preview's file is removed once read");
+}

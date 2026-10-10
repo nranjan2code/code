@@ -691,11 +691,29 @@ fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
             .trim()
             .to_string();
         let x = scalar(&point["x"]);
-        let entry = serde_json::json!({"x": x, "y": point["y"]});
+        // A y written as text ("24,850.3") is still a number; anything
+        // else cannot be drawn, and saying so lets the call be repaired.
+        let y = match scalar(&point["y"]) {
+            number @ Value::Number(_) => number,
+            _ => {
+                return Err(format!(
+                    "each point's `y` must be a number; series `{name}` at x `{}` has none",
+                    point["x"]
+                        .as_str()
+                        .map_or_else(|| point["x"].to_string(), str::to_string)
+                ));
+            }
+        };
+        let entry = serde_json::json!({"x": x, "y": y});
         match series.iter_mut().find(|(existing, _)| *existing == name) {
             Some((_, points)) => points.push(entry),
             None => series.push((name, vec![entry])),
         }
+    }
+    // A chart with no points is an empty frame, summary or not (found on a
+    // deployed host, 2026-10-10: two cards said "No data points supplied").
+    if series.is_empty() {
+        return Err("give `points`: every point, each with its series, x and y".into());
     }
     let mut payload = copy(
         args,
@@ -712,9 +730,6 @@ fn build_chart(args: &Map<String, Value>) -> Result<Value, String> {
         .and_then(Value::as_str)
         .is_some_and(|summary| !summary.trim().is_empty())
     {
-        if series.is_empty() {
-            return Err("give `points`: every point, each with its series, x and y".into());
-        }
         payload.insert(
             "accessible_summary".into(),
             Value::String(chart_summary(args, &series)),
@@ -1986,6 +2001,34 @@ mod tests {
         assert_eq!(payload["series"][0]["name"], "2025");
         assert_eq!(payload["series"][0]["points"].as_array().unwrap().len(), 2);
         assert_eq!(payload["series"][0]["points"][0]["x"], "Jan");
+        // A summary is no stand-in for data, a y given as text is read as a
+        // number, and one that is not a number is refused by name.
+        assert!(
+            built(
+                "emit_chart_card",
+                serde_json::json!({"chart_type": "line", "accessible_summary": "rose", "points": []}),
+            )
+            .unwrap_err()
+            .contains("`points`")
+        );
+        let texty = built(
+            "emit_chart_card",
+            serde_json::json!({"chart_type": "line", "points": [
+                {"series": "NIFTY 50", "x": "Mon", "y": "24,850.5"}
+            ]}),
+        )
+        .unwrap();
+        assert_eq!(texty["series"][0]["points"][0]["y"], 24850.5);
+        assert!(
+            built(
+                "emit_chart_card",
+                serde_json::json!({"chart_type": "line", "points": [
+                    {"series": "NIFTY 50", "x": "Mon", "y": "up"}
+                ]}),
+            )
+            .unwrap_err()
+            .contains("`y` must be a number")
+        );
         let research = built(
             "emit_research_card",
             serde_json::json!({

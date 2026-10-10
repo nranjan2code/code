@@ -384,7 +384,9 @@ fn may_review(
 }
 
 /// `GET /library/{id}/versions/{version}/document`: the Office or PDF
-/// projection of a version in Review, parsed in the worker.
+/// projection of a version, parsed in the worker: a version in Review from
+/// its draft, any other from its stored bytes. The Library page showed
+/// "Download to open" for every Office file and PDF before this read them.
 async fn version_document(
     State(state): State<AppState>,
     Path((id, version)): Path<(String, String)>,
@@ -394,9 +396,8 @@ async fn version_document(
     if let Err(response) = may_review(&state, &principal, &id, &version) {
         return *response;
     }
-    let review = match in_review(&state, &id, &version) {
-        Ok(review) => review,
-        Err(response) => return *response,
+    let Ok(review) = in_review(&state, &id, &version) else {
+        return stored_document(state, principal, id, version, query).await;
     };
     query.path = review.path;
     crate::read_sandbox_candidate_office_projection(
@@ -405,6 +406,54 @@ async fn version_document(
         axum::extract::Query(query),
     )
     .await
+}
+
+/// A version's own bytes, projected in the worker through a file of its
+/// own in the runtime directory, removed once read.
+async fn stored_document(
+    state: AppState,
+    principal: crate::AuthenticatedPrincipal,
+    id: String,
+    version: String,
+    query: crate::OfficeProjectionQuery,
+) -> Response {
+    let (path, bytes) = match readable(&state, &principal, id.clone(), &version).await {
+        Ok(found) => found,
+        Err(status) => return status.into_response(),
+    };
+    if !crate::is_document_path(&path) {
+        return refuse(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "not an Office file or PDF",
+        );
+    }
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "document".into());
+    let dir = vak_config::paths::runtime_dir()
+        .join("library-previews")
+        .join(uuid::Uuid::now_v7().to_string());
+    let file = dir.join(&name);
+    let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&file, &bytes));
+    if written.is_err() {
+        let _ = std::fs::remove_dir_all(&dir);
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+    let projected =
+        vak_tools::broker::office_project(&state.core.tool_worker_exe(), &file, query.view()).await;
+    let _ = std::fs::remove_dir_all(&dir);
+    match projected {
+        Ok(mut body) => {
+            body["path"] = serde_json::Value::String(path);
+            Json(body).into_response()
+        }
+        Err(error) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 /// `GET /library/{id}/versions/{version}/review`: what a version in

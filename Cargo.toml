@@ -158,6 +158,8 @@ libc = "0.2"
 tempfile = "3"
 # Linux filesystem containment: safe wrapper over the Landlock LSM syscalls
 landlock = "0.4"
+# Linux sandbox network denial: Landlock cannot deny UDP, a seccomp filter can (no unsafe).
+seccompiler = "=0.4.0"
 # Desktop shell (crates/vak-desktop, docs/design/48-web-client.md): native
 # webview + Rust host.
 # `tray-icon` keeps the window and menu-bar lifecycle in this one app process.

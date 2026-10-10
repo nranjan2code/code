@@ -1653,3 +1653,44 @@ fn empty_strings_can_be_written_and_clear_existing_excel_values() {
             .all(|unit| !unit.text.contains("Previous value"))
     );
 }
+
+/// A block formatted first and a sub-range refined after is one request:
+/// the later number format decides the cells it covers, and the earlier
+/// op's check holds for the rest. Found live on 2026-10-10, where the
+/// earlier op's check refused the whole edit ("G2 has number format 0.000,
+/// not #,##0.00").
+#[test]
+fn a_later_format_refines_part_of_an_earlier_one() {
+    let cells: BTreeMap<String, CellValue> = [
+        ("A1", CellValue::Number(22555.75)),
+        ("A2", CellValue::Number(0.104)),
+        ("A3", CellValue::Number(22776.1)),
+    ]
+    .into_iter()
+    .map(|(address, value)| (address.to_string(), value))
+    .collect();
+    let format = |range: &str, code: &str| OfficeOp::FormatCells {
+        sheet: WORKBOOK_SHEET.into(),
+        range: range.into(),
+        bold: None,
+        italic: None,
+        number_format: Some(code.into()),
+        fill: None,
+        wrap: None,
+    };
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::SetCells {
+                sheet: WORKBOOK_SHEET.into(),
+                cells,
+            },
+            format("A1:A3", "#,##0.00"),
+            format("A2", "0.000"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(applied.results.len(), 3);
+    let styles = part(&applied.bytes, "xl/styles.xml");
+    assert!(styles.contains(r#"formatCode="0.000""#), "{styles}");
+}

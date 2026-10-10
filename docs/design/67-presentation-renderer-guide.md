@@ -269,7 +269,15 @@ shape to an empty series list and `renderChart` shows its
 `test_matrix` (the old component called `.filter` on a possibly-absent `tests`)
 and in `diff` (a raw patch under `diff`/`patch`/`raw_diff`/`content` rendered
 an empty card). **An empty or malformed payload must reach a visible empty
-state, never a blank node and never a throw.** Test the empty array, not just
+state, never a blank node and never a throw.**
+
+**Read a primitive in the shape the host emits.** The host's `chart` node
+carries its data in `props.series` (there is no `series` primitive), and a
+card compiled through a presentation pack arrives that way. The client once
+built child `series` nodes in `buildChartSpec` and read only those, so every
+pack-compiled chart showed "No data points supplied." with its data in hand
+(found 2026-10-10). Now both paths use `props.series`, read by
+`normalizeSeries` in `presentation/data.ts` (`tests/chart-series.mjs`). Test the empty array, not just
 the populated one.
 
 **Stringifying a structured value instead of carrying it.** `JSON.stringify` on

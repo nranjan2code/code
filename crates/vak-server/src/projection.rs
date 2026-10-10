@@ -2650,7 +2650,7 @@ mod tests {
         for summary in ["revenue", "cost"] {
             let info = vak_core::presentation_tools::presentation_info(
                 "emit_chart_card",
-                &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":summary}),
+                &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary}),
                 &skills,
             )
             .expect("fixture card validates");
@@ -3947,7 +3947,7 @@ mod tests {
         })
         .expect("append user message");
 
-        let chart_input = |summary: &str| serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":summary});
+        let chart_input = |summary: &str| serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary});
         let ack = || "Card displayed to the user (chart).".to_string();
 
         log.append_message(MessageRecord {
@@ -4106,7 +4106,7 @@ mod tests {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-1".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":"revenue"}),
+                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"}),
             }]),
             meta: None,
         })
@@ -4127,13 +4127,13 @@ mod tests {
             &mut log,
             "emit_chart_card",
             "call-1",
-            &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":"revenue"}),
+            &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"}),
         );
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-2".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":"cost"}),
+                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"cost"}),
             }]),
             meta: None,
         })
@@ -4154,7 +4154,7 @@ mod tests {
             &mut log,
             "emit_chart_card",
             "call-2",
-            &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":"cost"}),
+            &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"cost"}),
         );
 
         let timeline = snapshot("two-charts", &log);
@@ -4827,7 +4827,7 @@ mod tests {
     }
 
     fn append_card_call(log: &mut SessionLog, id: &str, summary: &str) {
-        let input = serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[],"accessible_summary":summary});
+        let input = serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary});
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: id.into(),
