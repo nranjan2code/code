@@ -152,11 +152,16 @@ mod task_copy_tests {
     fn task_copy_excludes_host_temp_write_roots() {
         let copy = tempfile::tempdir().expect("task copy");
         let sandbox = Landlock::task_copy(SandboxMode::WorkspaceWrite, copy.path());
-        assert_eq!(
-            sandbox.write_paths,
-            vec![copy.path().canonicalize().expect("canonical copy")]
-        );
-        assert!(!sandbox.read_paths.contains(&PathBuf::from("/private/tmp")));
+        let canonical = copy.path().canonicalize().expect("canonical copy");
+        // The copy and its own execution root, never the host's temp.
+        let executions = vak_config::scope::executions_root(&canonical);
+        let executions = executions.canonicalize().unwrap_or(executions);
+        assert_eq!(sandbox.write_paths, vec![canonical, executions]);
+        let temp = std::env::temp_dir();
+        for host in [temp.as_path(), Path::new("/tmp"), Path::new("/private/tmp")] {
+            assert!(!sandbox.write_paths.iter().any(|path| path == host));
+            assert!(!sandbox.read_paths.iter().any(|path| path == host));
+        }
     }
 }
 

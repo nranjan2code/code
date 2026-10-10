@@ -329,27 +329,24 @@ fn prune_stale_bot_units(wanted: &[String], paths: &Paths, runner: &dyn CommandR
     for entry in entries.flatten() {
         let file_name = entry.file_name();
         let file_name = file_name.to_string_lossy();
+        // A systemd unit is `vak-<short name>.service`, its short name the
+        // label without "com.vak."; rebuild the label before matching.
+        let label = match file_name.strip_suffix(".plist") {
+            Some(stem) => stem.to_string(),
+            None => match file_name
+                .strip_suffix(".service")
+                .and_then(|stem| stem.strip_prefix("vak-"))
+            {
+                Some(short) => format!("com.vak.{short}"),
+                None => continue,
+            },
+        };
         let is_bot_unit = BRIDGE_SURFACES
             .iter()
-            .any(|s| file_name.starts_with(&format!("com.vak.{s}-")));
+            .any(|s| label.starts_with(&format!("com.vak.{s}-")));
         if !is_bot_unit {
             continue;
         }
-        let stem = file_name
-            .strip_suffix(".plist")
-            .or_else(|| {
-                file_name
-                    .strip_suffix(".service")
-                    .map(|s| s.trim_start_matches("vak-"))
-            })
-            .unwrap_or(&file_name);
-        // systemd stems are stripped of the "com.vak." prefix by
-        // `short_name`; reconstruct the launchd-style label to compare.
-        let label = if file_name.ends_with(".service") {
-            format!("com.vak.{stem}")
-        } else {
-            stem.to_string()
-        };
         if !wanted.contains(&label) {
             let _ = services_uninstall(&[label.as_str()], paths, runner);
         }
@@ -1353,22 +1350,26 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    /// The service manager as each platform's real one answers: launchd's
+    /// `print` text on macOS, systemd's `show -P` values elsewhere.
     struct Fake {
         cmds: Mutex<Vec<(String, Vec<String>)>>,
-        pid_text: Option<String>,
+        pid: Option<u32>,
+        exit: Option<i32>,
         fail_load: bool,
     }
     impl Fake {
         fn new() -> Self {
             Fake {
                 cmds: Mutex::new(Vec::new()),
-                pid_text: None,
+                pid: None,
+                exit: None,
                 fail_load: false,
             }
         }
         fn with_pid(pid: u32) -> Self {
             Fake {
-                pid_text: Some(format!("com.vak.x = {{\n\tpid = {pid}\n}}")),
+                pid: Some(pid),
                 ..Self::new()
             }
         }
@@ -1379,16 +1380,37 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((program.to_string(), args.to_vec()));
-            !(self.fail_load
-                && program == "launchctl"
-                && args.first().map(String::as_str) == Some("bootstrap"))
+            let loads = match program {
+                "launchctl" => args.first().map(String::as_str) == Some("bootstrap"),
+                "systemctl" => {
+                    args.iter().any(|arg| arg == "--now") && args.iter().any(|arg| arg == "enable")
+                }
+                _ => false,
+            };
+            !(self.fail_load && loads)
         }
         fn text(&self, program: &str, args: &[String]) -> Option<String> {
             if program == "id" {
                 return Some("501".to_string());
             }
             self.success(program, args);
-            self.pid_text.clone()
+            let asks = |key: &str| args.iter().any(|arg| arg == key);
+            match program {
+                "launchctl" => {
+                    let pid = self.pid.map(|pid| format!("\tpid = {pid}\n"));
+                    let exit = self.exit.map(|code| format!("\tlast exit code = {code}\n"));
+                    (pid.is_some() || exit.is_some()).then(|| {
+                        format!(
+                            "com.vak.x = {{\n{}{}}}",
+                            pid.unwrap_or_default(),
+                            exit.unwrap_or_default()
+                        )
+                    })
+                }
+                "systemctl" if asks("MainPID") => self.pid.map(|pid| pid.to_string()),
+                "systemctl" if asks("ExecMainStatus") => self.exit.map(|code| code.to_string()),
+                _ => None,
+            }
         }
     }
 
@@ -1758,11 +1780,20 @@ mod tests {
         {
             // Scope the guard: sync_specs locks the same log internally.
             let bounced = fake.cmds.lock().unwrap();
+            // launchd restarts in place with `kickstart -k`, systemd with
+            // `restart`.
+            let restarted = |(p, a): &(String, Vec<String>)| {
+                if cfg!(target_os = "macos") {
+                    p == "launchctl"
+                        && a.first().map(String::as_str) == Some("kickstart")
+                        && a.contains(&"-k".to_string())
+                } else {
+                    p == "systemctl" && a.contains(&"restart".to_string())
+                }
+            };
             assert!(
-                bounced.iter().any(|(p, a)| p == "launchctl"
-                    && a.first().map(String::as_str) == Some("kickstart")
-                    && a.contains(&"-k".to_string())),
-                "expected kickstart -k among {:?}",
+                bounced.iter().any(restarted),
+                "expected an in-place restart among {:?}",
                 *bounced
             );
         }
@@ -1808,8 +1839,7 @@ mod tests {
     }
 
     /// A service that keeps exiting with an error is reported as failing,
-    /// not as down: `launchctl print` names its last exit code.
-    #[cfg(target_os = "macos")]
+    /// not as down: the manager names its last exit status.
     #[test]
     fn a_failing_service_reports_its_exit_status() {
         let (_d, paths) = tmp_paths("failing");
@@ -1820,17 +1850,18 @@ mod tests {
             .collect();
         let _ = sync_specs(&specs, &paths, &Fake::with_pid(11));
         let failing = Fake {
-            pid_text: Some("com.vak.x = {\n\tlast exit code = 78: EX_CONFIG\n}".into()),
+            exit: Some(78),
             ..Fake::new()
         };
         let row = status_specs(&specs, &paths, &failing)[0].clone();
         assert_eq!(row.running_pid, None);
         assert_eq!(row.failed_exit, Some(78));
         let stopped = Fake {
-            pid_text: Some("com.vak.x = {\n\tlast exit code = 0\n}".into()),
+            exit: Some(0),
             ..Fake::new()
         };
         assert_eq!(status_specs(&specs, &paths, &stopped)[0].failed_exit, None);
+        #[cfg(target_os = "macos")]
         assert_eq!(
             platform::parse_launchd_last_exit("last exit code = (never exited)"),
             None
