@@ -71,7 +71,8 @@ for entry in entries:
     metadata, raw_name = entry.split(b"\t", 1)
     mode, object_type, object_id = metadata.split(b" ", 2)
     name = raw_name.decode("utf-8")
-    if not (name.startswith("crates/") or name in required_root):
+    # crates/ and the add-on packages vak-core embeds at compile time.
+    if not (name.startswith(("crates/", "packages/")) or name in required_root):
         continue
     if object_type != b"blob" or mode == b"120000":
         raise SystemExit(f"Build input must be a regular tracked file: {name}")

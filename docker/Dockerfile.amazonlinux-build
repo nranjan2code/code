@@ -17,6 +17,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+COPY packages ./packages
 COPY scripts/ui_bundle_check.rs ./scripts/ui_bundle_check.rs
 
 ARG VAK_GIT_SHA=unknown

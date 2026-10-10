@@ -23,7 +23,8 @@ PLATFORM_KEY=""
 ALLOW_DIRTY=false
 BUILD=true
 SKIP_CHECKS=false
-TEST_TIMEOUT="${VAK_TEST_TIMEOUT:-900}"
+# The workspace suite takes 20 to 25 minutes on the maintainer's Mac; 15 killed it.
+TEST_TIMEOUT="${VAK_TEST_TIMEOUT:-2400}"
 
 while (($# > 0)); do
     case "$1" in
@@ -32,7 +33,7 @@ while (($# > 0)); do
         --allow-dirty) ALLOW_DIRTY=true ;;
         --no-build) BUILD=false ;;
         --skip-checks) SKIP_CHECKS=true ;;
-        --test-timeout) TEST_TIMEOUT="${2:-900}"; shift ;;
+        --test-timeout) TEST_TIMEOUT="${2:-2400}"; shift ;;
         -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
     esac
