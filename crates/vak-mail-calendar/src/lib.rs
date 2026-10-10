@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 pub mod connection_ledger;
 pub mod effect;
+pub mod endpoints;
 pub mod oauth;
 pub mod provider;
 pub mod vault;

@@ -720,8 +720,10 @@ metadata advances in the ledger. OAuth adapter tests cover response
 validation. A scheduled-run integration test now invokes the owner Run now
 path twice against a loopback token endpoint: it verifies refresh occurs
 before each model dispatch and that the second request uses the rotated
-refresh token. The test-only endpoint override is behind the `test-support`
-feature and accepts loopback HTTP only. The sustained-service acceptance
+refresh token. Every provider URL is decided in one place,
+`vak_mail_calendar::endpoints`; a `test-support` build sends all of them to
+the loopback origin in `VAK_TEST_PROVIDER_BASE` and nothing else (it replaced
+a per-server token-endpoint override on 2026-10-10). The sustained-service acceptance
 remains open.
 
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
@@ -2618,3 +2620,25 @@ remains open.
   deleted; `RunStep::ItemsUsed` records the results-used count; the history
   endpoint maps the routine's run records. Run records stay after a
   disconnect (the owner's decision).
+- 2026-10-10: The 24-hour service test has a harness, `scripts/mail-soak`:
+  a `vak` built with `vak-server/test-support` sends every provider call to
+  a loopback stand-in for Google (`fake.py`: OAuth with signed id tokens,
+  Gmail, Calendar, faults on request), and `soak.py` links an account
+  through the real OAuth flow, runs a watch, a digest and a calendar-event
+  routine, and injects restarts, sleep and wake, provider failures, rate
+  limits and hangs, network loss, rejected and revoked tokens, an expired
+  history cursor, a second server on the same data home, a pause mid-run
+  and a burst past the queue ceiling, checking every half hour. Provider
+  URLs are now decided only in `vak_mail_calendar::endpoints`, which
+  replaced the per-server token-endpoint test override, and `vak-server`'s
+  tests turn the seam on through their dev-dependency, so the token-refresh
+  and routine tests behind `test-support` run in the workspace suite again
+  (one had failed unseen since the freshness redo doubled its model calls).
+  The first runs found and fixed two defects: a watch run's turn was never
+  told new mail was queued for it, answered "no new mail" without reading,
+  left the queue undelivered and so stopped the watch polling (it now gets
+  a Mail-watch context note, `routine_prompt`); and a token the provider
+  refused before its expiry failed every check until the token would have
+  expired (an hour, for Google) before the refresh found it revoked, where
+  a check now reports `CheckError::TokenRefused`, the scheduler refreshes
+  once at once and checks again, and a refused refresh asks for sign-in.

@@ -90,11 +90,12 @@ impl ProviderEffectClient {
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(20))
             .build()?;
+        let at = crate::endpoints::current();
         Ok(Self {
             http,
-            google_gmail_base: "https://gmail.googleapis.com/gmail/v1".into(),
-            google_calendar_base: "https://www.googleapis.com/calendar/v3".into(),
-            microsoft_graph_base: "https://graph.microsoft.com/v1.0".into(),
+            google_gmail_base: at.gmail,
+            google_calendar_base: at.calendar,
+            microsoft_graph_base: at.graph,
         })
     }
 

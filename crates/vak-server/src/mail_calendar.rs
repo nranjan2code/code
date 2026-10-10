@@ -122,6 +122,21 @@ pub(crate) async fn validate_routine_scope(
     Ok(())
 }
 
+/// Why a mail or calendar routine's check could not run.
+#[derive(Debug)]
+pub(crate) enum CheckError {
+    /// The provider refused the access token before it was due to expire:
+    /// it was revoked, or rotated by the provider. One refresh may mend it.
+    TokenRefused,
+    Failed(String),
+}
+
+impl From<String> for CheckError {
+    fn from(reason: String) -> Self {
+        Self::Failed(reason)
+    }
+}
+
 /// Poll only the configured account's bounded recent-mail window. The
 /// scheduler uses this content-free result to avoid invoking a model when a
 /// watch has no unseen message IDs; the actual content is read again by the
@@ -130,10 +145,12 @@ pub(crate) async fn mail_watch_has_unseen(
     agent_id: &str,
     scope: &RoutineScope,
     previous_run_succeeded: bool,
-) -> Result<Option<bool>, String> {
+) -> Result<Option<bool>, CheckError> {
     scope.validate().map_err(|error| error.to_string())?;
     if !scope.watch_new_mail || !scope.operations.contains(&RoutineOperation::RecentMail) {
-        return Err("the scheduled routine is not a mail watch".into());
+        return Err(CheckError::Failed(
+            "the scheduled routine is not a mail watch".into(),
+        ));
     }
     let ledger = ConnectionLedger::for_agent(agent_id)
         .map_err(|_| "mail/calendar connection state is unavailable".to_string())?;
@@ -161,25 +178,45 @@ pub(crate) async fn mail_watch_has_unseen(
         // claiming that this tick contacted or refreshed the provider.
         return Ok(None);
     }
+    let client = ProviderReadClient::new();
+    let page = |cursor: Option<String>| {
+        let (client, account, vault, audience) = (&client, &account, &vault, &audience);
+        async move {
+            client
+                .mail_watch_page(
+                    account,
+                    vault,
+                    agent_id,
+                    audience,
+                    cursor.as_deref(),
+                    vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
+                )
+                .await
+        }
+    };
     let cursor = vault
         .routine_provider_cursor(&scope.routine_id, &scope.account_id)
         .map_err(|_| "the private mail watch cursor is unavailable".to_string())?;
-    let (item_ids, next_cursor) = ProviderReadClient::new()
-        .mail_watch_page(
-            &account,
-            &vault,
-            agent_id,
-            &audience,
-            cursor.as_deref(),
-            vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
-        )
-        .await
-        .map_err(|error| match error {
-            vak_mail_calendar::provider::ProviderReadError::WatchCursorReset => {
-                "the provider watch cursor expired or reset; delete and recreate this watch to establish a fresh cursor, which may leave a gap".to_string()
-            }
-            _ => "the mail watch could not check its bounded provider window".to_string(),
-        })?;
+    let mut read = page(cursor).await;
+    // The provider cannot resume the watch's position: resync to a fresh
+    // baseline and record the gap, rather than stop the watch for good.
+    if matches!(
+        read,
+        Err(vak_mail_calendar::provider::ProviderReadError::WatchCursorReset)
+    ) {
+        vault
+            .resync_routine_mail(&scope.routine_id, &scope.account_id)
+            .map_err(|_| "the private mail watch cursor is unavailable".to_string())?;
+        read = page(None).await;
+    }
+    let (item_ids, next_cursor) = read.map_err(|error| match error {
+        vak_mail_calendar::provider::ProviderReadError::ReauthenticationRequired => {
+            CheckError::TokenRefused
+        }
+        _ => CheckError::Failed(
+            "the mail watch could not check its bounded provider window".to_string(),
+        ),
+    })?;
     let still_authorized = ledger.read_all().ok().is_some_and(|latest| {
         latest.iter().any(|current| {
             current.id == account.id
@@ -188,7 +225,9 @@ pub(crate) async fn mail_watch_has_unseen(
         })
     });
     if !still_authorized {
-        return Err("the mail account changed during the watch check".into());
+        return Err(CheckError::Failed(
+            "the mail account changed during the watch check".into(),
+        ));
     }
     vault
         .queue_mail_ids_with_cursor(
@@ -198,7 +237,7 @@ pub(crate) async fn mail_watch_has_unseen(
             next_cursor.as_deref(),
         )
         .map(Some)
-        .map_err(|_| "the private mail watch cursor is unavailable".to_string())
+        .map_err(|_| CheckError::Failed("the private mail watch cursor is unavailable".to_string()))
 }
 
 /// Poll the configured calendar window and durably queue only event
@@ -210,10 +249,12 @@ pub(crate) async fn calendar_event_has_due(
     last_check_at: Option<DateTime<Utc>>,
     previous_run_succeeded: bool,
     worker_exe: &std::path::Path,
-) -> Result<Option<bool>, String> {
+) -> Result<Option<bool>, CheckError> {
     scope.validate().map_err(|error| error.to_string())?;
     let Some(trigger) = scope.calendar_event_trigger else {
-        return Err("the scheduled routine has no calendar event trigger".into());
+        return Err(CheckError::Failed(
+            "the scheduled routine has no calendar event trigger".into(),
+        ));
     };
     let ledger = ConnectionLedger::for_agent(agent_id)
         .map_err(|_| "mail/calendar connection state is unavailable".to_string())?;
@@ -272,13 +313,18 @@ pub(crate) async fn calendar_event_has_due(
         )
         .await
     }
-    .map_err(|_| {
-        "the calendar event trigger could not check its bounded provider window".to_string()
+    .map_err(|error| match error {
+        vak_mail_calendar::provider::ProviderReadError::ReauthenticationRequired => {
+            CheckError::TokenRefused
+        }
+        _ => CheckError::Failed(
+            "the calendar event trigger could not check its bounded provider window".to_string(),
+        ),
     })?;
     if page.has_more {
-        return Err(
+        return Err(CheckError::Failed(
             "the calendar event trigger found more events than its bounded scan can safely reconcile; narrow its catch-up window".into(),
-        );
+        ));
     }
     let still_authorized = ledger.read_all().ok().is_some_and(|latest| {
         latest.iter().any(|current| {
@@ -288,23 +334,30 @@ pub(crate) async fn calendar_event_has_due(
         })
     });
     if !still_authorized {
-        return Err("the calendar account changed during the trigger check".into());
+        return Err(CheckError::Failed(
+            "the calendar account changed during the trigger check".into(),
+        ));
     }
     let keys = due_calendar_occurrence_keys(&page.events, trigger, checked_after, now);
     vault
         .reconcile_calendar_occurrences(&scope.routine_id, &scope.account_id, &keys)
         .map(Some)
-        .map_err(|_| "the private calendar occurrence queue is unavailable".to_string())
+        .map_err(|_| {
+            CheckError::Failed("the private calendar occurrence queue is unavailable".to_string())
+        })
 }
 
 /// Keep OAuth-backed unattended routines usable across access-token expiry.
 /// The account lock is shared with explicit owner refresh and disconnect so a
 /// refresh-token rotation cannot race a second refresh or a credential purge.
 /// Apple app passwords have no access-token expiry and pass through untouched.
+/// With `force` it refreshes now: the provider refused the current token
+/// before its expiry.
 async fn refresh_routine_account_if_needed(
     state: &AppState,
     agent_id: &str,
     account_id: &str,
+    force: bool,
 ) -> Result<ConnectedAccount, String> {
     const REFRESH_AHEAD: chrono::Duration = chrono::Duration::seconds(300);
 
@@ -334,10 +387,11 @@ async fn refresh_routine_account_if_needed(
                 && account.revoked_at.is_none()
         })
         .ok_or_else(|| "the selected account is no longer connected".to_string())?;
-    let Some(expires_at) = account.access_token_expires_at else {
-        return Ok(account);
-    };
-    if expires_at > Utc::now() + REFRESH_AHEAD {
+    if !force
+        && account
+            .access_token_expires_at
+            .is_none_or(|expires_at| expires_at > Utc::now() + REFRESH_AHEAD)
+    {
         return Ok(account);
     }
 
@@ -362,25 +416,6 @@ async fn refresh_routine_account_if_needed(
         require_reconnection();
         return Err("this account needs to be reconnected before its routine can continue".into());
     }
-    #[cfg(feature = "test-support")]
-    let refresh_result = {
-        let test_endpoint = state
-            .mail_calendar_test_refresh_endpoints
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&account.provider)
-            .cloned();
-        match test_endpoint {
-            Some(endpoint) => {
-                vak_mail_calendar::oauth::refresh_account_tokens_from_loopback_test_endpoint(
-                    &vault, &account, &endpoint,
-                )
-                .await
-            }
-            None => vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await,
-        }
-    };
-    #[cfg(not(feature = "test-support"))]
     let refresh_result = vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await;
     let rotated = match refresh_result {
         Ok(tokens) => tokens,
@@ -432,9 +467,12 @@ pub(crate) async fn prepare_routine_account(
     state: &AppState,
     agent_id: &str,
     scope: &RoutineScope,
+    force_refresh: bool,
 ) -> Result<(), String> {
     scope.validate().map_err(|error| error.to_string())?;
-    let account = refresh_routine_account_if_needed(state, agent_id, &scope.account_id).await?;
+    let account =
+        refresh_routine_account_if_needed(state, agent_id, &scope.account_id, force_refresh)
+            .await?;
     let audience = format!("agent:{agent_id}");
     let authorized = scope.operations.iter().all(|operation| {
         let capability = match operation {
@@ -3359,13 +3397,13 @@ fn record_account_event(
 }
 
 #[cfg(test)]
-#[cfg_attr(not(feature = "test-support"), allow(unused_imports))]
 mod tests {
     use super::{
-        OAUTH_CALLBACK_COOKIE, due_calendar_occurrence_keys, is_loopback_request,
-        oauth_callback_cookie, oauth_callback_page, oauth_callback_set_cookie, oauth_callback_uri,
-        pause_routines_for_account, prepare_routine_account, refresh_routine_account_if_needed,
-        registered_agent, same_provider_principal, valid_agent, valid_microsoft_personal_email,
+        CheckError, OAUTH_CALLBACK_COOKIE, due_calendar_occurrence_keys, is_loopback_request,
+        mail_watch_has_unseen, oauth_callback_cookie, oauth_callback_page,
+        oauth_callback_set_cookie, oauth_callback_uri, pause_routines_for_account,
+        prepare_routine_account, refresh_routine_account_if_needed, registered_agent,
+        same_provider_principal, valid_agent, valid_microsoft_personal_email,
         valid_provider_app_password, valid_provider_email, verifiable_app_password_selection,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -3809,8 +3847,6 @@ mod tests {
         assert!(enabled(&other_agent));
     }
 
-    // Needs the loopback OAuth endpoint, which exists only with `test-support`.
-    #[cfg(feature = "test-support")]
     #[tokio::test]
     async fn expired_routine_tokens_refresh_or_pause_before_use() {
         vak_config::paths::isolate_home_for_tests();
@@ -3926,19 +3962,22 @@ mod tests {
             }))
         }
         let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        // The provider refuses the access token early, as when it is revoked.
         let app = axum::Router::new()
-            .route("/token", axum::routing::post(refresh_endpoint))
+            .route("/google/token", axum::routing::post(refresh_endpoint))
+            .route(
+                "/gmail/v1/users/me/profile",
+                axum::routing::get(|| async { axum::http::StatusCode::UNAUTHORIZED }),
+            )
             .with_state(calls.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+        vak_config::set_override(
+            "VAK_TEST_PROVIDER_BASE",
+            format!("http://{}", listener.local_addr().unwrap()),
+        );
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        state
-            .mail_calendar_test_refresh_endpoints
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(Provider::Google, token_url);
 
         let scope = RoutineScope {
             routine_id: Uuid::now_v7().to_string(),
@@ -3951,7 +3990,7 @@ mod tests {
             read_commitments: false,
             calendar_event_trigger: None,
         };
-        prepare_routine_account(&state, agent_id, &scope)
+        prepare_routine_account(&state, agent_id, &scope, false)
             .await
             .unwrap();
         assert_eq!(
@@ -3975,7 +4014,7 @@ mod tests {
                 Ok::<(), std::convert::Infallible>(())
             })
             .unwrap();
-        prepare_routine_account(&state, agent_id, &scope)
+        prepare_routine_account(&state, agent_id, &scope, false)
             .await
             .unwrap();
         let refreshed_again = ledger
@@ -3990,6 +4029,21 @@ mod tests {
             vault.access_token(&refresh_account_id).unwrap().as_str(),
             "rotated-access-token"
         );
+
+        // A token an hour from expiry is not refreshed, until the provider
+        // refuses it: the check says so, and a forced refresh goes through.
+        prepare_routine_account(&state, agent_id, &scope, false)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(matches!(
+            mail_watch_has_unseen(agent_id, &scope, true).await,
+            Err(CheckError::TokenRefused)
+        ));
+        prepare_routine_account(&state, agent_id, &scope, true)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
         server.abort();
 
         let routine_id = vak_session::ids::TriggerId::new();
@@ -4022,7 +4076,7 @@ mod tests {
         };
         vak_core::triggers::create(&state.core.shared_scope(), &routine).unwrap();
 
-        let result = refresh_routine_account_if_needed(&state, agent_id, &account_id).await;
+        let result = refresh_routine_account_if_needed(&state, agent_id, &account_id, false).await;
         assert!(result.is_err());
         assert_eq!(
             ledger

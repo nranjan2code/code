@@ -1012,7 +1012,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                                 let cursor = vault
                                     .routine_provider_cursor(&scope.routine_id, &scope.account_id)
                                     .map_err(|error| error.to_string())?;
-                                let (ids, next_cursor) = client
+                                let mut read = client
                                     .mail_watch_page(
                                         account,
                                         &vault,
@@ -1021,8 +1021,28 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                                         cursor.as_deref(),
                                         vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
                                     )
-                                    .await
-                                    .map_err(|error| error.to_string())?;
+                                    .await;
+                                // As the scheduler's check does: a position the
+                                // provider cannot resume resyncs, with a gap row.
+                                if matches!(
+                                    read,
+                                    Err(vak_mail_calendar::provider::ProviderReadError::WatchCursorReset)
+                                ) {
+                                    vault
+                                        .resync_routine_mail(&scope.routine_id, &scope.account_id)
+                                        .map_err(|error| error.to_string())?;
+                                    read = client
+                                        .mail_watch_page(
+                                            account,
+                                            &vault,
+                                            agent_id,
+                                            &account_audience,
+                                            None,
+                                            vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
+                                        )
+                                        .await;
+                                }
+                                let (ids, next_cursor) = read.map_err(|error| error.to_string())?;
                                 vault
                                     .queue_mail_ids_with_cursor(
                                         &scope.routine_id,

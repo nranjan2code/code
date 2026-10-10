@@ -239,6 +239,31 @@ impl Cursors {
         self.write(owner, stream, position, None, from)
     }
 
+    /// Records a gap for a position kept inside `owner`'s backlog rather
+    /// than in a cursor ref of its own: the position could not be resumed
+    /// and a fresh one was taken. Moves no ref; the caller has already
+    /// written the backlog that drops the old position.
+    pub fn note_gap(
+        &self,
+        owner: &str,
+        stream: &str,
+        from: Option<&str>,
+        to: &str,
+        reason: &str,
+    ) -> Result<(), SessionError> {
+        self.chain.append(&CursorGap {
+            owner: owner.to_owned(),
+            stream: stream.to_owned(),
+            at: Utc::now(),
+            from: from.map(str::to_owned),
+            to: to.to_owned(),
+            reason: reason.to_owned(),
+            trace: None,
+            actor: None,
+        })?;
+        Ok(())
+    }
+
     /// Stores `bytes` as an encrypted tenant object for `owner`'s cursor
     /// backlog.
     pub fn put_backlog(&self, owner: &str, bytes: &[u8]) -> Result<ObjectRef, SessionError> {

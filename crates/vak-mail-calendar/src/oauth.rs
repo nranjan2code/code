@@ -667,18 +667,13 @@ fn authorization_url(
     challenge: &str,
     nonce: &str,
 ) -> Result<String, OAuthError> {
+    let at = crate::endpoints::current();
     let (endpoint, provider_scopes) = match provider {
-        Provider::Google => (
-            "https://accounts.google.com/o/oauth2/v2/auth",
-            scopes.join(" "),
-        ),
-        Provider::Microsoft => (
-            "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-            scopes.join(" "),
-        ),
+        Provider::Google => (at.google_authorize, scopes.join(" ")),
+        Provider::Microsoft => (at.microsoft_authorize, scopes.join(" ")),
         Provider::AppleIcloud => return Err(OAuthError::UnsupportedProvider),
     };
-    let mut url = Url::parse(endpoint).map_err(|_| OAuthError::InvalidRequest)?;
+    let mut url = Url::parse(&endpoint).map_err(|_| OAuthError::InvalidRequest)?;
     {
         let mut query = url.query_pairs_mut();
         query
@@ -930,22 +925,23 @@ pub async fn redeem(
     redeem_with_endpoints(grant, code, &endpoints).await
 }
 
-#[derive(Clone, Copy)]
-struct OAuthEndpoints<'a> {
-    token: &'a str,
-    signing_keys: &'a str,
+#[derive(Clone)]
+struct OAuthEndpoints {
+    token: String,
+    signing_keys: String,
 }
 
-impl<'a> OAuthEndpoints<'a> {
+impl OAuthEndpoints {
     fn for_provider(provider: Provider) -> Result<Self, OAuthExchangeError> {
+        let at = crate::endpoints::current();
         match provider {
             Provider::Google => Ok(Self {
-                token: "https://oauth2.googleapis.com/token",
-                signing_keys: "https://www.googleapis.com/oauth2/v3/certs",
+                token: at.google_token,
+                signing_keys: at.google_signing_keys,
             }),
             Provider::Microsoft => Ok(Self {
-                token: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-                signing_keys: "https://login.microsoftonline.com/common/discovery/v2.0/keys",
+                token: at.microsoft_token,
+                signing_keys: at.microsoft_signing_keys,
             }),
             Provider::AppleIcloud => {
                 Err(OAuthExchangeError::Setup(OAuthError::UnsupportedProvider))
@@ -957,7 +953,7 @@ impl<'a> OAuthEndpoints<'a> {
 async fn redeem_with_endpoints(
     grant: &AuthorizationGrant,
     code: &str,
-    endpoints: &OAuthEndpoints<'_>,
+    endpoints: &OAuthEndpoints,
 ) -> Result<RedeemedAuthorization, OAuthExchangeError> {
     if code.trim().is_empty() || code.len() > 4096 || code.chars().any(char::is_control) {
         return Err(OAuthExchangeError::InvalidResponse);
@@ -980,7 +976,7 @@ async fn redeem_with_endpoints(
         form.push(("scope", requested_scope.as_str()));
     }
     let mut token_response = client
-        .post(endpoints.token)
+        .post(&endpoints.token)
         .form(&form)
         .send()
         .await
@@ -1035,7 +1031,7 @@ async fn redeem_with_endpoints(
         id_token,
         &grant.client_id,
         grant.oidc_nonce(),
-        endpoints.signing_keys,
+        &endpoints.signing_keys,
     )
     .await?;
     let principal = match grant.provider {
@@ -1093,23 +1089,7 @@ pub async fn refresh_account_tokens(
 ) -> Result<RefreshedOAuthTokens, OAuthRefreshError> {
     let endpoints = OAuthEndpoints::for_provider(account.provider)
         .map_err(|_| OAuthRefreshError::ReconnectRequired)?;
-    refresh_account_tokens_with_endpoint(vault, account, endpoints.token).await
-}
-
-/// Test-only adapter seam for a loopback OAuth provider double. Arbitrary
-/// hosts remain unavailable in normal builds, and even test builds can only
-/// call plain HTTP loopback endpoints.
-#[cfg(feature = "test-support")]
-pub async fn refresh_account_tokens_from_loopback_test_endpoint(
-    vault: &AccountVault,
-    account: &ConnectedAccount,
-    token_endpoint: &str,
-) -> Result<RefreshedOAuthTokens, OAuthRefreshError> {
-    let endpoint = Url::parse(token_endpoint).map_err(|_| OAuthRefreshError::InvalidResponse)?;
-    if !valid_redirect(&endpoint) {
-        return Err(OAuthRefreshError::ReconnectRequired);
-    }
-    refresh_account_tokens_with_endpoint(vault, account, endpoint.as_str()).await
+    refresh_account_tokens_with_endpoint(vault, account, &endpoints.token).await
 }
 
 async fn refresh_account_tokens_with_endpoint(
@@ -1213,8 +1193,8 @@ async fn refresh_account_tokens_with_endpoint(
 /// personal accounts, so that provider returns `false` and the UI must not
 /// claim its grant was revoked.
 pub async fn revoke_provider_grant(vault: &AccountVault, account: &ConnectedAccount) -> bool {
-    revoke_provider_grant_with_endpoint(vault, account, "https://oauth2.googleapis.com/revoke")
-        .await
+    let endpoint = crate::endpoints::current().google_revoke;
+    revoke_provider_grant_with_endpoint(vault, account, &endpoint).await
 }
 
 async fn revoke_provider_grant_with_endpoint(
@@ -1699,8 +1679,8 @@ mod tests {
             let token_url = format!("http://{address}/token");
             let signing_keys_url = format!("http://{address}/keys");
             let endpoints = OAuthEndpoints {
-                token: &token_url,
-                signing_keys: &signing_keys_url,
+                token: token_url,
+                signing_keys: signing_keys_url,
             };
             let result = redeem_with_endpoints(&grant, "fixture-code", &endpoints).await;
             assert!(matches!(result, Err(OAuthExchangeError::InvalidResponse)));
@@ -1927,8 +1907,8 @@ mod tests {
             let token_url = format!("http://{address}/token");
             let signing_keys_url = format!("http://{address}/keys");
             let endpoints = OAuthEndpoints {
-                token: &token_url,
-                signing_keys: &signing_keys_url,
+                token: token_url,
+                signing_keys: signing_keys_url,
             };
             let redeemed = redeem_with_endpoints(&grant, "fixture-code", &endpoints)
                 .await

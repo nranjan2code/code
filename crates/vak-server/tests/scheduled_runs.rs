@@ -282,30 +282,7 @@ async fn serve_core(core: Core, dispatches: Arc<AtomicUsize>) -> Server {
     }
 }
 
-#[cfg(feature = "test-support")]
-async fn serve_core_with_router(
-    core: Core,
-    dispatches: Arc<AtomicUsize>,
-    test_oauth: Option<(vak_mail_calendar::Provider, String)>,
-) -> Server {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    let (app, token) = match test_oauth {
-        Some((provider, endpoint)) => {
-            vak_server::secured_router_with_test_oauth_endpoint(core, provider, endpoint)
-        }
-        None => vak_server::secured_router_with(core, false),
-    };
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    Server {
-        base: format!("http://{addr}"),
-        token,
-        dispatches,
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[cfg(feature = "test-support")]
 async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     use vak_mail_calendar::connection_ledger::ConnectionLedger;
     use vak_mail_calendar::vault::{AccountSecretMaterial, AccountVault};
@@ -393,18 +370,22 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
             "scope": "https://www.googleapis.com/auth/gmail.readonly"
         }))
     }
+    // An empty inbox, so the routine's read succeeds the same way each run.
     let token_app = axum::Router::new()
-        .route("/token", axum::routing::post(token_refresh))
+        .route("/google/token", axum::routing::post(token_refresh))
+        .route(
+            "/gmail/v1/users/me/messages",
+            axum::routing::get(|| async { axum::Json(serde_json::json!({ "messages": [] })) }),
+        )
         .with_state(refresh_calls.clone());
     let token_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let token_endpoint = format!("http://{}/token", token_listener.local_addr().unwrap());
+    // The provider stand-in: every provider call this process makes goes to it.
+    vak_config::set_override(
+        "VAK_TEST_PROVIDER_BASE",
+        format!("http://{}", token_listener.local_addr().unwrap()),
+    );
     tokio::spawn(async move { axum::serve(token_listener, token_app).await.unwrap() });
-    let server = serve_core_with_router(
-        core,
-        dispatches.clone(),
-        Some((Provider::Google, token_endpoint)),
-    )
-    .await;
+    let server = serve_core(core, dispatches.clone()).await;
     let create = server
         .client()
         .post(format!("{}/triggers", server.base))
@@ -439,6 +420,9 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
         server.inbox().await
     );
 
+    // Each run is two model calls: the turn, and the one freshness redo
+    // the runtime asks for when a turn about recent mail retrieved nothing.
+    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 2 }).await);
     assert!(
         eventually(15, || async {
             server.last_run_status(task_id).await == "completed"
@@ -447,7 +431,7 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
         "routine reaches a settled successful state"
     );
     assert_eq!(server.run_now(task_id).await, reqwest::StatusCode::ACCEPTED);
-    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 2 }).await);
+    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 4 }).await);
     assert!(
         eventually(15, || async {
             server.last_run_status(task_id).await == "completed"
@@ -466,7 +450,7 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     assert_eq!(history["runs"][0]["trigger"], "manual");
     assert_eq!(history["runs"][0]["status"], "complete");
     assert_eq!(history["runs"][0]["session_id"], session_id);
-    assert_eq!(dispatches.load(Ordering::SeqCst), 2);
+    assert_eq!(dispatches.load(Ordering::SeqCst), 4);
     assert_eq!(refresh_calls.load(Ordering::SeqCst), 2);
     assert_eq!(
         vault.access_token(&account_id).unwrap().as_str(),

@@ -478,6 +478,41 @@ impl AccountVault {
         })
     }
 
+    /// The provider can no longer resume this routine's mail position (its
+    /// history expired, or it reset its delta): forget the position, so the
+    /// next check takes a fresh baseline of the newest messages, and record
+    /// the skipped range as a gap row. What the routine already saw is
+    /// kept, so nothing is read twice.
+    pub fn resync_routine_mail(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+    ) -> Result<(), VaultError> {
+        validate_account_id(account_id)?;
+        validate_account_id(routine_id)?;
+        let had = self.with_routine_cursors(|cursors| {
+            let Some(cursor) = cursors
+                .iter_mut()
+                .find(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Ok(false);
+            };
+            if cursor.account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            Ok(cursor.provider_cursor.take().is_some())
+        })?;
+        routine_cursor_store()
+            .note_gap(
+                &format!("agent/{}/mail-calendar", self.agent_id),
+                &format!("routine/{routine_id}"),
+                had.then_some("provider position"),
+                "fresh baseline",
+                "the provider could no longer resume this watch; mail that arrived while it was stopped, beyond the newest messages, may not be read",
+            )
+            .map_err(|_| VaultError::Unavailable)
+    }
+
     /// Return the encrypted provider continuation token for one routine.
     pub fn routine_provider_cursor(
         &self,
@@ -1633,6 +1668,41 @@ mod tests {
                 .queue_unseen_mail_ids(&routine_id, &other_account_id, &ids(&["m4"]))
                 .unwrap()
         );
+    }
+
+    /// A position the provider can no longer resume is forgotten, what the
+    /// watch already queued stays, and the skipped range is a gap row.
+    #[test]
+    fn a_reset_mail_position_resyncs_and_records_a_gap() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-resync-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let routine_id = Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let ids = vec!["message-1".to_string()];
+        vault
+            .queue_mail_ids_with_cursor(&routine_id, &account_id, &ids, Some("history-7"))
+            .unwrap();
+        vault.resync_routine_mail(&routine_id, &account_id).unwrap();
+        assert_eq!(
+            vault
+                .routine_provider_cursor(&routine_id, &account_id)
+                .unwrap(),
+            None
+        );
+        assert!(
+            vault
+                .has_unresolved_mail_ids(&routine_id, &account_id)
+                .unwrap()
+        );
+        let gaps = routine_cursor_store().gaps().unwrap();
+        let gap = gaps
+            .iter()
+            .find(|gap| gap.owner == format!("agent/{agent_id}/mail-calendar"))
+            .expect("the resync is a gap row");
+        assert_eq!(gap.stream, format!("routine/{routine_id}"));
+        assert_eq!(gap.from.as_deref(), Some("provider position"));
+        assert!(!gap.reason.contains("message-1") && !gap.to.contains("history-7"));
     }
 
     #[test]

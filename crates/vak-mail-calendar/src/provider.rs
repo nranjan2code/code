@@ -145,7 +145,7 @@ pub enum ProviderReadError {
     #[error("provider response was invalid or exceeded its size limit")]
     InvalidResponse,
     #[error(
-        "the provider watch cursor expired or reset; delete and recreate the routine to establish a new cursor, which may leave a gap"
+        "the provider watch cursor expired or reset; the watch resyncs to the newest messages and records the gap"
     )]
     WatchCursorReset,
     #[error("requested time range is outside the allowed window")]
@@ -354,11 +354,12 @@ impl ProviderReadClient {
             .timeout(StdDuration::from_secs(20))
             .build()
             .unwrap_or_default();
+        let at = crate::endpoints::current();
         Self {
             http,
-            google_gmail_base: "https://gmail.googleapis.com/gmail/v1".into(),
-            google_calendar_base: "https://www.googleapis.com/calendar/v3".into(),
-            microsoft_graph_base: "https://graph.microsoft.com/v1.0".into(),
+            google_gmail_base: at.gmail,
+            google_calendar_base: at.calendar,
+            microsoft_graph_base: at.graph,
         }
     }
 

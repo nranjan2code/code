@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [features]
+# A soak build: provider calls go to a loopback stand-in named by
+# VAK_TEST_PROVIDER_BASE (vak-mail-calendar endpoints.rs). Never released.
 test-support = ["vak-mail-calendar/test-support"]
 
 [dependencies]
@@ -68,7 +70,8 @@ zeroize = { workspace = true }
 [dev-dependencies]
 vak-intake = { workspace = true }
 reqwest = { workspace = true }
-vak-mail-calendar = { workspace = true }
+# Its tests send provider calls to a loopback stand-in (endpoints.rs).
+vak-mail-calendar = { workspace = true, features = ["test-support"] }
 vak-ooxml = { workspace = true, features = ["fixtures"] }
 vak-pdf = { workspace = true, features = ["fixtures"] }
 # A real WebSocket client for the /voice/session end-to-end test.

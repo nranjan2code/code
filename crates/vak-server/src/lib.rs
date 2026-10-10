@@ -274,8 +274,6 @@ pub struct AppState {
     mail_calendar_account_locks:
         Arc<Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>>,
     /// Loopback OAuth token endpoints used only by the server's unit tests.
-    #[cfg(feature = "test-support")]
-    mail_calendar_test_refresh_endpoints: Arc<Mutex<HashMap<vak_mail_calendar::Provider, String>>>,
     /// Open preview origins (docs/design/66, §3.2).
     pub(crate) previews: preview::PreviewHub,
     /// Each conversation's Canvas: change hints and write serialization
@@ -333,8 +331,6 @@ impl AppState {
             mail_calendar_oauth: Arc::new(vak_mail_calendar::oauth::AuthorizationStore::default()),
             linkedin_oauth: social::linkedin::PendingAuthorizations::default(),
             mail_calendar_account_locks: Arc::new(Mutex::new(HashMap::new())),
-            #[cfg(feature = "test-support")]
-            mail_calendar_test_refresh_endpoints: Arc::new(Mutex::new(HashMap::new())),
             previews: preview::PreviewHub::default(),
             canvases: canvas::CanvasHub::default(),
         }
@@ -3132,32 +3128,6 @@ pub fn secured_router_with(core: Core, force_gateway: bool) -> (Router, String) 
 /// probes. `serve_with` uses this so a non-default `--port` cannot make the
 /// console probe a different process.
 pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (Router, String) {
-    secured_router_with_port_and_test_oauth_endpoint(core, force_gateway, port, None)
-}
-
-/// Build the secured stack with a loopback OAuth token endpoint for provider
-/// integration tests. The explicit `test-support` feature is only needed by
-/// tests; normal builds expose no endpoint override.
-#[cfg(feature = "test-support")]
-pub fn secured_router_with_test_oauth_endpoint(
-    core: Core,
-    provider: vak_mail_calendar::Provider,
-    endpoint: String,
-) -> (Router, String) {
-    secured_router_with_port_and_test_oauth_endpoint(
-        core,
-        false,
-        vak_ops::OpsConfig::detect().port,
-        Some((provider, endpoint)),
-    )
-}
-
-fn secured_router_with_port_and_test_oauth_endpoint(
-    core: Core,
-    force_gateway: bool,
-    port: u16,
-    test_endpoint: Option<(vak_mail_calendar::Provider, String)>,
-) -> (Router, String) {
     // Tauri can use either its custom scheme or the loopback-style origin,
     // depending on the platform and WebView runtime, plus vite dev servers.
     let origins = [
@@ -3190,16 +3160,6 @@ fn secured_router_with_port_and_test_oauth_endpoint(
         ]);
     let mut state = AppState::new(core);
     state.ops_port = port;
-    #[cfg(feature = "test-support")]
-    if let Some((provider, endpoint)) = test_endpoint {
-        state
-            .mail_calendar_test_refresh_endpoints
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(provider, endpoint);
-    }
-    #[cfg(not(feature = "test-support"))]
-    let _ = test_endpoint;
     if force_gateway {
         state.enable_gateway();
     }
