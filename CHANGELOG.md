@@ -1,5 +1,18 @@
-## Unreleased
+## 7.0.1 — 2026-10-10
 
+- Linux: commands, document previews, Review and `doc_read` run again.
+  The sandbox restricts files with Landlock and refuses internet sockets
+  (TCP and UDP) and io_uring with a seccomp filter; it still refuses to
+  run on a kernel that cannot enforce both.
+- Chart cards draw their data again (they showed "No data points
+  supplied"); a chart needs at least one point, and a number written as
+  text such as "24,850.5" is read as a number.
+- `recall` returns the result it was pointed at when a query is given
+  beside it, instead of refusing.
+- A spreadsheet edit that formats a block and then changes part of it
+  is written, instead of failing its own check.
+- The Library previews spreadsheets, Word files, slide decks and PDFs
+  instead of offering only a download.
 - Linux: `vak setup`, `setup status`, `vak self services-sync`, `vak self
   status` and `vak doctor` say when systemd user lingering is off, so the
   durable services would stop at logout, and print
