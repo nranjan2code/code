@@ -59,9 +59,11 @@ fi
 # The README badge is the version a person reads first, and it is the one
 # stamp check-version.sh cannot let drift silently. It is derived here rather
 # than hand-edited, so "one place to change" stays true.
+# shields.io writes a hyphen in a badge's text as `--`, so a prerelease such
+# as 7.0.0-dev reads `7.0.0--dev` there; match and write that form.
 if [[ -n "$(sed -n 's|.*/badge/version-\([0-9][0-9.]*\)-.*|\1|p' README.md | head -1)" ]]; then
     tmp="$(mktemp)"
-    sed "s|badge/version-[0-9][0-9.]*-|badge/version-${target}-|" README.md > "$tmp"
+    sed -E "s#badge/version-[0-9][0-9.]*(--[0-9A-Za-z.]+)*-#badge/version-${target//-/--}-#" README.md > "$tmp"
     mv "$tmp" README.md
     printf '  ✓ README badge\n'
 else

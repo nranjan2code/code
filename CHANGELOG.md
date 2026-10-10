@@ -1,4 +1,4 @@
-## Unreleased
+## 7.0.0 — 2026-10-10
 
 - The 7.0 data baseline (data-architecture M3b). A data home written by
   6.x or earlier is refused with one message; run
@@ -17,6 +17,27 @@
   in the data home and runtime directory.
 - Backups say plainly when encrypted history and memory can be restored
   only on this machine.
+- Every unit of work has a run record, every schedule is one automation
+  (a trigger) that starts a slot only through its claim, and every action
+  outside Vakyartha (a channel message, a mail send, a calendar change) is
+  an effect sent at most once. A process fenced by a restore stops writing,
+  and `vak serve` starts itself again.
+- One data catalog serves every search and traces anything to its run and
+  cause; the Library keeps every declared deliverable with its versions,
+  comments and shares, and Review works on artifact versions.
+- Retention rules, holds and erasure: the trash ends in erasure, and the
+  owner can erase a conversation, a draft, a guest's messages, what a
+  disconnected account returned, an Agent's data, a project's data, one
+  channel sender, or the whole install, each with a signed receipt.
+  Backups restore without overwriting and apply every erasure again.
+  Keys can be rotated and earlier ones retired.
+- A second machine can keep a copy in a folder and take the work over:
+  push, pull, hand-over and take-over under a lease, with a passphrase-
+  sealed key file carried by hand and no secret ever written to the folder.
+- Content-free structured telemetry with traces per run.
+- Mail and calendar routines recover by themselves: a watch run is told
+  where its new mail is, a token the provider refuses early is refreshed
+  at once, and a history the provider expired resyncs with a recorded gap.
 
 ## 6.0.0 — 2026-10-03
 
