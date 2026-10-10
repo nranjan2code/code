@@ -15,7 +15,7 @@ triggers), a routine paused mid-run, and a burst of meetings past the queue
 ceiling. Every half hour it checks what must hold, and at the end it writes
 `report.json` beside this file's output directory.
 """
-import argparse, json, random, subprocess, sys, time
+import argparse, calendar, json, random, subprocess, sys, time
 from urllib.parse import urlencode
 
 C = "mail-soak"
@@ -333,7 +333,7 @@ def checks(state, final=False):
         for run in runs:
             statuses[run.get("status")] = statuses.get(run.get("status"), 0) + 1
         stuck = [r for r in runs if r.get("status") == "running"
-                 and time.time() - time.mktime(time.strptime(r["opened_at"][:19], "%Y-%m-%dT%H:%M:%S")) > 1800]
+                 and time.time() - calendar.timegm(time.strptime(r["opened_at"][:19], "%Y-%m-%dT%H:%M:%S")) > 1800]
         check(f"{key}: at most one run per slot", not duplicates, f"{len(runs)} runs {statuses}; duplicates {duplicates[:3]}")
         check(f"{key}: nothing left running", not stuck, f"{len(stuck)} open past 30 min")
         summary[key] = statuses
