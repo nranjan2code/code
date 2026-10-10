@@ -20,6 +20,7 @@ pub fn probe(prefix: Option<PathBuf>) -> ProbedFacts {
         install: probe_install(prefix),
         services: probe_services(),
         awaiting_activation: probe_awaiting_activation(),
+        stops_at_logout: crate::install::stops_at_logout(),
     }
 }
 

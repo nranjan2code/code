@@ -125,9 +125,13 @@ terminal setup wizard before expecting a ready model route:
 scripts/hosting/aws-ec2.sh "$private_inventory" setup
 ```
 
-The wizard activates the durable gateway as part of setup. If systemd user
-services must survive logout, enable user lingering for the host account and
-check `systemctl --user` status.
+The wizard activates the durable gateway as part of setup. Systemd user
+services stop when the account's last SSH session ends unless user
+lingering is on, and then Caddy answers 502: enable it with
+`sudo loginctl enable-linger ec2-user`. Setup, `vak self status`,
+`services-sync` and `vak doctor` report it when it is off. Check from
+outside with no SSH session open (`web-check`) before declaring a deploy
+done.
 
 ```bash
 scripts/hosting/aws-ec2.sh "$private_inventory" tunnel

@@ -622,6 +622,69 @@ impl CommandRunner for SystemRunner {
     }
 }
 
+/// Whether a user's systemd manager outlives their last login session.
+/// Durable services on Linux are user units, so with lingering off the
+/// gateway and every bridge stop as soon as that user logs out (found on a
+/// headless host, 2026-10-10: the site answered 502 once SSH closed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Linger {
+    On,
+    Off,
+}
+
+/// Reads `loginctl show-user <user> -p Linger` output (`Linger=yes`).
+pub fn parse_linger(output: &str) -> Option<Linger> {
+    output
+        .lines()
+        .find_map(|line| match line.trim().strip_prefix("Linger=")?.trim() {
+            "yes" => Some(Linger::On),
+            "no" => Some(Linger::Off),
+            _ => None,
+        })
+}
+
+/// `user`'s lingering, from logind, or else from the marker file systemd
+/// keeps for a lingering user under `marker_dir` (`/var/lib/systemd/linger`).
+pub fn linger_of(user: &str, runner: &dyn CommandRunner, marker_dir: &Path) -> Option<Linger> {
+    let args = ["show-user", user, "-p", "Linger"].map(String::from);
+    if let Some(linger) = runner
+        .text("loginctl", &args)
+        .as_deref()
+        .and_then(parse_linger)
+    {
+        return Some(linger);
+    }
+    if !marker_dir.is_dir() {
+        return None;
+    }
+    Some(if marker_dir.join(user).exists() {
+        Linger::On
+    } else {
+        Linger::Off
+    })
+}
+
+/// The user whose services stop at logout because lingering is off for
+/// them, on Linux. `None` on other platforms (a launchd agent needs no
+/// such switch), when lingering is on, or when it cannot be read.
+pub fn user_without_linger(runner: &dyn CommandRunner) -> Option<String> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let user = std::env::var("USER")
+        .ok()
+        .filter(|user| !user.is_empty())
+        .or_else(|| runner.text("id", &["-un".to_string()]))?;
+    (linger_of(&user, runner, Path::new("/var/lib/systemd/linger")) == Some(Linger::Off))
+        .then_some(user)
+}
+
+/// The one command that keeps `user`'s services running after logout. It
+/// needs root, so Vakyartha names it and never runs it.
+pub fn linger_remedy(user: &str) -> String {
+    format!("sudo loginctl enable-linger {user}")
+}
+
 /// The systemd unit name for a launchd-style service label.
 ///
 /// One definition, shared by [`ServiceSpec::systemd_unit`] and the
@@ -1327,6 +1390,50 @@ mod tests {
             self.success(program, args);
             self.pid_text.clone()
         }
+    }
+
+    /// Answers `loginctl` with fixed text, or fails it.
+    struct Logind(Option<&'static str>);
+    impl CommandRunner for Logind {
+        fn success(&self, _program: &str, _args: &[String]) -> bool {
+            self.0.is_some()
+        }
+        fn text(&self, program: &str, _args: &[String]) -> Option<String> {
+            (program == "loginctl").then_some(self.0?.to_string())
+        }
+    }
+
+    #[test]
+    fn lingering_is_read_from_logind_then_from_the_marker_file() {
+        assert_eq!(parse_linger("Linger=yes"), Some(Linger::On));
+        assert_eq!(parse_linger("Linger=no\n"), Some(Linger::Off));
+        assert_eq!(parse_linger("Name=ec2-user"), None);
+        let markers = tempfile::tempdir().unwrap();
+        let gone = markers.path().join("absent");
+        assert_eq!(
+            linger_of("ec2-user", &Logind(Some("Linger=no")), &gone),
+            Some(Linger::Off)
+        );
+        assert_eq!(
+            linger_of("ec2-user", &Logind(Some("Linger=yes")), &gone),
+            Some(Linger::On)
+        );
+        // No logind (a container): the marker directory decides, and with
+        // neither there is nothing to say.
+        assert_eq!(linger_of("ec2-user", &Logind(None), &gone), None);
+        assert_eq!(
+            linger_of("ec2-user", &Logind(None), markers.path()),
+            Some(Linger::Off)
+        );
+        std::fs::write(markers.path().join("ec2-user"), b"").unwrap();
+        assert_eq!(
+            linger_of("ec2-user", &Logind(None), markers.path()),
+            Some(Linger::On)
+        );
+        assert_eq!(
+            linger_remedy("ec2-user"),
+            "sudo loginctl enable-linger ec2-user"
+        );
     }
 
     fn tmp_paths(tag: &str) -> (tempfile::TempDir, Paths) {

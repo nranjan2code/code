@@ -9286,6 +9286,18 @@ async fn onboarding_state(
     .await
     .unwrap_or(None);
 
+    // Linux user units stop with their user's last login unless lingering
+    // keeps the manager alive; only registered services can be affected.
+    let stops_at_logout = tokio::task::spawn_blocking(|| {
+        let user = vak_ops::services::user_without_linger(&vak_ops::services::SystemRunner)?;
+        Some(vak_core::onboarding::StopsAtLogout {
+            remedy: vak_ops::services::linger_remedy(&user),
+            user,
+        })
+    })
+    .await
+    .unwrap_or(None)
+    .filter(|_| services.as_ref().is_some_and(|probed| !probed.is_empty()));
     let awaiting_activation = service_control::activation_drift(&core)
         .await
         .map(|drift| drift.awaiting_activation)
@@ -9296,6 +9308,7 @@ async fn onboarding_state(
             services,
             install: None,
             awaiting_activation,
+            stops_at_logout,
         },
     );
     Json(projection).into_response()

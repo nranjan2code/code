@@ -691,6 +691,13 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
         );
         drifted = true;
     }
+    if let Some(off) = stops_at_logout() {
+        println!(
+            "lingering ✗ off for {} — the services stop when {} logs out; run `{}`",
+            off.user, off.user, off.remedy
+        );
+        drifted = true;
+    }
     if let Some(note) = untagged_build_note(&m.version, &m.git_sha) {
         println!("note      {note}");
     }
@@ -758,6 +765,24 @@ fn installed_cli_version(cli: &Path) -> Result<String, String> {
 }
 
 // ---------------------------------------------------------- services-sync
+
+/// Registered services that stop when their user logs out, because systemd
+/// lingering is off (Linux). `None` when nothing is registered, they keep
+/// running, or the platform has no such switch.
+pub fn stops_at_logout() -> Option<vak_core::onboarding::StopsAtLogout> {
+    let cfg = vak_ops::OpsConfig::detect();
+    let registered = [vak_ops::Service::Gateway, vak_ops::Service::Bridges]
+        .into_iter()
+        .any(|service| vak_ops::status(service, &cfg) != vak_ops::State::NotInstalled);
+    if !registered {
+        return None;
+    }
+    let user = vak_ops::services::user_without_linger(&vak_ops::services::SystemRunner)?;
+    Some(vak_core::onboarding::StopsAtLogout {
+        remedy: vak_ops::services::linger_remedy(&user),
+        user,
+    })
+}
 
 pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
     let root = InstallRoot::resolve(prefix);
@@ -846,6 +871,15 @@ pub fn run_services_sync(prefix: Option<PathBuf>, names: Vec<String>) -> i32 {
             }
             action => println!("✓ {}: {action:?}", o.name),
         }
+    }
+
+    // Registered and running is not enough on Linux: user units stop with
+    // their user's last login unless lingering keeps the manager alive.
+    if let Some(off) = stops_at_logout() {
+        println!(
+            "! these services stop when {} logs out: user lingering is off.\n  run: {}",
+            off.user, off.remedy
+        );
     }
 
     if failed { 1 } else { 0 }

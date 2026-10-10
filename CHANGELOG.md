@@ -1,3 +1,10 @@
+## Unreleased
+
+- Linux: `vak setup`, `setup status`, `vak self services-sync`, `vak self
+  status` and `vak doctor` say when systemd user lingering is off, so the
+  durable services would stop at logout, and print
+  `sudo loginctl enable-linger <user>`.
+
 ## 7.0.0 — 2026-10-10
 
 - The 7.0 data baseline (data-architecture M3b). A data home written by

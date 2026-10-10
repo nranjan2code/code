@@ -37,8 +37,11 @@ scripts/build.sh
 - macOS → LaunchAgents `com.vak.gateway` / `com.vak.telegram`
   (KeepAlive + RunAtLoad; survives reboot & crashes).
 - Linux → systemd user units `vak-gateway.service` /
-  `vak-telegram.service` (`systemctl --user ...`, enable lingering for
-  boot start: `sudo loginctl enable-linger $USER`).
+  `vak-telegram.service` (`systemctl --user ...`). User units stop when
+  their user's last login session ends unless lingering is on:
+  `sudo loginctl enable-linger $USER`. Vakyartha cannot run that (it needs
+  root), so `vak self services-sync`, `vak self status`, `vak setup` and
+  `vak doctor` say when it is off and print the command.
 - The desktop app gets a unit too — `com.vak.desktop` /
   `vak-desktop.service` — so the menu-bar icon comes back at login and
   survives a reboot. It starts as `vak-desktop --tray`: menu-bar icon

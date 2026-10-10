@@ -29,6 +29,16 @@ fn collect(core: &Core) -> health::HealthReport {
         });
         report.failures += 1;
     }
+    if let Some(off) = crate::install::stops_at_logout() {
+        report.checks.push(health::HealthCheck {
+            label: "services survive logout".into(),
+            detail: Err(format!(
+                "user lingering is off, so the services stop when {} logs out; run `{}`",
+                off.user, off.remedy
+            )),
+        });
+        report.failures += 1;
+    }
     report
 }
 

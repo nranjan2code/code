@@ -150,6 +150,18 @@ pub struct ProbedFacts {
     /// reinstall) or pre-baseline state (repair: purge) — and offering
     /// the wrong remedy is worse than offering none.
     pub install: Option<Result<String, StepFailure>>,
+    /// Services that stop when their user logs out, because systemd
+    /// lingering is off (Linux only). `None` when they keep running, or
+    /// the platform has no such switch.
+    pub stops_at_logout: Option<StopsAtLogout>,
+}
+
+/// Who the services stop with, and the one command that keeps them running
+/// (`vak_ops::services::linger_remedy`), filled in by the prober.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopsAtLogout {
+    pub user: String,
+    pub remedy: String,
 }
 
 /// The whole projection.
@@ -560,6 +572,16 @@ fn services_step(probed: &ProbedFacts) -> StepState {
         .filter(|(_, running)| !running)
         .map(|(name, _)| name.as_str())
         .collect();
+    if let Some(off) = &probed.stops_at_logout {
+        return StepState::Incomplete(StepFailure::new(
+            format!(
+                "The services stop when {} logs out: user lingering is off.",
+                off.user
+            ),
+            "They run while someone is logged in; configuration and credentials are unchanged.",
+            format!("Run `{}`, then `vak self services-sync`.", off.remedy),
+        ));
+    }
     if down.is_empty() {
         return StepState::ok(format!("{} running", services.len()));
     }
@@ -740,6 +762,7 @@ mod tests {
             &ProbedFacts {
                 services: None,
                 awaiting_activation: Vec::new(),
+                stops_at_logout: None,
                 install: Some(Err(StepFailure::new(
                     "predates the baseline",
                     "project files untouched",
@@ -765,10 +788,37 @@ mod tests {
                 services: Some(vec![("com.vak.gateway".into(), false)]),
                 install: None,
                 awaiting_activation: Vec::new(),
+                stops_at_logout: None,
             },
         );
         let failure = down.services.failure().expect("a down service is a defect");
         assert!(failure.what.contains("com.vak.gateway"));
+    }
+
+    /// Running services that will stop at logout are not settled: the
+    /// step names the user and the prober's own command.
+    #[test]
+    fn services_that_stop_at_logout_say_so_with_the_remedy() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core_in(dir.path());
+        let state = derive(
+            &core,
+            &ProbedFacts {
+                services: Some(vec![("com.vak.gateway".into(), true)]),
+                stops_at_logout: Some(StopsAtLogout {
+                    user: "ec2-user".into(),
+                    remedy: "sudo loginctl enable-linger ec2-user".into(),
+                }),
+                ..ProbedFacts::default()
+            },
+        );
+        let failure = state.services.failure().expect("they stop at logout");
+        assert!(failure.what.contains("ec2-user") && failure.what.contains("lingering"));
+        assert!(
+            failure
+                .repair
+                .contains("sudo loginctl enable-linger ec2-user")
+        );
     }
 
     #[test]
@@ -803,6 +853,7 @@ mod tests {
                 services: None,
                 install: None,
                 awaiting_activation: vec!["com.vak.discord-ops".into()],
+                stops_at_logout: None,
             },
         );
         let failure = state.services.failure().expect("activation is owed");
