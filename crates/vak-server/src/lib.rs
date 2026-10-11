@@ -17170,7 +17170,6 @@ async fn get_config(
             "enabled": cfg.stop_policy.enabled,
             "marker_gate": cfg.stop_policy.marker_gate,
             "verify_gate": cfg.stop_policy.verify_gate,
-            "max_blocks": cfg.stop_policy.max_blocks,
         },
         "work": {
             "enabled": work.enabled,

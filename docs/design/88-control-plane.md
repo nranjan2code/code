@@ -40,21 +40,38 @@ the loop records each failed call's fault as `CallEffect::Failed`, and
 tool this turn offers is `Refusal::Unknown` at `AcceptCall`. The workspace
 is checkpointed when the first call that declares it may change the
 workspace is accepted (`Tool::changes_workspace`, `AgentConfig::before_effect`),
-not from a reading of the request. Later stages are not built.
+not from a reading of the request. C5 done (2026-10-11):
+`vak_control::correct` holds the typed `Finding`s, the one `Ladder` (told
+once, then the frame changes or the answer stands; a check that passes can
+fail anew) and `render`, the one place a correction's wording is written;
+every correction in the loop goes through `Agent::correct`. Removed: the
+freshness, grounding and topic-mismatch checks with their word lists and
+the three endings that replaced the model's answer; the stop gate's
+`max_blocks` budget, its "does the answer quote the error" reading and the
+worker gate's count; `DOOM_LOOP_THRESHOLD` and `READ_REPEAT_LIMIT`, replaced
+by an observed state (a call that returned the same result again is
+refused, `Refusal::Repeated`); `AgentConfig::retrieval_check` and
+`observation_check`. A model step's `request_timeout` bounds silence between
+stream events, never the whole step (§5a). Later stages are not built.
 
-### Carried into later stages (found while building C0–C4)
+### Carried into later stages (found while building C0–C5)
 
-- C5: `Posture::checkpoint_before_effect` is still derived and recorded but
+- C6: `Posture::checkpoint_before_effect` is still derived and recorded but
   decides nothing; it goes with the reader's other behaviour fields.
-- C5: the `[recovery]` note and the unknown-tool message are still free text
-  written in the agent loop; they become rendered `Correction`s.
+- C6: the unknown-tool message and the `[uncited-source]` refusal are tool
+  results still worded in the agent loop, not in `vak_control::render`.
 - The commitment satisfaction lattice (`vak-commit/src/satisfy.rs`) is
   already pure and stays in `vak-commit` until the judge takes a
   `vak-session` dependency for criteria (C7, with `vak-eval`).
-- C5: the freshness gate reads `Reading.domains` (temporal-deixis words);
-  it goes with the other stop-policy checks. Commitments opened from the
-  reading's horizon (`may_open_commitment`) and managed mode from the
-  horizon go with it.
+- C6: commitments opened from the reading's horizon
+  (`may_open_commitment`) and managed mode from the horizon still follow
+  the reading; they go with the guessed outcome requirements.
+- C6: `detect_model_drift` still compares directive lineage to decide that
+  a verbatim repeated answer is unrelated; the repeat is a fact, the
+  relation is a reading. The loop's `inspection_ids` is a table of tool
+  names. Both go when the answer form frames the final step.
+- The remaining time constants in §5a (reflection, heartbeat, probe,
+  gateway wait, command and person waits) are not yet configuration.
 - C6: delivery shape and `OutcomeSpec` requirements guessed from words
   (`apply_output_requirements`) are replaced by the answer form.
 - `vak runs` does not print decisions yet (the admin Run detail does). Builds on docs/design/86-model-plans-runtime-checks.md (the model
@@ -174,6 +191,35 @@ One ladder, used at every point, replacing the six ad-hoc ones:
 
 No count decides a rung. The operator's turn limit is the only number that
 bounds a run.
+
+## 5a. Time
+
+Requested by the maintainer on 2026-10-11: a model, a tool or a person may
+be fast or slow, so nothing is ended because a number of seconds picked in
+code went by. A wait ends on an observed state:
+
+- **the work finished**: the stream closed, the process exited, the person
+  answered;
+- **someone stopped it**: cancellation, a revoked capability, a fenced
+  process;
+- **it stopped making progress**: no event arrived on a stream, or a
+  holder's liveness lapsed. Silence is measured between events, never over
+  the whole of a piece of work, so a slow answer that is still arriving is
+  never cut;
+- **the operator's limit**: a limit a person configured, shown in Settings
+  with its shipped default, recorded in the `Ending` when it is what ended
+  the work.
+
+Audit of time constants in code at C4 (`b213cc1f6`), by what they bound:
+
+| Kind | Where | To do |
+|---|---|---|
+| A whole model dispatch | `AgentConfig::request_timeout` wrapped the entire streamed step | done at C5: it bounds silence between stream events (`within` in the agent loop) |
+| A whole model call, fixed | `REFLECTION_CALL_TIMEOUT` 120 s (defined three times: `vak-server/src/lib.rs`, `gateway.rs`, `vak/src/main.rs`), `HEARTBEAT_TURN_TIMEOUT` 120 s, `PROBE_REQUEST_TIMEOUT` 30 s, gateway `WAIT_TIMEOUT` 240 s | C5: one silence rule from `[control]`, no per-site constant |
+| A command or script | bash `DEFAULT_TIMEOUT_MS` 120 s, `SCRIPT_TIMEOUT_MS` 120 s, hooks `DEFAULT_TIMEOUT_MS` 10 s | C5: the operator's limit, from configuration |
+| Waiting for a person | `QUESTION_TIMEOUT` 900 s, `HTTP_APPROVAL_TIMEOUT` 900 s | C5: configuration; silence still means no (invariant 15) |
+| Protection against a hostile or dead peer | discovery 15 s, MCP list 10 s, webfetch and browse totals, `VERIFY_DEADLINE`, delivery worker 5 s, credential probe | stay: they bound input Vak does not control, like the parser limits in §8 |
+| Freshness of a cache or a liveness beat | profile and discovery TTLs, reconcile intervals, `LIVENESS_RENEW_SECS` | stay: they schedule work and end nothing |
 
 ## 6. Records
 

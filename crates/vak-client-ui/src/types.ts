@@ -468,7 +468,7 @@ export interface ConfigSnapshot {
   context_window_source?: "setting" | "model" | "unknown";
   theme: string;
   bell: boolean;
-  stop_policy: { enabled: boolean; marker_gate: boolean; verify_gate: boolean; max_blocks: number };
+  stop_policy: { enabled: boolean; marker_gate: boolean; verify_gate: boolean };
   route: {
     objective: string;
     fallback_models: string[];

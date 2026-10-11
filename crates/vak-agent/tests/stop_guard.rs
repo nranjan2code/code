@@ -167,7 +167,6 @@ async fn truncated_plan_gets_one_continuation_then_completes() {
         Some(StopPolicy {
             marker_gate: true,
             verify_gate: false,
-            max_blocks: 2,
         }),
         vec![
             ScriptedResponse::Message(text_msg("Fixing both:\n```rust\nfn a() {")),
@@ -228,7 +227,6 @@ async fn the_stop_guard_nudge_reaches_the_actual_next_request() {
         Some(StopPolicy {
             marker_gate: true,
             verify_gate: false,
-            max_blocks: 2,
         }),
         vec![
             ScriptedResponse::Message(text_msg("Fixing both:\n```rust\nfn a() {")),
@@ -282,7 +280,6 @@ async fn max_blocks_cap_lets_second_bad_response_through() {
         Some(StopPolicy {
             marker_gate: true,
             verify_gate: false,
-            max_blocks: 1,
         }),
         vec![
             ScriptedResponse::Message(text_msg("Now I'll fix it:\n```")),
@@ -321,7 +318,6 @@ async fn guard_at_turn_limit_is_not_reported_as_completed() {
         Some(StopPolicy {
             marker_gate: true,
             verify_gate: false,
-            max_blocks: 1,
         }),
         vec![ScriptedResponse::Message(text_msg(
             "Fixing both:\n```rust\nfn a() {",
@@ -382,7 +378,6 @@ async fn authored_prose_without_a_file_target_completes_without_a_guard() {
         Some(StopPolicy {
             marker_gate: false,
             verify_gate: true,
-            max_blocks: 1,
         }),
         vec![ScriptedResponse::Message(text_msg(
             "Here is the component, explained step by step.",
@@ -425,7 +420,6 @@ async fn universal_task_with_verify_completes_without_bash_guard() {
         Some(StopPolicy {
             marker_gate: true,
             verify_gate: true,
-            max_blocks: 1,
         }),
         vec![ScriptedResponse::Message(text_msg(
             "Here is the brewing guide: grind size, water-to-coffee ratio, and brew temperature. I have verified that water temperature should be kept between 90°C and 96°C for optimal extraction.",

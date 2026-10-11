@@ -482,42 +482,10 @@ tolerate topic changes:
 - **Directive drift** (the user changed subject): the working set is
   re-ranked so the retrieved slice favours the new subject; the thread lists
   the superseded directives as "earlier, now paused". No cut, a re-weighting.
-- **Stale data** (the directive asks for a value as it stands now — temporal
-  deixis such as "current", "right now", "today", "latest" sets the
-  `live-data` domain on the reading, but only in a request that seeks a fact
-  (answer, locate, analyse) and not beside something local, a time, or the
-  agent's own state: "the current price of copper" and "the live score" are
-  live data, "the current directory", "refactor the current parser" and
-  "what are you holding right now" are not; `live` counts only in its
-  *current* sense, never as the verb "reside" ("we live in the city"),
-  resolver version 6 — and no call that observes current state succeeded in
-  the run): the answer or card can only repeat an earlier turn's figure. An
-  observation is any call whose capability declares that it reads the world
-  as it is now — a retrieval, and equally reading a file, listing a
-  directory or running a command (`AgentConfig::observation_check`, built
-  from `serves`): demanding a web search for "what is on the current branch"
-  replaced correct answers with "I could not retrieve a current value".
-  A card call is intercepted before execution and answered with a
-  `[freshness-check]` error value the model repairs by retrieving first; a
-  prose answer gets the same as one redo nudge. An explicit "no live data"
-  is accepted. After that one repair the turn **fails closed**: a second
-  card with still nothing retrieved, or a final answer that still carries
-  no retrieval, ends the turn with a system-authored statement that no
-  current value was retrieved, naming the last figure the conversation
-  recorded and when — never a carried-over figure presented as current.
-  A request to recall what the assistant reported earlier is historical
-  retrieval, even when it names a temporal topic such as “the latest weather
-  answer”; it must not be routed through this freshness gate.
-  A card whose every figure the person's own words this turn gave is not
-  stopped either, and its turn is not redone (`figures_come_from`): "show
-  the current CPU usage of 42 percent as a metric card" asks for nothing to
-  be retrieved, and its correct card was refused 3 of 3 times
-  (2026-10-08).
-  Measured live: the model's "repair" was a different stale card from an
-  older turn. The signal sets the domain
-  only — raising the evidence standard through the stance text made the
-  small model deliberate in its thinking channel and emit nothing. Measured live: five of six replays of a "current weather"
-  question emitted a card carrying a temperature from a previous turn.
+- **Stale data**: removed at control-plane C5. The check read temporal
+  words in the request and ended a turn with a statement the model did not
+  write; no check reads a request's words now
+  (docs/design/88-control-plane.md §5).
 - **Model drift** (a step ends with no tool call and its final text is a
   verbatim repeat of a prior turn's `TurnCard` narration — domain-mismatch
   detection was tried and dropped: it also fired on a legitimately related
@@ -526,26 +494,11 @@ tolerate topic changes:
   request was near the horizon. The nudge is sent once; an answer that
   drifts again straight after it stands as the model's own, with a
   `model-drift` diagnostic.
-- **Topic mismatch** (a card's own content is unrelated to both the
-  directive and this turn's own retrieval, found in real post-release use:
-  asked "what is the current top news in AI", the model correctly called
-  `tavily_search`, got real AI-news results back, and then wrote
-  `emit_metric_card` for "Noida Weather, 28°C" — a payload copied from an
-  unrelated, much older turn still sitting in context. Freshness had nothing
-  to say: a retrieval genuinely had succeeded this run). The check is a word-
-  overlap test between the card's serialized payload and the directive plus
-  this turn's own retrieved evidence text (never the directive alone —
-  evidence is far richer, so a card correctly titled from what was actually
-  found, e.g. "OpenAI announces GPT-6" for a directive that only said "AI
-  news", still passes on zero overlap against the directive). Deliberately
-  **scoped to only fire when a retrieval has already succeeded this run**:
-  a card built from the model's own reasoning or from data already in the
-  directive routinely shares no vocabulary with anything (an empty chart
-  skeleton, a bare numeric metric) whether it is right or wrong, and
-  checking those broke a real, previously-passing test the first time this
-  was tried unscoped. A gated card is intercepted before execution
-  (`[topic-mismatch]`, one repair); the second strike fails closed with the
-  raw evidence text quoted rather than a wrong card or nothing.
+- **Topic mismatch**: removed at control-plane C5, with its word overlap
+  and stop-word list. A card is refused before execution only for a fact:
+  it cites a source URL nothing in the conversation retrieved or was given
+  (`[uncited-source]`), each time it is offered; the model's next answer is
+  its own.
 
 A card-only turn is a complete answer: the outcome evaluator sees the turn's
 presentation entries as response content, so a model that emits a card and

@@ -3,9 +3,9 @@
 //! Small models frequently end their turn mid-plan ("Fixing both:" /
 //! "Now I'll write the tests") or finish without doing the work the request
 //! asked for. The dogfood campaign measured this at 5/7 runs on a free tier.
-//! This policy reuses the existing stop-hook continuation machinery (append
-//! a `[stop-guard]` control message, emit StopHookContinuation) at most
-//! `max_blocks` times per run, so it can never trap a model in a loop.
+//! Each reason is told once through the correction ladder
+//! (`vak_control::Ladder`); an answer that still leaves it standing is the
+//! model's own, so it can never trap a model in a loop.
 //!
 //! What completion needs comes from the admitted reading (`OutcomeSpec`) and
 //! the run's receipts, never from phrases in the request: a phrase list read
@@ -28,43 +28,19 @@ pub enum BlockReason {
 }
 
 impl BlockReason {
-    pub fn message(&self) -> String {
+    /// The finding a correction is rendered from.
+    pub fn finding(&self) -> vak_control::Finding {
+        use vak_control::Finding;
         match self {
-            BlockReason::TruncatedPlan(tail) => format!(
-                "your last message appears cut off ({tail}). Finish it now; if you are \
-                 actually done, say so plainly."
-            ),
-            BlockReason::VerificationStale => String::from(
-                "files changed after the last check ran. Run the check again before finishing, \
-                 or say plainly why it cannot be run.",
-            ),
-            BlockReason::UserCompletionRequired => String::from(
-                "the user asked you to keep working until they say done. Continue making \
-                 useful progress; do not declare completion yet.",
-            ),
-            BlockReason::UnresolvedToolFailure { tool, error } => format!(
-                "the `{tool}` call failed: {error}. Fix the cause and try again, or tell the \
-                 person plainly that it failed and why, quoting the error.",
-            ),
+            BlockReason::TruncatedPlan(what) => Finding::Truncated { what: what.clone() },
+            BlockReason::VerificationStale => Finding::VerificationStale,
+            BlockReason::UserCompletionRequired => Finding::KeepWorking,
+            BlockReason::UnresolvedToolFailure { tool, error } => Finding::UnresolvedFailure {
+                tool: tool.clone(),
+                error: error.clone(),
+            },
         }
     }
-}
-
-/// The control message a stop-guard block appends: the reason alone. Every
-/// reason ends with what to do and the way out ("say plainly why"), so a
-/// fixed "Please continue." after it only repeated the first half of that
-/// and contradicted the second.
-pub fn guard_message(reason: &str) -> String {
-    format!("[stop-guard]: {reason}")
-}
-
-/// The control message a stop hook's demand appends. A hook's reason is
-/// its own text, so the message gives the instruction and the way out.
-pub fn hook_message(reason: &str) -> String {
-    format!(
-        "[stop-hook]: a stop hook asked for more work: {}. Do it now, or say plainly why you cannot.",
-        reason.trim().trim_end_matches('.')
-    )
 }
 
 /// Summary of tool execution receipts produced during a run.
@@ -131,56 +107,12 @@ impl ReceiptSummary {
     }
 }
 
-/// Whether the answer names the failure it leaves standing, by quoting the
-/// error's own words: a distinctive identifier (`unknown_capability`) or a
-/// pair of adjacent words ("disk full", "read-only mode", "exit code"), or
-/// the tool's name with a distinctive word of the error ("bash denied").
-/// Keywords ("no issues", "error-free") read as a report and let a false
-/// success through, and they only work in English; the error's words are
-/// the same whatever language the rest of the answer is written in.
-fn reports_blocker(text: &str, tool: &str, error: &str) -> bool {
-    fn words(text: &str) -> Vec<String> {
-        text.to_lowercase()
-            .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
-            .filter(|word| !word.is_empty())
-            .map(str::to_string)
-            .collect()
-    }
-    let answer = words(text);
-    let joined = format!(" {} ", answer.join(" "));
-    let error: String = error.chars().take(600).collect();
-    let error = words(&error);
-    let identifier = error
-        .iter()
-        .any(|word| (word.contains('_') || word.chars().count() >= 12) && answer.contains(word));
-    // The tool named together with a distinctive word of its error ("bash
-    // denied"). Words any success claim can carry do not count.
-    const GENERIC: [&str; 6] = ["error", "errors", "failed", "failure", "issue", "problem"];
-    let tool = tool.to_lowercase();
-    let named_with_cause = answer.contains(&tool)
-        && error.iter().any(|word| {
-            word.chars().count() >= 5
-                && *word != tool
-                && !GENERIC.contains(&word.as_str())
-                && answer.contains(word)
-        });
-    identifier
-        || named_with_cause
-        || error.windows(2).any(|pair| {
-            pair[0].chars().count() + pair[1].chars().count() >= 7
-                && pair.iter().any(|word| word.chars().count() >= 4)
-                && joined.contains(&format!(" {} {} ", pair[0], pair[1]))
-        })
-}
-
 #[derive(Debug, Clone)]
 pub struct StopPolicy {
     /// Gate on truncated-looking final messages.
     pub marker_gate: bool,
     /// Gate on promised-but-never-run verification.
     pub verify_gate: bool,
-    /// Hard cap of guard continuations per run.
-    pub max_blocks: u32,
 }
 
 impl Default for StopPolicy {
@@ -188,7 +120,6 @@ impl Default for StopPolicy {
         StopPolicy {
             marker_gate: true,
             verify_gate: true,
-            max_blocks: 2,
         }
     }
 }
@@ -242,9 +173,7 @@ impl StopPolicy {
         if self.marker_gate && final_text.matches("```").count() % 2 == 1 {
             return Some(BlockReason::TruncatedPlan("unclosed code fence".into()));
         }
-        if let Some((tool, error)) = &receipts.unresolved_error
-            && !reports_blocker(final_text, tool, error)
-        {
+        if let Some((tool, error)) = &receipts.unresolved_error {
             return Some(BlockReason::UnresolvedToolFailure {
                 tool: tool.clone(),
                 error: error.clone(),
@@ -385,10 +314,15 @@ mod tests {
             tool: "bash".into(),
             error: "read-only mode denies 'bash'".into(),
         }
-        .message();
+        .finding();
         for message in [
-            super::guard_message(&reason),
-            super::hook_message("tests fail"),
+            vak_control::render(&reason, "[stop-guard]"),
+            vak_control::render(
+                &vak_control::Finding::StopHook {
+                    reason: "tests fail".into(),
+                },
+                "[stop-hook]",
+            ),
         ] {
             assert!(!message.contains("Please continue"), "{message}");
             assert!(message.contains("plainly"), "{message}");
@@ -487,67 +421,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unresolved_failure_passes_only_when_the_answer_quotes_it() {
-        let p = StopPolicy::default();
-        let receipts = ReceiptSummary {
-            total_tool_calls: 1,
-            failed_tool_calls: 1,
-            unresolved_error: Some((
-                "write".into(),
-                "write failed: disk full (os error 28)".into(),
-            )),
-            ..Default::default()
-        };
-        for claim in [
-            "All done! Everything succeeded.",
-            "Saved your notes to notes.md with no issues.",
-            "Saved without any error or problem.",
-        ] {
-            assert!(
-                matches!(
-                    p.evaluate_receipts("save my notes", claim, &receipts, false),
-                    Some(BlockReason::UnresolvedToolFailure { .. })
-                ),
-                "{claim}"
-            );
-        }
-        for report in [
-            "I could not save the notes: the disk is full (disk full).",
-            "नोट्स सेव नहीं हुए — disk full.",
-        ] {
-            assert_eq!(
-                p.evaluate_receipts("save my notes", report, &receipts, false),
-                None,
-                "{report}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_denial_is_reported_by_naming_the_tool_and_its_cause() {
-        let p = StopPolicy::default();
-        let receipts = ReceiptSummary {
-            total_tool_calls: 1,
-            failed_tool_calls: 1,
-            unresolved_error: Some(("bash".into(), "denied by user: bash needs approval".into())),
-            ..Default::default()
-        };
-        assert_eq!(
-            p.evaluate_receipts(
-                "run it",
-                "bash denied: moving on without it",
-                &receipts,
-                false
-            ),
-            None
-        );
-        assert!(matches!(
-            p.evaluate_receipts("run it", "Ran bash without any error.", &receipts, false),
-            Some(BlockReason::UnresolvedToolFailure { .. })
-        ));
-    }
-
-    #[test]
     fn test_is_code_path_accurately_classifies_code_vs_doc_paths() {
         assert!(is_code_path("src/main.rs"));
         assert!(is_code_path("backend/app.py"));
@@ -556,5 +429,25 @@ mod tests {
         assert!(!is_code_path("README.md"));
         assert!(!is_code_path("recipes/sourdough.txt"));
         assert!(!is_code_path("data/analysis.csv"));
+    }
+
+    /// Whether an answer owns up to a failure is not read from its words:
+    /// the failure is a reason whatever the answer says, and the loop
+    /// records it and lets the answer stand.
+    #[test]
+    fn an_unrepaired_failure_is_a_reason_whatever_the_answer_says() {
+        let receipts = ReceiptSummary {
+            unresolved_error: Some(("bash".into(), "read-only mode denies 'bash'".into())),
+            ..Default::default()
+        };
+        for answer in [
+            "All done, everything worked.",
+            "The bash call failed: read-only mode denies 'bash'.",
+        ] {
+            assert!(matches!(
+                StopPolicy::default().evaluate_receipts("do it", answer, &receipts, false),
+                Some(BlockReason::UnresolvedToolFailure { .. })
+            ));
+        }
     }
 }

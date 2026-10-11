@@ -4049,7 +4049,12 @@ mod tests {
 
         // Synthetic stop-hook nudge (should NOT increment turn count)
         log.append_message(MessageRecord {
-            message: Message::user_text(vak_agent::stop_policy::hook_message("hook said continue")),
+            message: Message::user_text(vak_control::render(
+                &vak_control::Finding::StopHook {
+                    reason: "hook said continue".into(),
+                },
+                "[stop-hook]",
+            )),
             meta: Some(vak_session::MessageMeta {
                 control: Some(vak_intent::control::ControlKind::StopHook),
                 ..Default::default()
@@ -5673,7 +5678,12 @@ mod tests {
         .expect("interim");
         log.append_message(MessageRecord::control(
             vak_intent::control::ControlKind::StopGuard,
-            vak_agent::stop_policy::guard_message("not done yet"),
+            vak_control::render(
+                &vak_control::Finding::StopGuard {
+                    reason: "not done yet".into(),
+                },
+                "[stop-guard]",
+            ),
         ))
         .expect("guard");
         log.append_message(MessageRecord {

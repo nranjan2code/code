@@ -512,19 +512,18 @@ async fn another_sessions_worker_is_unknown_not_forbidden() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn finishing_with_a_running_worker_is_blocked_twice_then_the_worker_is_cancelled() {
+async fn finishing_with_a_running_worker_is_told_once_then_the_worker_is_cancelled() {
     let mut h = harness(
         vec![
             background_task("scout"),
             text("I am done"),
             text("still done"),
-            text("final answer"),
         ],
         Child::Hangs,
     );
     let outcome = run(&mut h.agent).await;
     assert!(
-        matches!(&outcome, TurnOutcome::Completed { response } if response.text_content() == "final answer"),
+        matches!(&outcome, TurnOutcome::Completed { response } if response.text_content() == "still done"),
         "{outcome:?}"
     );
     let requests = h.requests.lock().unwrap().clone();
@@ -534,7 +533,7 @@ async fn finishing_with_a_running_worker_is_blocked_twice_then_the_worker_is_can
         .map(|m| m.text_content())
         .filter(|t| t.contains("workers you started are still running"))
         .count();
-    assert!(nudges >= 1, "the parent was sent back at least once");
+    assert_eq!(nudges, 1, "the parent was told once");
     for _ in 0..200 {
         if h.registry.active_for("parent-bg").is_empty() {
             let session = h.agent.session.lock().await;

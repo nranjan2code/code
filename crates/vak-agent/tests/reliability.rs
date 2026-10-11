@@ -297,7 +297,7 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
     eprintln!("OUTCOME: {outcome:?}");
     match outcome {
         TurnOutcome::Failed { error } => {
-            assert!(error.to_string().contains("deadline"), "got: {error}");
+            assert!(error.to_string().contains("sent nothing"), "got: {error}");
         }
         other => panic!("expected deadline failure, got {other:?}"),
     }
@@ -451,7 +451,7 @@ async fn hung_provider_with_retries_gets_bounded_attempts_then_fails_with_deadli
         )
         .await;
     match outcome {
-        TurnOutcome::Failed { error } => assert!(error.to_string().contains("deadline")),
+        TurnOutcome::Failed { error } => assert!(error.to_string().contains("sent nothing")),
         other => panic!("expected deadline failure, got {other:?}"),
     }
     assert_eq!(

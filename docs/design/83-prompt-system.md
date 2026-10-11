@@ -613,14 +613,11 @@ stateDiagram-v2
 
 | Marker | Fires when | Asks for |
 |---|---|---|
-| `[grounding-check]` | a search/fetch succeeded and the answer ignored it | answer the opening message from those results with sources, or say they do not answer |
-| `[freshness-check]` | a `live-data` reading got no retrieval or observation this run | fetch now, then an honest last-known statement if impossible |
 | `[empty-step]` | a thinking-only response | nothing arrived; a call whose arguments were not valid JSON can be dropped, so make the same call again with valid JSON, or write the answer |
 | `[steering-drift]` | the step served a different directive | refocus on the latest message (never quotes it) |
 | `[presentation-check]` | the prose reads as a card shape | call the matching card tool (also loads it) |
 | `[fence-check]` | an inline `vak` fence failed to parse | fix it |
 | `[duplicate-card-check]` | a fence repeats a card a tool already showed | drop the duplicate |
-| `[topic-mismatch]` | a card after a retrieval shares no topic with it or the directive | rebuild from the retrieval |
 | `[repair-directive]` | correctable tool failures went unrepaired | the failing tools' schemas and retries left |
 | `[stop-guard]` | the stop policy blocks completion (unverified change, cut-off plan, unresolved failure, missing execution) | the specific `BlockReason` message |
 | `[stop-hook]` | a configured stop hook blocked | the hook's reason |
@@ -827,9 +824,7 @@ Agent, no custom layers, a search MCP server configured.
    What's the weather in Pune right now?
    ```
 
-5. **Steps.** If the model answers from memory, the loop appends
-   `[freshness-check]: This asks for a value as it stands now, but nothing
-   was …` and discards the draft. The model calls `mcp` → search, the
+5. **Steps.** The model calls `mcp` → search, the
    result is appended; it calls a card tool; the card is recorded as a
    `Presentation`, the turn closes with a `TurnCard`.
 

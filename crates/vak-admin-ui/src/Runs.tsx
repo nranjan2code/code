@@ -209,6 +209,8 @@ function decisionWords(step: TurnStep): string {
     case "accept_answer":
       return choice.verdict === "accepted" ? "The answer was accepted" : `The answer was held back: ${words(choice.by ?? "")}`;
     case "correct":
+      if (choice.rung === "end") return `Left as the model's answer (${words(choice.cause)})`;
+      if (choice.rung === "reframe") return `The next step was changed (${words(choice.cause)})`;
       return `The model was asked to correct its work (${words(choice.cause)})`;
     case "end_turn":
       return ENDED[choice.end] ?? words(choice.end);

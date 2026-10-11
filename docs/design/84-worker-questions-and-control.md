@@ -234,11 +234,10 @@ relative files or folders, never the whole workspace, never `..`.
 A worker whose parent turn has ended would run unattended with nobody to
 receive its result. So:
 
-1. The stop gate gains a `WorkersRunning` reason: a parent that tries to
-   finish with live background workers is sent back once per worker set with
+1. A parent that tries to finish with live background workers is told
+   once, through the correction ladder (`Finding::WorkersRunning`):
    "workers are still running: wait for them with `workers`, or stop them".
-   This reuses the bounded stop-guard budget (`StopPolicy::max_blocks`).
-2. When that budget is spent, the loop cancels the remaining workers and
+2. If it finishes anyway, the loop cancels the remaining workers and
    records each as cancelled with its partial output (invariant 5).
 
 This is the one place a *worker* is stopped without a person asking, and it

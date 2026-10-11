@@ -14,7 +14,7 @@ executed through the normal broker.
 Recovery hints are deliberately omitted for user cancellation, permission or
 approval denial, revocation, authentication, and rate-limit failures. Those
 conditions require an external state change or human decision. Existing turn
-limits, doom-loop detection, provider dispatch ceilings, and append-only
+limits, the repeated-call rule, provider dispatch ceilings, and append-only
 session recording remain the upper bounds for the repair loop.
 
 A registered capability called under the wrong kind is a correctable routing
@@ -65,6 +65,16 @@ special-case the `mcp` broker. Found live on 2026-10-11: the earlier
 three-strike budget ended a turn with a canned refusal after three failed
 card calls and threw away a complete answer.
 
+### Repeated calls (an observed state, no count)
+
+The loop remembers what each call of a run last returned, by tool and exact
+arguments (`SeenCall`). A call that runs again and returns the same result
+is marked unchanged, and from then on is refused (`Refusal::Repeated`) with
+the reason: it would return the same thing. An accepted call that may
+change the workspace clears what other calls returned. Until control-plane
+C5 two counts did this (three identical calls asked a person; five
+identical reads were denied).
+
 ### Outcome linkage (no false `Produced`)
 
 The outcome gate (`vak_core` → `vak_judge::outcome::evaluate_response_with_failures`)
@@ -87,9 +97,12 @@ The standard failure matrix and where each case is handled.
   (429 / 529 / network). Delay = `retry_base_backoff_ms * 2^(n-1)` with ±50%
   jitter, capped at 30s; server-advised `Retry-After` overrides. User aborts
   and partial-output aborts are never retried.
-- **Watchdog**: each step runs under `request_timeout` (default 600s,
-  `request_timeout_secs = 0` disables). A hung stream becomes a retryable
-  deadline error instead of hanging forever.
+- **Watchdog**: `request_timeout` (default 600s, `request_timeout_secs = 0`
+  disables) is how long a step may stay silent: it bounds the wait to
+  connect, for each stream event and for the collected result, never the
+  whole step, so an answer that is still arriving is never cut
+  (docs/design/88-control-plane.md §5a). A silent stream becomes a
+  retryable deadline error instead of hanging forever.
 - Surfaced as `AgentEvent::RetryScheduled{attempt, delay_ms, reason}` so all
   UIs show the wait; config keys `max_retries`, `retry_base_backoff_ms`,
   `request_timeout_secs`.

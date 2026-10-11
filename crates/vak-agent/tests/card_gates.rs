@@ -232,7 +232,6 @@ async fn build_agent(
                 Arc::new(FakeEmitTableCard),
                 Arc::new(FailingFetch),
             ];
-            cfg.retrieval_check = Some(Arc::new(|name, _| name == "fetch"));
             // As in production: a card tool the request did not predict is
             // deferred, so it is not declared until something loads it.
             cfg.tool_definitions = Some(vec![
@@ -275,8 +274,9 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
         .await
 }
 
-/// A card citing a page nothing here retrieved is refused, once with a
-/// repair, then the turn ends on an honest statement and no card.
+/// A card citing a page nothing here retrieved is refused each time it is
+/// offered, with the URLs named; no card is recorded, and the answer the
+/// model then writes is the turn's answer.
 #[tokio::test]
 async fn a_card_citing_an_unretrieved_page_is_never_shown() {
     let dir = tempdir().unwrap();
@@ -287,6 +287,7 @@ async fn a_card_citing_an_unretrieved_page_is_never_shown() {
         vec![
             tool_call_msg("c1", "emit_chart_card", cited.clone()),
             tool_call_msg("c2", "emit_chart_card", cited),
+            text_msg("I could not open that report, so I have no figures to chart."),
         ],
     )
     .await;
@@ -294,12 +295,9 @@ async fn a_card_citing_an_unretrieved_page_is_never_shown() {
     let TurnOutcome::Completed { response } = &outcome else {
         panic!("{outcome:?}");
     };
-    assert!(
-        response
-            .text_content()
-            .contains("could not verify the sources"),
-        "{}",
-        response.text_content()
+    assert_eq!(
+        response.text_content(),
+        "I could not open that report, so I have no figures to chart."
     );
     let session = agent.session.lock().await;
     assert!(session.presentations().is_empty(), "no card is recorded");

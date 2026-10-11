@@ -65,7 +65,7 @@ No panics; session-write failures become `Failed`.
   alternative call, and do not repeat identical arguments. Cancellation,
   permission/approval denial, revocation, authentication, and rate limiting
   do not receive recovery advice. The corrected call still passes the normal
-  authorization, sandbox, hook, doom-loop, turn, and dispatch-ceiling checks.
+  authorization, sandbox, hook, repeated-call, turn, and dispatch-ceiling checks.
   When the model fails to repair a correctable fault across consecutive turns,
   the loop escalates past the hint into a system-authored, schema-resurfacing
   directive and finally a bounded stop that degrades the outcome (see
@@ -84,15 +84,6 @@ Five bounded, system-authored checks run inside the loop, each with its own
 `ControlKind` marker so the nudge is visible on the ledger
 (docs/design/68-context-engine.md §7, §10):
 
-- **`[freshness-check]`**: the directive's reading carries the `live-data`
-  domain (temporal deixis — "current", "right now", "today") and nothing was
-  retrieved this run. A card call is intercepted *before execution* and
-  answered with an error value; a final text answer gets one redo nudge. An
-  explicit "no live data" is accepted. After one repair still nothing
-  retrieved (a second stale card, or another empty step), the turn **fails
-  closed**: `stale_data_outcome()` states plainly that nothing current was
-  retrieved and names the last figure this conversation recorded and when —
-  never a carried-over figure presented as current.
 - **`[empty-step]`**: the response carried neither text nor a tool call (a
   thinking-only completion). One redo, unless a card was already emitted
   this run — a card-only turn is a complete answer. A provider can drop a
@@ -112,21 +103,13 @@ Five bounded, system-authored checks run inside the loop, each with its own
   already shown this run is acknowledged as a no-op (not an error). A step
   that only repeats shown cards again, straight after that acknowledgement,
   closes the turn on that card as its answer (`card_repeat_outcome()`).
-- **`[grounding-check]`**: the step right after a retrieval gave an answer
-  that shows no sign of using it. "Uses" is judged from the result, not the
-  answer's format: the answer repeats a host or a figure the retrieval
-  returned, or says plainly that it found nothing (`admits_no_data`, the one
-  phrase list the freshness check shares). A card emitted alongside the
-  retrieval clears the check, and a result with nothing checkable in it never
-  triggers one. It used to pass only answers containing a `vak` fence, which
-  sent correct cited prose back for a redo.
-- The `[fence-check]`, `[duplicate-card-check]`, `[presentation-check]` and
-  `[card-completion-check]` nudges keep repairs within the current logical
-  turn. A card-completion check catches structured final text that the card
-  contract would hide, then asks the model to emit missing parts or repair
-  incomplete cards; a presentation check loads the card tool it names for the
-  redo. All `ControlKind` variants are enumerated in
-  `vak-intent/src/control.rs`.
+- **Removed at control-plane C5** (docs/design/88-control-plane.md §5):
+  `[freshness-check]`, `[grounding-check]` and `[topic-mismatch]`, which read
+  the request's or the answer's words, and the runtime endings that replaced
+  the model's answer with a statement of its own. Every remaining correction
+  is a typed `Finding` rendered by `vak_control::render` and paced by the one
+  `Ladder`: told once with the evidence, then the frame changes (a tool is
+  withdrawn) or the answer stands.
 
 Every one of these was found by replaying a real failing session against a
 live local model (`gemma4:e2b-mlx`) six times per fix and reading the
@@ -152,24 +135,21 @@ returning `Completed`:
   that ran before code changed must run again. The phrase lists this
   replaced read "run a quick grammar check" as a demand for a shell command
   and only spoke English;
-- **unresolved failure**: a tool error the run never cleared blocks
-  completion unless the answer quotes it — a distinctive identifier or a
-  pair of adjacent words from the error. Keywords such as "no issues" were
-  once accepted as a report and let a false success through.
+- **unresolved failure**: a call failed and no later call of its tool
+  succeeded. It is recorded as a decision and the answer stands: whether an
+  answer owns up to a failure is not something its words can establish, and
+  the turn's outcome carries the failure as a typed fact. (Until
+  control-plane C5 the answer was sent back unless it quoted the error.)
 
-On a hit, the gate reuses the stop-hook continuation machinery: emits
-`StopHookContinuation`, appends `[stop-guard]: <reason>` as a user message
-(model-visible ⇒ logged), and continues within max_turns. The reason is the
-whole message: each one says what to do and gives the way out ("say plainly
-why") (`stop_policy::guard_message`, `hook_message`). Until 2026-10-09 a
-fixed `Please continue.` followed it, repeating half of that and
-contradicting the rest. Removing it was measured on 2026-10-09 against
-local `gemma4:e2b-mlx` (30 calls each, the real exchange of a refused
-`bash` call): neither text was echoed, and 28 against 27 replies reported
-the error, so the change is a cleanup, not a fix for a measured failure.
-Hard cap `stop_policy.max_blocks` (default 2) per run — the gate can nudge,
-never trap. Config (`[stop_policy]`): `enabled/marker_gate/verify_gate/
-max_blocks`; unknown keys warn, `enabled = false` restores old behavior.
+On a hit, each reason goes through the correction ladder
+(`vak_control::Ladder`, docs/design/88-control-plane.md §5): told once as
+`[stop-guard]: <reason>` (a typed `Finding` rendered by
+`vak_control::render`; model-visible ⇒ logged), with `StopHookContinuation`
+emitted, and continued within max_turns. An answer that still leaves the
+reason standing is the model's own and ends the turn, with a
+`Correct { rung: end }` decision saying so. No count bounds the gate.
+Config (`[stop_policy]`): `enabled/marker_gate/verify_gate`; unknown keys
+warn, `enabled = false` turns the gate off.
 External Stop hooks still run first and keep their own `[stop-hook]`
 prefix, so operator logs can tell them apart; a hook's reason is its own
 text, so its message adds the instruction and the way out itself.
@@ -179,7 +159,7 @@ uses a separate user-completion gate. It is the only way to hold completion
 for the person: control comes from commands, never from phrases in free
 text (invariant 32), so "keep working until the tests pass" names a
 condition and is not a hold. It continues across ordinary model
-completion claims without consuming the diagnostic `max_blocks` budget, until
+completion claims, told each time, until
 an exact user steering message such as `done` or `stop` releases it. The
 configured `max_turns` remains a hard safety ceiling; reaching it returns
 `MaxTurnsReached`, never `Completed`.

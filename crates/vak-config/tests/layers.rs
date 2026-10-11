@@ -186,18 +186,17 @@ fn stop_policy_defaults_on_and_layer_overrides_apply() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = load_with_trust(dir.path(), false).unwrap();
     assert!(cfg.stop_policy.enabled);
-    assert_eq!(cfg.stop_policy.max_blocks, 2);
 
     let project = dir.path().join(".vak");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("config.toml"),
-        "[stop_policy]\nenabled = true\nmax_blocks = 5\nbogus = 1\n",
+        "[stop_policy]\nenabled = true\nverify_gate = false\nbogus = 1\n",
     )
     .unwrap();
     let cfg = load_with_trust(dir.path(), true).unwrap();
     assert!(cfg.stop_policy.enabled);
-    assert_eq!(cfg.stop_policy.max_blocks, 5);
+    assert!(!cfg.stop_policy.verify_gate);
     assert!(
         cfg.warnings.iter().any(|w| w.contains("stop_policy.bogus")),
         "unknown stop_policy key must warn: {:?}",

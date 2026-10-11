@@ -138,8 +138,6 @@ async fn third_identical_call_is_blocked_with_reason() {
             cfg.tools = vec![Arc::new(BashTool)];
             cfg.mode = vak_permission::Mode::FullAccess;
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
-            // AutoDeny makes the doom-loop Ask observable as a typed denial.
-            cfg.approver = Some(Arc::new(vak_agent::AutoDeny));
             // About what the guard recorded; the stop gate's handling of an
             // unquoted failure is tested in stop_policy.rs.
             cfg.stop_policy = None;
@@ -181,7 +179,7 @@ async fn third_identical_call_is_blocked_with_reason() {
     assert!(!results[0].0 && !results[1].0, "first two run normally");
     assert!(results[2].0, "third identical call must be blocked");
     assert!(
-        results[2].1.contains("repeated"),
+        results[2].1.contains("returned the same"),
         "guard reason must reach the model: {}",
         results[2].1
     );

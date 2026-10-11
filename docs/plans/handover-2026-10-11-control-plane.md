@@ -3,7 +3,7 @@
 ## Prompt for a fresh session
 
 "Continue building the control plane in /Users/nisheethranjan/Projects/Vak/code
-on main, from stage C5. Read AGENTS.md (especially 'No word lists, no
+on main, from stage C6. Read AGENTS.md (especially 'No word lists, no
 tuned limits' and 'Investigating a failure'), docs/design/88-control-plane.md
 (its Status line, §12 decisions and 'Carried into later stages'), then this
 file's Progress and Rules. The four open questions are decided (doc 88
@@ -103,9 +103,31 @@ seven live run ids, and what is still open.
   checkpoint taken at the first accepted call that declares
   `Tool::changes_workspace`. A ledger written before C4 has no fault
   records; purge the dev data home's conversations if an old one misreads.
-- Next: C5 (`Correction` and the ladder; the control messages, thresholds
-  and stop-policy checks removed), with the items doc 88 lists under
-  "Carried into later stages".
+- C5 done 2026-10-11: the correction ladder, typed findings and one
+  renderer (`vak_control::correct`); freshness, grounding and topic checks,
+  the stop gate's block budget and wording check, the worker gate's count
+  and the repeated-call thresholds removed; a model step's timeout bounds
+  silence, not duration. The time-limit audit is doc 88 §5a.
+- Live runs for C4 and C5 (local route, read back from
+  `/runs/{id}/decisions`): `run_01a12a3e-7526-7e41-9b49-c97b3e043f74` (a
+  missing file: the failed read recorded as a `target` fault, no
+  checkpoint), `run_01a12a3f-a503-7822-ae43-9156df57c40d` (a write: one
+  checkpoint at the accepted call), `run_01a12a5e-0f19-7d80-ab77-61db1972930e`
+  ("right now … current count": two cards and an answer in two steps, no
+  freshness gate), `run_01a12a6d-1eb6-7cf3-bef0-7d596de66363` (a command
+  that fails: the failure left standing is recorded as
+  `correct {unresolved_failure, end}`, the honest answer stands and the
+  client marks it a partial result).
+- Seen in that last run, for C6: after a card's result ("Shown to the
+  user") the model called the same card tool again instead of ending, was
+  told the card was already shown, then a malformed call drew the
+  tool-call-repair text ("continue the same request … regenerate"), and it
+  ran the command twice more. Nothing tells the model that a shown card
+  ends the work: that is the answer form's job. A bash call between two
+  identical calls also clears the repeat memory, because bash declares it
+  may change the workspace.
+- Next: C6 (the answer form as the `Answer` step's contract), with the
+  items doc 88 lists under "Carried into later stages".
 - Slowness investigated 2026-10-11: in steady state the provider's prompt
   cache is reused across turn boundaries (first-step prefill 0.6-0.7 s);
   the 17-49 s first steps seen earlier came after a new build changed the

@@ -31,7 +31,8 @@ pub enum ControlKind {
     StopHook,
     /// The stop gate (verification, goal, managed work) blocked completion.
     StopGuard,
-    /// A search/fetch result was ignored by the answer that followed it.
+    /// Recorded history only: no longer written (control-plane C5). It
+    /// judged from words whether an answer used what a retrieval returned.
     GroundingCheck,
     /// A `vak` fence in the answer did not parse.
     FenceCheck,
@@ -46,8 +47,8 @@ pub enum ControlKind {
     /// Recorded history only: no longer written. It asked the model to audit
     /// its own cards against the request (replaced by `PlanCheck`).
     CardCompletenessCheck,
-    /// A current value was asked for and nothing was retrieved this turn
-    /// (docs/design/68-context-engine.md §7).
+    /// Recorded history only: no longer written (control-plane C5). It read
+    /// temporal words in the request.
     FreshnessCheck,
     /// The response carried neither text nor a tool call (a thinking-only
     /// completion): act on the plan, or answer.
@@ -56,13 +57,8 @@ pub enum ControlKind {
     /// different directive than the current one — a mismatched-domain tool
     /// call, or a verbatim repeat of a past answer.
     SteeringDrift,
-    /// An `emit_*_card` call after a successful retrieval THIS run whose
-    /// own payload shares no topic word with either the directive or what
-    /// was just retrieved — never checked when nothing was retrieved this
-    /// run, since a card built from the model's own reasoning or from data
-    /// already in the directive routinely has no vocabulary overlap with
-    /// either and would otherwise be gated for being right
-    /// (docs/design/68-context-engine.md §7).
+    /// Recorded history only: no longer written (control-plane C5). It
+    /// compared a card's words with the request's.
     TopicMismatchCheck,
     /// Correctable tool failures went unrepaired across steps: the admitted
     /// schema of each failing tool, re-surfaced with the retries left.

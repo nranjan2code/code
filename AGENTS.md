@@ -181,12 +181,15 @@ Read before changing behaviour in these areas:
   decision points and records each decision; a step contract sets
   reasoning, sampling, tools and output form from discovered model
   capabilities; one correction ladder; `vak-control` and `vak-judge` as
-  their own crates. Being built in stages C0–C7: C0 to C4 are done
+  their own crates. Being built in stages C0–C7: C0 to C5 are done
   (`crates/vak-control`, the `Decision` ledger entry, step settings with
   model capabilities and what was applied on the receipt, the step
   contract per purpose from `[control]`, tools loaded by declaration, the
   model-made reading and the misread ledger removed; `crates/vak-judge`,
-  typed tool faults, the checkpoint at the first accepted workspace change); progress is in
+  typed tool faults, the checkpoint at the first accepted workspace change;
+  the correction ladder with typed findings and one renderer, the
+  word-reading checks and count thresholds removed, silence-based model
+  waits); progress is in
   `docs/plans/handover-2026-10-11-control-plane.md`),
   `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
@@ -1210,11 +1213,14 @@ in progress, and the rest of V4 follows it.
     (required for provider-specific preserved-thinking checks and for cache hits).
     Only a handoff reset clears the frozen plan. Cache breakpoints/keys are
     rendered per provider. Presentations and TurnCards are hash-linked
-    ledger entries, never rebuilt from tool arguments. A directive with
-    temporal deixis ("current", "right now") that gets no retrieval this
-    run is a `[freshness-check]` redo, then fails closed with an honest
-    last-known statement rather than presenting a carried-over figure as
-    current; a thinking-only step is one `[empty-step]` redo unless a card
+    ledger entries, never rebuilt from tool arguments. No check reads a
+    request's or an answer's words: the freshness, grounding and
+    topic-mismatch gates are removed (docs/design/88-control-plane.md §5),
+    and a card is refused only for a fact, such as a source URL nothing in
+    the conversation retrieved. Every correction goes through the one ladder
+    (`vak_control::Ladder`: told once with the evidence, then the frame
+    changes or the answer stands);
+    a thinking-only step is one `[empty-step]` redo unless a card
     already answered; an answer that repeats a prior turn's answer verbatim
     is nudged once and redone, and one that repeats again stands as the
     model's own with a diagnostic. A tool whose
@@ -1587,13 +1593,8 @@ in progress, and the rest of V4 follows it.
   pairs turns through `vak-client-ui/src/turnPairing.ts`. What remains
   judgement (which card the model picks, inline tool-result hints) is
   listed in
-  `docs/design/30-output-engineering.md`. Whether a call is *retrieval* is
-  never guessed from a tool's name or output: `AgentConfig::retrieval_check`
-  is built by `Core` from each capability's declared `serves` domains
-  (`capability::provider::call_retrieves_external`), and a tool declares that it
-  presents cards with `Tool::presents_cards`. For an MCP server, declare
-  `serves = ["web"]` (or `documents`, etc.); a server that declares nothing
-  inherits the `mcp` broker's web/live-data claim. A tool names the file a
+  `docs/design/30-output-engineering.md`. A tool declares that it
+  presents cards with `Tool::presents_cards`. A tool names the file a
   successful call delivers for review with `Tool::delivered_file`
   (`office_apply`'s draft): the file is a receipt for the plan check,
   an identical call gets the first call's result instead of a second draft,
@@ -1910,7 +1911,8 @@ crates/vak-intent    the decision layer (docs/design/47-commitment-kernel.md):
                      silence (docs/design/68-context-engine.md §7).
                      `control.rs` is the single `ControlKind` vocabulary for
                      every runtime-authored nudge, including
-                     `FreshnessCheck`/`EmptyStep`/`SteeringDrift`.
+                     `EmptyStep`/`SteeringDrift`; a kind no longer written
+                     stays as recorded history.
 crates/vak-commit    durable commitments (docs/design/47): lifecycle, the
                      satisfaction lattice, the append-only ledger + projection,
                      and the deterministic portfolio scheduler. Reuses
@@ -2283,9 +2285,15 @@ A tool error says where its fault lies as a typed value at its source
 (`ToolOutput::error(Fault::…, …)`, `vak_control::Fault`): add no reader of
 an error's words, and give a new failure the fault its author knows.
 
-Still to be brought under this rule (found 2026-10-11, not yet changed):
-the agent loop's `DOOM_LOOP_THRESHOLD`, `READ_REPEAT_LIMIT` and
-`WORKERS_GATE_BLOCKS`.
+Every correction goes through the one ladder (`vak_control::Ladder`): a
+failed check is told once with a typed `Finding`, then the frame changes or
+the answer stands. Add no once-flag, block budget or repeat count of your
+own, and write a correction's wording only in `vak_control::render`.
+
+Nothing is ended because a number of seconds picked in code went by: a wait
+ends when the work finishes, someone stops it, it goes silent, or the
+operator's configured limit is reached (docs/design/88-control-plane.md
+§5a, which lists the constants still to be brought under this).
 
 ## Verification before every commit
 

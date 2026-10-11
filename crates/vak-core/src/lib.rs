@@ -6622,27 +6622,6 @@ impl Core {
         });
         let revoke_registry = registry.clone();
         {
-            // Grounding: which calls reach outside information is decided from
-            // what each capability declares it serves (`serves`), never from
-            // a tool's name or its output.
-            let servers: std::collections::BTreeMap<String, Vec<String>> = self
-                .effective_mcp()
-                .servers
-                .iter()
-                .map(|(name, server)| (name.clone(), server.serves.clone()))
-                .collect();
-            let index = cfg.mcp_tool_index.clone();
-            let tool_serves: std::collections::BTreeMap<String, Vec<String>> = self
-                .tool_declarations()
-                .into_iter()
-                .map(|(name, serves)| (name, serves.iter().map(|d| d.to_string()).collect()))
-                .collect();
-            let observing: std::collections::BTreeSet<String> = tool_serves
-                .iter()
-                .filter(|(_, serves)| capability::provider::serves_observation(serves))
-                .map(|(name, _)| name.clone())
-                .collect();
-            cfg.observation_check = Some(Arc::new(move |name, _input| observing.contains(name)));
             cfg.artifacts = Some(Arc::new(self.artifact_sink()));
             // Make another (plan M8.3b): the source of a new one stays as it is.
             cfg.protected_paths = prompt_meta
@@ -6655,20 +6634,6 @@ impl Core {
                         .collect()
                 })
                 .unwrap_or_default();
-            cfg.retrieval_check = Some(Arc::new(move |name, input| {
-                let server = index
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(name)
-                    .cloned();
-                capability::provider::call_retrieves_external(
-                    name,
-                    input,
-                    server.as_deref(),
-                    &|tool| tool_serves.get(tool).cloned().unwrap_or_default(),
-                    &|server| servers.get(server).cloned().unwrap_or_default(),
-                )
-            }));
         }
         {
             // Presentations are ledger entries (docs/design/68-context-engine.md
@@ -6676,7 +6641,7 @@ impl Core {
             // knowledge (AGENTS.md invariant 14 — the tool itself executes
             // across the worker/broker boundary and has no session-log
             // access either), so `Core` supplies the rebuild as a closure,
-            // the same pattern `presentation_check`/`retrieval_check` use.
+            // as it does every other host-owned check.
             let skills = vak_delivery::built_in_skill_registry();
             cfg.presentation_rebuild = Some(Arc::new(move |name, input| {
                 // A tool call already passes its own tool name; a fence
@@ -6891,7 +6856,6 @@ impl Core {
             Some(vak_agent::StopPolicy {
                 marker_gate: sp.marker_gate,
                 verify_gate: sp.verify_gate,
-                max_blocks: sp.max_blocks,
             })
         } else {
             None

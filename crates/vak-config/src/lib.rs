@@ -534,7 +534,6 @@ pub struct StopPolicySettings {
     pub enabled: Option<bool>,
     pub marker_gate: Option<bool>,
     pub verify_gate: Option<bool>,
-    pub max_blocks: Option<u32>,
 }
 
 /// Spend admission (docs/design/15-reliability.md). Absent prices are UNKNOWN:
@@ -1540,7 +1539,6 @@ pub struct StopPolicyResolved {
     pub enabled: bool,
     pub marker_gate: bool,
     pub verify_gate: bool,
-    pub max_blocks: u32,
 }
 
 /// Resolved gateway policy (docs/design/22-gateway.md).
@@ -1672,7 +1670,6 @@ impl Default for Config {
                 enabled: true,
                 marker_gate: true,
                 verify_gate: true,
-                max_blocks: 2,
             },
             finops: FinopsResolved::default(),
             goal: GoalResolved {
@@ -3061,7 +3058,6 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         enabled: sp.enabled.unwrap_or(true),
         marker_gate: sp.marker_gate.unwrap_or(true),
         verify_gate: sp.verify_gate.unwrap_or(true),
-        max_blocks: sp.max_blocks.unwrap_or(2),
     };
 
     cfg.finops = FinopsResolved {
@@ -3581,7 +3577,7 @@ const KNOWN_THEME_COLORS: &[&str] = &[
     "selected_bg",
 ];
 const KNOWN_ACCESSIBILITY_KEYS: &[&str] = &["plain", "reduced_motion", "screen_reader"];
-const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate", "max_blocks"];
+const KNOWN_STOP_POLICY_KEYS: &[&str] = &["enabled", "marker_gate", "verify_gate"];
 const KNOWN_GATEWAY_KEYS: &[&str] = &[
     "enabled",
     "approvals",

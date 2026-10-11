@@ -7,6 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod correct;
+
+pub use correct::{Finding, Ladder, RECOVERY_NOTE, ShownTool, render};
+
 /// Who made a decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -532,7 +536,7 @@ pub enum AnswerVerdict {
 }
 
 /// What a correction answers: the check whose verdict failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Cause {
     StopHook,
@@ -550,6 +554,16 @@ pub enum Cause {
     Repair,
     Plan,
     ToolCallRepair,
+    /// The answer ends inside an unclosed block.
+    Truncated,
+    /// Files changed after the last check ran.
+    VerificationStale,
+    /// The person asked for work to go on until they say done.
+    KeepWorking,
+    /// A call failed and no later call of its tool succeeded.
+    UnresolvedFailure,
+    /// Workers the turn started are still running.
+    WorkersRunning,
 }
 
 /// The rung of the correction ladder (doc 88 §5).

@@ -95,6 +95,7 @@ use futures::FutureExt;
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
+use vak_control::{Cause, Finding, Rung};
 use vak_llm::{
     AssistantMessage, ChatRequest, ContentBlock, LlmError, Message, Provider, Role, StopReason,
     StreamEvent, Usage,
@@ -392,14 +393,10 @@ pub struct AgentConfig {
     /// another" request (plan M8.3b). A write, edit or `office_apply` that
     /// targets one is refused with a message the model can act on.
     pub protected_paths: Vec<String>,
-    pub retrieval_check: Option<RetrievalCheck>,
     /// What each purpose's steps ask of the model on this turn's route
     /// (docs/design/88-control-plane.md §4): the shipped defaults with the
     /// configured `[control]` layers applied.
     pub steps: vak_control::StepDefaults,
-    /// What satisfies the freshness check: any call that observed current
-    /// state this run. See `ObservationCheck`. Absent, only retrieval counts.
-    pub observation_check: Option<ObservationCheck>,
     /// Pre-authorization from a live envelope, consulted at an `Ask` gate
     /// before the approver. See `EnvelopeCheck`. Absent, every gate asks.
     pub envelope_check: Option<EnvelopeCheck>,
@@ -422,7 +419,9 @@ pub struct AgentConfig {
     pub max_retries: u32,
     /// Exponential backoff base: delay = base * 2^(attempt-1), jittered.
     pub retry_base_backoff_ms: u64,
-    /// Whole-step deadline (connect + stream + collect). None disables.
+    /// How long a model step may stay silent: the wait to connect, for each
+    /// stream event, and for the collected result. A step that keeps
+    /// producing is never cut. None disables.
     pub request_timeout: Option<std::time::Duration>,
     /// Shared cross-run provider-health breaker. None disables.
     pub circuit_breaker: Option<Arc<CircuitBreaker>>,
@@ -503,23 +502,6 @@ pub type ToolActivityRecorder =
     Arc<dyn Fn(&str, &str, &serde_json::Value, bool, u64) + Send + Sync>;
 pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
-/// Whether a tool call reaches information from outside the machine and the
-/// conversation (the kind an answer should cite), given the tool's name and
-/// the call's input. Supplied by `Core`, which knows what each capability
-/// *declares it serves*; the agent loop never guesses from a tool's name or
-/// its output. Absent, no call counts as retrieval and the grounding check is
-/// inert.
-pub type RetrievalCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
-
-/// Whether a call observes the current state of something — a file, a
-/// repository, a running service, a web page — as opposed to recalling what
-/// the conversation or memory already holds. Supplied by `Core` from what each
-/// capability declares it serves. The freshness check is satisfied by any
-/// such call: "what's in the current directory?" is answered by listing it,
-/// not by a web search, and demanding a retrieval there replaced correct
-/// answers with "I could not retrieve a current value".
-pub type ObservationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
-
 /// Whether a gated call falls inside a live envelope the human granted,
 /// returning that envelope's id. Supplied by `Core` only for a `delegated`
 /// turn whose work is not irreversible, and the grant is read fresh on every
@@ -581,9 +563,7 @@ impl AgentConfig {
             revocation_check: None,
             artifacts: None,
             protected_paths: Vec::new(),
-            retrieval_check: None,
             steps: vak_control::StepDefaults::shipped(),
-            observation_check: None,
             envelope_check: None,
             before_effect: None,
             presentation_rebuild: None,
@@ -691,10 +671,6 @@ fn same_workspace_path(a: &str, b: &str) -> bool {
     let trim = |path: &str| path.trim().trim_start_matches("./").to_string();
     trim(a) == trim(b)
 }
-
-/// How many times a run that tries to finish with background workers still
-/// running is sent back to wait for them, before they are cancelled.
-const WORKERS_GATE_BLOCKS: u32 = 2;
 
 /// The most recent Execute-purpose receipt's prefix digest recorded in this
 /// session, or `None` when no receipt has recorded one yet.
@@ -850,42 +826,6 @@ fn load_discovered(
 }
 
 #[cfg(test)]
-mod grounding_tests {
-    use super::{admits_no_data, uses_evidence};
-
-    const RESULT: &str = "Weather for Paris: 18°C, light rain. Source: https://wttr.in/Paris";
-
-    #[test]
-    fn a_cited_prose_answer_is_grounded() {
-        assert!(uses_evidence(
-            "It is 18°C and raining in Paris (wttr.in).",
-            RESULT
-        ));
-        assert!(uses_evidence("Per wttr.in, light rain today.", RESULT));
-    }
-
-    #[test]
-    fn an_answer_from_memory_is_not() {
-        assert!(!uses_evidence(
-            "Paris is usually mild this time of year.",
-            RESULT
-        ));
-    }
-
-    #[test]
-    fn evidence_with_nothing_checkable_never_nags() {
-        assert!(uses_evidence("anything", "the service said hello"));
-    }
-
-    #[test]
-    fn an_honest_no_is_recognised_by_the_one_shared_list() {
-        assert!(admits_no_data("I couldn't find current figures for that."));
-        assert!(admits_no_data("I have no live data for this."));
-        assert!(!admits_no_data("It is 18°C."));
-    }
-}
-
-#[cfg(test)]
 mod tool_id_tests {
     use super::*;
     use std::collections::HashSet;
@@ -1034,183 +974,6 @@ fn resolve_narration(narration: &str) -> String {
     }
 }
 
-/// Words too generic to establish that a card is *about* the same thing as
-/// the directive: recency deixis ("current", "now") appears in both a
-/// legitimate live-data directive and an unrelated one, and would make any
-/// two such directives look related if left in; ordinary function words and
-/// a few request-shaped verbs are excluded for the same reason. Deliberately
-/// small and topic-neutral — this never grows into a per-domain keyword
-/// list, it only strips words that carry no topic of their own.
-const TOPIC_STOPWORDS: &[&str] = &[
-    "a",
-    "an",
-    "the",
-    "is",
-    "are",
-    "was",
-    "were",
-    "what",
-    "who",
-    "when",
-    "where",
-    "how",
-    "why",
-    "current",
-    "currently",
-    "now",
-    "today",
-    "tonight",
-    "latest",
-    "right",
-    "this",
-    "that",
-    "of",
-    "in",
-    "on",
-    "at",
-    "to",
-    "for",
-    "and",
-    "or",
-    "with",
-    "me",
-    "please",
-    "give",
-    "tell",
-    "show",
-    "get",
-    "find",
-    "you",
-];
-
-/// Lower-cased, stopword-stripped word set of `text`, for a cheap topic
-/// overlap check — not a search index, just "do these two strings share a
-/// real word".
-fn topic_tokens(text: &str) -> std::collections::HashSet<String> {
-    text.to_ascii_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| word.len() > 2 && !TOPIC_STOPWORDS.contains(word))
-        .map(str::to_string)
-        .collect()
-}
-
-/// Whether an `emit_*_card` call's own text (its title/payload, serialized)
-/// shares at least one real word with the directive it is supposed to
-/// answer. Found live: a model that had just run a correct, on-topic search
-/// still wrote a card from an unrelated older turn's payload ("Noida
-/// Weather", "28°C") in answer to "what is the current top news in AI" — the
-/// call executed, `derived_from` correctly pointed at the real search
-/// result, and nothing else in the loop notices the payload itself has
-/// nothing to do with either the question or that evidence. A directive with
-/// no topic words of its own (every word is a stopword) is never gated —
-/// there is nothing to compare against, and refusing everything would be a
-/// worse failure than missing this one.
-fn card_shares_a_topic_with(directive: &str, name: &str, input: &serde_json::Value) -> bool {
-    let directive_words = topic_tokens(directive);
-    if directive_words.is_empty() {
-        return true;
-    }
-    let card_text = serde_json::to_string(input).unwrap_or_default() + " " + name;
-    let card_words = topic_tokens(&card_text);
-    directive_words.iter().any(|word| card_words.contains(word))
-}
-
-#[cfg(test)]
-mod topic_gate_tests {
-    use super::card_shares_a_topic_with;
-
-    #[test]
-    fn a_weather_card_matches_a_weather_directive() {
-        let input = serde_json::json!({
-            "semantic_type": "weather",
-            "label": "Noida Weather",
-            "unit": "Celsius",
-            "value": "28°C"
-        });
-        assert!(card_shares_a_topic_with(
-            "what is the current weather in noida",
-            "emit_metric_card",
-            &input
-        ));
-    }
-
-    #[test]
-    fn the_real_regression_a_weather_card_does_not_match_an_ai_news_directive() {
-        // Exactly what shipped and broke live: a correct on-topic search for
-        // "current top news in AI" ran, then the model wrote this weather
-        // card from an unrelated older turn anyway.
-        let input = serde_json::json!({
-            "semantic_type": "weather",
-            "label": "Noida Weather",
-            "unit": "Celsius",
-            "value": "28°C"
-        });
-        assert!(!card_shares_a_topic_with(
-            "what is the current top news in AI",
-            "emit_metric_card",
-            &input
-        ));
-    }
-
-    #[test]
-    fn an_on_topic_ai_card_matches() {
-        let input = serde_json::json!({
-            "semantic_type": "research.synthesis",
-            "title": "AI news roundup",
-            "sources": [{"title": "Latest AI breakthroughs"}]
-        });
-        assert!(card_shares_a_topic_with(
-            "what is the current top news in AI",
-            "emit_research_card",
-            &input
-        ));
-    }
-
-    #[test]
-    fn a_directive_with_only_stopwords_is_never_gated() {
-        let input = serde_json::json!({"label": "anything at all"});
-        assert!(card_shares_a_topic_with(
-            "what is this now",
-            "emit_metric_card",
-            &input
-        ));
-    }
-
-    #[test]
-    fn a_correctly_derived_card_that_renames_the_topic_still_passes() {
-        // The false-positive risk of a literal word check: a card that is
-        // genuinely right but titled from what the search actually returned
-        // ("OpenAI announces GPT-6"), not from the user's own words ("AI
-        // news"), must not be gated just because it paraphrased. Checked
-        // against the directive PLUS this turn's evidence together — the
-        // call site does this by widening the context string before calling
-        // this function, which is what this test exercises directly.
-        let input = serde_json::json!({
-            "title": "OpenAI announces GPT-6",
-            "summary": "a major model release"
-        });
-        let directive_plus_evidence =
-            "what is the current top news in AI OpenAI today unveiled GPT-6, its newest model";
-        assert!(card_shares_a_topic_with(
-            directive_plus_evidence,
-            "emit_entity_card",
-            &input
-        ));
-    }
-
-    #[test]
-    fn recency_words_alone_never_establish_a_shared_topic() {
-        // Both directives use "current"/"now"/"right"; without stripping
-        // them as stopwords, this unrelated pair would look related.
-        let input = serde_json::json!({"label": "Noida Weather"});
-        assert!(!card_shares_a_topic_with(
-            "what is currently happening right now in politics",
-            "emit_metric_card",
-            &input
-        ));
-    }
-}
-
 pub struct AutoApprove;
 
 #[async_trait::async_trait]
@@ -1356,7 +1119,11 @@ pub struct Agent {
     pub session: Arc<Mutex<SessionLog>>,
     pub config: AgentConfig,
     /// Identical-call detector for the doom-loop guard, reset per run.
-    run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
+    /// What each call of this run last returned, by its name and arguments
+    /// (`SeenCall`), since the last accepted change to the workspace.
+    seen_calls: std::sync::Mutex<HashMap<String, SeenCall>>,
+    /// This run's correction ladder (docs/design/88-control-plane.md §5).
+    ladder: vak_control::Ladder,
     /// Whether this run has already announced its first workspace change.
     effect_announced: std::sync::atomic::AtomicBool,
     /// `name + input` of every card call that displayed successfully this run.
@@ -1401,7 +1168,8 @@ impl Agent {
             provider,
             session,
             config,
-            run_call_counts: std::sync::Mutex::new(HashMap::new()),
+            seen_calls: std::sync::Mutex::new(HashMap::new()),
+            ladder: vak_control::Ladder::default(),
             effect_announced: std::sync::atomic::AtomicBool::new(false),
             presented_cards: std::sync::Mutex::new(std::collections::HashSet::new()),
             declared_plan: std::sync::Mutex::new(None),
@@ -1714,12 +1482,13 @@ impl Agent {
         let mut user_completion_released = false;
         self.obligations.clear();
         self.handoff_used = false;
-        self.run_call_counts
+        self.seen_calls
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         self.effect_announced
             .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.ladder = vak_control::Ladder::default();
         self.presented_cards
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1873,7 +1642,7 @@ impl Agent {
                 .insert(at.min(self.config.tools.len()), tool);
         }
         self.repair.reset();
-        self.run_call_counts
+        self.seen_calls
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
@@ -1889,7 +1658,6 @@ impl Agent {
             .deliveries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = RunDeliveries::default();
-        let mut worker_blocks_left: u32 = WORKERS_GATE_BLOCKS;
         if let Some(registry) = &self.config.workers
             && let Some(parent) = self
                 .session
@@ -1901,54 +1669,7 @@ impl Agent {
             // Results kept for the previous turn are not this turn's.
             registry.forget_finished_for(&parent);
         }
-        let mut stop_blocks_left = self
-            .config
-            .stop_policy
-            .as_ref()
-            .map(|p| p.max_blocks)
-            .unwrap_or(0);
-        // Names of retrieval-shaped tools that succeeded on the immediately
-        // preceding turn (see `AgentConfig::retrieval_check`), cleared and
-        // recomputed every time a tool-call batch runs. Consulted the very
-        // next time the model produces a final text-only answer, to catch
-        // the case where a search/fetch tool call succeeded and the model's
-        // very next turn ignored the result instead of grounding on it.
-        let mut pending_grounding_check: Option<Vec<String>> = None;
-        let mut grounding_repair_attempted = false;
-        // Whether any call that observes current state succeeded at any
-        // point in this run, for the freshness check: a directive whose
-        // reading carries the `live-data` domain (temporal deixis —
-        // "current", "right now") asks for a value observed this turn, and
-        // an answer or card that arrives without one is repeating what an
-        // earlier turn found. A retrieval counts, and so does any other
-        // observation (`AgentConfig::observation_check`): reading the file
-        // or running the command is how a local "current" value is found.
-        let mut observed_this_run = false;
-        let mut freshness_repair_attempted = false;
-        let mut tool_call_format_repair_attempted = false;
-        // A card shown this run that only restated figures the request
-        // itself gave: the answer is the person's own data, so nothing
-        // needs retrieving to make it current.
-        let mut restated_request_figures = false;
-        let mut empty_step_repair_attempted = false;
         let mut card_repeat_acked: Option<Vec<(String, serde_json::Value)>> = None;
-        let mut topic_repair_attempted = false;
-        let mut citation_repair_attempted = false;
-        // The most recent non-card tool result's own text this run, for the
-        // fail-closed fallback below: when a topic-mismatched card has to be
-        // refused twice, the evidence that WAS gathered is worth showing
-        // rather than nothing (found live: a real `tavily_search` for "AI
-        // news" succeeded, then the model wrote an unrelated "Noida Weather"
-        // card twice in a row — the search result was sitting right there
-        // and never got refused nothing).
-        let mut last_evidence_snippet: Option<String> = None;
-        let wants_live_data = self
-            .session
-            .lock()
-            .await
-            .latest_reading()
-            .is_some_and(|reading| reading.domains.iter().any(|d| d == "live-data"));
-        let mut malformed_fence_repair_attempted = false;
         // `semantic_type`s successfully emitted via an `emit_*_card` tool
         // call in the immediately preceding batch. A tool-emitted card is
         // already shown to the user (vak-server's projection pushes it from
@@ -1960,7 +1681,6 @@ impl Agent {
         // the identical chart as a trailing fence. Same bounded-repair
         // pattern as `pending_grounding_check`/`malformed_fence_repair_attempted`.
         let mut pending_duplicate_card_check: Option<Vec<String>> = None;
-        let mut duplicate_card_repair_attempted = false;
         // Whether any `emit_*_card` call succeeded so far in this run (unlike
         // `pending_duplicate_card_check`, which only covers the last batch),
         // and the one-shot flag for the presentation check below.
@@ -1973,7 +1693,6 @@ impl Agent {
         let mut card_answers: Vec<Option<String>> = Vec::new();
         // The deliverables the last plan check named, so the same gap is
         // named once.
-        let mut plan_checked = false;
         // Append-only requests within a turn (docs/design/68-context-
         // engine.md §7): the working-set plan and the tools array are each
         // resolved ONCE per turn and reused by every later step, so a
@@ -2520,9 +2239,9 @@ impl Agent {
                             continue;
                         }
                         Err(error @ LlmError::ToolCallFormat(_))
-                            if !tool_call_format_repair_attempted =>
+                            if !self.ladder.told(Cause::ToolCallRepair) =>
                         {
-                            tool_call_format_repair_attempted = true;
+                            self.ladder.step(Cause::ToolCallRepair, false);
                             let _ = self
                                 .session
                                 .lock()
@@ -2535,14 +2254,15 @@ impl Agent {
                                 LlmError::ToolCallFormat(reason) => reason.as_str(),
                                 _ => unreachable!("matched ToolCallFormat"),
                             };
-                            if let Err(write_error) = self.session.lock().await.append_correction(
-                                MessageRecord::control(
-                                    vak_intent::control::ControlKind::ToolCallRepair,
-                                    format!(
-                                        "[tool-call-repair]: The inference provider could not parse the structured tool call it generated ({reason}). This was an output-format failure before any tool ran. Continue the same request from the admitted tool schemas and regenerate valid structured arguments. Do not repeat the malformed envelope. If the request needs several outputs, complete them with the admitted tools; if no tool call is needed, answer directly."
-                                    ),
-                                ),
-                            ) {
+                            if let Err(write_error) = self
+                                .correct(
+                                    Finding::ToolCallFormat {
+                                        reason: reason.to_string(),
+                                    },
+                                    Rung::Tell,
+                                )
+                                .await
+                            {
                                 return nudge_write_failed(write_error);
                             }
                             let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
@@ -2760,7 +2480,7 @@ impl Agent {
                     && !cards_emitted_this_run
                     && !file_delivered_this_run
                 {
-                    if empty_step_repair_attempted {
+                    if self.ladder.step(Cause::EmptyStep, false) != Rung::Tell {
                         return TurnOutcome::Failed {
                             error: LlmError::Parse(
                                 "model returned no visible answer or tool call after one retry"
@@ -2768,104 +2488,15 @@ impl Agent {
                             ),
                         };
                     }
-                    empty_step_repair_attempted = true;
                     if turn + 1 >= self.config.max_turns {
                         return TurnOutcome::MaxTurnsReached;
                     }
-                    if let Err(error) = self
-                        .session
-                        .lock()
-                        .await
-                        .append_correction(MessageRecord::control(
-                        vak_intent::control::ControlKind::EmptyStep,
-                        // A provider can drop a call whose arguments do not
-                        // parse (Ollama logs "tool call parsing failed" and
-                        // returns nothing), so "you made no call" was false
-                        // and the model planned again from scratch, once
-                        // reaching for webfetch instead of the card it had
-                        // written.
-                        "[empty-step]: Nothing arrived from your last response: no visible answer \
-                         and no tool call. A tool call whose arguments are not valid JSON can be \
-                         dropped before it reaches Vak, so if you made one, make the same call again \
-                         with valid JSON arguments that follow its schema. This is the request in \
-                         the person's message that opened this turn, not a new one. Or write the \
-                         answer as text."
-                            .to_string(),
-                    )) {
+                    if let Err(error) = self.correct(Finding::EmptyStep, Rung::Tell).await {
                         return nudge_write_failed(error);
                     }
                     let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                     turn += 1;
                     continue;
-                }
-                // Freshness enforcement (docs/design/68 §7): the directive
-                // asked for a current value and nothing was retrieved in
-                // this run, so the answer — prose or card — can only be a
-                // repeat of an earlier turn's data. One bounded redo naming
-                // the gap; the model may decline by saying it has no live
-                // data, which the grounding phrases below already accept.
-                if wants_live_data && !observed_this_run && !restated_request_figures {
-                    let admits_no_data = admits_no_data(&response.text_content());
-                    if !admits_no_data && freshness_repair_attempted {
-                        // Repaired once already and still nothing retrieved
-                        // (a thinking-only end, or the same figure again):
-                        // fail closed rather than accept a stale answer.
-                        return self.stale_data_outcome().await;
-                    }
-                    if !admits_no_data {
-                        freshness_repair_attempted = true;
-                        if turn + 1 >= self.config.max_turns {
-                            return TurnOutcome::MaxTurnsReached;
-                        }
-                        let available = freshness_retrieval_hint(&tool_defs);
-                        if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(
-                            vak_intent::control::ControlKind::FreshnessCheck,
-                            format!("[freshness-check]: This asks for a value as it stands now, but nothing was \
-                             retrieved on this turn — a number carried over from an earlier answer is \
-                             stale. {available} Retrieve a current reading and answer from what it \
-                             returns (a card is fine). If retrieval fails, say what failed."),
-                        )) {
- return nudge_write_failed(error);
- }
-                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-                        turn += 1;
-                        continue;
-                    }
-                }
-                // Grounding enforcement: the immediately preceding step ran a
-                // retrieval and this final answer shows no sign of using what
-                // it returned. One bounded redo. "Uses" is judged from the
-                // result itself — a source, host or figure it contained — so
-                // a cited prose answer passes; a card emitted with the
-                // retrieval clears the check where it is recorded.
-                if !grounding_repair_attempted
-                    && let Some(tool_names) = pending_grounding_check.take()
-                    && !tool_names.is_empty()
-                {
-                    let text = response.text_content();
-                    let grounded = text.contains("\"semantic_type\"")
-                        || admits_no_data(&text)
-                        || last_evidence_snippet
-                            .as_deref()
-                            .is_none_or(|evidence| uses_evidence(&text, evidence));
-                    if !grounded {
-                        grounding_repair_attempted = true;
-                        if turn + 1 >= self.config.max_turns {
-                            return TurnOutcome::MaxTurnsReached;
-                        }
-                        let tool_list = tool_names.join(", ");
-                        if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
-                                "[grounding-check]: Your last answer does not use what {tool_list} just returned. \
-                                 Answer the request in the person's message that opened this turn from \
-                                 those results and name the sources you used, or, if they do not answer \
-                                 it, say so plainly instead of answering from memory. This is not a new request."
-                            ))) {
- return nudge_write_failed(error);
- }
-                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-                        turn += 1;
-                        continue;
-                    }
                 }
                 // Malformed-fence enforcement: the model emitted an explicit
                 // vak-tagged card fence, but its JSON body doesn't parse
@@ -2875,21 +2506,24 @@ impl Agent {
                 // degrades to a "could not be rendered" notice at best),
                 // give the model one bounded repair turn naming the exact
                 // parse error, mirroring the grounding-check pattern above.
-                if !malformed_fence_repair_attempted {
+                if !self.ladder.told(Cause::Fence) {
                     let text = response.text_content();
                     if let Some(parse_error) = find_malformed_vak_fence(&text) {
-                        malformed_fence_repair_attempted = true;
+                        self.ladder.step(Cause::Fence, false);
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
-                        if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(vak_intent::control::ControlKind::FenceCheck, format!(
-                                "[fence-check]: The ```vak card block in your last answer has invalid JSON and failed to parse \
-                                 ({parse_error}). Resend the same answer with a syntactically valid JSON body this time — \
-                                 double-check every object/array is closed and every key is quoted. If you can't produce \
-                                 valid JSON for it, drop the fence and answer in plain prose instead."
-                            ))) {
- return nudge_write_failed(error);
- }
+                        if let Err(error) = self
+                            .correct(
+                                Finding::Fence {
+                                    error: parse_error.to_string(),
+                                },
+                                Rung::Tell,
+                            )
+                            .await
+                        {
+                            return nudge_write_failed(error);
+                        }
                         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
@@ -2903,24 +2537,27 @@ impl Agent {
                 // independent paths; nothing dedupes across them). One
                 // bounded repair turn asking the model to drop the
                 // redundant fence, mirroring the two checks above.
-                if !duplicate_card_repair_attempted
+                if !self.ladder.told(Cause::DuplicateCard)
                     && let Some(emitted_types) = pending_duplicate_card_check.take()
                     && !emitted_types.is_empty()
                 {
                     let text = response.text_content();
                     if let Some(dup_type) = find_duplicate_card_fence(&text, &emitted_types) {
-                        duplicate_card_repair_attempted = true;
+                        self.ladder.step(Cause::DuplicateCard, false);
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
-                        if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(vak_intent::control::ControlKind::DuplicateCardCheck, format!(
-                                "[duplicate-card-check]: You already emitted a `{dup_type}` card via the matching \
-                                 emit_*_card tool call above, and the user already sees it. Resend your answer \
-                                 WITHOUT the ```vak fence that repeats it — just the short narration around the \
-                                 card is needed, no restated JSON."
-                            ))) {
- return nudge_write_failed(error);
- }
+                        if let Err(error) = self
+                            .correct(
+                                Finding::DuplicateCard {
+                                    semantic_type: dup_type.to_string(),
+                                },
+                                Rung::Tell,
+                            )
+                            .await
+                        {
+                            return nudge_write_failed(error);
+                        }
                         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
@@ -2931,48 +2568,57 @@ impl Agent {
                 // §2.2). Nothing is discarded: the model is told once what the
                 // plan lists and what the turn produced. Whatever is still
                 // missing after that, the turn ends as it stands.
-                let still_missing: Vec<String> = {
+                let plan_gap: Option<Finding> = {
                     let plan = self
                         .declared_plan
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    match plan.as_deref() {
-                        Some(plan) => {
-                            let final_text = response.text_content();
-                            let produced = vak_judge::plan::Produced {
-                                cards: &card_answers,
-                                final_text: &final_text,
-                                file_delivered: file_delivered_this_run
-                                    || receipts.artifact_deliveries > 0,
-                                changed: receipts.has_execution_receipt(),
-                                checked: receipts.substantive_bash_calls > 0 && !verification_stale,
-                            };
-                            let gap = vak_judge::plan::gap(plan, &produced);
-                            if gap.is_empty() || std::mem::replace(&mut plan_checked, true) {
-                                Vec::new()
-                            } else {
-                                vec![plan_gap_message(&gap)]
-                            }
-                        }
-                        None => Vec::new(),
-                    }
+                    plan.as_deref().and_then(|plan| {
+                        let final_text = response.text_content();
+                        let produced = vak_judge::plan::Produced {
+                            cards: &card_answers,
+                            final_text: &final_text,
+                            file_delivered: file_delivered_this_run
+                                || receipts.artifact_deliveries > 0,
+                            changed: receipts.has_execution_receipt(),
+                            checked: receipts.substantive_bash_calls > 0 && !verification_stale,
+                        };
+                        let gap = vak_judge::plan::gap(plan, &produced);
+                        (!gap.is_empty()).then(|| Finding::Plan {
+                            cards_unnamed: gap
+                                .cards_unnamed
+                                .iter()
+                                .map(|deliverable| deliverable.name.clone())
+                                .collect(),
+                            cards_unattributed: gap.cards_unattributed,
+                            cards_short: gap.cards_short(),
+                            others: gap
+                                .others
+                                .iter()
+                                .map(|deliverable| {
+                                    (
+                                        deliverable.name.clone(),
+                                        deliverable.form.as_str().to_string(),
+                                    )
+                                })
+                                .collect(),
+                        })
+                    })
                 };
-                if let Some(message) = still_missing.into_iter().next()
+                // Told once, keeping everything produced; a plan still
+                // short after that stands as the model's answer, and the
+                // decision trail says so.
+                if let Some(finding) = plan_gap
                     && turn + 1 < self.config.max_turns
                 {
-                    if let Err(error) =
-                        self.session
-                            .lock()
-                            .await
-                            .append_correction(MessageRecord::control(
-                                vak_intent::control::ControlKind::PlanCheck,
-                                message,
-                            ))
-                    {
+                    let rung = self.ladder.step(Cause::Plan, false);
+                    if let Err(error) = self.correct(finding, rung).await {
                         return nudge_write_failed(error);
                     }
-                    turn += 1;
-                    continue;
+                    if rung == Rung::Tell {
+                        turn += 1;
+                        continue;
+                    }
                 }
                 if let Some(hooks) = &self.config.hooks {
                     let session_id = self
@@ -3019,14 +2665,14 @@ impl Agent {
                                 reason: reason.clone(),
                             })
                             .await;
-                        if let Err(error) =
-                            self.session
-                                .lock()
-                                .await
-                                .append_correction(MessageRecord::control(
-                                    vak_intent::control::ControlKind::StopHook,
-                                    stop_policy::hook_message(&reason),
-                                ))
+                        if let Err(error) = self
+                            .correct(
+                                Finding::StopHook {
+                                    reason: reason.clone(),
+                                },
+                                Rung::Tell,
+                            )
+                            .await
                         {
                             return nudge_write_failed(error);
                         }
@@ -3035,45 +2681,51 @@ impl Agent {
                         continue;
                     }
                 }
-                if let Some((reason, exhausted)) = self
+                if let Some(finding) = self
                     .stop_gate(
                         &prompt_owned,
                         &response,
                         &receipts,
                         verification_stale,
-                        &mut stop_blocks_left,
                         user_completion_released,
                     )
                     .await
                 {
-                    // Stop-policy block: the model tried to end the turn
-                    // prematurely against an explicit completion
-                    // requirement (§1, §6).
-                    self.record_capacity_instruction_failure(response.usage.prompt_tokens())
-                        .await;
-                    if exhausted {
-                        return TurnOutcome::Failed {
-                            error: LlmError::InvalidRequest(format!(
-                                "completion requirements remain unmet after the bounded recovery budget: {reason}"
-                            )),
-                        };
+                    // A hold the person set by command lasts until they
+                    // release it; every other reason is told once.
+                    // A failed call nothing repaired is recorded and the
+                    // answer stands: whether the answer owns up to it is not
+                    // something its words can establish, and the turn's
+                    // outcome already carries the failure as a typed fact.
+                    let rung = match finding.cause() {
+                        Cause::KeepWorking => Rung::Tell,
+                        Cause::UnresolvedFailure => Rung::End,
+                        cause => self.ladder.step(cause, false),
+                    };
+                    if rung != Rung::End {
+                        // The model tried to end the turn against a
+                        // completion requirement (§1, §6).
+                        self.record_capacity_instruction_failure(response.usage.prompt_tokens())
+                            .await;
                     }
-                    match self.guard_continue(reason, &events, turn).await {
-                        Ok(true) => {
+                    match self.hold(finding, rung, &events, turn).await {
+                        Ok(Held::Redo) => {
                             turn += 1;
                             continue;
                         }
-                        Ok(false) => return TurnOutcome::MaxTurnsReached,
+                        Ok(Held::Stands) => {}
+                        Ok(Held::OutOfSteps) => return TurnOutcome::MaxTurnsReached,
                         Err(error) => return nudge_write_failed(error),
                     }
                 }
-                if let Some(rejection) = self.workers_gate(&mut worker_blocks_left).await {
-                    match self.guard_continue(rejection, &events, turn).await {
-                        Ok(true) => {
+                if let Some(finding) = self.workers_gate().await {
+                    match self.hold(finding, Rung::Tell, &events, turn).await {
+                        Ok(Held::Redo) => {
                             turn += 1;
                             continue;
                         }
-                        Ok(false) => return TurnOutcome::MaxTurnsReached,
+                        Ok(Held::Stands) => {}
+                        Ok(Held::OutOfSteps) => return TurnOutcome::MaxTurnsReached,
                         Err(error) => return nudge_write_failed(error),
                     }
                 }
@@ -3115,7 +2767,7 @@ impl Agent {
             // correctable tool error with an exact repair schema), the model
             // may legitimately need one fresh nudge to perform its next
             // planned action.
-            empty_step_repair_attempted = false;
+            self.ladder.passed(Cause::EmptyStep);
 
             for call in &calls {
                 receipts.total_tool_calls += 1;
@@ -3205,26 +2857,11 @@ impl Agent {
             // bash" are different situations even if both calls land in the
             // same batch and finish in the opposite order.
             let call_issue_order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
-            // Two card gates at the earliest point, before execution
-            // (docs/design/68 §7). Freshness: a card in a live-data turn
-            // with nothing retrieved yet would show a carried-over figure.
-            // Topic mismatch: a card whose own payload shares no topic word
-            // with the directive is unrelated to what was asked, whatever
-            // it claims to be derived from — found live, a card correctly
-            // linked to a real, on-topic search result still carried an
-            // entirely different topic's payload, copied from an older
-            // turn's own tool call still sitting in context. Each gated
-            // call gets an error value naming which check refused it;
-            // either one gets exactly one repair before failing closed.
-            // Citations: a card that names a source URL nothing in this
-            // conversation retrieved or was given names a page it never
-            // saw (live: a research card's sources written after a search
-            // page that held none of them).
-            enum CardGate {
-                Fresh,
-                Topic,
-                Uncited(Vec<String>),
-            }
+            // A card that names a source URL nothing in this conversation
+            // retrieved or was given names a page it never saw (live: a
+            // research card's sources written after a search page that
+            // held none of them). The call is refused with the URLs named;
+            // what the model answers next is its own.
             let evidence = if calls
                 .iter()
                 .any(|call| self.tool_presents_cards(&call.name))
@@ -3236,7 +2873,7 @@ impl Agent {
             } else {
                 String::new()
             };
-            let mut gated: Vec<(PendingToolCall, CardGate)> = Vec::new();
+            let mut gated: Vec<(PendingToolCall, Vec<String>)> = Vec::new();
             let calls: Vec<PendingToolCall> = calls
                 .into_iter()
                 .filter(|call| {
@@ -3245,105 +2882,10 @@ impl Agent {
                     }
                     let uncited = uncited_urls(&call.input, &evidence);
                     if !uncited.is_empty() {
-                        gated.push((call.clone(), CardGate::Uncited(uncited)));
+                        gated.push((call.clone(), uncited));
                         return false;
                     }
-                    if wants_live_data && !observed_this_run {
-                        if figures_come_from(&prompt_owned, &call.input) {
-                            restated_request_figures = true;
-                        } else {
-                            gated.push((call.clone(), CardGate::Fresh));
-                            return false;
-                        }
-                    }
-                    // Scoped to "a retrieval actually succeeded this run":
-                    // that is the one circumstance the real bug needs and
-                    // the only one this check can safely judge. Many
-                    // legitimate cards have sparse, structural payloads with
-                    // no vocabulary of their own at all (an empty chart
-                    // skeleton, a bare numeric metric) and share no word
-                    // with any directive whether they are right or wrong —
-                    // checked live, this exact shape broke a real,
-                    // previously-passing test. Only when the model has just
-                    // retrieved something is "the card is unrelated to
-                    // both the question and what was found" a signal worth
-                    // trusting; a card built from the model's own reasoning
-                    // or from data already in the directive gets no such
-                    // check; the evidence text (far richer than the terse
-                    // question) is what lets a correctly-derived card that
-                    // renames or paraphrases what was found still pass even
-                    // with zero overlap against the directive alone.
-                    if let Some(evidence) = &last_evidence_snippet {
-                        let topic_context = format!("{prompt_owned} {evidence}");
-                        if !card_shares_a_topic_with(&topic_context, &call.name, &call.input) {
-                            gated.push((call.clone(), CardGate::Topic));
-                            return false;
-                        }
-                    }
                     true
-                })
-                .collect();
-            if gated
-                .iter()
-                .any(|(_, gate)| matches!(gate, CardGate::Fresh))
-            {
-                if freshness_repair_attempted {
-                    // The repair was another carried-over card (measured
-                    // live: "New Delhi 29.1°C" gated, then "Noida 28°C"
-                    // from an older turn offered instead). Fail closed:
-                    // no stale figure is presented as current.
-                    return self.stale_data_outcome().await;
-                }
-                freshness_repair_attempted = true;
-            }
-            if gated
-                .iter()
-                .any(|(_, gate)| matches!(gate, CardGate::Topic))
-            {
-                if topic_repair_attempted {
-                    return self
-                        .topic_mismatch_outcome(last_evidence_snippet.clone())
-                        .await;
-                }
-                topic_repair_attempted = true;
-            }
-            let uncited: Vec<String> = gated
-                .iter()
-                .filter_map(|(_, gate)| match gate {
-                    CardGate::Uncited(urls) => Some(urls.clone()),
-                    _ => None,
-                })
-                .flatten()
-                .collect();
-            if !uncited.is_empty() {
-                if citation_repair_attempted {
-                    return uncited_sources_outcome(&self.config.model, &uncited);
-                }
-                citation_repair_attempted = true;
-            }
-            // A raw search-results HTML page is not a retrieved source for a
-            // current fact. When a genuine discovery route is offered, turn
-            // this mistaken fetch into a correctable tool result instead of
-            // spending context on script-heavy markup and treating it as
-            // fresh evidence. This identifies the URL shape, not a search
-            // vendor or an MCP server instance.
-            let discovery_offered = tool_defs
-                .iter()
-                .any(|definition| matches!(definition.name.as_str(), "mcp" | "find_tools"));
-            let mut search_page_fetches = Vec::new();
-            let calls: Vec<PendingToolCall> = calls
-                .into_iter()
-                .filter(|call| {
-                    if wants_live_data
-                        && discovery_offered
-                        && call.name == "webfetch"
-                        && is_search_results_fetch(&call.input)
-                    {
-                        search_page_fetches.push(call.id.clone());
-                        false
-                    } else {
-                        true
-                    }
                 })
                 .collect();
             let inspection_ids = calls
@@ -3370,42 +2912,34 @@ impl Agent {
                 .map(|call| (call.name.clone(), call.input.clone()))
                 .collect();
             let (mut results, history_misses) = self.execute_batch(calls, &cancel, &events).await;
-            let available = freshness_retrieval_hint(&tool_defs);
-            results.extend(search_page_fetches.into_iter().map(|id| {
+            results.extend(gated.into_iter().map(|(call, urls)| {
                 (
-                    id,
-                    ToolRunOutput::Err(Fault::Refused, format!(
-                        "[source-discovery]: webfetch retrieves a known page, not a search-results URL for a current fact. {available} Discover a search capability, then use its returned source URLs as evidence."
-                    )),
-                )
-            }));
-            results.extend(gated.into_iter().map(|(call, gate)| {
-                let message = match gate {
-                    CardGate::Fresh => {
-                        format!("[freshness-check]: not shown — this asks for a value as it stands now and \
-                         nothing has been retrieved on this turn, so the card would carry a figure \
-                         from an earlier answer. {available} Retrieve current evidence first and \
-                         build the card from what it returns. If retrieval fails, say what failed.")
-                    }
-                    CardGate::Uncited(urls) => {
+                    call.id,
+                    ToolRunOutput::Err(
+                        Fault::Refused,
                         format!(
                             "[uncited-source]: not shown — this card cites {} which nothing in this \
                              conversation retrieved or was given. A card cites only the exact URLs of \
                              pages a tool fetched here. Fetch the page first, or answer in text and say \
                              what could not be verified.",
-                            urls.iter().map(|url| format!("`{url}`")).collect::<Vec<_>>().join(", ")
-                        )
-                    }
-                    CardGate::Topic => {
-                        "[topic-mismatch]: not shown — this card's own content has nothing to do \
-                         with what was asked. Build the card from what the current directive and \
-                         this turn's own tool results actually say, not from an earlier turn's data."
-                            .to_string()
-                    }
-                };
-                (call.id, ToolRunOutput::Err(Fault::Refused, message))
+                            urls.iter()
+                                .map(|url| format!("`{url}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    ),
+                )
             }));
             self.record_worker_work(&task_assignments, &results).await;
+            for (id, output) in &results {
+                if let (Some(name), Some(input)) = (call_names.get(id), call_inputs.get(id)) {
+                    let (failed, content) = match output {
+                        ToolRunOutput::Ok(content) => (false, content),
+                        ToolRunOutput::Err(_, content) => (true, content),
+                    };
+                    note_result(&self.seen_calls, name, input, failed, content);
+                }
+            }
             // Identical-card repeat: a step that only re-emits cards already
             // shown is told so by the no-op ack. A step that makes the same
             // calls again straight after that ack is the model giving the same answer
@@ -3439,62 +2973,6 @@ impl Agent {
                     _ => None,
                 })
                 .collect();
-            // Recomputed every batch (not accumulated) so the grounding
-            // check below only ever looks at the IMMEDIATELY preceding
-            // turn's retrieval calls, matching the observed bug shape
-            // (search succeeds, the very next answer ignores it).
-            let retrieval_tool_names: Vec<String> = results
-                .iter()
-                .filter_map(|(id, out)| match out {
-                    ToolRunOutput::Ok(_) => {
-                        let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("tool");
-                        let input = call_inputs.get(id)?;
-                        self.config
-                            .retrieval_check
-                            .as_ref()
-                            .is_some_and(|check| check(name, input))
-                            .then(|| name.to_string())
-                    }
-                    ToolRunOutput::Err(..) => None,
-                })
-                .collect();
-            if !observed_this_run {
-                observed_this_run = !retrieval_tool_names.is_empty()
-                    || results.iter().any(|(id, out)| {
-                        matches!(out, ToolRunOutput::Ok(_))
-                            && self.config.observation_check.as_ref().is_some_and(|check| {
-                                let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("");
-                                call_inputs.get(id).is_some_and(|input| check(name, input))
-                            })
-                    });
-            }
-            if !retrieval_tool_names.is_empty() {
-                // Every retrieval this batch returned, as its result block
-                // carries it: judging a card or an answer against only the
-                // first result, or the first part of one, flagged answers
-                // built from the rest.
-                let retrieved: Vec<&str> = results
-                    .iter()
-                    .filter_map(|(id, out)| match out {
-                        ToolRunOutput::Ok(content)
-                            if call_names
-                                .get(id)
-                                .is_some_and(|name| retrieval_tool_names.contains(name)) =>
-                        {
-                            Some(content.as_str())
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                if !retrieved.is_empty() {
-                    last_evidence_snippet = Some(retrieved.join("\n\n"));
-                }
-            }
-            pending_grounding_check = if retrieval_tool_names.is_empty() {
-                None
-            } else {
-                Some(retrieval_tool_names)
-            };
             let emitted_card_types: Vec<String> = results
                 .iter()
                 .filter_map(|(id, out)| match out {
@@ -3519,11 +2997,6 @@ impl Agent {
                         .zip(call_inputs.get(id))
                         .is_some_and(|(name, input)| self.delivered_file(name, input).is_some())
             });
-            if !emitted_card_types.is_empty() {
-                // A card emitted alongside the retrieval is the grounded
-                // answer; its payload was validated when it was recorded.
-                pending_grounding_check = None;
-            }
             pending_duplicate_card_check = if emitted_card_types.is_empty() {
                 None
             } else {
@@ -4823,7 +4296,7 @@ impl Agent {
                 input: serde_json::json!({"command": cmd}),
             },
             &cwd,
-            &self.run_call_counts,
+            &self.seen_calls,
             &self.config.tools,
             &[],
         )
@@ -4983,39 +4456,29 @@ impl Agent {
         response: &AssistantMessage,
         receipts: &stop_policy::ReceiptSummary,
         verification_stale: bool,
-        blocks_left: &mut u32,
         user_completion_released: bool,
-    ) -> Option<(String, bool)> {
+    ) -> Option<Finding> {
         let policy = self.config.stop_policy.as_ref()?;
         if user_completion_released {
             return None;
         }
-        let reason = policy.evaluate_receipts(
-            prompt,
-            &response.text_content(),
-            receipts,
-            verification_stale,
-        )?;
-        if matches!(reason, BlockReason::UserCompletionRequired) {
-            return Some((reason.message(), false));
-        }
-        // The cap limits recovery nudges, not the user's turn. Once the
-        // bounded recovery budget is spent, let the model's next response
-        // stand rather than failing the whole run on the same unmet check.
-        if *blocks_left == 0 {
-            return None;
-        }
-        *blocks_left -= 1;
-        Some((reason.message(), false))
+        policy
+            .evaluate_receipts(
+                prompt,
+                &response.text_content(),
+                receipts,
+                verification_stale,
+            )
+            .map(|reason| reason.finding())
     }
 
-    /// Refuse to finish while background workers are still running: send the
-    /// model back to wait for them, up to `blocks_left` times, then cancel
-    /// them and let the turn end (docs/design/84 §5.2). The one place a
-    /// worker is stopped without a person asking, and it is the end of its
-    /// parent's turn.
-    async fn workers_gate(&self, blocks_left: &mut u32) -> Option<String> {
-        let registry = self.config.workers.as_ref()?;
+    /// Refuse to finish while background workers are still running: the
+    /// model is told once to wait for them or stop them; if it finishes
+    /// anyway they are cancelled and the turn ends (docs/design/84 §5.2).
+    /// The one place a worker is stopped without a person asking, and it is
+    /// the end of its parent's turn.
+    async fn workers_gate(&mut self) -> Option<Finding> {
+        let registry = self.config.workers.clone()?;
         let parent = self
             .session
             .lock()
@@ -5030,16 +4493,13 @@ impl Agent {
         if live.is_empty() {
             return None;
         }
-        if *blocks_left > 0 {
-            *blocks_left -= 1;
-            let names = live
-                .iter()
-                .map(|worker| format!("{} ({})", worker.label, worker.id))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Some(format!(
-                "workers you started are still running: {names}. Wait for them with the workers tool (action wait) and use their results, or stop them. They are cancelled if you finish now."
-            ));
+        if self.ladder.step(Cause::WorkersRunning, false) == Rung::Tell {
+            return Some(Finding::WorkersRunning {
+                workers: live
+                    .iter()
+                    .map(|worker| format!("{} ({})", worker.label, worker.id))
+                    .collect(),
+            });
         }
         let stopped = registry.stop_all_for(&parent);
         let _ = self
@@ -5083,32 +4543,68 @@ impl Agent {
             .map(|_| ())
     }
 
-    /// Appends the continue nudge (model-visible => logged) and reports
-    /// whether the loop may continue within max_turns. A nudge the ledger
-    /// could not record ends the turn (`nudge_write_failed`).
+    /// Carries out a rung of the ladder for a failed check: the decision is
+    /// recorded, and unless the answer is left to stand the model is told,
+    /// in the one wording `vak_control::render` writes.
+    async fn correct(&self, finding: Finding, rung: Rung) -> Result<(), vak_session::SessionError> {
+        let cause = finding.cause();
+        let mut session = self.session.lock().await;
+        if rung != Rung::End {
+            let kind = kind_of(cause);
+            session.append_message(MessageRecord::control(
+                kind,
+                vak_control::render(&finding, kind.marker()),
+            ))?;
+        }
+        session.append_decision(vak_control::Decision::by_runtime(
+            vak_control::Choice::Correct(vak_control::Correction { cause, rung }),
+        ))?;
+        Ok(())
+    }
+
+    /// Carries out a rung for an answer a completion gate held: told, the
+    /// draft is set aside and the model answers again; left to stand, the
+    /// decision says so and the turn goes on to its end.
+    async fn hold(
+        &self,
+        finding: Finding,
+        rung: Rung,
+        events: &mpsc::Sender<AgentEvent>,
+        turn: usize,
+    ) -> Result<Held, vak_session::SessionError> {
+        if rung == Rung::End {
+            self.correct(finding, rung).await?;
+            return Ok(Held::Stands);
+        }
+        if turn + 1 >= self.config.max_turns {
+            return Ok(Held::OutOfSteps);
+        }
+        let _ = events
+            .send(AgentEvent::StopHookContinuation {
+                reason: vak_control::render(&finding, "")
+                    .trim_start_matches([':', ' '])
+                    .to_string(),
+            })
+            .await;
+        self.correct(finding, rung).await?;
+        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
+        Ok(Held::Redo)
+    }
+
+    /// Holds an answer for a gate that gives its own reason (goal mode,
+    /// managed work) and reports whether the loop may continue within
+    /// `max_turns`.
     async fn guard_continue(
         &mut self,
         reason: String,
         events: &mpsc::Sender<AgentEvent>,
         turn: usize,
     ) -> Result<bool, vak_session::SessionError> {
-        if turn + 1 >= self.config.max_turns {
-            return Ok(false);
-        }
-        let _ = events
-            .send(AgentEvent::StopHookContinuation {
-                reason: reason.clone(),
-            })
-            .await;
-        self.session
-            .lock()
-            .await
-            .append_correction(MessageRecord::control(
-                vak_intent::control::ControlKind::StopGuard,
-                stop_policy::guard_message(&reason),
-            ))?;
-        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-        Ok(true)
+        Ok(matches!(
+            self.hold(Finding::StopGuard { reason }, Rung::Tell, events, turn)
+                .await?,
+            Held::Redo
+        ))
     }
 
     /// Recovers the session ledger after a run (server/API consumers).
@@ -5755,10 +5251,20 @@ impl Agent {
                 // aborting the whole run.
                 let attempt_cancel = cancel.child_token();
                 let stream_cancel = attempt_cancel.clone();
+                // Silence, not duration, ends an attempt: the operator's limit
+                // bounds each wait for the next piece of the answer, so one
+                // that is still arriving is never cut
+                // (docs/design/88-control-plane.md §5a).
+                let quiet_limit = self.config.request_timeout;
+                let went_silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let silent = went_silent.clone();
                 let step = async move {
-                    let mut stream = provider_for_stream
-                        .stream(req_for_stream, stream_cancel)
-                        .await?;
+                    let mut stream = within(
+                        quiet_limit,
+                        &silent,
+                        provider_for_stream.stream(req_for_stream, stream_cancel),
+                    )
+                    .await??;
                     // First-token latency, wall clock from just before
                     // `.stream()` was called to the first event off the
                     // wire. Ollama fills `usage.prefill_ms` itself
@@ -5777,7 +5283,9 @@ impl Agent {
                     // already finished, until the watchdog, so this never
                     // blocks mid-stream.
                     let mut pending: VecDeque<StreamEvent> = VecDeque::new();
-                    while let Some(ev) = futures::StreamExt::next(&mut stream).await {
+                    while let Some(ev) =
+                        within(quiet_limit, &silent, futures::StreamExt::next(&mut stream)).await?
+                    {
                         if first_token_ms.is_none() {
                             first_token_ms = Some(started.elapsed().as_millis() as u64);
                         }
@@ -5811,9 +5319,8 @@ impl Agent {
                             let _ = events.send(AgentEvent::Stream(event)).await;
                         }
                     }
-                    stream
-                        .result()
-                        .await
+                    within(quiet_limit, &silent, stream.result())
+                        .await?
                         .map(|message| (message, first_token_ms))
                 };
                 let dispatch_span = tracing::info_span!(
@@ -5830,37 +5337,20 @@ impl Agent {
                 .catch_unwind();
 
                 let mut domain_override: Option<FailureDomain> = None;
-                let outcome = match self.config.request_timeout {
-                    Some(t) => match tokio::time::timeout(t, step).await {
-                        Ok(Ok(r)) => r,
-                        Ok(Err(_)) => Err(LlmError::Network(
-                            "provider dispatch panicked and was contained".into(),
-                        )),
-                        Err(_) => {
-                            // The provider owns a spawned producer keyed by
-                            // this token. A watchdog timeout must revoke
-                            // the attempt before the retry/fallback path
-                            // can release capacity and dispatch again --
-                            // but only THIS attempt: cancelling the run's
-                            // own token here used to abort the whole run
-                            // (the very next retry's backoff wait would
-                            // see it already cancelled and return Aborted
-                            // instead of actually retrying).
-                            attempt_cancel.cancel();
-                            domain_override = Some(FailureDomain::Deadline);
-                            Err(LlmError::Network(format!(
-                                "model step exceeded deadline of {}s",
-                                t.as_secs()
-                            )))
-                        }
-                    },
-                    None => match step.await {
-                        Ok(r) => r,
-                        Err(_) => Err(LlmError::Network(
-                            "provider dispatch panicked and was contained".into(),
-                        )),
-                    },
+                let outcome = match step.await {
+                    Ok(r) => r,
+                    Err(_) => Err(LlmError::Network(
+                        "provider dispatch panicked and was contained".into(),
+                    )),
                 };
+                if went_silent.load(std::sync::atomic::Ordering::Relaxed) {
+                    // The provider owns a spawned producer keyed by this
+                    // token: revoke the attempt before the retry or
+                    // fallback path dispatches again. Only this attempt,
+                    // never the run's own token.
+                    attempt_cancel.cancel();
+                    domain_override = Some(FailureDomain::Deadline);
+                }
                 let elapsed_ms = started.elapsed().as_millis() as u64;
 
                 match outcome {
@@ -6373,100 +5863,6 @@ impl Agent {
         results
     }
 
-    /// The turn's answer when a current value was asked for and nothing
-    /// was retrieved after the one repair (docs/design/68 §7): an honest
-    /// statement naming the last figure this conversation recorded and
-    /// when, never that figure presented as current.
-    async fn stale_data_outcome(&self) -> TurnOutcome {
-        let last_known = {
-            let session = self.session.lock().await;
-            let turn_id = session.latest_directive_entry_id();
-            let entries = session.chain_to_root();
-            session
-                .presentations()
-                .into_iter()
-                .rev()
-                .find(|(_, record)| Some(record.turn_id.as_str()) != turn_id.as_deref())
-                .map(|(id, record)| {
-                    let when = entries
-                        .iter()
-                        .find(|entry| entry.id == id)
-                        .map(|entry| entry.ts.format("%Y-%m-%d %H:%M UTC").to_string())
-                        .unwrap_or_else(|| "an earlier turn".to_string());
-                    format!(
-                        " The most recent figure in this conversation was recorded at {when}: {}.",
-                        record.identity_digest
-                    )
-                })
-                .unwrap_or_default()
-        };
-        self.record_activity(
-            vak_session::ActivityKind::Diagnostic,
-            vak_session::ActivityStatus::Failed,
-            "stale-data-refused".into(),
-            Some(
-                "a current value was asked for, nothing was retrieved this turn after one repair, \
-                 and no carried-over figure was presented as current"
-                    .into(),
-            ),
-            std::collections::BTreeMap::new(),
-        )
-        .await;
-        TurnOutcome::Completed {
-            response: AssistantMessage {
-                content: vec![ContentBlock::text(format!(
-                    "I could not retrieve a current value on this turn, so I am not presenting a \
-                     carried-over figure as current.{last_known} Ask again when a retrieval tool \
-                     is available, or ask for the last known figure explicitly."
-                ))],
-                stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                model: self.config.model.clone(),
-                response_id: None,
-                applied: None,
-            },
-        }
-    }
-
-    /// The turn's answer when a card repeatedly refuses to be about what was
-    /// asked (docs/design/68 §7): honest text instead of a wrong card. When
-    /// this turn's own retrieval actually succeeded, its raw result is
-    /// quoted rather than left out — the evidence exists, only the card
-    /// built from it did not.
-    async fn topic_mismatch_outcome(&self, evidence: Option<String>) -> TurnOutcome {
-        self.record_activity(
-            vak_session::ActivityKind::Diagnostic,
-            vak_session::ActivityStatus::Failed,
-            "topic-mismatch-refused".into(),
-            Some(
-                "a card was offered twice whose content did not match the directive; the turn \
-                 closed on an honest statement instead of showing a wrong card"
-                    .into(),
-            ),
-            std::collections::BTreeMap::new(),
-        )
-        .await;
-        let text = match evidence {
-            Some(found) => format!(
-                "I could not turn what I found into a card that actually answers this, so here is \
-                 the raw result instead:\n\n{found}"
-            ),
-            None => "I could not produce a card that matches what was asked, and had nothing else \
-                     to fall back on this turn. Could you rephrase the question?"
-                .to_string(),
-        };
-        TurnOutcome::Completed {
-            response: AssistantMessage {
-                content: vec![ContentBlock::text(text)],
-                stop_reason: StopReason::EndTurn,
-                usage: Usage::default(),
-                model: self.config.model.clone(),
-                response_id: None,
-                applied: None,
-            },
-        }
-    }
-
     /// The turn's answer when the model kept re-emitting a card it had
     /// already shown: the card stands, the loop stops paying for acks.
     async fn card_repeat_outcome(&self) -> TurnOutcome {
@@ -6590,7 +5986,7 @@ impl Agent {
                 &self.config,
                 call,
                 &cwd,
-                &self.run_call_counts,
+                &self.seen_calls,
                 &self.config.tools,
                 &skill_names,
             )
@@ -6616,6 +6012,19 @@ impl Agent {
                     .find(|tool| tool.name() == call.name)
                     .is_some_and(|tool| tool.changes_workspace(&call.input))
         });
+        if changes {
+            // What other calls returned may no longer hold. A call in this
+            // batch keeps its own memory: the same command returning the
+            // same output again is itself the observation.
+            let made: HashSet<String> = calls
+                .iter()
+                .map(|call| call_key(&call.name, &call.input))
+                .collect();
+            self.seen_calls
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|key, _| made.contains(key));
+        }
         if changes
             && !self
                 .effect_announced
@@ -7309,113 +6718,6 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
     call
 }
 
-/// Name only retrieval routes actually offered on this step. A generic
-/// "use a retrieval tool" repair left small models claiming they had no live
-/// access even when an MCP broker was admitted and had worked in this same
-/// session. Server and tool instances remain discovered at demand time.
-fn freshness_retrieval_hint(definitions: &[vak_llm::ToolDefinition]) -> String {
-    let mut routes = Vec::new();
-    for definition in definitions {
-        match definition.name.as_str() {
-            "mcp" => routes
-                .push("mcp (list a configured server's tools, then call an exact discovered tool)"),
-            "browse" => routes.push("browse"),
-            "webfetch" => routes.push("webfetch"),
-            "find_tools" => routes.push("find_tools (discover another admitted retrieval tool)"),
-            _ => {}
-        }
-    }
-    if routes.is_empty() {
-        "Use an admitted retrieval tool if one is available.".into()
-    } else {
-        format!(
-            "Admitted retrieval routes on this step: {}.",
-            routes.join(", ")
-        )
-    }
-}
-
-fn is_search_results_fetch(input: &Value) -> bool {
-    let Some(url) = input.get("url").and_then(Value::as_str) else {
-        return false;
-    };
-    let Some((_, authority_and_path)) = url.split_once("://") else {
-        return false;
-    };
-    let Some((_, path_and_query)) = authority_and_path.split_once('/') else {
-        return false;
-    };
-    let Some((path, query)) = path_and_query.split_once('?') else {
-        return false;
-    };
-    let path = path.trim_end_matches('/');
-    (path == "search" || path.ends_with("/search"))
-        && query.split('&').any(|part| {
-            part.starts_with("q=") || part.starts_with("query=") || part.starts_with("search=")
-        })
-}
-
-/// Whether an answer honestly says it has no data. The one list the
-/// freshness and grounding checks share (a judgement, listed in
-/// docs/design/30-output-engineering.md).
-fn admits_no_data(text: &str) -> bool {
-    let lower = text.to_lowercase();
-    [
-        "don't have",
-        "do not have",
-        "no access to",
-        "couldn't find",
-        "could not find",
-        "unable to find",
-        "no live data",
-    ]
-    .iter()
-    .any(|phrase| lower.contains(phrase))
-}
-
-/// Whether `answer` visibly draws on `evidence`: it repeats a host or a
-/// figure the retrieval returned. Evidence with nothing so checkable says
-/// nothing either way, so it counts as used — the check exists to catch an
-/// answer written from memory beside a retrieval, not to demand a format.
-fn uses_evidence(answer: &str, evidence: &str) -> bool {
-    let answer = answer.to_lowercase();
-    let mut markers = evidence
-        .split(|c: char| c.is_whitespace() || "()[]{}<>\"'`,;|".contains(c))
-        .map(|token| {
-            token
-                .trim_matches(|c: char| ".:!?".contains(c))
-                .to_lowercase()
-        })
-        .filter_map(|token| {
-            let host = token
-                .split_once("://")
-                .map(|(_, rest)| rest)
-                .unwrap_or(&token)
-                .split('/')
-                .next()
-                .unwrap_or_default()
-                .trim_start_matches("www.")
-                .to_string();
-            let is_host = host.contains('.')
-                && host.rsplit('.').next().is_some_and(|tld| {
-                    tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())
-                });
-            let is_figure = token.chars().filter(char::is_ascii_digit).count() >= 2;
-            if is_host {
-                Some(host)
-            } else if is_figure {
-                Some(token)
-            } else {
-                None
-            }
-        })
-        .peekable();
-    if markers.peek().is_none() {
-        return true;
-    }
-    markers.any(|marker| answer.contains(&marker))
-}
-
 fn normalize_mcp_call(
     mut call: PendingToolCall,
     index: &std::collections::HashMap<String, String>,
@@ -8054,7 +7356,7 @@ fn tool_recovery_hint(fault: Fault) -> Option<&'static str> {
     vak_judge::call::repairable(fault).then_some(RECOVERY_HINT)
 }
 
-const RECOVERY_HINT: &str = "\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.";
+use vak_control::RECOVERY_NOTE as RECOVERY_HINT;
 
 /// What the model is told about a name that is no tool this turn offers:
 /// the tools that are, and, when the name is a skill or an MCP server's
@@ -8090,48 +7392,28 @@ fn unknown_tool_message(name: &str, tools: &[Arc<dyn Tool>], skill_names: &[Stri
     )
 }
 
-/// What the model is told when a plan's receipts are short: what the plan
-/// lists, what was observed, and what is left, in the model's own names. It
-/// says who is speaking, because a model reads an unsigned reminder as the
-/// person's.
-fn plan_gap_message(gap: &vak_judge::plan::Gap) -> String {
-    let named = |deliverables: &[&vak_intent::Deliverable]| {
-        deliverables
-            .iter()
-            .map(|deliverable| format!("\"{}\"", deliverable.name))
-            .collect::<Vec<_>>()
-            .join(", ")
+/// Waits for one piece of a model's answer: the connection, the next
+/// stream event, the collected result. Silence longer than the operator's
+/// limit ends the wait and marks the attempt; time spent while pieces keep
+/// arriving is never counted.
+async fn within<T>(
+    limit: Option<std::time::Duration>,
+    silent: &std::sync::atomic::AtomicBool,
+    wait: impl std::future::Future<Output = T>,
+) -> Result<T, LlmError> {
+    let Some(limit) = limit else {
+        return Ok(wait.await);
     };
-    let mut parts = vec![
-        "[plan-check]: Vakyartha's runtime compared your plan with what this turn \
-         produced. This is not a message from the person, and it is sent once."
-            .to_string(),
-    ];
-    if gap.cards_short() > 0 {
-        parts.push(format!(
-            "Planned as cards and named by no card's `answers`: {}. Cards shown without \
-             a planned name in `answers`: {}. So {} planned card(s) are not shown yet.",
-            named(&gap.cards_unnamed),
-            gap.cards_unattributed,
-            gap.cards_short()
-        ));
+    match tokio::time::timeout(limit, wait).await {
+        Ok(value) => Ok(value),
+        Err(_) => {
+            silent.store(true, std::sync::atomic::Ordering::Relaxed);
+            Err(LlmError::Network(format!(
+                "the model sent nothing for {}s",
+                limit.as_secs()
+            )))
+        }
     }
-    if !gap.others.is_empty() {
-        let listed = gap
-            .others
-            .iter()
-            .map(|deliverable| format!("\"{}\" ({})", deliverable.name, deliverable.form.as_str()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        parts.push(format!("Nothing produced yet for: {listed}."));
-    }
-    parts.push(
-        "Produce what is missing, setting `answers` on a card to its planned name, or \
-         finish and say plainly why it is not needed. Keep everything already produced \
-         and do not plan again."
-            .to_string(),
-    );
-    parts.join(" ")
 }
 
 /// Model-guided repair of a tool whose calls keep failing, with no counter
@@ -8201,6 +7483,7 @@ async fn withdraw_tools(
     names: &[String],
 ) -> Result<(), vak_session::SessionError> {
     let mut gone = Vec::new();
+    let mut withdrawn = Vec::new();
     for name in names {
         if let Some(at) = agent
             .config
@@ -8213,6 +7496,7 @@ async fn withdraw_tools(
             agent.repair.failing.remove(name);
             agent.repair.schema_shown.remove(name);
             gone.push(format!("`{name}`"));
+            withdrawn.push(name.clone());
         }
     }
     if gone.is_empty() {
@@ -8235,20 +7519,8 @@ async fn withdraw_tools(
         )
         .await;
     agent
-        .session
-        .lock()
+        .correct(Finding::Withdrawn { tools: withdrawn }, Rung::Reframe)
         .await
-        .append_correction(MessageRecord::control(
-            vak_intent::control::ControlKind::RepairDirective,
-            format!(
-                "{} {gone} is withdrawn for the rest of this turn: its calls kept failing \
-                 after its schema was shown. Do not call it again. Deliver that part another \
-                 way, with another tool or as plain text in your reply, and keep everything \
-                 you have already produced.",
-                vak_intent::control::ControlKind::RepairDirective.marker()
-            ),
-        ))
-        .map(|_| ())
 }
 
 /// Append an authoritative repair directive that resurfaces the admitted
@@ -8259,58 +7531,34 @@ async fn inject_repair_directive(
     agent: &Agent,
     failed: &[String],
 ) -> Result<(), vak_session::SessionError> {
-    let mut parts: Vec<String> = vec![format!(
-        "{} The same tool call failed twice. Do not repeat the failing call shape; \
-         send exactly the arguments the schema below asks for, or deliver this part \
-         another way.",
-        vak_intent::control::ControlKind::RepairDirective.marker()
-    )];
+    let mut tools = Vec::new();
+    let mut unknown = Vec::new();
     for name in failed {
-        let mut found = false;
-        for tool in &agent.config.tools {
-            if tool.name() != *name {
-                continue;
-            }
-            found = true;
-            let schema_str =
-                serde_json::to_string(&tool.schema()).unwrap_or_else(|_| "{}".to_string());
-            parts.push(format!(
-                "\nAdmitted tool `{}` (re-surfaced verbatim):\ndescription: {}\ninput_schema: {}",
-                tool.name(),
-                tool.description(),
-                schema_str
-            ));
-            break;
-        }
-        if !found {
-            // Unknown tool name: list what IS admitted so the model can map
-            // the rejected call onto an admitted one (e.g. use the `mcp`
-            // broker instead of a raw capability name).
-            let admitted: Vec<String> = agent
-                .config
-                .tools
-                .iter()
-                .map(|t| t.name().to_string())
-                .collect();
-            parts.push(format!(
-                "\nTool `{}` is not in the admitted set for this turn. Admitted \
-                 tools: {}. Re-issue using an admitted tool.",
-                name,
-                admitted.join(", ")
-            ));
+        match agent.config.tools.iter().find(|tool| tool.name() == *name) {
+            Some(tool) => tools.push(vak_control::ShownTool {
+                name: tool.name().to_string(),
+                description: tool.description().to_string(),
+                schema: serde_json::to_string(&tool.schema()).unwrap_or_else(|_| "{}".to_string()),
+            }),
+            None => unknown.push(name.clone()),
         }
     }
-    // Runtime-authored, so tagged: it must never read as the person's words,
-    // to the model or to any client (AGENTS.md, "typed, never sniffed").
+    let offered = agent
+        .config
+        .tools
+        .iter()
+        .map(|tool| tool.name().to_string())
+        .collect();
     agent
-        .session
-        .lock()
+        .correct(
+            Finding::SchemaShown {
+                tools,
+                unknown,
+                offered,
+            },
+            Rung::Tell,
+        )
         .await
-        .append_correction(MessageRecord::control(
-            vak_intent::control::ControlKind::RepairDirective,
-            parts.join("\n\n"),
-        ))
-        .map(|_| ())
 }
 
 /// A request's `max_tokens`: its output budget, no larger than the room the
@@ -8323,70 +7571,6 @@ fn reply_room(profile: &CapacityProfile, request_chars: u64, budget: Option<u32>
     };
     let room = window.saturating_sub(profile.estimate_tokens(request_chars));
     Some(budget.min(u32::try_from(room).unwrap_or(u32::MAX)).max(1))
-}
-
-/// The turn's answer when a card still cites pages nothing retrieved after
-/// one repair: an honest statement, never the card.
-fn uncited_sources_outcome(model: &str, urls: &[String]) -> TurnOutcome {
-    TurnOutcome::Completed {
-        response: AssistantMessage {
-            content: vec![ContentBlock::text(format!(
-                "I could not verify the sources for that card: {} {} not retrieved in this \
-                 conversation, so I am not showing it. Share a source or ask me to fetch one.",
-                urls.iter()
-                    .map(|url| format!("`{url}`"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                if urls.len() == 1 { "was" } else { "were" }
-            ))],
-            stop_reason: StopReason::EndTurn,
-            usage: Usage::default(),
-            model: model.to_string(),
-            response_id: None,
-            applied: None,
-        },
-    }
-}
-
-/// Whether every figure a card call carries is one the person's own words
-/// this turn gave, and it carries at least one. Such a card restates the
-/// request ("show the current CPU usage of 42 percent as a metric card"):
-/// it cannot be a figure carried over from an earlier answer, which is what
-/// the freshness gate exists to stop. Measured live 2026-10-08: that
-/// request's correct card was refused 3 of 3 times.
-fn figures_come_from(request: &str, input: &Value) -> bool {
-    fn figures(text: &str, out: &mut Vec<String>) {
-        let mut current = String::new();
-        for ch in text.chars() {
-            if ch.is_ascii_digit() || (ch == '.' && !current.is_empty()) {
-                current.push(ch);
-            } else if !current.is_empty() {
-                out.push(std::mem::take(&mut current));
-            }
-        }
-        if !current.is_empty() {
-            out.push(current);
-        }
-        for figure in out.iter_mut() {
-            while figure.ends_with('.') {
-                figure.pop();
-            }
-        }
-    }
-    fn carried(value: &Value, out: &mut Vec<String>) {
-        match value {
-            Value::Number(number) => figures(&number.to_string(), out),
-            Value::String(text) => figures(text, out),
-            Value::Array(items) => items.iter().for_each(|item| carried(item, out)),
-            Value::Object(fields) => fields.values().for_each(|field| carried(field, out)),
-            Value::Bool(_) | Value::Null => {}
-        }
-    }
-    let mut given = Vec::new();
-    figures(request, &mut given);
-    let mut shown = Vec::new();
-    carried(input, &mut shown);
-    !shown.is_empty() && shown.iter().all(|figure| given.contains(figure))
 }
 
 /// The source URLs a card cites (a `url`, or a `source` that is a web
@@ -8478,6 +7662,33 @@ fn cause_of(kind: vak_intent::control::ControlKind) -> vak_control::Cause {
     }
 }
 
+/// The message tag a check's correction is written under.
+fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
+    use vak_intent::control::ControlKind;
+    match cause {
+        Cause::StopHook => ControlKind::StopHook,
+        Cause::StopGuard
+        | Cause::Truncated
+        | Cause::VerificationStale
+        | Cause::KeepWorking
+        | Cause::UnresolvedFailure
+        | Cause::WorkersRunning => ControlKind::StopGuard,
+        Cause::Grounding => ControlKind::GroundingCheck,
+        Cause::Fence => ControlKind::FenceCheck,
+        Cause::DuplicateCard => ControlKind::DuplicateCardCheck,
+        Cause::Presentation => ControlKind::PresentationCheck,
+        Cause::CardCompletion => ControlKind::CardCompletionCheck,
+        Cause::CardCompleteness => ControlKind::CardCompletenessCheck,
+        Cause::Freshness => ControlKind::FreshnessCheck,
+        Cause::EmptyStep => ControlKind::EmptyStep,
+        Cause::SteeringDrift => ControlKind::SteeringDrift,
+        Cause::TopicMismatch => ControlKind::TopicMismatchCheck,
+        Cause::Repair => ControlKind::RepairDirective,
+        Cause::Plan => ControlKind::PlanCheck,
+        Cause::ToolCallRepair => ControlKind::ToolCallRepair,
+    }
+}
+
 /// A runtime correction is its control message and the decision it was
 /// rendered from, written together.
 trait CorrectionLog {
@@ -8509,48 +7720,77 @@ impl CorrectionLog for SessionLog {
     }
 }
 
-/// Effectful repetitions reach a human at this count. An identical `read`
-/// remains inside its normal permission check for two more attempts, then
-/// fails as a tool value without asking a human to approve rereading a file.
-const DOOM_LOOP_THRESHOLD: u32 = 3;
-const READ_REPEAT_LIMIT: u32 = 5;
+/// What a call returned the last time it ran in this run.
+struct SeenCall {
+    /// A digest of the result.
+    result: u64,
+    /// The call ran again and returned the same result.
+    unchanged: bool,
+}
 
-fn repeat_guard_decision(name: &str, count: u32) -> Option<Decision> {
-    if name == "read" && count >= READ_REPEAT_LIMIT {
-        return Some(Decision::Deny {
-            reason: format!(
-                "identical read call repeated ×{count} this run; use the successful result already returned or explain why a different inspection is needed"
-            ),
-        });
+/// One call's identity within a run: its tool and its exact arguments.
+fn call_key(name: &str, input: &serde_json::Value) -> String {
+    format!(
+        "{name}\u{0}{}",
+        serde_json::to_string(input).unwrap_or_default()
+    )
+}
+
+/// Notes what a call returned. A call that returns what it returned before
+/// is marked unchanged; the loop refuses it from then on, until something
+/// changes the workspace (`Refusal::Repeated`). An observed state decides
+/// this, never a count of calls.
+fn note_result(
+    seen_calls: &std::sync::Mutex<HashMap<String, SeenCall>>,
+    name: &str,
+    input: &serde_json::Value,
+    failed: bool,
+    content: &str,
+) {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (failed, content).hash(&mut hasher);
+    let result = hasher.finish();
+    let mut seen = seen_calls
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match seen.get_mut(&call_key(name, input)) {
+        Some(earlier) => {
+            earlier.unchanged = earlier.result == result;
+            earlier.result = result;
+        }
+        None => {
+            seen.insert(
+                call_key(name, input),
+                SeenCall {
+                    result,
+                    unchanged: false,
+                },
+            );
+        }
     }
-    if name != "read" && count >= DOOM_LOOP_THRESHOLD {
-        return Some(Decision::Ask {
-            reason: format!("identical {name} call repeated ×{count} this run"),
-            source: AskSource::CircuitBreaker,
-        });
-    }
-    None
 }
 
 #[cfg(test)]
-mod repeat_guard_tests {
-    use super::{AskSource, Decision, repeat_guard_decision};
+#[allow(clippy::unwrap_used)]
+mod seen_call_tests {
+    use super::{HashMap, call_key, note_result};
 
     #[test]
-    fn repeated_reads_stay_under_normal_permission_before_bounded_denial() {
-        assert!(repeat_guard_decision("read", 3).is_none());
-        assert!(repeat_guard_decision("read", 4).is_none());
-        assert!(matches!(
-            repeat_guard_decision("read", 5),
-            Some(Decision::Deny { .. })
-        ));
-        assert!(matches!(
-            repeat_guard_decision("write", 3),
-            Some(Decision::Ask {
-                source: AskSource::CircuitBreaker,
-                ..
-            })
-        ));
+    fn a_call_is_unchanged_only_after_returning_the_same_result_again() {
+        let seen = std::sync::Mutex::new(HashMap::new());
+        let input = serde_json::json!({"path": "notes.txt"});
+        let unchanged = |seen: &std::sync::Mutex<HashMap<String, super::SeenCall>>| {
+            seen.lock().unwrap()[&call_key("read", &input)].unchanged
+        };
+        note_result(&seen, "read", &input, false, "one");
+        assert!(!unchanged(&seen));
+        note_result(&seen, "read", &input, false, "two");
+        assert!(!unchanged(&seen), "a different result is a new observation");
+        note_result(&seen, "read", &input, false, "two");
+        assert!(unchanged(&seen));
+        note_result(&seen, "read", &input, true, "two");
+        assert!(!unchanged(&seen), "a failure is not the same result");
     }
 }
 
@@ -8581,7 +7821,7 @@ async fn authorize(
     config: &AgentConfig,
     call: &PendingToolCall,
     cwd: &std::path::Path,
-    run_call_counts: &std::sync::Mutex<HashMap<String, u32>>,
+    seen_calls: &std::sync::Mutex<HashMap<String, SeenCall>>,
     tools: &[Arc<dyn Tool>],
     skill_names: &[String],
 ) -> Result<(), (vak_control::Refusal, String)> {
@@ -8618,27 +7858,26 @@ async fn authorize(
         facts.revoked = revoked();
     }
     if admit(&facts) == Some(CallVerdict::Accepted) {
-        let key = format!(
-            "{}\u{0}{}",
-            call.name,
-            serde_json::to_string(&call.input).unwrap_or_default()
-        );
-        let n = {
-            let mut counts = run_call_counts
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let entry = counts.entry(key).or_insert(0);
-            *entry += 1;
-            *entry
-        };
-        let repeated = repeat_guard_decision(&call.name, n);
-        facts.repeated = matches!(repeated, Some(Decision::Deny { .. }));
-        let decision = match repeated {
-            Some(decision) => decision,
-            None => match &config.permission {
+        // The same call has already returned the same result twice with
+        // nothing changed in between: a third would return it again.
+        facts.repeated = seen_calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&call_key(&call.name, &call.input))
+            .is_some_and(|seen| seen.unchanged);
+        let decision = if facts.repeated {
+            told = format!(
+                "This exact `{}` call has already run twice in this turn and returned the same \
+                 result both times, with nothing changed in between. Use that result, or make a \
+                 different call.",
+                call.name
+            );
+            Decision::Allow
+        } else {
+            match &config.permission {
                 Some(engine) => engine.evaluate(&call.name, &call.input, config.mode, cwd),
                 None => Decision::Allow,
-            },
+            }
         };
         match decision {
             Decision::Allow => {}
@@ -8735,6 +7974,16 @@ async fn authorize(
             },
         )),
     }
+}
+
+/// What followed an answer a completion gate held.
+enum Held {
+    /// The model was told and answers again.
+    Redo,
+    /// The answer stands as the model's own.
+    Stands,
+    /// The operator's step limit leaves no step to answer in.
+    OutOfSteps,
 }
 
 enum ToolRunOutput {
@@ -9135,40 +8384,39 @@ fn queue_stream_event(pending: &mut VecDeque<StreamEvent>, event: StreamEvent) {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tool_recovery_tests {
-    use super::{Fault, freshness_retrieval_hint, tool_recovery_hint, unknown_tool_message};
+    use super::{Fault, tool_recovery_hint, unknown_tool_message};
 
-    #[test]
-    fn freshness_repair_names_only_admitted_generic_retrieval_routes() {
-        let offered = vec![
-            vak_llm::ToolDefinition::new("mcp", "broker", serde_json::json!({})),
-            vak_llm::ToolDefinition::new("browse", "browse", serde_json::json!({})),
-            vak_llm::ToolDefinition::new("emit_metric_card", "card", serde_json::json!({})),
-        ];
-        let hint = freshness_retrieval_hint(&offered);
-        assert!(
-            hint.contains("mcp (list a configured server's tools"),
-            "{hint}"
+    /// Silence ends a wait; time spent while pieces keep arriving does not
+    /// (docs/design/88-control-plane.md §5a).
+    #[tokio::test]
+    async fn a_slow_answer_that_keeps_arriving_is_never_cut() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        let limit = Some(Duration::from_millis(200));
+        let silent = AtomicBool::new(false);
+        // Ten pieces, each well inside the limit, together well past it.
+        for _ in 0..10 {
+            let piece = super::within(
+                limit,
+                &silent,
+                tokio::time::sleep(Duration::from_millis(50)),
+            );
+            assert!(piece.await.is_ok());
+        }
+        assert!(!silent.load(Ordering::Relaxed));
+        let quiet = super::within(
+            limit,
+            &silent,
+            tokio::time::sleep(Duration::from_millis(600)),
         );
-        assert!(hint.contains("browse"), "{hint}");
-        assert!(!hint.contains("webfetch"), "{hint}");
-        assert!(!hint.contains("emit_metric_card"), "{hint}");
-    }
-
-    #[test]
-    fn current_fact_search_page_fetch_is_identified_by_url_shape() {
-        use super::is_search_results_fetch;
-        assert!(is_search_results_fetch(&serde_json::json!({
-            "url": "https://www.google.com/search?q=weather+in+Mumbai"
-        })));
-        assert!(is_search_results_fetch(&serde_json::json!({
-            "url": "https://example.org/site/search?query=weather"
-        })));
-        assert!(!is_search_results_fetch(&serde_json::json!({
-            "url": "https://weather.example.org/mumbai"
-        })));
-        assert!(!is_search_results_fetch(&serde_json::json!({
-            "url": "https://example.org/search?category=weather"
-        })));
+        assert!(quiet.await.is_err());
+        assert!(silent.load(Ordering::Relaxed));
+        let unbounded = super::within(
+            None,
+            &silent,
+            tokio::time::sleep(Duration::from_millis(300)),
+        );
+        assert!(unbounded.await.is_ok());
     }
 
     #[test]
@@ -9264,27 +8512,6 @@ mod tool_recovery_tests {
             repair.input.get("action").and_then(|v| v.as_str()),
             Some("list")
         );
-    }
-
-    #[test]
-    fn a_card_that_restates_the_requests_own_figures_is_not_a_stale_one() {
-        let request = "Show the current CPU usage of 42 percent as a metric card.";
-        let card = serde_json::json!({"semantic_type": "metric", "label": "CPU usage",
-            "readings": [{"label": "CPU usage", "value": "42"}], "unit": "%"});
-        assert!(super::figures_come_from(request, &card));
-        let other = serde_json::json!({"semantic_type": "metric", "value": "57"});
-        assert!(!super::figures_come_from(request, &other));
-        let mixed = serde_json::json!({"semantic_type": "metric", "value": 42, "delta": "3.5"});
-        assert!(!super::figures_come_from(request, &mixed));
-        let none = serde_json::json!({"semantic_type": "metric", "label": "CPU usage"});
-        assert!(
-            !super::figures_come_from(request, &none),
-            "a card with no figure restates nothing"
-        );
-        assert!(super::figures_come_from(
-            "Latest reading: 1.5 bar at 20 degrees.",
-            &serde_json::json!({"value": 1.5, "note": "at 20"})
-        ));
     }
 
     #[test]
