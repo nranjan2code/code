@@ -41,8 +41,8 @@ pub use route::{
 pub use stream::{EventSink, EventStream, StreamEvent};
 pub use turn::current_turn_boundary;
 pub use types::{
-    AssistantMessage, CacheBreakpoint, CacheHints, ChatRequest, ContentBlock, Effort, Message,
-    Role, StopReason, ToolDefinition, Usage,
+    AssistantMessage, CacheBreakpoint, CacheHints, ChatRequest, ContentBlock, Message, Role,
+    StopReason, ToolDefinition, Usage,
 };
 pub use work::{
     AttemptReason, DispatchAttempt, DispatchBudget, DispatchCeiling, FailureDomain, Settlement,

@@ -20,6 +20,7 @@ vak-config = { workspace = true }
 vak-agent = { workspace = true }
 vak-intent = { workspace = true }
 vak-llm = { workspace = true }
+vak-control = { workspace = true }
 vak-permission = { workspace = true }
 vak-session = { workspace = true }
 vak-tools = { workspace = true }

@@ -11,7 +11,7 @@
 
 use sha2::{Digest, Sha256};
 use vak_llm::{
-    CacheBreakpoint, ChatRequest, ContentBlock, Effort, Message, Role, ToolDefinition,
+    CacheBreakpoint, ChatRequest, ContentBlock, Message, Role, ToolDefinition,
     current_turn_boundary,
 };
 use vak_session::TailSections;
@@ -64,12 +64,9 @@ pub fn compaction_request(model: &str, transcript: &str) -> ChatRequest {
     req.system = Some(COMPACTION_SYSTEM.to_string());
     req.messages = vec![Message::user_text(compaction_prompt(transcript))];
     // A summary, not a deliberation: measured live, thinking made no
-    // difference to the summary and cost 3x the latency. `effort` is set
-    // explicitly rather than relying only on the Anthropic adapter's
-    // think-false-implies-low fallback, so this request's intent reads the
-    // same on every provider that inspects `ChatRequest.effort` directly.
-    req.think = Some(false);
-    req.effort = Some(Effort::Low);
+    // difference to the summary and cost 3x the latency. A wire that cannot
+    // switch reasoning off sends its lowest depth instead.
+    req.settings.reasoning = vak_control::Reasoning::Off;
     req
 }
 
@@ -376,10 +373,9 @@ mod tests {
     }
 
     #[test]
-    fn compaction_request_asks_for_low_effort_not_just_think_false() {
+    fn compaction_request_asks_for_no_reasoning() {
         let req = compaction_request("m", "SEGMENT TEXT");
-        assert_eq!(req.think, Some(false));
-        assert_eq!(req.effort, Some(vak_llm::Effort::Low));
+        assert_eq!(req.settings.reasoning, vak_control::Reasoning::Off);
     }
 
     #[test]

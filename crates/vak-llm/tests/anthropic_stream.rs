@@ -43,7 +43,7 @@ fn sample_request() -> ChatRequest {
 
 #[test]
 fn body_serialization_matches_anthropic_shape() {
-    let body = build_body(&sample_request(), 8192, true, false).unwrap();
+    let body = build_body(&sample_request(), 8192, Default::default(), false).unwrap();
     assert_eq!(body["model"], "claude-sonnet-4-5");
     assert_eq!(body["max_tokens"], 8192);
     assert_eq!(body["stream"], true);
@@ -68,7 +68,7 @@ fn body_rejects_misplaced_blocks() {
         content: vec![ContentBlock::tool_result("x", "y")],
     }];
     assert!(matches!(
-        build_body(&req, 8192, true, false),
+        build_body(&req, 8192, Default::default(), false),
         Err(LlmError::InvalidRequest(_))
     ));
 }

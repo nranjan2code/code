@@ -123,10 +123,11 @@ pub enum Purpose {
 }
 
 /// How much the model reasons on a step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", content = "depth", rename_all = "snake_case")]
 pub enum Reasoning {
     /// The model's own default; nothing asked.
+    #[default]
     Default,
     Off,
     Depth(Depth),
@@ -151,6 +152,136 @@ pub struct Sampling {
     pub top_p: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u32>,
+}
+
+/// The settings a request carries for one step: how much the model
+/// reasons and how it samples.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct StepSettings {
+    pub reasoning: Reasoning,
+    #[serde(default)]
+    pub sampling: Sampling,
+}
+
+/// Whether a model takes one setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Support {
+    Yes,
+    No,
+    /// Nobody reported it and no request has refused it yet: sent, and
+    /// learned from the provider's answer.
+    #[default]
+    Unknown,
+}
+
+impl Support {
+    fn sends(self) -> bool {
+        self != Self::No
+    }
+
+    /// The narrower of two reports: a `No` from either side wins.
+    pub fn meet(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::No, _) | (_, Self::No) => Self::No,
+            (Self::Yes, _) | (_, Self::Yes) => Self::Yes,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// How a model's reasoning can be set.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningSupport {
+    #[default]
+    Unknown,
+    /// The model does not reason, or the wire cannot set it.
+    Fixed,
+    /// Reasoning can be turned on or off, not graded.
+    Toggle,
+    /// Reasoning takes a depth.
+    Graded,
+}
+
+/// What a model on a wire can honour (doc 88 §4): what the adapter can pass
+/// through, narrowed by what the provider reported and what a request it
+/// refused showed. Nothing here names a model or a provider.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCapabilities {
+    pub reasoning: ReasoningSupport,
+    pub temperature: Support,
+    pub top_p: Support,
+    pub top_k: Support,
+}
+
+impl ModelCapabilities {
+    /// The settings this model can honour of those asked: what it cannot
+    /// take is left to the model's default, never approximated.
+    pub fn honour(&self, asked: StepSettings) -> StepSettings {
+        let reasoning = match (self.reasoning, asked.reasoning) {
+            (ReasoningSupport::Fixed, _) => Reasoning::Default,
+            (ReasoningSupport::Toggle, Reasoning::Depth(_)) => Reasoning::Default,
+            (_, reasoning) => reasoning,
+        };
+        let keep = |support: Support, value| if support.sends() { value } else { None };
+        StepSettings {
+            reasoning,
+            sampling: Sampling {
+                temperature: keep(self.temperature, asked.sampling.temperature),
+                top_p: keep(self.top_p, asked.sampling.top_p),
+                top_k: if self.top_k.sends() {
+                    asked.sampling.top_k
+                } else {
+                    None
+                },
+            },
+        }
+    }
+
+    /// These capabilities with every setting `sent` carried marked as not
+    /// taken: what a request refused for its settings, and accepted
+    /// without them, showed.
+    pub fn refusing(mut self, sent: StepSettings) -> Self {
+        if sent.reasoning != Reasoning::Default {
+            self.reasoning = ReasoningSupport::Fixed;
+        }
+        if sent.sampling.temperature.is_some() {
+            self.temperature = Support::No;
+        }
+        if sent.sampling.top_p.is_some() {
+            self.top_p = Support::No;
+        }
+        if sent.sampling.top_k.is_some() {
+            self.top_k = Support::No;
+        }
+        self
+    }
+
+    /// The narrower of two reports, setting by setting.
+    pub fn meet(self, other: Self) -> Self {
+        use ReasoningSupport::*;
+        let reasoning = match (self.reasoning, other.reasoning) {
+            (Fixed, _) | (_, Fixed) => Fixed,
+            (Toggle, _) | (_, Toggle) => Toggle,
+            (Graded, _) | (_, Graded) => Graded,
+            _ => Unknown,
+        };
+        Self {
+            reasoning,
+            temperature: self.temperature.meet(other.temperature),
+            top_p: self.top_p.meet(other.top_p),
+            top_k: self.top_k.meet(other.top_k),
+        }
+    }
+}
+
+/// What an adapter sent for one dispatch, and what it knew of the model
+/// when it did.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Applied {
+    pub settings: StepSettings,
+    pub capabilities: ModelCapabilities,
 }
 
 /// The form the step's output must take.
@@ -180,14 +311,12 @@ pub struct StepContract {
     pub output: OutputForm,
 }
 
-/// The contract asked for a step and, once the adapter reports it, the one
-/// the provider was actually sent.
+/// The contract asked for a step. What each dispatch of it applied is on
+/// the step's receipt, attempt by attempt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Framing {
     pub step: u32,
     pub asked: StepContract,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub applied: Option<StepContract>,
 }
 
 /// Whether a proposed call runs.
@@ -325,6 +454,51 @@ mod tests {
     }
 
     #[test]
+    fn a_model_is_asked_only_what_it_can_honour() {
+        let asked = StepSettings {
+            reasoning: Reasoning::Depth(Depth::Low),
+            sampling: Sampling {
+                temperature: Some(0.2),
+                top_p: Some(0.9),
+                top_k: Some(20),
+            },
+        };
+        let toggle = ModelCapabilities {
+            reasoning: ReasoningSupport::Toggle,
+            top_k: Support::No,
+            ..Default::default()
+        };
+        let applied = toggle.honour(asked);
+        assert_eq!(applied.reasoning, Reasoning::Default);
+        assert_eq!(applied.sampling.temperature, Some(0.2));
+        assert_eq!(applied.sampling.top_k, None);
+        let off = StepSettings {
+            reasoning: Reasoning::Off,
+            ..Default::default()
+        };
+        assert_eq!(toggle.honour(off).reasoning, Reasoning::Off);
+        assert_eq!(ModelCapabilities::default().honour(asked), asked);
+    }
+
+    #[test]
+    fn a_refused_request_narrows_only_what_it_sent() {
+        let sent = StepSettings {
+            reasoning: Reasoning::Depth(Depth::High),
+            sampling: Sampling::default(),
+        };
+        let caps = ModelCapabilities::default().refusing(sent);
+        assert_eq!(caps.reasoning, ReasoningSupport::Fixed);
+        assert_eq!(caps.temperature, Support::Unknown);
+        let reported = ModelCapabilities {
+            reasoning: ReasoningSupport::Graded,
+            temperature: Support::Yes,
+            ..Default::default()
+        };
+        assert_eq!(reported.meet(caps).reasoning, ReasoningSupport::Fixed);
+        assert_eq!(reported.meet(caps).temperature, Support::Yes);
+    }
+
+    #[test]
     fn a_framing_round_trips() {
         let decision = Decision::by_runtime(Choice::FrameStep(Framing {
             step: 2,
@@ -335,7 +509,6 @@ mod tests {
                 tools: vec!["read".into()],
                 output: OutputForm::Free,
             },
-            applied: None,
         }));
         let text = serde_json::to_string(&decision).unwrap();
         assert_eq!(serde_json::from_str::<Decision>(&text).unwrap(), decision);

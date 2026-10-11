@@ -283,6 +283,7 @@ mod tests {
             usage: Usage::default(),
             model: "m".into(),
             response_id: None,
+            applied: None,
         }
     }
 

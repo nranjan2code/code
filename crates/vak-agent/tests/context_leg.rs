@@ -59,6 +59,7 @@ fn answer() -> Result<AssistantMessage, LlmError> {
         usage: Usage::default(),
         model: "m".into(),
         response_id: None,
+        applied: None,
     })
 }
 
@@ -220,6 +221,7 @@ fn answer_with_usage() -> Result<AssistantMessage, LlmError> {
         },
         model: "m".into(),
         response_id: None,
+        applied: None,
     })
 }
 

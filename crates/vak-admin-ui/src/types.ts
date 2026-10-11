@@ -1659,3 +1659,18 @@ export interface DataRulesPreview {
   shortened: string[];
   newly_due: { class: string; items: number; bytes: number }[];
 }
+
+/// One decision of the control plane (docs/design/88-control-plane.md §6),
+/// as `GET /runs/{id}/decisions` returns it.
+export type Decision = {
+  turn?: string;
+  decider: "runtime" | "person" | "provider";
+  evidence?: { kind: string; id: string }[];
+  choice:
+    | { point: "admit_turn"; agent?: string; model: string; max_steps: number }
+    | { point: "frame_step"; step: number; asked: { purpose: string; reasoning: { mode: string; depth?: string }; tools: string[]; output: { form: string } } }
+    | { point: "accept_call"; verdict: "accepted" | "refused"; by?: string }
+    | { point: "accept_answer"; verdict: "accepted" | "held"; by?: string }
+    | { point: "correct"; cause: string; rung: string }
+    | { point: "end_turn"; end: string };
+};

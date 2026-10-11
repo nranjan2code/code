@@ -36,7 +36,12 @@ fn sample_request() -> ChatRequest {
 
 #[test]
 fn body_maps_neutral_history_to_responses_shape() {
-    let body = build_body(&OpenAiResponsesConfig::default(), &sample_request()).unwrap();
+    let body = build_body(
+        &OpenAiResponsesConfig::default(),
+        &sample_request(),
+        Default::default(),
+    )
+    .unwrap();
     assert_eq!(body["model"], "gpt-5.6");
     assert_eq!(body["stream"], true);
     assert_eq!(body["instructions"], "You are a coding agent.");

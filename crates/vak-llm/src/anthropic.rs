@@ -10,9 +10,7 @@ use crate::gate::ProviderGate;
 use crate::sse::SseDecoder;
 use crate::stream::{EventSink, EventStream, StreamEvent, channel};
 use crate::turn::{current_turn_boundary, strip_thinking};
-use crate::types::{
-    AssistantMessage, ChatRequest, ContentBlock, Effort, Message, Role, StopReason, Usage,
-};
+use crate::types::{AssistantMessage, ChatRequest, ContentBlock, Message, Role, StopReason, Usage};
 
 /// Anthropic accepts at most 4 `cache_control` breakpoints per request. The
 /// stable system prompt always claims one when present, leaving the rest
@@ -138,15 +136,26 @@ impl AnthropicProvider {
     }
 }
 
-/// `effort_allowed` and `fast_mode` are resolved by the caller (`stream`)
-/// from the in-process capability cache (`models.rs`) before this is
-/// called, so building the body stays a pure function of its inputs.
+/// What the Messages API can pass through: reasoning takes a depth
+/// (`output_config.effort`), and every sampling setting is a field. A
+/// model's own report or a refused request narrows it.
+const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
+    reasoning: vak_control::ReasoningSupport::Graded,
+    temperature: vak_control::Support::Yes,
+    top_p: vak_control::Support::Yes,
+    top_k: vak_control::Support::Yes,
+};
+
+/// `settings` (what the model can honour of the step's) and `fast_mode` are
+/// resolved by the caller (`stream`) from the in-process capability store
+/// (`models.rs`) before this is called, so building the body stays a pure
+/// function of its inputs.
 /// `max_tokens` is required by the Messages API: the request's own budget,
 /// else the model's published maximum (see `send_once`).
 pub fn build_body(
     request: &ChatRequest,
     max_tokens: u64,
-    effort_allowed: bool,
+    settings: vak_control::StepSettings,
     fast_mode: bool,
 ) -> Result<Value, LlmError> {
     let boundary = current_turn_boundary(&request.messages);
@@ -191,8 +200,14 @@ pub fn build_body(
             "cache_control": {"type": "ephemeral"}
         }]);
     }
-    if let Some(t) = request.temperature {
+    if let Some(t) = settings.sampling.temperature {
         body["temperature"] = serde_json::json!(t);
+    }
+    if let Some(p) = settings.sampling.top_p {
+        body["top_p"] = serde_json::json!(p);
+    }
+    if let Some(k) = settings.sampling.top_k {
+        body["top_k"] = serde_json::json!(k);
     }
     if !request.tools.is_empty() {
         let mut tools: Vec<Value> = Vec::with_capacity(request.tools.len() + 1);
@@ -222,20 +237,13 @@ pub fn build_body(
     // models either reject an explicit `{"type":"disabled"}`/`budget_tokens`
     // outright or silently degrade tool-call reliability under it, so this
     // adapter never sends either — `thinking` is simply omitted, which runs
-    // adaptive on every current model. `effort` is the one supported dial,
-    // and `think == Some(false)` (a side-dispatch that wants a fast, cheap
-    // answer) maps onto its lowest level only when the caller has not
-    // already asked for a specific one.
+    // adaptive on every current model. `effort` is the one supported dial;
+    // `stream` turns an asked `Off` into its lowest level and records that.
     if fast_mode {
         body["speed"] = serde_json::json!("fast");
     }
-    if effort_allowed {
-        let effort = request
-            .effort
-            .or_else(|| (request.think == Some(false)).then_some(Effort::Low));
-        if let Some(effort) = effort {
-            body["output_config"] = serde_json::json!({ "effort": effort.as_str() });
-        }
+    if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
+        body["output_config"] = serde_json::json!({ "effort": crate::types::depth_str(depth) });
     }
     Ok(body)
 }
@@ -662,13 +670,26 @@ impl Provider for AnthropicProvider {
             let model = request.model.clone();
             tokio::spawn(async move {
                 if let Ok(caps) = crate::models::anthropic_model_capabilities(&auth, &model).await {
-                    crate::models::record_anthropic_capabilities(&model, caps);
+                    crate::models::record_anthropic_capabilities(
+                        auth.base_url.as_deref().unwrap_or_default(),
+                        &model,
+                        caps,
+                    );
                 }
             });
         }
 
-        let mut effort_allowed =
-            crate::models::effort_allowed(crate::models::ANTHROPIC_WIRE, &request.model);
+        let mut dispatch = crate::models::DispatchSettings::new(
+            &self.config.base_url,
+            REACH,
+            &request.model,
+            request.settings,
+        );
+        // Thinking cannot be switched off on this wire; the lowest effort is
+        // the nearest it can honour, and the receipt says so.
+        if dispatch.settings.reasoning == vak_control::Reasoning::Off {
+            dispatch.settings.reasoning = vak_control::Reasoning::Depth(vak_control::Depth::Low);
+        }
         let mut fast_mode =
             self.config.fast_mode && crate::models::anthropic_fast_mode_allowed(&request.model);
         let mut capacity_identity =
@@ -678,7 +699,7 @@ impl Provider for AnthropicProvider {
             &request.model,
         );
         let mut response = self
-            .send_once(&request, effort_allowed, fast_mode, &cancel)
+            .send_once(&request, dispatch.settings, fast_mode, &cancel)
             .await?;
 
         // One narrow, same-turn retry per failure class (docs/design/68
@@ -688,35 +709,10 @@ impl Provider for AnthropicProvider {
         // feature that failed and resends once; a second failure is final.
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            if status == 400 && effort_allowed {
-                let headers = response.headers().clone();
-                let observation = anthropic_capacity_observation(&headers);
-                let retry_after = retry_after_header(&response);
-                let text = response.text().await.unwrap_or_default();
-                if crate::models::rejects_effort(&text) {
-                    crate::models::mark_effort_unsupported(
-                        crate::models::ANTHROPIC_WIRE,
-                        &request.model,
-                    );
-                    effort_allowed = false;
-                    response = self
-                        .send_once(&request, effort_allowed, fast_mode, &cancel)
-                        .await?;
-                } else {
-                    observe_anthropic_capacity_response(
-                        &capacity_ticket,
-                        &capacity_identity,
-                        &self.config.base_url,
-                        &self.config.api_key,
-                        &request.model,
-                        status,
-                        retry_after,
-                        &headers,
-                        observation,
-                        fast_mode,
-                    );
-                    return Err(map_status_error(status, &text, retry_after));
-                }
+            if status == 400 && dispatch.retry_without_settings() {
+                response = self
+                    .send_once(&request, dispatch.settings, fast_mode, &cancel)
+                    .await?;
             } else if status == 429 && fast_mode {
                 let headers = response.headers().clone();
                 let retry_after = retry_after_header(&response);
@@ -743,7 +739,7 @@ impl Provider for AnthropicProvider {
                     &request.model,
                 );
                 response = self
-                    .send_once(&request, effort_allowed, fast_mode, &cancel)
+                    .send_once(&request, dispatch.settings, fast_mode, &cancel)
                     .await?;
             }
         }
@@ -787,6 +783,7 @@ impl Provider for AnthropicProvider {
         let mut byte_stream = response.bytes_stream();
         let mut decoder = SseDecoder::new();
         let mut acc = Accumulator::new(&model);
+        acc.message.applied = Some(dispatch.accepted());
 
         tokio::spawn(async move {
             drive_stream(&mut byte_stream, &mut decoder, &mut acc, sink, cancel).await;
@@ -800,7 +797,7 @@ impl AnthropicProvider {
     async fn send_once(
         &self,
         request: &ChatRequest,
-        effort_allowed: bool,
+        settings: vak_control::StepSettings,
         fast_mode: bool,
         cancel: &CancellationToken,
     ) -> Result<reqwest::Response, LlmError> {
@@ -825,7 +822,7 @@ impl AnthropicProvider {
                     })?
             }
         };
-        let body = build_body(request, max_tokens, effort_allowed, fast_mode)?;
+        let body = build_body(request, max_tokens, settings, fast_mode)?;
         let mut req = self
             .http
             .post(&url)
@@ -1037,7 +1034,7 @@ mod build_body_tests {
         let mut req = ChatRequest::new("claude-sonnet-4-5");
         req.system = Some("be helpful".into());
         req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, Default::default(), false).unwrap();
         assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
         assert!(body["messages"][0].get("cache_control").is_none());
     }
@@ -1057,7 +1054,7 @@ mod build_body_tests {
                 after_message: Some(1),
             }],
         });
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, Default::default(), false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         assert_eq!(msgs[1]["content"][0]["cache_control"]["type"], "ephemeral");
         assert!(msgs[0].get("cache_control").is_none());
@@ -1079,7 +1076,7 @@ mod build_body_tests {
                 })
                 .collect(),
         });
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, Default::default(), false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         let cached: Vec<usize> = (0..6)
             .filter(|&i| msgs[i]["content"][0].get("cache_control").is_some())
@@ -1098,7 +1095,7 @@ mod build_body_tests {
             Message::user_text("second, a fresh directive"),
             message_with_thinking("second answer"),
         ];
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, Default::default(), false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         // Turn 1 (indices 0-1) is closed: thinking must not survive.
         assert!(
@@ -1139,7 +1136,7 @@ mod build_body_tests {
                 content: vec![ContentBlock::tool_result("t1", "result")],
             },
         ];
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, Default::default(), false).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         // The whole exchange is one turn (the tool-result message is not a
         // fresh directive), so thinking in message 1 must still be present.
@@ -1160,7 +1157,7 @@ mod build_body_tests {
             ToolDefinition::new("core_tool", "always visible", serde_json::json!({})),
             ToolDefinition::new("rare_tool", "rarely needed", serde_json::json!({})).deferred(),
         ];
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, Default::default(), false).unwrap();
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools[0]["type"], "tool_search_tool_regex_20251119");
         let core = tools.iter().find(|t| t["name"] == "core_tool").unwrap();
@@ -1183,7 +1180,7 @@ mod build_body_tests {
             "always visible",
             serde_json::json!({}),
         )];
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, Default::default(), false).unwrap();
         let tools = body["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "core_tool");
@@ -1202,7 +1199,7 @@ mod build_body_tests {
             kind: "server_tool_use".into(),
             raw: raw.clone(),
         }])];
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, Default::default(), false).unwrap();
         let sent = &body["messages"][0]["content"][0];
         assert_eq!(sent, &raw, "a provider block must round-trip unchanged");
         assert_ne!(sent["type"], "provider");
@@ -1252,69 +1249,54 @@ mod build_body_tests {
         assert_eq!(raw["type"], "server_tool_use");
     }
 
+    fn depth(depth: vak_control::Depth) -> vak_control::StepSettings {
+        vak_control::StepSettings {
+            reasoning: vak_control::Reasoning::Depth(depth),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn explicit_effort_is_rendered_under_output_config() {
+    fn a_depth_is_rendered_under_output_config() {
         let mut req = ChatRequest::new("claude-opus-5");
         req.messages = vec![Message::user_text("hi")];
-        req.effort = Some(Effort::XHigh);
-        let body = build_body(&req, 8192, true, false).unwrap();
+        let body = build_body(&req, 8192, depth(vak_control::Depth::XHigh), false).unwrap();
         assert_eq!(body["output_config"]["effort"], "xhigh");
+        let plain = build_body(&req, 8192, Default::default(), false).unwrap();
+        assert!(plain.get("output_config").is_none());
     }
 
     #[test]
-    fn think_false_falls_back_to_low_effort_when_effort_is_unset() {
-        let mut req = ChatRequest::new("claude-haiku-4-5");
-        req.messages = vec![Message::user_text("classify this")];
-        req.think = Some(false);
-        let body = build_body(&req, 8192, true, false).unwrap();
-        assert_eq!(body["output_config"]["effort"], "low");
-    }
-
-    #[test]
-    fn explicit_effort_wins_over_the_think_false_fallback() {
+    fn sampling_settings_are_fields() {
         let mut req = ChatRequest::new("claude-opus-5");
         req.messages = vec![Message::user_text("hi")];
-        req.think = Some(false);
-        req.effort = Some(Effort::Max);
-        let body = build_body(&req, 8192, true, false).unwrap();
-        assert_eq!(body["output_config"]["effort"], "max");
-    }
-
-    #[test]
-    fn no_output_config_when_neither_effort_nor_think_false_is_set() {
-        let mut req = ChatRequest::new("claude-sonnet-5");
-        req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&req, 8192, true, false).unwrap();
-        assert!(body.get("output_config").is_none());
-    }
-
-    #[test]
-    fn effort_is_withheld_when_not_allowed_even_if_requested() {
-        let mut req = ChatRequest::new("claude-haiku-4-5");
-        req.messages = vec![Message::user_text("hi")];
-        req.effort = Some(Effort::High);
-        let body = build_body(&req, 8192, false, false).unwrap();
-        assert!(body.get("output_config").is_none());
+        let settings = vak_control::StepSettings {
+            sampling: vak_control::Sampling {
+                temperature: Some(0.5),
+                top_p: Some(0.9),
+                top_k: Some(40),
+            },
+            ..Default::default()
+        };
+        let body = build_body(&req, 8192, settings, false).unwrap();
+        assert_eq!(body["temperature"], 0.5);
+        assert_eq!(body["top_k"], 40);
     }
 
     #[test]
     fn the_adapter_never_sends_a_thinking_field() {
         // docs/design/68 §11: current models either 400 on an explicit
         // `{"type":"disabled"}`/`budget_tokens` or silently degrade under
-        // it. This build must never construct either shape, whatever the
-        // effort/think inputs are.
-        for (effort, think) in [
-            (None, None),
-            (None, Some(false)),
-            (Some(Effort::Low), None),
-            (Some(Effort::Max), Some(false)),
+        // it. This build must never construct either shape.
+        for settings in [
+            vak_control::StepSettings::default(),
+            depth(vak_control::Depth::Low),
+            depth(vak_control::Depth::Max),
         ] {
             let mut req = ChatRequest::new("claude-opus-5");
             req.messages = vec![Message::user_text("hi")];
-            req.effort = effort;
-            req.think = think;
-            let body = build_body(&req, 8192, true, false).unwrap();
-            assert!(body.get("thinking").is_none(), "{effort:?}/{think:?}");
+            let body = build_body(&req, 8192, settings, false).unwrap();
+            assert!(body.get("thinking").is_none(), "{settings:?}");
         }
     }
 
@@ -1322,19 +1304,9 @@ mod build_body_tests {
     fn fast_mode_sets_the_speed_field_only_when_enabled() {
         let mut req = ChatRequest::new("claude-opus-5");
         req.messages = vec![Message::user_text("hi")];
-        let on = build_body(&req, 8192, true, true).unwrap();
+        let on = build_body(&req, 8192, Default::default(), true).unwrap();
         assert_eq!(on["speed"], "fast");
-        let off = build_body(&req, 8192, true, false).unwrap();
+        let off = build_body(&req, 8192, Default::default(), false).unwrap();
         assert!(off.get("speed").is_none());
-    }
-
-    #[test]
-    fn rejects_effort_detects_the_parameter_by_name() {
-        use crate::models::rejects_effort;
-        assert!(rejects_effort(
-            "output_config.effort: extra fields not permitted"
-        ));
-        assert!(rejects_effort("Unknown parameter: 'effort'"));
-        assert!(!rejects_effort("model does not exist"));
     }
 }

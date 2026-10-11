@@ -28,6 +28,7 @@ fn write_call(id: &str, path: &str, content: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -42,6 +43,7 @@ fn text(t: &str) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

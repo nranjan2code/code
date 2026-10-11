@@ -58,6 +58,7 @@ fn text(t: &str) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

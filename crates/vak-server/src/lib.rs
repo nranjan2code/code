@@ -990,6 +990,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/runs", get(runs_list))
         .route("/runs/{id}", get(run_detail))
         .route("/runs/{id}/spans", get(telemetry::run_spans))
+        .route("/runs/{id}/decisions", get(run_decisions))
         .route("/telemetry/services", get(telemetry::list_services))
         .route("/telemetry/logs", get(telemetry::logs))
         .route("/nodes/{id}", get(catalog_api::node))
@@ -7662,6 +7663,39 @@ async fn run_detail(
         )
             .into_response(),
     }
+}
+
+/// The decisions made in a run's turn, in order (docs/design/88 §6): read
+/// from each conversation the run wrote, matched by the turn its trace
+/// names.
+async fn run_decisions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<TurnDecision>>, StatusCode> {
+    let run = vak_session::ids::RunId::parse(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let record = state
+        .core
+        .runs()
+        .get(run)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let Some(turn) = record.trace.as_ref().and_then(|trace| trace.turn.as_ref()) else {
+        return Ok(Json(Vec::new()));
+    };
+    let turn = turn.to_string();
+    let turn = turn.strip_prefix("trn_").unwrap_or(&turn).to_string();
+    let mut decisions = Vec::new();
+    for session in &record.sessions {
+        let Ok(Json(rows)) = session_decisions(State(state.clone()), Path(session.clone())).await
+        else {
+            continue;
+        };
+        decisions.extend(
+            rows.into_iter()
+                .filter(|row| row.turn.as_deref() == Some(&turn)),
+        );
+    }
+    Ok(Json(decisions))
 }
 
 /// Typed run-graph snapshot (delta+snapshot invariant 4): projection of
@@ -22671,6 +22705,7 @@ mod sandbox_promotion_tests {
             usage: Usage::default(),
             model: "test-model".into(),
             response_id: None,
+            applied: None,
         }
     }
 
@@ -26737,6 +26772,7 @@ mod scheduler_state_tests {
                 usage: vak_llm::types::Usage::default(),
                 model: "answers".into(),
                 response_id: None,
+                applied: None,
             };
             let (mut sink, rx) = vak_llm::stream::channel(8);
             sink.push(vak_llm::stream::StreamEvent::Start {

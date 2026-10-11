@@ -74,6 +74,7 @@ fn message(content: ContentBlock, stop_reason: StopReason) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

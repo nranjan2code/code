@@ -63,6 +63,7 @@ impl Provider for SlowNoPrefillMs {
             },
             model: "test-model".into(),
             response_id: None,
+            applied: None,
         };
         sink.push(stream::StreamEvent::Start {
             partial: message.clone(),

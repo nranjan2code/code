@@ -7174,6 +7174,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "uuid",
+ "vak-control",
  "vak-intent",
  "vak-llm",
  "vak-session",
@@ -7216,6 +7217,7 @@ dependencies = [
  "vak-commit",
  "vak-config",
  "vak-context",
+ "vak-control",
  "vak-delivery",
  "vak-flow",
  "vak-hooks",
@@ -7322,6 +7324,7 @@ dependencies = [
  "uuid",
  "vak-agent",
  "vak-config",
+ "vak-control",
  "vak-intent",
  "vak-llm",
  "vak-permission",
@@ -7400,6 +7403,7 @@ dependencies = [
  "tokio-tungstenite 0.24.0",
  "tokio-util",
  "tracing",
+ "vak-control",
 ]
 
 [[package]]

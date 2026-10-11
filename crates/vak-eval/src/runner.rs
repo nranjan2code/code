@@ -52,6 +52,7 @@ impl ScriptedTurn {
                 usage,
                 model: "eval-model".into(),
                 response_id: None,
+                applied: None,
             },
             ScriptedTurn::ToolCalls(calls) => AssistantMessage {
                 content: calls
@@ -66,6 +67,7 @@ impl ScriptedTurn {
                 usage,
                 model: "eval-model".into(),
                 response_id: None,
+                applied: None,
             },
         }
     }

@@ -43,6 +43,7 @@ impl Provider for Recording {
                 usage: Usage::default(),
                 model: "test-model".into(),
                 response_id: None,
+                applied: None,
             },
         });
         sink.close_message(AssistantMessage {
@@ -51,6 +52,7 @@ impl Provider for Recording {
             usage: Usage::default(),
             model: "test-model".into(),
             response_id: None,
+            applied: None,
         })
         .await;
         Ok(rx)

@@ -6357,7 +6357,7 @@ impl Core {
         // A strict-JSON answer, not a deliberation: measured live on a
         // thinking model, the default spent the whole budget in its thinking
         // channel and returned nothing.
-        request.think = Some(false);
+        request.settings.reasoning = vak_control::Reasoning::Off;
 
         // --- admission ----------------------------------------------------------
         use vak_agent::SpendGate as _;
@@ -6442,13 +6442,10 @@ impl Core {
         let answer = match outcome {
             Ok(Ok(message)) => {
                 admission.settle(&message.usage);
-                receipt.record(
+                receipt.record_response(
                     vak_llm::AttemptReason::Initial,
-                    vak_llm::FailureDomain::Unknown,
-                    vak_llm::Settlement::Ok,
                     started.elapsed().as_millis() as u64,
-                    Some(message.usage.clone()),
-                    None,
+                    &message,
                 );
                 gate.record_settled_with_latency(
                     &provider_name,
@@ -7100,7 +7097,7 @@ impl Core {
             .posture
             .demand
             .direct_reply
-            .then_some(vak_llm::Effort::Low);
+            .then_some(vak_control::Depth::Low);
         let mut turn_plan =
             self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand));
         // The engagement's modality constraint: a leg that cannot see is not
@@ -8522,13 +8519,10 @@ impl Core {
         let summary = match outcome {
             Ok(msg) => {
                 admission.settle(&msg.usage);
-                receipt.record(
+                receipt.record_response(
                     vak_llm::AttemptReason::Initial,
-                    vak_llm::FailureDomain::Unknown,
-                    vak_llm::Settlement::Ok,
                     started.elapsed().as_millis() as u64,
-                    Some(msg.usage.clone()),
-                    None,
+                    &msg,
                 );
                 msg.text_content()
             }
@@ -11821,6 +11815,7 @@ mod capacity_probe_tests {
                 },
                 model: request.model,
                 response_id: None,
+                applied: None,
             })
             .await;
             Ok(rx)
@@ -11858,6 +11853,7 @@ mod capacity_probe_tests {
                 },
                 model: "fake-ollama-model".into(),
                 response_id: None,
+                applied: None,
             })
             .await;
             Ok(rx)
@@ -12146,6 +12142,7 @@ mod capacity_probe_tests {
                 },
                 model: "fake-ollama-model".into(),
                 response_id: None,
+                applied: None,
             })
             .await;
             Ok(rx)
@@ -12253,6 +12250,7 @@ mod capacity_probe_tests {
                 },
                 model: "fake-ollama-model".into(),
                 response_id: None,
+                applied: None,
             })
             .await;
             Ok(rx)

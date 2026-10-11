@@ -70,6 +70,15 @@ seven live run ids, and what is still open.
   `GET /sessions/{id}/decisions`; seen live on the local route (admission,
   frames, call verdict, accepted answer, ending read back from the ledger).
 
+- C2 done 2026-10-11: `ChatRequest.settings`, adapter reach plus
+  discovered and learned capabilities (`models::DispatchSettings`),
+  applied settings and `reasoned` per attempt, `WorkReceipt.asked`; admin
+  Run detail "How it went" (`/runs/{id}/decisions`); doctor fact. Seen live.
+- Found live (to fix, all wires): the first step of every new turn
+  re-prefills about 6k message tokens (17–20 s on the dev route) while later
+  steps of the turn reuse the cache (0.4 s): the message part of the request
+  changes shape at each turn boundary.
+
 ## Order of work
 
 1. **Doc 88, stages C0 to C7**, in order. Each stage: code, tests, docs,

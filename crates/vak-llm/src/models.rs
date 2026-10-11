@@ -401,6 +401,9 @@ pub async fn model_context(
             match send_admitted(provider_adapter.as_ref(), provider, req).await {
                 Ok(res) if res.status().is_success() => {
                     let json = read_json(res).await?;
+                    if let Some(caps) = ollama_capabilities(&json) {
+                        record_capabilities(root, model, caps);
+                    }
                     return Ok(context_from_json("ollama", &json));
                 }
                 _ => return Ok(None),
@@ -451,6 +454,21 @@ pub async fn model_context(
     }
     .map_err(|e| LlmError::Network(e.to_string()))?;
     Ok(context_from_json(provider, &read_json(response).await?))
+}
+
+/// What Ollama's `/api/show` reports a model can do: its `capabilities`
+/// list names `thinking` when the model's reasoning can be switched.
+fn ollama_capabilities(json: &serde_json::Value) -> Option<vak_control::ModelCapabilities> {
+    let listed = json.get("capabilities")?.as_array()?;
+    let thinks = listed.iter().any(|c| c.as_str() == Some("thinking"));
+    Some(vak_control::ModelCapabilities {
+        reasoning: if thinks {
+            vak_control::ReasoningSupport::Toggle
+        } else {
+            vak_control::ReasoningSupport::Fixed
+        },
+        ..Default::default()
+    })
 }
 
 /// Anthropic per-model capability flags this build conditions behaviour on
@@ -514,77 +532,114 @@ pub async fn anthropic_model_capabilities(
     })
 }
 
-/// In-process memory of what this run has learned about each Anthropic
-/// model's `effort`/fast-mode support — never persisted, never shared
-/// across processes, and only ever narrows what the adapter attempts next
-/// (docs/design/68-context-engine.md §11). Two different policies live
-/// behind the same shape because the two features start from opposite
-/// priors: `effort` is GA on every current-generation model, so a model not
-/// yet seen defaults to "try it" and a live 400 naming the parameter is
-/// what teaches the cache `false`; fast mode is a narrow, opt-in research
-/// preview, so a model not yet seen defaults to "do not try it" until an
-/// explicit capability fetch has said otherwise.
+/// In-process memory of what each model on each wire was reported or
+/// shown to honour (docs/design/88-control-plane.md §4), and of each
+/// Anthropic model's fast-mode support. Never persisted; it only narrows
+/// what an adapter sends next, and every dispatch records what it knew in
+/// `AssistantMessage::applied`.
 #[derive(Default)]
-struct AnthropicCapabilityCache {
-    effort: std::collections::HashMap<String, bool>,
+struct CapabilityCache {
+    models: std::collections::HashMap<String, vak_control::ModelCapabilities>,
     fast_mode: std::collections::HashMap<String, bool>,
 }
 
-fn anthropic_capability_cache() -> &'static std::sync::Mutex<AnthropicCapabilityCache> {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<AnthropicCapabilityCache>> =
+fn capability_cache() -> &'static std::sync::Mutex<CapabilityCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<CapabilityCache>> =
         std::sync::OnceLock::new();
-    CACHE.get_or_init(|| std::sync::Mutex::new(AnthropicCapabilityCache::default()))
+    CACHE.get_or_init(|| std::sync::Mutex::new(CapabilityCache::default()))
 }
 
-/// Whether an adapter should send a reasoning-effort setting for `model`
-/// on `wire` (the adapter's endpoint; `anthropic` for the Anthropic one).
-/// Defaults to `true` (unknown models are worth trying) until
-/// [`mark_effort_unsupported`] narrows it.
-pub fn effort_allowed(wire: &str, model: &str) -> bool {
-    anthropic_capability_cache()
+fn capability_key(wire: &str, model: &str) -> String {
+    let wire = wire.trim_end_matches('/');
+    format!("{}\n{model}", wire.strip_suffix("/v1").unwrap_or(wire))
+}
+
+/// What `model` on `wire` (the adapter's endpoint) can honour: `reach`,
+/// what the adapter can pass through at all, narrowed by what the provider
+/// reported and what a refused request showed.
+pub fn capabilities(
+    wire: &str,
+    reach: vak_control::ModelCapabilities,
+    model: &str,
+) -> vak_control::ModelCapabilities {
+    capability_cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .effort
-        .get(&effort_key(wire, model))
-        .copied()
-        .unwrap_or(true)
+        .models
+        .get(&capability_key(wire, model))
+        .map_or(reach, |known| reach.meet(*known))
 }
 
-/// Records that `model` on `wire` rejected a reasoning-effort setting (a
-/// live 400 naming the parameter): every later request in this process
-/// skips sending it.
-pub fn mark_effort_unsupported(wire: &str, model: &str) {
-    anthropic_capability_cache()
+/// Records what was reported or shown about `model` on `wire`, narrowing
+/// what was known.
+pub fn record_capabilities(wire: &str, model: &str, caps: vak_control::ModelCapabilities) {
+    let mut cache = capability_cache()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .effort
-        .insert(effort_key(wire, model), false);
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let entry = cache.models.entry(capability_key(wire, model)).or_default();
+    *entry = entry.meet(caps);
 }
 
-/// The `wire` the Anthropic adapter's effort memory is kept under.
-pub const ANTHROPIC_WIRE: &str = "anthropic";
-
-fn effort_key(wire: &str, model: &str) -> String {
-    format!("{wire}\n{model}")
+/// The settings of one dispatch: what the model can honour of those the
+/// step asked for, sent once more without them when the provider refuses
+/// the request, and learned from when the request without them is taken.
+/// No wording of the refusal is read: the second answer is the evidence.
+pub struct DispatchSettings {
+    wire: String,
+    model: String,
+    capabilities: vak_control::ModelCapabilities,
+    pub settings: vak_control::StepSettings,
+    refused: Option<vak_control::StepSettings>,
 }
 
-/// Provider phrasing that identifies a 400 as caused by the reasoning-effort
-/// setting an adapter sent, distinct from an unrelated validation failure:
-/// each wire's own name for it (`output_config.effort`, `reasoning.effort`,
-/// `reasoning_effort`, `thinkingConfig`). Keyed off the provider's wording,
-/// never a model table.
-pub fn rejects_effort(message: &str) -> bool {
-    let normalized = message.to_ascii_lowercase();
-    ["effort", "output_config", "reasoning", "thinking"]
-        .iter()
-        .any(|name| normalized.contains(name))
+impl DispatchSettings {
+    pub fn new(
+        wire: &str,
+        reach: vak_control::ModelCapabilities,
+        model: &str,
+        asked: vak_control::StepSettings,
+    ) -> Self {
+        let capabilities = capabilities(wire, reach, model);
+        Self {
+            wire: wire.to_string(),
+            model: model.to_string(),
+            capabilities,
+            settings: capabilities.honour(asked),
+            refused: None,
+        }
+    }
+
+    /// After a request the provider refused as invalid: whether to send it
+    /// once more without the optional settings.
+    pub fn retry_without_settings(&mut self) -> bool {
+        if self.refused.is_some() || self.settings == vak_control::StepSettings::default() {
+            return false;
+        }
+        self.refused = Some(self.settings);
+        self.settings = vak_control::StepSettings::default();
+        true
+    }
+
+    /// After a request the provider took: records what a refusal before it
+    /// showed, and returns what this dispatch sent.
+    pub fn accepted(mut self) -> vak_control::Applied {
+        if let Some(sent) = self.refused {
+            let refusing = vak_control::ModelCapabilities::default().refusing(sent);
+            record_capabilities(&self.wire, &self.model, refusing);
+            self.capabilities = self.capabilities.meet(refusing);
+        }
+        vak_control::Applied {
+            settings: self.settings,
+            capabilities: self.capabilities,
+        }
+    }
 }
 
 /// Whether the adapter should attempt `speed: "fast"` for `model`. Defaults
 /// to `false` (an unknown model is never assumed to support a research
 /// preview) until [`record_anthropic_capabilities`] has looked it up.
 pub fn anthropic_fast_mode_allowed(model: &str) -> bool {
-    anthropic_capability_cache()
+    capability_cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .fast_mode
@@ -596,7 +651,7 @@ pub fn anthropic_fast_mode_allowed(model: &str) -> bool {
 /// Whether `model`'s fast-mode support has already been learned one way or
 /// the other, so a caller can skip a redundant discovery fetch.
 pub fn anthropic_fast_mode_known(model: &str) -> bool {
-    anthropic_capability_cache()
+    capability_cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .fast_mode
@@ -606,14 +661,24 @@ pub fn anthropic_fast_mode_known(model: &str) -> bool {
 /// Records a freshly discovered capability set
 /// ([`anthropic_model_capabilities`]) so later requests for `model` skip
 /// both the network round trip and the conservative first-attempt default.
-pub fn record_anthropic_capabilities(model: &str, caps: AnthropicCapabilities) {
-    let mut cache = anthropic_capability_cache()
+pub fn record_anthropic_capabilities(wire: &str, model: &str, caps: AnthropicCapabilities) {
+    record_capabilities(
+        wire,
+        model,
+        vak_control::ModelCapabilities {
+            reasoning: if caps.effort {
+                vak_control::ReasoningSupport::Graded
+            } else {
+                vak_control::ReasoningSupport::Fixed
+            },
+            ..Default::default()
+        },
+    );
+    capability_cache()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    cache
-        .effort
-        .insert(effort_key(ANTHROPIC_WIRE, model), caps.effort);
-    cache.fast_mode.insert(model.to_string(), caps.fast_mode);
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .fast_mode
+        .insert(model.to_string(), caps.fast_mode);
 }
 
 /// NVIDIA NIM's hosted, OpenAI-compatible endpoint.
@@ -813,32 +878,30 @@ mod tests {
     // Each test below uses its own unique model id: the capability cache is
     // a process-wide static, and tests in this module run concurrently.
     #[test]
-    fn effort_defaults_to_allowed_for_an_unseen_model() {
-        assert!(effort_allowed(ANTHROPIC_WIRE, "test-model-effort-unseen-1"));
-    }
-
-    #[test]
-    fn marking_effort_unsupported_narrows_it_for_that_model_only() {
-        mark_effort_unsupported(ANTHROPIC_WIRE, "test-model-effort-marked-2");
-        assert!(!effort_allowed(
-            ANTHROPIC_WIRE,
-            "test-model-effort-marked-2"
-        ));
-        assert!(effort_allowed(
-            ANTHROPIC_WIRE,
-            "test-model-effort-sibling-2"
-        ));
-        assert!(
-            effort_allowed("https://other.example/v1", "test-model-effort-marked-2"),
-            "a refusal is remembered for the wire that refused"
+    fn a_refused_setting_is_learned_only_once_the_request_without_it_is_taken() {
+        use vak_control::{Depth, ModelCapabilities, Reasoning, ReasoningSupport, StepSettings};
+        let asked = StepSettings {
+            reasoning: Reasoning::Depth(Depth::High),
+            ..Default::default()
+        };
+        let reach = ModelCapabilities {
+            reasoning: ReasoningSupport::Graded,
+            ..Default::default()
+        };
+        let mut dispatch = DispatchSettings::new("wire-a", reach, "test-model-refused-1", asked);
+        assert_eq!(dispatch.settings, asked);
+        assert!(dispatch.retry_without_settings());
+        assert!(!dispatch.retry_without_settings(), "sent again once only");
+        assert_eq!(dispatch.settings, StepSettings::default());
+        let applied = dispatch.accepted();
+        assert_eq!(applied.capabilities.reasoning, ReasoningSupport::Fixed);
+        let next = DispatchSettings::new("wire-a", reach, "test-model-refused-1", asked);
+        assert_eq!(next.settings.reasoning, Reasoning::Default);
+        let other_wire = DispatchSettings::new("wire-b", reach, "test-model-refused-1", asked);
+        assert_eq!(
+            other_wire.settings, asked,
+            "learned for the wire that refused"
         );
-        assert!(rejects_effort("Unsupported parameter: 'reasoning.effort'"));
-        assert!(rejects_effort(
-            "Thinking level is not supported for this model"
-        ));
-        assert!(!rejects_effort(
-            "messages: at least one message is required"
-        ));
     }
 
     #[test]
@@ -850,6 +913,7 @@ mod tests {
     #[test]
     fn recording_discovered_capabilities_makes_fast_mode_known_and_gates_on_the_flag() {
         record_anthropic_capabilities(
+            "wire-c",
             "test-model-fast-supported-4",
             AnthropicCapabilities {
                 effort: true,
@@ -860,6 +924,7 @@ mod tests {
         assert!(anthropic_fast_mode_allowed("test-model-fast-supported-4"));
 
         record_anthropic_capabilities(
+            "wire-c",
             "test-model-fast-unsupported-5",
             AnthropicCapabilities {
                 effort: true,

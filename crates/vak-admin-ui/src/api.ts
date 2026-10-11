@@ -1,4 +1,5 @@
 import type {
+  Decision,
   DataRulesPreview,
   DataIntegrity,
   ConversationLifecycle,
@@ -259,6 +260,8 @@ export const api = {
   },
   run: (id: string): Promise<RunRecord> =>
     fetch(`/runs/${encodeURIComponent(id)}`).then((r) => handle(r)),
+  runDecisions: (id: string): Promise<Decision[]> =>
+    fetch(`/runs/${encodeURIComponent(id)}/decisions`).then((r) => handle(r)),
   runSpans: (id: string): Promise<{ spans: TelemetrySpan[] }> =>
     fetch(`/runs/${encodeURIComponent(id)}/spans`).then((r) => handle(r)),
   telemetryServices: (): Promise<{ services: string[] }> =>

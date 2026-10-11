@@ -67,6 +67,7 @@ fn text_msg(t: &str) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -81,6 +82,7 @@ fn task_call(id: &str, prompt: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

@@ -55,6 +55,7 @@ impl Provider for Scripted {
                     usage: Usage::default(),
                     model: "test-model".into(),
                     response_id: None,
+                    applied: None,
                 };
                 sink.push(stream::StreamEvent::Start {
                     partial: msg.clone(),
@@ -380,6 +381,7 @@ fn text_msg_for_hung(t: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "m".into(),
         response_id: None,
+        applied: None,
     }
 }
 

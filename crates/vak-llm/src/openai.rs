@@ -226,7 +226,21 @@ impl OpenAiCompletionsProvider {
     }
 }
 
-pub fn build_body(config: &OpenAiConfig, request: &ChatRequest) -> Result<Value, LlmError> {
+/// What chat completions can pass through: a reasoning depth
+/// (`reasoning_effort`, three levels), temperature and top-p. There is no
+/// top-k, and no way to switch reasoning off.
+const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
+    reasoning: vak_control::ReasoningSupport::Graded,
+    temperature: vak_control::Support::Yes,
+    top_p: vak_control::Support::Yes,
+    top_k: vak_control::Support::No,
+};
+
+pub fn build_body(
+    config: &OpenAiConfig,
+    request: &ChatRequest,
+    settings: vak_control::StepSettings,
+) -> Result<Value, LlmError> {
     // Chat Completions carries no reasoning-item channel, so `Thinking`
     // blocks are dropped unconditionally by `append_message` below — there
     // is no turn boundary to compute here (contrast Anthropic/Google, which
@@ -270,12 +284,19 @@ pub fn build_body(config: &OpenAiConfig, request: &ChatRequest) -> Result<Value,
             .collect();
         body["tools"] = Value::Array(tools);
     }
-    if let Some(effort) = request.effort {
+    if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
+        let level = crate::types::three_level(depth);
         if config.openrouter {
-            body["reasoning"] = serde_json::json!({ "effort": effort.three_level() });
+            body["reasoning"] = serde_json::json!({ "effort": level });
         } else {
-            body["reasoning_effort"] = serde_json::json!(effort.three_level());
+            body["reasoning_effort"] = serde_json::json!(level);
         }
+    }
+    if let Some(t) = settings.sampling.temperature {
+        body["temperature"] = serde_json::json!(t);
+    }
+    if let Some(p) = settings.sampling.top_p {
+        body["top_p"] = serde_json::json!(p);
     }
     Ok(body)
 }
@@ -624,16 +645,22 @@ impl Provider for OpenAiCompletionsProvider {
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
         );
-        let mut request = request;
-        if request.effort.is_some()
-            && !crate::models::effort_allowed(&self.config.base_url, &request.model)
-        {
-            request.effort = None;
+        let mut dispatch = crate::models::DispatchSettings::new(
+            &self.config.base_url,
+            REACH,
+            &request.model,
+            request.settings,
+        );
+        // Reasoning cannot be switched off on this wire: the lowest depth is
+        // the nearest it can honour, and the receipt says so.
+        if dispatch.settings.reasoning == vak_control::Reasoning::Off {
+            dispatch.settings.reasoning = vak_control::Reasoning::Depth(vak_control::Depth::Low);
         }
-        // A model that refuses the reasoning setting is asked once more
-        // without it and remembered (docs/design/01-llm.md).
+        // A request refused as invalid is sent once more without its optional
+        // settings; if that is taken, the refusal is remembered
+        // (docs/design/88-control-plane.md §4).
         let response = loop {
-            let body = build_body(&self.config, &request)?;
+            let body = build_body(&self.config, &request, dispatch.settings)?;
             let send_fut = self
                 .http
                 .post(&url)
@@ -655,12 +682,7 @@ impl Provider for OpenAiCompletionsProvider {
             let project_observation = openai_project_capacity_observation(response.headers());
             let retry_after = retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
-            if status.as_u16() == 400
-                && request.effort.is_some()
-                && crate::models::rejects_effort(&text)
-            {
-                crate::models::mark_effort_unsupported(&self.config.base_url, &request.model);
-                request.effort = None;
+            if status.as_u16() == 400 && dispatch.retry_without_settings() {
                 continue;
             }
             capacity_ticket.observe_model(observation);
@@ -676,6 +698,7 @@ impl Provider for OpenAiCompletionsProvider {
         let mut byte_stream = response.bytes_stream();
         let mut decoder = SseDecoder::new();
         let mut acc = Accumulator::new(&model);
+        acc.message.applied = Some(dispatch.accepted());
 
         tokio::spawn(async move {
             loop {
@@ -907,17 +930,17 @@ mod build_body_tests {
             cache_key: false,
             openrouter: false,
         };
-        let body = build_body(&config, &req).unwrap();
+        let body = build_body(&config, &req, req.settings).unwrap();
         assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("reasoning").is_none());
-        req.effort = Some(crate::types::Effort::Low);
-        let body = build_body(&config, &req).unwrap();
+        req.settings.reasoning = vak_control::Reasoning::Depth(vak_control::Depth::Low);
+        let body = build_body(&config, &req, req.settings).unwrap();
         assert_eq!(body["reasoning_effort"], "low");
         let routed = OpenAiConfig {
             openrouter: true,
             ..config
         };
-        let body = build_body(&routed, &req).unwrap();
+        let body = build_body(&routed, &req, req.settings).unwrap();
         assert_eq!(body["reasoning"]["effort"], "low");
         assert!(body.get("reasoning_effort").is_none());
     }
@@ -936,7 +959,7 @@ mod build_body_tests {
     #[test]
     fn cache_key_off_sends_neither_hint() {
         let config = OpenAiConfig::default();
-        let body = build_body(&config, &req_with_cache()).unwrap();
+        let body = build_body(&config, &req_with_cache(), Default::default()).unwrap();
         assert!(body.get("prompt_cache_key").is_none());
         assert!(body.get("session_id").is_none());
     }
@@ -947,7 +970,7 @@ mod build_body_tests {
             cache_key: true,
             ..Default::default()
         };
-        let body = build_body(&config, &req_with_cache()).unwrap();
+        let body = build_body(&config, &req_with_cache(), Default::default()).unwrap();
         assert_eq!(body["prompt_cache_key"], "sess-1");
         assert!(body.get("session_id").is_none());
     }
@@ -1016,7 +1039,7 @@ mod build_body_tests {
             openrouter: true,
             ..Default::default()
         };
-        let body = build_body(&config, &req_with_cache()).unwrap();
+        let body = build_body(&config, &req_with_cache(), Default::default()).unwrap();
         assert_eq!(body["prompt_cache_key"], "sess-1");
         assert_eq!(body["session_id"], "sess-1");
     }
@@ -1031,7 +1054,7 @@ mod build_body_tests {
         };
         let mut req = ChatRequest::new("gpt-5.6");
         req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&config, &req).unwrap();
+        let body = build_body(&config, &req, req.settings).unwrap();
         assert!(body.get("prompt_cache_key").is_none());
         assert!(body.get("session_id").is_none());
     }

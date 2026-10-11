@@ -63,6 +63,7 @@ fn message(content: Vec<ContentBlock>, stop_reason: StopReason) -> AssistantMess
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

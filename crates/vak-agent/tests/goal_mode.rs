@@ -34,6 +34,7 @@ fn text_msg(t: &str) -> AssistantMessage {
         },
         model: "judge-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -48,6 +49,7 @@ fn tool_msg() -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

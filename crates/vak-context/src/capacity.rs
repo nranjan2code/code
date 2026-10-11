@@ -1266,6 +1266,7 @@ mod tests {
             usage: vak_llm::Usage::default(),
             model: "m".into(),
             response_id: None,
+            applied: None,
         };
         assert!(followed(&with_ack));
 
@@ -1275,6 +1276,7 @@ mod tests {
             usage: vak_llm::Usage::default(),
             model: "m".into(),
             response_id: None,
+            applied: None,
         };
         assert!(!followed(&prose_only));
     }

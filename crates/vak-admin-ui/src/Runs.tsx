@@ -8,7 +8,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
 import { navigate } from "./store";
-import type { RunRecord, RunStatus } from "./types";
+import type { Decision, RunRecord, RunStatus } from "./types";
 import { SessionTrail } from "./OperationsCenter";
 import { RunEffects } from "./Effects";
 import { RunWaterfall } from "./Diagnostics";
@@ -150,6 +150,7 @@ function RunDetail(props: { id: string }) {
                 <button class="ghost small" onClick={() => navigate(`#/diagnostics?trace=${encodeURIComponent(record().id)}`)}>This run's log lines</button>
               </details>
             </section>
+            <RunDecisions run={record().id} />
             <RunWaterfall run={record().id} />
             <Show when={(record().sessions ?? []).length > 0} fallback={<section class="panel"><p class="dim">This run wrote no conversation.</p></section>}>
               <For each={record().sessions ?? []}>{(session) => <SessionTrail sessionId={session} />}</For>
@@ -158,6 +159,70 @@ function RunDetail(props: { id: string }) {
           </>
         )}
       </Show>
+    </Show>
+  );
+}
+
+const REFUSED_BY: Record<string, string> = {
+  schema: "its details did not fit the tool",
+  tool: "the tool turned it down",
+  revoked: "the tool was taken away during the turn",
+  repeated: "the same call was made again",
+  policy: "a permission rule",
+  person: "you declined it",
+  unattended: "nobody was there to approve it",
+};
+
+const ENDED: Record<string, string> = {
+  answered: "Ended with an answer",
+  aborted: "Stopped",
+  failed: "Ended with an error",
+  step_limit: "Ended at the step limit",
+};
+
+function words(text: string): string {
+  return text.replace(/_/g, " ");
+}
+
+/// One decision in plain words; the evidence ids sit in technical details.
+function decisionWords(decision: Decision): string {
+  const choice = decision.choice;
+  switch (choice.point) {
+    case "admit_turn":
+      return `Started on ${choice.model}, allowed up to ${choice.max_steps} steps`;
+    case "frame_step": {
+      const reasoning = choice.asked.reasoning.mode === "depth" ? `${choice.asked.reasoning.depth} reasoning` : `reasoning ${words(choice.asked.reasoning.mode)}`;
+      return `Step ${choice.step + 1} (${words(choice.asked.purpose)}): ${reasoning}, ${choice.asked.tools.length} tools offered`;
+    }
+    case "accept_call":
+      return choice.verdict === "accepted" ? "A tool call was allowed" : `A tool call was refused: ${REFUSED_BY[choice.by ?? ""] ?? words(choice.by ?? "")}`;
+    case "accept_answer":
+      return choice.verdict === "accepted" ? "The answer was accepted" : `The answer was held back: ${words(choice.by ?? "")}`;
+    case "correct":
+      return `The model was asked to correct its work (${words(choice.cause)})`;
+    case "end_turn":
+      return ENDED[choice.end] ?? words(choice.end);
+  }
+}
+
+/// How the run's turn went, decision by decision (docs/design/88 §6).
+function RunDecisions(props: { run: string }) {
+  const [decisions] = createResource(() => props.run, (id) => api.runDecisions(id));
+  return (
+    <Show when={(decisions() ?? []).length > 0}>
+      <section class="panel">
+        <span class="eyebrow">How it went</span>
+        <ol class="decision-list">
+          <For each={decisions()}>
+            {(decision) => (
+              <li>
+                {decisionWords(decision)}
+                <Show when={decision.decider !== "runtime"}><span class="dim"> · decided by {decision.decider === "person" ? "you" : "the provider"}</span></Show>
+              </li>
+            )}
+          </For>
+        </ol>
+      </section>
     </Show>
   );
 }

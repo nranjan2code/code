@@ -65,6 +65,7 @@ fn answer(text: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

@@ -48,6 +48,7 @@ impl Provider for Counting {
             usage: Usage::default(),
             model: "counted-model".into(),
             response_id: None,
+            applied: None,
         };
         sink.push(stream::StreamEvent::Start {
             partial: done.clone(),
@@ -97,6 +98,7 @@ impl Provider for GatedProvider {
             usage: Usage::default(),
             model: "gated-model".into(),
             response_id: None,
+            applied: None,
         };
         sink.push(stream::StreamEvent::Start {
             partial: done.clone(),

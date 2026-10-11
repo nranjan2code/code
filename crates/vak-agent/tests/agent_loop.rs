@@ -78,6 +78,7 @@ fn assistant_text(text: &str) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -92,6 +93,7 @@ fn tool_call_msg(id: &str, name: &str, input: serde_json::Value) -> AssistantMes
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -707,6 +709,7 @@ async fn parallel_tools_preserve_source_order() {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     };
     let h = harness(
         vec![

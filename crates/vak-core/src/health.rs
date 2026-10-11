@@ -475,6 +475,54 @@ pub fn agent_roster_check(core: &Core) -> HealthCheck {
 /// Collect everything `/doctor` reports. `session` optionally adds the
 /// frozen-ladder section for the active session. Never panics; every
 /// failure mode lands as a failed check or an empty fact.
+/// What the session's latest dispatch asked of the model, what the adapter
+/// sent, and what it knew the model could honour
+/// (docs/design/88-control-plane.md §4).
+fn model_settings_fact(session: &SessionLog) -> Option<String> {
+    use vak_control::{Reasoning, ReasoningSupport, Support};
+    let receipts = session.receipts();
+    let (receipt, applied) = receipts.iter().rev().find_map(|receipt| {
+        receipt
+            .attempts
+            .iter()
+            .rev()
+            .find_map(|attempt| attempt.applied.map(|applied| (*receipt, applied)))
+    })?;
+    let reasoning = |r: Reasoning| match r {
+        Reasoning::Default => "the model's default".to_string(),
+        Reasoning::Off => "off".to_string(),
+        Reasoning::Depth(depth) => format!("{depth:?}").to_lowercase(),
+    };
+    let support = match applied.capabilities.reasoning {
+        ReasoningSupport::Unknown => "not reported",
+        ReasoningSupport::Fixed => "fixed",
+        ReasoningSupport::Toggle => "on or off",
+        ReasoningSupport::Graded => "graded",
+    };
+    let taken: Vec<&str> = [
+        ("temperature", applied.capabilities.temperature),
+        ("top-p", applied.capabilities.top_p),
+        ("top-k", applied.capabilities.top_k),
+    ]
+    .into_iter()
+    .filter(|(_, s)| *s != Support::No)
+    .map(|(name, _)| name)
+    .collect();
+    Some(format!(
+        "model settings ({}): reasoning asked {}, sent {}; reasoning {support}; sampling takes {}",
+        receipt.model,
+        receipt
+            .asked
+            .map_or("nothing".into(), |asked| reasoning(asked.reasoning)),
+        reasoning(applied.settings.reasoning),
+        if taken.is_empty() {
+            "nothing".into()
+        } else {
+            taken.join(", ")
+        },
+    ))
+}
+
 pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
     let mut checks = Vec::new();
 
@@ -603,6 +651,10 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         core.model_discovery_started(),
         &core.model_discovery_status(),
     ));
+
+    if let Some(fact) = session.and_then(model_settings_fact) {
+        facts.push(fact);
+    }
 
     let cap_suffix = core
         .config()

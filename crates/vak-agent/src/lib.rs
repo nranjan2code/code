@@ -398,7 +398,7 @@ pub struct AgentConfig {
     /// `None` leaves the provider's default. `Core` sets it only to lower
     /// it, for a turn read as a direct reply (invariant 32); an adapter
     /// with no such dial, and Ollama always, ignores it.
-    pub effort: Option<vak_llm::Effort>,
+    pub effort: Option<vak_control::Depth>,
     /// What satisfies the freshness check: any call that observed current
     /// state this run. See `ObservationCheck`. Absent, only retrieval counts.
     pub observation_check: Option<ObservationCheck>,
@@ -1543,8 +1543,16 @@ impl Agent {
     }
 
     async fn record_decision(&self, decision: vak_control::Decision) {
-        if let Err(error) = self.session.lock().await.append_decision(decision) {
-            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a decision was not recorded");
+        self.record_decisions([decision]).await;
+    }
+
+    /// Records decisions in order under one hold of the session.
+    async fn record_decisions(&self, decisions: impl IntoIterator<Item = vak_control::Decision>) {
+        let mut session = self.session.lock().await;
+        for decision in decisions {
+            if let Err(error) = session.append_decision(decision) {
+                tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a decision was not recorded");
+            }
         }
     }
 
@@ -1552,35 +1560,20 @@ impl Agent {
     /// step that follows a runtime correction is a repair; every other step
     /// acts.
     async fn record_framing(&self, step: usize, request: &ChatRequest) {
-        use vak_control::{Depth, Reasoning};
         let follows_correction = self
             .session
             .lock()
             .await
             .latest_message_record()
             .is_some_and(|record| record.control_kind().is_some());
-        let reasoning = match (request.think, request.effort) {
-            (Some(false), _) => Reasoning::Off,
-            (_, Some(effort)) => Reasoning::Depth(match effort {
-                vak_llm::Effort::Low => Depth::Low,
-                vak_llm::Effort::Medium => Depth::Medium,
-                vak_llm::Effort::High => Depth::High,
-                vak_llm::Effort::XHigh => Depth::XHigh,
-                vak_llm::Effort::Max => Depth::Max,
-            }),
-            _ => Reasoning::Default,
-        };
         let asked = vak_control::StepContract {
             purpose: if follows_correction {
                 vak_control::Purpose::Repair
             } else {
                 vak_control::Purpose::Act
             },
-            reasoning,
-            sampling: vak_control::Sampling {
-                temperature: request.temperature,
-                ..Default::default()
-            },
+            reasoning: request.settings.reasoning,
+            sampling: request.settings.sampling,
             tools: request.tools.iter().map(|tool| tool.name.clone()).collect(),
             output: vak_control::OutputForm::Free,
         };
@@ -1588,7 +1581,6 @@ impl Agent {
             vak_control::Choice::FrameStep(vak_control::Framing {
                 step: u32::try_from(step).unwrap_or(u32::MAX),
                 asked,
-                applied: None,
             }),
         ))
         .await;
@@ -2369,11 +2361,15 @@ impl Agent {
                     tools: tool_defs.clone(),
                     max_tokens: self.output_budget(),
                     context_need: None,
-                    temperature: None,
                     cache,
                     previous_response_id: None,
-                    think: None,
-                    effort: self.config.effort,
+                    settings: vak_control::StepSettings {
+                        reasoning: self.config.effort.map_or(
+                            vak_control::Reasoning::Default,
+                            vak_control::Reasoning::Depth,
+                        ),
+                        sampling: vak_control::Sampling::default(),
+                    },
                 }
             };
             let mut base_request = base_request;
@@ -2388,6 +2384,7 @@ impl Agent {
             );
             let mut request = base_request.clone();
             self.record_framing(turn, &request).await;
+            ledger.receipt.asked = Some(request.settings);
 
             let mut response = {
                 // Run-level endurance: a sustained fault window (rate-limit
@@ -2501,11 +2498,9 @@ impl Agent {
                                     tools: tool_defs.clone(),
                                     max_tokens: self.output_budget(),
                                     context_need: None,
-                                    temperature: None,
                                     cache,
                                     previous_response_id: None,
-                                    think: None,
-                                    effort: None,
+                                    settings: vak_control::StepSettings::default(),
                                 }
                             };
                             continue;
@@ -4143,11 +4138,9 @@ impl Agent {
             tools: Vec::new(),
             max_tokens: self.output_budget(),
             context_need: None,
-            temperature: None,
             cache: None,
             previous_response_id: None,
-            think: None,
-            effort: None,
+            settings: vak_control::StepSettings::default(),
         };
         let mut ledger = StepLedger::new(
             WorkPurpose::Plan,
@@ -5862,14 +5855,7 @@ impl Agent {
                             breaker.record_success_key(&breaker_key);
                         }
                         ledger.last_first_token_ms = first_token_ms;
-                        ledger.receipt.record(
-                            reason,
-                            FailureDomain::Unknown,
-                            Settlement::Ok,
-                            elapsed_ms,
-                            Some(r.usage.clone()),
-                            None,
-                        );
+                        ledger.receipt.record_response(reason, elapsed_ms, &r);
                         if let Some(gate) = &self.config.spend_gate {
                             if let Some(id) = spend_reservation.take() {
                                 gate.settle_dispatch(
@@ -6400,6 +6386,7 @@ impl Agent {
                 usage: Usage::default(),
                 model: self.config.model.clone(),
                 response_id: None,
+                applied: None,
             },
         }
     }
@@ -6438,6 +6425,7 @@ impl Agent {
                 usage: Usage::default(),
                 model: self.config.model.clone(),
                 response_id: None,
+                applied: None,
             },
         }
     }
@@ -6464,6 +6452,7 @@ impl Agent {
                 usage: Usage::default(),
                 model: self.config.model.clone(),
                 response_id: None,
+                applied: None,
             },
         }
     }
@@ -6558,6 +6547,7 @@ impl Agent {
             .unwrap_or_default();
 
         let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
+        let mut verdicts = Vec::with_capacity(n);
         for call in &calls {
             let verdict = authorize(
                 &self.config,
@@ -6567,7 +6557,7 @@ impl Agent {
                 &self.config.tools,
             )
             .await;
-            self.record_decision(
+            verdicts.push(
                 vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(
                     match &verdict {
                         Ok(()) => vak_control::CallVerdict::Accepted,
@@ -6575,10 +6565,10 @@ impl Agent {
                     },
                 ))
                 .with(vak_control::Evidence::Call(call.id.clone())),
-            )
-            .await;
+            );
             authz.push(verdict.map_err(|(_, message)| message));
         }
+        self.record_decisions(verdicts).await;
         let ids: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
 
         if !self.config.parallel_tools
@@ -8263,6 +8253,7 @@ fn uncited_sources_outcome(model: &str, urls: &[String]) -> TurnOutcome {
             usage: Usage::default(),
             model: model.to_string(),
             response_id: None,
+            applied: None,
         },
     }
 }
@@ -9692,6 +9683,7 @@ mod tool_call_envelope_tests {
             usage: Usage::default(),
             model: "test-model".into(),
             response_id: None,
+            applied: None,
         }
     }
 
@@ -9823,6 +9815,7 @@ mod tool_call_envelope_tests {
             usage: Usage::default(),
             model: "test-model".into(),
             response_id: None,
+            applied: None,
         };
         let calls = extract_tool_calls(&mut response, &loaded());
         assert_eq!(calls.len(), 1);

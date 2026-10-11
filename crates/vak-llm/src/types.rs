@@ -238,6 +238,10 @@ pub struct AssistantMessage {
     /// the turn's history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_id: Option<String>,
+    /// The settings the adapter sent for this response and what it knew
+    /// of the model when it did (docs/design/88-control-plane.md §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied: Option<vak_control::Applied>,
 }
 
 impl AssistantMessage {
@@ -248,6 +252,7 @@ impl AssistantMessage {
             usage: Usage::default(),
             model: model.into(),
             response_id: None,
+            applied: None,
         }
     }
 
@@ -293,39 +298,26 @@ pub struct CacheHints {
     pub breakpoints: Vec<CacheBreakpoint>,
 }
 
-/// Reasoning depth, rendered by each adapter in its own wire's terms
-/// (docs/design/01-llm.md "Reasoning effort"): Anthropic
-/// `output_config.effort`, OpenAI Responses `reasoning.effort`, chat
-/// completions `reasoning_effort`, Gemini `thinkingConfig.thinkingLevel`.
-/// The native Ollama adapter ignores it: measured, a card call written
-/// without thinking failed 20 of 20.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Effort {
-    Low,
-    Medium,
-    High,
-    XHigh,
-    Max,
+/// The three-level spelling of a reasoning depth, for a wire that has
+/// three: anything above high is high.
+pub fn three_level(depth: vak_control::Depth) -> &'static str {
+    use vak_control::Depth;
+    match depth {
+        Depth::Low => "low",
+        Depth::Medium => "medium",
+        Depth::High | Depth::XHigh | Depth::Max => "high",
+    }
 }
 
-impl Effort {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Effort::Low => "low",
-            Effort::Medium => "medium",
-            Effort::High => "high",
-            Effort::XHigh => "xhigh",
-            Effort::Max => "max",
-        }
-    }
-
-    /// The level on a wire that has three: anything above high is high.
-    pub fn three_level(self) -> &'static str {
-        match self {
-            Effort::Low => "low",
-            Effort::Medium => "medium",
-            Effort::High | Effort::XHigh | Effort::Max => "high",
-        }
+/// The five-level spelling of a reasoning depth.
+pub fn depth_str(depth: vak_control::Depth) -> &'static str {
+    use vak_control::Depth;
+    match depth {
+        Depth::Low => "low",
+        Depth::Medium => "medium",
+        Depth::High => "high",
+        Depth::XHigh => "xhigh",
+        Depth::Max => "max",
     }
 }
 
@@ -346,27 +338,17 @@ pub struct ChatRequest {
     /// rather than to the model's maximum, which reserved 16 GB on a 17 GB
     /// machine (docs/design/68-context-engine.md §8).
     pub context_need: Option<u64>,
-    pub temperature: Option<f32>,
     pub cache: Option<CacheHints>,
     /// When set, an OpenAI Responses adapter chains from this prior
     /// response instead of replaying the full history: only messages after
     /// the last assistant message are sent, alongside this id.
     pub previous_response_id: Option<String>,
-    /// Whether the model may spend tokens in a thinking channel before
-    /// answering. `None` leaves the provider's default; `Some(false)` asks
-    /// for a direct answer (Ollama `think`), which a strict-JSON
-    /// classification needs — measured live, a thinking model spent its
-    /// whole output budget deliberating and returned no JSON at all.
-    /// Adapters without such a switch ignore it. On Anthropic this never
-    /// disables thinking (current models reject that, or silently degrade
-    /// tool-call reliability on the ones that still accept it) — instead,
-    /// when `effort` is unset, the adapter reads `think == Some(false)` as
-    /// "spend as little as possible" and sends `effort: low`.
-    pub think: Option<bool>,
-    /// Explicit reasoning depth (see [`Effort`]). `None` leaves the
-    /// provider's default, except that the Anthropic adapter falls back to
-    /// `Low` when `think == Some(false)` (see `think`).
-    pub effort: Option<Effort>,
+    /// How much the model reasons and how it samples on this step, as
+    /// the step's contract asked (docs/design/88-control-plane.md §4).
+    /// Each adapter sends what the model can honour of it
+    /// (`ModelCapabilities::honour`) and reports what it sent in
+    /// `AssistantMessage::applied`.
+    pub settings: vak_control::StepSettings,
 }
 
 impl ChatRequest {
@@ -378,11 +360,9 @@ impl ChatRequest {
             tools: Vec::new(),
             max_tokens: None,
             context_need: None,
-            temperature: None,
             cache: None,
             previous_response_id: None,
-            think: None,
-            effort: None,
+            settings: vak_control::StepSettings::default(),
         }
     }
 }
@@ -427,18 +407,16 @@ mod tests {
     }
 
     #[test]
-    fn effort_renders_the_documented_wire_strings() {
-        assert_eq!(Effort::Low.as_str(), "low");
-        assert_eq!(Effort::Medium.as_str(), "medium");
-        assert_eq!(Effort::High.as_str(), "high");
-        assert_eq!(Effort::XHigh.as_str(), "xhigh");
-        assert_eq!(Effort::Max.as_str(), "max");
+    fn depth_renders_the_documented_wire_strings() {
+        use vak_control::Depth;
+        assert_eq!(depth_str(Depth::XHigh), "xhigh");
+        assert_eq!(three_level(Depth::Max), "high");
+        assert_eq!(three_level(Depth::Low), "low");
     }
 
     #[test]
-    fn chat_request_defaults_carry_no_effort() {
+    fn chat_request_defaults_ask_for_nothing() {
         let req = ChatRequest::new("m");
-        assert_eq!(req.effort, None);
-        assert_eq!(req.think, None);
+        assert_eq!(req.settings, vak_control::StepSettings::default());
     }
 }

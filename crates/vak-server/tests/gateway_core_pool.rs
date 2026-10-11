@@ -45,6 +45,7 @@ impl Provider for NoCred {
             usage: Usage::default(),
             model: "test-model".into(),
             response_id: None,
+            applied: None,
         };
         sink.close_message(m).await;
         Ok(rx)

@@ -89,6 +89,7 @@ fn bash_call(id: &str, cmd: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -103,6 +104,7 @@ fn text_msg(t: &str) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

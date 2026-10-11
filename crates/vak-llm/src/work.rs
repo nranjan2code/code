@@ -95,6 +95,14 @@ pub struct DispatchAttempt {
     pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// What the adapter sent of the settings asked, and what it knew of the
+    /// model when it did (docs/design/88-control-plane.md §4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied: Option<vak_control::Applied>,
+    /// Whether the response carried reasoning, so "asked for none, the
+    /// provider reasoned anyway" is a recorded fact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoned: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +130,10 @@ pub struct WorkReceipt {
     /// `None` when not yet measured for this digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_tokens: Option<u64>,
+    /// The settings the step's contract asked for; each attempt records
+    /// what was applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<vak_control::StepSettings>,
 }
 
 impl WorkReceipt {
@@ -138,6 +150,7 @@ impl WorkReceipt {
             attempts: Vec::new(),
             prefix_digest: String::new(),
             prefix_tokens: None,
+            asked: None,
         }
     }
 
@@ -188,7 +201,36 @@ impl WorkReceipt {
             error,
             provider: None,
             model: None,
+            applied: None,
+            reasoned: None,
         });
+    }
+
+    /// Records a dispatch the provider answered: its usage, the settings
+    /// the adapter applied, and whether the response carried reasoning.
+    pub fn record_response(
+        &mut self,
+        reason: AttemptReason,
+        latency_ms: u64,
+        response: &crate::AssistantMessage,
+    ) {
+        self.record(
+            reason,
+            FailureDomain::Unknown,
+            Settlement::Ok,
+            latency_ms,
+            Some(response.usage.clone()),
+            None,
+        );
+        if let Some(attempt) = self.attempts.last_mut() {
+            attempt.applied = response.applied;
+            attempt.reasoned = Some(
+                response
+                    .content
+                    .iter()
+                    .any(|block| matches!(block, crate::ContentBlock::Thinking { .. })),
+            );
+        }
     }
 
     pub fn settle_cancelled(&mut self) {
@@ -326,14 +368,8 @@ impl StepLedger {
         let outcome = f.await;
         match &outcome {
             Ok(value) => {
-                self.receipt.record(
-                    reason,
-                    FailureDomain::Unknown,
-                    Settlement::Ok,
-                    started.elapsed().as_millis() as u64,
-                    Some(value.usage.clone()),
-                    None,
-                );
+                self.receipt
+                    .record_response(reason, started.elapsed().as_millis() as u64, value);
             }
             Err(e) => {
                 // Deadline classification happens at the watchdog site via

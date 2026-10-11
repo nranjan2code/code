@@ -253,14 +253,15 @@ async fn complete_text(
         tools: Vec::new(),
         max_tokens: None,
         context_need: None,
-        temperature: None,
         cache: None,
         previous_response_id: None,
         // A TOML DAG, not a deliberation: measured live, thinking made no
         // difference to whether the plan parsed and cost up to 5x the
         // latency.
-        think: Some(false),
-        effort: None,
+        settings: vak_control::StepSettings {
+            reasoning: vak_control::Reasoning::Off,
+            ..Default::default()
+        },
     };
     let mut backoff_ms = PLANNER_RETRY_BACKOFF_MS;
     for attempt in 1..=PLANNER_CALL_ATTEMPTS {

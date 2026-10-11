@@ -94,6 +94,7 @@ fn text(t: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -108,6 +109,7 @@ fn bash_script(command: String) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -160,6 +162,7 @@ fn task_call(id: &str, paths: &[&str], tag: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -174,6 +177,7 @@ fn multi_task_msg(calls: Vec<AssistantMessage>) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

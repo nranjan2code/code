@@ -69,7 +69,20 @@ impl GoogleProvider {
     }
 }
 
-pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
+/// What `generateContent` can pass through: a reasoning depth
+/// (`thinkingConfig.thinkingLevel`, three levels) and every sampling
+/// setting. Reasoning cannot be switched off.
+const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
+    reasoning: vak_control::ReasoningSupport::Graded,
+    temperature: vak_control::Support::Yes,
+    top_p: vak_control::Support::Yes,
+    top_k: vak_control::Support::Yes,
+};
+
+pub fn build_body(
+    request: &ChatRequest,
+    settings: vak_control::StepSettings,
+) -> Result<Value, LlmError> {
     let boundary = current_turn_boundary(&request.messages);
     let mut contents: Vec<Value> = Vec::with_capacity(request.messages.len());
     // function_call ids → names, resolved while walking history so
@@ -216,10 +229,25 @@ pub fn build_body(request: &ChatRequest) -> Result<Value, LlmError> {
             .collect();
         body["tools"] = serde_json::json!([{ "functionDeclarations": decls }]);
     }
-    if let Some(effort) = request.effort {
-        body["generationConfig"] = serde_json::json!({
-            "thinkingConfig": { "thinkingLevel": effort.three_level() }
-        });
+    let mut generation = serde_json::Map::new();
+    if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
+        generation.insert(
+            "thinkingConfig".into(),
+            serde_json::json!({ "thinkingLevel": crate::types::three_level(depth) }),
+        );
+    }
+    let sampling = settings.sampling;
+    if let Some(t) = sampling.temperature {
+        generation.insert("temperature".into(), serde_json::json!(t));
+    }
+    if let Some(p) = sampling.top_p {
+        generation.insert("topP".into(), serde_json::json!(p));
+    }
+    if let Some(k) = sampling.top_k {
+        generation.insert("topK".into(), serde_json::json!(k));
+    }
+    if !generation.is_empty() {
+        body["generationConfig"] = Value::Object(generation);
     }
     Ok(body)
 }
@@ -537,16 +565,21 @@ impl Provider for GoogleProvider {
             self.config.base_url.trim_end_matches('/'),
             request.model
         );
-        let mut request = request;
-        if request.effort.is_some()
-            && !crate::models::effort_allowed(&self.config.base_url, &request.model)
-        {
-            request.effort = None;
+        let mut dispatch = crate::models::DispatchSettings::new(
+            &self.config.base_url,
+            REACH,
+            &request.model,
+            request.settings,
+        );
+        // Reasoning cannot be switched off on this wire: the lowest depth is
+        // the nearest it can honour, and the receipt says so.
+        if dispatch.settings.reasoning == vak_control::Reasoning::Off {
+            dispatch.settings.reasoning = vak_control::Reasoning::Depth(vak_control::Depth::Low);
         }
         // A model that refuses the thinking setting is asked once more
         // without it and remembered (docs/design/01-llm.md).
         let response = loop {
-            let body = build_body(&request)?;
+            let body = build_body(&request, dispatch.settings)?;
             let send_fut = self
                 .http
                 .post(&url)
@@ -567,12 +600,7 @@ impl Provider for GoogleProvider {
             let headers = response.headers().clone();
             let retry_after = crate::openai::retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
-            if status.as_u16() == 400
-                && request.effort.is_some()
-                && crate::models::rejects_effort(&text)
-            {
-                crate::models::mark_effort_unsupported(&self.config.base_url, &request.model);
-                request.effort = None;
+            if status.as_u16() == 400 && dispatch.retry_without_settings() {
                 continue;
             }
             let observation = google_capacity_observation(&headers, Some(&text));
@@ -587,6 +615,7 @@ impl Provider for GoogleProvider {
         let mut byte_stream = response.bytes_stream();
         let mut decoder = SseDecoder::new();
         let mut acc = Accumulator::new(&model);
+        acc.message.applied = Some(dispatch.accepted());
 
         tokio::spawn(async move {
             loop {
@@ -850,7 +879,7 @@ mod build_body_tests {
                 },
             ]),
         ];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, req.settings).unwrap();
         let parts = body["contents"][1]["parts"].as_array().unwrap();
         let call_part = parts
             .iter()
@@ -877,7 +906,7 @@ mod build_body_tests {
             ]),
             Message::user_text("second, a fresh directive"),
         ];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, req.settings).unwrap();
         let parts = body["contents"][1]["parts"].as_array().unwrap();
         assert!(
             parts.iter().all(|p| p.get("thoughtSignature").is_none()),
@@ -889,9 +918,14 @@ mod build_body_tests {
     fn effort_is_sent_as_a_thinking_level_and_only_when_set() {
         let mut req = ChatRequest::new("gemini-test");
         req.messages = vec![Message::user_text("hi")];
-        assert!(build_body(&req).unwrap().get("generationConfig").is_none());
-        req.effort = Some(crate::types::Effort::Low);
-        let body = build_body(&req).unwrap();
+        assert!(
+            build_body(&req, req.settings)
+                .unwrap()
+                .get("generationConfig")
+                .is_none()
+        );
+        req.settings.reasoning = vak_control::Reasoning::Depth(vak_control::Depth::Low);
+        let body = build_body(&req, req.settings).unwrap();
         assert_eq!(
             body["generationConfig"]["thinkingConfig"]["thinkingLevel"],
             "low"
@@ -919,7 +953,7 @@ mod build_body_tests {
                 content: vec![ContentBlock::tool_result("t1", "result")],
             },
         ];
-        let body = build_body(&req).unwrap();
+        let body = build_body(&req, req.settings).unwrap();
         let parts = body["contents"][1]["parts"].as_array().unwrap();
         let call_part = parts
             .iter()

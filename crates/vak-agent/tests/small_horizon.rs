@@ -118,6 +118,7 @@ async fn run_with_budget(
         usage: Usage::default(),
         model: "m".into(),
         response_id: None,
+        applied: None,
     };
     let provider = Arc::new(Script {
         replies: Mutex::new(vec![reply("hello!"), reply("hello!")].into()),
@@ -244,6 +245,7 @@ async fn handoff_summary_uses_the_current_working_set_instead_of_full_session_hi
                 usage: Usage::default(),
                 model: "m".into(),
                 response_id: None,
+                applied: None,
             }]
             .into(),
         ),

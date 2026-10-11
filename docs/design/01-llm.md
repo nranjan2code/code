@@ -65,46 +65,40 @@ features from a model-name prefix:
 | `openrouter`, compatible gateways, `ollama` | OpenAI-compatible Chat Completions | Compatibility is endpoint- and model-specific; reject live mismatches rather than assuming support. |
 | `google` | Gemini `streamGenerateContent` + SSE | Client function declarations/results are supported; Google recommends its newer Interactions API for new agent integrations, but this route remains a distinct supported wire contract. |
 
-### Reasoning effort
+### Reasoning and sampling
 
-`ChatRequest.effort` is one dial, rendered by each adapter in its own
+`ChatRequest.settings` (`vak_control::StepSettings`) carries a step's
+reasoning (the model's default, off, or a depth) and sampling
+(temperature, top-p, top-k), as the step's contract asked
+(docs/design/88-control-plane.md §4). Each adapter renders it in its own
 wire's words:
 
-| Wire | Field |
-|---|---|
-| Anthropic | `output_config.effort` |
-| OpenAI Responses | `reasoning.effort` |
-| OpenAI chat completions | `reasoning_effort` (`reasoning.effort` through OpenRouter) |
-| Gemini | `generationConfig.thinkingConfig.thinkingLevel` |
-| Ollama (native) | never sent |
+| Wire | Reasoning | Sampling |
+|---|---|---|
+| Anthropic | `output_config.effort`; off is sent as the lowest depth | `temperature`, `top_p`, `top_k` |
+| OpenAI Responses | `reasoning.effort` (three levels); off as the lowest | `temperature`, `top_p` |
+| OpenAI chat completions | `reasoning_effort` (`reasoning.effort` through OpenRouter); off as the lowest | `temperature`, `top_p` |
+| Gemini | `generationConfig.thinkingConfig.thinkingLevel`; off as the lowest | `temperature`, `topP`, `topK` |
+| Ollama (native) | `think` on or off; a depth leaves the default | `options` |
 
-A wire with three levels sends anything above `high` as `high`. A turn's
-own steps carry an effort only when its reading is a direct reply
-(`DemandHint::direct_reply`: every part of the turn is conversation, or an
-answer expected in one reply, read confidently, with no cited evidence
-asked for), and then only `low`: a reading may ask for less reasoning than
-the provider's default, never more (invariant 32,
-docs/design/47-commitment-kernel.md). With no such reading nothing is
-sent and the provider's default stands.
+No table says which models take a setting. Each adapter declares its
+reach (`REACH`, what the wire can carry at all); what a provider reports
+about a model narrows it (Ollama `/api/show` capabilities, Anthropic's
+model capabilities); and a request the provider refuses as invalid is sent
+once more without its optional settings, the refusal remembered for that
+model on that endpoint only when the request without them is taken
+(`models::DispatchSettings`). No wording of the refusal is read. Every
+answered dispatch records what was sent and what was known
+(`DispatchAttempt.applied`), whether the response reasoned
+(`DispatchAttempt.reasoned`), and the receipt what was asked
+(`WorkReceipt.asked`), so "asked for no reasoning, the provider reasoned
+anyway" is a recorded fact.
 
-A plain factual question is not a direct reply, and stays that way.
-Measured on 2026-10-08 with `vak intent explain`: 20 of 20 questions got
-the same reading (an answer, within the turn, no reasoning demanded): 8
-single facts ("What is the capital of Australia?"), 10 that need working
-out ("Which is larger, 2^100 or 3^63, and by what factor?") and 2 that
-need a tool ("What is in my notes.txt file?"). Nothing in the reading
-tells them apart, so lowering effort for that reading would lower it for
-the ten that need it. Only a reading the words themselves make immediate
-(conversation, or an answer expected in one reply) is lowered.
-
-No table says which models take the setting. A 400 that names it
-(`models::rejects_effort`) is retried once without it, and that model on
-that endpoint is remembered for the life of the process
-(`models::mark_effort_unsupported`), so later requests skip it.
-
-Ollama never receives it. Measured on gemma4 (2026-10-07): with thinking
-off, a card call failed 20 of 20, so on that wire the model's own default
-is the only setting.
+A turn's own steps ask for a depth only when its reading is a direct
+reply, and then only `low` (invariant 32, docs/design/47-commitment-kernel.md);
+doc 88 stage C3 replaces this reading with the step contract.
+Side dispatches that want a fast structured answer (classify, compaction,
+handoff, plan) ask for reasoning off.
 
 ### Deferred tools and tool search
 
@@ -146,13 +140,10 @@ The adapter never sends `thinking: {type: "disabled"}` or an explicit
 `budget_tokens` — current models either reject it outright or silently
 degrade tool-call reliability under it — so `thinking` is simply omitted,
 which runs adaptive reasoning on every current model. `effort` is the one
-supported dial: `ChatRequest.effort` renders as `output_config.effort`, and
-`think == Some(false)` (a side-dispatch that wants a fast, cheap answer —
-classify, compaction, handoff, plan) maps onto its lowest level only when
-the caller has not already asked for a specific one. An `output_config`
-400 on a model that does not support it is a one-time, per-model fallback:
-the request is retried once without `effort`, and the model is marked
-unsupported so later requests skip straight to the fallback. Opt-in
+supported dial: a depth renders as `output_config.effort`, and reasoning
+off (a side-dispatch that wants a fast, cheap answer) is sent as the
+lowest depth, which the receipt records. A request refused for its
+settings follows "Reasoning and sampling" above. Opt-in
 `[providers.anthropic] fast_mode` sends `speed: "fast"` on models discovered
 to support it (support is looked up once per model id, in the background,
 never blocking the request that triggered it); a 429 while `speed` is set is

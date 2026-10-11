@@ -75,6 +75,7 @@ impl Provider for LongReasoning {
                 },
                 model: "test-model".into(),
                 response_id: None,
+                applied: None,
             })
             .await;
         });

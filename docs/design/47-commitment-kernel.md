@@ -12,7 +12,7 @@ there.
 | I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice, **strands** | `Core::resolve_turn_intent_with_escalation` |
 | I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler | `commitments::plan_episodes` then `begin_episodes` — one commitment per thread |
 | I2 | admission, intent ledger entry, `[intent]`/`[commitment]` config, `vak intent explain` | `IntentRecord` (reading, strands, engagement, note) |
-| I3 | route demand, per-commitment budget, prompt projection, **context profile**, reasoning effort (lowered only) | `plan_route_ladder(demand)`, `DemandHint::direct_reply` → `AgentConfig::effort` low (docs/design/01-llm.md "Reasoning effort"), `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only an explicitly referenced preceding turn at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`) |
+| I3 | route demand, per-commitment budget, prompt projection, **context profile**, reasoning effort (lowered only) | `plan_route_ladder(demand)`, `DemandHint::direct_reply` → `AgentConfig::effort` low (docs/design/01-llm.md "Reasoning and sampling"), `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only an explicitly referenced preceding turn at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`) |
 | I4 | capability slicing (progressive disclosure) | stage-4 exclusion for a confident reading; the tool surface (core vs. deferred) for every reading |
 | I5 | envelopes: `vak grant` / `vak revoke`; a live grant narrows the strands that serve its commitment and pre-authorizes, one gate at a time, the actions it covers; revocation honoured on read | `vak_intent::apply_envelopes` → `intent::permission_mode` → `cfg.mode` and `spend_ceiling_usd` → the run cap; `intent::envelope_check` → `AgentConfig::envelope_check` |
 | I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
@@ -302,8 +302,7 @@ tokens), because a fixed budget truncated the answer for requests with more
 than a few parts and a truncated array parses as nothing.
 `parse_classifications` reads the first JSON value in the answer, as an
 array or a single object, and ignores unknown values; a domain outside the
-vocabulary is dropped. The request asks the model **not** to think (`ChatRequest.think =
-Some(false)`, Ollama `think`): measured live on `gemma4:e2b-mlx`, the default
+vocabulary is dropped. The request asks for reasoning off (`ChatRequest.settings`): measured live on `gemma4:e2b-mlx`, the default
 spent its whole output budget in the thinking channel and returned no JSON;
 without thinking it answers in 0.8–4 s. The watchdog is
 `classify_timeout_secs` (default 10). When the model splits the request

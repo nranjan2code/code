@@ -92,6 +92,7 @@ fn msg(content: Vec<ContentBlock>, stop_reason: StopReason) -> AssistantMessage 
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

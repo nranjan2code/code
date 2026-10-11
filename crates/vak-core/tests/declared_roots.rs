@@ -71,6 +71,7 @@ impl vak_llm::Provider for ReadThenAnswer {
             usage: Usage::default(),
             model: "test-model".into(),
             response_id: None,
+            applied: None,
         };
         let (mut sink, rx) = vak_llm::stream::channel(64);
         sink.push(vak_llm::stream::StreamEvent::Start {

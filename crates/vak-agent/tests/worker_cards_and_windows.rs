@@ -79,6 +79,7 @@ fn text_msg(t: &str) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -93,6 +94,7 @@ fn call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

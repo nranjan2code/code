@@ -6,7 +6,18 @@ C0 done (2026-10-11: blast radius re-scanned, §12 decided). C1 done
 records, as `EntryPayload::Decision`, the decisions it already makes:
 admission, each step's frame as asked, every call's verdict (a refusal
 names what refused it), each correction, the accepted answer and the
-ending. Later stages are not built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
+ending. C2 done (2026-10-11): `ChatRequest.settings` (reasoning and
+sampling) replaces `temperature`, `think` and `effort`; each adapter
+declares its reach, a model's own report (Ollama `/api/show`
+capabilities, Anthropic's model capabilities) narrows it, and a request
+the provider refuses as invalid is sent once more without its optional
+settings, the refusal learned only when that is taken (the wording-based
+`rejects_effort` is removed). Every answered dispatch records what was
+applied and whether the response reasoned (`DispatchAttempt.applied`,
+`reasoned`), and the receipt what was asked (`WorkReceipt.asked`).
+`GET /runs/{id}/decisions` and the admin Run detail's "How it went" show a
+turn's decisions; the doctor reports the latest dispatch's settings.
+Later stages are not built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
 satisfaction; the model never does) from satisfaction to every decision.
 The start prompt and working order for the session that builds it are in
@@ -134,6 +145,16 @@ is the one model-visible record (invariant 1).
 
 A turn's decisions read in order are its explanation. The admin Run detail
 and `vak runs` show them.
+
+## 6a. Scale
+
+Agents, workers and sub-agents run by the hundreds or thousands, so every
+decision point is a pure function over values the caller already holds: no
+lock, no I/O, no allocation beyond its output, safe to call from any task
+at once. What costs is recording, and that is one ledger append under the
+session's own lock, never a lock shared across sessions. The capability
+store is the one shared structure; it is read once per dispatch and
+written only when a provider's answer teaches something.
 
 ## 7. Crates
 

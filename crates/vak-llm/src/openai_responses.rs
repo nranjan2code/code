@@ -62,9 +62,20 @@ fn messages_since_last_assistant(messages: &[Message]) -> &[Message] {
     }
 }
 
+/// What the Responses API can pass through: a reasoning depth
+/// (`reasoning.effort`, three levels), temperature and top-p. There is no
+/// top-k, and no way to switch reasoning off.
+const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
+    reasoning: vak_control::ReasoningSupport::Graded,
+    temperature: vak_control::Support::Yes,
+    top_p: vak_control::Support::Yes,
+    top_k: vak_control::Support::No,
+};
+
 pub fn build_body(
     config: &OpenAiResponsesConfig,
     request: &ChatRequest,
+    settings: vak_control::StepSettings,
 ) -> Result<Value, LlmError> {
     let messages: &[Message] = match &request.previous_response_id {
         Some(_) => messages_since_last_assistant(&request.messages),
@@ -115,8 +126,14 @@ pub fn build_body(
             .collect();
         body["tools"] = Value::Array(tools);
     }
-    if let Some(effort) = request.effort {
-        body["reasoning"] = serde_json::json!({ "effort": effort.three_level() });
+    if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
+        body["reasoning"] = serde_json::json!({ "effort": crate::types::three_level(depth) });
+    }
+    if let Some(t) = settings.sampling.temperature {
+        body["temperature"] = serde_json::json!(t);
+    }
+    if let Some(p) = settings.sampling.top_p {
+        body["top_p"] = serde_json::json!(p);
     }
     Ok(body)
 }
@@ -484,16 +501,22 @@ impl Provider for OpenAiResponsesProvider {
             &request.model,
         );
         let url = format!("{}/responses", self.config.base_url.trim_end_matches('/'));
-        let mut request = request;
-        if request.effort.is_some()
-            && !crate::models::effort_allowed(&self.config.base_url, &request.model)
-        {
-            request.effort = None;
+        let mut dispatch = crate::models::DispatchSettings::new(
+            &self.config.base_url,
+            REACH,
+            &request.model,
+            request.settings,
+        );
+        // Reasoning cannot be switched off on this wire: the lowest depth is
+        // the nearest it can honour, and the receipt says so.
+        if dispatch.settings.reasoning == vak_control::Reasoning::Off {
+            dispatch.settings.reasoning = vak_control::Reasoning::Depth(vak_control::Depth::Low);
         }
-        // A model that refuses the reasoning setting is asked once more
-        // without it and remembered (docs/design/01-llm.md).
+        // A request refused as invalid is sent once more without its optional
+        // settings; if that is taken, the refusal is remembered
+        // (docs/design/88-control-plane.md §4).
         let response = loop {
-            let body = build_body(&self.config, &request)?;
+            let body = build_body(&self.config, &request, dispatch.settings)?;
             let send_fut = self
                 .http
                 .post(&url)
@@ -516,12 +539,7 @@ impl Provider for OpenAiResponsesProvider {
                 crate::openai::openai_project_capacity_observation(response.headers());
             let retry_after = crate::openai::retry_after_from_headers(response.headers());
             let text = response.text().await.unwrap_or_default();
-            if status.as_u16() == 400
-                && request.effort.is_some()
-                && crate::models::rejects_effort(&text)
-            {
-                crate::models::mark_effort_unsupported(&self.config.base_url, &request.model);
-                request.effort = None;
+            if status.as_u16() == 400 && dispatch.retry_without_settings() {
                 continue;
             }
             capacity_ticket.observe_model(observation);
@@ -542,6 +560,7 @@ impl Provider for OpenAiResponsesProvider {
         let mut byte_stream = response.bytes_stream();
         let mut decoder = SseDecoder::new();
         let mut acc = Accumulator::new(&model);
+        acc.message.applied = Some(dispatch.accepted());
         acc.retry_after_secs = stream_retry_after;
 
         tokio::spawn(async move {
@@ -627,16 +646,16 @@ mod build_body_tests {
         let mut req = ChatRequest::new("gpt-5.6");
         req.messages = vec![Message::user_text("hi")];
         assert!(
-            build_body(&config(), &req)
+            build_body(&config(), &req, req.settings)
                 .unwrap()
                 .get("reasoning")
                 .is_none()
         );
-        req.effort = Some(crate::types::Effort::Max);
-        let body = build_body(&config(), &req).unwrap();
+        req.settings.reasoning = vak_control::Reasoning::Depth(vak_control::Depth::Max);
+        let body = build_body(&config(), &req, req.settings).unwrap();
         assert_eq!(body["reasoning"]["effort"], "high");
-        req.effort = Some(crate::types::Effort::Low);
-        let body = build_body(&config(), &req).unwrap();
+        req.settings.reasoning = vak_control::Reasoning::Depth(vak_control::Depth::Low);
+        let body = build_body(&config(), &req, req.settings).unwrap();
         assert_eq!(body["reasoning"]["effort"], "low");
     }
 
@@ -652,7 +671,7 @@ mod build_body_tests {
             cache_key: true,
             ..config()
         };
-        let body = build_body(&cfg, &req).unwrap();
+        let body = build_body(&cfg, &req, req.settings).unwrap();
         assert_eq!(body["prompt_cache_key"], "sess-1");
         assert!(body.get("session_id").is_none());
         // Cache hints imply this response might be chained from later.
@@ -672,7 +691,7 @@ mod build_body_tests {
             openrouter: true,
             ..config()
         };
-        let body = build_body(&cfg, &req).unwrap();
+        let body = build_body(&cfg, &req, req.settings).unwrap();
         assert_eq!(body["session_id"], "sess-1");
     }
 
@@ -680,7 +699,7 @@ mod build_body_tests {
     fn no_cache_hints_keeps_store_false() {
         let mut req = ChatRequest::new("gpt-5.6");
         req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&config(), &req).unwrap();
+        let body = build_body(&config(), &req, req.settings).unwrap();
         assert_eq!(body["store"], false);
         assert!(body.get("prompt_cache_key").is_none());
     }
@@ -701,7 +720,7 @@ mod build_body_tests {
             },
         ];
         req.previous_response_id = Some("resp_abc".into());
-        let body = build_body(&config(), &req).unwrap();
+        let body = build_body(&config(), &req, req.settings).unwrap();
         assert_eq!(body["previous_response_id"], "resp_abc");
         let input = body["input"].as_array().unwrap();
         // Only the tool-result message (after the last assistant turn) is
@@ -717,7 +736,7 @@ mod build_body_tests {
             Message::user_text("first"),
             Message::assistant(vec![ContentBlock::text("answer")]),
         ];
-        let body = build_body(&config(), &req).unwrap();
+        let body = build_body(&config(), &req, req.settings).unwrap();
         assert_eq!(body["input"].as_array().unwrap().len(), 2);
         assert!(body.get("previous_response_id").is_none());
     }

@@ -38,7 +38,7 @@ fn openai_body_builds_multimodal_parts_from_images() {
         }],
         ..ChatRequest::new("test-model")
     };
-    let body = build_body(&OpenAiConfig::default(), &req).unwrap();
+    let body = build_body(&OpenAiConfig::default(), &req, Default::default()).unwrap();
     let content = body["messages"][0]["content"].as_array().unwrap();
     assert_eq!(content[0]["type"], "text");
     assert_eq!(content[1]["type"], "image_url");
@@ -54,7 +54,7 @@ fn openai_text_only_stays_a_plain_string() {
         messages: vec![Message::user_text("plain")],
         ..ChatRequest::new("test-model")
     };
-    let body = build_body(&OpenAiConfig::default(), &req).unwrap();
+    let body = build_body(&OpenAiConfig::default(), &req, Default::default()).unwrap();
     assert_eq!(body["messages"][0]["content"], "plain");
 }
 
@@ -73,5 +73,5 @@ fn image_in_assistant_message_rejected_for_anthropic() {
         }],
         ..ChatRequest::new("test-model")
     };
-    assert!(vak_llm::anthropic::build_body(&req, 8192, true, false).is_err());
+    assert!(vak_llm::anthropic::build_body(&req, 8192, Default::default(), false).is_err());
 }

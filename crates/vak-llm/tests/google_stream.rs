@@ -37,7 +37,7 @@ fn sample_request() -> ChatRequest {
 
 #[test]
 fn body_maps_neutral_history_to_gemini_shape() {
-    let body = build_body(&sample_request()).unwrap();
+    let body = build_body(&sample_request(), Default::default()).unwrap();
     assert_eq!(
         body["systemInstruction"]["parts"][0]["text"],
         "You are a coding agent."
@@ -286,7 +286,7 @@ fn body_sanitizes_unsupported_schema_keywords_for_gemini() {
         }),
     )];
 
-    let body = build_body(&req).unwrap();
+    let body = build_body(&req, req.settings).unwrap();
     let params = &body["tools"][0]["functionDeclarations"][0]["parameters"];
     assert!(params.get("$schema").is_none());
     assert!(params.get("additionalProperties").is_none());
@@ -322,7 +322,7 @@ fn body_serializes_thought_signature_on_assistant_function_calls() {
         },
     ];
 
-    let body = build_body(&req).unwrap();
+    let body = build_body(&req, req.settings).unwrap();
     let contents = body["contents"].as_array().unwrap();
     assert_eq!(contents.len(), 3);
     let model_parts = contents[1]["parts"].as_array().unwrap();

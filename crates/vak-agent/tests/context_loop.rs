@@ -56,6 +56,7 @@ fn msg(content: Vec<ContentBlock>, stop: StopReason) -> Result<AssistantMessage,
         usage: Usage::default(),
         model: "m".into(),
         response_id: None,
+        applied: None,
     })
 }
 

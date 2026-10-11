@@ -253,7 +253,7 @@ pub fn handoff_request(model: &str, prompt: String) -> ChatRequest {
     let mut req = ChatRequest::new(model);
     req.system = Some(HANDOFF_SYSTEM.to_string());
     req.messages = vec![vak_llm::Message::user_text(prompt)];
-    req.think = Some(false);
+    req.settings.reasoning = vak_control::Reasoning::Off;
     req
 }
 

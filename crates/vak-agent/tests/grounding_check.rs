@@ -102,6 +102,7 @@ fn search_call(id: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -116,6 +117,7 @@ fn text_msg(t: &str) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -457,6 +459,7 @@ async fn session_search_of_the_users_own_notes_is_not_flagged() {
                     usage: Usage::default(),
                     model: "test-model".into(),
                     response_id: None,
+                    applied: None,
                 },
                 text_msg("Recalled from memory."),
             ])),

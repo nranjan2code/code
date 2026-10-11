@@ -52,6 +52,7 @@ impl Provider for FlakyThenGood {
                 usage: Usage::default(),
                 model: "test-model".into(),
                 response_id: None,
+                applied: None,
             };
             sink.push(stream::StreamEvent::Start {
                 partial: msg.clone(),

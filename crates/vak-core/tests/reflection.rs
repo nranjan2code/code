@@ -65,6 +65,7 @@ fn scripted(json_reply: &str) -> Arc<dyn vak_llm::Provider> {
                 usage: vak_llm::types::Usage::default(),
                 model: "m".into(),
                 response_id: None,
+                applied: None,
             })
             .await;
             Ok(rx)

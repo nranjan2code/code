@@ -9,6 +9,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 vak-llm = { workspace = true }
+vak-control = { workspace = true }
 vak-session = { workspace = true }
 
 [dev-dependencies]

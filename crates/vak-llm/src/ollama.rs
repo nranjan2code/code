@@ -93,6 +93,7 @@ pub fn build_body(
     config: &OllamaConfig,
     request: &ChatRequest,
     num_ctx: Option<u64>,
+    settings: vak_control::StepSettings,
 ) -> Result<Value, LlmError> {
     let mut messages: Vec<Value> = Vec::with_capacity(request.messages.len() + 1);
     if let Some(system) = &request.system {
@@ -129,8 +130,20 @@ pub fn build_body(
         "keep_alive": config.keep_alive,
         "options": options,
     });
-    if let Some(think) = request.think {
-        body["think"] = Value::Bool(think);
+    match settings.reasoning {
+        vak_control::Reasoning::Off => body["think"] = Value::Bool(false),
+        vak_control::Reasoning::Depth(_) => body["think"] = Value::Bool(true),
+        vak_control::Reasoning::Default => {}
+    }
+    let sampling = settings.sampling;
+    if let Some(temperature) = sampling.temperature {
+        body["options"]["temperature"] = serde_json::json!(temperature);
+    }
+    if let Some(top_p) = sampling.top_p {
+        body["options"]["top_p"] = serde_json::json!(top_p);
+    }
+    if let Some(top_k) = sampling.top_k {
+        body["options"]["top_k"] = serde_json::json!(top_k);
     }
     if !request.tools.is_empty() {
         let tools: Vec<Value> = request
@@ -151,6 +164,16 @@ pub fn build_body(
     }
     Ok(body)
 }
+
+/// What the native Ollama wire can pass through: `think` switches
+/// reasoning on or off (not graded), and `options` carries every sampling
+/// setting. A model's own report narrows it (`models::capabilities`).
+const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
+    reasoning: vak_control::ReasoningSupport::Toggle,
+    temperature: vak_control::Support::Yes,
+    top_p: vak_control::Support::Yes,
+    top_k: vak_control::Support::Yes,
+};
 
 fn append_message(
     out: &mut Vec<Value>,
@@ -478,24 +501,30 @@ impl Provider for OllamaProvider {
     ) -> Result<EventStream, LlmError> {
         let provider_permit = self.gate.acquire(&cancel).await?;
         let url = format!("{}/api/chat", self.config.base_url.trim_end_matches('/'));
+        let auth = crate::registry::ProviderAuth {
+            api_key: self.config.api_key.clone(),
+            base_url: Some(self.config.base_url.clone()),
+            ..Default::default()
+        };
+        // `/api/show` reports the model's window and what it can do; it is
+        // asked once per process and remembered.
+        let context = crate::models::cached_model_context("ollama", &auth, &request.model).await;
         let num_ctx = match self.config.num_ctx {
             Some(_) => None,
             None => {
-                let auth = crate::registry::ProviderAuth {
-                    api_key: self.config.api_key.clone(),
-                    base_url: Some(self.config.base_url.clone()),
-                    ..Default::default()
-                };
-                let window = crate::models::cached_model_context("ollama", &auth, &request.model)
-                    .await
-                    .map(|context| context.input_tokens);
+                let window = context.map(|context| context.input_tokens);
                 // Without a measured need, the request's bytes bound its
                 // tokens from above (every token is at least one byte).
                 let need = match request.context_need {
                     Some(need) => need,
                     None => {
-                        let bytes = serde_json::to_vec(&build_body(&self.config, &request, None)?)
-                            .map_or(0, |body| body.len() as u64);
+                        let bytes = serde_json::to_vec(&build_body(
+                            &self.config,
+                            &request,
+                            None,
+                            request.settings,
+                        )?)
+                        .map_or(0, |body| body.len() as u64);
                         bytes.saturating_add(request.max_tokens.map_or(0, u64::from))
                     }
                 };
@@ -507,35 +536,48 @@ impl Provider for OllamaProvider {
                 ))
             }
         };
-        let body = build_body(&self.config, &request, num_ctx)?;
-        let mut req = self.http.post(&url).json(&body);
-        if !self.config.api_key.is_empty() {
-            req = req.bearer_auth(&self.config.api_key);
-        }
-        let send_fut = req.send();
-        let response = tokio::select! {
-            _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-            r = send_fut => match r {
-                Ok(r) => r,
-                Err(e) => return Err(LlmError::Network(e.to_string())),
-            },
-        };
-
-        let status = response.status();
-        if !status.is_success() {
+        let mut dispatch = crate::models::DispatchSettings::new(
+            &self.config.base_url,
+            REACH,
+            &request.model,
+            request.settings,
+        );
+        let response = loop {
+            let body = build_body(&self.config, &request, num_ctx, dispatch.settings)?;
+            let mut req = self.http.post(&url).json(&body);
+            if !self.config.api_key.is_empty() {
+                req = req.bearer_auth(&self.config.api_key);
+            }
+            let send_fut = req.send();
+            let response = tokio::select! {
+                _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+                r = send_fut => match r {
+                    Ok(r) => r,
+                    Err(e) => return Err(LlmError::Network(e.to_string())),
+                },
+            };
+            let status = response.status();
+            if status.is_success() {
+                break response;
+            }
+            if status.as_u16() == 400 && dispatch.retry_without_settings() {
+                continue;
+            }
             let text = response.text().await.unwrap_or_default();
             return Err(map_status_error(
                 status.as_u16(),
                 &text,
                 !request.tools.is_empty(),
             ));
-        }
+        };
+        let applied = dispatch.accepted();
 
         let model = request.model.clone();
         let (mut sink, stream_rx) = channel(256);
         let mut byte_stream = response.bytes_stream();
         let mut decoder = NdjsonDecoder::default();
         let mut acc = Accumulator::new(&model, !request.tools.is_empty());
+        acc.message.applied = Some(applied);
 
         tokio::spawn(async move {
             let mut saw_end = false;
@@ -614,29 +656,44 @@ mod tests {
     }
 
     /// Measured on gemma4: a card call written without thinking failed 20
-    /// of 20, so an effort setting never reaches this wire.
+    /// of 20, so a reasoning depth on this wire leaves the model's default
+    /// rather than switching thinking off; only `Off` sends `think: false`.
     #[test]
-    fn an_effort_setting_changes_nothing_on_this_wire() {
+    fn a_depth_leaves_the_default_and_off_switches_thinking_off() {
+        use vak_control::{Depth, Reasoning, StepSettings};
         let mut req = ChatRequest::new("gemma3:e2b");
         req.messages = vec![Message::user_text("hi")];
-        let plain = build_body(&OllamaConfig::default(), &req, None).unwrap();
-        req.effort = Some(crate::types::Effort::Low);
-        let lowered = build_body(&OllamaConfig::default(), &req, None).unwrap();
-        assert_eq!(plain, lowered);
-        assert!(lowered.get("think").is_none());
+        let depth = REACH.honour(StepSettings {
+            reasoning: Reasoning::Depth(Depth::Low),
+            ..Default::default()
+        });
+        let body = build_body(&OllamaConfig::default(), &req, None, depth).unwrap();
+        assert!(body.get("think").is_none());
+        let off = REACH.honour(StepSettings {
+            reasoning: Reasoning::Off,
+            sampling: vak_control::Sampling {
+                temperature: Some(0.0),
+                top_k: Some(1),
+                ..Default::default()
+            },
+        });
+        let body = build_body(&OllamaConfig::default(), &req, None, off).unwrap();
+        assert_eq!(body["think"], false);
+        assert_eq!(body["options"]["temperature"], 0.0);
+        assert_eq!(body["options"]["top_k"], 1);
     }
 
     #[test]
     fn body_takes_the_model_window_and_caps_output_only_when_asked() {
         let mut req = ChatRequest::new("gemma3:e2b");
         req.messages = vec![Message::user_text("hi")];
-        let body = build_body(&OllamaConfig::default(), &req, None).unwrap();
+        let body = build_body(&OllamaConfig::default(), &req, None, req.settings).unwrap();
         assert_eq!(body["keep_alive"], "30m");
         assert!(body["options"].get("num_ctx").is_none());
         assert!(body["options"].get("num_predict").is_none());
         assert_eq!(body["stream"], true);
         req.max_tokens = Some(512);
-        let body = build_body(&OllamaConfig::default(), &req, Some(131_072)).unwrap();
+        let body = build_body(&OllamaConfig::default(), &req, Some(131_072), req.settings).unwrap();
         assert_eq!(body["options"]["num_ctx"], 131_072);
         assert_eq!(body["options"]["num_predict"], 512);
     }
@@ -650,7 +707,7 @@ mod tests {
             keep_alive: "10m".into(),
             ..Default::default()
         };
-        let body = build_body(&config, &req, Some(131_072)).unwrap();
+        let body = build_body(&config, &req, Some(131_072), req.settings).unwrap();
         assert_eq!(body["options"]["num_ctx"], 8192, "the operator's pin wins");
         assert_eq!(body["keep_alive"], "10m");
     }
@@ -670,7 +727,7 @@ mod tests {
                 content: vec![ContentBlock::tool_result("call_0", "result text")],
             },
         ];
-        let body = build_body(&OllamaConfig::default(), &req, None).unwrap();
+        let body = build_body(&OllamaConfig::default(), &req, None, req.settings).unwrap();
         let msgs = body["messages"].as_array().unwrap();
         let call = &msgs[1]["tool_calls"][0];
         // Ollama's native wire wants a JSON object, not an escaped string.
@@ -696,7 +753,7 @@ mod tests {
             },
             ContentBlock::text("answer"),
         ])];
-        let body = build_body(&OllamaConfig::default(), &req, None).unwrap();
+        let body = build_body(&OllamaConfig::default(), &req, None, req.settings).unwrap();
         assert_eq!(body["messages"][0]["content"], "answer");
     }
 

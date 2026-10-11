@@ -70,6 +70,7 @@ fn message(content: Vec<ContentBlock>, stop: StopReason) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

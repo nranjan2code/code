@@ -33,6 +33,7 @@ fn text_msg(model: &str, t: &str) -> AssistantMessage {
         },
         model: model.into(),
         response_id: None,
+        applied: None,
     }
 }
 

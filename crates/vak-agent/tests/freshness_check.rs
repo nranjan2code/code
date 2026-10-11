@@ -93,6 +93,7 @@ fn search_call(id: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -107,6 +108,7 @@ fn text_msg(t: &str) -> AssistantMessage {
         },
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -120,6 +122,7 @@ fn thinking_only() -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -444,6 +447,7 @@ fn card_call(id: &str, value: &str) -> AssistantMessage {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 
@@ -620,6 +624,7 @@ async fn a_local_observation_satisfies_the_freshness_check() {
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     };
     let mut agent = build_agent(
         &dir,

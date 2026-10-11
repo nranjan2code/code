@@ -97,6 +97,7 @@ fn reply(content: ContentBlock, stop: vak_llm::types::StopReason) -> AssistantMe
         usage: Usage::default(),
         model: "test-model".into(),
         response_id: None,
+        applied: None,
     }
 }
 

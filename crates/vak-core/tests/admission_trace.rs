@@ -46,6 +46,7 @@ impl Provider for Echo {
             },
             model: "test-model".into(),
             response_id: None,
+            applied: None,
         };
         let (mut sink, rx) = stream::channel(64);
         sink.push(stream::StreamEvent::Start { partial: m.clone() });

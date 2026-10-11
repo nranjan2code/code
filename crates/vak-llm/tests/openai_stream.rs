@@ -41,7 +41,12 @@ fn sample_request() -> ChatRequest {
 
 #[test]
 fn body_maps_neutral_history_to_openai_shape() {
-    let body = build_body(&OpenAiConfig::default(), &sample_request()).unwrap();
+    let body = build_body(
+        &OpenAiConfig::default(),
+        &sample_request(),
+        Default::default(),
+    )
+    .unwrap();
     assert_eq!(body["model"], "gpt-5.6");
     assert_eq!(body["stream"], true);
     assert_eq!(body["stream_options"]["include_usage"], true);
@@ -93,7 +98,7 @@ fn user_tool_results_become_separate_tool_messages() {
             ContentBlock::tool_result("b", "two"),
         ],
     }];
-    let msgs = build_body(&OpenAiConfig::default(), &req).unwrap()["messages"]
+    let msgs = build_body(&OpenAiConfig::default(), &req, Default::default()).unwrap()["messages"]
         .as_array()
         .unwrap()
         .clone();
