@@ -4,18 +4,41 @@
 
 "Continue the control plane in /Users/nisheethranjan/Projects/Vak/code on
 main, inside stage C6. Everything is committed and pushed; the full gate
-was green at the last commit. Read AGENTS.md (especially 'No word lists,
-no tuned limits' and 'Investigating a failure'), docs/design/88-control-plane.md
-(Status, §5a, §12, 'Open in C6', 'Carried into later stages'), then this
-file's 'Where C6 stands' and Rules. Take the next item under 'Next, in
-order', finish it whole (code, tests, docs, screens), run the gate, commit
-and push, then the next. Verify behaviour changes with real turns through
-the web app on local Ollama, read back from `/runs/{id}/decisions` or
-`vak runs show <id>`. Work autonomously, report short progress lines, ask
-only on a genuine product decision. Main only: no branches, PRs or
-worktrees. No provider, model or tool is first-class. Never blame the
-model. Ollama is the dev route; a hosted route (OpenAI Responses,
-`gpt-6-luna`, key in the installed home) only for a few one-off checks."
+was green on the code at `5ba4eaad3` (289 suites) and only this file
+changed after it.
+
+Read AGENTS.md (especially 'No word lists, no tuned limits' and
+'Investigating a failure'), docs/design/88-control-plane.md (Status, §5a
+including 'Still open here', §12, 'Open in C6', 'Carried into later
+stages'), then this file: 'Where C6 stands', 'Done since', 'Next, in
+order', Rules and Traps.
+
+Done in the last session: the §5a time constants are `[control.limits]`
+(`vak_control::TimeLimits`, `Core::time_limits`,
+`Tool::time_limit_argument`), seen live in
+`run_01a12b7f-2142-7062-85f7-b5c2879cf4f2`; the loop's receipts read tool
+declarations (`Tool::command`, `Tool::looks_up`, `Tool::planned`) and
+`is_substantive_command` is removed.
+
+Take the next item under 'Next, in order', finish it whole (code, tests,
+docs, screens), run the gate, commit and push, then the next.
+
+Not yet checked from the last session: the Time limits screens at
+390 × 844 and in light theme, the hook editor now that an unset hook
+timeout stays unset, and the receipts change beyond one live turn.
+
+Verify behaviour changes with real turns through the web app on local
+Ollama, read back from `/runs/{id}/decisions` or `vak runs show <id>`. Do
+not edit sources while a full `cargo test` run is going. Put back any
+shared setting a live check changes. Another session is adding a
+frosted-glass theme to `crates/vak-client-ui` on main: pull before work
+and before each commit, and rebuild `dist-web` rather than merging it.
+
+Work autonomously, report short progress lines, ask only on a genuine
+product decision. Main only: no branches, PRs or worktrees. No provider,
+model or tool is first-class. Never blame the model. Ollama is the dev
+route; a hosted route (OpenAI Responses, `gpt-6-luna`, key in the
+installed home) only for a few one-off checks."
 
 ## Where C6 stands (end of the 2026-10-11 sessions)
 
