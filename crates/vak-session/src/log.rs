@@ -83,10 +83,15 @@ impl LedgerDir {
 /// the header, what a person or a tool result put in (the directive, a
 /// steering message, tool results; never a runtime nudge), an effect outside the ledger, and the
 /// card that closes a turn. Everything else becomes durable at the next
-/// commit point or when the ledger closes.
+/// commit point or when the ledger closes. A failed call's fault touched
+/// nothing outside: it is written before the call's result and commits
+/// with it.
 fn commits(entry: &Entry) -> bool {
     match &entry.payload {
-        EntryPayload::Header(_) | EntryPayload::TurnCard(_) | EntryPayload::CallEffect(_) => true,
+        EntryPayload::CallEffect(record) => {
+            !matches!(record.effect, crate::types::CallEffect::Failed { .. })
+        }
+        EntryPayload::Header(_) | EntryPayload::TurnCard(_) => true,
         EntryPayload::Message(record) => {
             record.message.role == vak_llm::Role::User && record.control_kind().is_none()
         }
@@ -182,6 +187,17 @@ pub fn request_admitted(session_id: &str, request_id: &str) -> Result<bool, Sess
         .get_ref(&admission_ref(session_id, request_id))
         .map_err(crate::objects::objects_error)?
         .is_some())
+}
+
+/// One step of a turn's explanation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TurnStep<'a> {
+    Decision(&'a vak_control::Decision),
+    /// A call failed, and where its fault lay.
+    Failed {
+        call: &'a str,
+        fault: vak_control::Fault,
+    },
 }
 
 impl SessionLog {
@@ -1883,14 +1899,25 @@ impl SessionLog {
             .collect()
     }
 
-    /// The control plane's decisions on this branch, in order, each with
-    /// the turn it was made in (docs/design/88-control-plane.md §6).
-    pub fn decisions(&self) -> Vec<(Option<&str>, &vak_control::Decision)> {
+    /// A turn's explanation in order: each decision of the control plane,
+    /// and each call that failed with where its fault lay
+    /// (docs/design/88-control-plane.md §6).
+    pub fn explanation(&self) -> Vec<(Option<&str>, TurnStep<'_>)> {
         self.chain_to_root()
             .into_iter()
-            .filter_map(|e| match &e.payload {
-                EntryPayload::Decision(d) => Some((e.at_turn.as_deref(), d)),
-                _ => None,
+            .filter_map(|e| {
+                let step = match &e.payload {
+                    EntryPayload::Decision(decision) => TurnStep::Decision(decision),
+                    EntryPayload::CallEffect(record) => match record.effect {
+                        crate::types::CallEffect::Failed { fault } => TurnStep::Failed {
+                            call: &record.tool_use_id,
+                            fault,
+                        },
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                Some((e.at_turn.as_deref(), step))
             })
             .collect()
     }

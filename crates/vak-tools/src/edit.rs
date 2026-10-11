@@ -1,3 +1,4 @@
+use crate::Fault;
 use async_trait::async_trait;
 use serde_json::Value;
 use similar::TextDiff;
@@ -76,32 +77,40 @@ impl Tool for EditTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(path_str) = args.get("path").and_then(|p| p.as_str()) else {
-            return ToolOutput::error("missing required parameter: path");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: path");
         };
         let Some(edits_val) = args.get("edits").and_then(|e| e.as_array()) else {
-            return ToolOutput::error("missing required parameter: edits");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: edits");
         };
         let path = ctx.resolve(std::path::Path::new(path_str));
         if let Some(refusal) = crate::write::protected_control_path(&path, ctx) {
-            return ToolOutput::error(refusal);
+            return ToolOutput::error(Fault::Refused, refusal);
         }
         if let Some(refusal) = crate::office_apply::text_tool_refusal(&path, "edit") {
-            return ToolOutput::error(refusal);
+            return ToolOutput::error(Fault::Refused, refusal);
         }
 
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
-            Err(e) => return ToolOutput::error(format!("cannot read {}: {e}", path.display())),
+            Err(e) => {
+                return ToolOutput::error(
+                    Fault::Target,
+                    format!("cannot read {}: {e}", path.display()),
+                );
+            }
         };
 
         // Editing is a text operation on the exact bytes on disk; silently
         // replacing invalid sequences would corrupt binary or mixed-encoding
         // files on write-back.
         if std::str::from_utf8(&bytes).is_err() {
-            return ToolOutput::error(format!(
-                "{} is not valid UTF-8 (binary or non-UTF-8 encoding); edit refused",
-                path.display()
-            ));
+            return ToolOutput::error(
+                Fault::Target,
+                format!(
+                    "{} is not valid UTF-8 (binary or non-UTF-8 encoding); edit refused",
+                    path.display()
+                ),
+            );
         }
 
         let bom = bytes.starts_with(&[0xEF, 0xBB, 0xBF]);
@@ -115,10 +124,10 @@ impl Tool for EditTool {
         let mut prepared: Vec<PreparedEdit> = Vec::with_capacity(edits_val.len());
         for (i, e) in edits_val.iter().enumerate() {
             let Some(old) = e.get("old_text").and_then(|o| o.as_str()) else {
-                return ToolOutput::error(format!("edit {i}: missing old_text"));
+                return ToolOutput::error(Fault::Shape, format!("edit {i}: missing old_text"));
             };
             let Some(new) = e.get("new_text").and_then(|n| n.as_str()) else {
-                return ToolOutput::error(format!("edit {i}: missing new_text"));
+                return ToolOutput::error(Fault::Shape, format!("edit {i}: missing new_text"));
             };
             let (old, new) = if crlf && !old.contains("\r\n") {
                 (old.replace('\n', "\r\n"), new.replace('\n', "\r\n"))
@@ -132,16 +141,22 @@ impl Tool for EditTool {
         for (i, e) in prepared.iter().enumerate() {
             let count = buf.matches(&e.old).count();
             if count == 0 {
-                return ToolOutput::error(format!(
-                    "edit {i}: old_text not found in {} (no changes applied)",
-                    path.display()
-                ));
+                return ToolOutput::error(
+                    Fault::Target,
+                    format!(
+                        "edit {i}: old_text not found in {} (no changes applied)",
+                        path.display()
+                    ),
+                );
             }
             if count > 1 {
-                return ToolOutput::error(format!(
-                    "edit {i}: old_text matches {count} locations in {}; make it unique (no changes applied)",
-                    path.display()
-                ));
+                return ToolOutput::error(
+                    Fault::Target,
+                    format!(
+                        "edit {i}: old_text matches {count} locations in {}; make it unique (no changes applied)",
+                        path.display()
+                    ),
+                );
             }
             buf = buf.replacen(&e.old, &e.new, 1);
         }
@@ -154,7 +169,7 @@ impl Tool for EditTool {
             buf.as_bytes().to_vec()
         };
         if let Err(e) = crate::write::write_atomic(&path, &final_bytes).await {
-            return ToolOutput::error(format!("cannot write {}: {e}", path.display()));
+            return ToolOutput::error(Fault::Tool, format!("cannot write {}: {e}", path.display()));
         }
         crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &path, &ctx.cwd);
 

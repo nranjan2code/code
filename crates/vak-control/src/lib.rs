@@ -485,6 +485,8 @@ pub enum CallVerdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Refusal {
+    /// The name is no tool this turn offers.
+    Unknown,
     /// The arguments do not match the tool's schema.
     Schema,
     /// The tool itself refused these arguments.
@@ -499,6 +501,26 @@ pub enum Refusal {
     Person,
     /// No approver could be asked.
     Unattended,
+}
+
+/// Where a failed call's fault lies: what would have to change for it to
+/// succeed. Named by whoever fails the call, where it fails; never read
+/// from an error's wording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Fault {
+    /// The call's shape: a name that is no tool, or arguments the tool does
+    /// not take. Nothing ran.
+    Shape,
+    /// What the call names: a file that is not there, text that does not
+    /// match, a command that failed. Another call can succeed.
+    Target,
+    /// The tool, or what it reaches. No change to the call helps.
+    Tool,
+    /// A rule, a mode or a person refused it.
+    Refused,
+    /// The run was cancelled.
+    Cancelled,
 }
 
 /// Whether a proposed answer ends the turn.

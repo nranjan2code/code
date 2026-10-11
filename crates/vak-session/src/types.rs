@@ -1066,6 +1066,10 @@ pub enum CallEffect {
     /// (mail, calendar): the result is kept under that account's key, so
     /// erasing the account removes it from every conversation (plan M7a-b).
     Account { account: String },
+    /// The call failed, and where its fault lay, as whoever failed it named
+    /// it (docs/design/88-control-plane.md §8). A refused call is a
+    /// `Decision` instead.
+    Failed { fault: vak_control::Fault },
 }
 
 /// Which MCP server answered a call: the configured name, what the server

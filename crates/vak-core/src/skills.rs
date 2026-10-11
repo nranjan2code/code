@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use vak_tools::Fault;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Skill {
@@ -237,6 +238,7 @@ impl vak_tools::Tool for SkillTool {
     async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(name) = args.get("name").and_then(Value::as_str) else {
             return vak_tools::ToolOutput::error(
+                Fault::Shape,
                 r#"{"type":"invalid_arguments","capability":"skill","message":"missing required string 'name'"}"#,
             );
         };
@@ -246,14 +248,17 @@ impl vak_tools::Tool for SkillTool {
             .or_else(|| self.skills.get(&name.replace('_', "-")))
             .or_else(|| self.skills.get(&name.replace('-', "_")));
         let Some(skill) = skill else {
-            return vak_tools::ToolOutput::error(format!(
-                r#"{{"type":"capability_not_admitted","kind":"skill","name":{}}}"#,
-                json_string(name)
-            ));
+            return vak_tools::ToolOutput::error(
+                Fault::Refused,
+                format!(
+                    r#"{{"type":"capability_not_admitted","kind":"skill","name":{}}}"#,
+                    json_string(name)
+                ),
+            );
         };
         match skill.load() {
             Ok(content) => vak_tools::ToolOutput::ok(content),
-            Err(error) => vak_tools::ToolOutput::error(error),
+            Err(error) => vak_tools::ToolOutput::error(Fault::Tool, error),
         }
     }
 
@@ -667,7 +672,7 @@ mod tests {
         let loaded = tool
             .execute(&serde_json::json!({"name": "code-task"}), &ctx)
             .await;
-        assert!(!loaded.is_error);
+        assert!(!loaded.is_error());
         assert!(loaded.content.contains("Use table-driven tests."));
         assert!(loaded.content.contains("References are relative to"));
 
@@ -675,7 +680,7 @@ mod tests {
         let stale = tool
             .execute(&serde_json::json!({"name": "code-task"}), &ctx)
             .await;
-        assert!(stale.is_error);
+        assert!(stale.is_error());
         assert!(stale.content.contains("capability_stale"));
         Ok(())
     }

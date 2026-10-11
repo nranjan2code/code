@@ -11,6 +11,7 @@
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use vak_tools::Fault;
 
 use serde_json::Value;
 use vak_tools::{ResourceClaims, Tool, ToolContext, ToolOutput};
@@ -181,7 +182,7 @@ impl Tool for ScopedWriteTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         if let Some(reason) = self.outside(args, &ctx.cwd) {
-            return ToolOutput::error(reason);
+            return ToolOutput::error(Fault::Refused, reason);
         }
         self.inner.execute(args, ctx).await
     }

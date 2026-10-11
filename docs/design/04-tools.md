@@ -4,7 +4,13 @@ Status: implemented in 2.0.0
 ## Contract
 
 Tools never panic and never return `Err`. Every failure is a
-`ToolOutput { content, is_error: true }` the model reads and self-corrects.
+`ToolOutput::error(fault, content)` the model reads and self-corrects. The
+`Fault` (`vak_control::Fault`) says where the fault lies — the call's shape,
+what it names, the tool or what it reaches, a refusal, a cancellation — and
+is named by the code that fails the call, never read from its message. A
+tool also declares whether a call may change the workspace
+(`Tool::changes_workspace`, by default from its resource claims): the
+workspace is checkpointed when the first such call of a turn is accepted.
 `ToolContext` carries cwd, cancellation child-token, output limits.
 
 ## Reading arguments

@@ -1,3 +1,4 @@
+use crate::Fault;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -15,7 +16,7 @@ use crate::{Tool, ToolContext, ToolOutput};
 pub const WORKER_SUBCOMMAND: &str = "__tool_worker";
 pub const PERSISTENT_WORKER_SUBCOMMAND: &str = "__persistent_tool_worker";
 pub(crate) const WORKER_ENV: &str = "VAK_INTERNAL_TOOL_WORKER";
-const PROTOCOL_VERSION: u8 = 4;
+const PROTOCOL_VERSION: u8 = 5;
 const MAX_PROTOCOL_BYTES: u64 = 2 * 1024 * 1024;
 /// Mail attachment previews cross the worker protocol as base64 JSON, so keep
 /// raw file bytes below the protocol ceiling with ample encoding overhead.
@@ -173,7 +174,7 @@ pub struct OfficeLineage {
 struct WorkerResponse {
     version: u8,
     content: String,
-    is_error: bool,
+    fault: Option<Fault>,
     events: Vec<SandboxEvent>,
     /// The worker's content-free telemetry lines for a traced call: its
     /// `execution` span under the run's trace, forwarded by the caller
@@ -347,6 +348,10 @@ impl Tool for BrokeredTool {
         self.inner.claims(args)
     }
 
+    fn changes_workspace(&self, args: &Value) -> bool {
+        self.inner.changes_workspace(args)
+    }
+
     fn serves(&self) -> &'static [&'static str] {
         self.inner.serves()
     }
@@ -391,10 +396,13 @@ async fn execute(
     ctx: &ToolContext,
 ) -> ToolOutput {
     if !worker_exe.is_file() {
-        return ToolOutput::error(format!(
-            "tool broker unavailable: worker executable not found: {}",
-            worker_exe.display()
-        ));
+        return ToolOutput::error(
+            Fault::Tool,
+            format!(
+                "tool broker unavailable: worker executable not found: {}",
+                worker_exe.display()
+            ),
+        );
     }
     let worker_command = format!(
         "{} {}",
@@ -421,7 +429,9 @@ async fn execute(
 
     let mut child = match cmd.spawn() {
         Ok(child) => child,
-        Err(error) => return ToolOutput::error(format!("tool broker spawn failed: {error}")),
+        Err(error) => {
+            return ToolOutput::error(Fault::Tool, format!("tool broker spawn failed: {error}"));
+        }
     };
     let request = WorkerRequest {
         version: PROTOCOL_VERSION,
@@ -441,24 +451,26 @@ async fn execute(
     };
     let payload = match serde_json::to_vec(&request) {
         Ok(payload) => payload,
-        Err(error) => return ToolOutput::error(format!("tool broker encode failed: {error}")),
+        Err(error) => {
+            return ToolOutput::error(Fault::Tool, format!("tool broker encode failed: {error}"));
+        }
     };
     let Some(mut stdin) = child.stdin.take() else {
         crate::bash::kill_process_group(&child.id());
-        return ToolOutput::error("tool broker has no stdin");
+        return ToolOutput::error(Fault::Tool, "tool broker has no stdin");
     };
     if let Err(error) = stdin.write_all(&payload).await {
         crate::bash::kill_process_group(&child.id());
         let _ = child.wait().await;
-        return ToolOutput::error(format!("tool broker request failed: {error}"));
+        return ToolOutput::error(Fault::Tool, format!("tool broker request failed: {error}"));
     }
     drop(stdin);
 
     let Some(mut stdout) = child.stdout.take() else {
-        return ToolOutput::error("tool broker has no stdout");
+        return ToolOutput::error(Fault::Tool, "tool broker has no stdout");
     };
     let Some(mut stderr) = child.stderr.take() else {
-        return ToolOutput::error("tool broker has no stderr");
+        return ToolOutput::error(Fault::Tool, "tool broker has no stderr");
     };
     let sink = ctx.sandbox_sink.clone();
     let partial = Arc::new(std::sync::Mutex::new(String::new()));
@@ -513,7 +525,9 @@ async fn execute(
     };
     let status = match status {
         Ok(status) => status,
-        Err(error) => return ToolOutput::error(format!("tool broker wait failed: {error}")),
+        Err(error) => {
+            return ToolOutput::error(Fault::Tool, format!("tool broker wait failed: {error}"));
+        }
     };
     let stdout = stdout_reader.await.unwrap_or_default();
     let stderr = stderr_reader.await.unwrap_or_default();
@@ -531,42 +545,50 @@ async fn execute(
             content.push_str(&diagnostics);
         }
         let _ = stdout;
-        return ToolOutput::error(content);
+        return ToolOutput::error(Fault::Tool, content);
     }
     if stdout.len() as u64 > MAX_PROTOCOL_BYTES || stderr.len() as u64 > MAX_PROTOCOL_BYTES {
-        return ToolOutput::error("tool broker output exceeded protocol limit");
+        return ToolOutput::error(Fault::Tool, "tool broker output exceeded protocol limit");
     }
     if !status.success() {
         let detail = String::from_utf8_lossy(&stderr);
-        return ToolOutput::error(format!(
-            "tool broker exited with {}: {}",
-            status.code().unwrap_or(-1),
-            detail.trim()
-        ));
+        return ToolOutput::error(
+            Fault::Tool,
+            format!(
+                "tool broker exited with {}: {}",
+                status.code().unwrap_or(-1),
+                detail.trim()
+            ),
+        );
     }
     let response: WorkerResponse = match serde_json::from_slice(&stdout) {
         Ok(response) => response,
         Err(error) => {
             let detail = String::from_utf8_lossy(&stderr);
-            return ToolOutput::error(format!(
-                "tool broker returned invalid protocol: {error}; stderr: {}",
-                detail.trim()
-            ));
+            return ToolOutput::error(
+                Fault::Tool,
+                format!(
+                    "tool broker returned invalid protocol: {error}; stderr: {}",
+                    detail.trim()
+                ),
+            );
         }
     };
     if response.version != PROTOCOL_VERSION {
-        return ToolOutput::error(format!(
-            "tool broker protocol mismatch: expected {PROTOCOL_VERSION}, got {}",
-            response.version
-        ));
+        return ToolOutput::error(
+            Fault::Tool,
+            format!(
+                "tool broker protocol mismatch: expected {PROTOCOL_VERSION}, got {}",
+                response.version
+            ),
+        );
     }
     for line in &response.telemetry {
         vak_telemetry::forward(line);
     }
-    if response.is_error {
-        ToolOutput::error(response.content)
-    } else {
-        ToolOutput::ok(response.content)
+    match response.fault {
+        Some(fault) => ToolOutput::error(fault, response.content),
+        None => ToolOutput::ok(response.content),
     }
 }
 
@@ -623,7 +645,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -637,7 +659,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -651,7 +673,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -670,7 +692,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -684,7 +706,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -702,7 +724,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -719,7 +741,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -733,7 +755,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -747,7 +769,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -762,7 +784,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -777,7 +799,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error,
+                fault: is_error.then_some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -789,7 +811,7 @@ pub async fn worker_main() -> i32 {
             return write_response(WorkerResponse {
                 version: PROTOCOL_VERSION,
                 content,
-                is_error: false,
+                fault: None,
                 events: Vec::new(),
                 telemetry: Vec::new(),
             })
@@ -860,7 +882,10 @@ pub async fn worker_main() -> i32 {
             (output, Vec::new())
         }
         None => (
-            ToolOutput::error(format!("worker does not expose tool '{tool_name}'")),
+            ToolOutput::error(
+                Fault::Tool,
+                format!("worker does not expose tool '{tool_name}'"),
+            ),
             Vec::new(),
         ),
     };
@@ -869,7 +894,7 @@ pub async fn worker_main() -> i32 {
     write_response(WorkerResponse {
         version: PROTOCOL_VERSION,
         content: output.content,
-        is_error: output.is_error,
+        fault: output.fault,
         events,
         telemetry,
     })
@@ -887,7 +912,7 @@ async fn write_response(response: WorkerResponse) -> i32 {
                     payload.len(),
                     MAX_PROTOCOL_BYTES
                 ),
-                is_error: true,
+                fault: Some(Fault::Target),
                 events: Vec::new(),
                 telemetry: Vec::new(),
             };
@@ -1138,7 +1163,7 @@ async fn preview_mail_attachment_in_worker(
             &context,
         )
         .await;
-    if output.is_error {
+    if output.is_error() {
         return Err("the selected attachment could not be read by the document reader".into());
     }
     let mut content = output.content;
@@ -1634,7 +1659,7 @@ async fn run_task(
     }
     let response: WorkerResponse = serde_json::from_slice(&stdout)
         .map_err(|error| format!("worker returned invalid protocol: {error}"))?;
-    if response.version != PROTOCOL_VERSION || response.is_error {
+    if response.version != PROTOCOL_VERSION || response.fault.is_some() {
         return Err(format!("worker refused the request: {}", response.content));
     }
     Ok(response.content)

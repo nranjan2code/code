@@ -181,11 +181,12 @@ Read before changing behaviour in these areas:
   decision points and records each decision; a step contract sets
   reasoning, sampling, tools and output form from discovered model
   capabilities; one correction ladder; `vak-control` and `vak-judge` as
-  their own crates. Being built in stages C0–C7: C0 to C3 are done
+  their own crates. Being built in stages C0–C7: C0 to C4 are done
   (`crates/vak-control`, the `Decision` ledger entry, step settings with
   model capabilities and what was applied on the receipt, the step
   contract per purpose from `[control]`, tools loaded by declaration, the
-  model-made reading and the misread ledger removed); progress is in
+  model-made reading and the misread ledger removed; `crates/vak-judge`,
+  typed tool faults, the checkpoint at the first accepted workspace change); progress is in
   `docs/plans/handover-2026-10-11-control-plane.md`),
   `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
@@ -1548,7 +1549,7 @@ in progress, and the rest of V4 follows it.
   (docs/design/86-model-plans-runtime-checks.md): the model declares its
   deliverables with the loop-owned `plan` tool (each a name and a form:
   card, text, file, change or check) and names the one a card delivers in
-  its `answers` field; when the turn ends, `plan_check` compares the plan
+  its `answers` field; when the turn ends, `vak_judge::plan` compares the plan
   with receipts (cards recorded, final text, files delivered, commands and
   changes) and a `[plan-check]` control names only what is missing, once,
   without discarding anything already produced. No reading of the request
@@ -1755,6 +1756,14 @@ crates/vak-control   the control plane's decisions (docs/design/
                      as an audit-only `EntryPayload::Decision`, never
                      model-visible; a turn's decisions in order are its
                      explanation
+crates/vak-judge     receipts to verdicts (docs/design/88-control-plane.md
+                     §7), pure, over vak-control and vak-intent only: the
+                     verdict on a proposed call from gathered facts and
+                     where a refusal's fault lies (call.rs), a turn's
+                     unrecovered failures, the plan check (plan.rs) and the
+                     outcome, requirement and completion evaluation
+                     (outcome.rs). The loop gathers facts and carries out
+                     what these return
 crates/vak-lifecycle the lifecycle reconciler's decisions (plan M7a,
                      docs/design/74 §3.1, §5), with NO vak dependencies:
                      retention labels and the deterministic plan over what
@@ -2270,9 +2279,12 @@ removed, and the change is verified with real turns.
 - No domain, provider or tool is first-class: nothing names one to make it
   work.
 
+A tool error says where its fault lies as a typed value at its source
+(`ToolOutput::error(Fault::…, …)`, `vak_control::Fault`): add no reader of
+an error's words, and give a new failure the fault its author knows.
+
 Still to be brought under this rule (found 2026-10-11, not yet changed):
-`ToolErrorKind::classify`, which sorts tool errors by words in their text,
-and the agent loop's `DOOM_LOOP_THRESHOLD`, `READ_REPEAT_LIMIT` and
+the agent loop's `DOOM_LOOP_THRESHOLD`, `READ_REPEAT_LIMIT` and
 `WORKERS_GATE_BLOCKS`.
 
 ## Verification before every commit

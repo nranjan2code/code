@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn a_person_at_the_terminal_answers_by_number() {
         let (out, registry) = ask(true, "2\n");
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         assert!(
             out.content.contains("Answer from the person: 2026"),
             "{}",

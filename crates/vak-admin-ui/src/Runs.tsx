@@ -8,7 +8,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
 import { navigate } from "./store";
-import type { Decision, RunRecord, RunStatus } from "./types";
+import type { FailedCall, RunRecord, RunStatus, TurnStep } from "./types";
 import { SessionTrail } from "./OperationsCenter";
 import { RunEffects } from "./Effects";
 import { RunWaterfall } from "./Diagnostics";
@@ -164,6 +164,7 @@ function RunDetail(props: { id: string }) {
 }
 
 const REFUSED_BY: Record<string, string> = {
+  unknown: "no tool has that name",
   schema: "its details did not fit the tool",
   tool: "the tool turned it down",
   revoked: "the tool was taken away during the turn",
@@ -171,6 +172,14 @@ const REFUSED_BY: Record<string, string> = {
   policy: "a permission rule",
   person: "you declined it",
   unattended: "nobody was there to approve it",
+};
+
+const FAULT: Record<FailedCall["failed"]["fault"], string> = {
+  shape: "its details did not fit the tool",
+  target: "what it named was not there or did not work",
+  tool: "the tool or what it reaches was not working",
+  refused: "it was not allowed",
+  cancelled: "it was stopped",
 };
 
 const ENDED: Record<string, string> = {
@@ -185,8 +194,9 @@ function words(text: string): string {
 }
 
 /// One decision in plain words; the evidence ids sit in technical details.
-function decisionWords(decision: Decision): string {
-  const choice = decision.choice;
+function decisionWords(step: TurnStep): string {
+  if ("failed" in step) return `A tool call failed: ${FAULT[step.failed.fault]}`;
+  const choice = step.choice;
   switch (choice.point) {
     case "admit_turn":
       return `Started on ${choice.model}, allowed up to ${choice.max_steps} steps`;
@@ -217,7 +227,7 @@ function RunDecisions(props: { run: string }) {
             {(decision) => (
               <li>
                 {decisionWords(decision)}
-                <Show when={decision.decider !== "runtime"}><span class="dim"> · decided by {decision.decider === "person" ? "you" : "the provider"}</span></Show>
+                <Show when={"decider" in decision && decision.decider !== "runtime"}><span class="dim"> · decided by {"decider" in decision && decision.decider === "person" ? "you" : "the provider"}</span></Show>
               </li>
             )}
           </For>

@@ -39,7 +39,7 @@ async fn doc_read_reads_a_workbook_through_the_real_worker() {
             &ToolContext::new(dir.path().to_path_buf()),
         )
         .await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     assert!(
         output
             .content
@@ -71,7 +71,7 @@ async fn core_never_runs_doc_read_in_its_own_process() {
             &ToolContext::new(dir.path().to_path_buf()),
         )
         .await;
-    assert!(output.is_error);
+    assert!(output.is_error());
     assert!(
         output.content.contains("tool broker unavailable"),
         "without a worker the read must fail, not fall back in-process: {}",
@@ -108,7 +108,7 @@ async fn office_apply_edits_through_the_worker_as_the_calling_agent() {
             &ToolContext::new(dir.path().to_path_buf()).with_agent_id("mira"),
         )
         .await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     assert!(
         output.content.contains("tracked changes by mira"),
         "the worker received the calling Agent's id: {}",
@@ -225,7 +225,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
                 &ToolContext::new(workspace.clone()).with_agent_id("vak"),
             )
             .await;
-        assert!(!output.is_error, "{name}: {}", output.content);
+        assert!(!output.is_error(), "{name}: {}", output.content);
         assert!(
             !workspace.join(name).exists(),
             "new Office content in {name} must remain a draft until Review accepts it"
@@ -256,7 +256,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
             .execute(&json!({"path":draft}), &ToolContext::new(workspace.clone()))
             .await;
         assert!(
-            !extracted.is_error,
+            !extracted.is_error(),
             "doc_read {name}: {}",
             extracted.content
         );
@@ -313,7 +313,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
                     )
                     .await;
                 assert!(
-                    !native_table.is_error,
+                    !native_table.is_error(),
                     "native Excel table extraction: {}",
                     native_table.content
                 );
@@ -328,7 +328,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
                     )
                     .await;
                 assert!(
-                    !second_native_table.is_error,
+                    !second_native_table.is_error(),
                     "second native table: {}",
                     second_native_table.content
                 );
@@ -343,7 +343,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
                     )
                     .await;
                 assert!(
-                    !chart_table.is_error,
+                    !chart_table.is_error(),
                     "chart table extraction: {}",
                     chart_table.content
                 );
@@ -356,7 +356,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
                     )
                     .await;
                 assert!(
-                    !second_chart_table.is_error,
+                    !second_chart_table.is_error(),
                     "second chart extraction: {}",
                     second_chart_table.content
                 );
@@ -387,7 +387,7 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
                     )
                     .await;
                 assert!(
-                    !chart_table.is_error,
+                    !chart_table.is_error(),
                     "PowerPoint chart table extraction: {}",
                     chart_table.content
                 );
@@ -474,7 +474,7 @@ async fn the_worker_writes_a_new_document_clean_when_the_runtime_says_so() {
                     &ToolContext::new(dir.clone()).with_agent_id("mira"),
                 )
                 .await;
-            assert!(!output.is_error, "{}", output.content);
+            assert!(!output.is_error(), "{}", output.content);
             let draft = output
                 .content
                 .split("written to ")

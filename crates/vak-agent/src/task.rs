@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use vak_tools::Fault;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -660,12 +661,15 @@ impl Tool for TaskTool {
 impl TaskTool {
     async fn execute_inner(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(prompt) = args.get("prompt").and_then(|p| p.as_str()) else {
-            return ToolOutput::error("missing required parameter: prompt");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: prompt");
         };
         let requested_contract = args.get("contract_id").and_then(|value| value.as_str());
         let requested_item = args.get("work_item_id").and_then(|value| value.as_str());
         if requested_contract.is_some() != requested_item.is_some() {
-            return ToolOutput::error("contract_id and work_item_id must be supplied together");
+            return ToolOutput::error(
+                Fault::Shape,
+                "contract_id and work_item_id must be supplied together",
+            );
         }
         if let Some(contract_id) = requested_contract
             && self
@@ -675,6 +679,7 @@ impl TaskTool {
                 .is_some_and(|known| known != contract_id)
         {
             return ToolOutput::error(
+                Fault::Target,
                 "child contract does not match the parent's managed contract",
             );
         }
@@ -683,6 +688,7 @@ impl TaskTool {
             && !self.deps.work_item_ids.iter().any(|known| known == item_id)
         {
             return ToolOutput::error(
+                Fault::Target,
                 "child work item does not exist in the parent's managed contract",
             );
         }
@@ -698,7 +704,10 @@ impl TaskTool {
             .unwrap_or(false)
         {
             let Some(registry) = self.deps.registry.as_ref() else {
-                return ToolOutput::error("background workers are not available here");
+                return ToolOutput::error(
+                    Fault::Refused,
+                    "background workers are not available here",
+                );
             };
             // A background writer keeps a lease on the paths it may change
             // for as long as it runs (docs/design/84 §5.1).
@@ -714,15 +723,18 @@ impl TaskTool {
                     .unwrap_or_default();
                 write_scopes = match crate::write_lease::normalize_scopes(&named) {
                     Ok(scopes) => scopes,
-                    Err(reason) => return ToolOutput::error(reason),
+                    Err(reason) => return ToolOutput::error(Fault::Shape, reason),
                 };
                 if let Some(holder) = registry.lease_conflict(
                     &self.deps.parent_session_id,
                     &crate::write_lease::lease_claims(&write_scopes),
                 ) {
-                    return ToolOutput::error(format!(
-                        "those paths are already leased to background worker '{holder}'; wait for it or stop it first"
-                    ));
+                    return ToolOutput::error(
+                        Fault::Refused,
+                        format!(
+                            "those paths are already leased to background worker '{holder}'; wait for it or stop it first"
+                        ),
+                    );
                 }
             }
         }
@@ -767,11 +779,14 @@ impl TaskTool {
                             .cloned()
                             .collect::<Vec<_>>()
                             .join(", ");
-                        return ToolOutput::error(if known.is_empty() {
-                            format!("unknown role '{role}': no roles are defined")
-                        } else {
-                            format!("unknown role '{role}'; defined roles: {known}")
-                        });
+                        return ToolOutput::error(
+                            Fault::Target,
+                            if known.is_empty() {
+                                format!("unknown role '{role}': no roles are defined")
+                            } else {
+                                format!("unknown role '{role}'; defined roles: {known}")
+                            },
+                        );
                     }
                 }
             }
@@ -791,13 +806,13 @@ impl TaskTool {
             .transpose()
         {
             Ok(profile) => profile.flatten(),
-            Err(error) => return ToolOutput::error(error),
+            Err(error) => return ToolOutput::error(Fault::Target, error),
         };
         if profile.is_none() && selected_agent.is_some() {
-            return ToolOutput::error(format!(
-                "unknown Agent '{}'",
-                selected_agent.unwrap_or_default()
-            ));
+            return ToolOutput::error(
+                Fault::Target,
+                format!("unknown Agent '{}'", selected_agent.unwrap_or_default()),
+            );
         }
         let child_tool_names = child_tools
             .iter()
@@ -926,7 +941,9 @@ impl TaskTool {
         let mut child_run = match (&self.deps.runs, &child_trace) {
             (Some(runs), Some(trace)) => match runs.begin(trace, None, None) {
                 Ok(run) => Some(run),
-                Err(e) => return ToolOutput::error(format!("child run not admitted: {e}")),
+                Err(e) => {
+                    return ToolOutput::error(Fault::Tool, format!("child run not admitted: {e}"));
+                }
             },
             _ => None,
         };
@@ -940,13 +957,13 @@ impl TaskTool {
                         },
                     ));
                 }
-                return ToolOutput::error(format!("cannot create child session: {e}"));
+                return ToolOutput::error(Fault::Tool, format!("cannot create child session: {e}"));
             }
         };
         if let (Some(runs), Some(run)) = (&self.deps.runs, &child_run)
             && let Err(e) = runs.session(run.id(), &session_id)
         {
-            return ToolOutput::error(format!("child run not recorded: {e}"));
+            return ToolOutput::error(Fault::Tool, format!("child run not recorded: {e}"));
         }
 
         let label = args
@@ -1055,7 +1072,7 @@ impl TaskTool {
                     progress: progress.clone(),
                 },
             ) {
-                return ToolOutput::error(reason);
+                return ToolOutput::error(Fault::Refused, reason);
             }
             Some(RegistryGuard {
                 registry: registry.clone(),
@@ -1249,7 +1266,7 @@ impl DriveChild {
                 id: session_id,
                 label,
                 parent_session_id,
-                is_error: output.is_error,
+                is_error: output.is_error(),
                 text: output.content.clone(),
                 elapsed_secs: started.elapsed().as_secs(),
             });
@@ -1276,16 +1293,19 @@ fn worker_output(session_id: &str, outcome: crate::TurnOutcome, contracted: bool
         }
         crate::TurnOutcome::Aborted { partial } => {
             let text = partial.map(|p| p.text_content()).unwrap_or_default();
-            ToolOutput::error(format!(
-                "worker '{session_id}' was cancelled. Partial output:\n{text}"
-            ))
+            ToolOutput::error(
+                Fault::Cancelled,
+                format!("worker '{session_id}' was cancelled. Partial output:\n{text}"),
+            )
         }
-        crate::TurnOutcome::Failed { error } => {
-            ToolOutput::error(format!("worker '{session_id}' failed: {error}"))
-        }
-        crate::TurnOutcome::MaxTurnsReached => ToolOutput::error(format!(
-            "worker '{session_id}' hit its turn limit before finishing"
-        )),
+        crate::TurnOutcome::Failed { error } => ToolOutput::error(
+            Fault::Tool,
+            format!("worker '{session_id}' failed: {error}"),
+        ),
+        crate::TurnOutcome::MaxTurnsReached => ToolOutput::error(
+            Fault::Tool,
+            format!("worker '{session_id}' hit its turn limit before finishing"),
+        ),
     }
 }
 

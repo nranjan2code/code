@@ -15,6 +15,7 @@
 //! a change reaches the workspace (invariant 35; docs/design/72, "Owner
 //! direction").
 
+use crate::Fault;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -135,7 +136,7 @@ impl Tool for OfficeApplyTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(path) = args.get("path").and_then(Value::as_str).map(str::trim) else {
-            return ToolOutput::error("missing required parameter: path");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: path");
         };
         let named_source = args
             .get("source")
@@ -148,7 +149,7 @@ impl Tool for OfficeApplyTool {
             .map(str::trim)
             .filter(|digest| !digest.is_empty());
         let Some(raw_ops) = args.get("ops") else {
-            return ToolOutput::error("missing required parameter: ops");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: ops");
         };
         let pdf = vak_pdf::is_pdf_path(path);
         // Checked first: a text file sent here once got "pass the sha256
@@ -159,36 +160,45 @@ impl Tool for OfficeApplyTool {
             .and_then(|extension| extension.to_str())
             .and_then(vak_ooxml::Format::from_extension);
         if target.is_none() && !pdf {
-            return ToolOutput::error(format!(
-                "{path} is not a Word, Excel, PowerPoint or PDF file (.docx, .xlsx, .pptx and their variants, or .pdf), so office_apply cannot change it. Change a text file such as Markdown, code or data with edit, or rewrite it whole with write."
-            ));
+            return ToolOutput::error(
+                Fault::Target,
+                format!(
+                    "{path} is not a Word, Excel, PowerPoint or PDF file (.docx, .xlsx, .pptx and their variants, or .pdf), so office_apply cannot change it. Change a text file such as Markdown, code or data with edit, or rewrite it whole with write."
+                ),
+            );
         }
         if let Some(error) = validate_chart_shapes(raw_ops, pdf) {
-            return ToolOutput::error(error);
+            return ToolOutput::error(Fault::Target, error);
         }
         let (ops, pdf_ops): (Vec<vak_ooxml::edit::OfficeOp>, Vec<vak_pdf::edit::PdfOp>) = if pdf {
             match serde_json::from_value(raw_ops.clone()) {
                 Ok(ops) => (Vec::new(), ops),
                 Err(error) => {
-                    return ToolOutput::error(format!(
-                        "ops are not valid for a PDF: {error}. A PDF takes {}; each op is an object with an \"op\" name and only that op's fields",
-                        crate::office_pdf::OPS
-                    ));
+                    return ToolOutput::error(
+                        Fault::Shape,
+                        format!(
+                            "ops are not valid for a PDF: {error}. A PDF takes {}; each op is an object with an \"op\" name and only that op's fields",
+                            crate::office_pdf::OPS
+                        ),
+                    );
                 }
             }
         } else {
             match serde_json::from_value(raw_ops.clone()) {
                 Ok(ops) => (ops, Vec::new()),
                 Err(error) => {
-                    return ToolOutput::error(format!(
-                        "ops are not valid: {error}. Each op is an object with an \"op\" name and only that op's fields"
-                    ));
+                    return ToolOutput::error(
+                        Fault::Shape,
+                        format!(
+                            "ops are not valid: {error}. Each op is an object with an \"op\" name and only that op's fields"
+                        ),
+                    );
                 }
             }
         };
         let destination = match confined_destination(&ctx.cwd, path) {
             Ok(destination) => destination,
-            Err(error) => return ToolOutput::error(error),
+            Err(error) => return ToolOutput::error(Fault::Target, error),
         };
         // One way to create: a new path with no source and no digest starts
         // from the built-in blank. A digest for a file that does not exist
@@ -196,15 +206,21 @@ impl Tool for OfficeApplyTool {
         // it is never taken as a request to create.
         let origin = match (named_source, base_digest) {
             (None, None) if destination.exists() => {
-                return ToolOutput::error(format!(
-                    "{path} already exists. To change it, read it with doc_read and pass the sha256 it prints as base_digest; to create a new file from scratch, give a name that does not exist yet"
-                ));
+                return ToolOutput::error(
+                    Fault::Target,
+                    format!(
+                        "{path} already exists. To change it, read it with doc_read and pass the sha256 it prints as base_digest; to create a new file from scratch, give a name that does not exist yet"
+                    ),
+                );
             }
             (None, None) => OfficeOrigin::Blank,
             (Some(source), None) => {
-                return ToolOutput::error(format!(
-                    "missing base_digest for source {source}: read it with doc_read and pass the sha256 it prints. To create a new file from scratch, leave out source as well"
-                ));
+                return ToolOutput::error(
+                    Fault::Shape,
+                    format!(
+                        "missing base_digest for source {source}: read it with doc_read and pass the sha256 it prints. To create a new file from scratch, leave out source as well"
+                    ),
+                );
             }
             (source, Some(digest)) => {
                 let source = source.unwrap_or(path);
@@ -214,25 +230,34 @@ impl Tool for OfficeApplyTool {
                         base_digest: digest.to_string(),
                     },
                     Err(_) if source == path && !destination.exists() => {
-                        return ToolOutput::error(format!(
-                            "{path} does not exist, so there is no file for base_digest to name. To create it from scratch, leave out base_digest; to edit a file, check its name"
-                        ));
+                        return ToolOutput::error(
+                            Fault::Target,
+                            format!(
+                                "{path} does not exist, so there is no file for base_digest to name. To create it from scratch, leave out base_digest; to edit a file, check its name"
+                            ),
+                        );
                     }
-                    Err(error) => return ToolOutput::error(error),
+                    Err(error) => return ToolOutput::error(Fault::Target, error),
                 }
             }
         };
         let root = match canonical_root(&ctx.cwd) {
             Ok(root) => root,
-            Err(error) => return ToolOutput::error(error),
+            Err(error) => return ToolOutput::error(Fault::Target, error),
         };
         let Ok(relative) = destination.strip_prefix(&root).map(Path::to_path_buf) else {
-            return ToolOutput::error(format!("access denied: {path} is outside the workspace"));
+            return ToolOutput::error(
+                Fault::Refused,
+                format!("access denied: {path} is outside the workspace"),
+            );
         };
         if relative.starts_with(vak_config::scope::PROJECT_DIR) {
-            return ToolOutput::error(format!(
-                "{path} is inside .vak; name the workspace file the draft is for, and pass an earlier draft as source"
-            ));
+            return ToolOutput::error(
+                Fault::Target,
+                format!(
+                    "{path} is inside .vak; name the workspace file the draft is for, and pass an earlier draft as source"
+                ),
+            );
         }
         let agent = ctx.agent_id.as_deref();
         let author = tracked_change_author(agent.unwrap_or(DEFAULT_AGENT));
@@ -314,11 +339,11 @@ impl Tool for OfficeApplyTool {
             }
             Ok(Err(error)) => {
                 finish(1, Vec::new());
-                ToolOutput::error(error)
+                ToolOutput::error(Fault::Target, error)
             }
             Err(error) => {
                 finish(1, Vec::new());
-                ToolOutput::error(format!("office_apply failed: {error}"))
+                ToolOutput::error(Fault::Tool, format!("office_apply failed: {error}"))
             }
         }
     }
@@ -990,14 +1015,19 @@ mod tests {
             crate::validate_input(&schema, example).unwrap();
             let dir = tempfile::tempdir().unwrap();
             let result = run(dir.path(), example.clone()).await;
-            assert!(!result.is_error, "{}: {}", example["path"], result.content);
+            assert!(
+                !result.is_error(),
+                "{}: {}",
+                example["path"],
+                result.content
+            );
             let read = crate::doc_read::DocReadTool
                 .execute(
                     &serde_json::json!({"path":draft_path(&result)}),
                     &ToolContext::new(dir.path().to_path_buf()).with_agent_id("mira"),
                 )
                 .await;
-            assert!(!read.is_error, "{}", read.content);
+            assert!(!read.is_error(), "{}", read.content);
             assert!(read.content.contains("sha256"));
             assert!(!dir.path().join(example["path"].as_str().unwrap()).exists());
         }
@@ -1030,7 +1060,7 @@ mod tests {
         let read = crate::read::ReadTool
             .execute(&serde_json::json!({"path": "q3.docx"}), &ctx)
             .await;
-        assert!(read.is_error);
+        assert!(read.is_error());
         assert!(
             read.content.contains("a Word document") && read.content.contains("doc_read"),
             "{}",
@@ -1042,7 +1072,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(edit.is_error);
+        assert!(edit.is_error());
         assert!(
             edit.content.contains("office_apply") && edit.content.contains("nothing was changed"),
             "{}",
@@ -1054,7 +1084,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(write.is_error);
+        assert!(write.is_error());
         assert!(write.content.contains("office_apply"), "{}", write.content);
         assert_eq!(
             std::fs::read(&file).unwrap(),
@@ -1066,7 +1096,7 @@ mod tests {
         let plain = crate::read::ReadTool
             .execute(&serde_json::json!({"path": "notes.txt"}), &ctx)
             .await;
-        assert!(!plain.is_error, "{}", plain.content);
+        assert!(!plain.is_error(), "{}", plain.content);
 
         let pdf = dir.path().join("scan.pdf");
         let original = vak_pdf::fixtures::report();
@@ -1075,7 +1105,9 @@ mod tests {
             .execute(&serde_json::json!({"path": "scan.pdf"}), &ctx)
             .await;
         assert!(
-            read.is_error && read.content.contains("is a PDF") && read.content.contains("doc_read"),
+            read.is_error()
+                && read.content.contains("is a PDF")
+                && read.content.contains("doc_read"),
             "{}",
             read.content
         );
@@ -1086,7 +1118,7 @@ mod tests {
             )
             .await;
         assert!(
-            write.is_error && write.content.contains("nothing was changed"),
+            write.is_error() && write.content.contains("nothing was changed"),
             "{}",
             write.content
         );
@@ -1112,7 +1144,7 @@ mod tests {
             }),
         )
         .await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         assert!(
             output
                 .content
@@ -1141,7 +1173,7 @@ mod tests {
                     .with_sandbox_sink(sink),
             )
             .await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         assert_eq!(
             std::fs::read(&file).unwrap(),
             vak_ooxml::fixtures::xlsx(),
@@ -1188,7 +1220,7 @@ mod tests {
             }),
         )
         .await;
-        assert!(stale.is_error);
+        assert!(stale.is_error());
         assert!(
             stale.content.contains("does not match the source"),
             "{}",
@@ -1213,7 +1245,7 @@ mod tests {
             }),
         )
         .await;
-        assert!(!first.is_error, "{}", first.content);
+        assert!(!first.is_error(), "{}", first.content);
         assert!(
             first.content.contains("It is a new file: 2 slides."),
             "{}",
@@ -1235,7 +1267,7 @@ mod tests {
         )
         .await;
         assert!(
-            second.is_error,
+            second.is_error(),
             "the template has no notes master to make a notes page from"
         );
         assert!(
@@ -1253,7 +1285,7 @@ mod tests {
             }),
         )
         .await;
-        assert!(!third.is_error, "{}", third.content);
+        assert!(!third.is_error(), "{}", third.content);
         let latest = on_disk(dir.path(), &draft_path(&third));
         let document = vak_ooxml::read::read(
             std::io::Cursor::new(std::fs::read(latest).unwrap()),
@@ -1289,7 +1321,7 @@ mod tests {
             serde_json::json!({"path": "memo.docx", "source": "brand.docx", "base_digest": digest_of(&brand), "ops": ops}),
         )
         .await;
-        assert!(!created.is_error, "{}", created.content);
+        assert!(!created.is_error(), "{}", created.content);
         assert!(
             !body(&created).contains(r#"w:author="mira""#),
             "a file not yet in the workspace is a new document, written clean"
@@ -1299,7 +1331,7 @@ mod tests {
             serde_json::json!({"path": "brand.docx", "base_digest": digest_of(&brand), "ops": ops}),
         )
         .await;
-        assert!(!edited.is_error, "{}", edited.content);
+        assert!(!edited.is_error(), "{}", edited.content);
         assert!(
             body(&edited).contains(r#"w:author="mira""#),
             "an existing document is edited with tracked changes"
@@ -1312,7 +1344,7 @@ mod tests {
                     .with_new_documents(vec!["brand.docx".into()]),
             )
             .await;
-        assert!(!revised.is_error, "{}", revised.content);
+        assert!(!revised.is_error(), "{}", revised.content);
         assert!(
             !body(&revised).contains(r#"w:author="mira""#),
             "a revision's copy of a new document stays clean, though the copy holds the file"
@@ -1349,7 +1381,7 @@ mod tests {
             ),
         ] {
             let output = run(dir.path(), args).await;
-            assert!(output.is_error, "{}", output.content);
+            assert!(output.is_error(), "{}", output.content);
             assert!(output.content.contains(expected), "{}", output.content);
         }
         assert_eq!(std::fs::read(&file).unwrap(), vak_ooxml::fixtures::docx());
@@ -1377,7 +1409,7 @@ mod tests {
             }),
         )
         .await;
-        assert!(!created.is_error, "{}", created.content);
+        assert!(!created.is_error(), "{}", created.content);
         assert!(
             created.content.contains("memo.docx is a new file, not in the workspace until a person reviews and accepts the draft"),
             "{}",
@@ -1428,7 +1460,7 @@ mod tests {
                 serde_json::json!({"path": format!("new.{extension}"), "ops": [op]}),
             )
             .await;
-            assert!(!output.is_error, "{extension}: {}", output.content);
+            assert!(!output.is_error(), "{extension}: {}", output.content);
         }
     }
 
@@ -1439,7 +1471,7 @@ mod tests {
         std::fs::write(dir.path().join("brand.docx"), vak_ooxml::fixtures::docx()).unwrap();
         let add = serde_json::json!([{"op": "add_paragraph", "text": "x"}]);
         let refusal = |output: &ToolOutput, needle: &str| {
-            assert!(output.is_error, "{}", output.content);
+            assert!(output.is_error(), "{}", output.content);
             assert!(output.content.contains(needle), "{}", output.content);
         };
         refusal(

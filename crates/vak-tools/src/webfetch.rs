@@ -7,6 +7,7 @@
 //! Credentials are never sent: bare requests, no cookie store, no auth
 //! headers, ever.
 
+use crate::Fault;
 use std::error::Error as StdError;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
@@ -257,14 +258,14 @@ impl Tool for WebFetchTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(url) = args.get("url").and_then(|u| u.as_str()) else {
-            return ToolOutput::error("missing required parameter: url");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: url");
         };
         let format = match PageFormat::from_args(args) {
             Ok(format) => format,
-            Err(error) => return ToolOutput::error(error),
+            Err(error) => return ToolOutput::error(Fault::Shape, error),
         };
         tokio::select! {
-            _ = ctx.cancel.cancelled() => ToolOutput::error("fetch cancelled"),
+            _ = ctx.cancel.cancelled() => ToolOutput::error(Fault::Cancelled, "fetch cancelled"),
             out = self.run(url, format) => out,
         }
     }
@@ -366,10 +367,13 @@ pub async fn guarded_get(
 fn http_error_output(url: &str, status: u16) -> ToolOutput {
     let status = reqwest::StatusCode::from_u16(status)
         .map_or_else(|_| status.to_string(), |status| status.to_string());
-    ToolOutput::error(format!(
-        "[webfetch] GET {url} -> {status}: the server answered with an error instead of \
+    ToolOutput::error(
+        Fault::Target,
+        format!(
+            "[webfetch] GET {url} -> {status}: the server answered with an error instead of \
          the page, so nothing was retrieved from it."
-    ))
+        ),
+    )
 }
 
 impl WebFetchTool {
@@ -383,7 +387,7 @@ impl WebFetchTool {
                 let text = if is_html(&fetched.content_type) {
                     match page(&self.worker_exe, &body, &fetched.final_url, format).await {
                         Ok(text) => text,
-                        Err(error) => return ToolOutput::error(error),
+                        Err(error) => return ToolOutput::error(Fault::Tool, error),
                     }
                 } else {
                     body.into_owned()
@@ -398,7 +402,7 @@ impl WebFetchTool {
                 );
                 ToolOutput::ok(format!("{header}\n{text}"))
             }
-            Err(error) => ToolOutput::error(error),
+            Err(error) => ToolOutput::error(Fault::Tool, error),
         }
     }
 }
@@ -590,7 +594,7 @@ mod tests {
     async fn missing_url_parameter_is_a_typed_error() {
         let ctx = shared_ctx(std::path::Path::new("."));
         let out = tool().execute(&serde_json::json!({}), &ctx).await;
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert!(out.content.contains("missing required parameter"));
     }
 
@@ -600,7 +604,7 @@ mod tests {
         let out = tool()
             .execute(&serde_json::json!({"url": "ftp://example.com/x"}), &ctx)
             .await;
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert!(out.content.contains("ftp"));
     }
 
@@ -627,7 +631,7 @@ mod tests {
         for (url, class) in cases {
             let out = tool().execute(&serde_json::json!({"url": url}), &ctx).await;
             assert!(
-                out.is_error,
+                out.is_error(),
                 "expected {url} to be blocked, got: {}",
                 out.content
             );
@@ -764,7 +768,7 @@ mod tests {
         let out = tool()
             .execute(&serde_json::json!({"url": "https://example.com"}), &ctx)
             .await;
-        assert!(!out.is_error, "live fetch failed: {}", out.content);
+        assert!(!out.is_error(), "live fetch failed: {}", out.content);
         assert!(
             out.content.starts_with("[webfetch] GET "),
             "{}",
@@ -776,12 +780,7 @@ mod tests {
     fn an_error_status_is_an_error_that_asks_for_no_argument_fix() {
         for status in [400, 401, 403, 404, 410, 500, 503] {
             let output = super::http_error_output("https://example.com/a", status);
-            assert!(output.is_error, "{status}");
-            assert!(
-                !output.classify().is_correctable(),
-                "{status}: {}",
-                output.content
-            );
+            assert_eq!(output.fault, Some(Fault::Target), "{status}");
         }
     }
 }

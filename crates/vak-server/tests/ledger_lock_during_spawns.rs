@@ -79,7 +79,7 @@ async fn reopening_a_ledger_while_workers_spawn_never_finds_it_locked() {
         lanes.spawn(async move {
             for _ in 0..25 {
                 let output = read.execute(&json!({"path": "note.txt"}), &ctx).await;
-                assert!(!output.is_error, "{}", output.content);
+                assert!(!output.is_error(), "{}", output.content);
             }
         });
     }

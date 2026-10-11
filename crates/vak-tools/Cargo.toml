@@ -26,6 +26,7 @@ tokio-util = { workspace = true }
 vak-config = { workspace = true }
 vak-intake = { workspace = true }
 vak-intent = { workspace = true }
+vak-control = { workspace = true }
 tracing = { workspace = true }
 vak-telemetry = { workspace = true }
 vak-llm = { workspace = true }

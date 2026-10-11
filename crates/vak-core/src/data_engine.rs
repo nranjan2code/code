@@ -5,6 +5,7 @@
 //! (CSV, JSON arrays, or Markdown tables) with zero subprocess overhead.
 
 use std::collections::BTreeMap;
+use vak_tools::Fault;
 
 use serde_json::Value;
 
@@ -275,17 +276,22 @@ impl vak_tools::Tool for DataQueryTool {
     #[allow(clippy::collapsible_if)]
     async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(raw_data) = args.get("data").and_then(Value::as_str).map(str::trim) else {
-            return vak_tools::ToolOutput::error("missing required argument 'data'");
+            return vak_tools::ToolOutput::error(Fault::Shape, "missing required argument 'data'");
         };
         if raw_data.is_empty() {
-            return vak_tools::ToolOutput::error("'data' must not be empty");
+            return vak_tools::ToolOutput::error(Fault::Shape, "'data' must not be empty");
         }
 
         let format = args.get("format").and_then(Value::as_str);
         let table = if format == Some("json") || (format.is_none() && raw_data.starts_with('[')) {
             match serde_json::from_str::<Value>(raw_data) {
                 Ok(v) => TableData::from_json(&v),
-                Err(e) => return vak_tools::ToolOutput::error(format!("invalid JSON data: {e}")),
+                Err(e) => {
+                    return vak_tools::ToolOutput::error(
+                        Fault::Shape,
+                        format!("invalid JSON data: {e}"),
+                    );
+                }
             }
         } else if format == Some("markdown") || (format.is_none() && raw_data.starts_with('|')) {
             TableData::from_markdown(raw_data)
@@ -295,7 +301,12 @@ impl vak_tools::Tool for DataQueryTool {
 
         let mut table = match table {
             Ok(t) => t,
-            Err(e) => return vak_tools::ToolOutput::error(format!("could not parse data: {e}")),
+            Err(e) => {
+                return vak_tools::ToolOutput::error(
+                    Fault::Shape,
+                    format!("could not parse data: {e}"),
+                );
+            }
         };
 
         // 1. Filtering
@@ -327,7 +338,10 @@ impl vak_tools::Tool for DataQueryTool {
                     }
                 });
             } else {
-                return vak_tools::ToolOutput::error(format!("filter column '{col}' not found"));
+                return vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    format!("filter column '{col}' not found"),
+                );
             }
         }
 
@@ -338,9 +352,10 @@ impl vak_tools::Tool for DataQueryTool {
             let agg_idx = match table.col_index(agg_col) {
                 Some(i) => i,
                 None => {
-                    return vak_tools::ToolOutput::error(format!(
-                        "aggregate column '{agg_col}' not found"
-                    ));
+                    return vak_tools::ToolOutput::error(
+                        Fault::Target,
+                        format!("aggregate column '{agg_col}' not found"),
+                    );
                 }
             };
 
@@ -348,9 +363,10 @@ impl vak_tools::Tool for DataQueryTool {
                 let group_idx = match table.col_index(group_by_col) {
                     Some(i) => i,
                     None => {
-                        return vak_tools::ToolOutput::error(format!(
-                            "group_by column '{group_by_col}' not found"
-                        ));
+                        return vak_tools::ToolOutput::error(
+                            Fault::Target,
+                            format!("group_by column '{group_by_col}' not found"),
+                        );
                     }
                 };
 
@@ -520,7 +536,7 @@ mod tests {
             "select": ["name", "salary"]
         });
         let out = tool.execute(&args, &ctx).await;
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         assert!(out.content.contains("Charlie"), "{}", out.content);
         assert!(!out.content.contains("Bob"), "{}", out.content);
 
@@ -531,7 +547,7 @@ mod tests {
             "aggregate": { "column": "salary", "fn": "avg" }
         });
         let agg_out = tool.execute(&agg_args, &ctx).await;
-        assert!(!agg_out.is_error, "{}", agg_out.content);
+        assert!(!agg_out.is_error(), "{}", agg_out.content);
         assert!(agg_out.content.contains("Eng"), "{}", agg_out.content);
         assert!(
             agg_out.content.contains("123333.33") || agg_out.content.contains("123333"),

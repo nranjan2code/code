@@ -50,7 +50,7 @@ print('full-stack build and smoke test passed')
 PY
 "#;
     let (output, events) = run(workspace.path(), "workflow-stack", command).await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     assert!(
         output
             .content
@@ -89,7 +89,7 @@ print('research evidence and citations verified')
 PY
 "#;
     let (output, events) = run(workspace.path(), "workflow-research", command).await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     assert!(
         output
             .content
@@ -123,7 +123,7 @@ print('document and data outputs validated')
 PY
 "#;
     let (output, events) = run(workspace.path(), "workflow-docs", command).await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     assert!(
         output
             .content

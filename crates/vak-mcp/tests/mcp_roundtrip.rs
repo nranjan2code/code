@@ -63,7 +63,7 @@ async fn tool_scoped_allow_keeps_server_discoverable_without_exposing_other_tool
     let out = tool
         .execute(&json!({"action": "list", "server": "fake"}), &ctx())
         .await;
-    assert!(!out.is_error, "{}", out.content);
+    assert!(!out.is_error(), "{}", out.content);
     assert!(out.content.contains("echo —"), "{}", out.content);
     assert!(!out.content.contains("boom —"), "{}", out.content);
     let denied = tool
@@ -72,7 +72,7 @@ async fn tool_scoped_allow_keeps_server_discoverable_without_exposing_other_tool
             &ctx(),
         )
         .await;
-    assert!(denied.is_error);
+    assert!(denied.is_error());
     assert!(denied.content.contains("denied by channel policy"));
 }
 
@@ -82,7 +82,7 @@ async fn list_discovers_server_and_tools() {
     let out = tool
         .execute(&json!({"action": "list", "server": "fake"}), &ctx())
         .await;
-    assert!(!out.is_error, "list failed: {}", out.content);
+    assert!(!out.is_error(), "list failed: {}", out.content);
     assert!(out.content.contains("fake:"), "got: {}", out.content);
     assert!(out.content.contains("echo — Echo back"));
 }
@@ -101,7 +101,7 @@ async fn call_invokes_tool_and_returns_text() {
             &ctx(),
         )
         .await;
-    assert!(!out.is_error, "call failed: {}", out.content);
+    assert!(!out.is_error(), "call failed: {}", out.content);
     assert_eq!(out.content.trim(), "echo: hello mcp");
 }
 
@@ -119,7 +119,7 @@ async fn a_call_returns_the_whole_result() {
             &ctx(),
         )
         .await;
-    assert!(!out.is_error, "{}", out.content);
+    assert!(!out.is_error(), "{}", out.content);
     assert!(out.content.contains(&"x".repeat(50_000)));
 }
 
@@ -136,7 +136,7 @@ async fn server_side_tool_errors_become_error_values() {
             &ctx(),
         )
         .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(out.content.contains("boom failed on purpose"));
 }
 
@@ -154,7 +154,7 @@ async fn configured_secrets_are_redacted_from_mcp_results_and_errors() {
             &ctx(),
         )
         .await;
-    assert!(!result.is_error);
+    assert!(!result.is_error());
     assert!(!result.content.contains(secret), "got: {}", result.content);
     assert!(result.content.contains("[REDACTED]"));
 
@@ -164,7 +164,7 @@ async fn configured_secrets_are_redacted_from_mcp_results_and_errors() {
             &ctx(),
         )
         .await;
-    assert!(error.is_error);
+    assert!(error.is_error());
     assert!(!error.content.contains(secret), "got: {}", error.content);
     assert!(error.content.contains("[REDACTED]"));
 }
@@ -182,7 +182,7 @@ async fn unknown_tool_is_rejected_from_discovered_catalog() {
             &ctx(),
         )
         .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(
         out.content.contains("unknown tool 'search'"),
         "got: {}",
@@ -200,7 +200,7 @@ async fn unknown_server_is_an_error_value() {
             &ctx(),
         )
         .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(out.content.contains("cannot connect") || out.content.contains("unknown mcp server"));
 }
 
@@ -213,7 +213,7 @@ async fn missing_server_is_an_error_value_before_spawn() {
             &ctx(),
         )
         .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(out.content.contains("missing required parameter: server"));
 }
 
@@ -226,7 +226,7 @@ async fn malformed_arguments_remain_typed_error_values() {
             &ctx(),
         )
         .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(out.content.contains("arguments") || out.content.contains("invalid"));
 }
 
@@ -234,6 +234,6 @@ async fn malformed_arguments_remain_typed_error_values() {
 async fn missing_action_parameter_is_rejected() {
     let tool = McpTool::new(manager());
     let out = tool.execute(&json!({}), &ctx()).await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(out.content.contains("action"));
 }

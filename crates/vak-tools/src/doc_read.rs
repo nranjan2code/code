@@ -8,6 +8,7 @@
 //! hostile input and are parsed only by `vak-ooxml` and `vak-pdf`, inside
 //! that process.
 
+use crate::Fault;
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -100,10 +101,10 @@ impl Tool for DocReadTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(path_str) = args.get("path").and_then(Value::as_str).map(str::trim) else {
-            return ToolOutput::error("missing required parameter: path");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: path");
         };
         if path_str.is_empty() {
-            return ToolOutput::error("'path' must not be empty");
+            return ToolOutput::error(Fault::Shape, "'path' must not be empty");
         }
 
         let p = Path::new(path_str);
@@ -115,10 +116,10 @@ impl Tool for DocReadTool {
                 let hint = attached_copy(&ctx.cwd, path_str)
                     .map(|saved| format!(". The file attached as '{path_str}' is at path \"{saved}\": call doc_read again with that exact path"))
                     .unwrap_or_default();
-                return ToolOutput::error(format!(
-                    "cannot open file '{}': {error}{hint}",
-                    p.display()
-                ));
+                return ToolOutput::error(
+                    Fault::Target,
+                    format!("cannot open file '{}': {error}{hint}", p.display()),
+                );
             }
         };
         // Cited as the workspace path, or by its draft name for a draft.
@@ -171,8 +172,10 @@ impl Tool for DocReadTool {
             };
             return match tokio::task::spawn_blocking(move || office(&target, &request)).await {
                 Ok(Ok(text)) => ToolOutput::ok(text),
-                Ok(Err(error)) => ToolOutput::error(error),
-                Err(error) => ToolOutput::error(format!("document reader failed: {error}")),
+                Ok(Err(error)) => ToolOutput::error(Fault::Target, error),
+                Err(error) => {
+                    ToolOutput::error(Fault::Tool, format!("document reader failed: {error}"))
+                }
             };
         }
         let request = Request {
@@ -190,28 +193,36 @@ impl Tool for DocReadTool {
             let target = canonical_target.clone();
             return match tokio::task::spawn_blocking(move || pdf(&target, &request)).await {
                 Ok(Ok(text)) => ToolOutput::ok(text),
-                Ok(Err(error)) => ToolOutput::error(error),
-                Err(error) => ToolOutput::error(format!("document reader failed: {error}")),
+                Ok(Err(error)) => ToolOutput::error(Fault::Target, error),
+                Err(error) => {
+                    ToolOutput::error(Fault::Tool, format!("document reader failed: {error}"))
+                }
             };
         }
         if let Some((_, name)) = UNSUPPORTED.iter().find(|(known, _)| *known == ext) {
-            return ToolOutput::error(format!(
-                "{} is a {name} file, which doc_read cannot read; it reads text formats, PDF and the Open XML family (.docx, .xlsx, .pptx, .vsdx and their variants)",
-                p.display()
-            ));
+            return ToolOutput::error(
+                Fault::Target,
+                format!(
+                    "{} is a {name} file, which doc_read cannot read; it reads text formats, PDF and the Open XML family (.docx, .xlsx, .pptx, .vsdx and their variants)",
+                    p.display()
+                ),
+            );
         }
 
         let content = match tokio::fs::read(&canonical_target).await {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => text,
                 Err(_) => {
-                    return ToolOutput::error(format!(
-                        "{} is not a text file, a PDF or an Open XML document; doc_read cannot read it",
-                        p.display()
-                    ));
+                    return ToolOutput::error(
+                        Fault::Target,
+                        format!(
+                            "{} is not a text file, a PDF or an Open XML document; doc_read cannot read it",
+                            p.display()
+                        ),
+                    );
                 }
             },
-            Err(e) => return ToolOutput::error(format!("failed to read file: {e}")),
+            Err(e) => return ToolOutput::error(Fault::Target, format!("failed to read file: {e}")),
         };
 
         match view {
@@ -1354,7 +1365,7 @@ mod tests {
                 &ToolContext::new(dir.path().to_path_buf()),
             )
             .await;
-        assert!(output.is_error);
+        assert!(output.is_error());
         assert!(
             output
                 .content
@@ -1379,7 +1390,7 @@ mod tests {
             serde_json::json!({}),
         )
         .await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         let text = output.content;
         assert!(
             text.starts_with("Word document (.docx) · title: Q3 Report"),
@@ -1453,7 +1464,7 @@ mod tests {
             serde_json::json!({"view": "table", "section": "Nope"}),
         )
         .await;
-        assert!(missing.is_error);
+        assert!(missing.is_error());
         assert!(
             missing.content.contains("'Budget' (Budget!)"),
             "{}",
@@ -1504,7 +1515,7 @@ mod tests {
             &[],
         );
         let output = read_office("bomb.docx", bomb, serde_json::json!({})).await;
-        assert!(output.is_error);
+        assert!(output.is_error());
         assert!(output.content.contains("DOCTYPE"), "{}", output.content);
 
         let legacy = read_office(
@@ -1513,7 +1524,7 @@ mod tests {
             serde_json::json!({}),
         )
         .await;
-        assert!(legacy.is_error);
+        assert!(legacy.is_error());
         assert!(
             legacy.content.contains("legacy binary Word"),
             "{}",
@@ -1526,7 +1537,7 @@ mod tests {
             serde_json::json!({}),
         )
         .await;
-        assert!(binary.is_error);
+        assert!(binary.is_error());
         assert!(
             binary.content.contains("not a text file"),
             "{}",
@@ -1551,7 +1562,7 @@ mod tests {
             &[],
         );
         let output = read_office("big.docx", package, serde_json::json!({"limit": 500})).await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         assert!(
             output.content.contains("· sha256 "),
             "anchors are bound to a digest"
@@ -1580,7 +1591,7 @@ mod tests {
             serde_json::json!({}),
         )
         .await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         let text = &output.content;
         assert!(
             text.starts_with("PDF document (PDF 1.7) · title: Q3 Report · sha256 "),
@@ -1647,7 +1658,7 @@ mod tests {
         )
         .await;
         assert!(
-            missing.is_error && missing.content.contains("2 pages"),
+            missing.is_error() && missing.content.contains("2 pages"),
             "{}",
             missing.content
         );
@@ -1658,7 +1669,7 @@ mod tests {
         )
         .await;
         assert!(
-            table.is_error && table.content.contains("no unambiguous aligned table"),
+            table.is_error() && table.content.contains("no unambiguous aligned table"),
             "{}",
             table.content
         );
@@ -1699,7 +1710,7 @@ mod tests {
             serde_json::json!({"view": "table"}),
         )
         .await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         assert!(output.content.contains("Table [page:1/table:1] on page 1"));
         assert!(
             output.content.contains("| Day | Visitors |"),
@@ -1738,13 +1749,13 @@ mod tests {
         )
         .await;
         assert!(
-            encrypted.is_error && encrypted.content.contains("encrypted"),
+            encrypted.is_error() && encrypted.content.contains("encrypted"),
             "{}",
             encrypted.content
         );
         let fake = read_office("fake.pdf", b"just text".to_vec(), serde_json::json!({})).await;
         assert!(
-            fake.is_error && fake.content.contains("not a PDF"),
+            fake.is_error() && fake.content.contains("not a PDF"),
             "{}",
             fake.content
         );

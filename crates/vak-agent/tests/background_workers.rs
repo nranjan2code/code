@@ -498,7 +498,7 @@ async fn another_sessions_worker_is_unknown_not_forbidden() {
                 &ctx,
             )
             .await;
-        assert!(out.is_error, "{action}: {}", out.content);
+        assert!(out.is_error(), "{action}: {}", out.content);
         assert_eq!(
             out.content,
             format!("unknown worker '{}'", worker.id),
@@ -583,7 +583,7 @@ async fn a_parent_answers_its_workers_question_and_the_worker_uses_it() {
             &ctx,
         )
         .await;
-    assert!(!started.is_error, "{}", started.content);
+    assert!(!started.is_error(), "{}", started.content);
     let tool = workers_tool(&h);
 
     // The worker asks, so a wait stops early and says what it is waiting for.
@@ -606,14 +606,14 @@ async fn a_parent_answers_its_workers_question_and_the_worker_uses_it() {
         serde_json::json!({"action": "reply", "id": id, "text": "fiscal 2026"}),
     )
     .await;
-    assert!(!replied.is_error, "{}", replied.content);
+    assert!(!replied.is_error(), "{}", replied.content);
     // A second reply has nothing to answer.
     let again = act(
         &tool,
         serde_json::json!({"action": "reply", "id": id, "text": "again"}),
     )
     .await;
-    assert!(again.is_error);
+    assert!(again.is_error());
 
     let finished = act(
         &tool,
@@ -643,7 +643,7 @@ async fn a_message_reaches_a_live_worker_and_stop_cancels_it() {
             &ctx,
         )
         .await;
-    assert!(!started.is_error, "{}", started.content);
+    assert!(!started.is_error(), "{}", started.content);
     let tool = workers_tool(&h);
     let id = h.registry.active_for("parent-bg")[0].id.clone();
 
@@ -654,21 +654,21 @@ async fn a_message_reaches_a_live_worker_and_stop_cancels_it() {
         serde_json::json!({"action": "message", "id": id, "text": "  "}),
     )
     .await;
-    assert!(empty.is_error);
+    assert!(empty.is_error());
     let sent = act(
         &tool,
         serde_json::json!({"action": "message", "id": id, "text": "focus on 2026"}),
     )
     .await;
-    assert!(!sent.is_error, "{}", sent.content);
+    assert!(!sent.is_error(), "{}", sent.content);
 
     let stopped = act(&tool, serde_json::json!({"action": "stop", "id": id})).await;
-    assert!(!stopped.is_error, "{}", stopped.content);
+    assert!(!stopped.is_error(), "{}", stopped.content);
     for _ in 0..200 {
         if h.registry.active_for("parent-bg").is_empty() {
             let result = act(&tool, serde_json::json!({"action": "result", "id": id})).await;
             assert!(
-                result.is_error,
+                result.is_error(),
                 "a stopped worker's result is an error: {}",
                 result.content
             );

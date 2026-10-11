@@ -87,13 +87,11 @@ pub use goal::{
 };
 pub use limits::Limits;
 pub use outcome::{
-    Command, CompletionVerdict, ControlSource, DeliverableForm, EvidenceReceipt, EvidenceState,
-    InterventionDecision, InterventionEvaluation, InterventionKind, InterventionRequest,
-    OutcomeRequirement, OutcomeSpec, OutcomeStatus, RequirementEvaluation, RequirementImportance,
-    RequirementKind, RequirementOrigin, RequirementStatus, ToolFailureLedger, TurnFacts,
-    evaluate_completion, evaluate_intervention, evaluate_requirements, evaluate_response,
-    evaluate_response_with_failures, evidence_state_from_age, evidence_state_from_receipt,
-    human_review_state, parse_command,
+    Command, CompletionVerdict, ControlSource, Deliverable, DeliverableForm, EvidenceReceipt,
+    EvidenceState, InterventionDecision, InterventionEvaluation, InterventionKind,
+    InterventionRequest, OutcomeRequirement, OutcomeSpec, OutcomeStatus, RequirementEvaluation,
+    RequirementImportance, RequirementKind, RequirementOrigin, RequirementStatus,
+    evaluate_intervention, parse_command,
 };
 pub use reading::{Confidences, Intent, Provenance, Reading, Tier};
 pub use resolve::{

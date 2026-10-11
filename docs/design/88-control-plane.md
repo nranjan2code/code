@@ -29,15 +29,28 @@ thinks" and the admin's Models panel edit it live. C3b done
 the session), never the reading; `Limits.required_domains`, `DomainSet`,
 the act-to-domain table, the misread ledger and the tier-2/3 model reading
 (`[intent] escalate`, `classify_model`, `max_classify_usd`) are removed.
-Later stages are not built.
+C4 done (2026-10-11): `crates/vak-judge` turns receipts into verdicts
+(the verdict on a proposed call from gathered facts, a turn's unrecovered
+failures, the plan check, and the outcome, requirement and completion
+evaluation moved out of `vak-intent` and the agent crate). A tool error is
+typed at its source: `ToolOutput::error` takes a `vak_control::Fault`
+(shape, target, tool, refused, cancelled), the worker protocol carries it,
+the loop records each failed call's fault as `CallEffect::Failed`, and
+`ToolErrorKind::classify` and `never_ran` are removed. A name that is no
+tool this turn offers is `Refusal::Unknown` at `AcceptCall`. The workspace
+is checkpointed when the first call that declares it may change the
+workspace is accepted (`Tool::changes_workspace`, `AgentConfig::before_effect`),
+not from a reading of the request. Later stages are not built.
 
-### Carried into later stages (found while building C0–C3)
+### Carried into later stages (found while building C0–C4)
 
-- C4: checkpoint skipping still follows the reading
-  (`may_slice_capabilities` in `Core::run`); replace it with a checkpoint
-  taken when the first effectful call is accepted (`AcceptCall`).
-- C4: an unknown tool name (seen live: `emit_emit_details_card`) is
-  refused by the broker as free text; make it a typed `Refusal`.
+- C5: `Posture::checkpoint_before_effect` is still derived and recorded but
+  decides nothing; it goes with the reader's other behaviour fields.
+- C5: the `[recovery]` note and the unknown-tool message are still free text
+  written in the agent loop; they become rendered `Correction`s.
+- The commitment satisfaction lattice (`vak-commit/src/satisfy.rs`) is
+  already pure and stays in `vak-commit` until the judge takes a
+  `vak-session` dependency for criteria (C7, with `vak-eval`).
 - C5: the freshness gate reads `Reading.domains` (temporal-deixis words);
   it goes with the other stop-policy checks. Commitments opened from the
   reading's horizon (`may_open_commitment`) and managed mode from the
@@ -217,8 +230,8 @@ In the same change that replaces each (invariant 30):
 - Behaviour driven by the fixed reader: reasoning depth from a "direct
   reply" reading, domains that load tools, the guessed outcome
   requirements.
-- `ToolErrorKind::classify`'s reading of error text. A tool error becomes a
-  typed value at its source (`ToolOutput::error` takes a kind).
+- `ToolErrorKind::classify`'s reading of error text (removed at C4). A tool
+  error is a typed value at its source (`ToolOutput::error` takes a `Fault`).
 - `DOOM_LOOP_THRESHOLD`, `READ_REPEAT_LIMIT`, `WORKERS_GATE_BLOCKS`, and the
   stop policy's wording checks.
 - The 17 free-text control messages, replaced by `Correction` rendered in
@@ -244,14 +257,14 @@ set at `vak-core/src/lib.rs` (`cfg.effort`) from the engagement.
 
 - `crates/vak-agent/src/lib.rs` (9,787 lines): the loop's gates and its 12
   control-message sites.
-- `crates/vak-agent/src/stop_policy.rs`, `plan_check.rs`.
+- `crates/vak-agent/src/stop_policy.rs`; the plan check is `crates/vak-judge/src/plan.rs`.
 - `crates/vak-core/src/lib.rs`: the outcome evaluation and the per-turn
   effort setting; `crates/vak-core/src/intent.rs`.
 - `crates/vak-intent`: the reader, `control.rs` (the control vocabulary,
   mirrored in the client and checked by
   `vak-server/tests/control_vocabulary_sync.rs`).
 - `crates/vak-llm`: every adapter, `ChatRequest`, `WorkReceipt`.
-- `crates/vak-tools`: `ToolErrorKind`, `ToolOutput`.
+- `crates/vak-tools`: `ToolOutput` and its `Fault`.
 - `crates/vak-server/src/projection.rs` (9 control sites) and the client's
   `structured.ts` lists.
 - `crates/vak-session`: one new entry type; `docs/reference/records.md`.

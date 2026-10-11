@@ -36,8 +36,9 @@ it cannot spin indefinitely.
 ### Staged repair (system-authored, no counter)
 
 A recovery hint alone is a nudge to the model; it is not a backstop. The loop
-moves a tool whose calls keep failing with a classifiable
-(`vak_tools::ToolErrorKind::is_correctable()`) fault one stage on at each
+moves a tool whose calls keep failing with a fault of shape
+(`vak_control::Fault::Shape`, named where the call failed and never read
+from the error's wording; `vak_judge::call::repairable`) one stage on at each
 failing step (`reconcile_repair`). There is no repair count to tune and no
 turn is ended for it:
 
@@ -66,13 +67,16 @@ card calls and threw away a complete answer.
 
 ### Outcome linkage (no false `Produced`)
 
-The outcome gate (`vak_core` → `vak_intent::evaluate_response_with_failures`)
-inspects the latest turn: when it ends with classifiable correctable failures
-and zero successful receipts, the run is downgraded to `Unknown` rather than
-`Produced` — a non-empty fallback answer is not evidence. A call the
-runtime refused before anything ran (`vak_tools::never_ran`: not a tool, or
-not the tool's arguments) is not such a failure, and neither is a card that
-was not shown: the stop guard asks the model to report neither.
+The outcome gate (`vak_core` → `vak_judge::outcome::evaluate_response_with_failures`)
+inspects the latest turn: when a call failed and no later call of the same
+tool succeeded (`vak_judge::call::Failures`), the run is downgraded to
+`Unknown` rather than `Produced` — a non-empty fallback answer is not
+evidence. Each failed call's fault is a typed record
+(`CallEffect::Failed { fault }`), written by the loop from what the tool or
+the refusal named. A call whose shape was wrong (not a tool, or not the
+tool's arguments) never ran and is not such a failure, nor is a cancelled
+one (`vak_judge::call::counts`), nor a card that was not shown: the stop
+guard asks the model to report none of them.
 
 The standard failure matrix and where each case is handled.
 

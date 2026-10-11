@@ -1,3 +1,4 @@
+use crate::Fault;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -59,14 +60,17 @@ impl Tool for ReadTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(path_str) = args.get("path").and_then(|p| p.as_str()) else {
-            return ToolOutput::error("missing required parameter: path");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: path");
         };
         let path = ctx.resolve(std::path::Path::new(path_str));
         if crate::write::protected_control_path(&path, ctx).is_some() {
-            return ToolOutput::error("sandbox denied reads of workspace control files");
+            return ToolOutput::error(
+                Fault::Refused,
+                "sandbox denied reads of workspace control files",
+            );
         }
         if let Some(refusal) = crate::office_apply::text_tool_refusal(&path, "read") {
-            return ToolOutput::error(refusal);
+            return ToolOutput::error(Fault::Refused, refusal);
         }
 
         let ext = path
@@ -83,7 +87,12 @@ impl Tool for ReadTool {
 
         let bytes = match tokio::fs::read(&path).await {
             Ok(b) => b,
-            Err(e) => return ToolOutput::error(format!("cannot read {}: {e}", path.display())),
+            Err(e) => {
+                return ToolOutput::error(
+                    Fault::Target,
+                    format!("cannot read {}: {e}", path.display()),
+                );
+            }
         };
         if bytes.iter().take(8192).any(|&b| b == 0) {
             return ToolOutput::ok(format!("[binary file: {}]", path.display()));
@@ -104,9 +113,10 @@ impl Tool for ReadTool {
 
         let start_idx = offset - 1;
         if start_idx >= total_lines {
-            return ToolOutput::error(format!(
-                "offset {offset} is beyond end of file ({total_lines} lines)"
-            ));
+            return ToolOutput::error(
+                Fault::Target,
+                format!("offset {offset} is beyond end of file ({total_lines} lines)"),
+            );
         }
         let end_idx = (start_idx + limit).min(total_lines);
 

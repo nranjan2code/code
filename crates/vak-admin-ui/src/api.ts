@@ -1,6 +1,6 @@
 import type {
   ControlLayer,
-  Decision,
+  TurnStep,
   StepOverride,
   DataRulesPreview,
   DataIntegrity,
@@ -271,7 +271,7 @@ export const api = {
   },
   run: (id: string): Promise<RunRecord> =>
     fetch(`/runs/${encodeURIComponent(id)}`).then((r) => handle(r)),
-  runDecisions: (id: string): Promise<Decision[]> =>
+  runDecisions: (id: string): Promise<TurnStep[]> =>
     fetch(`/runs/${encodeURIComponent(id)}/decisions`).then((r) => handle(r)),
   runSpans: (id: string): Promise<{ spans: TelemetrySpan[] }> =>
     fetch(`/runs/${encodeURIComponent(id)}/spans`).then((r) => handle(r)),

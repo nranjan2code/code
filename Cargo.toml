@@ -18,6 +18,7 @@ members = [
     "crates/vak-intent",
     "crates/vak-lifecycle",
     "crates/vak-control",
+    "crates/vak-judge",
     "crates/vak-commit",
     "crates/vak-mcp",
     "crates/vak-flow",
@@ -69,6 +70,7 @@ vak-hooks = { path = "crates/vak-hooks" }
 vak-intent = { path = "crates/vak-intent" }
 vak-lifecycle = { path = "crates/vak-lifecycle" }
 vak-control = { path = "crates/vak-control" }
+vak-judge = { path = "crates/vak-judge" }
 vak-commit = { path = "crates/vak-commit" }
 vak-sandbox = { path = "crates/vak-sandbox" }
 vak-terminal = { path = "crates/vak-terminal" }

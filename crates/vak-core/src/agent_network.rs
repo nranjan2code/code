@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
+use vak_tools::Fault;
 
 use uuid::Uuid;
 
@@ -110,7 +111,10 @@ impl vak_tools::Tool for AgentNetworkTool {
         _ctx: &vak_tools::ToolContext,
     ) -> vak_tools::ToolOutput {
         let Some(capability) = self.broker.capability_for(&self.workspace) else {
-            return vak_tools::ToolOutput::error("agent network is not enabled for this workspace");
+            return vak_tools::ToolOutput::error(
+                Fault::Refused,
+                "agent network is not enabled for this workspace",
+            );
         };
         match args.get("action").and_then(serde_json::Value::as_str) {
             Some("send") => {
@@ -119,18 +123,22 @@ impl vak_tools::Tool for AgentNetworkTool {
                     .and_then(serde_json::Value::as_str)
                 else {
                     return vak_tools::ToolOutput::error(
+                        Fault::Shape,
                         "agent_network send requires destination_workspace",
                     );
                 };
                 let Some(message) = args.get("message").and_then(serde_json::Value::as_str) else {
-                    return vak_tools::ToolOutput::error("agent_network send requires message");
+                    return vak_tools::ToolOutput::error(
+                        Fault::Shape,
+                        "agent_network send requires message",
+                    );
                 };
                 match self
                     .broker
                     .send_to(&capability, destination, message.as_bytes().to_vec())
                 {
                     Ok(()) => vak_tools::ToolOutput::ok("message queued"),
-                    Err(error) => vak_tools::ToolOutput::error(error),
+                    Err(error) => vak_tools::ToolOutput::error(Fault::Tool, error),
                 }
             }
             Some("receive") => match self.broker.receive(&capability) {
@@ -142,9 +150,12 @@ impl vak_tools::Tool for AgentNetworkTool {
                     .to_string(),
                 ),
                 Ok(None) => vak_tools::ToolOutput::ok("no messages available"),
-                Err(error) => vak_tools::ToolOutput::error(error),
+                Err(error) => vak_tools::ToolOutput::error(Fault::Tool, error),
             },
-            _ => vak_tools::ToolOutput::error("agent_network action must be send or receive"),
+            _ => vak_tools::ToolOutput::error(
+                Fault::Shape,
+                "agent_network action must be send or receive",
+            ),
         }
     }
 

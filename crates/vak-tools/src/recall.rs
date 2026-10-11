@@ -16,6 +16,7 @@
 //! [`parse_recall_args`] and [`apply_range`] are the pure logic the loop
 //! reuses to validate arguments and slice evidence content.
 
+use crate::Fault;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
@@ -299,11 +300,13 @@ impl Tool for RecallTool {
         // silently returning nothing.
         match parse_recall_args(args) {
             Ok(_) => ToolOutput::error(
+                Fault::Tool,
                 r#"{"type":"internal","message":"recall must be answered by the agent loop, not dispatched directly"}"#,
             ),
-            Err(message) => ToolOutput::error(format!(
-                r#"{{"type":"invalid_arguments","message":"{message}"}}"#
-            )),
+            Err(message) => ToolOutput::error(
+                Fault::Shape,
+                format!(r#"{{"type":"invalid_arguments","message":"{message}"}}"#),
+            ),
         }
     }
 }
@@ -465,6 +468,6 @@ mod tests {
         let tool = RecallTool;
         let ctx = ToolContext::new(std::path::PathBuf::from("."));
         let out = tool.execute(&json!({"turn": 1}), &ctx).await;
-        assert!(out.is_error, "execute() must never be a live recall path");
+        assert!(out.is_error(), "execute() must never be a live recall path");
     }
 }

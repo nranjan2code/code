@@ -1676,8 +1676,8 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
     use std::collections::HashMap;
     // Per ledger turn: the plan it settled on. Per call: its ledger turn
     // and the deliverable it says it answers.
-    let mut plans: HashMap<String, Vec<vak_tools::Deliverable>> = HashMap::new();
-    let mut proposed: HashMap<String, (String, Vec<vak_tools::Deliverable>)> = HashMap::new();
+    let mut plans: HashMap<String, Vec<vak_intent::Deliverable>> = HashMap::new();
+    let mut proposed: HashMap<String, (String, Vec<vak_intent::Deliverable>)> = HashMap::new();
     let mut calls: HashMap<String, (String, Option<String>)> = HashMap::new();
     for entry in session.chain_to_root() {
         let (Some(turn), vak_session::EntryPayload::Message(record)) =

@@ -1,3 +1,4 @@
+use crate::Fault;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -80,23 +81,26 @@ impl Tool for WriteTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(path_str) = args.get("path").and_then(|p| p.as_str()) else {
-            return ToolOutput::error("missing required parameter: path");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: path");
         };
         let Some(content) = args.get("content").and_then(|c| c.as_str()) else {
-            return ToolOutput::error("missing required parameter: content");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: content");
         };
         let path = ctx.resolve(std::path::Path::new(path_str));
         if let Some(refusal) = protected_control_path(&path, ctx) {
-            return ToolOutput::error(refusal);
+            return ToolOutput::error(Fault::Refused, refusal);
         }
         if let Some(refusal) = crate::office_apply::text_tool_refusal(&path, "write") {
-            return ToolOutput::error(refusal);
+            return ToolOutput::error(Fault::Refused, refusal);
         }
 
         if let Some(parent) = path.parent()
             && let Err(e) = tokio::fs::create_dir_all(parent).await
         {
-            return ToolOutput::error(format!("cannot create directory {}: {e}", parent.display()));
+            return ToolOutput::error(
+                Fault::Tool,
+                format!("cannot create directory {}: {e}", parent.display()),
+            );
         }
         match write_atomic(&path, content.as_bytes()).await {
             Ok(()) => {
@@ -107,7 +111,9 @@ impl Tool for WriteTool {
                     path.display()
                 ))
             }
-            Err(e) => ToolOutput::error(format!("cannot write {}: {e}", path.display())),
+            Err(e) => {
+                ToolOutput::error(Fault::Tool, format!("cannot write {}: {e}", path.display()))
+            }
         }
     }
 }
@@ -172,7 +178,7 @@ mod control_path_tests {
             )
             .await;
 
-        assert!(output.is_error);
+        assert!(output.is_error());
         assert_eq!(std::fs::read_to_string(control).unwrap(), "allow = []");
     }
 }
@@ -208,7 +214,7 @@ mod tests {
             )
             .await;
 
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         let event = events.try_recv().unwrap();
         assert!(matches!(
             event,
@@ -236,7 +242,7 @@ mod tests {
             )
             .await;
 
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep me");
         assert!(
             !std::fs::symlink_metadata(workspace.path().join("target.txt"))

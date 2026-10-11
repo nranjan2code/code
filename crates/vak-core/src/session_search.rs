@@ -6,6 +6,7 @@
 //! (model-visible ⇒ logged) holds by construction.
 
 use std::sync::Arc;
+use vak_tools::Fault;
 
 use serde_json::Value;
 
@@ -100,13 +101,14 @@ impl vak_tools::Tool for SessionSearchTool {
 
     async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(query) = args.get("query").and_then(Value::as_str) else {
-            return vak_tools::ToolOutput::error("missing required argument 'query'");
+            return vak_tools::ToolOutput::error(Fault::Shape, "missing required argument 'query'");
         };
         if query.trim().is_empty() {
-            return vak_tools::ToolOutput::error("'query' must not be empty");
+            return vak_tools::ToolOutput::error(Fault::Shape, "'query' must not be empty");
         }
         let Some(catalog) = self.catalog.clone() else {
             return vak_tools::ToolOutput::error(
+                Fault::Tool,
                 "session search is unavailable: the catalog could not be opened",
             );
         };
@@ -167,8 +169,10 @@ impl vak_tools::Tool for SessionSearchTool {
                 }
                 vak_tools::ToolOutput::ok(out)
             }
-            Ok(Err(e)) => vak_tools::ToolOutput::error(format!("session search failed: {e}")),
-            Err(e) => vak_tools::ToolOutput::error(format!("search task failed: {e}")),
+            Ok(Err(e)) => {
+                vak_tools::ToolOutput::error(Fault::Tool, format!("session search failed: {e}"))
+            }
+            Err(e) => vak_tools::ToolOutput::error(Fault::Tool, format!("search task failed: {e}")),
         }
     }
 
@@ -249,14 +253,14 @@ mod tests {
         let out = tool
             .execute(&serde_json::json!({"query": "deploy script"}), &ctx)
             .await;
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         assert!(out.content.contains("· memory"), "{}", out.content);
         assert!(!out.content.contains("· profile"), "{}", out.content);
 
         let out = tool
             .execute(&serde_json::json!({"query": "vim keybindings"}), &ctx)
             .await;
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         // Profile-tier hits carry the profile/ id prefix AND role.
         assert!(out.content.contains("profile/"), "{}", out.content);
         assert!(out.content.contains("· profile (score "), "{}", out.content);
@@ -283,7 +287,7 @@ mod tests {
         let out = tool
             .execute(&serde_json::json!({"query": "anything at all"}), &ctx)
             .await;
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert!(out.content.contains("No past session matches"));
     }
 
@@ -363,7 +367,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         assert!(out.content.contains("one"), "{}", out.content);
         assert!(!out.content.contains("two"), "{}", out.content);
     }
@@ -411,7 +415,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         assert!(
             out.content.contains("Project Apollo") && out.content.contains("mission"),
             "{}",

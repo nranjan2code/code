@@ -19,6 +19,7 @@
 //! inside the browser resolve and connect on their own and are not
 //! re-screenable here.
 
+use crate::Fault;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -221,13 +222,13 @@ impl Tool for WebBrowseTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         if args.get("url").and_then(Value::as_str).is_none() {
-            return ToolOutput::error("missing required parameter: url");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: url");
         }
         if let Err(error) = crate::webfetch::PageFormat::from_args(args) {
-            return ToolOutput::error(error);
+            return ToolOutput::error(Fault::Shape, error);
         }
         tokio::select! {
-            _ = ctx.cancel.cancelled() => ToolOutput::error("browse cancelled"),
+            _ = ctx.cancel.cancelled() => ToolOutput::error(Fault::Cancelled, "browse cancelled"),
             out = self.run(args, ctx) => out,
         }
     }
@@ -239,32 +240,36 @@ impl WebBrowseTool {
         // method total even when called directly in tests.
         let raw = match args.get("url").and_then(Value::as_str) {
             Some(r) => r,
-            None => return ToolOutput::error("missing required parameter: url"),
+            None => return ToolOutput::error(Fault::Shape, "missing required parameter: url"),
         };
         let wait_ms = clamp_wait_ms(args.get("wait_ms").and_then(Value::as_i64));
 
         let url = match parse_target(raw) {
             Ok(u) => u,
-            Err(e) => return ToolOutput::error(e),
+            Err(e) => return ToolOutput::error(Fault::Shape, e),
         };
         let Some(host) = url.host_str().map(str::to_string) else {
-            return ToolOutput::error("invalid url: missing host");
+            return ToolOutput::error(Fault::Shape, "invalid url: missing host");
         };
         let screened = match tokio::task::spawn_blocking(move || ssrf_guard(&host)).await {
             Ok(r) => r,
-            Err(e) => return ToolOutput::error(format!("address screening failed: {e}")),
+            Err(e) => {
+                return ToolOutput::error(Fault::Tool, format!("address screening failed: {e}"));
+            }
         };
         if let Err(rejection) = screened {
-            return ToolOutput::error(rejection.to_string());
+            return ToolOutput::error(Fault::Refused, rejection.to_string());
         }
 
         let browser = match discover_browser() {
             Ok(b) => b,
-            Err(e) => return ToolOutput::error(e),
+            Err(e) => return ToolOutput::error(Fault::Tool, e),
         };
         let profile = match fresh_profile_dir() {
             Ok(p) => ProfileDir(p),
-            Err(e) => return ToolOutput::error(format!("profile dir creation failed: {e}")),
+            Err(e) => {
+                return ToolOutput::error(Fault::Tool, format!("profile dir creation failed: {e}"));
+            }
         };
 
         // Capture DOM/stderr via FILES, not pipes: Chromium helper
@@ -274,11 +279,18 @@ impl WebBrowseTool {
         let err_path = profile.0.join("stderr.txt");
         let out_file = match std::fs::File::create(&out_path) {
             Ok(f) => f,
-            Err(e) => return ToolOutput::error(format!("dom capture create failed: {e}")),
+            Err(e) => {
+                return ToolOutput::error(Fault::Tool, format!("dom capture create failed: {e}"));
+            }
         };
         let err_file = match std::fs::File::create(&err_path) {
             Ok(f) => f,
-            Err(e) => return ToolOutput::error(format!("stderr capture create failed: {e}")),
+            Err(e) => {
+                return ToolOutput::error(
+                    Fault::Tool,
+                    format!("stderr capture create failed: {e}"),
+                );
+            }
         };
 
         let mut cmd = tokio::process::Command::new(&browser);
@@ -296,7 +308,10 @@ impl WebBrowseTool {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                return ToolOutput::error(format!("failed to launch {}: {e}", basename(&browser)));
+                return ToolOutput::error(
+                    Fault::Tool,
+                    format!("failed to launch {}: {e}", basename(&browser)),
+                );
             }
         };
 
@@ -316,9 +331,12 @@ impl WebBrowseTool {
                 let _ = child.start_kill();
                 let _ = child.wait().await;
                 let elapsed_ms = started_at.elapsed().as_millis();
-                return ToolOutput::error(format!(
-                    "{header_base} ({elapsed_ms} ms): exceeded its {TOTAL_TIMEOUT_SECS}s total timeout"
-                ));
+                return ToolOutput::error(
+                    Fault::Tool,
+                    format!(
+                        "{header_base} ({elapsed_ms} ms): exceeded its {TOTAL_TIMEOUT_SECS}s total timeout"
+                    ),
+                );
             }
             let wait = std::cmp::min(
                 std::time::Duration::from_millis(250),
@@ -331,7 +349,7 @@ impl WebBrowseTool {
                     // Direct-pid SIGKILL: see re-exec note above.
                     let _ = child.start_kill();
                     let _ = child.wait().await;
-                    return ToolOutput::error(format!("{header_base}: browse cancelled"));
+                    return ToolOutput::error(Fault::Cancelled, format!("{header_base}: browse cancelled"));
                 }
                 _ = tokio::time::sleep(wait) => {
                     if matches!(child.try_wait(), Ok(Some(_))) {
@@ -368,7 +386,7 @@ impl WebBrowseTool {
                 .unwrap_or(crate::webfetch::PageFormat::Text);
             match crate::webfetch::page(&self.worker_exe, &dom, url.as_str(), format).await {
                 Ok(page) => page,
-                Err(error) => return ToolOutput::error(format!("{header}: {error}")),
+                Err(error) => return ToolOutput::error(Fault::Tool, format!("{header}: {error}")),
             }
         };
         ToolOutput::ok(format!("{header}\n{body}"))
@@ -499,7 +517,7 @@ mod tests {
             let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
                 .execute(&serde_json::json!({"url": url}), &ctx)
                 .await;
-            assert!(out.is_error, "expected {url} to be blocked");
+            assert!(out.is_error(), "expected {url} to be blocked");
             assert!(
                 out.content.contains("blocked") && out.content.contains(class),
                 "unexpected message for {url}: {}",
@@ -514,13 +532,13 @@ mod tests {
         let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
             .execute(&serde_json::json!({"url": "file:///etc/passwd"}), &ctx)
             .await;
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert!(out.content.contains("scheme"), "{}", out.content);
 
         let out = WebBrowseTool::new(std::path::PathBuf::from("/nonexistent/vak-tool-worker"))
             .execute(&serde_json::json!({}), &ctx)
             .await;
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert!(out.content.contains("missing required parameter"));
     }
 
@@ -548,7 +566,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(!out.is_error, "live browse failed: {}", out.content);
+        assert!(!out.is_error(), "live browse failed: {}", out.content);
         assert!(out.content.starts_with("[browse] GET "), "{}", out.content);
     }
 }

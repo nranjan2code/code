@@ -87,13 +87,13 @@ async fn seatbelt_read_only_blocks_file_writes_but_allows_reads() {
 
     let out = run(&ctx, "cat /etc/hostname >/dev/null; echo read-ok").await;
     assert!(
-        !out.is_error,
+        !out.is_error(),
         "reads must work under read-only sandbox: {}",
         out.content
     );
 
     let out = run(&ctx, "echo blocked > ./should-not-exist.txt").await;
-    assert!(out.is_error, "writes must be denied");
+    assert!(out.is_error(), "writes must be denied");
     assert!(
         !dir.path().join("should-not-exist.txt").exists(),
         "denied write must not have created the file"
@@ -108,7 +108,7 @@ async fn seatbelt_workspace_write_allows_inside_cwd() {
 
     let out = run(&ctx, "echo inside > ./inside.txt && cat ./inside.txt").await;
     assert!(
-        !out.is_error,
+        !out.is_error(),
         "in-workspace writes must succeed: {}",
         out.content
     );
@@ -124,7 +124,10 @@ async fn seatbelt_workspace_write_blocks_outside_paths() {
 
     let outside = "$HOME/vak-sb-escape-test.txt";
     let out = run(&ctx, &format!("echo escape > {outside}")).await;
-    assert!(out.is_error, "writes outside the workspace must be denied");
+    assert!(
+        out.is_error(),
+        "writes outside the workspace must be denied"
+    );
     assert!(
         out.content.contains("Operation not permitted"),
         "{}",
@@ -156,7 +159,7 @@ async fn seatbelt_blocks_home_reads_outside_workspace() {
         &format!("cat {}", protected.path().join("secret").display()),
     )
     .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(!out.content.contains("not-visible"));
 }
 
@@ -184,7 +187,7 @@ async fn deny_sandbox_returns_error_at_runtime() {
     let out = BashTool
         .execute(&serde_json::json!({"command": "echo leaked"}), &ctx)
         .await;
-    assert!(out.is_error, "denied command must report an error");
+    assert!(out.is_error(), "denied command must report an error");
     assert!(
         out.content.contains("126"),
         "exit code 126 expected: {out:?}"
@@ -216,7 +219,11 @@ async fn off_mode_allows_unrestricted_writes() {
         "echo unrestricted > ./freedom.txt && cat ./freedom.txt",
     )
     .await;
-    assert!(!out.is_error, "off-mode must allow writes: {}", out.content);
+    assert!(
+        !out.is_error(),
+        "off-mode must allow writes: {}",
+        out.content
+    );
     assert!(dir.path().join("freedom.txt").exists());
 }
 

@@ -468,14 +468,14 @@ async fn run_case_with_tools(
 
     let report = EvalReport {
         task_id: case.id.clone(),
-        passed: loop_error.is_none() && !verify_out.is_error,
-        verify_exit: Some(if verify_out.is_error { 1 } else { 0 }),
+        passed: loop_error.is_none() && !verify_out.is_error(),
+        verify_exit: Some(if verify_out.is_error() { 1 } else { 0 }),
         tokens_in,
         tokens_out,
         duration_ms: start.elapsed().as_millis(),
         outcome_status: format!(
             "{:?}",
-            vak_intent::evaluate_response(
+            vak_judge::outcome::evaluate_response(
                 match &outcome {
                     TurnOutcome::Completed { response } => Some(response.text_content()),
                     TurnOutcome::Aborted { partial } => {
@@ -504,23 +504,23 @@ async fn run_case_with_tools(
                     vak_intent::RESOLVER_VERSION,
                 )
             });
-            let status = vak_intent::evaluate_response(
+            let status = vak_judge::outcome::evaluate_response(
                 response.as_deref(),
                 loop_error.is_some(),
                 matches!(outcome, TurnOutcome::Aborted { .. }),
             );
-            let evaluations = vak_intent::evaluate_requirements(
+            let evaluations = vak_judge::outcome::evaluate_requirements(
                 &spec,
-                &vak_intent::TurnFacts::reply(response.as_deref()),
+                &vak_judge::outcome::TurnFacts::reply(response.as_deref()),
             );
-            let verdict = vak_intent::evaluate_completion(status, &evaluations, &spec);
-            if verify_out.is_error && matches!(verdict, vak_intent::CompletionVerdict::Complete) {
+            let verdict = vak_judge::outcome::evaluate_completion(status, &evaluations, &spec);
+            if verify_out.is_error() && matches!(verdict, vak_intent::CompletionVerdict::Complete) {
                 "partial".into()
             } else {
                 format!("{verdict:?}").to_ascii_lowercase()
             }
         },
-        human_review: if verify_out.is_error
+        human_review: if verify_out.is_error()
             || case.outcome.as_ref().is_some_and(|outcome| {
                 outcome.requirements.iter().any(|requirement| {
                     matches!(requirement.kind, vak_intent::RequirementKind::Evidence)
@@ -530,13 +530,13 @@ async fn run_case_with_tools(
         } else {
             "not_required".into()
         },
-        verification_evidence: if verify_out.is_error {
+        verification_evidence: if verify_out.is_error() {
             "observed_failure".into()
         } else {
             "observed_success".into()
         },
         error: loop_error.or_else(|| {
-            if verify_out.is_error {
+            if verify_out.is_error() {
                 Some(format!("verify failed: {}", verify_out.content))
             } else {
                 None

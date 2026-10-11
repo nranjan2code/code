@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use vak_tools::Fault;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -190,20 +191,27 @@ impl vak_tools::Tool for EntityRecordTool {
         _ctx: &vak_tools::ToolContext,
     ) -> vak_tools::ToolOutput {
         let Some(name) = args.get("name").and_then(|v| v.as_str()).map(str::trim) else {
-            return vak_tools::ToolOutput::error("missing required argument 'name'");
+            return vak_tools::ToolOutput::error(Fault::Shape, "missing required argument 'name'");
         };
         let Some(entity_type) = args
             .get("entity_type")
             .and_then(|v| v.as_str())
             .map(str::trim)
         else {
-            return vak_tools::ToolOutput::error("missing required argument 'entity_type'");
+            return vak_tools::ToolOutput::error(
+                Fault::Shape,
+                "missing required argument 'entity_type'",
+            );
         };
         let Some(summary) = args.get("summary").and_then(|v| v.as_str()).map(str::trim) else {
-            return vak_tools::ToolOutput::error("missing required argument 'summary'");
+            return vak_tools::ToolOutput::error(
+                Fault::Shape,
+                "missing required argument 'summary'",
+            );
         };
         if name.is_empty() || entity_type.is_empty() || summary.is_empty() {
             return vak_tools::ToolOutput::error(
+                Fault::Shape,
                 "'name', 'entity_type', and 'summary' must not be empty",
             );
         }
@@ -278,7 +286,9 @@ impl vak_tools::Tool for EntityRecordTool {
                 saved.attributes.len(),
                 saved.relations.len()
             )),
-            Err(e) => vak_tools::ToolOutput::error(format!("could not record entity: {e}")),
+            Err(e) => {
+                vak_tools::ToolOutput::error(Fault::Tool, format!("could not record entity: {e}"))
+            }
         }
     }
 
@@ -496,7 +506,7 @@ mod tests {
             "relations": [ { "relation": "depends_on", "target": "redis-session-store" } ]
         });
         let rec_out = record_tool.execute(&record_args, &ctx).await;
-        assert!(!rec_out.is_error, "{}", rec_out.content);
+        assert!(!rec_out.is_error(), "{}", rec_out.content);
         assert!(
             rec_out.content.contains("recorded entity 'auth-gateway'"),
             "{}",
@@ -506,7 +516,7 @@ mod tests {
         // Query entity via tool
         let query_args = serde_json::json!({ "query": "JWT" });
         let q_out = query_tool.execute(&query_args, &ctx).await;
-        assert!(!q_out.is_error, "{}", q_out.content);
+        assert!(!q_out.is_error(), "{}", q_out.content);
         assert!(q_out.content.contains("Auth Gateway"), "{}", q_out.content);
         assert!(
             q_out
@@ -519,7 +529,7 @@ mod tests {
         // Filter query by entity_type
         let type_args = serde_json::json!({ "entity_type": "service" });
         let type_out = query_tool.execute(&type_args, &ctx).await;
-        assert!(!type_out.is_error, "{}", type_out.content);
+        assert!(!type_out.is_error(), "{}", type_out.content);
         assert!(
             type_out.content.contains("Auth Gateway"),
             "{}",
@@ -528,7 +538,7 @@ mod tests {
 
         let none_args = serde_json::json!({ "entity_type": "database" });
         let none_out = query_tool.execute(&none_args, &ctx).await;
-        assert!(!none_out.is_error, "{}", none_out.content);
+        assert!(!none_out.is_error(), "{}", none_out.content);
         assert!(
             none_out.content.contains("no matching entities"),
             "{}",

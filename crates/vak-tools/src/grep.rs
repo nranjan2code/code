@@ -1,3 +1,4 @@
+use crate::Fault;
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -52,11 +53,11 @@ impl Tool for GrepTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(pattern) = args.get("pattern").and_then(|p| p.as_str()) else {
-            return ToolOutput::error("missing required parameter: pattern");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: pattern");
         };
         let re = match Regex::new(pattern) {
             Ok(r) => r,
-            Err(e) => return ToolOutput::error(format!("invalid regex: {e}")),
+            Err(e) => return ToolOutput::error(Fault::Shape, format!("invalid regex: {e}")),
         };
         let base = match args.get("path").and_then(|p| p.as_str()) {
             Some(p) => ctx.resolve(Path::new(p)),
@@ -67,18 +68,22 @@ impl Tool for GrepTool {
             Some(glob_str) => {
                 let g = match Glob::new(glob_str) {
                     Ok(g) => g,
-                    Err(e) => return ToolOutput::error(format!("invalid include: {e}")),
+                    Err(e) => {
+                        return ToolOutput::error(Fault::Shape, format!("invalid include: {e}"));
+                    }
                 };
                 match GlobSetBuilder::new().add(g).build() {
                     Ok(gs) => Some(gs),
-                    Err(e) => return ToolOutput::error(format!("invalid include: {e}")),
+                    Err(e) => {
+                        return ToolOutput::error(Fault::Shape, format!("invalid include: {e}"));
+                    }
                 }
             }
             None => None,
         };
 
         if !base.exists() {
-            return ToolOutput::error(format!("path not found: {}", base.display()));
+            return ToolOutput::error(Fault::Target, format!("path not found: {}", base.display()));
         }
 
         // File IO + regex over whole trees is blocking; keep it off the
@@ -88,7 +93,7 @@ impl Tool for GrepTool {
             tokio::task::spawn_blocking(move || search_tree(&base, &re, include_set, &cwd)).await;
         let out = match walked {
             Ok(out) => out,
-            Err(e) => return ToolOutput::error(format!("grep task failed: {e}")),
+            Err(e) => return ToolOutput::error(Fault::Tool, format!("grep task failed: {e}")),
         };
 
         match out {

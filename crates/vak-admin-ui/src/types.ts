@@ -1657,8 +1657,16 @@ export interface DataRulesPreview {
   newly_due: { class: string; items: number; bytes: number }[];
 }
 
-/// One decision of the control plane (docs/design/88-control-plane.md §6),
-/// as `GET /runs/{id}/decisions` returns it.
+/// One step of a turn's explanation (docs/design/88-control-plane.md §6),
+/// as `GET /runs/{id}/decisions` returns it: a decision of the control
+/// plane, or a call that failed and where its fault lay.
+export type TurnStep = Decision | FailedCall;
+
+export type FailedCall = {
+  turn?: string;
+  failed: { call: string; fault: "shape" | "target" | "tool" | "refused" | "cancelled" };
+};
+
 export type Decision = {
   turn?: string;
   decider: "runtime" | "person" | "provider";

@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use vak_tools::Fault;
 
 use serde_json::{Value, json};
 use vak_tools::{Tool, ToolContext, ToolOutput};
@@ -107,12 +108,13 @@ impl WorkersTool {
     fn message(&self, id: &str, text: &str) -> ToolOutput {
         let text = text.trim();
         if text.is_empty() {
-            return ToolOutput::error("text is required");
+            return ToolOutput::error(Fault::Shape, "text is required");
         }
         if text.chars().count() > MAX_MESSAGE_CHARS {
-            return ToolOutput::error(format!(
-                "a message is at most {MAX_MESSAGE_CHARS} characters"
-            ));
+            return ToolOutput::error(
+                Fault::Shape,
+                format!("a message is at most {MAX_MESSAGE_CHARS} characters"),
+            );
         }
         if self
             .registry
@@ -142,7 +144,7 @@ impl WorkersTool {
             return unknown(id);
         }
         let Some(question) = self.registry.questions().for_worker(id) else {
-            return ToolOutput::error("that worker is not waiting for an answer");
+            return ToolOutput::error(Fault::Target, "that worker is not waiting for an answer");
         };
         match self.registry.questions().answer(
             &self.parent_session_id,
@@ -151,14 +153,14 @@ impl WorkersTool {
             "the agent that started you",
         ) {
             Ok(_) => ToolOutput::ok("Answered."),
-            Err(error) => ToolOutput::error(error.to_string()),
+            Err(error) => ToolOutput::error(Fault::Target, error.to_string()),
         }
     }
 
     fn result(&self, id: &str) -> ToolOutput {
         if let Some(worker) = self.registry.finished_child(&self.parent_session_id, id) {
             return if worker.is_error {
-                ToolOutput::error(worker.text)
+                ToolOutput::error(Fault::Tool, worker.text)
             } else {
                 ToolOutput::ok(worker.text)
             };
@@ -250,7 +252,7 @@ impl WorkersTool {
             tokio::select! {
                 _ = tokio::time::timeout(WAIT_TICK, self.registry.changed()) => {}
                 _ = ctx.cancel.cancelled() => {
-                    return ToolOutput::error("cancelled while waiting for workers");
+                    return ToolOutput::error(Fault::Cancelled, "cancelled while waiting for workers");
                 }
             }
         }
@@ -279,7 +281,7 @@ impl WorkersTool {
 }
 
 fn unknown(id: &str) -> ToolOutput {
-    ToolOutput::error(format!("unknown worker '{id}'"))
+    ToolOutput::error(Fault::Target, format!("unknown worker '{id}'"))
 }
 
 #[async_trait::async_trait]
@@ -334,7 +336,8 @@ impl Tool for WorkersTool {
         let id = args.get("id").and_then(Value::as_str).unwrap_or_default();
         let text = args.get("text").and_then(Value::as_str).unwrap_or_default();
         let needs_id = |id: &str| -> Option<ToolOutput> {
-            id.is_empty().then(|| ToolOutput::error("id is required"))
+            id.is_empty()
+                .then(|| ToolOutput::error(Fault::Shape, "id is required"))
         };
         match args.get("action").and_then(Value::as_str) {
             Some("list") => self.list(),
@@ -363,6 +366,7 @@ impl Tool for WorkersTool {
                 self.wait(ids, Duration::from_secs(secs), ctx).await
             }
             _ => ToolOutput::error(
+                Fault::Shape,
                 "action must be one of: list, status, message, reply, wait, result, stop",
             ),
         }

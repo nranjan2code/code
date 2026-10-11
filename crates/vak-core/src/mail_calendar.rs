@@ -20,6 +20,7 @@ use vak_mail_calendar::{
     provider::{BusySlot, CalendarItem, CalendarRange, ProviderReadClient},
     vault::AccountVault,
 };
+use vak_tools::Fault;
 
 pub struct MailCalendarTool {
     pub agent_id: Option<String>,
@@ -686,6 +687,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
             (self.agent_id.as_deref(), self.audience_id.as_deref())
         else {
             return vak_tools::ToolOutput::error(
+                Fault::Refused,
                 "Mail and calendar access requires an Agent and conversation scope.",
             );
         };
@@ -695,12 +697,16 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
         // UI; never reinterpret a channel audience as the Agent audience.
         if audience_id != "local" {
             return vak_tools::ToolOutput::error(
+                Fault::Refused,
                 "This account is not shared with the current conversation. Do not retry through another identity or route; only the local owner can manage account access.",
             );
         }
         let account_audience = format!("agent:{agent_id}");
         let Some(operation) = args.get("operation").and_then(Value::as_str) else {
-            return vak_tools::ToolOutput::error("Choose a supported mail or calendar read.");
+            return vak_tools::ToolOutput::error(
+                Fault::Shape,
+                "Choose a supported mail or calendar read.",
+            );
         };
         let capability = match operation {
             "list_accounts" => match args.get("purpose").and_then(Value::as_str) {
@@ -709,6 +715,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 Some("free_busy") => Capability::CalendarFreeBusy,
                 _ => {
                     return vak_tools::ToolOutput::error(
+                        Fault::Shape,
                         "Choose mail, calendar, or free_busy as the account discovery purpose.",
                     );
                 }
@@ -716,16 +723,23 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
             "list_folders" | "recent_mail" | "read_thread" | "read_message" => Capability::MailRead,
             "calendar_events" => Capability::CalendarRead,
             "free_busy" => Capability::CalendarFreeBusy,
-            _ => return vak_tools::ToolOutput::error("Unsupported mail or calendar read."),
+            _ => {
+                return vak_tools::ToolOutput::error(
+                    Fault::Shape,
+                    "Unsupported mail or calendar read.",
+                );
+            }
         };
         if let Some(scope) = &self.routine_scope {
             if operation == "list_accounts" {
                 return vak_tools::ToolOutput::error(
+                    Fault::Refused,
                     "Scheduled routines cannot discover accounts; they use only their configured account.",
                 );
             }
             if operation == "list_folders" {
                 return vak_tools::ToolOutput::error(
+                    Fault::Refused,
                     "Scheduled routines cannot discover folders; select the mail folder in Today Canvas before starting the routine.",
                 );
             }
@@ -734,10 +748,16 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 "read_thread" => RoutineOperation::MailThread,
                 "calendar_events" => RoutineOperation::CalendarEvents,
                 "free_busy" => RoutineOperation::FreeBusy,
-                _ => return vak_tools::ToolOutput::error("Unsupported mail or calendar read."),
+                _ => {
+                    return vak_tools::ToolOutput::error(
+                        Fault::Shape,
+                        "Unsupported mail or calendar read.",
+                    );
+                }
             };
             if !scope.operations.contains(&permitted_operation) {
                 return vak_tools::ToolOutput::error(
+                    Fault::Refused,
                     "This scheduled routine is not allowed to perform that mail or calendar read.",
                 );
             }
@@ -747,6 +767,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 .is_some_and(|requested| requested != scope.account_id)
             {
                 return vak_tools::ToolOutput::error(
+                    Fault::Refused,
                     "This scheduled routine is restricted to its configured account.",
                 );
             }
@@ -785,6 +806,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 Some(reservation) => Some(reservation),
                 None => {
                     return vak_tools::ToolOutput::error(
+                        Fault::Refused,
                         "This routine has reached its per-run mail and calendar item limit.",
                     );
                 }
@@ -796,13 +818,17 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
         let ledger = match ConnectionLedger::for_agent(agent_id) {
             Ok(ledger) => ledger,
             Err(_) => {
-                return vak_tools::ToolOutput::error("Mail and calendar access is unavailable.");
+                return vak_tools::ToolOutput::error(
+                    Fault::Tool,
+                    "Mail and calendar access is unavailable.",
+                );
             }
         };
         let accounts = match ledger.read_all() {
             Ok(accounts) => accounts,
             Err(_) => {
                 return vak_tools::ToolOutput::error(
+                    Fault::Tool,
                     "Mail and calendar account state is unavailable.",
                 );
             }
@@ -823,6 +849,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 hint.trim().is_empty() || hint.len() > 320 || hint.chars().any(char::is_control)
             }) {
                 return vak_tools::ToolOutput::error(
+                    Fault::Shape,
                     "Use a valid account address supplied directly by the owner, or omit identity_hint.",
                 );
             }
@@ -830,6 +857,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 Ok(vault) => vault,
                 Err(_) => {
                     return vak_tools::ToolOutput::error(
+                        Fault::Tool,
                         "Mail and calendar account details are unavailable.",
                     );
                 }
@@ -840,6 +868,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                     Ok(secret) => secret,
                     Err(_) => {
                         return vak_tools::ToolOutput::error(
+                            Fault::Tool,
                             "A linked account identity is unavailable; review connected accounts in Agent Settings.",
                         );
                     }
@@ -868,17 +897,20 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
             None if eligible.is_empty() => None,
             None => {
                 return vak_tools::ToolOutput::error(
+                    Fault::Target,
                     "More than one matching account is linked. Ask the owner to identify the account; use list_accounts with the exact owner-provided address as identity_hint, then retry with its returned account_id.",
                 );
             }
         };
         let Some(account) = account else {
             return vak_tools::ToolOutput::error(
+                Fault::Refused,
                 "No connected account grants this exact read to this Agent and conversation.",
             );
         };
         if account.status != AccountStatus::Connected {
             return vak_tools::ToolOutput::error(
+                Fault::Tool,
                 "This account needs attention before it can be read.",
             );
         }
@@ -886,6 +918,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
             Ok(vault) => vault,
             Err(_) => {
                 return vak_tools::ToolOutput::error(
+                    Fault::Tool,
                     "Mail and calendar credentials are unavailable.",
                 );
             }
@@ -897,6 +930,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 Some(folder_id) => folder_id,
                 None => {
                     return vak_tools::ToolOutput::error(
+                        Fault::Refused,
                         "This scheduled routine is restricted to its configured mail folder.",
                     );
                 }
@@ -912,13 +946,15 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 Ok(folders) if folders.iter().any(|folder| folder.provider_id == folder_id) => {}
                 Ok(_) => {
                     return vak_tools::ToolOutput::error(
+                        Fault::Target,
                         "Select a mail folder that belongs to this connected account.",
                     );
                 }
                 Err(error) => {
-                    return vak_tools::ToolOutput::error(format!(
-                        "The selected mail folder could not be verified: {error}"
-                    ));
+                    return vak_tools::ToolOutput::error(
+                        Fault::Tool,
+                        format!("The selected mail folder could not be verified: {error}"),
+                    );
                 }
             }
         }
@@ -942,6 +978,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 if operation == "read_thread" {
                     let Some(thread_id) = args.get("thread_id").and_then(Value::as_str) else {
                         return vak_tools::ToolOutput::error(
+                            Fault::Shape,
                             "Read a conversation using a thread_id returned by recent_mail.",
                         );
                     };
@@ -950,12 +987,14 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                             && vault.has_app_password(&account.id))
                     {
                         return vak_tools::ToolOutput::error(
+                            Fault::Target,
                             "Conversation reads are unavailable for this account's sign-in method.",
                         );
                     }
                     let cursor = args.get("cursor").and_then(Value::as_str);
                     if cursor.is_some_and(|cursor| cursor.len() > 8192) {
                         return vak_tools::ToolOutput::error(
+                            Fault::Shape,
                             "The conversation continuation is invalid or too large.",
                         );
                     }
@@ -976,6 +1015,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 } else if operation == "read_message" {
                     let Some(provider_id) = args.get("provider_id").and_then(Value::as_str) else {
                         return vak_tools::ToolOutput::error(
+                            Fault::Shape,
                             "Read a message using an ID returned by recent_mail.",
                         );
                     };
@@ -984,6 +1024,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                             && vault.has_app_password(&account.id))
                     {
                         return vak_tools::ToolOutput::error(
+                            Fault::Target,
                             "This provider already includes bounded message text in recent_mail or read_thread.",
                         );
                     }
@@ -1114,6 +1155,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 };
                 let Some((from, to)) = range_times else {
                     return vak_tools::ToolOutput::error(
+                        Fault::Shape,
                         "Calendar reads need RFC 3339 'from' and 'to' times.",
                     );
                 };
@@ -1237,7 +1279,12 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                     .map(|items| json!(items.into_iter().take(limit).collect::<Vec<_>>()))
                 }
             }
-            _ => return vak_tools::ToolOutput::error("Unsupported mail or calendar read."),
+            _ => {
+                return vak_tools::ToolOutput::error(
+                    Fault::Shape,
+                    "Unsupported mail or calendar read.",
+                );
+            }
         };
         match result {
             Ok(mut value) => {
@@ -1253,6 +1300,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 });
                 if !still_admitted {
                     return vak_tools::ToolOutput::error(
+                        Fault::Tool,
                         "The account was disconnected or its access changed during the read; provider content was discarded.",
                     );
                 }
@@ -1264,6 +1312,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 {
                     let Some(scope) = self.routine_scope.as_ref() else {
                         return vak_tools::ToolOutput::error(
+                            Fault::Tool,
                             "The scheduled mail watch scope is unavailable.",
                         );
                     };
@@ -1272,6 +1321,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                             Ok(items) => items,
                             Err(_) => {
                                 return vak_tools::ToolOutput::error(
+                                    Fault::Tool,
                                     "Mail results could not be safely filtered for this watch.",
                                 );
                             }
@@ -1285,6 +1335,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                         .is_err()
                     {
                         return vak_tools::ToolOutput::error(
+                            Fault::Tool,
                             "The private mail watch cursor is unavailable; results were discarded.",
                         );
                     }
@@ -1314,7 +1365,7 @@ Provider effects are a separate owner-controlled flow. If the user asks to send 
                 }
                 vak_tools::ToolOutput::ok(output.to_string()).from_account(&account.id)
             }
-            Err(error) => vak_tools::ToolOutput::error(error.to_string()),
+            Err(error) => vak_tools::ToolOutput::error(Fault::Tool, error.to_string()),
         }
     }
 }
@@ -1662,7 +1713,7 @@ mod tests {
                 &vak_tools::ToolContext::default(),
             )
             .await;
-        assert!(result.is_error);
+        assert!(result.is_error());
         assert!(
             result
                 .content
@@ -1685,7 +1736,7 @@ mod tests {
                 &vak_tools::ToolContext::default(),
             )
             .await;
-        assert!(result.is_error);
+        assert!(result.is_error());
         assert!(
             result
                 .content
@@ -1719,7 +1770,7 @@ mod tests {
                 &vak_tools::ToolContext::default(),
             )
             .await;
-        assert!(result.is_error);
+        assert!(result.is_error());
         assert!(result.content.contains("not allowed to perform"));
     }
 
@@ -1748,7 +1799,7 @@ mod tests {
                 &vak_tools::ToolContext::default(),
             )
             .await;
-        assert!(result.is_error);
+        assert!(result.is_error());
         assert!(
             result
                 .content
@@ -1760,7 +1811,7 @@ mod tests {
                 &vak_tools::ToolContext::default(),
             )
             .await;
-        assert!(account_discovery.is_error);
+        assert!(account_discovery.is_error());
         assert!(
             account_discovery
                 .content
@@ -1793,7 +1844,7 @@ mod tests {
                 &vak_tools::ToolContext::default(),
             )
             .await;
-        assert!(result.is_error);
+        assert!(result.is_error());
         assert!(result.content.contains("not allowed to perform"));
     }
 
@@ -2032,7 +2083,7 @@ mod tests {
                 &vak_tools::ToolContext::default(),
             )
             .await;
-        assert!(!result.is_error);
+        assert!(!result.is_error());
         let value: Value = serde_json::from_str(&result.content).unwrap();
         assert_eq!(value["accounts"].as_array().unwrap().len(), 1);
         assert_eq!(value["accounts"][0]["account_id"], account_id);
@@ -2050,7 +2101,7 @@ mod tests {
             )
             .await;
         let filtered: Value = serde_json::from_str(&disambiguated.content).unwrap();
-        assert!(!disambiguated.is_error);
+        assert!(!disambiguated.is_error());
         assert_eq!(filtered["accounts"].as_array().unwrap().len(), 1);
         assert_eq!(filtered["accounts"][0]["account_id"], account_id);
         assert!(!disambiguated.content.contains("OWNER@EXAMPLE.COM"));
@@ -2114,7 +2165,7 @@ mod tests {
                 &vak_tools::ToolContext::default(),
             )
             .await;
-        assert!(result.is_error);
+        assert!(result.is_error());
         assert!(
             result
                 .content

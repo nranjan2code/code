@@ -11,6 +11,7 @@ mod support;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
+use vak_tools::Fault;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
@@ -87,7 +88,10 @@ impl Tool for FailingFetch {
         serde_json::json!({"type": "object"})
     }
     async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
-        ToolOutput::error("[webfetch] GET https://example.com -> 403 Forbidden")
+        ToolOutput::error(
+            Fault::Tool,
+            "[webfetch] GET https://example.com -> 403 Forbidden",
+        )
     }
 }
 

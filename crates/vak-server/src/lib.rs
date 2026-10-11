@@ -7072,27 +7072,50 @@ async fn session_receipts(
     }
 }
 
-/// One decision of the control plane with the turn it was made in.
+/// One step of a turn's explanation with the turn it belongs to.
 #[derive(serde::Serialize)]
 struct TurnDecision {
     #[serde(skip_serializing_if = "Option::is_none")]
     turn: Option<String>,
     #[serde(flatten)]
-    decision: vak_control::Decision,
+    step: TurnStepRow,
 }
 
-/// A session's decisions in order: each turn's explanation
-/// (docs/design/88-control-plane.md §6).
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+enum TurnStepRow {
+    Decision(vak_control::Decision),
+    Failed { failed: FailedCall },
+}
+
+#[derive(serde::Serialize)]
+struct FailedCall {
+    call: String,
+    fault: vak_control::Fault,
+}
+
+/// A session's decisions and failed calls in order: each turn's
+/// explanation (docs/design/88-control-plane.md §6).
 async fn session_decisions(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<TurnDecision>>, StatusCode> {
     let collect = |log: &SessionLog| {
-        log.decisions()
+        log.explanation()
             .into_iter()
-            .map(|(turn, decision)| TurnDecision {
+            .map(|(turn, step)| TurnDecision {
                 turn: turn.map(str::to_string),
-                decision: decision.clone(),
+                step: match step {
+                    vak_session::log::TurnStep::Decision(decision) => {
+                        TurnStepRow::Decision(decision.clone())
+                    }
+                    vak_session::log::TurnStep::Failed { call, fault } => TurnStepRow::Failed {
+                        failed: FailedCall {
+                            call: call.to_string(),
+                            fault,
+                        },
+                    },
+                },
             })
             .collect::<Vec<_>>()
     };
@@ -20537,7 +20560,7 @@ async fn execute_script(
     };
     let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
     let out = bash.execute(&args, &ctx).await;
-    if out.is_error {
+    if out.is_error() {
         ScriptOutcome {
             ok: false,
             text: format!("script failed: {}", vak_tools::bounded(out.content).trim()),
@@ -23303,7 +23326,7 @@ mod sandbox_promotion_tests {
             }
         };
         let output = run("exec-1", first.clone()).await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         // The Agent keeps editing its own draft: a second call, whose source
         // is the first draft, so the lineage spans both calls.
         let second = serde_json::json!({
@@ -23313,7 +23336,7 @@ mod sandbox_promotion_tests {
             "ops": [{"op": "set_cells", "sheet": "Budget", "cells": {"B3": 70}}]
         });
         let output = run("exec-2", second.clone()).await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         assert_eq!(
             tokio::fs::read(&workbook).await.unwrap(),
             vak_ooxml::fixtures::xlsx(),
@@ -23591,7 +23614,7 @@ mod sandbox_promotion_tests {
                 &vak_tools::ToolContext::new(dir.path().to_path_buf()).with_sandbox_sink(sink),
             )
             .await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         let memo = dir.path().join("memo.docx");
         assert!(
             !memo.exists(),
@@ -23749,7 +23772,7 @@ mod sandbox_promotion_tests {
                 &vak_tools::ToolContext::new(dir.path().to_path_buf()).with_sandbox_sink(sink),
             )
             .await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         let target = dir.path().join("daily.xlsx");
         assert!(
             !target.exists(),
@@ -23962,7 +23985,7 @@ mod sandbox_promotion_tests {
                 &vak_tools::ToolContext::new(dir.path().to_path_buf()).with_sandbox_sink(sink),
             )
             .await;
-        assert!(!output.is_error, "{}", output.content);
+        assert!(!output.is_error(), "{}", output.content);
         seed_office_calls(&state.core, "session-1", &[("exec-1", args)]);
         append_session_sandbox_event(
             &state.core.scope().into_root(),

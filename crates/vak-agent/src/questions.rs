@@ -15,6 +15,7 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 use std::time::Duration;
+use vak_tools::Fault;
 
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
@@ -307,12 +308,15 @@ impl Tool for AskParentTool {
             .map(str::trim)
             .unwrap_or_default();
         if question.is_empty() {
-            return ToolOutput::error("missing required parameter: question");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: question");
         }
         if question.chars().count() > MAX_QUESTION_CHARS {
-            return ToolOutput::error(format!(
-                "the question is too long: at most {MAX_QUESTION_CHARS} characters. Ask one specific question."
-            ));
+            return ToolOutput::error(
+                Fault::Shape,
+                format!(
+                    "the question is too long: at most {MAX_QUESTION_CHARS} characters. Ask one specific question."
+                ),
+            );
         }
         let options: Vec<String> = args
             .get("options")
@@ -331,14 +335,18 @@ impl Tool for AskParentTool {
                 .iter()
                 .any(|option| option.chars().count() > MAX_OPTION_CHARS)
         {
-            return ToolOutput::error(format!(
-                "at most {MAX_OPTIONS} options of {MAX_OPTION_CHARS} characters each"
-            ));
+            return ToolOutput::error(
+                Fault::Shape,
+                format!("at most {MAX_OPTIONS} options of {MAX_OPTION_CHARS} characters each"),
+            );
         }
         if self.asked.load(Ordering::SeqCst) >= MAX_QUESTIONS_PER_WORKER {
-            return ToolOutput::error(format!(
-                "you have used your {MAX_QUESTIONS_PER_WORKER} questions. Decide from what you know and state your assumption."
-            ));
+            return ToolOutput::error(
+                Fault::Refused,
+                format!(
+                    "you have used your {MAX_QUESTIONS_PER_WORKER} questions. Decide from what you know and state your assumption."
+                ),
+            );
         }
         if !self.answerable {
             return ToolOutput::ok(NOBODY_AVAILABLE);
@@ -354,6 +362,7 @@ impl Tool for AskParentTool {
         };
         let Some(rx) = self.board.questions().open(info.clone()) else {
             return ToolOutput::error(
+                Fault::Refused,
                 "you already have a question waiting for an answer; wait for it first",
             );
         };
@@ -382,7 +391,7 @@ impl Tool for AskParentTool {
             _ = ctx.cancel.cancelled() => {
                 self.board.questions().close(&info.id);
                 self.closed(&info).await;
-                return ToolOutput::error("cancelled while waiting for an answer");
+                return ToolOutput::error(Fault::Cancelled, "cancelled while waiting for an answer");
             }
         };
         // Dropping the entry on expiry means a reply that arrives later
@@ -518,7 +527,7 @@ mod tests {
         let out = tool
             .execute(&json!({"question": "Which year?"}), &context())
             .await;
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert!(out.content.contains("Nobody is available"));
         assert!(registry.questions().pending("p1").is_empty());
     }
@@ -544,7 +553,7 @@ mod tests {
                 .unwrap();
         };
         let (out, ()) = tokio::join!(ask, answer);
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert!(
             out.content.contains("Answer from person:you: 2026"),
             "{}",
@@ -581,7 +590,7 @@ mod tests {
             assert!(out.content.contains("No answer arrived"));
         }
         let out = tool.execute(&json!({"question": "once more?"}), &ctx).await;
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert!(out.content.contains("used your 3 questions"));
     }
 
@@ -594,13 +603,13 @@ mod tests {
                 &context(),
             )
             .await;
-        assert!(out.is_error);
+        assert!(out.is_error());
         let out = tool
             .execute(
                 &json!({"question": "ok?", "options": ["a","b","c","d","e","f","g"]}),
                 &context(),
             )
             .await;
-        assert!(out.is_error);
+        assert!(out.is_error());
     }
 }

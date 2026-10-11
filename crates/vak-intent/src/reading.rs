@@ -174,17 +174,6 @@ impl Reading {
         }
     }
 
-    /// Whether this reading is confident enough to narrow capability.
-    ///
-    /// Gated on the `act` axis alone, because that is the only axis the
-    /// capability slice is derived from. Two thresholds rather than one: a
-    /// provisional reading may still raise an approval floor (getting that
-    /// wrong is merely annoying) but may not remove a tool (getting that wrong
-    /// breaks the task).
-    pub fn may_slice_capabilities(&self, floor: f64) -> bool {
-        self.axis_confidence.act >= floor
-    }
-
     /// Whether this reading is confident enough to promote work to a durable
     /// commitment. Gated on `horizon` alone.
     pub fn may_open_commitment(&self, floor: f64) -> bool {

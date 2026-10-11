@@ -64,7 +64,7 @@ async fn nothing_starts_until_a_call_needs_the_server() {
     let names = tool
         .execute(&json!({"action": "list"}), &ctx(dir.path()))
         .await;
-    assert!(!names.is_error, "{}", names.content);
+    assert!(!names.is_error(), "{}", names.content);
     assert!(names.content.contains("- fake"), "{}", names.content);
     assert_eq!(spawns(&marker), 0, "listing server names starts nothing");
 
@@ -91,7 +91,7 @@ async fn nothing_starts_until_a_call_needs_the_server() {
             &ctx(dir.path()),
         )
         .await;
-    assert!(!called.is_error, "{}", called.content);
+    assert!(!called.is_error(), "{}", called.content);
     assert_eq!(spawns(&marker), 1, "the pooled connection is reused");
 
     let observed = manager.observations();

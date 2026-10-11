@@ -44,7 +44,7 @@ async fn write_then_read_roundtrip() {
         serde_json::json!({"path": "nested/dir/file.txt"}),
     )
     .await;
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert!(out.content.contains("alpha"));
     assert!(out.content.contains('1'));
 }
@@ -58,7 +58,7 @@ async fn read_reports_missing_file_as_error_value() {
         serde_json::json!({"path": "nope.txt"}),
     )
     .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(out.content.contains("cannot read"));
 }
 
@@ -78,7 +78,7 @@ async fn read_paging_hint() {
         serde_json::json!({"path": "big.txt", "limit": 10}),
     )
     .await;
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert!(out.content.contains("Use offset=11 to continue."));
 }
 
@@ -101,7 +101,7 @@ async fn edit_is_atomic_on_duplicate_match() {
     })).await;
 
     assert!(
-        out.is_error,
+        out.is_error(),
         "second edit matches twice; whole op must fail"
     );
     assert!(out.content.contains("no changes applied"));
@@ -137,7 +137,7 @@ async fn edit_applies_sequential_edits_with_diff() {
     )
     .await;
 
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     let after = tokio::fs::read_to_string(dir.path().join("f.txt"))
         .await
         .unwrap();
@@ -165,7 +165,7 @@ async fn edit_preserves_crlf_line_endings() {
     )
     .await;
 
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     let after = tokio::fs::read_to_string(dir.path().join("crlf.txt"))
         .await
         .unwrap();
@@ -181,7 +181,7 @@ async fn bash_runs_and_captures() {
         serde_json::json!({"command": "echo hi && echo err >&2"}),
     )
     .await;
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert!(out.content.contains("[stdout]\nhi"));
     assert!(out.content.contains("[stderr]\nerr"));
 }
@@ -195,7 +195,7 @@ async fn bash_nonzero_exit_is_error_value() {
         serde_json::json!({"command": "exit 3"}),
     )
     .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(out.content.contains("exit code: 3"));
 }
 
@@ -212,7 +212,7 @@ async fn bash_timeout_kills_process() {
         }),
     )
     .await;
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
     assert!(out.content.contains("timed out"));
 }
@@ -234,7 +234,7 @@ async fn glob_finds_nested_files() {
         serde_json::json!({"pattern": "src/**/*.rs"}),
     )
     .await;
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert!(out.content.contains("src/a.rs"));
     assert!(out.content.contains("src/deep/b.rs"));
     assert!(!out.content.contains("docs/c.md"));
@@ -262,7 +262,7 @@ async fn glob_does_not_walk_into_another_agents_isolated_workspace() {
         serde_json::json!({"pattern": "**/*.md"}),
     )
     .await;
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert!(out.content.contains("notes.md"));
     assert!(!out.content.contains("secret.md"));
 }
@@ -286,7 +286,7 @@ async fn grep_does_not_walk_into_another_agents_isolated_workspace() {
     )
     .await;
     let out = run(&GrepTool, dir.path(), serde_json::json!({"pattern": "42"})).await;
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert!(out.content.contains("notes.md"));
     assert!(!out.content.contains("secret.md"));
 }
@@ -316,7 +316,7 @@ async fn grep_matches_with_include_filter() {
         }),
     )
     .await;
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert!(out.content.contains("code.rs:1"));
     assert!(!out.content.contains("note.md"));
 }
@@ -332,7 +332,7 @@ async fn a_tool_returns_its_whole_output() {
         serde_json::json!({"command": "cat long.txt"}),
     )
     .await;
-    assert!(!out.is_error, "{}", out.content);
+    assert!(!out.is_error(), "{}", out.content);
     assert!(out.content.contains("L00000") && out.content.contains("L39999"));
     assert!(out.content.chars().count() > long.chars().count());
 }
@@ -348,7 +348,7 @@ async fn edit_rejects_non_utf8_instead_of_corrupting() {
         serde_json::json!({"path": "blob.bin", "edits": [{"old_text": "hi", "new_text": "ho"}]}),
     )
     .await;
-    assert!(out.is_error, "non-UTF-8 edit must be refused");
+    assert!(out.is_error(), "non-UTF-8 edit must be refused");
     assert_eq!(
         std::fs::read(dir.path().join("blob.bin")).unwrap(),
         bytes,

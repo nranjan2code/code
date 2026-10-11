@@ -97,8 +97,8 @@ common model hallucinations like `read_file` → `read`) now also
 redirects retired tool names to their replacement. When the model
 calls `python_eval`, the name is normalized to `bash` by
 `normalize_tool_call()` in the agent loop. The resulting error
-(`missing required parameter: command`) is classified as `Correctable`,
-enabling model self-repair rather than a hard `unknown_capability`
+(`missing required parameter: command`) is a fault of shape
+(`Fault::Shape`), enabling model self-repair rather than a hard `unknown_capability`
 failure.
 
 ## Lifecycle Summary

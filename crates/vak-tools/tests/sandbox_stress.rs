@@ -17,7 +17,7 @@ async fn nested_data_artifacts_are_reported_from_the_workspace() {
             &ctx,
         )
         .await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     assert!(workspace.path().join("nested/deeper/data.csv").is_file());
     let mut saw_nested = false;
     while let Ok(event) = events.try_recv() {
@@ -43,7 +43,7 @@ async fn timeout_keeps_partial_output_and_kills_descendant() {
             &ctx,
         )
         .await;
-    assert!(output.is_error);
+    assert!(output.is_error());
     assert!(output.content.contains("before"));
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
 }
@@ -62,7 +62,7 @@ async fn successful_shell_exit_stops_background_children() {
             &ctx,
         )
         .await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
     assert!(
         !marker.exists(),
@@ -118,6 +118,6 @@ async fn control_files_are_denied_before_spawn() {
     let output = BashTool
         .execute(&serde_json::json!({"command": "cat .env"}), &ctx)
         .await;
-    assert!(output.is_error);
+    assert!(output.is_error());
     assert!(output.content.contains("control files"));
 }

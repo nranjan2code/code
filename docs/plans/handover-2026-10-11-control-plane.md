@@ -3,8 +3,7 @@
 ## Prompt for a fresh session
 
 "Continue building the control plane in /Users/nisheethranjan/Projects/Vak/code
-on main, from stage C4. First run the full gate on a clean tree and fix
-anything it shows. Read AGENTS.md (especially 'No word lists, no
+on main, from stage C5. Read AGENTS.md (especially 'No word lists, no
 tuned limits' and 'Investigating a failure'), docs/design/88-control-plane.md
 (its Status line, §12 decisions and 'Carried into later stages'), then this
 file's Progress and Rules. The four open questions are decided (doc 88
@@ -93,14 +92,20 @@ seven live run ids, and what is still open.
   it), `DomainSet` and the act-to-domain table removed, the misread ledger
   removed, the tier-2/3 model reading and its `[intent]` keys removed. Seen
   live: a bash turn answered, decisions read back.
-- Full gate: NOT run to the end on the final C3b tree (stopped by the
-  maintainer to end the session). fmt and clippy `-D warnings` were clean,
-  and the tests of vak-control, vak-config, vak-intent, vak-core,
-  vak-agent, vak-llm, vak-context, vak-flow, vak and the touched vak-server
-  tests passed. First step of the next session: run the full gate once and
-  fix anything it shows before C4.
-- Next: C4 (`vak-judge`, call and answer verdicts, typed tool errors), with
-  the items doc 88 lists under "Carried into later stages".
+- The full gate was run on the C3b tree at the start of the next session:
+  green (283 suites).
+- C4 done 2026-10-11: `crates/vak-judge` (call verdicts from gathered
+  facts, unrecovered failures, the plan check, the outcome evaluators moved
+  from `vak-intent`); `ToolOutput::error(Fault, …)` at all 261 sites,
+  carried over the worker protocol (version 5) and recorded as
+  `CallEffect::Failed`; `ToolErrorKind::classify`, `never_ran` and
+  `Reading::may_slice_capabilities` removed; `Refusal::Unknown`; the
+  checkpoint taken at the first accepted call that declares
+  `Tool::changes_workspace`. A ledger written before C4 has no fault
+  records; purge the dev data home's conversations if an old one misreads.
+- Next: C5 (`Correction` and the ladder; the control messages, thresholds
+  and stop-policy checks removed), with the items doc 88 lists under
+  "Carried into later stages".
 - Slowness investigated 2026-10-11: in steady state the provider's prompt
   cache is reused across turn boundaries (first-step prefill 0.6-0.7 s);
   the 17-49 s first steps seen earlier came after a new build changed the

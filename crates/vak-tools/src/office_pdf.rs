@@ -294,7 +294,7 @@ mod tests {
             ]}),
         )
         .await;
-        assert!(!created.is_error, "{}", created.content);
+        assert!(!created.is_error(), "{}", created.content);
         assert!(
             created
                 .content
@@ -330,7 +330,7 @@ mod tests {
             ]}),
         )
         .await;
-        assert!(!edited.is_error, "{}", edited.content);
+        assert!(!edited.is_error(), "{}", edited.content);
         assert!(
             edited
                 .content
@@ -363,7 +363,7 @@ mod tests {
         )
         .await;
         assert!(
-            stale.is_error && stale.content.contains("does not match the source"),
+            stale.is_error() && stale.content.contains("does not match the source"),
             "{}",
             stale.content
         );
@@ -373,7 +373,7 @@ mod tests {
         )
         .await;
         assert!(
-            office_op.is_error && office_op.content.contains("A PDF takes"),
+            office_op.is_error() && office_op.content.contains("A PDF takes"),
             "{}",
             office_op.content
         );

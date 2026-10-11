@@ -75,6 +75,7 @@ pub use vak_sandbox;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use vak_tools::Fault;
 
 use tokio_util::sync::CancellationToken;
 use vak_agent::{Agent, AgentConfig, AgentEvent, TurnOutcome, WorkMode};
@@ -123,16 +124,16 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
         approver: Option<Arc<dyn vak_agent::Approver>>,
     ) -> vak_tools::ToolOutput {
         let Some(name) = args.get("flow").and_then(|value| value.as_str()) else {
-            return vak_tools::ToolOutput::error("flow requires flow");
+            return vak_tools::ToolOutput::error(Fault::Shape, "flow requires flow");
         };
         let Some(contract_id) = args.get("contract_id").and_then(|value| value.as_str()) else {
-            return vak_tools::ToolOutput::error("flow requires contract_id");
+            return vak_tools::ToolOutput::error(Fault::Shape, "flow requires contract_id");
         };
         let Some(work_item_id) = args.get("work_item_id").and_then(|value| value.as_str()) else {
-            return vak_tools::ToolOutput::error("flow requires work_item_id");
+            return vak_tools::ToolOutput::error(Fault::Shape, "flow requires work_item_id");
         };
         if !valid_managed_flow_name(name) {
-            return vak_tools::ToolOutput::error("invalid managed flow name");
+            return vak_tools::ToolOutput::error(Fault::Shape, "invalid managed flow name");
         }
         let flow_path = self
             .core
@@ -142,30 +143,46 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
         let definition_toml = match std::fs::read_to_string(&flow_path) {
             Ok(body) => body,
             Err(_) => {
-                return vak_tools::ToolOutput::error(format!("managed flow '{name}' not found"));
+                return vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    format!("managed flow '{name}' not found"),
+                );
             }
         };
         let flow = match vak_flow::parse_flow(&definition_toml) {
             Ok(flow) if flow.name == name => flow,
             Ok(_) => {
                 return vak_tools::ToolOutput::error(
+                    Fault::Target,
                     "managed flow name does not match its definition",
                 );
             }
             Err(error) => {
-                return vak_tools::ToolOutput::error(format!("invalid managed flow: {error}"));
+                return vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    format!("invalid managed flow: {error}"),
+                );
             }
         };
         let (parent_session_id, attempt) = {
             let log = session.lock().await;
             let Some(header) = log.header() else {
-                return vak_tools::ToolOutput::error("managed flow session has no header");
+                return vak_tools::ToolOutput::error(
+                    Fault::Tool,
+                    "managed flow session has no header",
+                );
             };
             let Ok(Some(work)) = log.work_projection() else {
-                return vak_tools::ToolOutput::error("managed flow has no active contract");
+                return vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    "managed flow has no active contract",
+                );
             };
             let Some(item) = work.items.get(work_item_id) else {
-                return vak_tools::ToolOutput::error("managed flow work item does not exist");
+                return vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    "managed flow work item does not exist",
+                );
             };
             if work.contract.contract_id != contract_id
                 || !matches!(
@@ -174,7 +191,10 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
                         | vak_session::types::WorkItemStatus::Running
                 )
             {
-                return vak_tools::ToolOutput::error("managed flow work item is not runnable");
+                return vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    "managed flow work item is not runnable",
+                );
             }
             (header.session_id.clone(), item.attempt.saturating_add(1))
         };
@@ -211,9 +231,10 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
         {
             Ok(engine) => Arc::new(engine),
             Err(error) => {
-                return vak_tools::ToolOutput::error(format!(
-                    "managed flow permission setup failed: {error}"
-                ));
+                return vak_tools::ToolOutput::error(
+                    Fault::Tool,
+                    format!("managed flow permission setup failed: {error}"),
+                );
             }
         };
         let mut outcome = vak_intent::OutcomeSpec::from_reading(
@@ -231,7 +252,10 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
         let objects = match self.core.objects() {
             Ok(objects) => objects,
             Err(error) => {
-                return vak_tools::ToolOutput::error(format!("object store unavailable: {error}"));
+                return vak_tools::ToolOutput::error(
+                    Fault::Tool,
+                    format!("object store unavailable: {error}"),
+                );
             }
         };
         let deps = vak_flow::ExecutorDeps {
@@ -239,7 +263,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             objects,
             provider: match self.core.provider() {
                 Ok(provider) => provider,
-                Err(error) => return vak_tools::ToolOutput::error(error.to_string()),
+                Err(error) => return vak_tools::ToolOutput::error(Fault::Tool, error.to_string()),
             },
             provider_route: self.core.effective_provider().to_string(),
             system_prompt: self.system_prompt.clone(),
@@ -297,11 +321,12 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             vak_flow::FlowOutcome::Completed { outputs } => vak_tools::ToolOutput::ok(
                 serde_json::to_string(&outputs).unwrap_or_else(|_| "managed flow completed".into()),
             ),
-            vak_flow::FlowOutcome::Failed { node, reason, .. } => {
-                vak_tools::ToolOutput::error(format!("managed flow failed at {node}: {reason}"))
-            }
+            vak_flow::FlowOutcome::Failed { node, reason, .. } => vak_tools::ToolOutput::error(
+                Fault::Tool,
+                format!("managed flow failed at {node}: {reason}"),
+            ),
             vak_flow::FlowOutcome::Aborted => {
-                vak_tools::ToolOutput::error("managed flow cancelled")
+                vak_tools::ToolOutput::error(Fault::Cancelled, "managed flow cancelled")
             }
         }
     }
@@ -7450,38 +7475,37 @@ impl Core {
             }
         }
 
-        // Checkpoint the workspace before any mutation of this run. Skipped
-        // only when the engagement is confident nothing will be executed or
-        // written (a greeting, a question): a wrong reading there costs a
-        // missed checkpoint, so the skip needs the acceptance bar, not the
-        // provisional one.
-        let expects_effect = engagement.posture.checkpoint_before_effect
-            || resolved_intent.provenance.tier == vak_intent::Tier::General
-            || !resolved_intent
-                .reading
-                .may_slice_capabilities(self.inner.config.intent.accept_confidence)
-            || admitted_outcome.requires_execution();
+        // Checkpoint the workspace before this run changes it. The session's
+        // first checkpoint is taken now: it is the baseline "what has this
+        // session changed" is measured against (`ContextProfile::Working`).
+        // Every later one is taken when the first call that may change the
+        // workspace is accepted, so a turn that changes nothing captures
+        // nothing, whatever its request said.
         if let Some(h) = session.header() {
             let seq = self.next_checkpoint_seq(&h.session_id);
-            // The session's first checkpoint is always taken: it is the
-            // baseline "what has this session changed" is measured against
-            // (`ContextProfile::Working`), whatever the first turn was.
-            let first_of_session = seq == 0;
-            if !expects_effect && !first_of_session {
-                // Nothing will be executed or written; skip the capture.
-            } else {
-                if let Ok(objects) = self.objects()
-                    && let Ok((cp, _stats)) = checkpoints::capture(
-                        &self.inner.cwd,
-                        &self.scope(),
-                        objects.as_ref(),
-                        &h.session_id,
-                        seq,
-                        &format!("turn: {turn_id}"),
-                    )
-                {
-                    let _ = checkpoints::store(&self.scope(), objects.as_ref(), &cp);
+            let capture = {
+                let core = self.clone();
+                let session_id = h.session_id.clone();
+                let label = format!("turn: {turn_id}");
+                move || {
+                    if let Ok(objects) = core.objects()
+                        && let Ok((cp, _stats)) = checkpoints::capture(
+                            &core.inner.cwd,
+                            &core.scope(),
+                            objects.as_ref(),
+                            &session_id,
+                            seq,
+                            &label,
+                        )
+                    {
+                        let _ = checkpoints::store(&core.scope(), objects.as_ref(), &cp);
+                    }
                 }
+            };
+            if seq == 0 {
+                capture();
+            } else {
+                cfg.before_effect = Some(std::sync::Arc::new(capture));
             }
         }
 
@@ -7727,8 +7751,22 @@ impl Core {
             let mut successful_receipts = std::collections::HashSet::new();
             let mut written_paths = std::collections::HashSet::<String>::new();
             let mut successful_effect_inputs = Vec::<String>::new();
-            let mut failures = vak_intent::ToolFailureLedger::default();
-            for entry in session.chain_to_root() {
+            let mut failures = vak_judge::call::Failures::default();
+            let chain = session.chain_to_root();
+            // Where each failed call's fault lay, as the loop recorded it.
+            let faults: std::collections::HashMap<&str, vak_control::Fault> = chain
+                .iter()
+                .filter_map(|entry| match &entry.payload {
+                    vak_session::EntryPayload::CallEffect(record) => match record.effect {
+                        vak_session::types::CallEffect::Failed { fault } => {
+                            Some((record.tool_use_id.as_str(), fault))
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect();
+            for entry in &chain {
                 if let vak_session::EntryPayload::Message(record) = &entry.payload {
                     if record.message.role == vak_llm::Role::User
                         && record.control_kind().is_none()
@@ -7783,14 +7821,15 @@ impl Core {
                             vak_llm::ContentBlock::ToolResult {
                                 tool_use_id,
                                 is_error: true,
-                                content,
                                 ..
-                            } if tool_calls.contains_key(tool_use_id)
-                                && vak_tools::ToolErrorKind::classify(content)
-                                    != vak_tools::ToolErrorKind::Cancelled
-                                && !vak_tools::never_ran(content) =>
-                            {
-                                failures.failed(tool_use_id);
+                            } if tool_calls.contains_key(tool_use_id) => {
+                                failures.failed(
+                                    tool_use_id,
+                                    faults
+                                        .get(tool_use_id.as_str())
+                                        .copied()
+                                        .unwrap_or(vak_control::Fault::Tool),
+                                );
                             }
                             _ => {}
                         }
@@ -7801,7 +7840,7 @@ impl Core {
                 .successful_tool_receipts_for_latest_turn()
                 .last()
                 .map_or(vak_intent::EvidenceState::None, |(_, recorded_at)| {
-                    vak_intent::evidence_state_from_age(
+                    vak_judge::outcome::evidence_state_from_age(
                         chrono::Utc::now(),
                         *recorded_at,
                         chrono::Duration::seconds(
@@ -7810,7 +7849,7 @@ impl Core {
                     )
                 });
             let unresolved_failure = failures.has_unrecovered();
-            let mut status = vak_intent::evaluate_response_with_failures(
+            let mut status = vak_judge::outcome::evaluate_response_with_failures(
                 response_text.as_deref(),
                 matches!(
                     outcome,
@@ -7841,18 +7880,21 @@ impl Core {
                         "research.synthesis" | "evidence"
                     )
                 });
-            let requirement_evaluations = vak_intent::evaluate_requirements(
+            let requirement_evaluations = vak_judge::outcome::evaluate_requirements(
                 &outcome_spec,
-                &vak_intent::TurnFacts {
+                &vak_judge::outcome::TurnFacts {
                     response: response_text.as_deref(),
                     evidence_state,
                     evidence_card,
                     deliverable_observed,
                 },
             );
-            let completion =
-                vak_intent::evaluate_completion(status, &requirement_evaluations, &outcome_spec);
-            let human_review = vak_intent::human_review_state(completion);
+            let completion = vak_judge::outcome::evaluate_completion(
+                status,
+                &requirement_evaluations,
+                &outcome_spec,
+            );
+            let human_review = vak_judge::outcome::human_review_state(completion);
             let evidence_receipts = successful_receipts
                 .into_iter()
                 .collect::<Vec<_>>()

@@ -8,7 +8,6 @@ mod fences;
 use fences::{find_duplicate_card_fence, find_malformed_vak_fence, vak_fence_bodies};
 pub mod circuit;
 pub mod goal;
-mod plan_check;
 pub mod questions;
 pub mod spend;
 pub mod steering;
@@ -103,7 +102,7 @@ use vak_llm::{
 };
 use vak_permission::{AskSource, Decision, Mode, PermissionEngine};
 use vak_session::{MessageMeta, MessageRecord, SessionLog, TurnIndex};
-use vak_tools::{RecallRequest, Tool, ToolContext, ToolErrorKind, ToolOutput};
+use vak_tools::{Fault, RecallRequest, Tool, ToolContext, ToolOutput};
 
 pub use steering::{DrainMode, SteeringQueues};
 
@@ -404,6 +403,10 @@ pub struct AgentConfig {
     /// Pre-authorization from a live envelope, consulted at an `Ask` gate
     /// before the approver. See `EnvelopeCheck`. Absent, every gate asks.
     pub envelope_check: Option<EnvelopeCheck>,
+    /// Run once per run, when the first call that may change the workspace
+    /// is accepted and before it runs (`Tool::changes_workspace`): the host
+    /// checkpoints the workspace here.
+    pub before_effect: Option<Arc<dyn Fn() + Send + Sync>>,
     /// Writes a `Presentation` ledger entry at the moment a card validates.
     /// See `PresentationRebuild`. `None` disables the write (the ack stays
     /// the tool's own generic text — no id to embed).
@@ -582,6 +585,7 @@ impl AgentConfig {
             steps: vak_control::StepDefaults::shipped(),
             observation_check: None,
             envelope_check: None,
+            before_effect: None,
             presentation_rebuild: None,
             history_recall: None,
             history_refresh: None,
@@ -1353,11 +1357,13 @@ pub struct Agent {
     pub config: AgentConfig,
     /// Identical-call detector for the doom-loop guard, reset per run.
     run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
+    /// Whether this run has already announced its first workspace change.
+    effect_announced: std::sync::atomic::AtomicBool,
     /// `name + input` of every card call that displayed successfully this run.
     presented_cards: std::sync::Mutex<std::collections::HashSet<String>>,
     /// The latest plan the model declared this run (docs/design/
     /// 86-model-plans-runtime-checks.md), checked when the turn ends.
-    declared_plan: std::sync::Mutex<Option<Vec<vak_tools::Deliverable>>>,
+    declared_plan: std::sync::Mutex<Option<Vec<vak_intent::Deliverable>>>,
     deliveries: std::sync::Mutex<RunDeliveries>,
     /// What each call in flight produced beyond its result text, drained
     /// when the batch's results are recorded (`CallYield`).
@@ -1396,6 +1402,7 @@ impl Agent {
             session,
             config,
             run_call_counts: std::sync::Mutex::new(HashMap::new()),
+            effect_announced: std::sync::atomic::AtomicBool::new(false),
             presented_cards: std::sync::Mutex::new(std::collections::HashSet::new()),
             declared_plan: std::sync::Mutex::new(None),
             deliveries: std::sync::Mutex::new(RunDeliveries::default()),
@@ -1711,6 +1718,8 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        self.effect_announced
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         self.presented_cards
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2930,7 +2939,7 @@ impl Agent {
                     match plan.as_deref() {
                         Some(plan) => {
                             let final_text = response.text_content();
-                            let produced = plan_check::Produced {
+                            let produced = vak_judge::plan::Produced {
                                 cards: &card_answers,
                                 final_text: &final_text,
                                 file_delivered: file_delivered_this_run
@@ -2938,11 +2947,11 @@ impl Agent {
                                 changed: receipts.has_execution_receipt(),
                                 checked: receipts.substantive_bash_calls > 0 && !verification_stale,
                             };
-                            let gap = plan_check::gap(plan, &produced);
+                            let gap = vak_judge::plan::gap(plan, &produced);
                             if gap.is_empty() || std::mem::replace(&mut plan_checked, true) {
                                 Vec::new()
                             } else {
-                                vec![gap.message()]
+                                vec![plan_gap_message(&gap)]
                             }
                         }
                         None => Vec::new(),
@@ -3365,7 +3374,7 @@ impl Agent {
             results.extend(search_page_fetches.into_iter().map(|id| {
                 (
                     id,
-                    ToolRunOutput::Err(format!(
+                    ToolRunOutput::Err(Fault::Refused, format!(
                         "[source-discovery]: webfetch retrieves a known page, not a search-results URL for a current fact. {available} Discover a search capability, then use its returned source URLs as evidence."
                     )),
                 )
@@ -3394,7 +3403,7 @@ impl Agent {
                             .to_string()
                     }
                 };
-                (call.id, ToolRunOutput::Err(message))
+                (call.id, ToolRunOutput::Err(Fault::Refused, message))
             }));
             self.record_worker_work(&task_assignments, &results).await;
             // Identical-card repeat: a step that only re-emits cards already
@@ -3416,25 +3425,16 @@ impl Agent {
             // `results` is consumed into tool-result blocks below, and keyed
             // by admitted tool name so the controller can resurface the exact
             // schema that was rejected.
-            let failed_correctable: Vec<(String, ToolErrorKind)> = results
+            let failed_correctable: Vec<String> = results
                 .iter()
                 .filter_map(|(id, out)| match out {
-                    ToolRunOutput::Err(content) => {
-                        // A history lookup that found nothing is optional
-                        // context the model cannot repair by repeating it; a
-                        // malformed one is repaired like any other call.
-                        if history_misses.contains(id) {
-                            return None;
-                        }
-                        let kind = ToolErrorKind::classify(content);
-                        if kind.is_correctable() {
-                            Some((
-                                call_names.get(id).cloned().unwrap_or_else(|| id.clone()),
-                                kind,
-                            ))
-                        } else {
-                            None
-                        }
+                    // A history lookup that found nothing is optional
+                    // context the model cannot repair by repeating it; a
+                    // malformed one is repaired like any other call.
+                    ToolRunOutput::Err(fault, _)
+                        if vak_judge::call::repairable(*fault) && !history_misses.contains(id) =>
+                    {
+                        Some(call_names.get(id).cloned().unwrap_or_else(|| id.clone()))
                     }
                     _ => None,
                 })
@@ -3455,7 +3455,7 @@ impl Agent {
                             .is_some_and(|check| check(name, input))
                             .then(|| name.to_string())
                     }
-                    ToolRunOutput::Err(_) => None,
+                    ToolRunOutput::Err(..) => None,
                 })
                 .collect();
             if !observed_this_run {
@@ -3508,7 +3508,7 @@ impl Agent {
                             .map(str::to_string)
                     }
                     ToolRunOutput::Ok(_) => None,
-                    ToolRunOutput::Err(_) => None,
+                    ToolRunOutput::Err(..) => None,
                 })
                 .collect();
             cards_emitted_this_run |= !emitted_card_types.is_empty();
@@ -3641,7 +3641,7 @@ impl Agent {
                             // not trust (measured live).
                             let shown = match &slot.1 {
                                 ToolRunOutput::Ok(text) => text.clone(),
-                                ToolRunOutput::Err(_) => String::new(),
+                                ToolRunOutput::Err(..) => String::new(),
                             };
                             slot.1 =
                                 ToolRunOutput::Ok(format!("{shown}\n(presentation {})", entry.id));
@@ -3694,7 +3694,7 @@ impl Agent {
                             self.obligations.push(cmd.clone());
                         }
                     }
-                    ToolRunOutput::Err(_) => {
+                    ToolRunOutput::Err(..) => {
                         receipts.failed_tool_calls += 1;
                     }
                 }
@@ -3752,11 +3752,11 @@ impl Agent {
                     call_names
                         .get(id)
                         .is_none_or(|name| !self.tool_presents_cards(name))
-                        && !matches!(out, ToolRunOutput::Err(err) if vak_tools::never_ran(err))
+                        && !matches!(out, ToolRunOutput::Err(fault, _) if !vak_judge::call::counts(*fault))
                 })
                 .collect();
             let batch_error = counted.iter().find_map(|(id, out)| match out {
-                ToolRunOutput::Err(err) => Some((
+                ToolRunOutput::Err(_, err) => Some((
                     call_names.get(id).cloned().unwrap_or_else(|| id.clone()),
                     err.clone(),
                 )),
@@ -3767,11 +3767,18 @@ impl Agent {
                 None if counted.is_empty() => receipts.unresolved_error.clone(),
                 None => None,
             };
+            let faults: Vec<(String, Fault)> = results
+                .iter()
+                .filter_map(|(id, out)| match out {
+                    ToolRunOutput::Err(fault, _) => Some((id.clone(), *fault)),
+                    ToolRunOutput::Ok(_) => None,
+                })
+                .collect();
             let blocks = results
                 .into_iter()
                 .map(|(id, out)| match out {
                     ToolRunOutput::Ok(content) => ContentBlock::tool_result(id, content),
-                    ToolRunOutput::Err(content) => ContentBlock::tool_error(id, content),
+                    ToolRunOutput::Err(_, content) => ContentBlock::tool_error(id, content),
                 })
                 .collect();
 
@@ -3786,13 +3793,28 @@ impl Agent {
                         }
                     }
                 }
-                let appended = session
-                    .append_message(MessageRecord {
-                        message: Message {
-                            role: Role::User,
-                            content: blocks,
-                        },
-                        meta: None,
+                // Where each failed call's fault lay, as a typed record
+                // written before the results it describes and committed
+                // with them: nothing later reads a fault back from a
+                // result's words (docs/design/88-control-plane.md §8).
+                let appended = faults
+                    .into_iter()
+                    .try_for_each(|(id, fault)| {
+                        session
+                            .append_call_effect(vak_session::types::CallEffectRecord {
+                                tool_use_id: id,
+                                effect: vak_session::types::CallEffect::Failed { fault },
+                            })
+                            .map(|_| ())
+                    })
+                    .and_then(|()| {
+                        session.append_message(MessageRecord {
+                            message: Message {
+                                role: Role::User,
+                                content: blocks,
+                            },
+                            meta: None,
+                        })
                     })
                     .and_then(|_| {
                         // The whole of each windowed result, beside the
@@ -3898,7 +3920,7 @@ impl Agent {
             if listed.is_empty() {
                 continue;
             }
-            if let Some((_, ToolRunOutput::Ok(content) | ToolRunOutput::Err(content))) =
+            if let Some((_, ToolRunOutput::Ok(content) | ToolRunOutput::Err(_, content))) =
                 results.iter_mut().find(|(rid, _)| rid == id)
             {
                 content.push_str(&format!(
@@ -4803,6 +4825,7 @@ impl Agent {
             &cwd,
             &self.run_call_counts,
             &self.config.tools,
+            &[],
         )
         .await
         .map_err(|(_, message)| message)?;
@@ -4834,7 +4857,7 @@ impl Agent {
             Ok(o) => o,
             Err(_) => return Err("timed out after 120s".to_string()),
         };
-        if out.is_error {
+        if out.is_error() {
             Err(vak_session::bash_digest(&out.content))
         } else {
             Ok(())
@@ -6040,6 +6063,7 @@ impl Agent {
                     ToolRunOutput::Ok(format!("Plan recorded: {listed}."))
                 }
                 Err(message) => ToolRunOutput::Err(
+                    Fault::Shape,
                     serde_json::json!({"type": "invalid_arguments", "message": message})
                         .to_string(),
                 ),
@@ -6056,14 +6080,17 @@ impl Agent {
                 // repair controller resurfaces the schema and stops a
                 // repeat (found live: eighteen `recall {}` calls in one turn
                 // when every failure was waved through as missing history).
-                Err(RecallFailure::Malformed(error)) => ToolRunOutput::Err(error),
+                Err(RecallFailure::Malformed(error)) => ToolRunOutput::Err(Fault::Shape, error),
                 Err(RecallFailure::NotFound(error)) => {
                     history_misses.insert(call.id.clone());
-                    ToolRunOutput::Err(format!(
-                        "{error}\n[optional-history]: nothing was found. Do not repeat this \
+                    ToolRunOutput::Err(
+                        Fault::Target,
+                        format!(
+                            "{error}\n[optional-history]: nothing was found. Do not repeat this \
                          lookup. Continue with the current request using available tools; if \
                          the missing historical detail is essential, ask the user for it."
-                    ))
+                        ),
+                    )
                 }
             };
             results.push((call.id, output));
@@ -6263,7 +6290,7 @@ impl Agent {
             if let Some(protected) = self.changes_protected_path(&call.name, &call.input) {
                 answered.push((
                     call.id.clone(),
-                    ToolRunOutput::Err(format!(
+                    ToolRunOutput::Err(Fault::Refused, format!(
                         "Not changed: {protected} is the one the person wants a new one like, so it stays as it is. Write the new one to a different file name."
                     )),
                 ));
@@ -6556,7 +6583,7 @@ impl Agent {
             })
             .unwrap_or_default();
 
-        let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
+        let mut authz: Vec<Result<(), (Fault, String)>> = Vec::with_capacity(n);
         let mut verdicts = Vec::with_capacity(n);
         for call in &calls {
             let verdict = authorize(
@@ -6565,6 +6592,7 @@ impl Agent {
                 &cwd,
                 &self.run_call_counts,
                 &self.config.tools,
+                &skill_names,
             )
             .await;
             verdicts.push(
@@ -6576,9 +6604,26 @@ impl Agent {
                 ))
                 .with(vak_control::Evidence::Call(call.id.clone())),
             );
-            authz.push(verdict.map_err(|(_, message)| message));
+            authz.push(verdict.map_err(|(by, message)| (vak_judge::call::fault_of(by), message)));
         }
         self.record_decisions(verdicts).await;
+        let changes = calls.iter().zip(&authz).any(|(call, verdict)| {
+            verdict.is_ok()
+                && self
+                    .config
+                    .tools
+                    .iter()
+                    .find(|tool| tool.name() == call.name)
+                    .is_some_and(|tool| tool.changes_workspace(&call.input))
+        });
+        if changes
+            && !self
+                .effect_announced
+                .swap(true, std::sync::atomic::Ordering::Relaxed)
+            && let Some(before_effect) = &self.config.before_effect
+        {
+            before_effect();
+        }
         let ids: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
 
         if !self.config.parallel_tools
@@ -6590,14 +6635,17 @@ impl Agent {
             let mut out = Vec::with_capacity(n);
             for (call, verdict) in calls.into_iter().zip(authz) {
                 match verdict {
-                    Err(reason) => out.push((call.id, ToolRunOutput::Err(reason))),
+                    Err((fault, reason)) => out.push((call.id, ToolRunOutput::Err(fault, reason))),
                     Ok(()) => {
                         if cancel.is_cancelled() {
-                            out.push((call.id, ToolRunOutput::Err("cancelled".into())));
+                            out.push((
+                                call.id,
+                                ToolRunOutput::Err(Fault::Cancelled, "cancelled".into()),
+                            ));
                             continue;
                         }
                         if let Some(reason) = self.lease_refusal(&session_id, &call) {
-                            out.push((call.id, ToolRunOutput::Err(reason)));
+                            out.push((call.id, ToolRunOutput::Err(Fault::Refused, reason)));
                             continue;
                         }
                         let managed_item = (self.config.work_mode == WorkMode::Managed
@@ -6627,7 +6675,7 @@ impl Agent {
                         {
                             out.push((
                                 call.id,
-                                ToolRunOutput::Err(
+                                ToolRunOutput::Err(Fault::Refused,
                                     "managed execution requires a compatible Ready or Running work item"
                                         .into(),
                                 ),
@@ -6728,7 +6776,7 @@ impl Agent {
                     None => continue,
                 };
                 if let Some(reason) = self.lease_refusal(&session_id, &call) {
-                    authz[idx] = Err(reason);
+                    authz[idx] = Err((Fault::Refused, reason));
                     continue;
                 }
                 let tools = self.config.tools.clone();
@@ -6776,8 +6824,8 @@ impl Agent {
             }
         }
         for (idx, verdict) in authz.into_iter().enumerate() {
-            if let Err(reason) = verdict {
-                ordered[idx] = Some((ids[idx].clone(), ToolRunOutput::Err(reason)));
+            if let Err((fault, reason)) = verdict {
+                ordered[idx] = Some((ids[idx].clone(), ToolRunOutput::Err(fault, reason)));
             }
         }
         ordered.into_iter().flatten().collect()
@@ -6805,8 +6853,12 @@ impl Agent {
         let mut session = self.session.lock().await;
         let projection = match session.work_projection() {
             Ok(Some(projection)) => projection,
-            Ok(None) => return ToolRunOutput::Err("no active managed work contract".into()),
-            Err(error) => return ToolRunOutput::Err(format!("invalid work ledger: {error}")),
+            Ok(None) => {
+                return ToolRunOutput::Err(Fault::Target, "no active managed work contract".into());
+            }
+            Err(error) => {
+                return ToolRunOutput::Err(Fault::Tool, format!("invalid work ledger: {error}"));
+            }
         };
         match operation {
             Some("get") => ToolRunOutput::Ok(
@@ -6814,16 +6866,16 @@ impl Agent {
             ),
             Some("transition") => {
                 let Some(item_id) = args.get("item_id").and_then(|value| value.as_str()) else {
-                    return ToolRunOutput::Err("work transition requires item_id".into());
+                    return ToolRunOutput::Err(Fault::Shape, "work transition requires item_id".into());
                 };
                 let Some(to) = args.get("to").and_then(|value| value.as_str()) else {
-                    return ToolRunOutput::Err("work transition requires to".into());
+                    return ToolRunOutput::Err(Fault::Shape, "work transition requires to".into());
                 };
                 let Some(state) = projection.items.get(item_id) else {
-                    return ToolRunOutput::Err(format!("unknown work item '{item_id}'"));
+                    return ToolRunOutput::Err(Fault::Target, format!("unknown work item '{item_id}'"));
                 };
                 let Some(target) = parse_model_item_status(to) else {
-                    return ToolRunOutput::Err(format!("unsupported model transition '{to}'"));
+                    return ToolRunOutput::Err(Fault::Shape, format!("unsupported model transition '{to}'"));
                 };
                 let event = vak_session::types::WorkEvent {
                     contract_id: projection.contract.contract_id.clone(),
@@ -6844,16 +6896,16 @@ impl Agent {
                     Ok(_) => {
                         ToolRunOutput::Ok(format!("work item '{item_id}' transitioned to {to}"))
                     }
-                    Err(error) => ToolRunOutput::Err(error.to_string()),
+                    Err(error) => ToolRunOutput::Err(Fault::Tool, error.to_string()),
                 }
             }
             Some("attach_evidence") => {
-                ToolRunOutput::Err(
+                ToolRunOutput::Err(Fault::Refused,
                     "model evidence attachment is disabled; successful tool results are attached automatically"
                         .into(),
                 )
             }
-            _ => ToolRunOutput::Err(
+            _ => ToolRunOutput::Err(Fault::Shape,
                 "work operation must be get, transition, or attach_evidence".into(),
             ),
         }
@@ -6968,7 +7020,7 @@ impl Agent {
         }
         let next = match result {
             ToolRunOutput::Ok(_) => vak_session::types::WorkItemStatus::ReadyForVerification,
-            ToolRunOutput::Err(_) => vak_session::types::WorkItemStatus::Failed,
+            ToolRunOutput::Err(..) => vak_session::types::WorkItemStatus::Failed,
         };
         let session_id = session
             .header()
@@ -7030,7 +7082,7 @@ impl Agent {
                 continue;
             };
             let child_id = match output {
-                ToolRunOutput::Ok(text) | ToolRunOutput::Err(text) => extract_worker_id(text),
+                ToolRunOutput::Ok(text) | ToolRunOutput::Err(_, text) => extract_worker_id(text),
             };
             let revision = projection.contract.revision;
             let assigned = vak_session::types::WorkEvent {
@@ -7795,7 +7847,7 @@ async fn execute_one(
                     result_preview: result_preview(&content),
                 })
                 .await;
-            return (call.id, ToolRunOutput::Err(content));
+            return (call.id, ToolRunOutput::Err(Fault::Refused, content));
         }
     }
 
@@ -7803,38 +7855,11 @@ async fn execute_one(
     let hook_name = call.name.clone();
     let hook_input = call.input.clone();
 
-    let matched_skill = skill_names.iter().find(|name| {
-        name.as_str() == call.name
-            || name.replace('-', "_") == call.name
-            || name.as_str() == call.name.replace('_', "-")
-    });
-
     let mut output = match tool {
-        None => {
-            if let Some(actual_skill) = matched_skill {
-                ToolRunOutput::Err(format!(
-                    r#"{{"type":"capability_kind_mismatch","name":{},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{{"name":{}}}}}}}"#,
-                    serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
-                    serde_json::to_string(actual_skill).unwrap_or_else(|_| "\"invalid\"".into())
-                ))
-            } else if tools.iter().any(|t| t.name() == "mcp") {
-                ToolRunOutput::Err(format!(
-                    r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{},"recovery_advice":"Tool '{}' is an external MCP capability. Invoke it via the 'mcp' tool: mcp(action: \"call\", server: \"<server_name>\", tool: \"{}\", arguments: {{ ... }})"}}"#,
-                    serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
-                    serde_json::to_string(&tools.iter().map(|t| t.name()).collect::<Vec<_>>())
-                        .unwrap_or_else(|_| "[]".into()),
-                    call.name,
-                    call.name
-                ))
-            } else {
-                ToolRunOutput::Err(format!(
-                    r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{}}}"#,
-                    serde_json::to_string(&call.name).unwrap_or_else(|_| "\"invalid\"".into()),
-                    serde_json::to_string(&tools.iter().map(|t| t.name()).collect::<Vec<_>>())
-                        .unwrap_or_else(|_| "[]".into())
-                ))
-            }
-        }
+        None => ToolRunOutput::Err(
+            Fault::Shape,
+            unknown_tool_message(&call.name, tools, skill_names),
+        ),
         Some(tool) => {
             let (sandbox_sink, mut sandbox_rx) =
                 vak_tools::SandboxEventSink::new_with_id(call.id.clone());
@@ -7888,7 +7913,7 @@ async fn execute_one(
             let output = match res {
                 Ok(out) => {
                     let mut effects = Vec::new();
-                    if !out.is_error {
+                    if !out.is_error() {
                         if let Some(source) = out.mcp_source.clone() {
                             effects.push(vak_session::types::CallEffect::Mcp(source));
                         }
@@ -7915,14 +7940,16 @@ async fn execute_one(
                             .or_default()
                             .delegated = Some(delegated);
                     }
+                    let fault = out.fault;
                     let content = windowed_result(&call.id, out.content, yields);
-                    if out.is_error {
-                        ToolRunOutput::Err(content)
-                    } else {
-                        ToolRunOutput::Ok(content)
+                    match fault {
+                        Some(fault) => ToolRunOutput::Err(fault, content),
+                        None => ToolRunOutput::Ok(content),
                     }
                 }
-                Err(join_err) => ToolRunOutput::Err(format!("tool task failed: {join_err}")),
+                Err(join_err) => {
+                    ToolRunOutput::Err(Fault::Tool, format!("tool task failed: {join_err}"))
+                }
             };
             let _ = forwarder.await;
             if matches!(output, ToolRunOutput::Ok(_)) {
@@ -7958,7 +7985,7 @@ async fn execute_one(
     if let Some(hooks) = hooks {
         let post_reason = match &output {
             ToolRunOutput::Ok(content) => content.as_str(),
-            ToolRunOutput::Err(content) => content.as_str(),
+            ToolRunOutput::Err(_, content) => content.as_str(),
         };
         let post = vak_hooks::run_hooks_with_recorder(
             hooks.clone(),
@@ -7973,10 +8000,15 @@ async fn execute_one(
         .await;
         if post.blocked && matches!(output, ToolRunOutput::Ok(_)) {
             let reason = post.reason.unwrap_or_else(|| "flagged by hook".into());
-            output = ToolRunOutput::Err(format!("{}\n[post-tool-use hook]: {reason}", post_reason));
-        } else if post.blocked {
+            output = ToolRunOutput::Err(
+                Fault::Refused,
+                format!("{post_reason}\n[post-tool-use hook]: {reason}"),
+            );
+        } else if let ToolRunOutput::Err(_, content) = &mut output
+            && post.blocked
+        {
             let reason = post.reason.unwrap_or_else(|| "flagged by hook".into());
-            output = ToolRunOutput::Err(format!("{post_reason}\n[post-tool-use hook]: {reason}"));
+            content.push_str(&format!("\n[post-tool-use hook]: {reason}"));
         }
     }
 
@@ -7985,20 +8017,20 @@ async fn execute_one(
     // attach a bounded, non-authorizing recovery contract. The next model
     // turn is the retry loop; permission, cancellation, and policy failures
     // deliberately do not receive a retry suggestion.
-    if let ToolRunOutput::Err(content) = &mut output
-        && let Some(hint) = tool_recovery_hint(content)
+    if let ToolRunOutput::Err(fault, content) = &mut output
+        && let Some(hint) = tool_recovery_hint(*fault)
     {
-        content.push_str(&hint);
+        content.push_str(hint);
     }
 
     let result_content = match &output {
-        ToolRunOutput::Ok(content) | ToolRunOutput::Err(content) => content.as_str(),
+        ToolRunOutput::Ok(content) | ToolRunOutput::Err(_, content) => content.as_str(),
     };
     let _ = events
         .send(AgentEvent::ToolCallEnd {
             id: call.id.clone(),
             name: call.name.clone(),
-            is_error: matches!(output, ToolRunOutput::Err(_)),
+            is_error: matches!(output, ToolRunOutput::Err(..)),
             result_preview: result_preview(result_content),
         })
         .await;
@@ -8015,43 +8047,91 @@ async fn execute_one(
     (call.id, output)
 }
 
-/// Returns the model recovery contract for a correctable tool error. The
-/// classification that decides this is owned by `vak_tools::ToolErrorKind` —
-/// this function is intentionally a thin shim so the hint and the repair
-/// budget in the turn loop can never drift onto a different keyword list.
-fn tool_recovery_hint(error: &str) -> Option<String> {
-    // The dispatcher already knows the correct capability invocation when a
-    // model calls a registered skill/tool name using the wrong capability
-    // kind. Preserve that structured correction for the model instead of
-    // handing it an opaque mismatch that falls outside the repair classifier.
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(error)
-        && value.get("type").and_then(serde_json::Value::as_str) == Some("capability_kind_mismatch")
-        && let (Some(actual_kind), Some(invocation)) = (
-            value.get("actual_kind").and_then(serde_json::Value::as_str),
-            value.get("invocation"),
+/// The recovery note for a call whose shape was wrong, which another call
+/// can repair. The fault is the one its source named; nothing here reads
+/// the error's wording.
+fn tool_recovery_hint(fault: Fault) -> Option<&'static str> {
+    vak_judge::call::repairable(fault).then_some(RECOVERY_HINT)
+}
+
+const RECOVERY_HINT: &str = "\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.";
+
+/// What the model is told about a name that is no tool this turn offers:
+/// the tools that are, and, when the name is a skill or an MCP server's
+/// tool, the call that reaches it.
+fn unknown_tool_message(name: &str, tools: &[Arc<dyn Tool>], skill_names: &[String]) -> String {
+    let quoted = |text: &str| serde_json::to_string(text).unwrap_or_else(|_| "\"invalid\"".into());
+    let skill = skill_names.iter().find(|skill| {
+        skill.as_str() == name
+            || skill.replace('-', "_") == name
+            || **skill == name.replace('_', "-")
+    });
+    if let Some(skill) = skill {
+        let arguments = serde_json::json!({ "name": skill });
+        return format!(
+            r#"{{"type":"capability_kind_mismatch","name":{},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{arguments}}}}}
+[recovery] `{name}` is registered as a skill, not a callable tool. The runtime supplied the correct invocation: call `skill` with arguments `{arguments}` if that capability is needed. Otherwise continue with the admitted tools. Do not retry `{name}` as a tool."#,
+            quoted(name)
+        );
+    }
+    let available =
+        serde_json::to_string(&tools.iter().map(|tool| tool.name()).collect::<Vec<_>>())
+            .unwrap_or_else(|_| "[]".into());
+    let advice = if tools.iter().any(|tool| tool.name() == "mcp") {
+        format!(
+            r#","recovery_advice":"Tool '{name}' is an external MCP capability. Invoke it via the 'mcp' tool: mcp(action: \"call\", server: \"<server_name>\", tool: \"{name}\", arguments: {{ ... }})""#
         )
-        && let (Some(tool), Some(arguments)) = (
-            invocation.get("tool").and_then(serde_json::Value::as_str),
-            invocation.get("arguments"),
-        )
-    {
-        let arguments = serde_json::to_string(arguments).ok()?;
-        let attempted = value
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("that name");
-        return Some(format!(
-            "\n[recovery] `{attempted}` is registered as a {actual_kind}, not a callable tool. \
-             The runtime supplied the correct invocation: call `{tool}` with arguments \
-             `{arguments}` if that capability is needed. Otherwise continue with the admitted \
-             tools. Do not retry `{attempted}` as a tool."
+    } else {
+        String::new()
+    };
+    format!(
+        r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{available}{advice}}}{RECOVERY_HINT}"#,
+        quoted(name)
+    )
+}
+
+/// What the model is told when a plan's receipts are short: what the plan
+/// lists, what was observed, and what is left, in the model's own names. It
+/// says who is speaking, because a model reads an unsigned reminder as the
+/// person's.
+fn plan_gap_message(gap: &vak_judge::plan::Gap) -> String {
+    let named = |deliverables: &[&vak_intent::Deliverable]| {
+        deliverables
+            .iter()
+            .map(|deliverable| format!("\"{}\"", deliverable.name))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut parts = vec![
+        "[plan-check]: Vakyartha's runtime compared your plan with what this turn \
+         produced. This is not a message from the person, and it is sent once."
+            .to_string(),
+    ];
+    if gap.cards_short() > 0 {
+        parts.push(format!(
+            "Planned as cards and named by no card's `answers`: {}. Cards shown without \
+             a planned name in `answers`: {}. So {} planned card(s) are not shown yet.",
+            named(&gap.cards_unnamed),
+            gap.cards_unattributed,
+            gap.cards_short()
         ));
     }
-    if ToolErrorKind::classify(error).is_correctable() {
-        Some("\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.".to_string())
-    } else {
-        None
+    if !gap.others.is_empty() {
+        let listed = gap
+            .others
+            .iter()
+            .map(|deliverable| format!("\"{}\" ({})", deliverable.name, deliverable.form.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("Nothing produced yet for: {listed}."));
     }
+    parts.push(
+        "Produce what is missing, setting `answers` on a card to its planned name, or \
+         finish and say plainly why it is not needed. Keep everything already produced \
+         and do not plan again."
+            .to_string(),
+    );
+    parts.join(" ")
 }
 
 /// Model-guided repair of a tool whose calls keep failing, with no counter
@@ -8064,11 +8144,11 @@ fn tool_recovery_hint(error: &str) -> Option<String> {
 /// ledger cannot be written.
 async fn reconcile_repair(
     agent: &mut Agent,
-    failed_correctable: &[(String, ToolErrorKind)],
+    failed_correctable: &[String],
     unresolved_error: &Option<(String, String)>,
 ) -> Option<TurnOutcome> {
     let mut failed: Vec<String> = Vec::new();
-    for (name, _) in failed_correctable {
+    for name in failed_correctable {
         let withdrawn = agent
             .repair
             .withdrawn
@@ -8495,62 +8575,91 @@ impl RepairState {
     }
 }
 
+/// Gathers what is known of a proposed call and has the judge settle it
+/// (`vak_judge::call`). A refusal carries what the model is told.
 async fn authorize(
     config: &AgentConfig,
     call: &PendingToolCall,
     cwd: &std::path::Path,
     run_call_counts: &std::sync::Mutex<HashMap<String, u32>>,
     tools: &[Arc<dyn Tool>],
+    skill_names: &[String],
 ) -> Result<(), (vak_control::Refusal, String)> {
-    use vak_control::Refusal;
-    if let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) {
-        vak_tools::validate_input(&tool.schema(), &call.input)
-            .map_err(|message| (Refusal::Schema, message))?;
-        if let Some(reason) = tool.refusal(&call.input) {
-            return Err((Refusal::Tool, reason));
+    use vak_control::{CallVerdict, Refusal};
+    use vak_judge::call::{Asked, CallFacts, Permission, admit, asked};
+    let revoked = || {
+        config
+            .revocation_check
+            .as_ref()
+            .is_some_and(|check| check(&call.name, &call.input))
+    };
+    let tool = tools.iter().find(|tool| tool.name() == call.name);
+    // `work` is the loop's own, offered whenever flows are admitted.
+    let mut facts = CallFacts {
+        known: tool.is_some() || (call.name == "work" && config.flow_dispatcher.is_some()),
+        fits_schema: true,
+        tool_refuses: false,
+        revoked: false,
+        repeated: false,
+        permission: Permission::Allowed,
+    };
+    let mut told = String::new();
+    let mut gate = None;
+    if let Some(tool) = tool {
+        if let Err(message) = vak_tools::validate_input(&tool.schema(), &call.input) {
+            facts.fits_schema = false;
+            told = message;
+        } else if let Some(reason) = tool.refusal(&call.input) {
+            facts.tool_refuses = true;
+            told = reason;
         }
     }
-    if config
-        .revocation_check
-        .as_ref()
-        .is_some_and(|check| check(&call.name, &call.input))
-    {
-        return Err((
-            Refusal::Revoked,
-            format!("capability `{}` was revoked during this turn", call.name),
-        ));
+    if facts.known && facts.fits_schema && !facts.tool_refuses {
+        facts.revoked = revoked();
     }
-    let key = format!(
-        "{}\u{0}{}",
-        call.name,
-        serde_json::to_string(&call.input).unwrap_or_default()
-    );
-    let n = {
-        let mut counts = run_call_counts
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let entry = counts.entry(key).or_insert(0);
-        *entry += 1;
-        *entry
-    };
-    let repeated = repeat_guard_decision(&call.name, n);
-    let refused_by = if repeated.is_some() {
-        Refusal::Repeated
-    } else {
-        Refusal::Policy
-    };
-    let decision = if let Some(decision) = repeated {
-        decision
-    } else if let Some(engine) = &config.permission {
-        engine.evaluate(&call.name, &call.input, config.mode, cwd)
-    } else {
-        Decision::Allow
-    };
-    match decision {
-        Decision::Allow => Ok(()),
-        Decision::Deny { reason } => Err((refused_by, reason)),
-        Decision::Ask { reason, source } => {
-            if auto_approve(
+    if admit(&facts) == Some(CallVerdict::Accepted) {
+        let key = format!(
+            "{}\u{0}{}",
+            call.name,
+            serde_json::to_string(&call.input).unwrap_or_default()
+        );
+        let n = {
+            let mut counts = run_call_counts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let entry = counts.entry(key).or_insert(0);
+            *entry += 1;
+            *entry
+        };
+        let repeated = repeat_guard_decision(&call.name, n);
+        facts.repeated = matches!(repeated, Some(Decision::Deny { .. }));
+        let decision = match repeated {
+            Some(decision) => decision,
+            None => match &config.permission {
+                Some(engine) => engine.evaluate(&call.name, &call.input, config.mode, cwd),
+                None => Decision::Allow,
+            },
+        };
+        match decision {
+            Decision::Allow => {}
+            Decision::Deny { reason } => {
+                facts.permission = Permission::Denied;
+                told = reason;
+            }
+            Decision::Ask { reason, source } => {
+                facts.permission = Permission::Ask;
+                gate = Some((reason, source));
+            }
+        }
+    }
+    let verdict = match (admit(&facts), gate) {
+        (Some(verdict), _) => verdict,
+        (None, None) => CallVerdict::Refused(Refusal::Policy),
+        (None, Some((reason, source))) => {
+            // A live envelope pre-authorizes what it covers, within the
+            // authority already in force, never beyond it. An ask a rule or
+            // the circuit breaker raised is not one a grant stands in for.
+            let covered = auto_approve(
                 config.approval_mode,
                 source,
                 &call.name,
@@ -8558,103 +8667,80 @@ async fn authorize(
                 config.mode,
                 config.sandbox.is_some(),
                 cwd,
-            ) {
-                if config
-                    .revocation_check
-                    .as_ref()
-                    .is_some_and(|check| check(&call.name, &call.input))
-                {
-                    return Err((
-                        Refusal::Revoked,
-                        format!("capability `{}` was revoked during this turn", call.name),
-                    ));
-                }
-                return Ok(());
-            }
-            // A live envelope pre-authorizes what it covers — within the
-            // authority already in force, never beyond it. An ask a rule or
-            // the circuit breaker raised is not one a grant stands in for.
-            if !matches!(source, AskSource::Rule | AskSource::CircuitBreaker)
+            ) || (!matches!(source, AskSource::Rule | AskSource::CircuitBreaker)
                 && config
                     .envelope_check
                     .as_ref()
                     .and_then(|check| check(&call.name, &call.input))
-                    .is_some()
-            {
-                if config
-                    .revocation_check
-                    .as_ref()
-                    .is_some_and(|check| check(&call.name, &call.input))
-                {
-                    return Err((
-                        Refusal::Revoked,
-                        format!("capability `{}` was revoked during this turn", call.name),
-                    ));
-                }
-                return Ok(());
-            }
-            match &config.approver {
-                Some(a)
-                    if a.approve(
-                        &call.name,
-                        &args_preview(&call.input),
-                        &reason,
-                        Some(&call.id),
-                    )
-                    .await =>
-                {
-                    if config
-                        .revocation_check
-                        .as_ref()
-                        .is_some_and(|check| check(&call.name, &call.input))
-                    {
-                        Err((
-                            Refusal::Revoked,
-                            format!(
-                                "capability `{}` was revoked while approval was pending",
-                                call.name
-                            ),
-                        ))
-                    } else {
-                        Ok(())
+                    .is_some());
+            let answer = if covered {
+                Asked::Covered
+            } else {
+                match &config.approver {
+                    // On an unattended surface the gate is never put to a
+                    // person, and the refusal says so: reported as "denied
+                    // by user" it sent the model looking for a different
+                    // tool, and the operator for a user who had done
+                    // nothing.
+                    Some(approver) if !approver.answerable() => {
+                        told = format!(
+                            "unattended surface: {reason}. No approver is configured to \
+                             answer it, so this capability cannot be used on this turn"
+                        );
+                        Asked::Unanswerable
+                    }
+                    Some(approver) => {
+                        if approver
+                            .approve(
+                                &call.name,
+                                &args_preview(&call.input),
+                                &reason,
+                                Some(&call.id),
+                            )
+                            .await
+                        {
+                            Asked::Approved
+                        } else {
+                            // The gate's reason is written for the person
+                            // asked; echoed alone it read as a step still
+                            // to take, and the model asked again twenty
+                            // times in one turn.
+                            told = format!(
+                                "The person declined this call ({reason}). Do not make it \
+                                 again in this turn: answer with what you already have, or say \
+                                 what you could not do without it."
+                            );
+                            Asked::Declined
+                        }
+                    }
+                    None => {
+                        told = format!("{reason} (no approver available)");
+                        Asked::Unanswerable
                     }
                 }
-                // Say who actually refused. On an unattended surface the
-                // gate was never put to a person, and reporting it as
-                // "denied by user" sent the model looking for a different
-                // tool — and the operator looking for a user who had done
-                // nothing — instead of naming the policy that decided.
-                Some(a) if !a.answerable() => Err((
-                    Refusal::Unattended,
-                    format!(
-                        "unattended surface: {reason}. No approver is configured to \
-                     answer it, so this capability cannot be used on this turn"
-                    ),
-                )),
-                // The gate's reason is written for the person asked; echoed
-                // alone ("denied by user: 'webfetch' needs approval") it read
-                // as a step still to take, and the model asked again twenty
-                // times in one turn.
-                Some(_) => Err((
-                    Refusal::Person,
-                    format!(
-                        "The person declined this call ({reason}). Do not make it again \
-                     in this turn: answer with what you already have, or say what you \
-                     could not do without it."
-                    ),
-                )),
-                None => Err((
-                    Refusal::Unattended,
-                    format!("{reason} (no approver available)"),
-                )),
-            }
+            };
+            asked(answer, revoked())
         }
+    };
+    match verdict {
+        CallVerdict::Accepted => Ok(()),
+        CallVerdict::Refused(by) => Err((
+            by,
+            match by {
+                Refusal::Unknown => unknown_tool_message(&call.name, tools, skill_names),
+                Refusal::Revoked => {
+                    format!("capability `{}` was revoked during this turn", call.name)
+                }
+                _ => told,
+            },
+        )),
     }
 }
 
 enum ToolRunOutput {
     Ok(String),
-    Err(String),
+    /// A failed call: where its fault lies, and what the model is told.
+    Err(Fault, String),
 }
 
 /// Why a `recall` call returned nothing, decided where it is answered rather
@@ -9049,7 +9135,7 @@ fn queue_stream_event(pending: &mut VecDeque<StreamEvent>, event: StreamEvent) {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tool_recovery_tests {
-    use super::{freshness_retrieval_hint, tool_recovery_hint};
+    use super::{Fault, freshness_retrieval_hint, tool_recovery_hint, unknown_tool_message};
 
     #[test]
     fn freshness_repair_names_only_admitted_generic_retrieval_routes() {
@@ -9086,36 +9172,36 @@ mod tool_recovery_tests {
     }
 
     #[test]
-    fn repairable_failures_get_a_model_recovery_contract() {
-        assert!(
-            tool_recovery_hint(r#"{"type":"unknown_capability","name":"tavily_search"}"#).is_some()
-        );
-        assert!(tool_recovery_hint("mcp protocol error: invalid arguments").is_some());
+    fn only_a_call_whose_shape_was_wrong_gets_the_recovery_note() {
+        assert!(tool_recovery_hint(Fault::Shape).is_some());
+        for fault in [Fault::Target, Fault::Tool, Fault::Refused, Fault::Cancelled] {
+            assert!(tool_recovery_hint(fault).is_none(), "{fault:?}");
+        }
     }
 
     #[test]
-    fn capability_kind_mismatch_gets_the_exact_registered_invocation() {
-        let hint = tool_recovery_hint(
-            r#"{"type":"capability_kind_mismatch","name":"planning-and-organizing","actual_kind":"skill","invocation":{"tool":"skill","arguments":{"name":"planning-and-organizing"}}}"#,
-        )
-        .expect("typed capability mismatch should be recoverable");
-        assert!(hint.contains("registered as a skill"), "{hint}");
-        assert!(hint.contains("call `skill`"), "{hint}");
+    fn a_skill_called_as_a_tool_is_told_the_call_that_reaches_it() {
+        let told = unknown_tool_message(
+            "planning_and_organizing",
+            &[],
+            &["planning-and-organizing".to_string()],
+        );
+        assert!(told.contains("registered as a skill"), "{told}");
+        assert!(told.contains("call `skill`"), "{told}");
         assert!(
-            hint.contains("`{\"name\":\"planning-and-organizing\"}`"),
-            "{hint}"
+            told.contains("`{\"name\":\"planning-and-organizing\"}`"),
+            "{told}"
         );
         assert!(
-            hint.contains("Do not retry `planning-and-organizing` as a tool"),
-            "{hint}"
+            told.contains("Do not retry `planning_and_organizing` as a tool"),
+            "{told}"
         );
-    }
-
-    #[test]
-    fn authorization_and_user_control_failures_never_get_retry_advice() {
-        assert!(tool_recovery_hint("capability denied by channel policy").is_none());
-        assert!(tool_recovery_hint("cancelled").is_none());
-        assert!(tool_recovery_hint("429 rate limit").is_none());
+        let unknown = unknown_tool_message("emit_emit_details_card", &[], &[]);
+        assert!(
+            unknown.contains(r#""type":"unknown_capability""#),
+            "{unknown}"
+        );
+        assert!(unknown.contains("[recovery]"), "{unknown}");
     }
 
     #[test]
@@ -9921,7 +10007,7 @@ mod file_effect_tests {
             CallEffect::FileRead { digest, .. } | CallEffect::FileWrite { digest, .. } => {
                 digest.clone()
             }
-            CallEffect::Mcp(_) | CallEffect::Account { .. } => None,
+            CallEffect::Mcp(_) | CallEffect::Account { .. } | CallEffect::Failed { .. } => None,
         }
     }
 

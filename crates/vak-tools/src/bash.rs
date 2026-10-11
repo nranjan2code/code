@@ -1,3 +1,4 @@
+use crate::Fault;
 use std::process::Stdio;
 
 use async_trait::async_trait;
@@ -53,7 +54,7 @@ impl Tool for BashTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(command) = args.get("command").and_then(|c| c.as_str()) else {
-            return ToolOutput::error("missing required parameter: command");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: command");
         };
         if ctx
             .sandbox_sink
@@ -62,6 +63,7 @@ impl Tool for BashTool {
             && references_control_file(command)
         {
             return ToolOutput::error(
+                Fault::Refused,
                 "sandbox denied access to workspace control files (.env and .vak/config.toml)",
             );
         }
@@ -97,14 +99,21 @@ impl Tool for BashTool {
         {
             let workspace = match ctx.cwd.canonicalize() {
                 Ok(path) => path,
-                Err(_) => return ToolOutput::error("working directory is unavailable"),
+                Err(_) => {
+                    return ToolOutput::error(Fault::Tool, "working directory is unavailable");
+                }
             };
             let target = match workspace.join(custom_cwd).canonicalize() {
                 Ok(path) => path,
-                Err(_) => return ToolOutput::error("working directory does not exist"),
+                Err(_) => {
+                    return ToolOutput::error(Fault::Target, "working directory does not exist");
+                }
             };
             if !target.starts_with(&workspace) || !target.is_dir() {
-                return ToolOutput::error("working directory must remain inside the workspace");
+                return ToolOutput::error(
+                    Fault::Refused,
+                    "working directory must remain inside the workspace",
+                );
             }
             execution_dir = target;
         }
@@ -163,7 +172,7 @@ impl Tool for BashTool {
                 if let Some(ref sink) = ctx.sandbox_sink {
                     sink.emit_finished(-1, duration_ms, Vec::new());
                 }
-                return ToolOutput::error(format!("spawn failed: {e}"));
+                return ToolOutput::error(Fault::Tool, format!("spawn failed: {e}"));
             }
         };
 
@@ -240,7 +249,7 @@ impl Tool for BashTool {
                         paths.join(", ")
                     ));
                 }
-                return ToolOutput::error(interrupted_output(&out, &err, &reason));
+                return ToolOutput::error(Fault::Tool, interrupted_output(&out, &err, &reason));
             }
             _ = cancelled => {
                 telemetry_cancel.cancel();
@@ -262,7 +271,7 @@ impl Tool for BashTool {
                     }
                     sink.emit_finished(-1, duration_ms, paths);
                 }
-                return ToolOutput::error(interrupted_output(&out, &err, "command cancelled"));
+                return ToolOutput::error(Fault::Cancelled, interrupted_output(&out, &err, "command cancelled"));
             }
             status = child.wait() => {
                 telemetry_cancel.cancel();
@@ -274,7 +283,7 @@ impl Tool for BashTool {
                         if let Some(ref sink) = ctx.sandbox_sink {
                             sink.emit_finished(-1, duration_ms, Vec::new());
                         }
-                        return ToolOutput::error(format!("wait failed: {e}"));
+                        return ToolOutput::error(Fault::Tool, format!("wait failed: {e}"));
                     }
                 };
                 // A shell may exit successfully while background children
@@ -319,7 +328,7 @@ impl Tool for BashTool {
                 }
                 if !status.success() {
                     text.push_str(&format!("\n[exit code: {}]", status.code().unwrap_or(-1)));
-                    return ToolOutput::error(text);
+                    return ToolOutput::error(Fault::Target, text);
                 }
                 if text.is_empty() {
                     text.push_str("(no output)");
@@ -1054,7 +1063,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         assert!(out.content.contains("workspace-marker"));
     }
 
@@ -1075,7 +1084,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         assert_eq!(
             std::fs::read_to_string(workspace.path().join("sorted.txt")).unwrap(),
             "alpha\ndelta\n",
@@ -1120,7 +1129,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(!out.is_error, "{}", out.content);
+        assert!(!out.is_error(), "{}", out.content);
         assert!(out.content.contains("in-sub"));
     }
 
@@ -1140,7 +1149,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert!(out.content.contains("inside the workspace"));
     }
 
@@ -1157,7 +1166,7 @@ mod tests {
         let out = super::BashTool
             .execute(&serde_json::json!({"command": "echo \"$TMPDIR\""}), &ctx)
             .await;
-        assert!(!out.is_error, "stdout/stderr: {}", out.content);
+        assert!(!out.is_error(), "stdout/stderr: {}", out.content);
         assert!(
             out.content.contains(
                 &vak_config::scope::execution_dir(workspace.path(), "researcher-99")
@@ -1187,7 +1196,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(!out.is_error, "stdout/stderr: {}", out.content);
+        assert!(!out.is_error(), "stdout/stderr: {}", out.content);
         assert!(workspace.path().join("index.html").is_file());
         let mut saw_result = false;
         while let Ok(event) = events.try_recv() {

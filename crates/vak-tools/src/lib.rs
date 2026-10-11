@@ -40,123 +40,14 @@ pub use arguments::read_arguments;
 pub use context::ToolContext;
 pub use contract::validate_input;
 pub use find_tools::FindToolsTool;
-pub use plan::{Deliverable, PlanTool, parse_plan_args};
+pub use plan::{PlanTool, parse_plan_args};
 pub use recall::{RecallRequest, RecallTool, apply_chars, apply_range, parse_recall_args};
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;
 pub use window::{LINE_WINDOW_CHARS, RESULT_WINDOW_CHARS, bounded, window};
 
-/// Machine classification of a tool failure, so the agent loop and the output
-/// gate can reason about it instead of re-running keyword matches against
-/// free-text errors. `ToolErrorKind::classify` is the single authority that
-/// drives both the recovery hint and the staged repair — there is no parallel
-/// classification in the agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolErrorKind {
-    /// The call shape was wrong (missing/invalid argument, schema mismatch,
-    /// unknown capability, oversized payload, or partial/malformed transport
-    /// data). Plausibly repairable by re-issuing with corrected arguments.
-    Correctable,
-    /// A transient transport fault; the runtime may retry, the model cannot
-    /// repair it by editing arguments.
-    Transient,
-    /// The tool is not admitted this turn (not in the frozen capability set).
-    NotAdmitted,
-    /// Policy / permission / capability-surface denial.
-    Denied,
-    /// Authentication / authorization failure.
-    Auth,
-    /// Provider rate limiting.
-    RateLimited,
-    /// User-initiated cancellation.
-    Cancelled,
-    /// Unclassified.
-    Unknown,
-}
-
-impl ToolErrorKind {
-    /// Classify a tool-error content string. Order matters: non-repairable
-    /// categories are matched before `Correctable`, so an auth error that
-    /// happens to contain "invalid" is never misread as a repairable
-    /// argument fault. This subsumes and extends the agent's old keyword
-    /// list — including the previously-uncovered payload/size faults (e.g.
-    /// a body exceeding the fetch byte cap) so they get classified instead
-    /// of falling through to `Unknown`.
-    pub fn classify(error: &str) -> Self {
-        let lower = error.to_ascii_lowercase();
-        if lower.contains("cancel") || lower.contains("aborted") {
-            return Self::Cancelled;
-        }
-        if lower.contains("rate limit") || lower.contains("429") || lower.contains("retry-after") {
-            return Self::RateLimited;
-        }
-        if lower.contains("unauthorized")
-            || lower.contains("forbidden")
-            || lower.contains("credential")
-            || lower.contains("token")
-            || lower.contains("authentication")
-            || lower.contains("unauthenticated")
-        {
-            return Self::Auth;
-        }
-        if lower.contains("denied")
-            || lower.contains("revoked")
-            || lower.contains("not allowed")
-            || lower.contains("permission")
-            || lower.contains("approval")
-            || lower.contains("policy")
-        {
-            return Self::Denied;
-        }
-        if lower.contains("not admitted") {
-            return Self::NotAdmitted;
-        }
-        // Correctable: the caller can plausibly fix this by re-issuing with
-        // corrected arguments. Covers the original hint set plus the
-        // payload/size and generic argument faults that used to be missed.
-        // `unknown_capability` is correctable — the model can switch to an
-        // admitted broker name instead.
-        if lower.contains("capability_kind_mismatch")
-            || lower.contains("unknown_capability")
-            || lower.contains("invalid")
-            || lower.contains("missing")
-            || lower.contains("parameter")
-            || lower.contains("argument")
-            || lower.contains("expected")
-            || lower.contains("not a valid")
-            || lower.contains("schema")
-            || lower.contains("malformed")
-            || lower.contains("truncated")
-            || lower.contains("partial")
-            || lower.contains("parse")
-            || lower.contains("exceeds")
-            || lower.contains("too large")
-            || lower.contains("payload")
-            || lower.contains("byte")
-            || lower.contains("cap")
-            || lower.contains("size")
-            || lower.contains("input too")
-            || lower.contains("timed out")
-            || lower.contains("connection closed")
-            || lower.contains("spawn failed")
-            || lower.contains("protocol error")
-            || lower.contains("tool task failed")
-        {
-            return Self::Correctable;
-        }
-        Self::Unknown
-    }
-
-    /// Whether the failure class carries a model recovery hint today.
-    /// `Transient`, `Auth`, `RateLimited`, `Denied`, `Cancelled`,
-    /// `NotAdmitted`, and `Unknown` deliberately do **not** — matching the
-    /// original contract that only requires an external state change or a
-    /// model-side argument fix.
-    pub fn is_correctable(self) -> bool {
-        matches!(self, Self::Correctable)
-    }
-}
+pub use vak_control::Fault;
 
 /// A validated card, ready to become a `Presentation` ledger entry
 /// (docs/design/68-context-engine.md §10): the canonical payload plus the
@@ -179,7 +70,9 @@ pub struct PresentationCard {
 #[derive(Debug, Clone, Default)]
 pub struct ToolOutput {
     pub content: String,
-    pub is_error: bool,
+    /// Where the fault lies when the call failed, named where it failed
+    /// (docs/design/88-control-plane.md §8). `None` is a success.
+    pub fault: Option<Fault>,
     /// The cards a run this call delegated to showed (a `task` worker's).
     /// The calling loop records each as a presentation of this call, so the
     /// user sees it and the delegating agent can recall it. In-process only:
@@ -215,7 +108,7 @@ impl ToolOutput {
     pub fn ok(content: impl Into<String>) -> Self {
         ToolOutput {
             content: content.into(),
-            is_error: false,
+            fault: None,
             delegated: None,
             mcp_source: None,
             account: None,
@@ -228,22 +121,18 @@ impl ToolOutput {
         self
     }
 
-    pub fn error(content: impl Into<String>) -> Self {
+    pub fn error(fault: Fault, content: impl Into<String>) -> Self {
         ToolOutput {
             content: content.into(),
-            is_error: true,
+            fault: Some(fault),
             delegated: None,
             mcp_source: None,
             account: None,
         }
     }
 
-    /// Classify this output's failure kind, or `Unknown` for a success.
-    pub fn classify(&self) -> ToolErrorKind {
-        if !self.is_error {
-            return ToolErrorKind::Unknown;
-        }
-        ToolErrorKind::classify(&self.content)
+    pub fn is_error(&self) -> bool {
+        self.fault.is_some()
     }
 }
 
@@ -288,6 +177,15 @@ pub trait Tool: Send + Sync {
     /// unclaimed: schedulers may run it alongside anything.
     fn claims(&self, _args: &Value) -> ResourceClaims {
         ResourceClaims::default()
+    }
+
+    /// Whether a call with these arguments may change the workspace. The
+    /// runtime checkpoints the workspace before the first such call of a
+    /// turn is run, so the declaration errs towards yes: by default any call
+    /// that claims the world or a path it does not only read.
+    fn changes_workspace(&self, args: &Value) -> bool {
+        let claims = self.claims(args);
+        claims.exclusive || (!claims.read_only && !claims.paths.is_empty())
     }
 
     /// Whether a successful call *is* the answer being presented to the user
@@ -479,26 +377,6 @@ pub fn definitions(tools: &[std::sync::Arc<dyn Tool>]) -> Vec<vak_llm::ToolDefin
         .collect()
 }
 
-/// Whether a tool result says the runtime refused the call before anything
-/// ran: it named something that is not a callable tool
-/// (`unknown_capability`, `capability_kind_mismatch`) or its arguments were
-/// not the tool's (`invalid_arguments`). Read from the typed error the
-/// runtime wrote, never from an error's wording. Such a call has no effect
-/// to repair and nothing for the person to be told about.
-pub fn never_ran(result: &str) -> bool {
-    serde_json::Deserializer::from_str(result)
-        .into_iter::<serde_json::Value>()
-        .next()
-        .and_then(Result::ok)
-        .and_then(|value| value.get("type")?.as_str().map(str::to_owned))
-        .is_some_and(|kind| {
-            matches!(
-                kind.as_str(),
-                "unknown_capability" | "capability_kind_mismatch" | "invalid_arguments"
-            )
-        })
-}
-
 /// Canonical tool name resolution for aliases and common model hallucinations.
 /// Also remaps retired tool names (e.g. `python_eval`) to their replacement
 /// (`bash`), so a model that still reaches for a retired name is guided to
@@ -546,86 +424,6 @@ pub fn canonical_tool_name(name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_call_that_never_ran_is_read_from_the_typed_error() {
-        assert!(never_ran(
-            r#"{"type":"unknown_capability","name":"emit_plan"} [recovery] Treat this as a failed attempt."#
-        ));
-        assert!(never_ran(
-            r#"{"type":"capability_kind_mismatch","name":"x"}"#
-        ));
-        assert!(never_ran(
-            r#"{"type":"invalid_arguments","message":"deliverables[0].name is missing"}"#
-        ));
-        assert!(!never_ran("unknown_capability"));
-        assert!(!never_ran(r#"{"type":"timeout","after_ms":300}"#));
-    }
-
-    #[test]
-    fn classify_correctable_covers_arg_shape_and_payload_faults() {
-        // The previously-uncovered webfetch byte-cap case must now classify
-        // as correctable instead of falling through to Unknown (which meant
-        // it got no recovery hint at all in the agent).
-        assert_eq!(
-            ToolErrorKind::classify("response body exceeds the 524288 byte cap"),
-            ToolErrorKind::Correctable,
-        );
-        assert_eq!(
-            ToolErrorKind::classify("missing required parameter: server"),
-            ToolErrorKind::Correctable,
-        );
-        assert_eq!(
-            ToolErrorKind::classify("invalid tool arguments: expected object"),
-            ToolErrorKind::Correctable,
-        );
-        assert_eq!(
-            ToolErrorKind::classify(r#"{"type":"unknown_capability","name":"tavily_search"}"#),
-            ToolErrorKind::Correctable,
-        );
-        assert_eq!(
-            ToolErrorKind::classify(r#"{"type":"capability_kind_mismatch","actual_kind":"skill"}"#),
-            ToolErrorKind::Correctable,
-        );
-        assert_eq!(
-            ToolErrorKind::classify("mcp protocol error: invalid argument"),
-            ToolErrorKind::Correctable,
-        );
-    }
-
-    #[test]
-    fn classify_non_repairable_classes_get_no_hint() {
-        assert_eq!(
-            ToolErrorKind::classify("cancelled"),
-            ToolErrorKind::Cancelled
-        );
-        assert_eq!(
-            ToolErrorKind::classify("429 rate limit exceeded"),
-            ToolErrorKind::RateLimited,
-        );
-        assert_eq!(
-            ToolErrorKind::classify("capability denied by channel policy"),
-            ToolErrorKind::Denied,
-        );
-        assert_eq!(
-            ToolErrorKind::classify("unauthorized: bad token"),
-            ToolErrorKind::Auth,
-        );
-        assert_eq!(
-            ToolErrorKind::classify("tool not admitted on this turn"),
-            ToolErrorKind::NotAdmitted,
-        );
-        assert!(!ToolErrorKind::classify("cancelled").is_correctable());
-        assert!(!ToolErrorKind::classify("429 rate limit").is_correctable());
-        assert!(ToolErrorKind::classify("missing required parameter: server").is_correctable());
-    }
-
-    #[test]
-    fn success_classifies_unknown() {
-        let ok = ToolOutput::ok("done");
-        assert_eq!(ok.classify(), ToolErrorKind::Unknown);
-        assert!(!ok.classify().is_correctable());
-    }
 
     #[test]
     fn canonical_tool_name_resolves_common_hallucinations_and_aliases() {

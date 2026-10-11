@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use vak_tools::Fault;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -102,6 +103,11 @@ impl Tool for McpTool {
         true
     }
 
+    /// A server's tool may write anywhere its process can; listing does not.
+    fn changes_workspace(&self, args: &Value) -> bool {
+        args.get("action").and_then(Value::as_str) == Some("call")
+    }
+
     fn description(&self) -> &str {
         "Discover and call tools exposed by configured MCP servers. For a current fact or an unknown source URL, check configured servers for a search tool before fetching a page by URL. Always use this broker (never call an MCP tool name directly). Use action \"list\" with a server to get its exact tool names and inputSchemas, then action \"call\" with server, tool, and arguments matching that schema exactly."
     }
@@ -144,8 +150,8 @@ impl Tool for McpTool {
         match args.get("action").and_then(|a| a.as_str()) {
             Some("list") => self.list(args).await,
             Some("call") => self.call(args).await,
-            Some(other) => ToolOutput::error(format!("unknown mcp action '{other}'")),
-            None => ToolOutput::error("missing required parameter: action"),
+            Some(other) => ToolOutput::error(Fault::Shape, format!("unknown mcp action '{other}'")),
+            None => ToolOutput::error(Fault::Shape, "missing required parameter: action"),
         }
     }
 }
@@ -204,18 +210,24 @@ impl McpTool {
             return ToolOutput::ok(out);
         };
         if !servers.iter().any(|name| name == server) {
-            return ToolOutput::error(format!(
-                "unknown mcp server '{server}'; available: {}",
-                servers.join(", ")
-            ));
+            return ToolOutput::error(
+                Fault::Target,
+                format!(
+                    "unknown mcp server '{server}'; available: {}",
+                    servers.join(", ")
+                ),
+            );
         }
         let tools = match self.manager.list_tools(server).await {
             Ok(tools) => tools,
             Err(reason) => {
-                return ToolOutput::error(format!(
-                    "mcp list failed: {reason}. {}",
-                    unavailable_guidance(server)
-                ));
+                return ToolOutput::error(
+                    Fault::Tool,
+                    format!(
+                        "mcp list failed: {reason}. {}",
+                        unavailable_guidance(server)
+                    ),
+                );
             }
         };
         let visible: Vec<_> = tools
@@ -242,10 +254,10 @@ impl McpTool {
 
     async fn call(&self, args: &Value) -> ToolOutput {
         let Some(server) = args.get("server").and_then(|s| s.as_str()) else {
-            return ToolOutput::error("missing required parameter: server");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: server");
         };
         let Some(tool) = args.get("tool").and_then(|t| t.as_str()) else {
-            return ToolOutput::error("missing required parameter: tool");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: tool");
         };
         let arguments = args
             .get("arguments")
@@ -256,9 +268,10 @@ impl McpTool {
             if let Some(record) = &self.invocation_recorder {
                 record(server, tool, false, 0);
             }
-            return ToolOutput::error(format!(
-                "MCP capability denied by channel policy: {server}/{tool}"
-            ));
+            return ToolOutput::error(
+                Fault::Refused,
+                format!("MCP capability denied by channel policy: {server}/{tool}"),
+            );
         }
 
         let started = std::time::Instant::now();
@@ -279,11 +292,20 @@ impl McpTool {
                 if let Some(record) = &self.invocation_recorder {
                     record(server, tool, false, started.elapsed().as_millis() as u64);
                 }
-                ToolOutput::error(format!(
-                    "mcp call failed: {}. {}",
-                    self.manager.redact(e.to_string()),
-                    unavailable_guidance(server)
-                ))
+                // A server that answered with an error judged the call it
+                // was given; anything else never reached a judgement.
+                let fault = match &e {
+                    crate::client::McpError::Server(_) => Fault::Target,
+                    _ => Fault::Tool,
+                };
+                ToolOutput::error(
+                    fault,
+                    format!(
+                        "mcp call failed: {}. {}",
+                        self.manager.redact(e.to_string()),
+                        unavailable_guidance(server)
+                    ),
+                )
             }
         }
     }

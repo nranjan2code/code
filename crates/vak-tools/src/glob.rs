@@ -1,3 +1,4 @@
+use crate::Fault;
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -50,23 +51,26 @@ impl Tool for GlobTool {
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         let Some(pattern) = args.get("pattern").and_then(|p| p.as_str()) else {
-            return ToolOutput::error("missing required parameter: pattern");
+            return ToolOutput::error(Fault::Shape, "missing required parameter: pattern");
         };
         let base = match args.get("path").and_then(|p| p.as_str()) {
             Some(p) => ctx.resolve(Path::new(p)),
             None => ctx.cwd.clone(),
         };
         if !base.is_dir() {
-            return ToolOutput::error(format!("not a directory: {}", base.display()));
+            return ToolOutput::error(
+                Fault::Target,
+                format!("not a directory: {}", base.display()),
+            );
         }
 
         let glob = match GlobBuilder::new(pattern).literal_separator(true).build() {
             Ok(g) => g,
-            Err(e) => return ToolOutput::error(format!("invalid pattern: {e}")),
+            Err(e) => return ToolOutput::error(Fault::Shape, format!("invalid pattern: {e}")),
         };
         let gs = match GlobSetBuilder::new().add(glob).build() {
             Ok(gs) => gs,
-            Err(e) => return ToolOutput::error(format!("invalid pattern: {e}")),
+            Err(e) => return ToolOutput::error(Fault::Shape, format!("invalid pattern: {e}")),
         };
 
         // Directory walks are blocking; keep them off the async workers.
@@ -98,7 +102,7 @@ impl Tool for GlobTool {
         .await;
         let mut matches = match walk {
             Ok(m) => m,
-            Err(e) => return ToolOutput::error(format!("glob walk failed: {e}")),
+            Err(e) => return ToolOutput::error(Fault::Tool, format!("glob walk failed: {e}")),
         };
 
         if matches.is_empty() {

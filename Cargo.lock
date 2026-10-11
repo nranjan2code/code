@@ -7087,6 +7087,7 @@ dependencies = [
  "vak-control",
  "vak-hooks",
  "vak-intent",
+ "vak-judge",
  "vak-llm",
  "vak-mcp",
  "vak-permission",
@@ -7224,6 +7225,7 @@ dependencies = [
  "vak-hooks",
  "vak-intake",
  "vak-intent",
+ "vak-judge",
  "vak-lifecycle",
  "vak-llm",
  "vak-mail-calendar",
@@ -7302,6 +7304,7 @@ dependencies = [
  "vak-context",
  "vak-core",
  "vak-intent",
+ "vak-judge",
  "vak-llm",
  "vak-permission",
  "vak-session",
@@ -7371,6 +7374,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "vak-judge"
+version = "7.0.1"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "vak-control",
+ "vak-intent",
 ]
 
 [[package]]
@@ -7708,6 +7721,7 @@ dependencies = [
  "toml 0.8.2",
  "tracing",
  "vak-config",
+ "vak-control",
  "vak-intake",
  "vak-intent",
  "vak-llm",

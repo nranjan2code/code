@@ -22,6 +22,7 @@ vak-hooks = { workspace = true }
 vak-config = { workspace = true }
 vak-intent = { workspace = true }
 vak-control = { workspace = true }
+vak-judge = { workspace = true }
 vak-llm = { workspace = true }
 vak-permission = { workspace = true }
 vak-session = { workspace = true }

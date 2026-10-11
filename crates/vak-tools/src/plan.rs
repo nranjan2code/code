@@ -6,18 +6,12 @@
 //! declared deliverable against what the turn actually produced; the model
 //! never marks one done (invariant 33).
 
+use crate::Fault;
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use vak_intent::DeliverableForm;
+use vak_intent::{Deliverable, DeliverableForm};
 
 use crate::{Tool, ToolContext, ToolOutput};
-
-/// One deliverable the model said it will produce.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Deliverable {
-    pub name: String,
-    pub form: DeliverableForm,
-}
 
 /// Reads a `plan` call's arguments. Every entry needs a name and a form;
 /// the error names the entry and the field.
@@ -112,11 +106,13 @@ impl Tool for PlanTool {
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match parse_plan_args(args) {
             Ok(_) => ToolOutput::error(
+                Fault::Tool,
                 r#"{"type":"internal","message":"plan must be answered by the agent loop, not dispatched directly"}"#,
             ),
-            Err(message) => ToolOutput::error(format!(
-                r#"{{"type":"invalid_arguments","message":"{message}"}}"#
-            )),
+            Err(message) => ToolOutput::error(
+                Fault::Shape,
+                format!(r#"{{"type":"invalid_arguments","message":"{message}"}}"#),
+            ),
         }
     }
 }

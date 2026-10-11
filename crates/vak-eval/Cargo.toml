@@ -21,6 +21,7 @@ vak-session = { workspace = true }
 vak-context = { workspace = true }
 vak-tools = { workspace = true }
 vak-intent = { workspace = true }
+vak-judge = { workspace = true }
 
 [dev-dependencies]
 

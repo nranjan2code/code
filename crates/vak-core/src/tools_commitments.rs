@@ -17,6 +17,7 @@
 //! here for it to reach for.
 
 use serde_json::{Value, json};
+use vak_tools::Fault;
 
 use vak_commit::{CommitmentLedger, SchedulerContext, rank};
 
@@ -92,13 +93,19 @@ impl vak_tools::Tool for CommitmentsTool {
                 .filter(|c| c.commitment_id == id || c.commitment_id.starts_with(id))
                 .collect();
             return match matches.as_slice() {
-                [] => vak_tools::ToolOutput::error(format!("no commitment matching '{id}'")),
+                [] => vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    format!("no commitment matching '{id}'"),
+                ),
                 // An ambiguous prefix names nothing rather than whichever row
                 // happened to sort first.
-                [_, _, ..] => vak_tools::ToolOutput::error(format!(
-                    "'{id}' matches {} commitments; use a longer prefix",
-                    matches.len()
-                )),
+                [_, _, ..] => vak_tools::ToolOutput::error(
+                    Fault::Target,
+                    format!(
+                        "'{id}' matches {} commitments; use a longer prefix",
+                        matches.len()
+                    ),
+                ),
                 [one] => vak_tools::ToolOutput::ok(detail(one)),
             };
         }
@@ -250,7 +257,7 @@ mod tests {
             audience_id: None,
         };
         let out = tool.execute(&json!({}), &ctx()).await;
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert!(out.content.contains("No commitments"));
     }
 
@@ -312,7 +319,7 @@ mod tests {
         // uuid v7 ids share a time-ordered prefix, so a one-character prefix
         // is genuinely ambiguous here.
         let out = tool.execute(&json!({ "id": "0" }), &ctx()).await;
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert!(out.content.contains("longer prefix"));
     }
 
@@ -345,7 +352,7 @@ mod tests {
             listed.content
         );
         let by_id = tool.execute(&json!({ "id": theirs }), &ctx()).await;
-        assert!(by_id.is_error);
+        assert!(by_id.is_error());
 
         let owner = CommitmentsTool {
             sessions_home: dir.path().to_path_buf(),
@@ -367,6 +374,6 @@ mod tests {
             audience_id: None,
         };
         let out = tool.execute(&json!({ "id": "nope" }), &ctx()).await;
-        assert!(out.is_error);
+        assert!(out.is_error());
     }
 }

@@ -4,6 +4,7 @@
 //! human action over HTTP or CLI.
 
 use std::path::{Path, PathBuf};
+use vak_tools::Fault;
 
 use serde_json::Value;
 
@@ -52,7 +53,10 @@ impl vak_tools::Tool for ForgetMemoryTool {
 
     async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(source_id) = args.get("note_id").and_then(Value::as_str) else {
-            return vak_tools::ToolOutput::error("missing required argument 'note_id'");
+            return vak_tools::ToolOutput::error(
+                Fault::Shape,
+                "missing required argument 'note_id'",
+            );
         };
         let (scope, result) = if let Some(id) = source_id.strip_prefix("memory/") {
             (
@@ -66,6 +70,7 @@ impl vak_tools::Tool for ForgetMemoryTool {
             )
         } else {
             return vak_tools::ToolOutput::error(
+                Fault::Shape,
                 "note_id must be the exact memory/<id> or profile/<id> source id from session_search",
             );
         };
@@ -73,9 +78,10 @@ impl vak_tools::Tool for ForgetMemoryTool {
             Ok(_) => vak_tools::ToolOutput::ok(format!(
                 "Forgot the {scope} memory note. It will no longer appear in future memory searches; its source conversation remains in history."
             )),
-            Err(error) => {
-                vak_tools::ToolOutput::error(format!("could not forget memory note: {error}"))
-            }
+            Err(error) => vak_tools::ToolOutput::error(
+                Fault::Tool,
+                format!("could not forget memory note: {error}"),
+            ),
         }
     }
 
@@ -123,13 +129,14 @@ impl vak_tools::Tool for RememberTool {
 
     async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
         let Some(note) = args.get("note").and_then(Value::as_str).map(str::trim) else {
-            return vak_tools::ToolOutput::error("missing required argument 'note'");
+            return vak_tools::ToolOutput::error(Fault::Shape, "missing required argument 'note'");
         };
         let kind = args.get("kind").and_then(Value::as_str).unwrap_or("fact");
         if !KINDS.contains(&kind) {
-            return vak_tools::ToolOutput::error(format!(
-                "unknown kind '{kind}'; expected one of {KINDS:?}"
-            ));
+            return vak_tools::ToolOutput::error(
+                Fault::Shape,
+                format!("unknown kind '{kind}'; expected one of {KINDS:?}"),
+            );
         }
         let tag = args.get("tag").and_then(Value::as_str).unwrap_or("");
         match memory::append_note(
@@ -149,7 +156,9 @@ impl vak_tools::Tool for RememberTool {
                     format!(", tag '{tag}'")
                 }
             )),
-            Err(e) => vak_tools::ToolOutput::error(format!("could not persist note: {e}")),
+            Err(e) => {
+                vak_tools::ToolOutput::error(Fault::Tool, format!("could not persist note: {e}"))
+            }
         }
     }
 
@@ -233,6 +242,7 @@ impl vak_tools::Tool for ProposeSkillTool {
         let Some(name) = sanitize_name(args.get("name").and_then(Value::as_str).unwrap_or(""))
         else {
             return vak_tools::ToolOutput::error(
+                Fault::Shape,
                 "'name' must be kebab-case (lowercase letters, digits, dashes)",
             );
         };
@@ -241,17 +251,24 @@ impl vak_tools::Tool for ProposeSkillTool {
             .and_then(Value::as_str)
             .map(str::trim)
         else {
-            return vak_tools::ToolOutput::error("missing required argument 'description'");
+            return vak_tools::ToolOutput::error(
+                Fault::Shape,
+                "missing required argument 'description'",
+            );
         };
         let Some(instructions) = args
             .get("instructions")
             .and_then(Value::as_str)
             .map(str::trim)
         else {
-            return vak_tools::ToolOutput::error("missing required argument 'instructions'");
+            return vak_tools::ToolOutput::error(
+                Fault::Shape,
+                "missing required argument 'instructions'",
+            );
         };
         if description.is_empty() || instructions.is_empty() {
             return vak_tools::ToolOutput::error(
+                Fault::Shape,
                 "'description' and 'instructions' must not be empty",
             );
         }
@@ -281,7 +298,7 @@ impl vak_tools::Tool for ProposeSkillTool {
             ts = chrono::Utc::now().to_rfc3339(),
         );
         if let Err(e) = vak_session::documents::create(&dir.join(format!("{id}.md")), &body) {
-            return vak_tools::ToolOutput::error(format!("write proposal: {e}"));
+            return vak_tools::ToolOutput::error(Fault::Tool, format!("write proposal: {e}"));
         }
         vak_tools::ToolOutput::ok(format!(
             "skill '{name}' queued for review as proposal {id}. It will NOT be \
@@ -724,9 +741,9 @@ mod tests {
             "description": "wait out the deploy window",
             "instructions": "always pause before rollback lets the deploy script finish"
         });
-        assert!(!tool.execute(&args, &ctx).await.is_error);
+        assert!(!tool.execute(&args, &ctx).await.is_error());
         // Re-proposal queues a fresh draft; neither may stack tag lines.
-        assert!(!tool.execute(&args, &ctx).await.is_error);
+        assert!(!tool.execute(&args, &ctx).await.is_error());
 
         for path in pending_paths(&home, &cwd) {
             let text = vak_session::documents::read(&path).unwrap().unwrap();
@@ -793,7 +810,7 @@ mod tests {
                 &ctx,
             )
             .await;
-        assert!(!out.is_error);
+        assert!(!out.is_error());
 
         for path in pending_paths(&home, &cwd) {
             let text = vak_session::documents::read(&path).unwrap().unwrap();

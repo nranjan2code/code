@@ -1,13 +1,14 @@
 //! The runtime's check of a declared plan against what the turn produced
-//! (docs/design/86-model-plans-runtime-checks.md §2.2). Pure: the loop
-//! gathers the receipts, this says which deliverables have none. It states
-//! what was observed and attributes nothing it did not see.
+//! (docs/design/86-model-plans-runtime-checks.md §2.2). The loop gathers the
+//! receipts; this says which deliverables have none, and whether the answer
+//! stands. It states what was observed and attributes nothing it did not
+//! see.
 
-use vak_intent::DeliverableForm;
-use vak_tools::Deliverable;
+use vak_control::{AnswerVerdict, Cause};
+use vak_intent::{Deliverable, DeliverableForm};
 
 /// What the turn produced, as the loop observed it.
-pub(crate) struct Produced<'a> {
+pub struct Produced<'a> {
     /// Every card recorded this turn, in emit order, with the deliverable
     /// its `answers` field named.
     pub cards: &'a [Option<String>],
@@ -21,7 +22,7 @@ pub(crate) struct Produced<'a> {
 }
 
 /// What a plan still lacks.
-pub(crate) struct Gap<'a> {
+pub struct Gap<'a> {
     /// Planned cards that no card's `answers` names, in plan order.
     pub cards_unnamed: Vec<&'a Deliverable>,
     /// Cards shown whose `answers` names no planned card.
@@ -34,65 +35,29 @@ impl Gap<'_> {
     /// How many planned cards have no card at all. A card that names no
     /// planned deliverable still counts as one of them, but the runtime
     /// never says which: it did not see that.
-    pub(crate) fn cards_short(&self) -> usize {
+    pub fn cards_short(&self) -> usize {
         self.cards_unnamed
             .len()
             .saturating_sub(self.cards_unattributed)
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.cards_short() == 0 && self.others.is_empty()
     }
+}
 
-    /// The control message: what the plan lists, what was observed, and
-    /// what is left, in the model's own names. It says who is speaking,
-    /// because a model reads an unsigned reminder as the person's.
-    pub(crate) fn message(&self) -> String {
-        let named = |deliverables: &[&Deliverable]| {
-            deliverables
-                .iter()
-                .map(|deliverable| format!("\"{}\"", deliverable.name))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let mut parts = vec![
-            "[plan-check]: Vakyartha's runtime compared your plan with what this turn \
-             produced. This is not a message from the person, and it is sent once."
-                .to_string(),
-        ];
-        if self.cards_short() > 0 {
-            parts.push(format!(
-                "Planned as cards and named by no card's `answers`: {}. Cards shown without \
-                 a planned name in `answers`: {}. So {} planned card(s) are not shown yet.",
-                named(&self.cards_unnamed),
-                self.cards_unattributed,
-                self.cards_short()
-            ));
-        }
-        if !self.others.is_empty() {
-            let listed = self
-                .others
-                .iter()
-                .map(|deliverable| {
-                    format!("\"{}\" ({})", deliverable.name, deliverable.form.as_str())
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            parts.push(format!("Nothing produced yet for: {listed}."));
-        }
-        parts.push(
-            "Produce what is missing, setting `answers` on a card to its planned name, or \
-             finish and say plainly why it is not needed. Keep everything already produced \
-             and do not plan again."
-                .to_string(),
-        );
-        parts.join(" ")
+/// Whether the plan's receipts let the answer stand.
+pub fn verdict(gap: &Gap) -> AnswerVerdict {
+    if gap.is_empty() {
+        AnswerVerdict::Accepted
+    } else {
+        AnswerVerdict::Held(Cause::Plan)
     }
 }
 
 /// Compares the plan with the receipts. A card covers the planned card its
 /// `answers` names; the rest are compared by count alone.
-pub(crate) fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
+pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     let mut covered = vec![false; plan.len()];
     let mut cards_unattributed = 0usize;
@@ -188,16 +153,9 @@ mod tests {
         let cards = [Some("first week".to_string())];
         let left = gap(&declared, &produced(&cards, ""));
         assert_eq!(left.cards_short(), 1);
-        let message = left.message();
-        assert!(
-            message.contains("\"comparison\", \"plan\"")
-                && message.contains("without a planned name in `answers`: 1"),
-            "{message}"
-        );
-        assert!(
-            message.contains("not a message from the person"),
-            "{message}"
-        );
+        assert_eq!(left.cards_unnamed.len(), 2);
+        assert_eq!(left.cards_unattributed, 1);
+        assert_eq!(verdict(&left), AnswerVerdict::Held(Cause::Plan));
     }
 
     #[test]
@@ -211,7 +169,6 @@ mod tests {
         let none: [Option<String>; 0] = [];
         let left = gap(&declared, &produced(&none, " "));
         assert_eq!(left.others.len(), 4);
-        assert!(left.message().contains("\"fix\" (change)"));
         let all = Produced {
             cards: &none,
             final_text: "Done: the parser now accepts empty input.",
@@ -219,6 +176,6 @@ mod tests {
             changed: true,
             checked: true,
         };
-        assert!(gap(&declared, &all).is_empty());
+        assert_eq!(verdict(&gap(&declared, &all)), AnswerVerdict::Accepted);
     }
 }

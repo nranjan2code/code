@@ -10,6 +10,7 @@
 //! read from the run records, never stored on it.
 
 use serde_json::Value;
+use vak_tools::Fault;
 
 use crate::triggers::{self, Schedule, Trigger, TriggerAction, TriggerKind};
 
@@ -167,7 +168,7 @@ impl vak_tools::Tool for AutomationsTool {
         };
         let all = match triggers::list(&self.shared) {
             Ok(all) => triggers::for_workspace(all, &self.cwd),
-            Err(e) => return vak_tools::ToolOutput::error(e.to_string()),
+            Err(e) => return vak_tools::ToolOutput::error(Fault::Tool, e.to_string()),
         };
         let mine = |id: &str| all.iter().any(|trigger| trigger.id.to_string() == id);
 
@@ -188,7 +189,10 @@ impl vak_tools::Tool for AutomationsTool {
             }
             "add" => {
                 let Some(name) = str_arg("name") else {
-                    return vak_tools::ToolOutput::error("'name' is required for action 'add'");
+                    return vak_tools::ToolOutput::error(
+                        Fault::Shape,
+                        "'name' is required for action 'add'",
+                    );
                 };
                 let action = match (str_arg("prompt"), str_arg("script")) {
                     (Some(text), None) => TriggerAction::Prompt {
@@ -198,11 +202,15 @@ impl vak_tools::Tool for AutomationsTool {
                     (None, Some(command)) => TriggerAction::Script { command },
                     (None, None) => {
                         return vak_tools::ToolOutput::error(
+                            Fault::Shape,
                             "exactly one of 'prompt' or 'script' is required",
                         );
                     }
                     (Some(_), Some(_)) => {
-                        return vak_tools::ToolOutput::error("give 'prompt' or 'script', not both");
+                        return vak_tools::ToolOutput::error(
+                            Fault::Shape,
+                            "give 'prompt' or 'script', not both",
+                        );
                     }
                 };
                 let now = chrono::Utc::now();
@@ -211,6 +219,7 @@ impl vak_tools::Tool for AutomationsTool {
                         Ok(at) => Some(at),
                         Err(_) => {
                             return vak_tools::ToolOutput::error(
+                                Fault::Shape,
                                 "'due_at' must be an RFC3339 instant with its offset",
                             );
                         }
@@ -230,11 +239,13 @@ impl vak_tools::Tool for AutomationsTool {
                     (None, None, Some(at)) => Schedule::Once { at },
                     (None, None, None) => {
                         return vak_tools::ToolOutput::error(
+                            Fault::Shape,
                             "give one of 'cron', 'every_secs' or 'due_at'",
                         );
                     }
                     _ => {
                         return vak_tools::ToolOutput::error(
+                            Fault::Shape,
                             "give only one of 'cron', 'every_secs' or 'due_at'",
                         );
                     }
@@ -244,6 +255,7 @@ impl vak_tools::Tool for AutomationsTool {
                     && !d.contains(':')
                 {
                     return vak_tools::ToolOutput::error(
+                        Fault::Shape,
                         "'deliver_to' must be '<surface>:<chat>', e.g. 'telegram:12345'",
                     );
                 }
@@ -251,9 +263,10 @@ impl vak_tools::Tool for AutomationsTool {
                     Some(named) => match agent_revision(&self.cwd, &named) {
                         Some((id, revision)) => (id, Some(revision)),
                         None => {
-                            return vak_tools::ToolOutput::error(format!(
-                                "no saved Agent '{named}' in this workspace"
-                            ));
+                            return vak_tools::ToolOutput::error(
+                                Fault::Target,
+                                format!("no saved Agent '{named}' in this workspace"),
+                            );
                         }
                     },
                     None => (self.agent.clone(), None),
@@ -274,7 +287,7 @@ impl vak_tools::Tool for AutomationsTool {
                     created_by: None,
                 };
                 if let Err(e) = triggers::create(&self.shared, &trigger) {
-                    return vak_tools::ToolOutput::error(e.to_string());
+                    return vak_tools::ToolOutput::error(Fault::Tool, e.to_string());
                 }
                 vak_tools::ToolOutput::ok(format!(
                     "created automation {}\n{}",
@@ -284,14 +297,16 @@ impl vak_tools::Tool for AutomationsTool {
             }
             "enable" | "disable" | "remove" => {
                 let Some(id) = str_arg("id") else {
-                    return vak_tools::ToolOutput::error(format!(
-                        "'id' is required for action '{action}'"
-                    ));
+                    return vak_tools::ToolOutput::error(
+                        Fault::Shape,
+                        format!("'id' is required for action '{action}'"),
+                    );
                 };
                 if !mine(&id) {
-                    return vak_tools::ToolOutput::error(format!(
-                        "no automation '{id}' in this workspace"
-                    ));
+                    return vak_tools::ToolOutput::error(
+                        Fault::Target,
+                        format!("no automation '{id}' in this workspace"),
+                    );
                 }
                 if action == "remove" {
                     if triggers::get(&self.shared, &id)
@@ -299,13 +314,16 @@ impl vak_tools::Tool for AutomationsTool {
                         .flatten()
                         .is_some_and(|trigger| trigger.source().is_some())
                     {
-                        return vak_tools::ToolOutput::error(format!(
-                            "automation {id} polls an intake source; remove the source instead"
-                        ));
+                        return vak_tools::ToolOutput::error(
+                            Fault::Refused,
+                            format!(
+                                "automation {id} polls an intake source; remove the source instead"
+                            ),
+                        );
                     }
                     return match triggers::delete(&self.shared, &self.runs, &id) {
                         Ok(_) => vak_tools::ToolOutput::ok(format!("removed automation {id}")),
-                        Err(e) => vak_tools::ToolOutput::error(e.to_string()),
+                        Err(e) => vak_tools::ToolOutput::error(Fault::Tool, e.to_string()),
                     };
                 }
                 let enabled = action == "enable";
@@ -317,12 +335,13 @@ impl vak_tools::Tool for AutomationsTool {
                         "{} automation {id}",
                         if enabled { "enabled" } else { "disabled" }
                     )),
-                    Err(e) => vak_tools::ToolOutput::error(e.to_string()),
+                    Err(e) => vak_tools::ToolOutput::error(Fault::Tool, e.to_string()),
                 }
             }
-            other => vak_tools::ToolOutput::error(format!(
-                "unknown action '{other}'; expected list, add, enable, disable, or remove"
-            )),
+            other => vak_tools::ToolOutput::error(
+                Fault::Shape,
+                format!("unknown action '{other}'; expected list, add, enable, disable, or remove"),
+            ),
         }
     }
 }
@@ -366,7 +385,7 @@ mod tests {
                 &ctx(),
             )
             .await;
-        assert!(!added.is_error, "{}", added.content);
+        assert!(!added.is_error(), "{}", added.content);
         let stored = triggers::list(&tool.shared).unwrap();
         assert_eq!(stored.len(), 1);
         let trigger = &stored[0];
@@ -381,12 +400,12 @@ mod tests {
         let disabled = tool
             .execute(&serde_json::json!({"action": "disable", "id": id}), &ctx())
             .await;
-        assert!(!disabled.is_error, "{}", disabled.content);
+        assert!(!disabled.is_error(), "{}", disabled.content);
         assert!(!triggers::get(&tool.shared, &id).unwrap().unwrap().enabled);
         let removed = tool
             .execute(&serde_json::json!({"action": "remove", "id": id}), &ctx())
             .await;
-        assert!(!removed.is_error, "{}", removed.content);
+        assert!(!removed.is_error(), "{}", removed.content);
         assert!(triggers::list(&tool.shared).unwrap().is_empty());
     }
 
@@ -406,7 +425,7 @@ mod tests {
             serde_json::json!({"action": "add", "name": "x", "prompt": "p", "every_secs": 600, "deliver_to": "nowhere"}),
         ] {
             let out = tool.execute(&args, &ctx()).await;
-            assert!(out.is_error, "{args}");
+            assert!(out.is_error(), "{args}");
         }
         assert!(triggers::list(&tool.shared).unwrap().is_empty());
         let unknown = tool
@@ -415,6 +434,6 @@ mod tests {
                 &ctx(),
             )
             .await;
-        assert!(unknown.is_error);
+        assert!(unknown.is_error());
     }
 }

@@ -43,12 +43,12 @@ async fn builtins_execute_in_worker_process() {
     let write = tool("write")
         .execute(&json!({"path": "inside.txt", "content": "brokered"}), &ctx)
         .await;
-    assert!(!write.is_error, "{}", write.content);
+    assert!(!write.is_error(), "{}", write.content);
 
     let read = tool("read")
         .execute(&json!({"path": "inside.txt"}), &ctx)
         .await;
-    assert!(!read.is_error, "{}", read.content);
+    assert!(!read.is_error(), "{}", read.content);
     assert!(read.content.contains("brokered"));
 }
 
@@ -64,7 +64,7 @@ async fn brokered_bash_streams_live_sandbox_events_with_identity() {
             &ctx,
         )
         .await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     let mut started = false;
     let mut artifact = false;
     while let Ok(event) = events.try_recv() {
@@ -97,7 +97,7 @@ async fn missing_worker_fails_closed() {
             &ToolContext::new(workspace.path().to_path_buf()),
         )
         .await;
-    assert!(output.is_error);
+    assert!(output.is_error());
     assert!(output.content.contains("broker unavailable"));
 }
 
@@ -117,7 +117,7 @@ async fn cancellation_terminates_worker_process_group() {
     )
     .await
     .expect("broker cancellation deadline");
-    assert!(output.is_error);
+    assert!(output.is_error());
     assert!(output.content.contains("cancelled"));
 }
 
@@ -130,7 +130,7 @@ async fn command_scoped_sandbox_wraps_bash_inside_protocol() {
     let output = tool("bash")
         .execute(&json!({"command": "printf 'tool-command\\n'"}), &ctx)
         .await;
-    assert!(!output.is_error, "{}", output.content);
+    assert!(!output.is_error(), "{}", output.content);
     assert!(output.content.contains("command-boundary"));
     assert!(output.content.contains("tool-command"));
 }
@@ -154,7 +154,7 @@ async fn restricted_worker_cannot_read_home_outside_workspace() {
     ctx.sandbox = Some(Arc::new(seatbelt));
 
     let output = tool("read").execute(&json!({"path": secret}), &ctx).await;
-    assert!(output.is_error);
+    assert!(output.is_error());
     assert!(!output.content.contains("must-not-cross-boundary"));
     assert!(
         !output.content.contains("tool broker exited"),

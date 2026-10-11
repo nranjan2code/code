@@ -7,6 +7,7 @@
 //! case-insensitive substring and token overlap over each candidate's name,
 //! description, and JSON-schema argument names, descriptions, and enum values.
 
+use crate::Fault;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -86,11 +87,13 @@ impl Tool for FindToolsTool {
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         let Some(query) = args.get("query").and_then(|v| v.as_str()) else {
             return ToolOutput::error(
+                Fault::Shape,
                 r#"{"type":"invalid_arguments","message":"missing required string 'query'"}"#,
             );
         };
         if query.trim().is_empty() {
             return ToolOutput::error(
+                Fault::Shape,
                 r#"{"type":"invalid_arguments","message":"'query' must not be empty"}"#,
             );
         }
@@ -302,7 +305,7 @@ mod tests {
             def("bash", "Run a shell command.", json!({})),
         ]);
         let out = tool.execute(&json!({"query": "http"}), &ctx()).await;
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         let parsed: Value = serde_json::from_str(&out.content).unwrap();
         let matches = parsed["matches"].as_array().unwrap();
         assert_eq!(matches.len(), 1);
@@ -471,7 +474,7 @@ mod tests {
         let out = tool
             .execute(&json!({"query": "zzz_no_such_thing"}), &ctx())
             .await;
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         let parsed: Value = serde_json::from_str(&out.content).unwrap();
         assert!(parsed["matches"].as_array().unwrap().is_empty());
     }
@@ -491,6 +494,6 @@ mod tests {
     async fn missing_query_is_a_correctable_error() {
         let tool = FindToolsTool::new(vec![]);
         let out = tool.execute(&json!({}), &ctx()).await;
-        assert!(out.is_error);
+        assert!(out.is_error());
     }
 }

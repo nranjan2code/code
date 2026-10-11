@@ -28,7 +28,7 @@ async fn verify_accept(
         let args = serde_json::json!({"command": command});
         authorize_flow_tool("bash", &args, deps).await?;
         let out = tool.execute(&args, &ctx).await;
-        if out.is_error {
+        if out.is_error() {
             return Err(format!(
                 "done-contract failed: `{command}`\n{}",
                 vak_tools::bounded(out.content)
@@ -579,12 +579,9 @@ async fn execute_node(
             let out = tool.execute(&args, &ctx).await;
             // A node's output is rendered into later nodes, prompts
             // included, and a flow keeps no evidence ledger to recall from.
+            let failed = out.is_error();
             let content = vak_tools::bounded(out.content);
-            if out.is_error {
-                Err(content)
-            } else {
-                Ok(content)
-            }
+            if failed { Err(content) } else { Ok(content) }
         }
         "agent" => {
             let prompt = render(node.prompt.as_deref().unwrap_or_default(), dep_outputs);

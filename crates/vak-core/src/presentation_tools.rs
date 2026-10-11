@@ -39,6 +39,7 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
+use vak_tools::Fault;
 use vak_tools::context::ToolContext;
 use vak_tools::{Tool, ToolOutput};
 
@@ -1787,10 +1788,13 @@ impl Tool for EmitCardTool {
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match validate_call(self.shape, args, &vak_delivery::built_in_skill_registry()) {
             Ok(output) => ToolOutput::ok(format!("Shown to the user ({}).", output.semantic_type)),
-            Err(reason) => ToolOutput::error(format!(
-                "Card not displayed: {reason}. Fix the arguments and call {} again.",
-                self.shape.name
-            )),
+            Err(reason) => ToolOutput::error(
+                Fault::Shape,
+                format!(
+                    "Card not displayed: {reason}. Fix the arguments and call {} again.",
+                    self.shape.name
+                ),
+            ),
         }
     }
 }
@@ -3150,7 +3154,7 @@ mod tests {
         let out = tool
             .execute(&args, &ToolContext::new(std::env::temp_dir()))
             .await;
-        assert!(!out.is_error, "expected Ok, got: {}", out.content);
+        assert!(!out.is_error(), "expected Ok, got: {}", out.content);
         assert!(out.content.contains("Shown to the user"), "{}", out.content);
         assert!(out.content.contains("chart"), "{}", out.content);
         assert!(!out.content.contains("emit"), "{}", out.content);
@@ -3183,7 +3187,7 @@ mod tests {
             .execute(&args, &ToolContext::new(std::env::temp_dir()))
             .await;
         assert!(
-            out.is_error,
+            out.is_error(),
             "validator-rejected card must be an error the model sees"
         );
         assert!(out.content.contains("Fix the arguments"), "{}", out.content);
@@ -3214,7 +3218,7 @@ mod tests {
         let args = serde_json::json!({"semantic_type": "recipe.card"});
         let ctx = ToolContext::new(std::env::temp_dir());
         let out = tool.execute(&args, &ctx).await;
-        assert!(out.is_error, "a chart tool must refuse a recipe type");
+        assert!(out.is_error(), "a chart tool must refuse a recipe type");
     }
 
     #[test]
@@ -3256,7 +3260,7 @@ mod tests {
             {
                 let ctx = ToolContext::new(std::env::temp_dir());
                 let out = tool.execute(&args, &ctx).await;
-                if out.is_error {
+                if out.is_error() {
                     failures.push(format!(
                         "{semantic_type} ({name}): rejected: {}",
                         out.content
@@ -3383,7 +3387,7 @@ mod tests {
             let result = search
                 .execute(&serde_json::json!({"query": query}), &context)
                 .await;
-            assert!(!result.is_error, "search failed for {semantic_type}");
+            assert!(!result.is_error(), "search failed for {semantic_type}");
             let result: Value = serde_json::from_str(&result.content).unwrap();
             assert_eq!(
                 result["matches"][0]["name"], expected,
