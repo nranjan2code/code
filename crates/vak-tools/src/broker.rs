@@ -1782,7 +1782,7 @@ mod tests {
         };
         let wire = serde_json::to_vec(&request).unwrap();
         let back: WorkerRequest = serde_json::from_slice(&wire).unwrap();
-        assert_eq!(back.version, 4);
+        assert_eq!(back.version, PROTOCOL_VERSION);
         match back.task {
             WorkerTask::Tool { trace: got, .. } => assert_eq!(got, Some(trace)),
             _ => unreachable!(),
