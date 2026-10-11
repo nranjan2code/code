@@ -278,21 +278,6 @@ impl Engagement {
         }
     }
 
-    /// The engagement for a request the kernel could not read confidently.
-    ///
-    /// Posture is the general one, but the tool surface is narrowed to the
-    /// orientation floor (docs/design/68-context-engine.md, Principle 6:
-    /// "when a decision cannot be made confidently, send less and give the
-    /// model a way to ask for more"). This is an *explicit* decision rather
-    /// than an ambiguous top element: `Limits::unrestricted` keeps meaning
-    /// "everything", which is what a disabled kernel produces.
-    pub fn orienting() -> Self {
-        let mut engagement = Engagement::general();
-        engagement.limits.required_domains =
-            crate::limits::DomainSet::only(FLOOR_DOMAINS.iter().copied());
-        engagement
-    }
-
     /// Compose with another engagement, narrowing only: limits meet, and the
     /// posture takes the more cautious of each selection ([`Posture::meet`]).
     pub fn meet(&self, other: &Engagement) -> Engagement {
@@ -306,21 +291,15 @@ impl Engagement {
     ///
     /// Everything authority-bearing meets: the strictest strand governs
     /// approval, permission, spend, closure evidence, modalities, and the
-    /// posture. The domain requirement is the turn's *capacity* rather than
-    /// its authority and takes the **union** — a turn that is "search the web,
-    /// then run the tests" needs both toolsets. It is still at most the
-    /// unrestricted baseline, which is the invariant that matters.
+    /// posture.
     pub fn compose(strands: &[Engagement]) -> Engagement {
         let Some((first, rest)) = strands.split_first() else {
             return Engagement::general();
         };
         let mut out = first.clone();
-        let mut domains = first.limits.required_domains.clone();
         for next in rest {
-            domains = domains.union(&next.limits.required_domains);
             out = out.meet(next);
         }
-        out.limits.required_domains = domains;
         out
     }
 }
@@ -392,64 +371,6 @@ impl Posture {
 
 // ------------------------------------------------------ capability slice ---
 
-/// Kinds of work this act plausibly needs, as domain names.
-///
-/// This replaces a table that listed built-in *tool names* per act
-/// (`Act::Answer => ["webfetch", "mcp"]`). That shape could not answer the
-/// only question that matters — which of the capabilities this user actually
-/// installed could serve this request — because installed capabilities were
-/// never in it. Its failure mode was silent: a live-data question about a
-/// specific place read as `Answer`, sliced to six file tools, and came back
-/// "I do not have access to real-time information" with a configured,
-/// connected search server sitting right there. Naming the server in the
-/// next turn did not help either, because `Locate` had no way to reach one.
-///
-/// Domains are matched against what each capability declares it serves, so
-/// adding an integration never edits this function. A capability that
-/// declares nothing is never narrowed away, which keeps the common case
-/// working with no configuration at all.
-fn act_domains(act: Act) -> &'static [&'static str] {
-    match act {
-        // A greeting needs nothing beyond the orientation floor. This is
-        // where slicing pays for itself most obviously.
-        Act::Converse => &[],
-        // The acts that exist to produce a fact must be able to go and get
-        // one. Lookup is read-only, and a missing capability costs a failed
-        // task while an extra one costs a little context — so this trade is
-        // the one this table has always claimed to want to make.
-        Act::Answer => &["live-data", "web"],
-        Act::Locate => &["live-data", "web", "vcs"],
-        Act::Analyze => &["live-data", "web", "code-exec", "vcs"],
-        // Authoring is not itself a request for a file or for research.
-        // Explicit file deliverables are added from OutcomeSpec, and cited
-        // evidence adds the live source domains below. Loading both here
-        // made ordinary plans and lists look like document-production work.
-        Act::Author => &[],
-        Act::Modify => &["documents", "code-exec", "vcs"],
-        // Operating reaches outside the workspace and legitimately needs the
-        // broad set; the narrowing that matters for this act is the approval
-        // floor, not the toolbox.
-        Act::Operate => &[
-            "code-exec",
-            "web",
-            "live-data",
-            "messaging",
-            "documents",
-            "orchestration",
-        ],
-        Act::Verify => &["code-exec", "observability"],
-        Act::Orchestrate => &["orchestration", "code-exec"],
-        Act::Govern => &["memory", "orchestration", "documents", "observability"],
-    }
-}
-
-/// The domains every turn gets regardless of act: enough to look at what is
-/// in front of it and recall what it already knows.
-///
-/// An agent that cannot look at anything cannot correct a misread of its own
-/// task, so this floor is what makes slicing safe to attempt at all.
-pub const FLOOR_DOMAINS: &[&str] = &["filesystem", "memory"];
-
 /// Every domain a capability can declare it serves — the shared vocabulary
 /// readings are matched against (`vak_core::capability::Domain` mirrors it,
 /// and a test there keeps the two equal). A tier-2/3 classifier is told to
@@ -471,45 +392,8 @@ pub const DOMAIN_VOCABULARY: &[&str] = &[
 // ----------------------------------------------------------- derivation ---
 
 /// Turn a reading plus the authority in force into an engagement.
-///
-/// `slice_capabilities` is separate from the reading's own confidence because
-/// the two failure modes are not symmetric: raising an approval floor on a
-/// misread is a small annoyance, while removing a tool the task needed looks
-/// to the user like the agent is broken. Callers therefore gate slicing on a
-/// higher bar, and low confidence still tightens risk.
-pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool) -> Engagement {
+pub fn derive(reading: &Reading, authority: &Authority) -> Engagement {
     let mut limits = Limits::unrestricted();
-
-    // --- capabilities --------------------------------------------------
-    if slice_capabilities {
-        // Union over every act the reading covers. A request that is
-        // genuinely both a modification and a verification needs both
-        // toolsets, and resolving the tie by argmax would silently remove
-        // half of what it needs.
-        let mut domains: BTreeSet<String> = FLOOR_DOMAINS
-            .iter()
-            .map(|domain| (*domain).to_string())
-            .collect();
-        for act in reading.acts() {
-            domains.extend(act_domains(act).iter().map(|d| (*d).to_string()));
-        }
-        // Evidence the reading demands has to come from somewhere. A turn
-        // required to cite cannot satisfy that from memory, so requiring
-        // citation implies the ability to reach a source — whatever the act
-        // was read as. This is the general form of the live-data failure: it
-        // was never specific to `Answer`.
-        if reading.evidence.rank() >= Evidence::Cited.rank() {
-            domains.insert("live-data".into());
-            domains.insert("web".into());
-        }
-        limits.required_domains = crate::limits::DomainSet::only(domains);
-    } else {
-        // Not confident enough to say what the turn needs: send the
-        // orientation floor and let `find_tools` reach the rest (design 68,
-        // Principle 6). Stated explicitly so `DomainSet::All` keeps its one
-        // meaning — "everything", the disabled-kernel behaviour.
-        limits.required_domains = crate::limits::DomainSet::only(FLOOR_DOMAINS.iter().copied());
-    }
 
     // --- modality ------------------------------------------------------
     // A leg that cannot see is not a valid fallback for a vision turn.
@@ -826,7 +710,7 @@ mod tests {
                                             autonomy,
                                             attendance,
                                         };
-                                        let engagement = derive(&r, &authority, slice);
+                                        let engagement = derive(&r, &authority);
                                         assert!(
                                             engagement.limits.is_at_most(&baseline),
                                             "widened: {act:?}/{horizon:?}/{stakes:?}/\
@@ -843,88 +727,6 @@ mod tests {
     }
 
     #[test]
-    fn a_greeting_gets_no_tools_and_minimal_context() {
-        let r = reading(
-            Act::Converse,
-            Horizon::Immediate,
-            Stakes::Inert,
-            Evidence::None,
-        );
-        let engagement = derive(&r, &Authority::default(), true);
-        // A greeting asks for nothing beyond the floor that lets it look at
-        // what is in front of it.
-        assert_eq!(
-            engagement.limits.required_domains,
-            crate::limits::DomainSet::only(FLOOR_DOMAINS.iter().copied())
-        );
-        assert_eq!(engagement.posture.context, ContextProfile::Minimal);
-        assert!(!engagement.posture.open_commitment);
-        assert_eq!(engagement.posture.note, None);
-    }
-
-    #[test]
-    fn every_act_keeps_the_orientation_floor() {
-        for act in Act::ALL {
-            let r = reading(act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-            let engagement = derive(&r, &Authority::default(), true);
-            for domain in FLOOR_DOMAINS {
-                assert!(
-                    engagement.limits.required_domains.contains(domain),
-                    "{act:?} lost `{domain}` and cannot orient itself"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn asking_and_searching_can_still_reach_a_live_source() {
-        // Regression: `answer` and `locate` were sliced to the orientation
-        // floor and `webfetch`. A configured search MCP server (Tavily) was
-        // therefore unreachable for exactly the two acts that ask for a
-        // fact, and "how is the weather today" came back as "I do not have
-        // access to real-time information" with the tool sitting right
-        // there, connected and admitted.
-        for act in [Act::Answer, Act::Locate] {
-            let r = reading(act, Horizon::Turn, Stakes::Inert, Evidence::None);
-            let engagement = derive(&r, &Authority::default(), true);
-            assert!(
-                engagement.limits.required_domains.contains("live-data"),
-                "{act:?} cannot reach a live source"
-            );
-        }
-    }
-
-    #[test]
-    fn required_citation_implies_reaching_a_source_whatever_the_act() {
-        // The general form of the weather failure: it was never specific to
-        // `Answer`. A turn obliged to cite cannot satisfy that from memory.
-        let r = reading(Act::Verify, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-        let engagement = derive(&r, &Authority::default(), true);
-        assert!(engagement.limits.required_domains.contains("live-data"));
-    }
-
-    #[test]
-    fn domain_requirements_narrow_by_intersection() {
-        // More domains admits more capabilities, so composing two limits
-        // must take the intersection or `meet` would widen.
-        let wide = Limits {
-            required_domains: crate::limits::DomainSet::only(["web", "live-data", "code-exec"]),
-            ..Limits::unrestricted()
-        };
-        let narrow = Limits {
-            required_domains: crate::limits::DomainSet::only(["web"]),
-            ..Limits::unrestricted()
-        };
-        let met = wide.meet(&narrow);
-        assert_eq!(
-            met.required_domains,
-            crate::limits::DomainSet::only(["web"])
-        );
-        assert!(met.is_at_most(&wide));
-        assert!(!wide.is_at_most(&narrow), "widening must not validate");
-    }
-
-    #[test]
     fn durable_work_is_managed_opens_a_commitment_and_renders_full_context() {
         let r = reading(
             Act::Modify,
@@ -932,7 +734,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::Verified,
         );
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert!(engagement.posture.managed);
         assert!(engagement.posture.open_commitment);
         assert_eq!(engagement.posture.context, ContextProfile::Full);
@@ -951,7 +753,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::Audited,
         );
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(
             engagement.limits.min_satisfaction,
             crate::Satisfaction::Attested
@@ -965,7 +767,7 @@ mod tests {
         let mut low = reading(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
         low.clarity = Clarity::Ambiguous;
         assert_eq!(
-            derive(&low, &Authority::default(), true).posture.clarify,
+            derive(&low, &Authority::default()).posture.clarify,
             ClarifyPolicy::StateAssumption
         );
 
@@ -977,7 +779,7 @@ mod tests {
         );
         high.clarity = Clarity::Ambiguous;
         assert_eq!(
-            derive(&high, &Authority::default(), true).posture.clarify,
+            derive(&high, &Authority::default()).posture.clarify,
             ClarifyPolicy::Ask
         );
     }
@@ -994,7 +796,7 @@ mod tests {
             autonomy: Autonomy::Delegated,
             attendance: Attendance::Unattended,
         };
-        let engagement = derive(&r, &authority, true);
+        let engagement = derive(&r, &authority);
         assert_eq!(engagement.posture.hil, HilMode::Defer);
         assert_eq!(engagement.posture.gate_fallback, GateFallback::Defer);
     }
@@ -1007,7 +809,7 @@ mod tests {
             Stakes::Irreversible,
             Evidence::None,
         );
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(engagement.posture.hil, HilMode::Interrupt);
         assert!(
             engagement
@@ -1026,7 +828,7 @@ mod tests {
             Stakes::Inert,
             Evidence::Cited,
         );
-        let demand = derive(&r, &Authority::default(), true).posture.demand;
+        let demand = derive(&r, &Authority::default()).posture.demand;
         assert!(demand.reasoning_required);
         assert!(demand.evidence_required);
     }
@@ -1043,7 +845,7 @@ mod tests {
             Evidence::None,
         );
         r.alternate_acts.insert(Act::Modify);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert!(engagement.posture.checkpoint_before_effect);
         assert_eq!(engagement.posture.stop, StopProfile::Inspection);
 
@@ -1054,7 +856,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::None,
         );
-        let engagement = derive(&inert, &Authority::default(), true);
+        let engagement = derive(&inert, &Authority::default());
         assert!(!engagement.posture.checkpoint_before_effect);
         assert_eq!(engagement.posture.stop, StopProfile::Message);
     }
@@ -1069,12 +871,10 @@ mod tests {
                 Evidence::Verified,
             ),
             &Authority::default(),
-            true,
         );
         let b = derive(
             &reading(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None),
             &Authority::default(),
-            true,
         );
         let met = a.meet(&b);
         assert!(met.limits.is_at_most(&a.limits));

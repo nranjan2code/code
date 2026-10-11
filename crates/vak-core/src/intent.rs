@@ -323,14 +323,9 @@ pub fn demand_input(
 
 /// Complete the reading's delivery posture with the request-level outcome.
 /// Authoring is conversational by default; only an explicitly requested
-/// saved file needs the document capability and file-shaped delivery.
+/// saved file gets file-shaped delivery.
 pub fn apply_output_requirements(intent: &mut Intent, outcome: &OutcomeSpec) {
     if outcome.expects_saved_file() || outcome.expects_artifact() {
-        intent.engagement.limits.required_domains = intent
-            .engagement
-            .limits
-            .required_domains
-            .union(&vak_intent::DomainSet::only(["documents"]));
         intent.engagement.posture.delivery.shape = OutputShape::Artifact;
     }
 }
@@ -580,56 +575,6 @@ mod tests {
     }
 
     #[test]
-    fn output_capability_follows_the_requested_saved_file() {
-        use vak_intent::{Act, OutputShape, Reading};
-        let reading = Reading {
-            act: Act::Author,
-            ..Reading::general()
-        };
-        let mut intent = Intent::general(vak_intent::RESOLVER_VERSION);
-        intent.reading = reading.clone();
-        intent.engagement = vak_intent::derive(&reading, &Authority::default(), true);
-        let inline = OutcomeSpec::from_reading("Make a plan suitable to share", &reading, 1);
-        apply_output_requirements(&mut intent, &inline);
-        assert_eq!(intent.engagement.posture.delivery.shape, OutputShape::Prose);
-        assert!(
-            !intent
-                .engagement
-                .limits
-                .required_domains
-                .contains("documents")
-        );
-        let cards = OutcomeSpec::from_reading(
-            "Make a practical plan and use suitable native presentation cards",
-            &reading,
-            1,
-        );
-        apply_output_requirements(&mut intent, &cards);
-        assert_eq!(intent.engagement.posture.delivery.shape, OutputShape::Prose);
-        assert!(
-            !intent
-                .engagement
-                .limits
-                .required_domains
-                .contains("documents")
-        );
-
-        let file = OutcomeSpec::from_reading("Create the plan as plan.md", &reading, 1);
-        apply_output_requirements(&mut intent, &file);
-        assert_eq!(
-            intent.engagement.posture.delivery.shape,
-            OutputShape::Artifact
-        );
-        assert!(
-            intent
-                .engagement
-                .limits
-                .required_domains
-                .contains("documents")
-        );
-    }
-
-    #[test]
     fn presentation_availability_does_not_require_structured_smalltalk() {
         let tools: Vec<std::sync::Arc<dyn vak_tools::Tool>> =
             crate::presentation_tools::EmitCardTool::all()
@@ -642,31 +587,6 @@ mod tests {
         let outcome = complete_output_contract(&mut intent, "Hello, how are you?");
         assert!(!outcome.expects_artifact());
         assert!(!intent.engagement.posture.demand.structured_output);
-    }
-
-    #[test]
-    fn output_contract_does_not_invent_a_file() {
-        use vak_intent::{Act, OutputShape, Reading};
-        let prompt = "For our 30-minute neighborhood book swap for 6 people, welcome 5 minutes, exchanging 20 minutes, tidy up 5 minutes. Budget is $18: labels $6 and refreshments $12. Make a plan and cost breakdown suitable to share.";
-        let reading = Reading {
-            act: Act::Author,
-            ..Reading::general()
-        };
-        let mut intent = Intent::general(vak_intent::RESOLVER_VERSION);
-        intent.reading = reading.clone();
-        intent.engagement = vak_intent::derive(&reading, &Authority::default(), true);
-
-        let outcome = complete_output_contract(&mut intent, prompt);
-
-        assert!(!outcome.expects_artifact());
-        assert_eq!(intent.engagement.posture.delivery.shape, OutputShape::Prose);
-        assert!(
-            !intent
-                .engagement
-                .limits
-                .required_domains
-                .contains("documents")
-        );
     }
 
     #[test]

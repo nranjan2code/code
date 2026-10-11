@@ -28,7 +28,7 @@ use vak_intent::engage::{
     ClarifyPolicy, ContextProfile, Engagement, HilMode, OutputShape, StopProfile, derive,
 };
 use vak_intent::goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate};
-use vak_intent::limits::{DomainSet, Limits};
+use vak_intent::limits::Limits;
 use vak_intent::outcome::{
     CompletionVerdict, EvidenceState, OutcomeSpec, OutcomeStatus, RequirementEvaluation,
     RequirementStatus, TurnFacts, evaluate_completion, evaluate_requirements,
@@ -1315,7 +1315,7 @@ fn resolution_unknown_input_falls_back_to_general() {
     // Kernel on and nothing understood: the orientation floor, not
     // everything (docs/design/68, Principle 6). `Engagement::general` is
     // what a *disabled* kernel produces.
-    assert_eq!(intent.engagement, Engagement::orienting());
+    assert_eq!(intent.engagement, Engagement::general());
 }
 
 #[test]
@@ -1362,27 +1362,6 @@ fn resolution_disabled_reproduces_general() {
     let intent = resolution.intent();
     assert_eq!(intent.engagement, Engagement::general());
     assert_eq!(intent.provenance.tier, Tier::General);
-}
-
-#[test]
-fn resolution_provisional_reading_withholds_slicing() {
-    let config = ResolverConfig {
-        accept_confidence: 0.99,
-        provisional_confidence: 0.0,
-        ..ResolverConfig::default()
-    };
-    let resolution = resolve(
-        &req("explain the deploy script and then deploy it"),
-        &Declared::default(),
-        &Authority::default(),
-        &config,
-    );
-    let intent = resolution.peek();
-    assert_eq!(
-        intent.engagement.limits.required_domains,
-        Engagement::orienting().limits.required_domains,
-        "a provisional reading gets the orientation floor, never a guessed slice"
-    );
 }
 
 #[test]
@@ -1469,7 +1448,7 @@ fn engagement_output_shape_per_act() {
     ];
     for (act, expected_shape) in cases {
         let r = reading_simple(*act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(
             engagement.posture.delivery.shape, *expected_shape,
             "act {:?} should produce shape {:?}",
@@ -1482,7 +1461,7 @@ fn engagement_output_shape_per_act() {
 fn engagement_output_shape_cited_evidence_for_answer_analyze() {
     for act in [Act::Answer, Act::Analyze] {
         let r = reading_simple(act, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(
             engagement.posture.delivery.shape,
             OutputShape::Sources,
@@ -1509,7 +1488,7 @@ fn engagement_stop_profile_per_act() {
     ];
     for (act, expected_stop) in cases {
         let r = reading_simple(*act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(
             engagement.posture.stop, *expected_stop,
             "act {:?} should produce stop {:?}",
@@ -1522,7 +1501,7 @@ fn engagement_stop_profile_per_act() {
 fn engagement_stop_profile_verified_overrides_act() {
     for act in Act::ALL {
         let r = reading_simple(act, Horizon::Turn, Stakes::Inert, Evidence::Verified);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(
             engagement.posture.stop,
             StopProfile::Verification,
@@ -1540,18 +1519,18 @@ fn engagement_context_profile_per_act_and_horizon() {
         Stakes::Inert,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     assert_eq!(engagement.posture.context, ContextProfile::Minimal);
 
     for act in [Act::Modify, Act::Verify, Act::Operate] {
         let r = reading_simple(act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(engagement.posture.context, ContextProfile::Working);
     }
 
     for act in [Act::Modify, Act::Operate] {
         let r = reading_simple(act, Horizon::Durable, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(engagement.posture.context, ContextProfile::Full);
     }
 }
@@ -1567,7 +1546,7 @@ fn engagement_hil_mode_matrix() {
                 Evidence::None,
             );
             let auth = authority_of(autonomy, attendance);
-            let engagement = derive(&r, &auth, true);
+            let engagement = derive(&r, &auth);
             assert_eq!(
                 engagement.posture.hil,
                 HilMode::Interrupt,
@@ -1585,7 +1564,7 @@ fn engagement_hil_mode_matrix() {
         Evidence::None,
     );
     let auth = authority_of(Autonomy::Autonomous, Attendance::Interactive);
-    let engagement = derive(&r, &auth, true);
+    let engagement = derive(&r, &auth);
     assert_eq!(engagement.posture.hil, HilMode::Review);
 
     let r = reading_simple(
@@ -1598,7 +1577,7 @@ fn engagement_hil_mode_matrix() {
     // reversible work until a strand is known to serve an enveloped
     // commitment.
     let auth = authority_of(Autonomy::Delegated, Attendance::Interactive);
-    let engagement = derive(&r, &auth, true);
+    let engagement = derive(&r, &auth);
     assert_eq!(engagement.posture.hil, HilMode::Review);
     assert_eq!(engagement.limits.approval_ceiling, ApprovalCeiling::Ask);
 }
@@ -1655,7 +1634,7 @@ fn an_envelope_narrows_the_strand_that_serves_its_commitment() {
 fn engagement_demand_hints_populated() {
     for act in [Act::Analyze, Act::Author, Act::Modify, Act::Orchestrate] {
         let r = reading_simple(act, Horizon::Durable, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert!(
             engagement.posture.demand.reasoning_required,
             "{:?} should require reasoning",
@@ -1664,7 +1643,7 @@ fn engagement_demand_hints_populated() {
     }
 
     let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     assert!(engagement.posture.demand.evidence_required);
 
     let r = reading_simple(
@@ -1673,7 +1652,7 @@ fn engagement_demand_hints_populated() {
         Stakes::Reversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     assert!(engagement.posture.demand.structured_output);
 }
 
@@ -1687,74 +1666,8 @@ fn engagement_min_satisfaction_per_evidence() {
     ];
     for (evidence, expected_sat) in cases {
         let r = reading_simple(Act::Modify, Horizon::Session, Stakes::Reversible, *evidence);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(engagement.limits.min_satisfaction, *expected_sat);
-    }
-}
-
-#[test]
-fn engagement_domain_requirements_per_act() {
-    let cases: &[(Act, &[&str])] = &[
-        (Act::Converse, &[]),
-        (Act::Answer, &["live-data", "web"]),
-        (Act::Locate, &["live-data", "web", "vcs"]),
-        (Act::Analyze, &["live-data", "web", "code-exec", "vcs"]),
-        (Act::Author, &[]),
-        (Act::Modify, &["documents", "code-exec", "vcs"]),
-        (
-            Act::Operate,
-            &[
-                "code-exec",
-                "web",
-                "live-data",
-                "messaging",
-                "documents",
-                "orchestration",
-            ],
-        ),
-        (Act::Verify, &["code-exec", "observability"]),
-        (Act::Orchestrate, &["orchestration", "code-exec"]),
-        (
-            Act::Govern,
-            &["memory", "orchestration", "documents", "observability"],
-        ),
-    ];
-    for (act, expected_domains) in cases {
-        let r = reading_simple(*act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
-        for domain in *expected_domains {
-            assert!(
-                engagement.limits.required_domains.contains(domain),
-                "{:?} should require domain `{domain}`",
-                act
-            );
-        }
-    }
-
-    let authoring = derive(
-        &reading_simple(
-            Act::Author,
-            Horizon::Turn,
-            Stakes::Reversible,
-            Evidence::None,
-        ),
-        &Authority::default(),
-        true,
-    );
-    assert_eq!(
-        authoring.limits.required_domains,
-        vak_intent::DomainSet::only(["filesystem", "memory"]),
-        "authoring in the conversation does not imply web research or a saved document"
-    );
-}
-
-#[test]
-fn engagement_cited_evidence_adds_live_data_and_web() {
-    for act in Act::ALL {
-        let r = reading_simple(act, Horizon::Turn, Stakes::Reversible, Evidence::Cited);
-        let engagement = derive(&r, &Authority::default(), true);
-        assert!(engagement.limits.required_domains.contains("live-data"));
-        assert!(engagement.limits.required_domains.contains("web"));
     }
 }
 
@@ -1763,13 +1676,13 @@ fn engagement_clarify_policy_by_stakes() {
     for act in [Act::Converse, Act::Answer] {
         let mut r = reading_simple(act, Horizon::Turn, Stakes::Inert, Evidence::None);
         r.clarity = Clarity::Ambiguous;
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert_eq!(engagement.posture.clarify, ClarifyPolicy::StateAssumption);
     }
 
     let mut r = reading_simple(Act::Operate, Horizon::Turn, Stakes::Costly, Evidence::None);
     r.clarity = Clarity::Ambiguous;
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     assert_eq!(engagement.posture.clarify, ClarifyPolicy::Ask);
 
     let r = reading_simple(
@@ -1778,7 +1691,7 @@ fn engagement_clarify_policy_by_stakes() {
         Stakes::Reversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     assert_eq!(engagement.posture.clarify, ClarifyPolicy::Proceed);
 }
 
@@ -1786,12 +1699,12 @@ fn engagement_clarify_policy_by_stakes() {
 fn engagement_checkpoints_for_effectful_stakes_reversible_plus() {
     for stakes in [Stakes::Reversible, Stakes::Costly, Stakes::Irreversible] {
         let r = reading_simple(Act::Modify, Horizon::Session, stakes, Evidence::None);
-        let engagement = derive(&r, &Authority::default(), true);
+        let engagement = derive(&r, &Authority::default());
         assert!(engagement.posture.checkpoint_before_effect);
     }
 
     let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     assert!(!engagement.posture.checkpoint_before_effect);
 }
 
@@ -1803,7 +1716,7 @@ fn engagement_any_effectful_contender_forces_checkpoint() {
         Stakes::Reversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     assert!(!engagement.posture.checkpoint_before_effect);
 
     let mut r2 = reading_simple(
@@ -1813,7 +1726,7 @@ fn engagement_any_effectful_contender_forces_checkpoint() {
         Evidence::None,
     );
     r2.alternate_acts.insert(Act::Modify);
-    let engagement2 = derive(&r2, &Authority::default(), true);
+    let engagement2 = derive(&r2, &Authority::default());
     assert!(engagement2.posture.checkpoint_before_effect);
     // The stop rule follows the primary act; a contender only widens the
     // toolbox and the checkpoint.
@@ -1828,7 +1741,7 @@ fn engagement_note_content() {
         Stakes::Irreversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(note.contains("cannot be undone"));
 
@@ -1838,12 +1751,12 @@ fn engagement_note_content() {
         Stakes::Reversible,
         Evidence::Verified,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(note.contains("runtime") || note.contains("decide"));
 
     let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(note.contains("source"));
 
@@ -1853,7 +1766,7 @@ fn engagement_note_content() {
         Stakes::Inert,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     assert!(engagement.posture.note.is_none());
 }
 
@@ -1974,7 +1887,7 @@ fn narrowing_invariant_full_combinatorial() {
                                         evidence: 0.9,
                                     };
                                     let auth = authority_of(autonomy, attendance);
-                                    let engagement = derive(&r, &auth, slice);
+                                    let engagement = derive(&r, &auth);
                                     assert!(
                                         engagement.limits.is_at_most(&baseline),
                                         "widened: {:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?} slice={slice}",
@@ -2021,7 +1934,7 @@ fn narrowing_invariant_full_combinatorial_with_envelope() {
                                         evidence: 0.9,
                                     };
                                     let auth = authority_of(autonomy, attendance);
-                                    let engagement = derive(&r, &auth, slice);
+                                    let engagement = derive(&r, &auth);
                                     assert!(
                                         engagement.limits.is_at_most(&baseline),
                                         "widened: {:?}/{:?}/{:?}/{:?}/{:?}/{:?}/{:?} slice={slice}",
@@ -2052,9 +1965,9 @@ fn engagement_meet_never_widens_either_operand() {
         for &horizon in &[Horizon::Turn, Horizon::Session, Horizon::Durable] {
             for &stakes in &[Stakes::Reversible, Stakes::Costly] {
                 for &evidence in &[Evidence::None, Evidence::Cited, Evidence::Verified] {
-                    for slice in [true, false] {
+                    for _ in 0..1 {
                         let r = reading_simple(act, horizon, stakes, evidence);
-                        readings.push(derive(&r, &Authority::default(), slice));
+                        readings.push(derive(&r, &Authority::default()));
                     }
                 }
             }
@@ -2087,8 +2000,8 @@ fn lattice_meet_is_idempotent() {
                     let r = reading_simple(act, horizon, stakes, evidence);
                     for &autonomy in &Autonomy::ALL {
                         let auth = authority_of(autonomy, Attendance::Interactive);
-                        for slice in [true, false] {
-                            let e = derive(&r, &auth, slice);
+                        for _ in 0..1 {
+                            let e = derive(&r, &auth);
                             assert_eq!(e.limits.meet(&e.limits), e.limits);
                         }
                     }
@@ -2114,7 +2027,7 @@ fn lattice_meet_is_commutative() {
         .collect();
     let engagements: Vec<Engagement> = readings
         .iter()
-        .map(|r| derive(r, &Authority::default(), true))
+        .map(|r| derive(r, &Authority::default()))
         .collect();
     for i in 0..engagements.len() {
         for j in (i + 1)..engagements.len().min(i + 20) {
@@ -2131,7 +2044,7 @@ fn lattice_meet_is_associative() {
     for &act in &Act::ALL {
         for &stakes in &Stakes::ALL {
             let r = reading_simple(act, Horizon::Session, stakes, Evidence::None);
-            limits_list.push(derive(&r, &Authority::default(), true).limits);
+            limits_list.push(derive(&r, &Authority::default()).limits);
         }
     }
     for i in 0..limits_list.len() {
@@ -2155,7 +2068,7 @@ fn lattice_unrestricted_is_identity() {
         .flat_map(|&act| {
             Stakes::ALL.iter().map(move |&stakes| {
                 let r = reading_simple(act, Horizon::Session, stakes, Evidence::None);
-                derive(&r, &Authority::default(), true).limits
+                derive(&r, &Authority::default()).limits
             })
         })
         .collect();
@@ -2164,68 +2077,6 @@ fn lattice_unrestricted_is_identity() {
         assert_eq!(Limits::unrestricted().meet(limits), *limits);
         assert!(limits.is_at_most(&Limits::unrestricted()));
     }
-}
-
-#[test]
-fn lattice_widening_any_field_is_detected() {
-    let narrow = Limits {
-        required_domains: DomainSet::only(["filesystem"]),
-        spend_ceiling_usd: Some(0.5),
-        approval_ceiling: ApprovalCeiling::Ask,
-        permission_ceiling: PermissionCeiling::ReadOnly,
-        min_satisfaction: Satisfaction::Attested,
-        required_modalities: BTreeSet::from([Modality::Image]),
-    };
-    let widened = vec![
-        Limits {
-            required_domains: DomainSet::All,
-            ..narrow.clone()
-        },
-        Limits {
-            spend_ceiling_usd: Some(5.0),
-            ..narrow.clone()
-        },
-        Limits {
-            approval_ceiling: ApprovalCeiling::AutoApprove,
-            ..narrow.clone()
-        },
-        Limits {
-            permission_ceiling: PermissionCeiling::FullAccess,
-            ..narrow.clone()
-        },
-        Limits {
-            min_satisfaction: Satisfaction::Asserted,
-            ..narrow.clone()
-        },
-        Limits {
-            required_modalities: BTreeSet::new(),
-            ..narrow.clone()
-        },
-    ];
-    for candidate in &widened {
-        assert!(
-            !candidate.is_at_most(&narrow),
-            "widening went undetected: {:?}",
-            candidate
-        );
-    }
-}
-
-#[test]
-fn domain_set_meet_and_at_most_laws() {
-    let all = DomainSet::All;
-    let only_ab = DomainSet::only(["a", "b"]);
-    let only_bc = DomainSet::only(["b", "c"]);
-    let only_b = DomainSet::only(["b"]);
-
-    assert_eq!(all.meet(&only_ab), only_ab);
-    assert_eq!(only_ab.meet(&all), only_ab);
-    assert_eq!(only_ab.meet(&only_bc), only_b);
-
-    assert!(only_ab.is_at_most(&all));
-    assert!(only_b.is_at_most(&only_ab));
-    assert!(!only_ab.is_at_most(&only_b));
-    assert!(!all.is_at_most(&only_ab));
 }
 
 // ================================================================
@@ -3136,73 +2987,6 @@ fn resolution_note_reaches_model() {
 // Part 17: Domain and capability slicing
 // ================================================================
 
-#[test]
-fn slicing_keeps_orientation_floor() {
-    let r = reading_simple(
-        Act::Converse,
-        Horizon::Immediate,
-        Stakes::Inert,
-        Evidence::None,
-    );
-    let engagement = derive(&r, &Authority::default(), true);
-    for domain in vak_intent::FLOOR_DOMAINS.iter() {
-        assert!(
-            engagement.limits.required_domains.contains(domain),
-            "floor domain `{}` must survive slicing",
-            domain
-        );
-    }
-}
-
-#[test]
-fn slicing_withheld_gives_the_orientation_floor() {
-    let r = reading_simple(
-        Act::Converse,
-        Horizon::Immediate,
-        Stakes::Inert,
-        Evidence::None,
-    );
-    let engagement = derive(&r, &Authority::default(), false);
-    assert_eq!(
-        engagement.limits.required_domains,
-        Engagement::orienting().limits.required_domains
-    );
-}
-
-#[test]
-fn below_floor_confidence_gives_the_orientation_floor() {
-    let resolution = resolve(
-        &req("zorble frobnicate"),
-        &Declared::default(),
-        &Authority::default(),
-        &ResolverConfig::default(),
-    );
-    let intent = resolution.intent();
-    assert_eq!(intent.provenance.tier, Tier::General);
-    assert_eq!(
-        intent.engagement.limits.required_domains,
-        Engagement::orienting().limits.required_domains
-    );
-}
-
-/// `DomainSet::All` has exactly one meaning — everything — and only a
-/// disabled kernel produces it.
-#[test]
-fn only_a_disabled_kernel_is_unconstrained() {
-    let config = ResolverConfig {
-        enabled: false,
-        ..ResolverConfig::default()
-    };
-    let intent = resolve(
-        &req("zorble frobnicate"),
-        &Declared::default(),
-        &Authority::default(),
-        &config,
-    )
-    .intent();
-    assert!(intent.engagement.limits.required_domains.is_unconstrained());
-}
-
 // ================================================================
 // Part 18: Capacity is never capped by a reading
 // ================================================================
@@ -3216,7 +3000,7 @@ fn a_reading_carries_no_capacity_limit() {
     for &act in &Act::ALL {
         for &horizon in &Horizon::ALL {
             let r = reading_simple(act, horizon, Stakes::Inert, Evidence::None);
-            let limits = derive(&r, &Authority::default(), true).limits;
+            let limits = derive(&r, &Authority::default()).limits;
             assert_eq!(
                 limits.spend_ceiling_usd, None,
                 "{act:?}/{horizon:?}: no spend cap without a grant"
@@ -3342,7 +3126,7 @@ fn prompt_note_for_ambiguous_high_stakes() {
         Evidence::None,
     );
     r.clarity = Clarity::Ambiguous;
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(
         note.contains("ask") || note.contains("question") || note.contains("ambiguous"),
@@ -3354,7 +3138,7 @@ fn prompt_note_for_ambiguous_high_stakes() {
 fn prompt_note_for_state_assumption() {
     let mut r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
     r.clarity = Clarity::Ambiguous;
-    let engagement = derive(&r, &Authority::default(), true);
+    let engagement = derive(&r, &Authority::default());
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(
         note.contains("under-specified") || note.contains("assumption"),
@@ -3371,7 +3155,7 @@ fn prompt_note_for_deferred_work() {
         Evidence::None,
     );
     let auth = authority_of(Autonomy::Delegated, Attendance::Unattended);
-    let engagement = derive(&r, &auth, true);
+    let engagement = derive(&r, &auth);
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(
         note.contains("Nobody") || note.contains("queued"),
@@ -3771,7 +3555,7 @@ fn thousands_of_engagement_matrix_combinations() {
                     for &attendance in &Attendance::ALL {
                         let r = reading_simple(act, Horizon::Session, stakes, evidence);
                         let auth = authority_of(autonomy, attendance);
-                        let engagement = derive(&r, &auth, true);
+                        let engagement = derive(&r, &auth);
                         assert!(engagement.limits.is_at_most(&Limits::unrestricted()));
                         count += 1;
                     }
@@ -3789,9 +3573,9 @@ fn thousands_of_lattice_meet_pairs() {
         for &horizon in &Horizon::ALL {
             for &stakes in &Stakes::ALL {
                 for &evidence in &Evidence::ALL {
-                    for slice in [true, false] {
+                    for _ in 0..1 {
                         let r = reading_simple(act, horizon, stakes, evidence);
-                        engagements.push(derive(&r, &Authority::default(), slice));
+                        engagements.push(derive(&r, &Authority::default()));
                     }
                 }
             }
@@ -3815,45 +3599,6 @@ fn thousands_of_lattice_meet_pairs() {
     assert!(
         tested >= 10_000,
         "should have tested ~10k pairs, got {}",
-        tested
-    );
-}
-
-#[test]
-fn thousands_of_capability_slice_intersections() {
-    let domains_list: &[&[&str]] = &[
-        &["filesystem", "memory"],
-        &["filesystem", "memory", "live-data", "web"],
-        &["filesystem", "memory", "code-exec", "vcs"],
-        &["filesystem", "memory", "documents", "web", "live-data"],
-        &["filesystem", "memory", "messaging", "orchestration"],
-        &["filesystem", "memory", "orchestration", "documents"],
-        &["filesystem", "memory", "code-exec", "vcs", "live-data"],
-        &["filesystem", "memory", "observability", "code-exec"],
-    ];
-    let baseline = Limits::unrestricted();
-    let mut tested = 0u64;
-    for i in 0..domains_list.len() {
-        for j in 0..domains_list.len() {
-            let mut a = Limits::unrestricted();
-            a.required_domains = DomainSet::only(domains_list[i].iter().copied());
-            let mut b = Limits::unrestricted();
-            b.required_domains = DomainSet::only(domains_list[j].iter().copied());
-            let met = a.meet(&b);
-            assert!(met.is_at_most(&a), "meet not below lhs: {} & {}", i, j);
-            assert!(met.is_at_most(&b), "meet not below rhs: {} & {}", i, j);
-            assert!(
-                met.is_at_most(&baseline),
-                "meet not below baseline: {} & {}",
-                i,
-                j
-            );
-            tested += 1;
-        }
-    }
-    assert!(
-        tested >= 64,
-        "should have tested {} domain combinations",
         tested
     );
 }
@@ -4046,23 +3791,6 @@ fn pipeline_audited_work_requires_attested() {
 }
 
 #[test]
-fn pipeline_cited_work_adds_live_data_domain() {
-    let intent = resolve_text("research the history with cited sources");
-    assert_eq!(intent.reading.evidence, Evidence::Cited);
-    assert!(
-        intent
-            .engagement
-            .limits
-            .required_domains
-            .contains("live-data")
-    );
-    assert_eq!(
-        intent.engagement.limits.min_satisfaction,
-        Satisfaction::Cited
-    );
-}
-
-#[test]
 fn pipeline_long_horizon_opens_commitment() {
     let intent = resolve_text("check the cloud bill every day and alert me");
     assert_eq!(intent.reading.horizon, Horizon::Durable);
@@ -4137,7 +3865,7 @@ fn authority_stakes_autonomy_hil_matrix() {
                 for &horizon in &[Horizon::Turn, Horizon::Durable] {
                     let r = reading_simple(Act::Modify, horizon, stakes, Evidence::None);
                     let auth = authority_of(autonomy, attendance);
-                    let engagement = derive(&r, &auth, true);
+                    let engagement = derive(&r, &auth);
 
                     if stakes == Stakes::Irreversible {
                         // Someone present: interrupt. Nobody present and the
@@ -4194,23 +3922,6 @@ fn regression_inflected_evidence_words_match() {
         intent.engagement.limits.min_satisfaction,
         Satisfaction::Observed
     );
-}
-
-#[test]
-fn regression_disjoint_domain_meet_collapses_to_empty() {
-    let a = Limits {
-        required_domains: DomainSet::only(["vcs"]),
-        ..Limits::unrestricted()
-    };
-    let b = Limits {
-        required_domains: DomainSet::only(["live-data"]),
-        ..Limits::unrestricted()
-    };
-    let met = a.meet(&b);
-    assert_eq!(met.required_domains, DomainSet::Empty);
-    assert!(met.is_at_most(&a));
-    assert!(met.is_at_most(&b));
-    assert!(met.is_at_most(&Limits::unrestricted()));
 }
 
 #[test]

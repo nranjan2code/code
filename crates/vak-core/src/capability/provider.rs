@@ -434,7 +434,6 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
     use std::time::Duration;
-    use vak_intent::Act;
 
     #[tokio::test]
     async fn starting_the_registry_does_not_keep_its_core_alive() {
@@ -453,49 +452,6 @@ mod tests {
         })
         .await
         .expect("the capability loop must release CoreInner after its owner drops");
-    }
-
-    /// The act → domain table lives in the kernel (`vak_intent::engage`);
-    /// this crate only parses the names. A second copy of the table here
-    /// drifted once already.
-    fn required_for(act: Act) -> BTreeSet<Domain> {
-        let reading = vak_intent::Reading {
-            act,
-            confidence: 0.9,
-            ..vak_intent::Reading::general()
-        };
-        let engagement = vak_intent::derive(&reading, &vak_intent::Authority::default(), true);
-        engagement
-            .limits
-            .required_domains
-            .iter()
-            .map(|name| Domain::parse(name))
-            .collect()
-    }
-
-    #[test]
-    fn every_act_that_produces_a_fact_can_reach_a_live_source() {
-        for act in [Act::Answer, Act::Locate, Act::Analyze, Act::Operate] {
-            assert!(
-                required_for(act).contains(&Domain::LiveData),
-                "{act:?} must be able to reach a live source"
-            );
-        }
-    }
-
-    #[test]
-    fn a_greeting_stays_narrow() {
-        let required = required_for(Act::Converse);
-        assert!(!required.contains(&Domain::CodeExec));
-        assert!(!required.contains(&Domain::LiveData));
-    }
-
-    #[test]
-    fn the_mcp_broker_serves_live_data_so_a_search_server_is_reachable() {
-        // This is the specific link that made "how is the weather" work:
-        // `mcp` must survive a slice that requires live data.
-        let required = required_for(Act::Answer);
-        assert!(Serves::from_labels(vak_mcp::McpTool::SERVES).serves_any(&required));
     }
 
     #[test]

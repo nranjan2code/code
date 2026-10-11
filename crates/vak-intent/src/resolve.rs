@@ -341,7 +341,7 @@ pub fn resolve(
         if !weak {
             all_weak = false;
         }
-        let (reading, mut engagement) = if weak {
+        let (reading, engagement) = if weak {
             // Nothing reached the bar for this part. Keep the facts that are
             // observations rather than inferences — attendance is a surface
             // fact, modalities come from attachments — and any risk the text
@@ -371,17 +371,12 @@ pub fn resolve(
                 axis_confidence: reading.axis_confidence,
                 ..general
             };
-            let engagement = Engagement::orienting().meet(&derive(&kept, authority, false));
+            let engagement = Engagement::general().meet(&derive(&kept, authority));
             (kept, engagement)
         } else {
-            let engagement = derive(&reading, authority, may_slice);
+            let engagement = derive(&reading, authority);
             (reading, engagement)
         };
-        // `slice_capabilities = false` switches capability narrowing off
-        // entirely — the surface included, not just the confident slice.
-        if !config.slice_capabilities {
-            engagement.limits.required_domains = crate::limits::DomainSet::All;
-        }
 
         let relation = match boundary {
             Boundary::Start => StrandRelation::Independent,
@@ -1338,9 +1333,7 @@ fn apply_to_strand(
     }
     reading.confidence = reading.axis_confidence.overall();
 
-    let may_slice =
-        config.slice_capabilities && reading.may_slice_capabilities(config.accept_confidence);
-    let fresh = derive(&reading, authority, may_slice);
+    let fresh = derive(&reading, authority);
     // What the part reaches for is the model's to refine; what it is allowed
     // to do is not.
     let previous = &strand.engagement;
@@ -1435,24 +1428,6 @@ mod tests {
     }
 
     #[test]
-    fn disabling_the_kernel_reproduces_the_general_engagement() {
-        let config = ResolverConfig {
-            enabled: false,
-            ..ResolverConfig::default()
-        };
-        let resolution = resolve(
-            &request("deploy everything to production right now"),
-            &Declared::default(),
-            &Authority::default(),
-            &config,
-        );
-        let intent = resolution.intent();
-        assert_eq!(intent.engagement, Engagement::general());
-        assert!(intent.engagement.limits.required_domains.is_unconstrained());
-        assert_eq!(intent.provenance.tier, Tier::General);
-    }
-
-    #[test]
     fn a_fully_declared_reading_is_tier_zero_and_reproducible() {
         let declared = Declared {
             act: Some(Act::Modify),
@@ -1493,26 +1468,6 @@ mod tests {
             &ResolverConfig::default(),
         );
         assert!(full.peek().reading.confidence > intent.reading.confidence);
-    }
-
-    /// Nothing recognisable: the orienting engagement (floor domains, general
-    /// posture) and a recommendation to escalate.
-    #[test]
-    fn unknown_input_falls_back_to_orienting_and_recommends_escalation() {
-        let resolution = resolve_text("zorble the frobnicator immediately");
-        match resolution {
-            Resolution::Escalate { partial, reason } => {
-                assert_eq!(partial.provenance.tier, Tier::General);
-                assert_eq!(
-                    partial.engagement.limits.required_domains,
-                    Engagement::orienting().limits.required_domains
-                );
-                assert!(!reason.is_empty());
-            }
-            Resolution::Settled(intent) => {
-                assert!(intent.reading.confidence >= 0.45);
-            }
-        }
     }
 
     /// What a human delegated applies whether or not the request was read:
@@ -1629,29 +1584,6 @@ mod tests {
         assert_eq!(after.engagement, before.engagement);
     }
 
-    /// A classifier that states no confidence is provisional: it may raise a
-    /// floor, it may not remove a tool.
-    #[test]
-    fn a_confidence_less_classification_does_not_slice() {
-        let partial = resolve_text("zorble the frobnicator").intent();
-        let after = apply_classification(
-            partial,
-            &[Classification {
-                act: Some("modify".into()),
-                ..Classification::default()
-            }],
-            "m",
-            "d",
-            &Authority::default(),
-            &ResolverConfig::default(),
-            false,
-        );
-        assert_eq!(
-            after.engagement.limits.required_domains,
-            Engagement::orienting().limits.required_domains
-        );
-    }
-
     /// A domain the classifier names counts as an answer on its own, and
     /// only names from the shared vocabulary are taken.
     #[test]
@@ -1682,74 +1614,7 @@ mod tests {
         assert_eq!(implied_stakes(Act::Answer), Stakes::Inert);
     }
 
-    /// Below the acceptance bar the turn gets the orientation floor, never a
-    /// guessed slice and never everything.
-    #[test]
-    fn provisional_readings_get_the_orientation_floor() {
-        let config = ResolverConfig {
-            accept_confidence: 0.99,
-            provisional_confidence: 0.0,
-            ..ResolverConfig::default()
-        };
-        let resolution = resolve(
-            &request("explain the deploy script"),
-            &Declared::default(),
-            &Authority::default(),
-            &config,
-        );
-        assert_eq!(
-            resolution.peek().engagement.limits.required_domains,
-            Engagement::orienting().limits.required_domains
-        );
-    }
-
-    #[test]
-    fn a_confident_reading_does_slice() {
-        let resolution = resolve_text("hello");
-        assert!(
-            !resolution
-                .peek()
-                .engagement
-                .limits
-                .required_domains
-                .is_empty()
-        );
-    }
-
     // ----------------------------------------------------------- strands ---
-
-    #[test]
-    fn a_compound_request_becomes_ordered_strands_with_the_union_of_domains() {
-        let intent = resolve_text("first explain the parser, then refactor it").intent();
-        assert_eq!(intent.strands.len(), 2);
-        assert_eq!(intent.strands[0].reading.act, Act::Answer);
-        assert_eq!(intent.strands[1].reading.act, Act::Modify);
-        assert_eq!(
-            intent.strands[1].relation,
-            StrandRelation::Sequential {
-                after: intent.strands[0].strand_id.clone()
-            }
-        );
-        // Composite: the consequential strand, widened by the other.
-        assert_eq!(intent.reading.act, Act::Modify);
-        assert!(intent.reading.alternate_acts.contains(&Act::Answer));
-        // The slice covers both parts.
-        let domains = &intent.engagement.limits.required_domains;
-        assert!(domains.contains("live-data"), "answer's domains lost");
-        assert!(domains.contains("code-exec"), "modify's domains lost");
-        // The order is in the user's own words; the model is not told about
-        // parts it was never shown, nor is the request quoted back at it.
-        let note = intent
-            .engagement
-            .posture
-            .note
-            .as_deref()
-            .unwrap_or_default();
-        assert!(!note.to_lowercase().contains("part "), "{note}");
-        for strand in &intent.strands {
-            assert!(!note.contains(strand.text.trim()), "quoted: {note}");
-        }
-    }
 
     #[test]
     fn independent_new_outputs_do_not_add_a_count_only_model_note() {
@@ -1759,71 +1624,6 @@ mod tests {
         .intent();
         assert!(intent.strands.len() > 1);
         assert!(intent.model_visible().is_none());
-    }
-
-    #[test]
-    fn timeboxed_schedule_labels_and_supply_list_do_not_expand_work_or_history() {
-        let intent = resolve_text(
-            "At the library, we're holding a 35-minute art session for 8 children: set up 5 minutes, painting 20 minutes, tidy up 10 minutes. We have $28: paper $16 and paint $12. Make an easy-to-share plan and supply list, with the budget adding up exactly.",
-        )
-        .intent();
-
-        assert_eq!(intent.reading.act, Act::Author);
-        assert_eq!(intent.strands.len(), 1);
-        assert_eq!(
-            intent.strands[0].engagement.posture.context,
-            crate::engage::ContextProfile::Recall
-        );
-        assert!(
-            !intent
-                .engagement
-                .limits
-                .required_domains
-                .contains("code-exec"),
-            "a timed activity label must not load code execution"
-        );
-        assert!(
-            !intent.engagement.limits.required_domains.contains("vcs"),
-            "a timed activity label or noun `list` must not request repository search"
-        );
-        assert!(!intent.reading.alternate_acts.contains(&Act::Modify));
-        assert!(!intent.reading.alternate_acts.contains(&Act::Locate));
-    }
-
-    #[test]
-    fn timed_phases_without_a_colon_do_not_turn_a_plan_into_workspace_changes() {
-        let intent = resolve_text(
-            "For our 30-minute neighborhood book swap for 6 people, welcome 5 minutes, exchanging 20 minutes, tidy up 5 minutes. Budget is $18: labels $6 and refreshments $12. Make a plan and cost breakdown suitable to share.",
-        )
-        .intent();
-
-        assert_ne!(
-            intent.reading.act,
-            Act::Modify,
-            "{:?}",
-            intent.provenance.signals
-        );
-        assert!(!intent.reading.alternate_acts.contains(&Act::Modify));
-        assert!(
-            intent
-                .strands
-                .iter()
-                .all(|strand| strand.reading.act != Act::Modify)
-        );
-        assert!(
-            !intent
-                .engagement
-                .limits
-                .required_domains
-                .contains("code-exec")
-        );
-        assert!(
-            !intent
-                .engagement
-                .limits
-                .required_domains
-                .contains("documents")
-        );
     }
 
     #[test]

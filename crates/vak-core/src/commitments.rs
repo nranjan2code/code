@@ -923,7 +923,7 @@ mod tests {
             },
             ..Reading::general()
         };
-        let engagement = vak_intent::derive(&reading, &vak_intent::Authority::default(), false);
+        let engagement = vak_intent::derive(&reading, &vak_intent::Authority::default());
         let thread_id = lineage.continued_thread().unwrap_or(strand_id).to_string();
         let mut intent = Intent::general(vak_intent::RESOLVER_VERSION);
         intent.strands = vec![vak_intent::Strand {
