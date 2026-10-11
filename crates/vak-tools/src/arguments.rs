@@ -41,12 +41,6 @@ fn read(schema: &Value, value: &mut Value) {
     if list {
         let items = schema.get("items");
         match value {
-            Value::String(text) => {
-                let lines = lines_of(text);
-                if !lines.is_empty() {
-                    *value = Value::Array(lines);
-                }
-            }
             Value::Object(fields)
                 if items.is_some_and(|items| {
                     accepts(items, "object")
@@ -120,42 +114,6 @@ fn scalar_text(value: &Value) -> Option<String> {
     }
 }
 
-/// Text sent where a list is asked: one item for each line. List markers
-/// are dropped only when every line carries one, so a line that merely
-/// starts with a dash or a digit is kept whole.
-fn lines_of(text: &str) -> Vec<Value> {
-    let lines: Vec<&str> = text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect();
-    let marked = lines.iter().all(|line| item_marker(line).is_some());
-    lines
-        .into_iter()
-        .map(|line| match item_marker(line).filter(|_| marked) {
-            Some(rest) => rest,
-            None => line,
-        })
-        .filter(|line| !line.is_empty())
-        .map(|line| Value::String(line.to_string()))
-        .collect()
-}
-
-/// `- item`, `* item`, `• item`, `1. item`, `1) item` → `item`.
-fn item_marker(line: &str) -> Option<&str> {
-    for bullet in ["- ", "* ", "• "] {
-        if let Some(rest) = line.strip_prefix(bullet) {
-            return Some(rest.trim_start());
-        }
-    }
-    let digits = line.chars().take_while(char::is_ascii_digit).count();
-    let rest = line.get(digits..)?;
-    (digits > 0)
-        .then(|| rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") ")))
-        .flatten()
-        .map(str::trim_start)
-}
-
 /// Text sent where a record is asked, when the record has exactly one
 /// required field that takes free text: the text is that field. A record
 /// with two such fields is never filled by cutting one text in two.
@@ -214,18 +172,16 @@ mod tests {
     }
 
     #[test]
-    fn a_list_sent_as_json_text_or_as_lines_is_its_items() {
+    fn a_list_sent_as_its_json_text_is_its_items_and_other_text_is_left() {
         let json_text = read_as(steps(), json!({"items": "[{\"label\": \"One\"}]"}));
         assert_eq!(json_text["items"], json!([{"label": "One"}]));
-        let lines = read_as(steps(), json!({"tags": "- red\n- green\n", "items": []}));
-        assert_eq!(lines["tags"], json!(["red", "green"]));
-        let unmarked = read_as(steps(), json!({"tags": "- red\ngreen", "items": []}));
-        assert_eq!(unmarked["tags"], json!(["- red", "green"]));
-        let empty = read_as(steps(), json!({"tags": "  ", "items": []}));
-        assert_eq!(
-            empty["tags"], "  ",
-            "nothing to read is left for validation"
-        );
+        // Found live: broken JSON read line by line became checklist items
+        // the person was shown. Text that is not a list's JSON is left as
+        // sent; reading lines out of it would be a guess.
+        for text in ["- red\n- green", "[ \"red\" ]\n]", "red"] {
+            let sent = json!({"tags": text, "items": []});
+            assert_eq!(read_as(steps(), sent.clone()), sent);
+        }
     }
 
     #[test]

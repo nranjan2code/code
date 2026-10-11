@@ -18,7 +18,6 @@ is lost and nothing is guessed:
 | Sent | Schema asks for | Read as |
 |---|---|---|
 | JSON text of a list or record | that list or record | the parsed value |
-| text | a list | one item for each line; list markers dropped only when every line has one |
 | one record that has the item's required fields | a list of records | a one-item list |
 | text | a record with exactly one required free-text field | that field |
 | a number or boolean | text | its text |
@@ -26,6 +25,8 @@ is lost and nothing is guessed:
 | `null` for a field that may be absent | anything | absent |
 
 It never cuts one text into two fields, never joins a list into one text,
+never reads lines out of a text as a list's items (found live: broken JSON
+read that way became checklist items the person was shown),
 and never fills a field with a value the call did not send (a `plan`
 deliverable sent as a bare name still lacks its `form`). Whatever it cannot
 read is left as sent, and validation refuses it by name.

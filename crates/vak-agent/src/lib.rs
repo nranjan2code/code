@@ -1883,7 +1883,7 @@ impl Agent {
         let mut card_answers: Vec<Option<String>> = Vec::new();
         // The deliverables the last plan check named, so the same gap is
         // named once.
-        let mut plan_check_named: Option<Vec<String>> = None;
+        let mut plan_checked = false;
         // Append-only requests within a turn (docs/design/68-context-
         // engine.md §7): the working-set plan and the tools array are each
         // resolved ONCE per turn and reused by every later step, so a
@@ -2835,10 +2835,9 @@ impl Agent {
                 }
                 // The model's own plan, checked against what this turn
                 // produced (docs/design/86-model-plans-runtime-checks.md
-                // §2.2). Nothing is discarded: the model is told only which
-                // declared deliverables have no receipt yet. The same gap
-                // after it was named ends the turn as it stands rather than
-                // asking again.
+                // §2.2). Nothing is discarded: the model is told once what the
+                // plan lists and what the turn produced. Whatever is still
+                // missing after that, the turn ends as it stands.
                 let still_missing: Vec<String> = {
                     let plan = self
                         .declared_plan
@@ -2855,23 +2854,11 @@ impl Agent {
                                 changed: receipts.has_execution_receipt(),
                                 checked: receipts.substantive_bash_calls > 0 && !verification_stale,
                             };
-                            let missing = plan_check::missing(plan, &produced);
-                            if missing.is_empty()
-                                || plan_check_named.as_deref()
-                                    == Some(
-                                        missing
-                                            .iter()
-                                            .map(|d| d.name.clone())
-                                            .collect::<Vec<_>>()
-                                            .as_slice(),
-                                    )
-                            {
+                            let gap = plan_check::gap(plan, &produced);
+                            if gap.is_empty() || std::mem::replace(&mut plan_checked, true) {
                                 Vec::new()
                             } else {
-                                let message = plan_check::missing_message(&missing);
-                                plan_check_named =
-                                    Some(missing.iter().map(|d| d.name.clone()).collect());
-                                vec![message]
+                                vec![gap.message()]
                             }
                         }
                         None => Vec::new(),

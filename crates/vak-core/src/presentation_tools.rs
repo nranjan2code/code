@@ -1666,6 +1666,21 @@ impl Tool for EmitCardTool {
                     }
                 }
             }
+            // A table's rows are lines: a table sent as one text is its
+            // lines, as the builder reads them.
+            if self.shape.name == "emit_table_card"
+                && let Some(Value::String(text)) = fields.get("rows")
+            {
+                let rows: Vec<Value> = text
+                    .lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(|line| Value::String(line.to_string()))
+                    .collect();
+                if !rows.is_empty() {
+                    fields.insert("rows".into(), Value::Array(rows));
+                }
+            }
             if self.shape.name == "emit_chart_card"
                 && matches!(
                     fields.get("semantic_type").and_then(Value::as_str),
@@ -2604,9 +2619,8 @@ mod tests {
         });
         sent(&checklist, &mut listed);
         assert_eq!(
-            listed["fields"],
-            serde_json::json!(["Owner: Ada", "Due: Friday"]),
-            "one line is one item; a line is never cut into a record's two fields"
+            listed["fields"], "- Owner: Ada\n- Due: Friday",
+            "text is not read as a list of records"
         );
     }
 

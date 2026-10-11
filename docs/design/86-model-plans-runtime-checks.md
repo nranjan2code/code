@@ -84,19 +84,31 @@ delivers, by the name the plan gave it.
 When the model ends the turn, the runtime reads the latest plan revision and
 the turn's receipts:
 
-- `card`: a card recorded this turn whose `answers` names it; cards that name
-  no deliverable cover the remaining card deliverables in emit order.
+- `card`: a card recorded this turn whose `answers` names it. A card that
+  names no planned deliverable is counted, never attributed: the planned
+  cards no card names are compared with those cards by number alone, and
+  the runtime does not say which one a card was.
 - `text`: the final text is non-empty.
 - `file`: a delivered-file receipt.
 - `change`: an execution or edit receipt.
 - `check`: a command run after the last file change.
 
 A deliverable with no receipt is missing. The runtime sends one control
-message naming exactly the missing deliverables, in the model's own words,
-and keeps what was already produced: the draft is not discarded and the
-model is not asked to audit anything. If the next step still leaves one
-missing, the turn ends partial and says which (`OutcomeStatus`), rather
-than looping.
+message for the turn, whatever changes afterwards, and keeps what was
+already produced: the draft is not discarded and the model is not asked to
+audit anything. The message says it comes from the runtime and not the
+person, lists what the plan names and what was observed (the planned cards
+no card names, how many cards were shown without a planned name, and each
+other deliverable with no receipt), and asks for what is missing or a plain
+reason. If the next step still leaves one missing, the turn ends as it
+stands rather than looping.
+
+Found live on 2026-10-11 (run_01a1293b-45c3-7f21-8fbf-bff3e2f9d3c6), before
+this wording: a card that named nothing was attributed to the first planned
+card by emit order, so the model was told the wrong one was missing; the
+check was sent again when the missing set changed; and the model took the
+unsigned message for the person, planned three more times and invented a
+`submit_plan` tool.
 
 A turn with no plan is not gated on guesses. What the runtime observed still
 gates it: an unresolved tool failure, and files changed after the last check.
