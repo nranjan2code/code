@@ -702,7 +702,6 @@ fn a_recurring_edit_is_durable() {
     let intent = resolve_text("every day, append the current date to log.txt");
     assert_eq!(intent.reading.act, Act::Modify);
     assert_eq!(intent.reading.horizon, Horizon::Durable);
-    assert!(intent.engagement.posture.open_commitment);
 }
 
 // ================================================================
@@ -3501,11 +3500,9 @@ fn pipeline_audited_work_requires_attested() {
 }
 
 #[test]
-fn pipeline_long_horizon_opens_commitment() {
+fn pipeline_long_horizon_renders_full_context() {
     let intent = resolve_text("check the cloud bill every day and alert me");
     assert_eq!(intent.reading.horizon, Horizon::Durable);
-    assert!(intent.engagement.posture.open_commitment);
-    assert!(intent.engagement.posture.managed);
     assert_eq!(intent.engagement.posture.context, ContextProfile::Full);
 }
 

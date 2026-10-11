@@ -6564,10 +6564,18 @@ impl Core {
         // knob is read, because a grant on one of them narrows the strands
         // that serve it. Nothing is written until the turn is about to run.
         let turn_authority = self.turn_authority();
+        // Durable work is asked for explicitly, never read from the request's
+        // words (docs/design/88-control-plane.md §12.1): `/until-done` or
+        // `/goal replace` opens a commitment and, under `auto`, managed work.
+        let durable = matches!(
+            vak_intent::parse_command(&prompt_text),
+            Some(vak_intent::Command::UntilDone { .. } | vak_intent::Command::GoalReplace { .. })
+        );
         let episode_plan = commitments::plan_episodes(
             self.scope().root(),
             &self.inner.config,
             &resolved_intent,
+            durable,
             chrono::Utc::now(),
         );
         let envelopes = episode_plan.envelopes();
@@ -6721,12 +6729,12 @@ impl Core {
         // enumeration instead. An explicit run-scoped mode still wins.
         let default_work_mode = match work_config.default_mode.as_str() {
             "managed" => WorkMode::Managed,
-            "auto" if engagement.posture.managed => WorkMode::Managed,
+            "auto" if durable => WorkMode::Managed,
             _ => WorkMode::Direct,
         };
         cfg.work_mode = work_mode.unwrap_or(default_work_mode);
         if cfg.work_mode == WorkMode::Auto {
-            cfg.work_mode = if engagement.posture.managed {
+            cfg.work_mode = if durable {
                 WorkMode::Managed
             } else {
                 WorkMode::Direct

@@ -267,11 +267,6 @@ fn explain(
     let posture = &intent.engagement.posture;
     println!();
     println!("posture");
-    println!(
-        "  work mode    {}",
-        if posture.managed { "managed" } else { "direct" }
-    );
-    println!("  commitment   {}", posture.open_commitment);
     println!("  human loop   {}", posture.hil.as_str());
     println!("  clarify      {}", posture.clarify.as_str());
     println!("  stop when    {}", posture.stop.as_str());

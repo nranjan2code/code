@@ -221,10 +221,6 @@ impl ContextProfile {
 /// The non-authority half of an engagement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Posture {
-    /// Run under managed-work admission rather than a direct turn.
-    pub managed: bool,
-    /// Open a durable commitment for this work.
-    pub open_commitment: bool,
     pub hil: HilMode,
     pub gate_fallback: GateFallback,
     pub clarify: ClarifyPolicy,
@@ -254,8 +250,6 @@ impl Engagement {
         Engagement {
             limits: Limits::unrestricted(),
             posture: Posture {
-                managed: false,
-                open_commitment: false,
                 hil: HilMode::Interrupt,
                 gate_fallback: GateFallback::Deny,
                 clarify: ClarifyPolicy::Proceed,
@@ -313,8 +307,6 @@ impl Posture {
         let b = other;
         {
             Posture {
-                managed: a.managed || b.managed,
-                open_commitment: a.open_commitment || b.open_commitment,
                 hil: if b.hil.caution_rank() > a.hil.caution_rank() {
                     b.hil
                 } else {
@@ -408,10 +400,6 @@ pub fn derive(reading: &Reading, authority: &Authority) -> Engagement {
     let hil = derive_hil(reading, authority);
     let delivery = derive_delivery(reading);
     let posture = Posture {
-        // Multi-step work runs under a plan; only work that outlives the
-        // session earns a durable commitment.
-        managed: reading.horizon.rank() >= Horizon::Session.rank(),
-        open_commitment: reading.horizon.opens_commitment(),
         hil,
         gate_fallback: GateFallback::Deny,
         clarify: derive_clarify(reading),
@@ -711,7 +699,7 @@ mod tests {
     }
 
     #[test]
-    fn durable_work_is_managed_opens_a_commitment_and_renders_full_context() {
+    fn durable_work_renders_full_context() {
         let r = reading(
             Act::Modify,
             Horizon::Durable,
@@ -719,8 +707,6 @@ mod tests {
             Evidence::Verified,
         );
         let engagement = derive(&r, &Authority::default());
-        assert!(engagement.posture.managed);
-        assert!(engagement.posture.open_commitment);
         assert_eq!(engagement.posture.context, ContextProfile::Full);
         assert_eq!(engagement.posture.stop, StopProfile::Verification);
         assert_eq!(

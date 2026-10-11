@@ -152,14 +152,15 @@ impl EpisodePlan {
 /// - a strand that replaces a thread with an open commitment opens the
 ///   successor and supersedes it — `/goal replace` on durable work yields
 ///   durable work;
-/// - any other strand opens a commitment only when it is itself durable and
-///   its reading is confident enough to carry an obligation.
+/// - any other strand opens a commitment only when the person asked for
+///   durable work explicitly (`durable`: `/until-done`, `/goal replace`).
 ///
 /// Empty when commitments are disabled or nothing here is durable.
 pub fn plan_episodes(
     sessions_home: &Path,
     config: &vak_config::Config,
     intent: &Intent,
+    durable: bool,
     now: chrono::DateTime<chrono::Utc>,
 ) -> EpisodePlan {
     if !config.commitment.enabled || intent.strands.is_empty() {
@@ -172,10 +173,6 @@ pub fn plan_episodes(
     };
     let mut plan = EpisodePlan::default();
     for strand in &intent.strands {
-        let durable = strand.engagement.posture.open_commitment
-            && strand
-                .reading
-                .may_open_commitment(config.intent.accept_confidence);
         let target = if let Some(existing) = on_thread(&strand.thread_id) {
             PlannedTarget::Existing {
                 commitment_id: existing.commitment_id.clone(),
@@ -220,6 +217,13 @@ pub fn begin_episodes(
     trace: Option<&vak_session::trace::TraceKey>,
 ) -> Vec<EpisodeHandle> {
     let ledger = CommitmentLedger::new(sessions_home).with_trace(trace);
+    // The obligation is the request's own words, without the command that
+    // asked for it to be durable.
+    let command = vak_intent::parse_command(prompt);
+    let prompt = command
+        .as_ref()
+        .and_then(|command| command.text())
+        .unwrap_or(prompt);
     let mut handles = Vec::new();
     for planned in &plan.strands {
         let Some(strand) = intent
@@ -948,7 +952,11 @@ mod tests {
         session_id: &str,
         cwd: &Path,
     ) -> Option<EpisodeHandle> {
-        let plan = plan_episodes(sessions_home, config, intent, chrono::Utc::now());
+        let durable = matches!(
+            vak_intent::parse_command(prompt),
+            Some(vak_intent::Command::UntilDone { .. } | vak_intent::Command::GoalReplace { .. })
+        );
+        let plan = plan_episodes(sessions_home, config, intent, durable, chrono::Utc::now());
         begin_episodes(
             sessions_home,
             config,
@@ -969,7 +977,7 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_horizon_opens_no_commitment() {
+    fn a_request_with_no_explicit_ask_opens_no_commitment() {
         let dir = tempfile::tempdir().unwrap();
         let handle = begin_episode(
             dir.path(),
@@ -990,7 +998,7 @@ mod tests {
             dir.path(),
             &config(),
             &intent_with(Evidence::None, Horizon::Durable, 0.9),
-            "watch the cloud bill every day",
+            "/until-done watch the cloud bill every day",
             "s1",
             dir.path(),
         )
@@ -1137,8 +1145,8 @@ mod tests {
     fn separate_durable_requests_open_separate_commitments() {
         let dir = tempfile::tempdir().unwrap();
         for (turn, prompt) in [
-            ("t1.0", "watch the bill daily"),
-            ("t2.0", "watch the logs daily"),
+            ("t1.0", "/until-done watch the bill daily"),
+            ("t2.0", "/until-done watch the logs daily"),
         ] {
             let intent = intent_on(
                 Evidence::None,
@@ -1190,7 +1198,7 @@ mod tests {
                 merges: Vec::new(),
             },
         );
-        let plan = plan_episodes(dir.path(), &config(), &intent, now);
+        let plan = plan_episodes(dir.path(), &config(), &intent, true, now);
         assert!(plan.envelopes().contains_key("t1.0"));
         assert_eq!(plan.enveloped_commitments(), vec![id.clone()]);
 
@@ -1203,7 +1211,7 @@ mod tests {
                 },
             ))
             .unwrap();
-        let plan = plan_episodes(dir.path(), &config(), &intent, now);
+        let plan = plan_episodes(dir.path(), &config(), &intent, true, now);
         assert!(
             plan.envelopes().is_empty(),
             "a revoked grant is not offered"
@@ -1270,10 +1278,10 @@ mod tests {
         assert_eq!(maintain_all(data.path()).await.resumed, vec![id]);
     }
 
-    /// A stray recurrence-ish word must not leave a month-long obligation
-    /// behind. Weak horizon evidence declines to open one.
+    /// A recurrence word alone opens nothing: durable work is asked for
+    /// explicitly (docs/design/88-control-plane.md §12.1).
     #[test]
-    fn a_weak_horizon_reading_opens_nothing() {
+    fn a_recurrence_word_alone_opens_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let handle = begin_episode(
             dir.path(),
@@ -1296,7 +1304,7 @@ mod tests {
                 dir.path(),
                 &config,
                 &intent_with(Evidence::None, Horizon::Durable, 0.9),
-                "watch the bill every day",
+                "/until-done watch the bill every day",
                 "s1",
                 dir.path(),
             )
@@ -1330,7 +1338,7 @@ mod tests {
             dir.path(),
             &config(),
             &intent_with(Evidence::Verified, Horizon::Durable, 0.9),
-            "migrate the schema and prove it works",
+            "/until-done migrate the schema and prove it works",
             "s1",
             dir.path(),
         )
@@ -1443,7 +1451,7 @@ mod tests {
             dir.path(),
             &config(),
             &intent_with(Evidence::None, Horizon::Durable, 0.9),
-            "tell me when the report lands, every day",
+            "/until-done tell me when the report lands, every day",
             "s1",
             dir.path(),
         )
@@ -1540,7 +1548,7 @@ mod tests {
             dir.path(),
             &config(),
             &intent_with(Evidence::None, Horizon::Durable, 0.9),
-            "check the bill every day",
+            "/until-done check the bill every day",
             "s1",
             dir.path(),
         )
@@ -1585,7 +1593,7 @@ mod tests {
             dir.path(),
             &config(),
             &intent_with(Evidence::None, Horizon::Durable, 0.9),
-            "migrate the schema every night",
+            "/until-done migrate the schema every night",
             "s1",
             dir.path(),
         )
@@ -1616,7 +1624,7 @@ mod tests {
             dir.path(),
             &config,
             &intent_with(Evidence::None, Horizon::Durable, 0.9),
-            "watch it every day",
+            "/until-done watch it every day",
             "s1",
             dir.path(),
         )

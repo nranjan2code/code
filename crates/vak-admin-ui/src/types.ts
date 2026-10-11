@@ -1270,8 +1270,6 @@ export interface Provenance {
 }
 
 export interface Posture {
-  managed: boolean;
-  open_commitment: boolean;
   hil: "interrupt" | "envelope" | "review" | "defer";
   gate_fallback: "deny" | "defer";
   clarify: "proceed" | "state-assumption" | "ask";

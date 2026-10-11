@@ -957,68 +957,6 @@ function IntentSimulator() {
               </div>
             </div>
 
-            {/* Commitment Engine Promotion Decision Callout */}
-            <div
-              class="commitment-promotion-banner"
-              classList={{
-                "banner-promoted": exp().engagement.posture.open_commitment,
-                "banner-ephemeral": !exp().engagement.posture.open_commitment,
-              }}
-            >
-              <div class="banner-icon-wrap">
-                <Show
-                  when={exp().engagement.posture.open_commitment}
-                  fallback={
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="banner-icon">
-                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                    </svg>
-                  }
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="banner-icon">
-                    <circle cx="12" cy="12" r="10" />
-                    <polyline points="12 6 12 12 14 14" />
-                  </svg>
-                </Show>
-              </div>
-              <div class="banner-body">
-                <div class="banner-title">
-                  <strong>
-                    {exp().engagement.posture.open_commitment
-                      ? "Commitment Engine: Promotion to Durable Obligation"
-                      : "Commitment Engine: Ephemeral Interactive Turn"}
-                  </strong>
-                  <span
-                    class="chip"
-                    classList={{
-                      "chip-tone-success": exp().engagement.posture.open_commitment,
-                      "chip-tone-info": !exp().engagement.posture.open_commitment,
-                    }}
-                  >
-                    {exp().engagement.posture.open_commitment ? "durable commitment" : "direct dispatch"}
-                  </span>
-                </div>
-                <div class="banner-desc">
-                  <Show
-                    when={exp().engagement.posture.open_commitment}
-                    fallback={
-                      <>
-                        This request is classified as single-turn work (horizon: <strong>{exp().reading.horizon}</strong>).
-                        The agent executes it directly in-memory. Zero commitment debt is created, keeping your portfolio
-                        ledger clean and avoiding unnecessary scheduled polling or inbox reminders.
-                      </>
-                    }
-                  >
-                    <>
-                      Because horizon is <strong>{exp().reading.horizon}</strong> (≥ session), Vakyartha promotes this work
-                      into a durable, tracked <strong>Commitment</strong> with independent audit lineage. Work cannot
-                      close as fulfilled until satisfaction criteria achieve at least{" "}
-                      <span class="chip chip-phrase">{exp().engagement.limits.min_satisfaction}</span> evidence.
-                    </>
-                  </Show>
-                </div>
-              </div>
-            </div>
-
             {/* Derived Safety Envelope & Capability Slicing Grid */}
             <div class="intent-engagement-grid">
               {/* Left Column: Safety Posture & Envelope */}
@@ -1030,12 +968,6 @@ function IntentSimulator() {
                   </div>
                 </div>
                 <div class="posture-specs-table">
-                  <div class="spec-row">
-                    <span class="spec-label">Managed Execution:</span>
-                    <span class="spec-val">
-                      <strong>{exp().engagement.posture.managed ? "Yes (Durable Session)" : "No (Direct Interactive)"}</strong>
-                    </span>
-                  </div>
                   <div class="spec-row">
                     <span class="spec-label">Approval Ceiling:</span>
                     <span class="spec-val">

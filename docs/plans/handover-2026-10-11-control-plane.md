@@ -3,39 +3,60 @@
 ## Prompt for a fresh session
 
 "Continue the control plane in /Users/nisheethranjan/Projects/Vak/code on
-main, inside stage C6. Read AGENTS.md (especially 'No word lists, no tuned
-limits' and 'Investigating a failure'), docs/design/88-control-plane.md
-(Status, §5a, 'Open in C6', 'Carried into later stages'), doc 87, then this
-file's 'Where the answer document stands' and Rules. The working tree holds
-the answer document as one local commit that is NOT pushed and has NOT had
-the full gate: first run `cargo fmt --all --check`, clippy `-D warnings`
-and `cargo test --workspace`, fix what it shows, then finish the steps
-listed under 'Where the answer document stands', verify with real turns
-through the web app on local Ollama read back from
-`/runs/{id}/decisions`, update the docs, push, and `cargo clean`. Work
-autonomously, ask nothing, report short progress lines. Main only: no
-branches, PRs or worktrees. No provider, model or tool is first-class.
-Never blame the model. Ollama is the dev route; a hosted route is used only
-when the maintainer asks for a one-off check."
+main, inside stage C6. Everything is committed and pushed; the full gate
+was green at the last commit. Read AGENTS.md (especially 'No word lists,
+no tuned limits' and 'Investigating a failure'), docs/design/88-control-plane.md
+(Status, §5a, §12, 'Open in C6', 'Carried into later stages'), then this
+file's 'Where C6 stands' and Rules. Take the next item under 'Next, in
+order', finish it whole (code, tests, docs, screens), run the gate, commit
+and push, then the next. Verify behaviour changes with real turns through
+the web app on local Ollama, read back from `/runs/{id}/decisions` or
+`vak runs show <id>`. Work autonomously, report short progress lines, ask
+only on a genuine product decision. Main only: no branches, PRs or
+worktrees. No provider, model or tool is first-class. Never blame the
+model. Ollama is the dev route; a hosted route (OpenAI Responses,
+`gpt-6-luna`, key in the installed home) only for a few one-off checks."
 
-## Where the answer document stands
+## Where C6 stands (end of the 2026-10-11 sessions)
 
-Pushed with the gate green: the answer document (doc 87 §2, doc 88 C6).
-The model answers with one loop-owned `answer` tool of blocks built at run
-time from the admitted card tools; card tools are not offered or callable
-by name; the per-card loop paths are removed; the outline reads each
-block's `answers`; a later `answer` in a turn replaces the earlier one;
-`AcceptCall` is recorded for `answer`. Seen live on Ollama and once on
-Luna (run ids in doc 88 Status). The faults the live runs found are fixed
-and listed there.
+Pushed, gate green, seen live: the answer document (doc 87 §2). The model
+answers with one loop-owned `answer` tool of blocks built at run time from
+the admitted card tools; card tools are not callable by name; a later
+`answer` in a turn replaces the earlier one; the outline places each
+block; cards fit a phone (the harness checks all 113 types at 260/293/358
+px). Also done and pushed: `checkpoint_before_effect` removed; the
+repeated-answer check rests on the repeat alone; inspection receipts from
+declarations; the unknown-tool and uncited-source texts in `vak_control`,
+and the citation check applied per `answer` block; `vak runs show` prints
+decisions; the outcome requirements guessed from words removed (verb,
+extension and Office-term lists, the unrequested-file gate); durable work
+only when asked explicitly (`/until-done`, `/goal replace`; maintainer's
+choice), `Posture::managed`/`open_commitment` removed. Run ids are in
+doc 88's Status and 'Open in C6'.
 
 Next, in order:
-1. Doc 88 'Open in C6': the open observations from the C6 live runs (a
-   Word request answered "cannot" once, cramped `details` card at 390 px,
-   `office_apply` anchors for paragraphs its own ops added).
-2. Run `scripts/measure_answer_form.py` with the real block schema on each
+1. §5a time constants into configuration, shown in Settings with their
+   shipped defaults: `PROBE_REQUEST_TIMEOUT` (vak-core), gateway
+   `WAIT_TIMEOUT`, bash `DEFAULT_TIMEOUT_MS` (in the worker: have a tool
+   declare its time-limit argument and the loop fill it from config when
+   the call names none, rather than a tool-name check), `SCRIPT_TIMEOUT_MS`,
+   hooks `DEFAULT_TIMEOUT_MS`, `QUESTION_TIMEOUT` and
+   `HTTP_APPROVAL_TIMEOUT`. Follow the `[control]` pattern
+   (`/config/control`, client Settings and admin editors).
+2. The name tables left in the loop's receipts (doc 88 'Carried'): the
+   `write | edit | patch | remember | propose_skill` count, the
+   `edit | write | patch` code-change list, `call.name == "bash"` with
+   `is_substantive_command`, `find_tools` in `looks_something_up`; and in
+   Core the `canonical == "plan"` read. Replace with tool declarations.
+3. The horizon reading still sets the context profile (`derive_context`)
+   and an unattended gate's fallback (`Authority::gate_fallback`).
+4. A wire that refuses a named tool choice is not learned; the hosted
+   named tool choice has not been sent live (needs a hosted check).
+5. `scripts/measure_answer_form.py` with the real block schema on each
    configured route.
-3. The rest of doc 88's 'Carried into later stages', then C7.
+6. Open with no contract fault found: one "cannot create Word files"
+   answer with `office_apply` offered but deferred (doc 88).
+7. Then C7 (doc 88 §11).
 
 ## Rules the maintainer set (all still in force)
 
@@ -54,9 +75,10 @@ Next, in order:
   crate and are called by the loop; the design must be solid, fast,
   efficient, self-healing and able to evolve under review.
 - Keep AGENTS.md and every design doc true as the code changes.
-- Disk: `cargo clean` after every full test run and after each commit, then
-  build only `cargo build -p vak -p vak-server --bins`. Run tests with
-  `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0`.
+- Disk: build lean (`CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0`) and
+  keep `target/` warm (about 32 GB after full gates). `cargo clean` only when
+  `target/` passes 45 GB or free space runs low, and at the end of a
+  session, then build `cargo build -p vak -p vak-server --bins`.
 - Tokens: Claude Pro plan. Keep reads narrow, filter command output, commit
   each verified step, and refresh this file before the session limit.
 - Live tests use the real installed home (`~/vak-home`) and local Ollama.

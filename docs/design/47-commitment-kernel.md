@@ -104,7 +104,7 @@ subsystem.
 | Axis | Values | Drives |
 |---|---|---|
 | `act` | `converse` `answer` `locate` `analyze` `author` `modify` `operate` `verify` `orchestrate` `govern` | which admitted tools are loaded, output shape, stop profile |
-| `horizon` | `immediate` `turn` `session` `durable` | managed admission, commitment promotion, context profile |
+| `horizon` | `immediate` `turn` `session` `durable` | context profile, unattended gate fallback |
 | `stakes` | `inert` `reversible` `costly` `irreversible` | approval ceiling, checkpoint-before |
 | `evidence` | `none` `cited` `verified` `audited` | **minimum satisfaction strength to close** |
 | `clarity` | `clear` `underspecified` `ambiguous` | ask vs. state-an-assumption |
@@ -161,7 +161,7 @@ does, never from what it is about ("customer", "payment", "live" are topics).
 #### Confidence is per-axis
 
 A single scalar conflates independent questions. Capability slicing depends
-only on `act`; commitment promotion only on `horizon`. Gating both on the
+only on `act`; the context profile only on `horizon`. Gating both on the
 weakest axis meant an unsignalled horizon — most requests, since few say how
 long they will take — suppressed slicing the act reading was certain about.
 
@@ -471,11 +471,15 @@ nobody replied is precisely the autonomy this system exists to prevent.
 
 ### The commitment
 
-`horizon = durable` — work that outlives the session: a recurrence, a watch,
-"every day" — promotes a resolution into a durable **commitment** in its own
-append-only ledger, independent of any session. Multi-step work inside one
-session runs managed, under a plan, and opens no commitment; below that,
-intents resolve and die inside the turn — a simple prompt pays nothing.
+Durable work is asked for explicitly, never read from the request's words
+(docs/design/88-control-plane.md §12.1): `/until-done <request>` (or
+`/goal replace` on an open commitment's thread) opens a durable
+**commitment** in its own append-only ledger, independent of any session,
+and with `[work] default_mode = "auto"` runs the turn managed, under a plan.
+A later strand on that thread works on the same commitment. Anything else
+resolves and ends inside the turn; a simple prompt pays nothing. The
+reader's `horizon` still sets the context profile and an unattended gate's
+fallback; it no longer opens a commitment or selects managed work.
 
 A commitment is held by the Agent that took it on: its ledger is in the
 Agent's home (docs/design/64-agent-owned-platform.md), the `commitments`
@@ -749,7 +753,7 @@ A consolidation, not an addition:
 
 | Removed / demoted | Becomes |
 |---|---|
-| `is_managed_work_request` | **deleted**; managed-ness follows from `horizon` |
+| `is_managed_work_request` | **deleted**; managed work is asked for explicitly (`/until-done`) |
 | `WorkMode::Auto`'s keyword branch | the reading |
 | Session-scoped `WorkContract` as the only durable work state | commitment-scoped (staged) |
 | Stop policy's completion role | narrows to "did this episode terminate cleanly" |

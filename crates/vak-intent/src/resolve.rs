@@ -1521,7 +1521,6 @@ mod tests {
             assert_eq!(intent.reading.horizon, *horizon, "{text}");
             assert_eq!(intent.reading.stakes, *stakes, "{text}");
             assert_eq!(intent.reading.evidence, *evidence, "{text}");
-            assert!(!intent.engagement.posture.open_commitment, "{text}");
             assert_ne!(
                 intent.engagement.limits.approval_ceiling,
                 crate::ApprovalCeiling::Ask,
@@ -1531,7 +1530,6 @@ mod tests {
         // A recurrence adjective names a thing, not a schedule.
         let adjective = resolve_text("check whether the nightly job ran");
         assert_ne!(adjective.reading.horizon, Horizon::Durable);
-        assert!(!adjective.engagement.posture.open_commitment);
         let adverb = resolve_text("check the cloud bill nightly and alert me");
         assert_eq!(adverb.reading.horizon, Horizon::Durable);
         // And the ones that should still fire, still do.
@@ -1539,7 +1537,6 @@ mod tests {
         assert_eq!(deploy.reading.stakes, Stakes::Irreversible);
         let nightly = resolve_text("check the cloud bill every day and alert me");
         assert_eq!(nightly.reading.horizon, Horizon::Durable);
-        assert!(nightly.engagement.posture.open_commitment);
         let cited = resolve_text("summarise the paper and cite your sources");
         assert_eq!(cited.reading.evidence, Evidence::Cited);
     }

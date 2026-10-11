@@ -134,9 +134,12 @@ below are not built.
 - The commitment satisfaction lattice (`vak-commit/src/satisfy.rs`) is
   already pure and stays in `vak-commit` until the judge takes a
   `vak-session` dependency for criteria (C7, with `vak-eval`).
-- C6: commitments opened from the reading's horizon
-  (`may_open_commitment`) and managed mode from the horizon still follow
-  the reading; they go with the guessed outcome requirements.
+- C6 (done, maintainer's choice 2026-10-11): a commitment opens and work
+  runs managed only when asked explicitly (`/until-done`, `/goal replace`);
+  `Posture::managed`, `Posture::open_commitment` and
+  `Reading::may_open_commitment` are removed. The horizon reading still
+  sets the context profile (`derive_context`) and an unattended gate's
+  fallback (`Authority::gate_fallback`); both are readings to replace.
 - The remaining time constants in §5a (probe, gateway wait, command and
   person waits) are not yet configuration.
 - C6 (done): the outcome requirements guessed from the request's words are

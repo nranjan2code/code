@@ -174,12 +174,6 @@ impl Reading {
         }
     }
 
-    /// Whether this reading is confident enough to promote work to a durable
-    /// commitment. Gated on `horizon` alone.
-    pub fn may_open_commitment(&self, floor: f64) -> bool {
-        self.axis_confidence.horizon >= floor
-    }
-
     /// Whether the reading is usable at all.
     pub fn is_actionable(&self, floor: f64) -> bool {
         self.confidence >= floor
