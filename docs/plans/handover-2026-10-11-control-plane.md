@@ -2,18 +2,23 @@
 
 ## Prompt for a fresh session
 
-"Build the control plane in /Users/nisheethranjan/Projects/Vak/code on
-main. Read AGENTS.md (especially 'No word lists, no tuned limits' and
-'Investigating a failure'), then docs/design/88-control-plane.md, then
-docs/design/86-model-plans-runtime-checks.md and
-docs/design/87-composed-answers.md, then this file. First run the full gate on
-a clean tree (see 'Where main stands') and fix anything it shows. Then start
-at stage C0: scan the blast radius, and ask me the four open questions in
-doc 88 §12 before writing code. Work only on main: no branches, PRs or worktrees; nobody else
-is working in this repository. Everything is typed, in its own crate, with
-no free text carrying a decision. Verify every stage with real turns on the
-configured local route through the web app in the built-in browser, read
-back from the ledger."
+"Continue building the control plane in /Users/nisheethranjan/Projects/Vak/code
+on main, from stage C4. First run the full gate on a clean tree and fix
+anything it shows. Read AGENTS.md (especially 'No word lists, no
+tuned limits' and 'Investigating a failure'), docs/design/88-control-plane.md
+(its Status line, §12 decisions and 'Carried into later stages'), then this
+file's Progress and Rules. The four open questions are decided (doc 88
+§12); do not ask them again. Work autonomously: code, run, debug, evaluate,
+correct, document; ask nothing; report only short progress lines. Work only
+on main: no branches, PRs or worktrees. Everything is typed, in its own
+crate, with no free text carrying a decision. Each stage also updates the
+Settings screen, the admin console and the doctor where it touches them,
+and removes what it replaces, including bad or dead code found on the way.
+Verify every stage with real turns through the web app in the built-in
+browser against the installed home (~/vak-home) on local Ollama, read back
+from the ledger (`GET /runs/{id}/decisions`, `/sessions/{id}/receipts`).
+Ollama is only the dev route: fix causes for every provider. Never blame
+the model. Keep the disk clean: `cargo clean` after each commit."
 
 ## Rules the maintainer set (all still in force)
 
@@ -83,8 +88,25 @@ seven live run ids, and what is still open.
   (shipped, steps, routes), every side dispatch framed by it,
   `direct_reply` removed, `/config/control`, Settings and admin editors;
   seen live (asked low, wire sent default, receipt says it reasoned).
-- Next: C3b, tool loading by tool declarations only (no reading), the
-  misread ledger removed; then C4.
+- C3b done 2026-10-11 (three commits): tools load by declaration
+  (`Tool::always_loaded`; bash, edit, write, webfetch and doc_read declare
+  it), `DomainSet` and the act-to-domain table removed, the misread ledger
+  removed, the tier-2/3 model reading and its `[intent]` keys removed. Seen
+  live: a bash turn answered, decisions read back.
+- Full gate: NOT run to the end on the final C3b tree (stopped by the
+  maintainer to end the session). fmt and clippy `-D warnings` were clean,
+  and the tests of vak-control, vak-config, vak-intent, vak-core,
+  vak-agent, vak-llm, vak-context, vak-flow, vak and the touched vak-server
+  tests passed. First step of the next session: run the full gate once and
+  fix anything it shows before C4.
+- Next: C4 (`vak-judge`, call and answer verdicts, typed tool errors), with
+  the items doc 88 lists under "Carried into later stages".
+- Slowness investigated 2026-10-11: in steady state the provider's prompt
+  cache is reused across turn boundaries (first-step prefill 0.6-0.7 s);
+  the 17-49 s first steps seen earlier came after a new build changed the
+  system prompt (cold cache) and one miss that did not reproduce. The
+  request bodies were captured with a throwaway logging proxy in front of
+  Ollama (`VAK_OLLAMA_BASE_URL` pointed at it), not kept.
 
 ## Order of work
 
@@ -106,6 +128,12 @@ seven live run ids, and what is still open.
    debris.
 
 ## How to run live
+
+Write a throwaway token to a scratch file and point the `vak-home-live`
+entry of `.claude/launch.json` at it (the file is gitignored). The admin
+console's Settings › Models has "How the model thinks"; the client's
+Settings (Shared) has the same group. `GET /config/control?scope=user`
+shows the layer and the effective step settings.
 
 `cargo build -p vak -p vak-server --bins`. The `vak-home-live` entry in
 `.claude/launch.json` (`vak-home-live`) serves `~/vak-home` on 8902 with a throwaway token
@@ -130,3 +158,10 @@ the build refuses a stale bundle.
 - Each time a reader guessed (cut a text in two, joined a list, read lines
   out of text) a live turn showed the damage. If a conversion needs a
   guess, it is not the reader's.
+- `python3 scripts/check_doc_paths.py | tail -1` hides its exit code;
+  run it without a pipe before committing.
+- The admin and client bundles must be rebuilt (`npm run build`) after any
+  change under their `src/`, or `cargo check -p vak-server` fails on a stale
+  `dist`.
+- A select's accessible name in the built-in browser is its selected text,
+  not its `aria-label`; find it by role (`combobox`).

@@ -9825,11 +9825,7 @@ async fn intent_explain(
         &core.turn_authority_for(&surface),
         &vak_core::intent::resolver_config(core.config()),
     );
-    let escalation = match &resolution {
-        vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
-        vak_intent::Resolution::Settled(_) => None,
-    };
-    let mut intent = resolution.intent();
+    let mut intent = resolution;
     let outcome = vak_core::intent::complete_output_contract(&mut intent, &q.prompt);
     Json(serde_json::json!({
         "reading": intent.reading,
@@ -9841,7 +9837,6 @@ async fn intent_explain(
             .engagement
             .limits
             .diff_from(&vak_intent::Limits::unrestricted()),
-        "escalation_recommended": escalation,
         "model_visible": intent.model_visible(),
         "history": {
             "turn_index": history.turn_index,
@@ -9862,9 +9857,6 @@ async fn intent_policy(State(state): State<AppState>) -> Json<serde_json::Value>
             "provisional_confidence": config.intent.provisional_confidence,
             "slice_capabilities": config.intent.slice_capabilities,
             "posture": config.intent.posture,
-            "escalate": config.intent.escalate,
-            "max_classify_usd": config.intent.max_classify_usd,
-            "classify_timeout_secs": config.intent.classify_timeout_secs,
             "autonomy": config.intent.autonomy,
             "evidence_max_age_secs": config.intent.evidence_max_age_secs,
         },

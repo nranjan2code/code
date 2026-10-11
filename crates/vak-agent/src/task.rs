@@ -1314,8 +1314,7 @@ fn child_outcome(
         &vak_intent::Declared::default(),
         &vak_intent::Authority::default(),
         &vak_intent::ResolverConfig::default(),
-    )
-    .intent();
+    );
     let mut spec = vak_intent::OutcomeSpec::from_intent(prompt, &intent);
     spec.evidence_max_age_secs = parent.evidence_max_age_secs;
     spec.max_turns = parent.max_turns;
@@ -1394,8 +1393,7 @@ mod registry_tests {
             &vak_intent::Declared::default(),
             &vak_intent::Authority::default(),
             &vak_intent::ResolverConfig::default(),
-        )
-        .intent();
+        );
         vak_intent::OutcomeSpec::from_intent(text, &intent)
     }
 

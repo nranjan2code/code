@@ -181,10 +181,11 @@ Read before changing behaviour in these areas:
   decision points and records each decision; a step contract sets
   reasoning, sampling, tools and output form from discovered model
   capabilities; one correction ladder; `vak-control` and `vak-judge` as
-  their own crates. Being built in stages C0–C7: C0, C1, C2 and C3a are done
+  their own crates. Being built in stages C0–C7: C0 to C3 are done
   (`crates/vak-control`, the `Decision` ledger entry, step settings with
   model capabilities and what was applied on the receipt, the step
-  contract per purpose from `[control]`); progress is in
+  contract per purpose from `[control]`, tools loaded by declaration, the
+  model-made reading and the misread ledger removed); progress is in
   `docs/plans/handover-2026-10-11-control-plane.md`),
   `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
@@ -1083,14 +1084,13 @@ in progress, and the rest of V4 follows it.
     `DomainSet::All` means everything and only a *disabled* kernel produces
     it; an uncertain reading resolves to the explicit *orienting* engagement
     (general posture, orientation-floor domains). A reading never removes a
-    capability at all: admission is policy only, and the reading decides
-    which admitted tools are *loaded* — the rest are one `find_tools` call
-    away, so being wrong never removes a tool the turn cannot get back. A request resolves
+    capability at all: admission is policy only, and which admitted tools
+    are *loaded* follows each tool's own declaration, never the reading
+    (docs/design/88-control-plane.md §12.1). A request resolves
     to its **strands** (one reading per part, with relations and cross-turn
     lineage); the turn's engagement meets every authority-bearing limit
-    across them and unions their domains. Resolver tiers 2/3 may raise
-    stakes or evidence and never lower either; their limits meet the free
-    tier's. A weak reading keeps the risk its words stated: it is never too
+    across them. The reader is the fixed one alone: no model makes a
+    reading. A weak reading keeps the risk its words stated: it is never too
     weak to raise caution. The tier-1 lexicon is pinned to `RESOLVER_VERSION`
     by a digest test, and nothing in `resolve`/`derive` reads a clock. An
     envelope is pre-authorization *within* existing authority, never a grant
@@ -1886,8 +1886,7 @@ crates/vak-plugin    plugin packages: manifest parsing, capability
 crates/vak-intent    the decision layer (docs/design/47-commitment-kernel.md):
                      seven behavioural axes, deterministic signal extraction,
                      clause segmentation into strands (strand.rs), the
-                     resolution cascade with the classifier prompt/parse for
-                     tiers 2/3, the autonomy/envelope model, the control
+                     fixed-reader resolution, the autonomy/envelope model, the control
                      plane (`ControlSource`, `parse_command`,
                      `evaluate_intervention` in outcome.rs) and the
                      narrowing lattice. NO vak dependencies -- a pure
@@ -2027,10 +2026,8 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      projects the engagement onto runtime knobs -- every
                      function takes a baseline and returns something no
                      wider; `open_threads` for strand lineage,
-                     `DeferringApprover` for the `Defer` HIL mode; the
-                     tier-2/3 `Classify` dispatch lives on `Core` as
-                     `resolve_turn_intent_with_escalation`, spend-gated,
-                     watchdogged, fail-open), commitments.rs (opens or
+                     `DeferringApprover` for the `Defer` HIL mode),
+                     commitments.rs (opens or
                      continues one commitment per durable thread,
                      brackets an episode per strand, classifies what it achieved,
                      evaluates workspace criteria, and runs the zero-token

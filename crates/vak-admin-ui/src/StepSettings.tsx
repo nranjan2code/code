@@ -14,7 +14,6 @@ const PURPOSES: [string, string][] = [
   ["plan", "Planning"],
   ["repair", "Fixing a mistake"],
   ["judge", "Checking finished work"],
-  ["classify", "Sorting requests"],
   ["compact", "Shortening history"],
   ["summarise", "Handing over"],
 ];

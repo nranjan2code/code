@@ -31,7 +31,6 @@ fn reading() -> vak_intent::Reading {
         &vak_intent::Authority::default(),
         &vak_intent::ResolverConfig::default(),
     )
-    .intent()
     .reading
 }
 

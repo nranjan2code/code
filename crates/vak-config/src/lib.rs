@@ -808,8 +808,6 @@ pub struct RouteSettings {
 /// * `autonomy` — `delegated` and `autonomous` suppress approval gates the
 ///   agent would otherwise raise. That is execution power, and a cloned
 ///   repository must not be able to grant it to itself.
-/// * `escalate = "cloud"` — spends the user's credentials on a classification
-///   dispatch before the run they actually asked for.
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct IntentSettings {
@@ -825,18 +823,6 @@ pub struct IntentSettings {
     pub slice_capabilities: Option<bool>,
     /// Allow stakes to raise the approval floor. Default true.
     pub posture: Option<bool>,
-    /// How far the cascade may escalate: "none" | "local" | "cloud".
-    pub escalate: Option<String>,
-    /// Model for the classification tier: `model`, or `provider/model`.
-    /// Local escalation runs it on `ollama`; cloud on the effective
-    /// provider unless a provider is named. Empty uses the effective route.
-    pub classify_model: Option<String>,
-    /// Hard ceiling on one classification dispatch.
-    pub max_classify_usd: Option<f64>,
-    /// Watchdog on one classification dispatch, in seconds (default 10).
-    /// A classifier that overruns it is abandoned and the free-tier reading
-    /// stands; the run never waits on it.
-    pub classify_timeout_secs: Option<u64>,
     /// Standing delegation: "manual" | "assisted" | "delegated" | "autonomous".
     pub autonomy: Option<String>,
     pub evidence_max_age_secs: Option<i64>,
@@ -1511,11 +1497,6 @@ pub struct IntentResolved {
     pub provisional_confidence: f64,
     pub slice_capabilities: bool,
     pub posture: bool,
-    /// "none" | "local" | "cloud".
-    pub escalate: String,
-    pub classify_model: Option<String>,
-    pub max_classify_usd: f64,
-    pub classify_timeout_secs: u64,
     /// Standing delegation for this workspace.
     pub autonomy: String,
     pub evidence_max_age_secs: i64,
@@ -1731,10 +1712,6 @@ impl Default for Config {
                 // Deterministic tiers only by default. A paid classification
                 // before the run the user actually asked for is a real cost
                 // and a real latency, so it is opt-in.
-                escalate: "none".into(),
-                classify_model: None,
-                max_classify_usd: 0.01,
-                classify_timeout_secs: 10,
                 autonomy: "assisted".into(),
                 evidence_max_age_secs: 86_400,
             },
@@ -2849,7 +2826,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2905,16 +2882,11 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             // user's own hooks and MCP servers — disabling a protection is
             // as privileged as adding a capability.
             fc.capabilities = CapabilityInheritanceSettings::default();
-            // `delegated` and `autonomous` suppress approval gates, and a
-            // cloud classification tier spends the user's credentials before
-            // the run they asked for. Both are execution power; a cloned
-            // repository must not grant them to itself. The rest of [intent]
+            // `delegated` and `autonomous` suppress approval gates: execution
+            // power a cloned repository must not grant itself. The rest of [intent]
             // only ever narrows, so it survives untrusted.
             if fc.intent.autonomy.is_some() {
                 fc.intent.autonomy = None;
-            }
-            if fc.intent.escalate.as_deref() == Some("cloud") {
-                fc.intent.escalate = None;
             }
             // Switching the kernel or its posture off removes the approval
             // floor it raises — "force push to production" asks even under
@@ -3240,11 +3212,6 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         0.45,
         "intent.provisional_confidence",
     );
-    let max_classify = finite(
-        merged.intent.max_classify_usd,
-        0.01,
-        "intent.max_classify_usd",
-    );
     let lifetime_budget = merged
         .commitment
         .lifetime_budget_usd
@@ -3253,29 +3220,6 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     cfg.intent.provisional_confidence = provisional.clamp(0.0, cfg.intent.accept_confidence);
     cfg.intent.slice_capabilities = merged.intent.slice_capabilities.unwrap_or(true);
     cfg.intent.posture = merged.intent.posture.unwrap_or(true);
-    cfg.intent.escalate = match merged.intent.escalate.as_deref() {
-        Some("none") | None => "none".into(),
-        Some("local") => "local".into(),
-        Some("cloud") => "cloud".into(),
-        Some(other) => {
-            cfg.warnings.push(format!(
-                "unknown intent.escalate '{other}'; using 'none' \
-                 (valid: none, local, cloud)"
-            ));
-            "none".into()
-        }
-    };
-    cfg.intent.classify_model = merged
-        .intent
-        .classify_model
-        .clone()
-        .filter(|model| !model.trim().is_empty());
-    cfg.intent.max_classify_usd = max_classify.clamp(0.0, 1.0);
-    cfg.intent.classify_timeout_secs = merged
-        .intent
-        .classify_timeout_secs
-        .unwrap_or(10)
-        .clamp(1, 120);
     cfg.intent.autonomy = match merged.intent.autonomy.as_deref() {
         Some("manual") => "manual".into(),
         Some("assisted") | None => "assisted".into(),
@@ -4298,18 +4242,6 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.intent.posture.is_some() {
         base.intent.posture = over.intent.posture;
     }
-    if over.intent.escalate.is_some() {
-        base.intent.escalate = over.intent.escalate;
-    }
-    if over.intent.classify_model.is_some() {
-        base.intent.classify_model = over.intent.classify_model;
-    }
-    if over.intent.max_classify_usd.is_some() {
-        base.intent.max_classify_usd = over.intent.max_classify_usd;
-    }
-    if over.intent.classify_timeout_secs.is_some() {
-        base.intent.classify_timeout_secs = over.intent.classify_timeout_secs;
-    }
     if over.intent.autonomy.is_some() {
         base.intent.autonomy = over.intent.autonomy;
     }
@@ -4923,7 +4855,7 @@ mod tests {
             dir.path(),
             "[intent]\nenabled = true\naccept_confidence = 0.9\n\
              provisional_confidence = 0.99\nslice_capabilities = false\n\
-             escalate = \"local\"\nautonomy = \"delegated\"\n",
+             autonomy = \"delegated\"\n",
         );
         let cfg = load_with_trust(dir.path(), true).unwrap();
         assert!(cfg.intent.enabled);
@@ -4931,37 +4863,29 @@ mod tests {
         // Inverted thresholds clamp rather than break the ordering invariant.
         assert!(cfg.intent.provisional_confidence <= cfg.intent.accept_confidence);
         assert!(!cfg.intent.slice_capabilities);
-        assert_eq!(cfg.intent.escalate, "local");
         assert_eq!(cfg.intent.autonomy, "delegated");
     }
 
     #[test]
     fn unknown_intent_values_warn_and_fall_back_to_the_safe_default() {
         let dir = tempfile::tempdir().unwrap();
-        write_project_config(
-            dir.path(),
-            "[intent]\nescalate = \"telepathy\"\nautonomy = \"unlimited\"\n",
-        );
+        write_project_config(dir.path(), "[intent]\nautonomy = \"unlimited\"\n");
         let cfg = load_with_trust(dir.path(), true).unwrap();
-        assert_eq!(cfg.intent.escalate, "none");
         assert_eq!(cfg.intent.autonomy, "assisted");
-        assert!(cfg.warnings.iter().any(|w| w.contains("intent.escalate")));
         assert!(cfg.warnings.iter().any(|w| w.contains("intent.autonomy")));
     }
 
     /// A cloned repository must not be able to grant itself the right to act
-    /// without asking, nor to spend the user's credentials classifying.
+    /// without asking.
     #[test]
-    fn an_untrusted_project_cannot_grant_itself_autonomy_or_a_paid_classifier() {
+    fn an_untrusted_project_cannot_grant_itself_autonomy() {
         let dir = tempfile::tempdir().unwrap();
         write_project_config(
             dir.path(),
-            "[intent]\nautonomy = \"autonomous\"\nescalate = \"cloud\"\n\
-             slice_capabilities = false\n",
+            "[intent]\nautonomy = \"autonomous\"\nslice_capabilities = false\n",
         );
         let cfg = load_with_trust(dir.path(), false).unwrap();
         assert_eq!(cfg.intent.autonomy, "assisted");
-        assert_eq!(cfg.intent.escalate, "none");
         // The non-privileged half of the section still applies: choosing to
         // see more of your own tools grants nothing.
         assert!(!cfg.intent.slice_capabilities);
@@ -4969,7 +4893,6 @@ mod tests {
         // And with trust, the same file does take effect.
         let trusted = load_with_trust(dir.path(), true).unwrap();
         assert_eq!(trusted.intent.autonomy, "autonomous");
-        assert_eq!(trusted.intent.escalate, "cloud");
     }
 
     /// Switching the kernel or its posture off removes the approval floor it
@@ -4996,12 +4919,11 @@ mod tests {
         write_project_config(
             dir.path(),
             "[intent]\naccept_confidence = nan\nprovisional_confidence = inf\n\
-             max_classify_usd = nan\n[commitment]\nlifetime_budget_usd = nan\n",
+             [commitment]\nlifetime_budget_usd = nan\n",
         );
         let cfg = load_with_trust(dir.path(), true).unwrap();
         assert_eq!(cfg.intent.accept_confidence, 0.75);
         assert_eq!(cfg.intent.provisional_confidence, 0.45);
-        assert_eq!(cfg.intent.max_classify_usd, 0.01);
         assert_eq!(cfg.commitment.lifetime_budget_usd, None);
         assert!(
             cfg.warnings
@@ -5010,14 +4932,6 @@ mod tests {
             "{:?}",
             cfg.warnings
         );
-    }
-
-    #[test]
-    fn an_untrusted_project_may_still_restrict_itself_to_a_local_classifier() {
-        let dir = tempfile::tempdir().unwrap();
-        write_project_config(dir.path(), "[intent]\nescalate = \"local\"\n");
-        let cfg = load_with_trust(dir.path(), false).unwrap();
-        assert_eq!(cfg.intent.escalate, "local");
     }
 
     #[test]

@@ -23,8 +23,28 @@ then `[control.routes."provider/model"]`), for the turn's own steps and
 every side dispatch (plan, judge, classify, compact, summarise); the
 "direct reply" reading and `DemandHint::direct_reply` are removed;
 `/config/control` (user or project layer), Settings › "How the model
-thinks" and the admin's Models panel edit it live. C3b (tool loading no
-longer follows the reading) is next. Later stages are not built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
+thinks" and the admin's Models panel edit it live. C3b done
+(2026-10-11): tools are loaded by their own declaration
+(`Tool::always_loaded`, cards, no declared domain, or loaded earlier in
+the session), never the reading; `Limits.required_domains`, `DomainSet`,
+the act-to-domain table, the misread ledger and the tier-2/3 model reading
+(`[intent] escalate`, `classify_model`, `max_classify_usd`) are removed.
+Later stages are not built.
+
+### Carried into later stages (found while building C0–C3)
+
+- C4: checkpoint skipping still follows the reading
+  (`may_slice_capabilities` in `Core::run`); replace it with a checkpoint
+  taken when the first effectful call is accepted (`AcceptCall`).
+- C4: an unknown tool name (seen live: `emit_emit_details_card`) is
+  refused by the broker as free text; make it a typed `Refusal`.
+- C5: the freshness gate reads `Reading.domains` (temporal-deixis words);
+  it goes with the other stop-policy checks. Commitments opened from the
+  reading's horizon (`may_open_commitment`) and managed mode from the
+  horizon go with it.
+- C6: delivery shape and `OutcomeSpec` requirements guessed from words
+  (`apply_output_requirements`) are replaced by the answer form.
+- `vak runs` does not print decisions yet (the admin Run detail does). Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
 satisfaction; the model never does) from satisfaction to every decision.
 The start prompt and working order for the session that builds it are in

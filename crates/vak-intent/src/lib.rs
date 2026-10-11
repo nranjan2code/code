@@ -97,9 +97,7 @@ pub use outcome::{
 };
 pub use reading::{Confidences, Intent, Provenance, Reading, Tier};
 pub use resolve::{
-    Classification, Declared, RESOLVER_VERSION, Resolution, ResolverConfig, apply_classification,
-    apply_envelopes, classification_budget, classification_prompt, implied_stakes,
-    parse_classifications, prompt_digest, resolve,
+    Declared, RESOLVER_VERSION, ResolverConfig, apply_envelopes, implied_stakes, resolve,
 };
 pub use signals::{
     Attachment, HistoryFacts, Request, Signal, SignalKind, Surface, WorkspaceFacts, extract,

@@ -261,6 +261,10 @@ skips that strand's episode and is logged; it does not cancel the turn.
 
 ### Resolution cascade
 
+Superseded in part 2026-10-11 (docs/design/88-control-plane.md §12.1):
+tiers 2 and 3 (a model classifying the request) are removed, and the
+reading no longer decides which tools are loaded. Tiers 0 and 1 stand.
+
 Cheapest first, stopping once confidence clears the bar.
 
 | Tier | Cost | Reproducible |

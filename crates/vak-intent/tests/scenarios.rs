@@ -35,10 +35,7 @@ use vak_intent::outcome::{
     evidence_state_from_age, human_review_state,
 };
 use vak_intent::reading::{Confidences, Intent, Reading, Tier};
-use vak_intent::resolve::{
-    Classification, Declared, Resolution, ResolverConfig, apply_classification, apply_envelopes,
-    resolve,
-};
+use vak_intent::resolve::{Declared, ResolverConfig, apply_envelopes, resolve};
 use vak_intent::signals::{
     Attachment, HistoryFacts, Request, Surface, Votes, WorkspaceFacts, extract,
 };
@@ -84,7 +81,6 @@ fn resolve_text(text: &str) -> Intent {
         &Authority::default(),
         &ResolverConfig::default(),
     )
-    .intent()
 }
 
 fn resolve_declared(text: &str, declared: &Declared) -> Intent {
@@ -94,7 +90,6 @@ fn resolve_declared(text: &str, declared: &Declared) -> Intent {
         &Authority::default(),
         &ResolverConfig::default(),
     )
-    .intent()
 }
 
 fn reading_simple(act: Act, horizon: Horizon, stakes: Stakes, evidence: Evidence) -> Reading {
@@ -1264,45 +1259,6 @@ fn clarity_underspecified_requests_do_not_crash() {
 // ================================================================
 
 #[test]
-fn resolution_confident_readings_are_settled() {
-    let cases: &[&str] = &[
-        "hello",
-        "what is the meaning of life",
-        "fix the bug in the parser",
-        "deploy to production",
-        "write a report on the architecture",
-        "find the config file",
-        "test the parser",
-    ];
-    for text in cases {
-        let resolution = resolve(
-            &req(text),
-            &Declared::default(),
-            &Authority::default(),
-            &ResolverConfig::default(),
-        );
-        match &resolution {
-            Resolution::Settled(intent) => {
-                assert!(
-                    intent.reading.confidence >= 0.45 || intent.provenance.tier == Tier::General,
-                    "`{}` settled but confidence too low: {}",
-                    text,
-                    intent.reading.confidence
-                );
-            }
-            Resolution::Escalate { partial, .. } => {
-                assert!(
-                    partial
-                        .engagement
-                        .limits
-                        .is_at_most(&Limits::unrestricted())
-                );
-            }
-        }
-    }
-}
-
-#[test]
 fn resolution_unknown_input_falls_back_to_general() {
     let resolution = resolve(
         &req("zorble the frobnicator immediately"),
@@ -1310,7 +1266,7 @@ fn resolution_unknown_input_falls_back_to_general() {
         &Authority::default(),
         &ResolverConfig::default(),
     );
-    let intent = resolution.intent();
+    let intent = resolution;
     assert_eq!(intent.provenance.tier, Tier::General);
     // Kernel on and nothing understood: the orientation floor, not
     // everything (docs/design/68, Principle 6). `Engagement::general` is
@@ -1359,73 +1315,9 @@ fn resolution_disabled_reproduces_general() {
         &Authority::default(),
         &config,
     );
-    let intent = resolution.intent();
+    let intent = resolution;
     assert_eq!(intent.engagement, Engagement::general());
     assert_eq!(intent.provenance.tier, Tier::General);
-}
-
-#[test]
-fn classification_may_raise_stakes_not_lower() {
-    let partial = resolve_text("deploy the service");
-    let downplayed = Classification {
-        act: Some("operate".into()),
-        stakes: Some("inert".into()),
-        confidence: Some(0.99),
-        ..Classification::default()
-    };
-    let intent = apply_classification(
-        partial,
-        std::slice::from_ref(&downplayed),
-        "cheap-model",
-        "digest",
-        &Authority::default(),
-        &ResolverConfig::default(),
-        true,
-    );
-    assert_eq!(
-        intent.reading.stakes,
-        Stakes::Irreversible,
-        "classifier must not lower stakes below the act floor"
-    );
-}
-
-#[test]
-fn classification_empty_leaves_free_tier_intact() {
-    let partial = resolve_text("refactor the parser");
-    let before_reading = partial.reading.clone();
-    let before_engagement = partial.engagement.clone();
-    let after = apply_classification(
-        partial,
-        std::slice::from_ref(&Classification::default()),
-        "flaky-model",
-        "digest",
-        &Authority::default(),
-        &ResolverConfig::default(),
-        true,
-    );
-    assert_eq!(after.reading, before_reading);
-    assert_eq!(after.engagement, before_engagement);
-}
-
-#[test]
-fn classification_only_overwrites_returned_axes() {
-    let partial = resolve_text("deploy to production");
-    let classification = Classification {
-        act: Some("operate".into()),
-        ..Classification::default()
-    };
-    let intent = apply_classification(
-        partial,
-        std::slice::from_ref(&classification),
-        "local-model",
-        "abc123",
-        &Authority::default(),
-        &ResolverConfig::default(),
-        false,
-    );
-    assert_eq!(intent.reading.act, Act::Operate);
-    assert!(!intent.provenance.reproducible);
-    assert_eq!(intent.provenance.tier, Tier::LocalModel);
 }
 
 // ================================================================
@@ -1594,8 +1486,7 @@ fn an_envelope_narrows_the_strand_that_serves_its_commitment() {
         &Declared::default(),
         &auth,
         &ResolverConfig::default(),
-    )
-    .intent();
+    );
     let strand_id = intent.strands[0].strand_id.clone();
     let envelopes = BTreeMap::from([(strand_id, test_envelope(PermissionCeiling::WorkspaceWrite))]);
     let narrowed = apply_envelopes(intent.clone(), &envelopes, Autonomy::Delegated, now);
@@ -2335,8 +2226,7 @@ fn a_git_repo_does_not_tag_engineering_on_a_non_effectful_request() {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
-    )
-    .intent();
+    );
     assert_eq!(intent.reading.act, Act::Author);
     assert!(!intent.reading.act.is_effectful());
     assert!(
@@ -2370,8 +2260,7 @@ fn edge_dirty_tree_adds_stakes_for_effectful_acts() {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
-    )
-    .intent();
+    );
     assert_eq!(
         intent.reading.stakes,
         Stakes::Inert,
@@ -3715,7 +3604,7 @@ fn provenance_escalation_note_present_when_below_threshold() {
         &Authority::default(),
         &ResolverConfig::default(),
     );
-    let intent = resolution.intent();
+    let intent = resolution;
     assert!(intent.provenance.escalation_note.is_some());
 }
 
@@ -3809,7 +3698,7 @@ fn pipeline_surface_changes_attendance() {
         &Authority::default(),
         &ResolverConfig::default(),
     );
-    let intent = resolution.intent();
+    let intent = resolution;
     assert_eq!(intent.reading.attendance, Attendance::Unattended);
 }
 
@@ -3839,8 +3728,7 @@ fn pipeline_workspace_repo_adds_domain() {
         &Declared::default(),
         &Authority::default(),
         &ResolverConfig::default(),
-    )
-    .intent();
+    );
     assert!(intent.reading.domains.contains("engineering"));
 }
 

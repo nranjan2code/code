@@ -5913,7 +5913,7 @@ impl Core {
             &self.turn_authority(),
             &intent::resolver_config(&self.inner.config),
         );
-        let demand = resolution.peek().engagement.posture.demand;
+        let demand = resolution.engagement.posture.demand;
         self.start_session_with_route_for(provider, model, Some(demand))
             .await
     }
@@ -6197,22 +6197,21 @@ impl Core {
 
     /// Resolve this turn's intent from the prompt and the session so far.
     ///
-    /// Free tiers only; the surfaces that preview a reading (`vak intent
-    /// explain`, `GET /intent/explain`, the composer strip) use this. The
-    /// turn path uses [`Core::resolve_turn_intent_with_escalation`], which
-    /// may spend a classification dispatch on a weak reading.
+    /// The surfaces that preview a reading (`vak intent explain`,
+    /// `GET /intent/explain`, the composer strip) use this; the turn path
+    /// resolves with the turn's own id.
     pub fn resolve_turn_intent(
         &self,
         session: &SessionLog,
         prompt: &vak_llm::Message,
     ) -> vak_intent::Intent {
         let text = prompt.text_content();
-        let mut intent = self.resolve_turn_free_tiers(session, prompt, "").intent();
+        let mut intent = self.resolve_turn_free_tiers(session, prompt, "");
         intent::complete_output_contract(&mut intent, &text);
         intent
     }
 
-    /// The free tiers, under the turn's base authority. A grant on a
+    /// The fixed reader, under the turn's base authority. A grant on a
     /// commitment is applied afterwards, once the turn knows which
     /// commitments its strands work on (`vak_intent::apply_envelopes`).
     fn resolve_turn_free_tiers(
@@ -6220,7 +6219,7 @@ impl Core {
         session: &SessionLog,
         prompt: &vak_llm::Message,
         turn_id: &str,
-    ) -> vak_intent::Resolution {
+    ) -> vak_intent::Intent {
         let text = prompt.text_content();
         let attachments: Vec<vak_intent::Attachment> = prompt
             .content
@@ -6244,302 +6243,6 @@ impl Core {
             &self.turn_authority(),
             &intent::resolver_config(&self.inner.config),
         )
-    }
-
-    /// Resolve this turn's intent, spending a classification dispatch when
-    /// the free tiers were not confident and `[intent] escalate` allows it.
-    ///
-    /// The dispatch is a dispatch like any other: a `Classify` work receipt
-    /// on the session, spend-gate admission under `max_classify_usd`, a
-    /// short watchdog, the run's cancellation token — and **fail-open** to
-    /// the free-tier reading on any failure. A classifier outage must never
-    /// block work, and the partial is never worse than the orienting
-    /// engagement.
-    ///
-    /// `escalate = "local"` means a model on this machine: only the keyless
-    /// `ollama` provider serves it, whatever `classify_model` names, so a
-    /// local setting can never send the request text off the machine.
-    pub async fn resolve_turn_intent_with_escalation(
-        &self,
-        session: &mut SessionLog,
-        prompt: &vak_llm::Message,
-        turn_id: &str,
-        cancel: &CancellationToken,
-    ) -> vak_intent::Intent {
-        let resolution = self.resolve_turn_free_tiers(session, prompt, turn_id);
-        let (partial, reason) = match resolution {
-            vak_intent::Resolution::Settled(intent) => return intent,
-            vak_intent::Resolution::Escalate { partial, reason } => (partial, reason),
-        };
-        let escalate = self.inner.config.intent.escalate.as_str();
-        if escalate == "none" {
-            return partial;
-        }
-        let cloud = escalate == "cloud";
-        let mut partial = partial;
-        let give_up = |partial: &mut vak_intent::Intent, why: String| {
-            partial.provenance.escalation_note = Some(format!(
-                "{}; escalation ({reason}) skipped: {why}",
-                partial
-                    .provenance
-                    .escalation_note
-                    .clone()
-                    .unwrap_or_default()
-            ));
-        };
-
-        // --- which leg ------------------------------------------------------
-        // `classify_model` may be `provider/model` or a bare model name. Local
-        // escalation runs on the keyless `ollama` provider and nothing else —
-        // an Ollama model name may itself contain `/` (`hf.co/org/model`), so
-        // only a prefix naming another configured provider is refused rather
-        // than read as a model; cloud escalation runs on the effective
-        // provider unless a provider was named.
-        let configured = self.inner.config.intent.classify_model.clone();
-        let known_providers = self.provider_names();
-        let (provider_name, model) = match (cloud, configured) {
-            (true, Some(spec)) if spec.contains('/') => {
-                let (p, m) = spec.split_once('/').unwrap_or(("", ""));
-                (p.to_string(), m.to_string())
-            }
-            (true, Some(model)) => (self.effective_provider(), model),
-            (true, None) => (self.effective_provider(), self.effective_model()),
-            (false, Some(spec)) => match spec.split_once('/') {
-                Some(("ollama", model)) => ("ollama".to_string(), model.to_string()),
-                Some((prefix, _)) if known_providers.iter().any(|p| p == prefix) => {
-                    give_up(
-                        &mut partial,
-                        format!(
-                            "escalate = \"local\" runs only on ollama, but classify_model names {prefix}"
-                        ),
-                    );
-                    return partial;
-                }
-                _ => ("ollama".to_string(), spec),
-            },
-            (false, None) => {
-                if self.effective_provider() == "ollama" {
-                    ("ollama".to_string(), self.effective_model())
-                } else {
-                    give_up(
-                        &mut partial,
-                        "escalate = \"local\" needs [intent] classify_model or an ollama route"
-                            .into(),
-                    );
-                    return partial;
-                }
-            }
-        };
-        let provider = match self
-            .provider_auth_for_leg(&provider_name, None)
-            .and_then(|auth| {
-                self.inner
-                    .registry
-                    .get(&provider_name, &auth)
-                    .map_err(CoreError::from)
-            }) {
-            Ok(provider) => provider,
-            Err(error) => {
-                give_up(
-                    &mut partial,
-                    format!("no usable {provider_name} provider: {error}"),
-                );
-                return partial;
-            }
-        };
-
-        // --- the request ------------------------------------------------------
-        let user_prompt = vak_intent::classification_prompt(&partial);
-        let digest = vak_intent::prompt_digest(&user_prompt);
-        // One object per part: a fixed budget truncated the answer for a
-        // request with more than a few parts, and a truncated array parses
-        // as nothing.
-        let output_budget = vak_intent::classification_budget(partial.strands.len());
-        let mut request = vak_llm::ChatRequest::new(&model);
-        request.system =
-            Some("You classify requests for an agent runtime. Answer with JSON only.".to_string());
-        request.messages = vec![vak_llm::Message::user_text(user_prompt.clone())];
-        request.max_tokens = Some(output_budget);
-        // A strict-JSON answer, not a deliberation: the shipped `Classify`
-        // default asks for no reasoning (measured live on a thinking model,
-        // the default spent the whole budget thinking and returned nothing).
-        request.settings = self
-            .step_defaults_for(&provider_name, &model)
-            .get(vak_control::Purpose::Classify);
-
-        // --- admission ----------------------------------------------------------
-        use vak_agent::SpendGate as _;
-        let session_id = session
-            .header()
-            .map(|header| header.session_id.clone())
-            .unwrap_or_default();
-        let gate = self.spend_gate_for(&session_id);
-        let planned = vak_llm::Usage {
-            input_tokens: (user_prompt.len() / 4) as u64 + 64,
-            output_tokens: u64::from(output_budget),
-            ..Default::default()
-        };
-        let cap = self.inner.config.intent.max_classify_usd;
-        // Every paid dispatch needs a price it can be held to; only the
-        // keyless local provider may run unpriced. A non-finite estimate is
-        // no estimate: `NaN > cap` is false and would wave anything through.
-        match gate.estimate_usd(&model, &planned) {
-            Some(est) if !est.is_finite() || est > cap => {
-                give_up(
-                    &mut partial,
-                    format!("estimated ${est:.4} exceeds max_classify_usd ${cap:.4}"),
-                );
-                return partial;
-            }
-            None if provider_name != "ollama" => {
-                give_up(&mut partial, format!("no price known for {model}"));
-                return partial;
-            }
-            _ => {}
-        }
-        if let Err(denied) = gate
-            .authorize(&vak_agent::SpendCheck {
-                model: &model,
-                provider: &provider_name,
-                session_id: &session_id,
-                est_input_tokens: planned.input_tokens,
-                planned_output_tokens: planned.output_tokens,
-            })
-            .await
-        {
-            give_up(&mut partial, format!("spend gate refused: {denied}"));
-            return partial;
-        }
-
-        // --- dispatch -----------------------------------------------------------
-        let watchdog =
-            std::time::Duration::from_secs(self.inner.config.intent.classify_timeout_secs);
-        let started = std::time::Instant::now();
-        let mut receipt =
-            vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Classify, &provider_name, &model);
-        let mut admission = match vak_llm::RequestAdmission::acquire_with_timeout(
-            provider.as_ref(),
-            &provider_name,
-            &model,
-            planned.input_tokens,
-            planned.output_tokens,
-            watchdog,
-            cancel,
-        )
-        .await
-        {
-            Ok(admission) => admission,
-            Err(error) => {
-                give_up(
-                    &mut partial,
-                    format!("provider capacity admission failed: {error}"),
-                );
-                return partial;
-            }
-        };
-        let remaining = watchdog.saturating_sub(started.elapsed());
-        let provider_cancel = admission.cancellation_token();
-        let outcome = tokio::time::timeout(remaining, async {
-            provider
-                .stream(request, provider_cancel)
-                .await?
-                .result()
-                .await
-        })
-        .await;
-        let answer = match outcome {
-            Ok(Ok(message)) => {
-                admission.settle(&message.usage);
-                receipt.record_response(
-                    vak_llm::AttemptReason::Initial,
-                    started.elapsed().as_millis() as u64,
-                    &message,
-                );
-                gate.record_settled_with_latency(
-                    &provider_name,
-                    &model,
-                    &session_id,
-                    &message.usage,
-                    started.elapsed().as_millis() as u64,
-                );
-                let _ = session.append_receipt(receipt);
-                message.text_content()
-            }
-            Ok(Err(error)) => {
-                if matches!(
-                    &error,
-                    vak_llm::LlmError::Context(_) | vak_llm::LlmError::QuotaExhausted(_)
-                ) {
-                    admission.release_before_dispatch();
-                }
-                receipt.record(
-                    vak_llm::AttemptReason::Initial,
-                    vak_llm::FailureDomain::Unknown,
-                    vak_llm::Settlement::Failed,
-                    started.elapsed().as_millis() as u64,
-                    None,
-                    Some(error.to_string()),
-                );
-                let _ = session.append_receipt(receipt);
-                give_up(&mut partial, format!("classifier failed: {error}"));
-                return partial;
-            }
-            Err(_) => {
-                receipt.record(
-                    vak_llm::AttemptReason::Initial,
-                    vak_llm::FailureDomain::Unknown,
-                    vak_llm::Settlement::Cancelled,
-                    started.elapsed().as_millis() as u64,
-                    None,
-                    Some(format!("watchdog {}s", watchdog.as_secs())),
-                );
-                let _ = session.append_receipt(receipt);
-                give_up(&mut partial, "classifier exceeded its watchdog".into());
-                return partial;
-            }
-        };
-
-        // --- fold in ------------------------------------------------------------
-        let classifications = match vak_intent::parse_classifications(&answer) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                give_up(
-                    &mut partial,
-                    format!("unparseable classifier answer: {error}"),
-                );
-                return partial;
-            }
-        };
-        // The tier names where the model actually ran, not which setting
-        // asked for it: `escalate = "cloud"` on an Ollama route is local.
-        let ran_off_machine = provider_name != "ollama";
-        let mut applied = vak_intent::apply_classification(
-            partial,
-            &classifications,
-            &format!("{provider_name}/{model}"),
-            &digest,
-            &self.turn_authority(),
-            &intent::resolver_config(&self.inner.config),
-            ran_off_machine,
-        );
-        if !matches!(
-            applied.provenance.tier,
-            vak_intent::Tier::LocalModel | vak_intent::Tier::CloudModel
-        ) {
-            // The answer parsed but set nothing: keep the start of it so the
-            // ledger says what the classifier actually said.
-            const NOTED_ANSWER_CHARS: usize = 400;
-            let shown: String = answer.chars().take(NOTED_ANSWER_CHARS).collect();
-            applied.provenance.escalation_note = Some(format!(
-                "{}; answer: {shown:?}",
-                applied
-                    .provenance
-                    .escalation_note
-                    .clone()
-                    .unwrap_or_default()
-            ));
-        }
-        applied
     }
 
     /// Takes `self` by value (an `Arc` bump plus a few small per-turn
@@ -6831,9 +6534,7 @@ impl Core {
         // from it narrows: the projections in `crate::intent` take a baseline
         // and return something no wider, so a misread can make this turn more
         // cautious and never less.
-        let resolved_intent = self
-            .resolve_turn_intent_with_escalation(&mut session, &request, &turn_id, &cancel)
-            .await;
+        let resolved_intent = self.resolve_turn_free_tiers(&session, &request, &turn_id);
         // Which commitments this turn works on is decided now, before any
         // knob is read, because a grant on one of them narrows the strands
         // that serve it. Nothing is written until the turn is about to run.

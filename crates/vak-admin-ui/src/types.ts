@@ -1308,7 +1308,6 @@ export interface IntentExplain {
   provenance: Provenance;
   /** Human-readable list of what this narrows versus doing nothing. */
   narrows: string[];
-  escalation_recommended?: string | null;
   model_visible?: string | null;
 }
 
@@ -1319,8 +1318,6 @@ export interface IntentPolicy {
     provisional_confidence: number;
     slice_capabilities: boolean;
     posture: boolean;
-    escalate: string;
-    max_classify_usd: number;
     autonomy: string;
   };
   commitment: {

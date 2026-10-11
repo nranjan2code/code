@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 
 use vak_intent::{
     ApprovalCeiling, Authority, Autonomy, Declared, Engagement, HistoryFacts, Intent, Limits,
-    OutcomeSpec, OutputShape, PermissionCeiling, Request, Resolution, ResolverConfig,
-    Surface as IntentSurface, WorkspaceFacts,
+    OutcomeSpec, OutputShape, PermissionCeiling, Request, ResolverConfig, Surface as IntentSurface,
+    WorkspaceFacts,
 };
 
 use crate::Surface;
@@ -60,10 +60,7 @@ pub fn configured_autonomy(config: &vak_config::Config) -> Autonomy {
 pub fn resolver_config(config: &vak_config::Config) -> ResolverConfig {
     ResolverConfig {
         enabled: config.intent.enabled,
-        accept_confidence: config.intent.accept_confidence,
         provisional_confidence: config.intent.provisional_confidence,
-        slice_capabilities: config.intent.slice_capabilities,
-        allow_escalation: config.intent.escalate != "none",
     }
 }
 
@@ -145,9 +142,6 @@ fn without_skill_invocation(text: &str) -> &str {
 /// is unique across turns and sessions. A preview passes `""` and gets
 /// positional ids, which it never persists.
 ///
-/// Returns the resolution rather than an `Intent` so the caller can decide
-/// whether to spend a classification dispatch on an
-/// [`Resolution::Escalate`]. The partial inside it is always safe to use.
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_turn(
     text: &str,
@@ -159,7 +153,7 @@ pub fn resolve_turn(
     declared: &Declared,
     authority: &Authority,
     config: &ResolverConfig,
-) -> Resolution {
+) -> vak_intent::Intent {
     // An explicit `/goal fix` or `/goal replace` is the only way a strand
     // becomes a correction or a replacement of earlier work.
     let (text, lineage_hint) = match vak_intent::parse_command(text) {

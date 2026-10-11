@@ -1168,12 +1168,6 @@ function KernelPolicyView() {
 
               <span class="dim">Autonomy Level:</span>
               <span><span class="chip chip-phrase">{p().intent.autonomy}</span></span>
-
-              <span class="dim">Max Classification Budget:</span>
-              <span class="num">${p().intent.max_classify_usd.toFixed(3)}</span>
-
-              <span class="dim">Escalation Strategy:</span>
-              <span><code>{p().intent.escalate}</code></span>
             </div>
           )}
         </Show>

@@ -37,7 +37,6 @@ fn resolved(text: &str, authority: &Authority) -> vak_intent::Intent {
         authority,
         &vak_intent::ResolverConfig::default(),
     )
-    .intent()
 }
 
 /// The single most important property: no delegation, however broad, lets an

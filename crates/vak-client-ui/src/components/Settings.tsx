@@ -120,7 +120,6 @@ const STEP_PURPOSES: [string, string, string][] = [
   ["plan", "Planning", "Writing the plan for longer managed work."],
   ["repair", "Fixing a mistake", "The step after Vakyartha points out a problem."],
   ["judge", "Checking finished work", "Deciding whether a goal was met."],
-  ["classify", "Sorting requests", "Reading what a request asks for."],
   ["compact", "Shortening history", "Summarising older parts of a long conversation."],
   ["summarise", "Handing over", "Writing the summary a long task restarts from."],
 ];

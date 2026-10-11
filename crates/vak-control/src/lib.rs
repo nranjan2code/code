@@ -116,7 +116,6 @@ pub enum Purpose {
     Act,
     Answer,
     Repair,
-    Classify,
     Compact,
     Judge,
     Summarise,
@@ -285,12 +284,11 @@ pub struct Applied {
 }
 
 /// Every purpose, in a fixed order.
-pub const PURPOSES: [Purpose; 8] = [
+pub const PURPOSES: [Purpose; 7] = [
     Purpose::Plan,
     Purpose::Act,
     Purpose::Answer,
     Purpose::Repair,
-    Purpose::Classify,
     Purpose::Compact,
     Purpose::Judge,
     Purpose::Summarise,
@@ -399,10 +397,7 @@ impl StepDefaults {
                         Purpose::Plan | Purpose::Act | Purpose::Answer | Purpose::Judge => {
                             Reasoning::Default
                         }
-                        Purpose::Repair
-                        | Purpose::Classify
-                        | Purpose::Compact
-                        | Purpose::Summarise => Reasoning::Off,
+                        Purpose::Repair | Purpose::Compact | Purpose::Summarise => Reasoning::Off,
                     };
                     (
                         purpose,

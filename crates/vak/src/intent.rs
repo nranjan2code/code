@@ -59,21 +59,6 @@ fn show_policy(core: &Core) -> i32 {
         config.intent.slice_capabilities
     );
     println!("  approval posture     {}", config.intent.posture);
-    println!("  escalation           {}", config.intent.escalate);
-    if config.intent.escalate == "cloud" {
-        println!(
-            "  classification cap   ${:.4} per dispatch",
-            config.intent.max_classify_usd
-        );
-        println!(
-            "  classification model {}",
-            config
-                .intent
-                .classify_model
-                .as_deref()
-                .unwrap_or("(cheapest leg on the frozen ladder)")
-        );
-    }
     println!("  autonomy             {}", config.intent.autonomy);
     println!();
     println!("commitments");
@@ -153,11 +138,7 @@ fn explain(
         &authority,
         &vak_core::intent::resolver_config(core.config()),
     );
-    let escalation = match &resolution {
-        vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
-        vak_intent::Resolution::Settled(_) => None,
-    };
-    let mut intent = resolution.intent();
+    let mut intent = resolution;
     let outcome = vak_core::intent::complete_output_contract(&mut intent, prompt);
 
     if json {
@@ -168,7 +149,6 @@ fn explain(
             "outcome": outcome,
             "provenance": intent.provenance,
             "narrows": intent.engagement.limits.diff_from(&Limits::unrestricted()),
-            "escalation_recommended": escalation,
             "model_visible": intent.model_visible(),
         });
         println!(
@@ -258,9 +238,6 @@ fn explain(
     }
     if let Some(note) = &intent.provenance.escalation_note {
         println!("  note         {note}");
-    }
-    if let Some(reason) = &escalation {
-        println!("  escalation   recommended: {reason}");
     }
 
     println!();

@@ -25,8 +25,8 @@ pub struct ModelRef {
 impl ModelRef {
     /// Read the config spelling `provider/model`. The provider is the part
     /// before the FIRST `/`: provider names never contain one, while model
-    /// ids often do (`openrouter/anthropic/claude-…`). This is the spelling
-    /// `[intent] classify_model` already uses for a provider-qualified model.
+    /// ids often do (`openrouter/anthropic/claude-…`). A route leg spells a
+    /// provider-qualified model the same way.
     pub fn parse(spelling: &str) -> Option<Self> {
         let (provider, model) = spelling.trim().split_once('/')?;
         let (provider, model) = (provider.trim(), model.trim());
