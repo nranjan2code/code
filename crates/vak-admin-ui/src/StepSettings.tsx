@@ -7,7 +7,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { api } from "./api";
 import { pushToast } from "./store";
-import type { ControlLayer, StepOverride } from "./types";
+import type { ControlLayer, StepOverride, TimeLimits } from "./types";
 
 const PURPOSES: [string, string][] = [
   ["act", "Working"],
@@ -94,6 +94,63 @@ export function StepSettingsPanel() {
                   </tr>
                 );
               }}
+            </For>
+          </tbody>
+        </table>
+      </Show>
+    </section>
+  );
+}
+
+const TIME_LIMITS: [keyof TimeLimits, string, string][] = [
+  ["command_secs", "A command", "When the call names no limit of its own"],
+  ["script_secs", "A scheduled script", "A script an automation runs"],
+  ["hook_secs", "A hook", "When the hook sets no limit of its own"],
+  ["approval_secs", "An approval", "Waiting for a person; no answer means no"],
+  ["question_secs", "A worker's question", "Waiting for a person before the worker goes on without an answer"],
+  ["reply_secs", "A channel reply", "How long a channel waits before saying the work is still running"],
+  ["probe_secs", "A capacity probe request", "One request of the background check of a model's limits"],
+];
+
+/// Settings › Models: the operator's time limits
+/// (docs/design/88-control-plane.md §5a). These are the only numbers that
+/// end work still in progress; an empty field uses the shipped default.
+export function TimeLimitsPanel() {
+  const [layer, { refetch }] = createResource(() => api.control("user"));
+  const save = async (key: keyof TimeLimits, text: string) => {
+    const current: ControlLayer = layer()?.control ?? {};
+    const limits = { ...(current.limits ?? {}) };
+    const seconds = Math.floor(Number(text));
+    if (text === "" || !Number.isFinite(seconds) || seconds < 1) delete limits[key];
+    else limits[key] = seconds;
+    try {
+      await api.setControl("user", { ...current, limits });
+      await refetch();
+    } catch (error) {
+      pushToast("alert", `${error}`);
+    }
+  };
+  return (
+    <section class="panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>Time limits</h2>
+          <p class="dim">How long each kind of wait may last, in seconds. Empty fields use the default shown.</p>
+        </div>
+      </div>
+      <Show when={layer()} fallback={<p class="dim">Loading…</p>}>
+        <table class="step-settings">
+          <thead><tr><th>Wait</th><th>Applies</th><th>Seconds</th><th>In force</th></tr></thead>
+          <tbody>
+            <For each={TIME_LIMITS}>
+              {([key, label, applies]) => (
+                <tr>
+                  <td>{label}</td>
+                  <td class="dim">{applies}</td>
+                  <td><input aria-label={`${label}: seconds`} type="number" min="1" step="1" placeholder={String(layer()!.shipped_limits[key])} value={layer()!.control.limits?.[key] ?? ""} onChange={(e) => void save(key, e.currentTarget.value)} /></td>
+                  <td>{layer()!.limits[key]} s</td>
+                </tr>
+              )}
             </For>
           </tbody>
         </table>

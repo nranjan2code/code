@@ -1070,6 +1070,7 @@ async fn run_flow_exec(
         }
     };
     let deps = vak_flow::ExecutorDeps {
+        time_limits: core.time_limits(),
         steps: core.step_defaults(),
         objects,
         prompt_layers: Vec::new(),
@@ -1996,6 +1997,7 @@ async fn run_plan(
         return 2;
     }
     let deps = vak_flow::ExecutorDeps {
+        time_limits: core.time_limits(),
         steps: core.step_defaults(),
         objects,
         prompt_layers: Vec::new(),

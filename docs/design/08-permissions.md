@@ -95,7 +95,7 @@ default:
 - Approval requests are answered exactly once: the pending map holds a
   oneshot sender, and answering removes the entry before responding.
 - Every gate is bounded. `GatewayApprover` waits `gateway.approval_timeout_secs`
-  (default 300); `HttpApprover` waits 15 minutes. Both fail closed on expiry,
+  (default 300); `HttpApprover` waits the operator's `[control.limits] approval_secs` (900 by default). Both fail closed on expiry,
   and both drop their pending entry first so a late reply resolves nothing.
 - The engine is pure: no I/O beyond path canonicalization.
 - **Intent never gates the engine** (`docs/design/47-commitment-kernel.md`).

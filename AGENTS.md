@@ -2301,7 +2301,12 @@ own, and write a correction's wording only in `vak_control::render`.
 Nothing is ended because a number of seconds picked in code went by: a wait
 ends when the work finishes, someone stops it, it goes silent, or the
 operator's configured limit is reached (docs/design/88-control-plane.md
-§5a, which lists the constants still to be brought under this).
+§5a, which lists what is still to be brought under this). The operator's
+limits are `[control.limits]` (`vak_control::TimeLimits`, read through
+`Core::time_limits`): add a wait's limit there, shown in Settings beside
+its shipped default, never as a constant. A tool whose call may be bounded
+names the argument that bounds it (`Tool::time_limit_argument`), and the
+loop fills it; nothing fills a limit by a tool's name.
 
 ## Verification before every commit
 

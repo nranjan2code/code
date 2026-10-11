@@ -985,3 +985,30 @@ async fn control_layer_round_trips_and_applies_live() {
     let act = core.step_defaults().get(vak_control::Purpose::Act);
     assert_eq!(act.sampling.temperature, Some(0.2));
 }
+
+/// `[control.limits]` round-trips through the same route, shows the shipped
+/// default beside the limit in force, and reaches the live Core
+/// (docs/design/88-control-plane.md §5a).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn time_limits_round_trip_and_apply_live() {
+    let (app, core, _temp) = two_agent_app().await;
+    let (_, body) = call(&app, "GET", "/config/control", json!({})).await;
+    assert_eq!(body["limits"]["command_secs"], 120);
+    assert_eq!(body["shipped_limits"]["approval_secs"], 900);
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/config/control",
+        json!({ "limits": { "command_secs": 45, "approval_secs": 60 } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = call(&app, "GET", "/config/control", json!({})).await;
+    assert_eq!(body["control"]["limits"]["command_secs"], 45);
+    assert_eq!(body["limits"]["command_secs"], 45);
+    assert_eq!(body["shipped_limits"]["command_secs"], 120);
+    assert_eq!(body["limits"]["hook_secs"], 10);
+    let limits = core.time_limits();
+    assert_eq!(limits.command_secs, 45);
+    assert_eq!(limits.approval_secs, 60);
+}

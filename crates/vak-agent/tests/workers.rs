@@ -174,6 +174,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         max_retries: 0,
         retry_base_backoff_ms: 0,
         request_timeout: None,
+        time_limits: vak_agent::TimeLimits::shipped(),
         circuit_breaker: None,
         run_retry_attempts: 0,
         run_retry_base_backoff_ms: 0,

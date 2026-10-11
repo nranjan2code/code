@@ -175,6 +175,58 @@ function StepSettingsGroup() {
   );
 }
 
+const TIME_LIMITS: [keyof api.TimeLimits, string, string, boolean][] = [
+  ["command_secs", "A command", "How long a command may run when the request sets no time of its own.", false],
+  ["script_secs", "A scheduled script", "How long a script run by an automation may take.", false],
+  ["approval_secs", "An approval", "How long a request for your approval waits. With no answer it is refused.", false],
+  ["question_secs", "A question from a helper", "How long a helper's question waits for your answer before it works without one.", false],
+  ["reply_secs", "A reply in a chat app", "How long a chat app waits for the answer before saying the work is still running.", false],
+  ["hook_secs", "A hook", "How long a hook may run when it sets no time of its own.", true],
+  ["probe_secs", "A model capacity check", "How long one request of the background check of a model's limits may take.", true],
+];
+
+function secondsInWords(seconds: number): string {
+  if (seconds % 60 === 0) return seconds === 60 ? "1 minute" : `${seconds / 60} minutes`;
+  return seconds === 1 ? "1 second" : `${seconds} seconds`;
+}
+
+/// The time limits a person sets, shared by every agent
+/// (docs/design/88-control-plane.md §5a). Nothing else ends work that is
+/// still going: an empty field uses the default named beside it.
+function TimeLimitsGroup() {
+  const [layer, { refetch }] = createResource(() => api.getControl("user"));
+  const [error, setError] = createSignal("");
+  const save = async (key: keyof api.TimeLimits, text: string) => {
+    const current = layer()?.control ?? {};
+    const limits = { ...(current.limits ?? {}) };
+    const seconds = Math.floor(Number(text));
+    if (text === "" || !Number.isFinite(seconds) || seconds < 1) delete limits[key];
+    else limits[key] = seconds;
+    try {
+      await api.putControl("user", { ...current, limits });
+      setError("");
+      await refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  const row = ([key, title, description]: [keyof api.TimeLimits, string, string, boolean]) => (
+    <Row title={title} description={`${description} Default: ${secondsInWords(layer()?.shipped_limits[key] ?? 0)}.`}>
+      <input class="settings-number" type="number" min="1" step="1" aria-label={`${title}: seconds`} placeholder={String(layer()?.shipped_limits[key] ?? "")} value={layer()?.control.limits?.[key] ?? ""} onChange={(event) => void save(key, event.currentTarget.value)} />
+      <span class="setting-unit">seconds</span>
+    </Row>
+  );
+  return (
+    <Group title="Time limits">
+      <Show when={error()}><p class="connect-error" role="alert">{error()}</p></Show>
+      <Show when={layer()}>
+        <For each={TIME_LIMITS.filter((limit) => !limit[3])}>{row}</For>
+        <TechnicalRow><For each={TIME_LIMITS.filter((limit) => limit[3])}>{row}</For></TechnicalRow>
+      </Show>
+    </Group>
+  );
+}
+
 function CapabilityIcon(props: { name: string }) {
   return <span class="capability-icon" style={{ "--capability-hue": `oklch(62% 0.14 ${capabilityHue(props.name)})` }}>{capabilityInitial(props.name)}</span>;
 }
@@ -2119,7 +2171,7 @@ export default function Settings() {
                   </Show>
                 </TechnicalRow>
               </Group>
-              <Show when={scope() === "user"}><StepSettingsGroup /></Show>
+              <Show when={scope() === "user"}><StepSettingsGroup /><TimeLimitsGroup /></Show>
               <Show when={technicalDetails()}><div class="settings-actions">
                 <button class="btn primary" disabled={saving() || !agentDirty()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>
                 <Show when={technicalDetails()}>

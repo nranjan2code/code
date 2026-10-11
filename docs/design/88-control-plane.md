@@ -140,8 +140,10 @@ below are not built.
   `Reading::may_open_commitment` are removed. The horizon reading still
   sets the context profile (`derive_context`) and an unattended gate's
   fallback (`Authority::gate_fallback`); both are readings to replace.
-- The remaining time constants in §5a (probe, gateway wait, command and
-  person waits) are not yet configuration.
+- C6 (done): the time constants in §5a (probe, channel wait, command,
+  script, hook and person waits) are `[control.limits]`, edited in Settings
+  and the admin console beside their shipped defaults; §5a lists the three
+  things still open there.
 - C6 (done): the outcome requirements guessed from the request's words are
   removed: the write-verb, file-extension and Office-term lists behind
   `saved_file_target`, `expects_artifact` and `permits_authored_text_file`,
@@ -288,16 +290,45 @@ code went by. A wait ends on an observed state:
   with its shipped default, recorded in the `Ending` when it is what ended
   the work.
 
-Audit of time constants in code at C4 (`b213cc1f6`), by what they bound:
+The operator's limits are `[control.limits]`, in seconds, each with its
+shipped default (`vak_control::TimeLimits`): `command_secs` 120 (a command
+whose call names no limit), `script_secs` 120 (a scheduled script),
+`hook_secs` 10 (a hook that sets none of its own), `approval_secs` 900 and
+`question_secs` 900 (waiting for a person; silence still means no,
+invariant 15), `reply_secs` 240 (how long a channel's `wait` request is
+held before it is told the turn is still running; the turn goes on) and
+`probe_secs` 30 (one request of the background capacity probe). They are
+layered like the step settings, read live (`Core::time_limits`), edited
+through `/config/control` (which returns the limits in force beside the
+shipped ones), the client's Settings › Time limits and the admin console's
+Models panel. A limit of zero is read as unset. An untrusted project sets
+none of them (`control.limits` is a privileged key).
 
-| Kind | Where | To do |
+A tool says which of its arguments bounds one call
+(`Tool::time_limit_argument`; `bash` names `timeout_ms`), and the loop fills
+that argument from `command_secs` when the call leaves it out, before the
+call is ledgered, so the record shows the limit it ran with. The loop
+names no tool to do this.
+
+Audit of time constants in code, first taken at C4 (`b213cc1f6`), by what
+they bound:
+
+| Kind | Where | State |
 |---|---|---|
 | A whole model dispatch | `AgentConfig::request_timeout` wrapped the entire streamed step | done at C5: it bounds silence between stream events (`within` in the agent loop) |
-| A whole model call, fixed | `REFLECTION_CALL_TIMEOUT` 120 s (was defined three times) and `HEARTBEAT_TURN_TIMEOUT` 120 s are removed at C6: reflection is bounded by the operator's `request_timeout_secs` inside the call, and a check-in runs until the next is due (`[heartbeat] interval_secs`). Left: `PROBE_REQUEST_TIMEOUT` 30 s, gateway `WAIT_TIMEOUT` 240 s | the two left become configuration |
-| A command or script | bash `DEFAULT_TIMEOUT_MS` 120 s, `SCRIPT_TIMEOUT_MS` 120 s, hooks `DEFAULT_TIMEOUT_MS` 10 s | C5: the operator's limit, from configuration |
-| Waiting for a person | `QUESTION_TIMEOUT` 900 s, `HTTP_APPROVAL_TIMEOUT` 900 s | C5: configuration; silence still means no (invariant 15) |
+| A whole model call, fixed | `REFLECTION_CALL_TIMEOUT` 120 s (was defined three times) and `HEARTBEAT_TURN_TIMEOUT` 120 s | removed at C6: reflection is bounded by the operator's `request_timeout_secs` inside the call, and a check-in runs until the next is due (`[heartbeat] interval_secs`) |
+| A probe request, a channel's wait | `PROBE_REQUEST_TIMEOUT` 30 s, gateway `WAIT_TIMEOUT` 240 s | done at C6: `probe_secs`, `reply_secs` |
+| A command or script | bash `DEFAULT_TIMEOUT_MS` 120 s, `SCRIPT_TIMEOUT_MS` 120 s, hooks `DEFAULT_TIMEOUT_MS` 10 s | done at C6: `command_secs`, `script_secs`, `hook_secs` |
+| Waiting for a person | `QUESTION_TIMEOUT` 900 s, `HTTP_APPROVAL_TIMEOUT` 900 s | done at C6: `question_secs`, `approval_secs` |
 | Protection against a hostile or dead peer | discovery 15 s, MCP list 10 s, webfetch and browse totals, `VERIFY_DEADLINE`, delivery worker 5 s, credential probe | stay: they bound input Vak does not control, like the parser limits in §8 |
 | Freshness of a cache or a liveness beat | profile and discovery TTLs, reconcile intervals, `LIVENESS_RENEW_SECS` | stay: they schedule work and end nothing |
+
+Still open here: bash's `MAX_TIMEOUT_MS` (600 s, also written in its
+schema) caps the limit a call may name; the `vak flow` and `vak plan`
+commands and the flow tool build their executor with a fixed 600 s
+`request_timeout` instead of the operator's `request_timeout_secs`; and an
+ending caused by an operator's limit is reported by the tool or the wait
+that hit it, not yet as a field of the turn's `Ending`.
 
 ## 6. Records
 

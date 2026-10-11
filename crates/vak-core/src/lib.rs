@@ -259,6 +259,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             }
         };
         let deps = vak_flow::ExecutorDeps {
+            time_limits: self.core.time_limits(),
             steps: self.core.step_defaults(),
             objects,
             provider: match self.core.provider() {
@@ -1588,6 +1589,14 @@ impl Core {
         Self::read_override(&self.inner.control_override)
             .unwrap_or_else(|| self.config().control.clone())
             .step_defaults(provider, model)
+    }
+
+    /// The operator's time limits (docs/design/88-control-plane.md §5a):
+    /// the shipped ones with the live `[control.limits]` layers applied.
+    pub fn time_limits(&self) -> vak_control::TimeLimits {
+        Self::read_override(&self.inner.control_override)
+            .unwrap_or_else(|| self.config().control.clone())
+            .time_limits()
     }
 
     pub fn effective_model(&self) -> String {
@@ -4147,7 +4156,7 @@ impl Core {
             .into_iter()
             .filter(|hook| hook.enabled)
         {
-            if let Err(reason) = hook_def(&hook) {
+            if let Err(reason) = hook_def(&hook, self.time_limits().hook_secs * 1000) {
                 out.push(CapabilityDiagnostic {
                     kind: "hook".into(),
                     name: format!("{}/{}", hook.event, hook.command),
@@ -5070,9 +5079,6 @@ impl Core {
     /// A background probe on a key repeatedly interrupted by real turns is
     /// spaced out rather than respawned on every single turn completion.
     const CAPACITY_PROBE_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
-    /// Bounds any single probe rung request: a hung provider must not stall
-    /// the background probe indefinitely.
-    const PROBE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     /// A rung whose expected prefill time (its token target divided by the
     /// measured prefill throughput so far) exceeds this is skipped rather
     /// than sent — every larger rung would be even slower, so the ladder
@@ -5360,6 +5366,9 @@ impl Core {
             metadata_digest,
             probed_at,
         } = metadata;
+        // The operator's limit on one probe request: a hung provider must
+        // not stall the background probe (docs/design/88 §5a).
+        let request_limit = std::time::Duration::from_secs(self.time_limits().probe_secs);
         let mut ladder = vak_context::capacity::Ladder::new(declared_window);
         let mut rungs: Vec<vak_context::capacity::Rung> = Vec::new();
         let mut signals: Vec<String> = Vec::new();
@@ -5427,7 +5436,7 @@ impl Core {
                     &leg.model,
                     target,
                     request.max_tokens.map_or(0, u64::from),
-                    Self::PROBE_REQUEST_TIMEOUT,
+                    request_limit,
                     cancel,
                 )
                 .await
@@ -5438,8 +5447,7 @@ impl Core {
                         break;
                     }
                 };
-                let remaining =
-                    Self::PROBE_REQUEST_TIMEOUT.saturating_sub(dispatch_started.elapsed());
+                let remaining = request_limit.saturating_sub(dispatch_started.elapsed());
                 let provider_cancel = admission.cancellation_token();
                 let outcome = match tokio::time::timeout(remaining, async {
                     provider_client
@@ -5453,7 +5461,7 @@ impl Core {
                     Ok(result) => result,
                     Err(_) => Err(vak_llm::LlmError::Network(format!(
                         "probe rung {target} exceeded its {:?} admission and dispatch budget",
-                        Self::PROBE_REQUEST_TIMEOUT
+                        request_limit
                     ))),
                 };
                 if matches!(
@@ -5610,6 +5618,7 @@ impl Core {
                 &provider_client,
                 &leg.provider,
                 cache_request.clone(),
+                request_limit,
                 cancel,
             )
             .await;
@@ -5620,6 +5629,7 @@ impl Core {
                             &provider_client,
                             &leg.provider,
                             cache_request,
+                            request_limit,
                             cancel,
                         )
                         .await;
@@ -5684,6 +5694,7 @@ impl Core {
         provider_client: &Arc<dyn Provider>,
         provider_route: &str,
         request: vak_llm::ChatRequest,
+        request_limit: std::time::Duration,
         cancel: &CancellationToken,
     ) -> (
         Result<vak_llm::AssistantMessage, vak_llm::LlmError>,
@@ -5703,7 +5714,7 @@ impl Core {
             &request.model,
             estimated_input,
             request.max_tokens.map_or(0, u64::from),
-            Self::PROBE_REQUEST_TIMEOUT,
+            request_limit,
             cancel,
         )
         .await
@@ -5712,7 +5723,7 @@ impl Core {
             Err(error) => return (Err(error), None),
         };
         let started = std::time::Instant::now();
-        let remaining = Self::PROBE_REQUEST_TIMEOUT.saturating_sub(dispatch_started.elapsed());
+        let remaining = request_limit.saturating_sub(dispatch_started.elapsed());
         let provider_cancel = admission.cancellation_token();
         match tokio::time::timeout(remaining, async {
             let mut stream = provider_client.stream(request, provider_cancel).await?;
@@ -6627,6 +6638,7 @@ impl Core {
             reach_standings: &reach_standings,
             mcp_inventory: &mcp_inventory,
             builtin_names: &builtin_names,
+            hook_limit_ms: self.time_limits().hook_secs * 1000,
         });
         let revoke_registry = registry.clone();
         {
@@ -6761,6 +6773,7 @@ impl Core {
         cfg.run_retry_base_backoff_ms = self.inner.config.run_retry_base_backoff_ms;
         cfg.dispatch_ceiling = (cfg.max_retries.saturating_add(1))
             .saturating_mul(cfg.run_retry_attempts.saturating_add(1));
+        cfg.time_limits = self.time_limits();
         cfg.request_timeout = if self.inner.config.request_timeout_secs == 0 {
             None
         } else {
@@ -7148,6 +7161,7 @@ impl Core {
                 max_retries: cfg.max_retries,
                 retry_base_backoff_ms: cfg.retry_base_backoff_ms,
                 request_timeout: cfg.request_timeout,
+                time_limits: cfg.time_limits,
                 circuit_breaker: cfg.circuit_breaker.clone(),
                 run_retry_attempts: cfg.run_retry_attempts,
                 run_retry_base_backoff_ms: cfg.run_retry_base_backoff_ms,
@@ -9545,7 +9559,7 @@ fn uuid_like() -> String {
 }
 
 pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
-    build_hooks_from(&config.hooks)
+    build_hooks_from(&config.hooks, config.control.time_limits().hook_secs * 1000)
 }
 
 fn normalize_capability_message(
@@ -9594,12 +9608,13 @@ fn normalize_capability_message(
 
 fn build_hooks_from(
     config_hooks: &[vak_config::HookConfig],
+    limit_ms: u64,
 ) -> Result<Vec<vak_hooks::HookDef>, CoreError> {
     config_hooks
         .iter()
         .filter(|hook| hook.enabled)
         .map(|hook| {
-            hook_def(hook).map_err(|reason| {
+            hook_def(hook, limit_ms).map_err(|reason| {
                 CoreError::Config(vak_config::ConfigError::Read {
                     path: self_path(),
                     source: std::io::Error::other(reason),
@@ -9612,7 +9627,10 @@ fn build_hooks_from(
 /// The one reading of a configured hook, shared by config validation and the
 /// per-turn capability pipeline so the two can never disagree about what a
 /// hook means.
-pub fn hook_def(hook: &vak_config::HookConfig) -> Result<vak_hooks::HookDef, String> {
+pub fn hook_def(
+    hook: &vak_config::HookConfig,
+    limit_ms: u64,
+) -> Result<vak_hooks::HookDef, String> {
     let event = match hook.event.as_str() {
         "session-start" | "session_start" | "start" => vak_hooks::HookEvent::SessionStart,
         "pre-tool-use" | "pre_tool_use" => vak_hooks::HookEvent::PreToolUse,
@@ -9635,7 +9653,7 @@ pub fn hook_def(hook: &vak_config::HookConfig) -> Result<vak_hooks::HookDef, Str
         event,
         matcher,
         command: hook.command.clone(),
-        timeout_ms: hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
+        timeout_ms: hook.timeout_ms.unwrap_or(limit_ms),
         failure_mode,
         refusal: None,
     })

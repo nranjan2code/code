@@ -8,6 +8,7 @@ mod fences;
 use fences::{find_malformed_vak_fence, vak_fence_bodies};
 mod answer;
 pub use answer::ANSWER;
+pub use vak_control::TimeLimits;
 pub mod circuit;
 pub mod goal;
 pub mod questions;
@@ -425,6 +426,10 @@ pub struct AgentConfig {
     /// stream event, and for the collected result. A step that keeps
     /// producing is never cut. None disables.
     pub request_timeout: Option<std::time::Duration>,
+    /// The operator's time limits (docs/design/88-control-plane.md §5a):
+    /// what a command runs under when its call names no limit, and how
+    /// long a worker's question waits for a person.
+    pub time_limits: vak_control::TimeLimits,
     /// Shared cross-run provider-health breaker. None disables.
     pub circuit_breaker: Option<Arc<CircuitBreaker>>,
     /// Run-level endurance: when a model step exhausts its retry budget with
@@ -576,6 +581,7 @@ impl AgentConfig {
             max_retries: 3,
             retry_base_backoff_ms: 500,
             request_timeout: Some(std::time::Duration::from_secs(600)),
+            time_limits: vak_control::TimeLimits::shipped(),
             circuit_breaker: None,
             run_retry_attempts: 6,
             run_retry_base_backoff_ms: 2_000,
@@ -2327,7 +2333,12 @@ impl Agent {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
-            normalize_response_tool_uses(&mut response, &self.config.tools, &mcp_index);
+            normalize_response_tool_uses(
+                &mut response,
+                &self.config.tools,
+                &mcp_index,
+                self.config.time_limits,
+            );
             // Some small models cannot emit a structured `tool_use` block
             // and spell one out as text instead: rewrite `response` BEFORE
             // it reaches the ledger, so what is recorded is already a
@@ -8008,6 +8019,7 @@ fn normalize_response_tool_uses(
     response: &mut AssistantMessage,
     tools: &[Arc<dyn Tool>],
     mcp_index: &std::collections::HashMap<String, String>,
+    limits: vak_control::TimeLimits,
 ) {
     for block in &mut response.content {
         let ContentBlock::ToolUse { id, name, input } = block else {
@@ -8029,6 +8041,33 @@ fn normalize_response_tool_uses(
         );
         *name = call.name;
         *input = call.input;
+        fill_time_limit(name, input, tools, limits);
+    }
+}
+
+/// A call that names no time limit runs under the operator's
+/// (`[control.limits] command_secs`, docs/design/88-control-plane.md §5a).
+/// The tool declares which argument holds its limit
+/// (`Tool::time_limit_argument`); the loop keeps no table of names. Filled
+/// before the call is ledgered, so the record shows the limit it ran with,
+/// and a limit the call wrote is never changed.
+fn fill_time_limit(
+    name: &str,
+    input: &mut Value,
+    tools: &[Arc<dyn Tool>],
+    limits: vak_control::TimeLimits,
+) {
+    let Some(argument) = tools
+        .iter()
+        .find(|tool| tool.name() == name)
+        .and_then(|tool| tool.time_limit_argument())
+    else {
+        return;
+    };
+    if let Some(arguments) = input.as_object_mut() {
+        arguments
+            .entry(argument)
+            .or_insert_with(|| Value::from(limits.command_secs.saturating_mul(1000)));
     }
 }
 
@@ -8763,6 +8802,68 @@ mod auto_approve_tests {
             ),
             "sandboxed bash is auto-approved by the sand-boxing contract"
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod time_limit_tests {
+    use super::fill_time_limit;
+    use serde_json::json;
+    use vak_tools::{Tool, ToolContext, ToolOutput};
+
+    struct Timed(Option<&'static str>);
+
+    #[async_trait::async_trait]
+    impl Tool for Timed {
+        fn name(&self) -> &str {
+            "anything"
+        }
+        fn description(&self) -> &str {
+            "a tool that may declare a time limit"
+        }
+        fn schema(&self) -> serde_json::Value {
+            json!({"type": "object"})
+        }
+        fn time_limit_argument(&self) -> Option<&'static str> {
+            self.0
+        }
+        async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+            ToolOutput::ok(String::new())
+        }
+    }
+
+    fn limits() -> vak_control::TimeLimits {
+        vak_control::TimeLimits {
+            command_secs: 45,
+            ..vak_control::TimeLimits::shipped()
+        }
+    }
+
+    #[test]
+    fn a_call_with_no_limit_gets_the_operators() {
+        let tools: Vec<std::sync::Arc<dyn Tool>> =
+            vec![std::sync::Arc::new(Timed(Some("wait_ms")))];
+        let mut input = json!({"command": "true"});
+        fill_time_limit("anything", &mut input, &tools, limits());
+        assert_eq!(input, json!({"command": "true", "wait_ms": 45_000}));
+    }
+
+    #[test]
+    fn a_limit_the_call_wrote_is_kept() {
+        let tools: Vec<std::sync::Arc<dyn Tool>> =
+            vec![std::sync::Arc::new(Timed(Some("wait_ms")))];
+        let mut input = json!({"wait_ms": 5_000});
+        fill_time_limit("anything", &mut input, &tools, limits());
+        assert_eq!(input, json!({"wait_ms": 5_000}));
+    }
+
+    #[test]
+    fn a_tool_that_declares_no_limit_is_left_alone() {
+        let tools: Vec<std::sync::Arc<dyn Tool>> = vec![std::sync::Arc::new(Timed(None))];
+        let mut input = json!({"command": "true"});
+        fill_time_limit("anything", &mut input, &tools, limits());
+        assert_eq!(input, json!({"command": "true"}));
     }
 }
 

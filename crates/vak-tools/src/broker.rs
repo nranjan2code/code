@@ -360,6 +360,10 @@ impl Tool for BrokeredTool {
         self.inner.always_loaded()
     }
 
+    fn time_limit_argument(&self) -> Option<&'static str> {
+        self.inner.time_limit_argument()
+    }
+
     fn refusal(&self, args: &Value) -> Option<String> {
         self.inner.refusal(args)
     }

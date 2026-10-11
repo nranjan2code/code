@@ -53,7 +53,6 @@ pub struct HookDef {
     pub refusal: Option<String>,
 }
 
-pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const MAX_CAPTURE: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Default, PartialEq)]

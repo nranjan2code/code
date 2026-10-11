@@ -7,7 +7,6 @@ use tokio::io::AsyncReadExt;
 
 use crate::{Tool, ToolContext, ToolOutput, artifact::guess_mime_type};
 
-const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_TIMEOUT_MS: u64 = 600_000;
 const MAX_CAPTURE: usize = 1 << 20;
 const MAX_SCAN_ENTRIES: usize = 50_000;
@@ -28,6 +27,10 @@ impl Tool for BashTool {
         true
     }
 
+    fn time_limit_argument(&self) -> Option<&'static str> {
+        Some("timeout_ms")
+    }
+
     fn description(&self) -> &str {
         "Execute any command, program, or script in the execution sandbox: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Commands run in the workspace, the same place `read` and `write` work; temporary files and tool caches go to `.vak/scratch/`. A command that never exits is killed at its timeout. Never create or change a Word, Excel, PowerPoint, PDF or Visio file with a command or script (no PDF or Office libraries, converters or exporters): those files reach the person only as a draft they review, made with office_apply; when office_apply is not available, or for a Visio drawing, say that instead of building one."
     }
@@ -37,7 +40,7 @@ impl Tool for BashTool {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
-                "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 600000, "description": "Timeout in milliseconds (default 120000; maximum 10 minutes)"},
+                "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 600000, "description": "Timeout in milliseconds (default: the configured command limit; maximum 10 minutes)"},
                 "cwd": {"type": "string", "description": "Folder to run in, relative to the workspace root (default: the workspace root)"}
             },
             "required": ["command"]
@@ -70,7 +73,7 @@ impl Tool for BashTool {
         let timeout_ms = args
             .get("timeout_ms")
             .and_then(|t| t.as_u64())
-            .unwrap_or(DEFAULT_TIMEOUT_MS)
+            .unwrap_or(vak_control::TimeLimits::shipped().command_secs * 1000)
             .clamp(1000, MAX_TIMEOUT_MS);
 
         // The command works in the workspace, where `read`/`write`/`edit`

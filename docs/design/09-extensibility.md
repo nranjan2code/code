@@ -85,7 +85,7 @@ Config-declared script handlers at lifecycle points:
 event = "pre-tool-use"        # session-start | pre-tool-use | post-tool-use | stop
 match = "Bash(git push *)"    # optional; same rule syntax as permissions
 command = "scripts/guard.sh"
-timeout_ms = 5000             # optional, default 10000
+timeout_ms = 5000             # optional; default [control.limits] hook_secs (10 s)
 enabled = true                # optional, default true (absent = enabled,
                                # for every [[hooks]] entry written before
                                # this field existed)

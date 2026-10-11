@@ -338,6 +338,7 @@ async fn a_resolved_secret_is_a_pending_change_at_the_next_admission() {
         channel_policy: &empty_policy,
         reach_standings: &[],
         mcp_inventory: &inventory,
+        hook_limit_ms: 10_000,
         builtin_names: &builtins,
     });
     assert_eq!(

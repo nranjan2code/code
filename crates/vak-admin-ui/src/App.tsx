@@ -1,4 +1,4 @@
-import { StepSettingsPanel } from "./StepSettings";
+import { StepSettingsPanel, TimeLimitsPanel } from "./StepSettings";
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import Projects from "./Projects";
 import Runs from "./Runs";
@@ -6513,7 +6513,7 @@ export function Settings() {
                 </div>
               </Show>
             </section>
-            <Show when={selectedAgentId() === "global"}><StepSettingsPanel /></Show>
+            <Show when={selectedAgentId() === "global"}><StepSettingsPanel /><TimeLimitsPanel /></Show>
 
               <Show when={selectedProvider()} fallback={
                 <section class="panel">

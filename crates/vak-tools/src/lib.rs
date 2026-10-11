@@ -259,6 +259,14 @@ pub trait Tool: Send + Sync {
         })
     }
 
+    /// The argument, in milliseconds, that bounds how long one call may
+    /// run. A call that leaves it out runs under the operator's limit
+    /// (`[control.limits] command_secs`), which the calling loop fills in
+    /// from this declaration (docs/design/88-control-plane.md §5a).
+    fn time_limit_argument(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Arguments this tool fills in itself when a call leaves them out,
     /// applied before the call is validated: a card tool whose name settles
     /// its type fills `semantic_type`, which its schema asks for first

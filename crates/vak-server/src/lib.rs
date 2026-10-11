@@ -640,7 +640,8 @@ impl ApprovalRequest {
     }
 }
 
-/// How long an HTTP-surfaced gate waits for a console or desktop client to
+/// An HTTP-surfaced gate waits `wait` (the operator's approval limit,
+/// `[control.limits] approval_secs`) for a console or desktop client to
 /// answer before failing closed.
 ///
 /// There was no bound at all, which was survivable while every run behind
@@ -650,8 +651,6 @@ impl ApprovalRequest {
 /// its slot never freed. Generous, because a person may genuinely be away
 /// from the tab, but finite: a run that fails closed can be retried, and one
 /// that hangs cannot.
-const HTTP_APPROVAL_TIMEOUT: Duration = Duration::from_secs(900);
-
 struct HttpApprover {
     events_tx: events::EventBus,
     pending: Arc<Mutex<HashMap<String, ApprovalRequest>>>,
@@ -669,6 +668,8 @@ struct HttpApprover {
     /// a worker is told at once that nobody can answer instead of waiting for
     /// a question nobody will see.
     shows_questions: bool,
+    /// How long a gate waits for a person; silence means no.
+    wait: Duration,
 }
 
 #[async_trait::async_trait]
@@ -749,14 +750,14 @@ impl Approver for HttpApprover {
         // `GatewayApprover` already had. Dropping the entry before returning
         // means a reply that arrives after the deadline resolves nothing
         // rather than answering a gate the run has already moved past.
-        let approved = match tokio::time::timeout(HTTP_APPROVAL_TIMEOUT, rx).await {
+        let approved = match tokio::time::timeout(self.wait, rx).await {
             Ok(answer) => answer.unwrap_or(false),
             Err(_) => {
                 tracing::info!(
                     kind = "approval",
                     tool = %tool,
                     outcome = "timed_out",
-                    duration_ms = HTTP_APPROVAL_TIMEOUT.as_millis() as u64,
+                    duration_ms = self.wait.as_millis() as u64,
                     "an approval expired; denied"
                 );
                 false
@@ -5509,6 +5510,7 @@ fn spawn_http_turn_chain(
 ) {
     let hub = state.hub.clone();
     let chain_handle = handle;
+    let approval_wait = Duration::from_secs(core.time_limits().approval_secs);
     tokio::spawn(async move {
         let approver_handle = chain_handle.clone();
         let settle_handle = chain_handle.clone();
@@ -5527,6 +5529,7 @@ fn spawn_http_turn_chain(
                     activity_buffer: approver_handle.activity_buffer.clone(),
                     answerable: true,
                     shows_questions,
+                    wait: approval_wait,
                 })
             },
             move |leg_session_id: &str, outcome| {
@@ -18739,6 +18742,7 @@ async fn get_hooks(
     } else {
         Vec::new()
     };
+    let limit_ms = state.core.time_limits().hook_secs * 1000;
     let hooks = hooks
         .iter()
         .map(|h| {
@@ -18746,7 +18750,7 @@ async fn get_hooks(
                 "event": h.event,
                 "matcher": h.matcher,
                 "command": h.command,
-                "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS),
+                "timeout_ms": h.timeout_ms.unwrap_or(limit_ms),
                 "enabled": h.enabled,
                 "failure_mode": h.failure_mode.as_deref().unwrap_or("open"),
             })
@@ -18827,6 +18831,8 @@ async fn get_control_layer(
         "control": layer,
         "route": format!("{}/{}", route.provider, route.model),
         "effective": effective,
+        "limits": state.core.time_limits(),
+        "shipped_limits": vak_control::TimeLimits::shipped(),
     }))
     .into_response()
 }
@@ -18867,8 +18873,9 @@ async fn put_control_layer(
     Json(serde_json::json!({ "saved": true })).into_response()
 }
 
-async fn get_global_hooks() -> axum::response::Response {
+async fn get_global_hooks(State(state): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let limit_ms = state.core.time_limits().hook_secs * 1000;
     let Some(path) = vak_config::global_path() else {
         return (StatusCode::INTERNAL_SERVER_ERROR, "user home unavailable").into_response();
     };
@@ -18883,7 +18890,7 @@ async fn get_global_hooks() -> axum::response::Response {
     } else {
         Vec::new()
     };
-    Json(serde_json::json!({ "scope": "global", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS), "enabled": h.enabled, "failure_mode": h.failure_mode.as_deref().unwrap_or("open") })).collect::<Vec<_>>() })).into_response()
+    Json(serde_json::json!({ "scope": "global", "hooks": hooks.into_iter().map(|h| serde_json::json!({ "event": h.event, "matcher": h.matcher, "command": h.command, "timeout_ms": h.timeout_ms.unwrap_or(limit_ms), "enabled": h.enabled, "failure_mode": h.failure_mode.as_deref().unwrap_or("open") })).collect::<Vec<_>>() })).into_response()
 }
 
 async fn put_global_hooks(
@@ -18941,8 +18948,7 @@ fn validated_hook_configs(hooks: &[HookInput]) -> Result<Vec<vak_config::HookCon
             if hook.enabled && hook.command.trim().is_empty() {
                 return Err("enabled hooks need a command".into());
             }
-            let timeout_ms = hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS);
-            if timeout_ms == 0 {
+            if hook.timeout_ms == Some(0) {
                 return Err("hook timeout must be greater than zero".into());
             }
             let failure_mode = hook.failure_mode.as_deref().unwrap_or("open").trim();
@@ -18956,7 +18962,7 @@ fn validated_hook_configs(hooks: &[HookInput]) -> Result<Vec<vak_config::HookCon
                     .clone()
                     .filter(|matcher| !matcher.trim().is_empty()),
                 command: hook.command.trim().to_string(),
-                timeout_ms: Some(timeout_ms),
+                timeout_ms: hook.timeout_ms,
                 enabled: hook.enabled,
                 failure_mode: Some(failure_mode.to_string()),
             })
@@ -19704,6 +19710,7 @@ async fn side_chat(
         activity_buffer: side_activity.clone(),
         answerable: true,
         shows_questions: false,
+        wait: Duration::from_secs(state.core.time_limits().approval_secs),
     });
     let events = mpsc_to_broadcast(side_tx.clone());
     let cancel = handle
@@ -20140,6 +20147,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
         activity_buffer: handle.activity_buffer.clone(),
         answerable: attended,
         shows_questions: false,
+        wait: Duration::from_secs(core.time_limits().approval_secs),
     });
     let core = core.clone().with_approver(approver.as_ref());
     let events = mpsc_to_broadcast(handle.events_tx.clone());
@@ -20500,7 +20508,6 @@ pub(crate) fn split_model_pin(pin: &str, current_provider: &str) -> (String, Str
 // Zero provider dispatch is a property of the call graph: nothing here can
 // name a Provider.
 
-const SCRIPT_TIMEOUT_MS: u64 = 120_000;
 /// Fallback delivery surface for error alerts when a watchdog has no
 /// `deliver_to`: failures are never silent.
 pub(crate) const FALLBACK_ALERT_TARGET: &str = "log:vak";
@@ -20551,7 +20558,10 @@ async fn execute_script(
         new_documents: Vec::new(),
         executions: None,
     };
-    let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
+    let args = serde_json::json!({
+        "command": script,
+        "timeout_ms": core.time_limits().script_secs * 1000,
+    });
     let out = bash.execute(&args, &ctx).await;
     if out.is_error() {
         ScriptOutcome {
@@ -22313,10 +22323,11 @@ mod configuration_control_tests {
             activity_buffer: Arc::new(Mutex::new(Vec::new())),
             answerable: false,
             shows_questions: false,
+            wait: Duration::from_secs(900),
         };
         assert!(!Approver::answerable(&approver));
         // Returns immediately; without the guard this would block until the
-        // 15-minute deadline, which the test would never reach.
+        // approval limit, which the test would never reach.
         assert!(!approver.approve("bash", "{}", "needs approval", None).await);
     }
 
@@ -22331,6 +22342,7 @@ mod configuration_control_tests {
             activity_buffer: activity_buffer.clone(),
             answerable: true,
             shows_questions: false,
+            wait: Duration::from_secs(900),
         };
         let task = tokio::spawn(async move {
             approver

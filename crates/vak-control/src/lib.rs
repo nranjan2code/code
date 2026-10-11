@@ -400,6 +400,100 @@ impl StepOverride {
     }
 }
 
+/// The operator's time limits (doc 88 §5a), in seconds: the only numbers
+/// that end a wait which is still within its rights to go on. Each is
+/// configuration, shown in Settings beside its shipped default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeLimits {
+    /// One request of the background capacity probe.
+    pub probe_secs: u64,
+    /// How long a channel waits for a turn's reply before it answers that
+    /// the work is still running.
+    pub reply_secs: u64,
+    /// A command whose call names no limit of its own.
+    pub command_secs: u64,
+    /// A scheduled script.
+    pub script_secs: u64,
+    /// A hook that sets no limit of its own.
+    pub hook_secs: u64,
+    /// A worker's question waiting for a person.
+    pub question_secs: u64,
+    /// An approval waiting for a person; silence means no.
+    pub approval_secs: u64,
+}
+
+impl TimeLimits {
+    /// The limits a new install runs with.
+    pub const fn shipped() -> Self {
+        Self {
+            probe_secs: 30,
+            reply_secs: 240,
+            command_secs: 120,
+            script_secs: 120,
+            hook_secs: 10,
+            question_secs: 900,
+            approval_secs: 900,
+        }
+    }
+
+    /// These limits with a configuration layer's set fields applied. A
+    /// limit of zero would end every wait at once, so it is read as unset.
+    pub fn with(self, over: TimeLimitsOverride) -> Self {
+        let pick = |set: Option<u64>, lower: u64| set.filter(|secs| *secs > 0).unwrap_or(lower);
+        Self {
+            probe_secs: pick(over.probe_secs, self.probe_secs),
+            reply_secs: pick(over.reply_secs, self.reply_secs),
+            command_secs: pick(over.command_secs, self.command_secs),
+            script_secs: pick(over.script_secs, self.script_secs),
+            hook_secs: pick(over.hook_secs, self.hook_secs),
+            question_secs: pick(over.question_secs, self.question_secs),
+            approval_secs: pick(over.approval_secs, self.approval_secs),
+        }
+    }
+}
+
+impl Default for TimeLimits {
+    fn default() -> Self {
+        Self::shipped()
+    }
+}
+
+/// The time limits one configuration layer sets: a field set there
+/// overrides the layer below, an unset one inherits it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimeLimitsOverride {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub probe_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub script_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_secs: Option<u64>,
+}
+
+impl TimeLimitsOverride {
+    /// This layer over `lower`: each field this one sets wins.
+    pub fn over(self, lower: Self) -> Self {
+        Self {
+            probe_secs: self.probe_secs.or(lower.probe_secs),
+            reply_secs: self.reply_secs.or(lower.reply_secs),
+            command_secs: self.command_secs.or(lower.command_secs),
+            script_secs: self.script_secs.or(lower.script_secs),
+            hook_secs: self.hook_secs.or(lower.hook_secs),
+            question_secs: self.question_secs.or(lower.question_secs),
+            approval_secs: self.approval_secs.or(lower.approval_secs),
+        }
+    }
+}
+
 /// The settings each purpose's steps are framed with: the shipped
 /// defaults, overridden by configuration (doc 88 §4, §12.4).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -754,5 +848,24 @@ mod tests {
         }));
         let text = serde_json::to_string(&decision).unwrap();
         assert_eq!(serde_json::from_str::<Decision>(&text).unwrap(), decision);
+    }
+
+    #[test]
+    fn time_limits_take_the_narrowest_layer_and_ignore_zero() {
+        let wide = TimeLimitsOverride {
+            command_secs: Some(300),
+            hook_secs: Some(20),
+            ..Default::default()
+        };
+        let narrow = TimeLimitsOverride {
+            command_secs: Some(45),
+            approval_secs: Some(0),
+            ..Default::default()
+        };
+        let limits = TimeLimits::shipped().with(narrow.over(wide));
+        assert_eq!(limits.command_secs, 45);
+        assert_eq!(limits.hook_secs, 20);
+        assert_eq!(limits.approval_secs, TimeLimits::shipped().approval_secs);
+        assert_eq!(limits.reply_secs, TimeLimits::shipped().reply_secs);
     }
 }

@@ -168,6 +168,10 @@ impl Tool for ScopedWriteTool {
         self.inner.always_loaded()
     }
 
+    fn time_limit_argument(&self) -> Option<&'static str> {
+        self.inner.time_limit_argument()
+    }
+
     fn delivered_file(&self, args: &Value) -> Option<String> {
         self.inner.delivered_file(args)
     }

@@ -99,6 +99,7 @@ pub struct TaskDeps {
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
     pub request_timeout: Option<std::time::Duration>,
+    pub time_limits: vak_control::TimeLimits,
     pub circuit_breaker: Option<Arc<crate::CircuitBreaker>>,
     pub run_retry_attempts: u32,
     pub run_retry_base_backoff_ms: u64,
@@ -980,18 +981,23 @@ impl TaskTool {
         let mut child_tools = child_tools;
         let mut child_only_definitions = Vec::new();
         if let Some(registry) = &self.deps.registry {
-            let ask_parent = Arc::new(crate::questions::AskParentTool::new(
-                registry.clone(),
-                session_id.clone(),
-                label.clone(),
-                self.deps.parent_session_id.clone(),
-                self.deps
-                    .approver
-                    .as_ref()
-                    .is_some_and(|a| a.answers_questions()),
-                self.deps.events.clone(),
-                self.deps.approver.clone(),
-            ));
+            let ask_parent = Arc::new(
+                crate::questions::AskParentTool::new(
+                    registry.clone(),
+                    session_id.clone(),
+                    label.clone(),
+                    self.deps.parent_session_id.clone(),
+                    self.deps
+                        .approver
+                        .as_ref()
+                        .is_some_and(|a| a.answers_questions()),
+                    self.deps.events.clone(),
+                    self.deps.approver.clone(),
+                )
+                .waiting(std::time::Duration::from_secs(
+                    self.deps.time_limits.question_secs,
+                )),
+            );
             child_only_definitions.push(vak_llm::ToolDefinition::new(
                 ask_parent.name(),
                 ask_parent.description(),
@@ -1028,6 +1034,7 @@ impl TaskTool {
         cfg.max_retries = self.deps.max_retries;
         cfg.retry_base_backoff_ms = self.deps.retry_base_backoff_ms;
         cfg.request_timeout = self.deps.request_timeout;
+        cfg.time_limits = self.deps.time_limits;
         cfg.circuit_breaker = self.deps.circuit_breaker.clone();
         cfg.run_retry_attempts = self.deps.run_retry_attempts;
         cfg.run_retry_base_backoff_ms = self.deps.run_retry_base_backoff_ms;

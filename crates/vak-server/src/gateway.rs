@@ -166,9 +166,6 @@ impl InboundRequest {
     }
 }
 
-/// Long-poll ceiling for `wait: true` inbound messages.
-const WAIT_TIMEOUT: Duration = Duration::from_secs(240);
-
 fn bindings_path(home: &std::path::Path) -> PathBuf {
     vak_config::scope::SharedScope::new(home).gateway_bindings()
 }
@@ -3300,7 +3297,11 @@ async fn gateway_inbound(
         )
             .into_response();
     }
-    match tokio::time::timeout(WAIT_TIMEOUT, reply_rx).await {
+    // A `wait: true` inbound message long-polls for the operator's reply
+    // limit (`[control.limits] reply_secs`); past it the caller is told the
+    // turn is still running, and the turn goes on.
+    let reply_wait = Duration::from_secs(core_for_turn.time_limits().reply_secs);
+    match tokio::time::timeout(reply_wait, reply_rx).await {
         Ok(Ok(reply)) => {
             let accepts_files = body
                 .capabilities

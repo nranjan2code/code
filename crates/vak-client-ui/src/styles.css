@@ -2398,6 +2398,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .settings-input { width: 190px; }
 .settings-input.wide { width: 260px; font-family: var(--mono); font-size: var(--fs-caption); }
 .settings-number { width: 84px; }
+.setting-unit { margin-left: var(--space-2); color: var(--muted); font-size: var(--fs-meta); }
 .switch { position: relative; width: 37px; height: 22px; border-radius: 99px; background: var(--surface-active); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent); transition: background var(--dur-fast) var(--ease); }
 .switch span { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-soft); box-shadow: var(--shadow-sm); transition: transform var(--dur-fast) var(--ease); }
 .switch.on { background: var(--accent); }

@@ -27,10 +27,6 @@ pub const MAX_OPTION_CHARS: usize = 80;
 pub const MAX_ANSWER_CHARS: usize = 2_000;
 pub const MAX_QUESTIONS_PER_WORKER: u32 = 3;
 
-/// How long a question waits for an answer before the worker is told none
-/// arrived. The same bound as an HTTP-surfaced approval gate.
-pub const QUESTION_TIMEOUT: Duration = Duration::from_secs(900);
-
 /// What the worker is told when nobody can answer, instead of blocking.
 const NOBODY_AVAILABLE: &str = "Nobody is available to answer right now. Decide from your task and state the assumption you made, or stop and say what you need.";
 
@@ -237,12 +233,13 @@ impl AskParentTool {
             asked: AtomicU32::new(0),
             events,
             approver,
-            timeout: QUESTION_TIMEOUT,
+            timeout: Duration::from_secs(vak_control::TimeLimits::shipped().question_secs),
         }
     }
 
-    #[cfg(test)]
-    fn with_timeout(mut self, timeout: Duration) -> Self {
+    /// Waits this long for an answer: the operator's question limit
+    /// (`[control.limits] question_secs`).
+    pub fn waiting(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
@@ -513,7 +510,7 @@ mod tests {
             None,
             None,
         )
-        .with_timeout(timeout);
+        .waiting(timeout);
         (tool, registry)
     }
 

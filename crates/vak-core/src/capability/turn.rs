@@ -62,6 +62,9 @@ pub struct TurnProbe<'a> {
     pub mcp_inventory: &'a [(String, Vec<vak_mcp::McpToolInfo>)],
     /// Built-in tool names, which a bare MCP tool name may never shadow.
     pub builtin_names: &'a BTreeSet<String>,
+    /// The operator's limit for a hook that sets none of its own, in
+    /// milliseconds (docs/design/88-control-plane.md §5a).
+    pub hook_limit_ms: u64,
 }
 
 fn blocked_ids(standings: &[crate::reach::Standing]) -> BTreeSet<CapabilityId> {
@@ -144,9 +147,9 @@ pub(crate) fn mcp_tool_index(
 /// or its failure mode is itself unreadable, so it may have been — becomes a
 /// refusal of every tool call: a guard whose definition cannot be read must
 /// not quietly stop guarding. `Core::capability_diagnostics` names it.
-fn hook_from_declaration(cap: &Capability) -> Option<HookDef> {
+fn hook_from_declaration(cap: &Capability, limit_ms: u64) -> Option<HookDef> {
     let config: vak_config::HookConfig = serde_json::from_value(cap.configuration.clone()).ok()?;
-    match crate::hook_def(&config) {
+    match crate::hook_def(&config, limit_ms) {
         Ok(def) => Some(def),
         Err(reason) => {
             let declared_open = config.failure_mode.as_deref().unwrap_or("open") == "open";
@@ -187,7 +190,7 @@ impl TurnCapabilities {
         let mcp_tool_index = mcp_tool_index(probe.mcp_inventory, &mcp_servers, probe.builtin_names);
 
         let hooks = of_kind(CapabilityKind::Hook)
-            .filter_map(hook_from_declaration)
+            .filter_map(|cap| hook_from_declaration(cap, probe.hook_limit_ms))
             .collect();
 
         let frozen_skills = of_kind(CapabilityKind::Skill)
@@ -309,6 +312,7 @@ mod tests {
                 reach_standings: &self.standings,
                 mcp_inventory: &self.inventory,
                 builtin_names: &self.builtins,
+                hook_limit_ms: vak_control::TimeLimits::shipped().hook_secs * 1000,
             })
         }
     }

@@ -594,9 +594,21 @@ pub struct ControlSettings {
         String,
         std::collections::BTreeMap<vak_control::Purpose, vak_control::StepOverride>,
     >,
+    /// `[control.limits]`: the operator's time limits (doc 88 §5a).
+    #[serde(skip_serializing_if = "is_default_limits")]
+    pub limits: vak_control::TimeLimitsOverride,
+}
+
+fn is_default_limits(limits: &vak_control::TimeLimitsOverride) -> bool {
+    *limits == vak_control::TimeLimitsOverride::default()
 }
 
 impl ControlSettings {
+    /// The time limits in force: the shipped ones with the layers applied.
+    pub fn time_limits(&self) -> vak_control::TimeLimits {
+        vak_control::TimeLimits::shipped().with(self.limits)
+    }
+
     /// The step defaults for a turn on this route.
     pub fn step_defaults(&self, provider: &str, model: &str) -> vak_control::StepDefaults {
         let defaults = vak_control::StepDefaults::shipped().with(&self.steps);
@@ -618,6 +630,7 @@ impl ControlSettings {
             }
         }
         layer(&mut self.steps, over.steps);
+        self.limits = over.limits.over(self.limits);
         for (route, steps) in over.routes {
             layer(self.routes.entry(route).or_default(), steps);
         }
@@ -2823,7 +2836,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.enabled=false, intent.posture=false, control.limits, plugins.network_allow, server.bus";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2902,6 +2915,9 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             // set these would be handing itself the machine.
             fc.server = ServerSettings::default();
             fc.lifecycle = LifecycleSettings::default();
+            // Time limits are the operator's: how long an approval waits or
+            // a scheduled script may run is not a cloned repository's call.
+            fc.control.limits = vak_control::TimeLimitsOverride::default();
             fc.plugins.network_allow = None;
             fc.plugins.allow = None;
             warnings.push(format!(
@@ -5284,6 +5300,31 @@ mod tests {
         assert!(
             !text.contains("fallback_models"),
             "an empty list removes the key:\n{text}"
+        );
+    }
+
+    #[test]
+    fn control_limits_override_the_shipped_time_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[control.limits]\ncommand_secs = 45\n");
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        let limits = cfg.control.time_limits();
+        assert_eq!(limits.command_secs, 45);
+        assert_eq!(
+            limits.approval_secs,
+            vak_control::TimeLimits::shipped().approval_secs
+        );
+        let untrusted = load_with_trust(dir.path(), false).unwrap();
+        assert_eq!(
+            untrusted.control.time_limits(),
+            vak_control::TimeLimits::shipped(),
+            "an untrusted project sets no time limit"
+        );
+        persist_control(&project_path(dir.path()), &ControlSettings::default()).unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(
+            cfg.control.time_limits(),
+            vak_control::TimeLimits::shipped()
         );
     }
 
