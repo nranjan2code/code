@@ -7748,6 +7748,7 @@ impl Core {
             let mut successful_receipts = std::collections::HashSet::new();
             let mut delivered = false;
             let mut planned_file = false;
+            let mut planned_cards = 0usize;
             let mut failures = vak_judge::call::Failures::default();
             let chain = session.chain_to_root();
             // Where each failed call's fault lay, as the loop recorded it.
@@ -7777,6 +7778,7 @@ impl Core {
                         successful_receipts.clear();
                         delivered = false;
                         planned_file = false;
+                        planned_cards = 0;
                         failures.clear();
                     }
                     for block in &record.message.content {
@@ -7795,6 +7797,12 @@ impl Core {
                                     planned_file |= plan.iter().any(|deliverable| {
                                         deliverable.form == vak_intent::DeliverableForm::File
                                     });
+                                    planned_cards = plan
+                                        .iter()
+                                        .filter(|deliverable| {
+                                            deliverable.form == vak_intent::DeliverableForm::Card
+                                        })
+                                        .count();
                                 }
                                 tool_calls.insert(id.clone(), delivers);
                                 // A card that was not shown changed nothing
@@ -7856,7 +7864,16 @@ impl Core {
             );
             // A file the model's own plan lists needs a call that delivered
             // one. A sentence saying it wrote the file is not a deliverable.
-            let deliverable_observed = !planned_file || delivered;
+            // A card the plan lists needs a card that was recorded: an
+            // answer that says it showed one is not a card (seen live
+            // 2026-10-11, after every `answer` call had been refused).
+            let deliverable_observed = vak_judge::outcome::PlannedReceipts {
+                planned_file,
+                delivered,
+                planned_cards,
+                cards_shown: session.presentations_for_latest_turn().len(),
+            }
+            .observed();
             if status == vak_intent::OutcomeStatus::Produced && !deliverable_observed {
                 status = vak_intent::OutcomeStatus::Unknown;
             }

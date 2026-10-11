@@ -44,13 +44,15 @@ turn is ended for it:
 
 1. **The failed call** carries the per-call `[recovery]` hint in its result
    (as above; the model still produces the next call).
-2. **A second failing step in a row** for the same tool: the loop appends a
+2. **A second failing step** for the same tool, with no call of it having
+   succeeded in between: the loop appends a
    tagged `ControlKind::RepairDirective` message (`[repair-directive] …`)
    that no client shows as the person's words. It re-surfaces the exact
    admitted `Tool::schema()` (or, for an unknown name, the admitted
    inventory), so the repair is no longer a guess.
 3. **A failure after its schema was shown**: the tool is withdrawn for the
-   rest of the turn. It leaves the admitted set, a second
+   rest of the turn. It leaves the admitted set and the tools the next
+   request offers, a second
    `[repair-directive]` tells the model to deliver that part another way
    (another tool, or plain text) and to keep what it has produced, and a
    `Tool withdrawn` diagnostic is recorded. A later call of it is answered
@@ -59,11 +61,52 @@ turn is ended for it:
    next run. The only bound on a model that keeps calling a withdrawn tool
    is the operator's own turn limit.
 
-A tool that stops failing leaves its stage. The stages are per `Agent` run
+The loop-owned `answer` tool is withdrawn the same way: the card tools it
+is made from leave the turn, so it is no longer offered, and the model is
+told (`Finding::AnswerWithdrawn`) that its next reply is the answer and to
+write the whole of it as Markdown text. The plan check then reads a
+planned card as text, because no card can be shown, and the outcome
+evaluation still records that the planned card was not shown.
+
+A tool leaves its stage when a call of it succeeds, not when a step
+happens not to call it. The stages are per `Agent` run
 (`RepairState`) and general across all tool-error classes; they do not
 special-case the `mcp` broker. Found live on 2026-10-11: the earlier
 three-strike budget ended a turn with a canned refusal after three failed
 card calls and threw away a complete answer.
+
+Found live later that day (dev build of `f0ae9e5aa`, local route): eight
+`answer` calls in one turn were refused with the same words and the ladder
+never moved. Four causes, all Vak's:
+
+- `answer` is no tool in the admitted set, so withdrawing it by name
+  removed nothing, and the stage stayed at "schema shown" for every later
+  failure.
+- A step that called another tool (`plan`) cleared the stages, so the
+  ladder could start again.
+- A withdrawn tool was still in the tools each request offered: the turn's
+  definitions are frozen at its first step, and withdrawal did not reach
+  them.
+- The refusal said `blocks` "was sent as text, not a list" and gave a
+  column in a 2,700-character line. The model had not sent text: on that
+  wire every argument travels as text and the provider reads it, and text
+  it cannot read as JSON is passed on as sent. The model's own reasoning
+  after the refusal was that it must "send a list, not raw text", and it
+  sent the same broken JSON again. The refusal now says where the JSON
+  breaks, inside which block and field, and quotes the text on both sides
+  (`vak_tools::json_fault`, docs/design/04-tools.md).
+
+After the fix, three live turns with the same request on the same route:
+in each the refusals named the place (`expected , or ] in
+blocks[1].rows, after … and before …`), the schema was shown at the second
+failure, `answer` was withdrawn at the third, and the model wrote the
+summary, table and checklist as Markdown. Still open: on this route the
+model's `blocks` JSON was malformed in 9 of 11 `answer` calls (a list not
+closed, an extra `}`, a `\$` escape), also when told the exact place, so
+most turns end in text rather than cards. One slip anywhere in the one
+deep argument voids the whole call; whether the answer document should
+have a shape that survives that on wires which carry arguments as text is
+not decided here.
 
 ### Repeated calls (an observed state, no count)
 

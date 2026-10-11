@@ -306,3 +306,11 @@ the build refuses a stale bundle.
   `dist`.
 - A select's accessible name in the built-in browser is its selected text,
   not its `aria-label`; find it by role (`combobox`).
+- `answer` repair (2026-10-11, after C6 (9)): eight identical `answer`
+  refusals in one turn came from four faults in Vak, all fixed and
+  recorded in docs/design/15-reliability.md "Staged repair": withdrawing
+  the loop-owned `answer` removed nothing; a step calling another tool
+  restarted the stages; a withdrawn tool stayed in the frozen tool
+  definitions; and the refusal said "sent as text" with a column number.
+  `vak_tools::json_fault` now locates broken JSON for every tool. Open:
+  the malformed-`blocks` rate on the dev route (doc 88 "Open in C6").

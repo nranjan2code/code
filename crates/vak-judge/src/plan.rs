@@ -19,6 +19,9 @@ pub struct Produced<'a> {
     pub changed: bool,
     /// A command ran and nothing changed after it.
     pub checked: bool,
+    /// The turn can show no card any more (the tool that shows them was
+    /// withdrawn): a planned card is then given as text, and checked so.
+    pub cards_withdrawn: bool,
 }
 
 /// What a plan still lacks.
@@ -80,17 +83,18 @@ pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
         .filter(|(_, covered)| !**covered)
         .map(|(deliverable, _)| deliverable)
         .collect();
-    let (cards_unnamed, rest): (Vec<_>, Vec<_>) = uncovered
-        .into_iter()
-        .partition(|deliverable| deliverable.form == DeliverableForm::Card);
+    let (cards_unnamed, rest): (Vec<_>, Vec<_>) = uncovered.into_iter().partition(|deliverable| {
+        deliverable.form == DeliverableForm::Card && !produced.cards_withdrawn
+    });
     Gap {
         cards_unnamed,
         cards_unattributed,
         others: rest
             .into_iter()
             .filter(|deliverable| match deliverable.form {
-                DeliverableForm::Card => false,
-                DeliverableForm::Text => produced.final_text.trim().is_empty(),
+                DeliverableForm::Card | DeliverableForm::Text => {
+                    produced.final_text.trim().is_empty()
+                }
                 DeliverableForm::File => !produced.file_delivered,
                 DeliverableForm::Change => !produced.changed,
                 DeliverableForm::Check => !produced.checked,
@@ -121,7 +125,20 @@ mod tests {
             file_delivered: false,
             changed: false,
             checked: false,
+            cards_withdrawn: false,
         }
+    }
+
+    #[test]
+    fn a_planned_card_is_checked_as_text_once_no_card_can_be_shown() {
+        let declared = plan(&[("comparison", DeliverableForm::Card)]);
+        let mut seen = produced(&[], "Obsidian is local; Notion is shared.");
+        assert_eq!(gap(&declared, &seen).cards_short(), 1);
+        seen.cards_withdrawn = true;
+        assert!(gap(&declared, &seen).is_empty());
+        seen.final_text = " ";
+        let left = gap(&declared, &seen);
+        assert_eq!((left.cards_short(), left.others.len()), (0, 1));
     }
 
     #[test]
@@ -175,6 +192,7 @@ mod tests {
             file_delivered: true,
             changed: true,
             checked: true,
+            cards_withdrawn: false,
         };
         assert_eq!(verdict(&gap(&declared, &all)), AnswerVerdict::Accepted);
     }

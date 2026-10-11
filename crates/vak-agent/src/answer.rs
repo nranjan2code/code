@@ -250,18 +250,18 @@ pub(crate) fn read(input: &Value, tools: &[Arc<dyn Tool>]) -> Result<Vec<Block>,
     let mut input = input.clone();
     vak_tools::read_arguments(&definition(tools).parameters, &mut input);
     let Some(blocks) = input.get("blocks").and_then(Value::as_array) else {
-        // Sent as text, it is a list only if it reads as JSON; say where
-        // it does not.
-        return Err(vec![match input.get("blocks") {
-            Some(Value::String(text)) => match serde_json::from_str::<Value>(text) {
-                Err(error) => format!(
-                    "blocks was sent as text, not a list, and that text is not JSON ({error}); \
-                     send blocks as a list of objects"
+        // Text the provider could not read as the list: say where it
+        // breaks and inside which block and field.
+        return Err(vec![
+            input
+                .get("blocks")
+                .and_then(Value::as_str)
+                .and_then(vak_tools::json_fault)
+                .map_or_else(
+                    || "blocks must be a list of block objects".into(),
+                    |fault| fault.describe("blocks"),
                 ),
-                Ok(_) => "blocks must be a list of block objects".into(),
-            },
-            _ => "blocks must be a list of block objects".into(),
-        }]);
+        ]);
     };
     if blocks.is_empty() {
         return Err(vec!["blocks needs at least one block".into()]);
@@ -298,8 +298,14 @@ pub(crate) fn read(input: &Value, tools: &[Arc<dyn Tool>]) -> Result<Vec<Block>,
         let mut owners =
             cards(tools).filter(|tool| tool.card_kinds().iter().any(|own| own == kind));
         let (Some(tool), None) = (owners.next(), owners.next()) else {
+            // Name the kinds: told only that one is not offered, the
+            // same one comes back (seen live 2026-10-11: `card`, the form
+            // the plan's own acknowledgement had just used).
+            let mut kinds: Vec<String> = cards(tools).flat_map(|tool| tool.card_kinds()).collect();
+            kinds.push(TEXT.into());
             errors.push(format!(
-                "blocks[{at}].type `{kind}` is not a kind of block this turn offers"
+                "blocks[{at}].type `{kind}` is not a kind of block; the kinds are: {}",
+                kinds.join(", ")
             ));
             continue;
         };
@@ -509,7 +515,11 @@ mod tests {
         .unwrap();
         assert_eq!(errors.len(), 4, "{errors:?}");
         assert!(errors[0].starts_with("blocks[0] (steps):"), "{errors:?}");
-        assert!(errors[1].contains("`weather` is not a kind"), "{errors:?}");
+        assert!(
+            errors[1]
+                .contains("`weather` is not a kind of block; the kinds are: steps, callout, text"),
+            "{errors:?}"
+        );
         assert!(errors[2].contains("blocks[2].text"), "{errors:?}");
         assert!(refused(&errors).contains("call `answer` again"));
         assert!(read(&json!({"blocks": "x"}), &tools()).is_err());
@@ -523,7 +533,21 @@ mod tests {
         let Err(errors) = read(&json!({"blocks": "[{\"type\": "}), &tools()) else {
             panic!("broken JSON read as blocks");
         };
-        assert!(errors[0].contains("not JSON"), "{errors:?}");
+        assert!(errors[0].contains("not valid JSON"), "{errors:?}");
+        // The fault seen live (2026-10-11): a table's rows never closed.
+        // The refusal names the block and field and quotes the text there.
+        let Err(errors) = read(
+            &json!({"blocks": "[{\"type\": \"text\", \"text\": \"Hi.\"}, {\"rows\": [\"A | B\", \"type\": \"steps\"}]"}),
+            &tools(),
+        ) else {
+            panic!("an unclosed list read as blocks");
+        };
+        assert!(
+            errors[0].contains("expected `,` or `]` in blocks[1].rows")
+                && errors[0].contains("\"A | B\", \"type\"")
+                && !errors[0].contains("sent as text"),
+            "{errors:?}"
+        );
         // A block written with another kind's fields is told that kind.
         let Err(errors) = read(
             &json!({"blocks": [{"type": "text", "steps": ["a"]}]}),

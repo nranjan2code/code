@@ -66,6 +66,9 @@ pub enum Finding {
     /// Calls of these tools failed again after their schema was shown, and
     /// the tools are out of the turn.
     Withdrawn { tools: Vec<String> },
+    /// The tool the whole answer is given with was withdrawn the same way,
+    /// so this turn shows no card and the answer is the reply's own text.
+    AnswerWithdrawn { tool: String },
 }
 
 impl Finding {
@@ -83,7 +86,9 @@ impl Finding {
             Self::KeepWorking => Cause::KeepWorking,
             Self::UnresolvedFailure { .. } => Cause::UnresolvedFailure,
             Self::WorkersRunning { .. } => Cause::WorkersRunning,
-            Self::SchemaShown { .. } | Self::Withdrawn { .. } => Cause::Repair,
+            Self::SchemaShown { .. } | Self::Withdrawn { .. } | Self::AnswerWithdrawn { .. } => {
+                Cause::Repair
+            }
         }
     }
 }
@@ -308,6 +313,13 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                  you have already produced."
             )
         }
+        Finding::AnswerWithdrawn { tool } => format!(
+            "{marker} `{tool}` is withdrawn for the rest of this turn: its calls kept failing \
+             after its schema was shown, so this turn shows no card. Do not call it again. \
+             Your next reply is the answer the person reads: write the whole answer in it \
+             as Markdown text, every part you meant to give, a table as a Markdown table \
+             and steps as a list."
+        ),
     }
 }
 
@@ -385,6 +397,7 @@ mod tests {
             Finding::Withdrawn {
                 tools: vec!["x".into()],
             },
+            Finding::AnswerWithdrawn { tool: "x".into() },
         ];
         for finding in findings {
             assert!(render(&finding, "[m]").starts_with("[m]"), "{finding:?}");

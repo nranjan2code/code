@@ -1788,6 +1788,9 @@ impl Agent {
                 turn_tool_base = Some(self.base_tool_definitions());
             }
             let mut tool_defs = turn_tool_base.clone().unwrap_or_default();
+            // A withdrawal is an explicit change of the turn's frame: a
+            // tool taken out is no longer offered, whatever was frozen.
+            tool_defs.retain(|definition| !self.is_withdrawn(&definition.name));
             let discovered = self
                 .config
                 .discovered_tools
@@ -2553,6 +2556,7 @@ impl Agent {
                                     || receipts.artifact_deliveries > 0,
                                 changed: receipts.has_execution_receipt(),
                                 checked: receipts.commands_run > 0 && !verification_stale,
+                                cards_withdrawn: self.repair.answer_withdrawn,
                             };
                             let gap = vak_judge::plan::gap(plan, &produced);
                             // The answer can be required of a step when
@@ -2878,19 +2882,29 @@ impl Agent {
             // `results` is consumed into tool-result blocks below, and keyed
             // by admitted tool name so the controller can resurface the exact
             // schema that was rejected.
-            let failed_correctable: Vec<String> = results
+            let failed_correctable: Vec<(String, String)> = results
                 .iter()
                 .filter_map(|(id, out)| match out {
                     // A history lookup that found nothing is optional
                     // context the model cannot repair by repeating it; a
                     // malformed one is repaired like any other call.
-                    ToolRunOutput::Err(fault, _)
+                    ToolRunOutput::Err(fault, error)
                         if vak_judge::call::repairable(*fault) && !history_misses.contains(id) =>
                     {
-                        Some(call_names.get(id).cloned().unwrap_or_else(|| id.clone()))
+                        Some((
+                            call_names.get(id).cloned().unwrap_or_else(|| id.clone()),
+                            error.clone(),
+                        ))
                     }
                     _ => None,
                 })
+                .collect();
+            // A tool leaves repair when a call of it succeeds, not when a
+            // step happens not to call it.
+            let succeeded_tools: Vec<String> = results
+                .iter()
+                .filter(|(_, out)| matches!(out, ToolRunOutput::Ok(_)))
+                .filter_map(|(id, _)| call_names.get(id).cloned())
                 .collect();
             file_delivered_this_run |= results.iter().any(|(id, out)| {
                 matches!(out, ToolRunOutput::Ok(_))
@@ -3123,7 +3137,7 @@ impl Agent {
             }
 
             if let Some(outcome) =
-                reconcile_repair(self, &failed_correctable, &receipts.unresolved_error).await
+                reconcile_repair(self, &failed_correctable, &succeeded_tools).await
             {
                 return outcome;
             }
@@ -3148,6 +3162,7 @@ impl Agent {
                                     || receipts.artifact_deliveries > 0,
                                 changed: receipts.has_execution_receipt(),
                                 checked: receipts.commands_run > 0 && !verification_stale,
+                                cards_withdrawn: false,
                             },
                         );
                         (!gap.is_empty()).then(|| Finding::Plan {
@@ -4550,6 +4565,16 @@ impl Agent {
             Some(tool) => tool.looks_up(),
             None => name != answer::ANSWER,
         }
+    }
+
+    /// Whether `name` was taken out of this turn by repair.
+    fn is_withdrawn(&self, name: &str) -> bool {
+        (name == answer::ANSWER && self.repair.answer_withdrawn)
+            || self
+                .repair
+                .withdrawn
+                .iter()
+                .any(|(_, tool)| tool.name() == name)
     }
 
     /// Whether a call by this name shows cards: a card tool, or the
@@ -7341,36 +7366,28 @@ async fn within<T>(
 /// Model-guided repair of a tool whose calls keep failing, with no counter
 /// to tune (docs/design/15-reliability.md). Each failing step moves the tool
 /// one stage on: the failed call's own result names the fault; a second
-/// failing step in a row gets the tool's exact schema from the loop; a
-/// failure after that withdraws the tool for the rest of the turn, and the
-/// model is told to deliver that part another way. Nothing already produced
-/// is discarded and the turn goes on. Returns an outcome only when the
-/// ledger cannot be written.
+/// failing step gets the tool's exact schema from the loop; a failure after
+/// that withdraws the tool for the rest of the turn, and the model is told
+/// to deliver that part another way. Only a call of the tool that succeeds
+/// takes it back to the start: a step that calls something else does not.
+/// Nothing already produced is discarded and the turn goes on. Returns an
+/// outcome only when the ledger cannot be written.
 async fn reconcile_repair(
     agent: &mut Agent,
-    failed_correctable: &[String],
-    unresolved_error: &Option<(String, String)>,
+    failed_correctable: &[(String, String)],
+    succeeded: &[String],
 ) -> Option<TurnOutcome> {
+    for name in succeeded {
+        agent.repair.failing.remove(name);
+        agent.repair.schema_shown.remove(name);
+    }
     let mut failed: Vec<String> = Vec::new();
-    for name in failed_correctable {
-        let withdrawn = agent
-            .repair
-            .withdrawn
-            .iter()
-            .any(|(_, tool)| tool.name() == name.as_str());
-        if !withdrawn && !failed.contains(name) {
+    for (name, error) in failed_correctable {
+        if !agent.is_withdrawn(name) && !failed.contains(name) {
             failed.push(name.clone());
+            agent.repair.last_error = Some(error.clone());
         }
     }
-    agent.repair.failing.retain(|name| failed.contains(name));
-    agent
-        .repair
-        .schema_shown
-        .retain(|name| failed.contains(name));
-    agent.repair.last_error = unresolved_error
-        .as_ref()
-        .filter(|(name, _)| failed.contains(name))
-        .map(|(_, error)| error.clone());
 
     let mut resurface = Vec::new();
     let mut withdraw = Vec::new();
@@ -7398,8 +7415,11 @@ async fn reconcile_repair(
 }
 
 /// Takes tools whose calls failed again after their schema was shown out of
-/// this turn's admitted set, and says so. A name that is not an admitted
-/// tool has nothing to withdraw: its own error already lists what is.
+/// this turn's admitted set, and says so. `answer` is the loop's own tool,
+/// made from the card tools the turn admits: withdrawing it takes those
+/// out, so it is no longer offered and the answer is given as text. A name
+/// that is not an admitted tool has nothing to withdraw: its own error
+/// already lists what is.
 async fn withdraw_tools(
     agent: &mut Agent,
     names: &[String],
@@ -7407,23 +7427,33 @@ async fn withdraw_tools(
     let mut gone = Vec::new();
     let mut withdrawn = Vec::new();
     for name in names {
-        if let Some(at) = agent
-            .config
-            .tools
-            .iter()
-            .position(|tool| tool.name() == name.as_str())
-        {
+        let whole_answer = name == answer::ANSWER;
+        // From the end, so each place recorded is the one to put it back.
+        let places: Vec<usize> = (0..agent.config.tools.len())
+            .rev()
+            .filter(|at| {
+                let tool = &agent.config.tools[*at];
+                tool.name() == name.as_str() || (whole_answer && tool.presents_cards())
+            })
+            .collect();
+        if places.is_empty() {
+            continue;
+        }
+        for at in places {
             let tool = agent.config.tools.remove(at);
             agent.repair.withdrawn.push((at, tool));
-            agent.repair.failing.remove(name);
-            agent.repair.schema_shown.remove(name);
-            gone.push(format!("`{name}`"));
-            withdrawn.push(name.clone());
         }
+        agent.repair.failing.remove(name);
+        agent.repair.schema_shown.remove(name);
+        gone.push(format!("`{name}`"));
+        withdrawn.push(name.clone());
     }
     if gone.is_empty() {
         return Ok(());
     }
+    let answer_gone = withdrawn.iter().any(|name| name == answer::ANSWER);
+    agent.repair.answer_withdrawn |= answer_gone;
+    withdrawn.retain(|name| name != answer::ANSWER);
     let gone = gone.join(", ");
     let _diagnostic = agent
         .record_activity(
@@ -7440,9 +7470,22 @@ async fn withdraw_tools(
             std::collections::BTreeMap::new(),
         )
         .await;
-    agent
-        .correct(Finding::Withdrawn { tools: withdrawn }, Rung::Reframe)
-        .await
+    if !withdrawn.is_empty() {
+        agent
+            .correct(Finding::Withdrawn { tools: withdrawn }, Rung::Reframe)
+            .await?;
+    }
+    if answer_gone {
+        agent
+            .correct(
+                Finding::AnswerWithdrawn {
+                    tool: answer::ANSWER.to_string(),
+                },
+                Rung::Reframe,
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 /// Append an authoritative repair directive that resurfaces the admitted
@@ -7734,6 +7777,8 @@ struct RepairState {
     withdrawn: Vec<(usize, Arc<dyn Tool>)>,
     /// Latest error of a tool still under repair, for the diagnostic.
     last_error: Option<String>,
+    /// The `answer` tool was withdrawn, and its card tools with it.
+    answer_withdrawn: bool,
 }
 
 impl RepairState {

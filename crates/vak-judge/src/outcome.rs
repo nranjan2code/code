@@ -88,6 +88,27 @@ pub fn evaluate_response(response: Option<&str>, failed: bool, cancelled: bool) 
     evaluate_response_with_failures(response, failed, cancelled, false)
 }
 
+/// What the turn's receipts show of the deliverables the model's own plan
+/// lists by form.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlannedReceipts {
+    /// The plan lists a file.
+    pub planned_file: bool,
+    /// A call delivered a file or changed the workspace.
+    pub delivered: bool,
+    /// Cards the plan lists, and cards recorded this turn.
+    pub planned_cards: usize,
+    pub cards_shown: usize,
+}
+
+impl PlannedReceipts {
+    /// Whether every planned file and card has a receipt. A sentence that
+    /// says a file was written or a card was shown is not one.
+    pub fn observed(&self) -> bool {
+        (!self.planned_file || self.delivered) && self.cards_shown >= self.planned_cards
+    }
+}
+
 /// As `evaluate_response`, but downgraded to `Unknown` when a tool call
 /// failed and no later call of the same tool succeeded in the turn. The
 /// caller decides what counts as failed; the kind of error does not matter,
@@ -435,6 +456,21 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use vak_intent::{Evidence, Reading};
+
+    #[test]
+    fn a_planned_card_or_file_needs_its_receipt() {
+        let mut receipts = PlannedReceipts::default();
+        assert!(receipts.observed());
+        receipts.planned_cards = 2;
+        receipts.cards_shown = 1;
+        assert!(!receipts.observed(), "one planned card was never shown");
+        receipts.cards_shown = 2;
+        assert!(receipts.observed());
+        receipts.planned_file = true;
+        assert!(!receipts.observed());
+        receipts.delivered = true;
+        assert!(receipts.observed());
+    }
 
     #[test]
     fn produced_output_is_not_called_complete() {

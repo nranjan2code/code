@@ -129,6 +129,17 @@ below are not built.
   said the tool needs a source or a digest, which its schema says to leave
   out for a new file. The next try, asked in other words, made the draft.
 
+- The same question from the live side (2026-10-11,
+  docs/design/15-reliability.md "Staged repair"): in full turns on the dev
+  route the `blocks` JSON was malformed in 9 of 11 `answer` calls, each a
+  single slip (a list not closed, an extra `}`, a `\$` escape) that voided
+  the whole document, because that wire carries each argument as text and
+  hands back what its provider cannot read. The refusal now names the
+  place and the repair ladder ends in a text answer, but the turns still
+  mostly end without cards. This weighs against the nested document on
+  such wires and is to be measured with `scripts/measure_answer_form.py`
+  on the real block schemas before the form is settled.
+
 ### Carried into later stages (found while building C0–C5)
 
 - The commitment satisfaction lattice (`vak-commit/src/satisfy.rs`) is
@@ -289,6 +300,12 @@ One ladder, used at every point, replacing the six ad-hoc ones:
 
 No count decides a rung. The operator's turn limit is the only number that
 bounds a run.
+
+A frame that is changed is changed in what the next request carries: a
+withdrawn tool leaves the offered tools as well as the admitted set, and
+withdrawing the loop-owned `answer` takes out the card tools it is made
+from (`Finding::AnswerWithdrawn`). Found live on 2026-10-11: neither held,
+so the same refusal was given eight times (docs/design/15-reliability.md).
 
 ## 5a. Time
 

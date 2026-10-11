@@ -19,6 +19,137 @@ pub fn read_arguments(schema: &Value, args: &mut Value) {
     read(schema, args);
 }
 
+/// Where text sent for a list or a record stops being JSON. Some wires
+/// carry every argument as text and their provider reads it; text it
+/// cannot read arrives here as sent, and the caller is told where it
+/// breaks rather than that it "sent text".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JsonFault {
+    /// What the parser expected or refused, without a position.
+    pub problem: String,
+    /// The value the fault is inside, from the text's root: `[1].rows`.
+    pub inside: String,
+    /// The text just before the fault, and from the fault on.
+    pub before: String,
+    pub after: String,
+}
+
+impl JsonFault {
+    /// What the caller is told about the argument `name`.
+    pub fn describe(&self, name: &str) -> String {
+        let after = if self.after.is_empty() {
+            "the end of the text".to_string()
+        } else {
+            format!("`{}`", self.after)
+        };
+        format!(
+            "{name} is not valid JSON, so none of it was read: {} in {name}{}, after `{}` and before {after}",
+            self.problem, self.inside, self.before
+        )
+    }
+}
+
+/// The fault in `text` when it is written as a JSON list or record and
+/// does not read as one. Text that is not written as either has none.
+pub fn json_fault(text: &str) -> Option<JsonFault> {
+    let text = text.trim();
+    if !text.starts_with(['[', '{']) {
+        return None;
+    }
+    let error = serde_json::from_str::<Value>(text).err()?;
+    // The byte the parser stopped at.
+    let line_start = text
+        .match_indices('\n')
+        .nth(error.line().saturating_sub(2))
+        .filter(|_| error.line() > 1)
+        .map_or(0, |(at, _)| at + 1);
+    let mut at = if error.is_eof() {
+        text.len()
+    } else {
+        (line_start + error.column().saturating_sub(1)).min(text.len())
+    };
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    let message = error.to_string();
+    let problem = message
+        .rfind(" at line ")
+        .map_or(message.as_str(), |end| &message[..end])
+        .to_string();
+    let before: String = {
+        let mut shown: Vec<char> = text[..at].chars().rev().take(EXCERPT_BEFORE).collect();
+        shown.reverse();
+        shown.into_iter().collect()
+    };
+    let after: String = text[at..].chars().take(EXCERPT_AFTER).collect();
+    Some(JsonFault {
+        problem,
+        inside: inside(&text[..at]),
+        before,
+        after,
+    })
+}
+
+/// How much of the text is quoted on each side of a fault.
+const EXCERPT_BEFORE: usize = 100;
+const EXCERPT_AFTER: usize = 40;
+
+/// The value a JSON text was inside when it was cut off, as a path of
+/// list positions and record keys.
+fn inside(read: &str) -> String {
+    enum Open {
+        List(usize),
+        Record(Option<String>),
+    }
+    let mut open: Vec<Open> = Vec::new();
+    let mut chars = read.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '[' => open.push(Open::List(0)),
+            '{' => open.push(Open::Record(None)),
+            ']' | '}' => {
+                open.pop();
+            }
+            ',' => match open.last_mut() {
+                Some(Open::List(at)) => *at += 1,
+                Some(Open::Record(key)) => *key = None,
+                None => {}
+            },
+            '"' => {
+                let mut string = String::new();
+                let mut closed = false;
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => {
+                            chars.next();
+                        }
+                        '"' => {
+                            closed = true;
+                            break;
+                        }
+                        c => string.push(c),
+                    }
+                }
+                if closed && let Some(Open::Record(key @ None)) = open.last_mut() {
+                    *key = Some(string);
+                }
+            }
+            _ => {}
+        }
+    }
+    // The innermost list is the one the fault is in, not an item of it.
+    let last = open.len().saturating_sub(1);
+    open.iter()
+        .enumerate()
+        .map(|(depth, frame)| match frame {
+            Open::List(_) if depth == last => String::new(),
+            Open::List(at) => format!("[{at}]"),
+            Open::Record(Some(key)) => format!(".{key}"),
+            Open::Record(None) => String::new(),
+        })
+        .collect()
+}
+
 fn accepts(schema: &Value, kind: &str) -> bool {
     match schema.get("type") {
         Some(Value::String(expected)) => expected == kind,
@@ -144,6 +275,35 @@ mod tests {
     fn read_as(schema: Value, mut args: Value) -> Value {
         read_arguments(&schema, &mut args);
         args
+    }
+
+    #[test]
+    fn text_that_is_not_json_says_where_it_breaks_and_what_it_was_inside() {
+        // A list never closed before the next key (seen live, 2026-10-11).
+        let text =
+            r#"[{"type": "text", "text": "Hi."}, {"rows": ["A | B", "C | D", "type": "table"}]"#;
+        let fault = json_fault(text).unwrap();
+        assert_eq!(fault.inside, "[1].rows");
+        assert_eq!(fault.problem, "expected `,` or `]`");
+        assert!(fault.before.ends_with(r#""C | D", "type""#), "{fault:?}");
+        assert!(fault.after.starts_with(r#": "table"}"#), "{fault:?}");
+        let told = fault.describe("blocks");
+        assert!(told.contains("in blocks[1].rows"), "{told}");
+        // An escape JSON does not have, inside a string.
+        let fault = json_fault(r#"[{"type": "text", "text": "Costs \$8 a month"}]"#).unwrap();
+        assert_eq!(fault.inside, "[0].text");
+        assert!(fault.problem.contains("escape"), "{fault:?}");
+        // Cut off at the end, on a later line.
+        let fault = json_fault("[{\"type\": \"steps\",\n \"steps\": [\"a\"").unwrap();
+        assert_eq!(fault.inside, "[0].steps");
+        assert!(
+            fault
+                .describe("blocks")
+                .ends_with("before the end of the text")
+        );
+        // Text that reads, and text never written as JSON, has no fault.
+        assert_eq!(json_fault("[1, 2]"), None);
+        assert_eq!(json_fault("three steps"), None);
     }
 
     fn steps() -> Value {

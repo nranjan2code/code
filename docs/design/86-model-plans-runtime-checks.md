@@ -91,6 +91,8 @@ the turn's receipts:
   names no planned deliverable is counted, never attributed: the planned
   cards no card names are compared with those cards by number alone, and
   the runtime does not say which one a card was.
+  Once the turn can show no card (the `answer` tool was withdrawn,
+  docs/design/15-reliability.md), a planned card is checked as text.
 - `text`: the final text is non-empty.
 - `file`: a delivered-file receipt.
 - `change`: an execution or edit receipt.
@@ -112,6 +114,13 @@ card by emit order, so the model was told the wrong one was missing; the
 check was sent again when the missing set changed; and the model took the
 unsigned message for the person, planned three more times and invented a
 `submit_plan` tool.
+
+The outcome evaluation reads the same receipts
+(`vak_judge::outcome::PlannedReceipts`): a turn whose plan lists more
+cards than were recorded, or a file no call delivered, is not `produced`,
+whatever its final text says. Found live on 2026-10-11: after every
+`answer` call had been refused, a reply saying the table "has been
+delivered" stood as a produced outcome.
 
 A turn with no plan is not gated on guesses. What the runtime observed still
 gates it: an unresolved tool failure, and files changed after the last check.

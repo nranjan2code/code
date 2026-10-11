@@ -36,7 +36,7 @@ pub mod write;
 use async_trait::async_trait;
 use serde_json::Value;
 
-pub use arguments::read_arguments;
+pub use arguments::{JsonFault, json_fault, read_arguments};
 pub use context::ToolContext;
 pub use contract::validate_input;
 pub use find_tools::FindToolsTool;

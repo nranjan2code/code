@@ -53,7 +53,13 @@ A turn's answer is composed by the runtime, not left to emit order:
   being its position in `blocks`. All blocks standing, the prose becomes
   the closing message and the turn ends with no further model step; any
   block failing, nothing is shown and each fault names its block, and a
-  field that belongs to another kind is named with the kinds that take it.
+  field that belongs to another kind is named with the kinds that take it,
+  a `type` that is no kind is told the kinds there are, and `blocks` that
+  arrived as text which is not JSON is told where it breaks and inside
+  which block and field. An `answer` whose calls keep failing goes through
+  the repair stages like any tool (docs/design/15-reliability.md): its
+  schema is shown, then it is withdrawn with its card tools and the answer
+  is given as text.
   A later `answer` in the same turn replaces the earlier one: the
   projection shows only the turn's latest answer. A block's fields are the
   union of the card tools' arguments, typed wherever the kinds agree on a

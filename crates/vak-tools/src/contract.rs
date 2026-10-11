@@ -33,7 +33,12 @@ fn check(schema: &Value, value: &Value, path: &str, problems: &mut Vec<String>) 
             _ => false,
         };
         if !matches {
-            problems.push(format!("{path} must be {}", schema_type_label(types)));
+            // A list or record that arrived as text which is not JSON:
+            // say where it breaks, which "must be array" does not.
+            match value.as_str().and_then(crate::arguments::json_fault) {
+                Some(fault) => problems.push(fault.describe(path)),
+                None => problems.push(format!("{path} must be {}", schema_type_label(types))),
+            }
             return;
         }
     }

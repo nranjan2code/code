@@ -37,6 +37,16 @@ and never fills a field with a value the call did not send (a `plan`
 deliverable sent as a bare name still lacks its `form`). Whatever it cannot
 read is left as sent, and validation refuses it by name.
 
+Text sent for a list or record that is written as JSON but does not parse
+is not repaired. Some wires carry every argument as text and their
+provider reads it; what the provider cannot read arrives as that text.
+The refusal says where it breaks (`vak_tools::json_fault`): the parser's
+own complaint, the value it was inside as a path (`blocks[1].rows`), and
+the text just before and after the fault. `validate_input` uses it for
+every tool, and the `answer` reader for `blocks`. Told only "must be
+array", or a column number in a long line, a model sent the same text
+again (found live 2026-10-11, docs/design/15-reliability.md).
+
 A shape only one tool can read (a table's nested rows, a list for a field
 that tool splits itself) belongs to that tool's `Tool::fill_defaults`,
 which runs after the reader and before validation. There is no third
