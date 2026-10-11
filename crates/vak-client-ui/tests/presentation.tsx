@@ -98,6 +98,27 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   await tick();
   const rendererSlots = Array.from(document.querySelectorAll<HTMLElement>("[data-renderer]"));
   check(rendererSlots.length === structuredRendererTypes.length, `All ${structuredRendererTypes.length} registered presentation types are exercised`);
+  // At a phone's card width every presentation stays inside its card and no
+  // text is wrapped into a column a few words wide.
+  const gallery = document.getElementById("renderer-gallery")!;
+  const shown = gallery.style.cssText;
+  gallery.style.display = "block";
+  gallery.style.padding = "0";
+  for (const width of [260, 293, 358]) {
+    gallery.style.maxWidth = `${width}px`;
+    await tick();
+    const cramped = rendererSlots.filter((slot) => {
+      const bounds = slot.getBoundingClientRect();
+      return Array.from(slot.querySelectorAll<HTMLElement>("*")).some((element) => {
+        const rect = element.getBoundingClientRect();
+        if (rect.width === 0) return false;
+        const line = parseFloat(getComputedStyle(element).lineHeight) || 18;
+        return rect.right > bounds.right + 2 || (element.children.length === 0 && rect.width < 130 && rect.height > line * 3.2);
+      });
+    }).map((slot) => slot.dataset.renderer);
+    check(cramped.length === 0, `Every presentation fits a ${width}px card: ${cramped.join(", ")}`);
+  }
+  gallery.style.cssText = shown;
   check(rendererSlots.every((slot) => Boolean(slot.textContent?.trim()) || Boolean(slot.querySelector("img,video,audio,iframe,svg"))), "Every registered presentation produces visible content");
   check(rendererSlots.every((slot) => !slot.textContent?.includes("Presentation unavailable") && !slot.textContent?.includes("Rich presentation unavailable")), "Registered presentations never fall back to an unavailable card");
   check(rendererSlots.every((slot) => !slot.textContent?.includes("semantic_type") && !slot.textContent?.includes('"schema_version"')), "Registered presentations hide transport fields");
@@ -120,13 +141,17 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   check(document.querySelector(".msg.assistant") === bubble, "Streaming keeps the assistant bubble mounted");
   store.applyEvent("background-task", { Sandbox: { kind: "ExecutionStarted", execution_id: "other", tool: "bash", language: "sh", scratch_dir: ".vak/scratch/other", code_preview: "echo other" } } as any, {});
   check(!store.workbenchExecutions().some((item) => item.id === "other"), "Background execution cannot contaminate focused Workbench");
-  const preview = await artifactPreviewHtml(".vak/scratch/result/index.html", '<head><link rel="stylesheet" href="style.css"></head><body><h1>Preview</h1><script src="app.js"></script></body>');
+  const fixtureReader = {
+    readFile: (path: string) => fetch(`/fs/file?path=${encodeURIComponent(path)}`).then((response) => response.json()),
+    readFileRaw: (path: string) => fetch(`/fs/file?path=${encodeURIComponent(path)}`).then((response) => response.json()).then((file) => file.content),
+  };
+  const preview = await artifactPreviewHtml(".vak/scratch/result/index.html", '<head><link rel="stylesheet" href="style.css"></head><body><h1>Preview</h1><script src="app.js"></script></body>', fixtureReader);
   check(preview.includes("rgb(240, 248, 242)") && preview.includes("Preview is interactive") && !preview.includes('src="app.js"'), "Preview resolves relative CSS and JavaScript through authenticated reads");
   check(preview.includes("connect-src 'none'") && preview.includes("base-uri 'none'"), "Preview retains network and origin isolation");
   check(assistantParts('```vak\n{"semantic_type":', true).length === 0, "Incomplete transport is held while streaming");
   check(assistantParts('```json\n{"ordinary":true}\n```').some((part) => part.type === "text"), "Ordinary JSON remains ordinary content");
   let refused = false;
-  try { await artifactPreviewHtml(".vak/scratch/result/index.html", '<img src="../private.png">'); } catch { refused = true; }
+  try { await artifactPreviewHtml(".vak/scratch/result/index.html", '<img src="../private.png">', fixtureReader); } catch { refused = true; }
   check(refused, "Artifact assets cannot traverse outside the preview directory");
   const previewRan = await new Promise<boolean>((resolve) => {
     const frame = document.createElement("iframe");

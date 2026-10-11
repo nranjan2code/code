@@ -225,8 +225,6 @@ pub struct Posture {
     pub managed: bool,
     /// Open a durable commitment for this work.
     pub open_commitment: bool,
-    /// Take a checkpoint before the first effect.
-    pub checkpoint_before_effect: bool,
     pub hil: HilMode,
     pub gate_fallback: GateFallback,
     pub clarify: ClarifyPolicy,
@@ -258,7 +256,6 @@ impl Engagement {
             posture: Posture {
                 managed: false,
                 open_commitment: false,
-                checkpoint_before_effect: false,
                 hil: HilMode::Interrupt,
                 gate_fallback: GateFallback::Deny,
                 clarify: ClarifyPolicy::Proceed,
@@ -318,7 +315,6 @@ impl Posture {
             Posture {
                 managed: a.managed || b.managed,
                 open_commitment: a.open_commitment || b.open_commitment,
-                checkpoint_before_effect: a.checkpoint_before_effect || b.checkpoint_before_effect,
                 hil: if b.hil.caution_rank() > a.hil.caution_rank() {
                     b.hil
                 } else {
@@ -416,18 +412,6 @@ pub fn derive(reading: &Reading, authority: &Authority) -> Engagement {
         // session earns a durable commitment.
         managed: reading.horizon.rank() >= Horizon::Session.rank(),
         open_commitment: reading.horizon.opens_commitment(),
-        // Any act the reading covers, not just the primary one. "migrate …
-        // and verify … before deploying" resolves `verify` as primary, and
-        // gating on that alone skipped the checkpoint for a turn that plainly
-        // modifies and deploys. `Author` is deliberately not one of the acts
-        // `requires_execution` covers (see `Act::requires_execution`): most
-        // authoring never touches the workspace, and only the request text —
-        // which this `Reading`-only derivation cannot see — says whether it
-        // names a file. `OutcomeSpec::requires_execution` covers that case
-        // once the objective text is known; a caller deciding whether to
-        // checkpoint a file-saving authoring turn needs that check too.
-        checkpoint_before_effect: reading.acts().iter().any(|act| act.requires_execution())
-            && reading.stakes.wants_checkpoint(),
         hil,
         gate_fallback: GateFallback::Deny,
         clarify: derive_clarify(reading),
@@ -837,7 +821,7 @@ mod tests {
     /// the stop rule follows the primary act, and a compound request with a
     /// genuinely effectful part carries it as a strand of its own.
     #[test]
-    fn any_effectful_contender_forces_a_checkpoint_but_not_an_effect_stop() {
+    fn an_effectful_contender_does_not_force_an_effect_stop() {
         let mut r = reading(
             Act::Verify,
             Horizon::Session,
@@ -846,7 +830,6 @@ mod tests {
         );
         r.alternate_acts.insert(Act::Modify);
         let engagement = derive(&r, &Authority::default());
-        assert!(engagement.posture.checkpoint_before_effect);
         assert_eq!(engagement.posture.stop, StopProfile::Inspection);
 
         // And a reading with no effectful act does neither.
@@ -857,7 +840,6 @@ mod tests {
             Evidence::None,
         );
         let engagement = derive(&inert, &Authority::default());
-        assert!(!engagement.posture.checkpoint_before_effect);
         assert_eq!(engagement.posture.stop, StopProfile::Message);
     }
 

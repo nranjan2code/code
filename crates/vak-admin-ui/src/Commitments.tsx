@@ -1058,12 +1058,6 @@ function IntentSimulator() {
                     </span>
                   </div>
                   <div class="spec-row">
-                    <span class="spec-label">Pre-Effect Checkpoint:</span>
-                    <span class="spec-val mono">
-                      {exp().engagement.posture.checkpoint_before_effect ? "Enforced Snapshot (disk)" : "None"}
-                    </span>
-                  </div>
-                  <div class="spec-row">
                     <span class="spec-label">Human-in-the-Loop Mode:</span>
                     <span class="spec-val">
                       <code>{exp().engagement.posture.hil}</code>

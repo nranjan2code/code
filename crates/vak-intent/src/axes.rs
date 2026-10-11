@@ -238,12 +238,6 @@ impl Stakes {
             .into_iter()
             .find(|s| s.as_str() == value.trim().to_ascii_lowercase())
     }
-
-    /// Take a checkpoint before the first effect, so `Review`-mode
-    /// human-in-the-loop has something to offer a reversal against.
-    pub fn wants_checkpoint(self) -> bool {
-        self.rank() >= Stakes::Reversible.rank()
-    }
 }
 
 /// The standard of proof the result must meet. This axis is the one that

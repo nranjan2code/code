@@ -63,7 +63,11 @@ impl Provider for ReadThenAnswer {
             )
         } else {
             (
-                vec![ContentBlock::text("The notes list three errands.")],
+                // Each file's answer is its own: a verbatim repeat of an
+                // earlier answer is corrected once (invariant 36).
+                vec![ContentBlock::text(format!(
+                    "The notes list three errands (answer {call})."
+                ))],
                 StopReason::EndTurn,
             )
         };

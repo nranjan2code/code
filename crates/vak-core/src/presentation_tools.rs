@@ -1798,10 +1798,7 @@ impl Tool for EmitCardTool {
             Ok(output) => ToolOutput::ok(format!("Shown to the user ({}).", output.semantic_type)),
             Err(reason) => ToolOutput::error(
                 Fault::Shape,
-                format!(
-                    "Card not displayed: {reason}. Fix the arguments and call {} again.",
-                    self.shape.name
-                ),
+                format!("Card not displayed: {reason}. Fix these fields."),
             ),
         }
     }
@@ -3198,7 +3195,7 @@ mod tests {
             out.is_error(),
             "validator-rejected card must be an error the model sees"
         );
-        assert!(out.content.contains("Fix the arguments"), "{}", out.content);
+        assert!(out.content.contains("Fix these fields"), "{}", out.content);
     }
 
     #[tokio::test]

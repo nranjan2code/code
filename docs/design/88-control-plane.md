@@ -111,34 +111,38 @@ below are not built.
   nothing for every provider; the script is to be run on each configured
   route with the real block schemas.
 
-- Seen in the C6 live runs, not yet fixed: a model given a request for a
-  new Word file once answered at its first step that it could not make one,
-  with `office_apply` offered (`run_01a12aeb-04df-7200-b6f3-d57e0389aed9`);
-  the second try made the draft. A `details` card's label and value columns
-  are cramped at 390 px. `office_apply` refused anchors the model built for
-  paragraphs its own earlier ops added (`p@1A000000`).
+- Seen in the C6 live runs. Fixed since: every card was squeezed into half
+  of a phone screen when an answer had no closing prose (that path skipped
+  the one answer composer); a card header's title group did not take the
+  row's width; an audio card overflowed a narrow card. The client's
+  presentation harness now checks that all registered types fit a 260, 293
+  and 358 px card. Fixed too: a card block's refusal named the card tool to
+  call again, and `office_apply`'s missing-anchor error pointed only at
+  `doc_read`, not at the anchors an earlier result for the draft named.
+  An `answer` block citing a URL nothing retrieved is refused per block
+  (the citation check had looked only at direct card calls).
+  Still open, with no fault found in Vak's contract: asked for a new Word
+  file, a model answered at its first step that it could not make one
+  (`run_01a12aeb-04df-7200-b6f3-d57e0389aed9`). `office_apply` was offered
+  but deferred, its catalogue line read "Create or edit Word, Excel,
+  PowerPoint and PDF files with typed ops", and the model's own thinking
+  said the tool needs a source or a digest, which its schema says to leave
+  out for a new file. The next try, asked in other words, made the draft.
 
 ### Carried into later stages (found while building C0–C5)
 
-- C6: `Posture::checkpoint_before_effect` is still derived and recorded but
-  decides nothing; it goes with the reader's other behaviour fields.
-- C6: the unknown-tool message and the `[uncited-source]` refusal are tool
-  results still worded in the agent loop, not in `vak_control::render`.
 - The commitment satisfaction lattice (`vak-commit/src/satisfy.rs`) is
   already pure and stays in `vak-commit` until the judge takes a
   `vak-session` dependency for criteria (C7, with `vak-eval`).
 - C6: commitments opened from the reading's horizon
   (`may_open_commitment`) and managed mode from the horizon still follow
   the reading; they go with the guessed outcome requirements.
-- C6: `detect_model_drift` still compares directive lineage to decide that
-  a verbatim repeated answer is unrelated; the repeat is a fact, the
-  relation is a reading. The loop's `inspection_ids` is a table of tool
-  names. Both go when the answer form frames the final step.
 - The remaining time constants in §5a (probe, gateway wait, command and
   person waits) are not yet configuration.
 - C6: delivery shape and `OutcomeSpec` requirements guessed from words
   (`apply_output_requirements`) are replaced by the answer form.
-- `vak runs` does not print decisions yet (the admin Run detail does). Builds on docs/design/86-model-plans-runtime-checks.md (the model
+
+Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
 satisfaction; the model never does) from satisfaction to every decision.
 The start prompt and working order for the session that builds it are in

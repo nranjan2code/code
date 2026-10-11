@@ -2843,79 +2843,11 @@ impl Agent {
             // bash" are different situations even if both calls land in the
             // same batch and finish in the opposite order.
             let call_issue_order: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
-            // A card that names a source URL nothing in this conversation
-            // retrieved or was given names a page it never saw (live: a
-            // research card's sources written after a search page that
-            // held none of them). The call is refused with the URLs named;
-            // what the model answers next is its own.
-            let evidence = if calls
-                .iter()
-                .any(|call| self.tool_presents_cards(&call.name))
-            {
-                self.session
-                    .lock()
-                    .await
-                    .evidence_text(|name| self.tool_presents_cards(name))
-            } else {
-                String::new()
-            };
-            let mut gated: Vec<(PendingToolCall, Vec<String>)> = Vec::new();
-            let calls: Vec<PendingToolCall> = calls
-                .into_iter()
-                .filter(|call| {
-                    if !self.tool_presents_cards(&call.name) {
-                        return true;
-                    }
-                    let uncited = uncited_urls(&call.input, &evidence);
-                    if !uncited.is_empty() {
-                        gated.push((call.clone(), uncited));
-                        return false;
-                    }
-                    true
-                })
-                .collect();
-            let inspection_ids = calls
-                .iter()
-                .filter(|call| {
-                    matches!(
-                        call.name.as_str(),
-                        "read"
-                            | "read_file"
-                            | "glob"
-                            | "grep"
-                            | "inspect"
-                            | "browse"
-                            | "webfetch"
-                            | "session_search"
-                            | "search"
-                            | "session_list"
-                    )
-                })
-                .map(|call| call.id.clone())
-                .collect::<std::collections::HashSet<_>>();
             let made: Vec<(String, serde_json::Value)> = calls
                 .iter()
                 .map(|call| (call.name.clone(), call.input.clone()))
                 .collect();
             let (mut results, history_misses) = self.execute_batch(calls, &cancel, &events).await;
-            results.extend(gated.into_iter().map(|(call, urls)| {
-                (
-                    call.id,
-                    ToolRunOutput::Err(
-                        Fault::Refused,
-                        format!(
-                            "[uncited-source]: not shown — this card cites {} which nothing in this \
-                             conversation retrieved or was given. A card cites only the exact URLs of \
-                             pages a tool fetched here. Fetch the page first, or answer in text and say \
-                             what could not be verified.",
-                            urls.iter()
-                                .map(|url| format!("`{url}`"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                    ),
-                )
-            }));
             self.record_worker_work(&task_assignments, &results).await;
             for (id, output) in &results {
                 if let (Some(name), Some(input)) = (call_names.get(id), call_inputs.get(id)) {
@@ -3023,7 +2955,16 @@ impl Agent {
                                 );
                             }
                         }
-                        if inspection_ids.contains(id) {
+                        // A look at something, by what the tool declares:
+                        // it shows no card and changes no workspace.
+                        if let (Some(name), Some(input)) = (call_names.get(id), call_inputs.get(id))
+                            && stop_policy::looks_something_up(name, self.tool_presents_cards(name))
+                            && !self
+                                .config
+                                .tools
+                                .iter()
+                                .any(|tool| tool.name() == name && tool.changes_workspace(input))
+                        {
                             receipts.successful_inspections += 1;
                         }
                         let external = match call_names.get(id).map(String::as_str) {
@@ -4595,11 +4536,13 @@ impl Agent {
             .then(|| answer::ANSWER.to_string())
     }
 
+    /// Whether a call by this name shows cards: a card tool, or the
+    /// `answer` built from them.
     fn tool_presents_cards(&self, name: &str) -> bool {
         self.config
             .tools
             .iter()
-            .any(|tool| tool.name() == name && tool.presents_cards())
+            .any(|tool| tool.presents_cards() && (tool.name() == name || name == answer::ANSWER))
     }
 
     /// A prose or card answer is not a text-file request. Enforce the
@@ -4845,24 +4788,16 @@ impl Agent {
         if !calls.is_empty() {
             return None;
         }
-        let (turns, lineage_by_turn, current_turn_id) = {
-            let session = self.session.lock().await;
-            (
-                TurnIndex::from_log(&session).turns,
-                Self::intent_threads_by_turn(&session),
-                session.latest_directive_entry_id(),
-            )
-        };
+        let turns = TurnIndex::from_log(&*self.session.lock().await).turns;
         let text = response.text_content();
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return None;
         }
 
-        let current_threads = current_turn_id
-            .as_deref()
-            .and_then(|id| lineage_by_turn.get(id));
-        let repeated_unrelated_answer = turns.iter().any(|past| {
+        // Facts only: the answer is a past turn's answer word for word, and
+        // the person did not ask that same thing again.
+        let repeated_answer = turns.iter().any(|past| {
             if past.behind_reset {
                 return false;
             }
@@ -4873,14 +4808,9 @@ impl Agent {
                 return false;
             }
 
-            Self::directives_are_unrelated(
-                current_directive,
-                &past.directive.text_content(),
-                current_threads,
-                lineage_by_turn.get(&past.id),
-            )
+            !Self::same_normalized_directive(current_directive, &past.directive.text_content())
         });
-        if repeated_unrelated_answer {
+        if repeated_answer {
             return Some(
                 "repeated a previous turn's answer verbatim instead of addressing the current directive"
                     .to_string(),
@@ -4889,49 +4819,8 @@ impl Agent {
         None
     }
 
-    /// The durable intent kernel assigns a stable thread id when a request
-    /// continues or corrects earlier work. That is the semantic relationship
-    /// signal for drift checks; surface-word overlap is too weak (and treats
-    /// different requests sharing words like "current" as related).
-    fn intent_threads_by_turn(
-        log: &vak_session::SessionLog,
-    ) -> std::collections::HashMap<String, std::collections::BTreeSet<String>> {
-        use vak_session::types::EntryPayload;
-
-        log.chain_to_root()
-            .into_iter()
-            .filter_map(|entry| match (&entry.payload, &entry.at_turn) {
-                (EntryPayload::Intent(record), Some(turn)) => Some((
-                    turn.clone(),
-                    record
-                        .strands
-                        .iter()
-                        .map(|strand| strand.thread_id.clone())
-                        .collect(),
-                )),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn directives_are_unrelated(
-        current: &str,
-        previous: &str,
-        current_threads: Option<&std::collections::BTreeSet<String>>,
-        previous_threads: Option<&std::collections::BTreeSet<String>>,
-    ) -> bool {
-        let shares_intent_lineage =
-            current_threads
-                .zip(previous_threads)
-                .is_some_and(|(current, previous)| {
-                    current.iter().any(|thread| previous.contains(thread))
-                });
-        !shares_intent_lineage && !Self::same_normalized_directive(current, previous)
-    }
-
-    /// Compatibility for ledgers without intent records. The normal runtime
-    /// path uses durable intent lineage above; normalization merely avoids a
-    /// false drift on legacy exact repeats with punctuation/case differences.
+    /// The person asked the same thing again: the same words once case,
+    /// spacing and punctuation are set aside.
     fn same_normalized_directive(left: &str, right: &str) -> bool {
         fn normalized(text: &str) -> String {
             text.chars()
@@ -5816,6 +5705,11 @@ impl Agent {
             .map(|header| header.contract_cwd())
             .unwrap_or_default();
         let ctx = ToolContext::new(cwd);
+        let evidence = self
+            .session
+            .lock()
+            .await
+            .evidence_text(|name| self.tool_presents_cards(name));
         let mut errors = Vec::new();
         let mut cards = Vec::new();
         let mut text = Vec::new();
@@ -5865,6 +5759,16 @@ impl Agent {
                                 .any(|delivered| same_workspace_path(delivered, path))
                         });
                     if previews_delivered {
+                        continue;
+                    }
+                    // A card cites only pages something in this
+                    // conversation retrieved or was given.
+                    let uncited = uncited_urls(&input, &evidence);
+                    if !uncited.is_empty() {
+                        errors.push(format!(
+                            "blocks[{at}]: {}",
+                            vak_control::uncited_source(&uncited)
+                        ));
                         continue;
                     }
                     let checked = tool.execute(&input, &ctx).await;
@@ -7380,19 +7284,13 @@ use vak_control::RECOVERY_NOTE as RECOVERY_HINT;
 /// the tools that are, and, when the name is a skill or an MCP server's
 /// tool, the call that reaches it.
 fn unknown_tool_message(name: &str, tools: &[Arc<dyn Tool>], skill_names: &[String]) -> String {
-    let quoted = |text: &str| serde_json::to_string(text).unwrap_or_else(|_| "\"invalid\"".into());
     let skill = skill_names.iter().find(|skill| {
         skill.as_str() == name
             || skill.replace('-', "_") == name
             || **skill == name.replace('_', "-")
     });
     if let Some(skill) = skill {
-        let arguments = serde_json::json!({ "name": skill });
-        return format!(
-            r#"{{"type":"capability_kind_mismatch","name":{},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{arguments}}}}}
-[recovery] `{name}` is registered as a skill, not a callable tool. The runtime supplied the correct invocation: call `skill` with arguments `{arguments}` if that capability is needed. Otherwise continue with the admitted tools. Do not retry `{name}` as a tool."#,
-            quoted(name)
-        );
+        return vak_control::skill_not_tool(name, skill);
     }
     // What the model may call by name: a card tool is reached only as a
     // block of `answer`.
@@ -7404,17 +7302,10 @@ fn unknown_tool_message(name: &str, tools: &[Arc<dyn Tool>], skill_names: &[Stri
     if tools.iter().any(|tool| tool.presents_cards()) {
         offered.push(answer::ANSWER);
     }
-    let available = serde_json::to_string(&offered).unwrap_or_else(|_| "[]".into());
-    let advice = if tools.iter().any(|tool| tool.name() == "mcp") {
-        format!(
-            r#","recovery_advice":"Tool '{name}' is an external MCP capability. Invoke it via the 'mcp' tool: mcp(action: \"call\", server: \"<server_name>\", tool: \"{name}\", arguments: {{ ... }})""#
-        )
-    } else {
-        String::new()
-    };
-    format!(
-        r#"{{"type":"unknown_capability","requested_kind":"tool","name":{},"available_tools":{available}{advice}}}{RECOVERY_HINT}"#,
-        quoted(name)
+    vak_control::unknown_tool(
+        name,
+        &offered,
+        tools.iter().any(|tool| tool.name() == "mcp"),
     )
 }
 
@@ -8705,39 +8596,16 @@ mod tool_recovery_tests {
 #[cfg(test)]
 mod drift_semantic_tests {
     use super::Agent;
-    use std::collections::BTreeSet;
 
     #[test]
-    fn intent_lineage_treats_semantic_followups_as_related_without_word_matching() {
-        let current = BTreeSet::from(["photosynthesis-thread".to_string()]);
-        let prior = BTreeSet::from(["photosynthesis-thread".to_string()]);
-        assert!(!Agent::directives_are_unrelated(
-            "What gas does that process release?",
-            "Explain photosynthesis.",
-            Some(&current),
-            Some(&prior),
-        ));
-    }
-
-    #[test]
-    fn unrelated_intent_threads_still_flag_a_reused_answer() {
-        let current = BTreeSet::from(["capital-question".to_string()]);
-        let prior = BTreeSet::from(["photosynthesis-question".to_string()]);
-        assert!(Agent::directives_are_unrelated(
-            "What is the capital of Japan?",
-            "Explain photosynthesis.",
-            Some(&current),
-            Some(&prior),
-        ));
-    }
-
-    #[test]
-    fn legacy_ledgers_allow_a_normalized_repeat_without_intent_records() {
-        assert!(!Agent::directives_are_unrelated(
+    fn the_same_request_asked_again_is_set_apart_by_its_words_alone() {
+        assert!(Agent::same_normalized_directive(
             "What is 17 times 23?",
-            "what is 17 times 23",
-            None,
-            None,
+            "what is 17 times 23"
+        ));
+        assert!(!Agent::same_normalized_directive(
+            "What is the capital of Japan?",
+            "Explain photosynthesis."
         ));
     }
 }

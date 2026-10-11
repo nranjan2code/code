@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 pub mod correct;
 
-pub use correct::{Finding, Ladder, RECOVERY_NOTE, ShownTool, render};
+pub use correct::{
+    Finding, Ladder, RECOVERY_NOTE, ShownTool, render, skill_not_tool, uncited_source, unknown_tool,
+};
 
 /// Who made a decision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

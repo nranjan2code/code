@@ -108,11 +108,15 @@ impl Tool for FakeEmitChartCard {
     }
 
     fn schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
+        serde_json::json!({"type": "object", "properties": {"sources": {"type": "array"}}})
     }
 
     fn presents_cards(&self) -> bool {
         true
+    }
+
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["chart".into()]
     }
 
     async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
@@ -276,13 +280,15 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
 #[tokio::test]
 async fn a_card_citing_an_unretrieved_page_is_never_shown() {
     let dir = tempdir().unwrap();
-    let cited = serde_json::json!({"sources": [{"url": "https://made-up.example/report"}]});
+    let cited = serde_json::json!({"blocks": [
+        {"type": "chart", "sources": [{"url": "https://made-up.example/report"}]}
+    ]});
     let (mut agent, _) = build_agent(
         &dir,
         "pc-uncited",
         vec![
-            tool_call_msg("c1", "emit_chart_card", cited.clone()),
-            tool_call_msg("c2", "emit_chart_card", cited),
+            tool_call_msg("c1", "answer", cited.clone()),
+            tool_call_msg("c2", "answer", cited),
             text_msg("I could not open that report, so I have no figures to chart."),
         ],
     )
@@ -297,4 +303,11 @@ async fn a_card_citing_an_unretrieved_page_is_never_shown() {
     );
     let session = agent.session.lock().await;
     assert!(session.presentations().is_empty(), "no card is recorded");
+    let refused = session
+        .message_chain()
+        .iter()
+        .flat_map(|(_, message)| message.content.iter())
+        .filter(|block| matches!(block, ContentBlock::ToolResult { content, is_error: true, .. } if content.contains("[uncited-source]") && content.contains("made-up.example")))
+        .count();
+    assert_eq!(refused, 2, "each answer is refused, naming the URL");
 }

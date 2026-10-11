@@ -1583,28 +1583,14 @@ fn engagement_clarify_policy_by_stakes() {
 }
 
 #[test]
-fn engagement_checkpoints_for_effectful_stakes_reversible_plus() {
-    for stakes in [Stakes::Reversible, Stakes::Costly, Stakes::Irreversible] {
-        let r = reading_simple(Act::Modify, Horizon::Session, stakes, Evidence::None);
-        let engagement = derive(&r, &Authority::default());
-        assert!(engagement.posture.checkpoint_before_effect);
-    }
-
-    let r = reading_simple(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
-    let engagement = derive(&r, &Authority::default());
-    assert!(!engagement.posture.checkpoint_before_effect);
-}
-
-#[test]
-fn engagement_any_effectful_contender_forces_checkpoint() {
+fn engagement_stop_rule_follows_the_primary_act() {
     let r = reading_simple(
         Act::Answer,
         Horizon::Session,
         Stakes::Reversible,
         Evidence::None,
     );
-    let engagement = derive(&r, &Authority::default());
-    assert!(!engagement.posture.checkpoint_before_effect);
+    let _ = derive(&r, &Authority::default());
 
     let mut r2 = reading_simple(
         Act::Answer,
@@ -1614,9 +1600,7 @@ fn engagement_any_effectful_contender_forces_checkpoint() {
     );
     r2.alternate_acts.insert(Act::Modify);
     let engagement2 = derive(&r2, &Authority::default());
-    assert!(engagement2.posture.checkpoint_before_effect);
-    // The stop rule follows the primary act; a contender only widens the
-    // toolbox and the checkpoint.
+    // The stop rule follows the primary act.
     assert_eq!(engagement2.posture.stop, StopProfile::Message);
 }
 

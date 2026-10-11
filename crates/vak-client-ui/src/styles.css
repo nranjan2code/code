@@ -1140,6 +1140,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .weather-card-facts strong { color: var(--text); font-size: var(--fs-control); font-weight: 500; }
 .rich-media { margin: var(--space-3) 0; }
 .rich-media img { display: block; max-width: min(100%, 720px); max-height: 480px; border-radius: var(--radius); object-fit: contain; }
+.rich-audio { display: block; width: 100%; max-width: 100%; }
 .rich-media figcaption { margin-top: var(--space-1); color: var(--muted); font-size: var(--fs-caption); }
 .rich-chart { max-width: 720px; margin: var(--space-2) 0; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface); }
 .rich-chart figcaption { margin-bottom: var(--space-2); color: var(--text); font-weight: 500; }
@@ -1235,6 +1236,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 }
 .card-title-group {
   display: flex;
+  flex: 1 1 12rem;
   align-items: center;
   flex-wrap: wrap;
   min-width: 0;

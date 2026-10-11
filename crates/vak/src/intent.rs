@@ -272,7 +272,6 @@ fn explain(
         if posture.managed { "managed" } else { "direct" }
     );
     println!("  commitment   {}", posture.open_commitment);
-    println!("  checkpoint   {}", posture.checkpoint_before_effect);
     println!("  human loop   {}", posture.hil.as_str());
     println!("  clarify      {}", posture.clarify.as_str());
     println!("  stop when    {}", posture.stop.as_str());

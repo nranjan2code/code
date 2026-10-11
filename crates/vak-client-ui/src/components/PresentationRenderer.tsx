@@ -1557,7 +1557,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       out.push(<AssistantMessage sessionId={props.sessionId}>
         <article class="primary-result" data-result-id={anchor?.outcome?.result_id} aria-label="Agent result">
           <Show when={anchor && anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-          <Show when={cards.length > 0}><div class="primary-result-material">{cards.map((entry) => entry.node)}</div></Show>
+          <Show when={cards.length > 0}><div class="primary-result-material" aria-label="Result material">{composeAnswer(cards, props.outline)}</div></Show>
           <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} />
           <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions turnId={props.id} answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item().outcome?.result_id ?? uniqueResultId() ?? item().id} /></>}</Show>
         </article>

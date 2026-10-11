@@ -52,6 +52,7 @@ pub(crate) fn run_runs(cwd: PathBuf, action: Option<crate::cli::RunsAction>) -> 
                 Some(run) => match serde_json::to_string_pretty(run) {
                     Ok(json) => {
                         println!("{json}");
+                        print_decisions(&core, run);
                         0
                     }
                     Err(error) => {
@@ -63,6 +64,51 @@ pub(crate) fn run_runs(cwd: PathBuf, action: Option<crate::cli::RunsAction>) -> 
                     eprintln!("error: no run {id}");
                     1
                 }
+            }
+        }
+    }
+}
+
+/// How the run went (docs/design/88-control-plane.md): the decisions its
+/// turn recorded, one per line, read from each of its sessions' ledgers.
+fn print_decisions(core: &Core, run: &RunRecord) {
+    let Some(turn) = run.trace.as_ref().and_then(|trace| trace.turn.as_ref()) else {
+        return;
+    };
+    let turn = turn.to_string();
+    let turn = turn.strip_prefix("trn_").unwrap_or(&turn).to_string();
+    let Ok(catalog) = core.catalog() else {
+        return;
+    };
+    let mut printed = false;
+    for session in &run.sessions {
+        if vak_core::trash::is_trashed(&core.shared_scope(), session) {
+            continue;
+        }
+        let Some(log) = catalog
+            .session_dir(session)
+            .ok()
+            .flatten()
+            .and_then(|dir| vak_session::SessionLog::open_read_only(dir).ok())
+        else {
+            continue;
+        };
+        for (at, step) in log.explanation() {
+            if at != Some(turn.as_str()) {
+                continue;
+            }
+            let line = match step {
+                vak_session::log::TurnStep::Decision(decision) => serde_json::to_string(decision),
+                vak_session::log::TurnStep::Failed { call, fault } => serde_json::to_string(
+                    &serde_json::json!({"failed": {"call": call, "fault": fault}}),
+                ),
+            };
+            if let Ok(line) = line {
+                if !printed {
+                    println!("decisions:");
+                    printed = true;
+                }
+                println!("  {line}");
             }
         }
     }

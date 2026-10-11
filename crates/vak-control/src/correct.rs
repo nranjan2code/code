@@ -125,6 +125,49 @@ impl Ladder {
 /// The note a failed call's result carries when another call can repair it.
 pub const RECOVERY_NOTE: &str = "\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.";
 
+/// The result of a call to a name this turn does not offer: what may be
+/// called instead, and how an MCP capability is reached when the `mcp`
+/// broker is offered.
+pub fn unknown_tool(name: &str, offered: &[&str], via_mcp: bool) -> String {
+    let quoted = serde_json::to_string(name).unwrap_or_else(|_| "\"invalid\"".into());
+    let available = serde_json::to_string(offered).unwrap_or_else(|_| "[]".into());
+    let advice = if via_mcp {
+        format!(
+            r#","recovery_advice":"Tool '{name}' is an external MCP capability. Invoke it via the 'mcp' tool: mcp(action: \"call\", server: \"<server_name>\", tool: \"{name}\", arguments: {{ ... }})""#
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        r#"{{"type":"unknown_capability","requested_kind":"tool","name":{quoted},"available_tools":{available}{advice}}}{RECOVERY_NOTE}"#
+    )
+}
+
+/// The result of calling a skill as if it were a tool: the invocation that
+/// reaches it.
+pub fn skill_not_tool(name: &str, skill: &str) -> String {
+    let quoted = serde_json::to_string(name).unwrap_or_else(|_| "\"invalid\"".into());
+    let arguments = serde_json::json!({ "name": skill });
+    format!(
+        r#"{{"type":"capability_kind_mismatch","name":{quoted},"actual_kind":"skill","invocation":{{"tool":"skill","arguments":{arguments}}}}}
+[recovery] `{name}` is registered as a skill, not a callable tool. The runtime supplied the correct invocation: call `skill` with arguments `{arguments}` if that capability is needed. Otherwise continue with the admitted tools. Do not retry `{name}` as a tool."#
+    )
+}
+
+/// Why a card is not shown: it cites source URLs nothing in the
+/// conversation retrieved or was given.
+pub fn uncited_source(urls: &[String]) -> String {
+    format!(
+        "[uncited-source]: not shown — this card cites {} which nothing in this conversation \
+         retrieved or was given. A card cites only the exact URLs of pages a tool fetched here. \
+         Fetch the page first, or answer in text and say what could not be verified.",
+        urls.iter()
+            .map(|url| format!("`{url}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 /// What the model is told about a failed check, signed with the check's
 /// marker. It says who is speaking, because a model reads an unsigned
 /// reminder as the person's.

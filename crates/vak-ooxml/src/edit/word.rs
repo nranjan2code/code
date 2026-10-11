@@ -103,7 +103,7 @@ fn find(doc: &Doc, anchor: &str) -> Result<usize, EditError> {
     Err(EditError {
         op: None,
         message: format!(
-            "no paragraph {anchor}; use an anchor from doc_read on this exact file (anchors look like p:1A2B3C4D or p@12){}",
+            "no paragraph {anchor}; use an anchor doc_read printed for this exact file, or one an earlier result for this draft named as added (anchors look like p:1A2B3C4D or p@12){}",
             suggestion(doc, &all, anchor)
         ),
     })
