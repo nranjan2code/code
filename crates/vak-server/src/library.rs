@@ -1162,55 +1162,24 @@ fn write_back(state: &AppState, artifact: &vak_core::artifacts::Artifact, bytes:
 }
 
 #[derive(serde::Deserialize)]
-struct CardSave {
+struct AnswerSave {
     session: String,
-    presentation: String,
+    turn: String,
 }
 
-/// `POST /library/cards`: a card a person keeps out of its conversation
-/// (doc 82 §3: a card stays in its chat unless saved). Its payload becomes
-/// the artifact's first version.
-async fn save_card(State(state): State<AppState>, Json(body): Json<CardSave>) -> Response {
+/// `POST /library/answers`: an answer a person keeps out of its
+/// conversation (doc 82 §3: what a chat shows stays in the chat unless
+/// saved). The whole answer is one artifact, its cards and its reply
+/// together as a Markdown document; a single card is never saved alone. An
+/// answer that delivered a file has that file in the Library already.
+async fn save_answer(State(state): State<AppState>, Json(body): Json<AnswerSave>) -> Response {
     let Some(log) = crate::open_historical_session(&state, &body.session) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some((_, record)) = log
-        .presentations()
-        .into_iter()
-        .find(|(id, _)| *id == body.presentation)
-    else {
+    let timeline = crate::projection::snapshot(&body.session, &log);
+    let Some((title, document)) = crate::projection::answer_document(&timeline, &body.turn) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    // A card with no title is named from what it shows (its columns),
-    // never just its type: "table" names nothing a person would recall.
-    let columns: Vec<String> = record
-        .payload
-        .get("columns")
-        .and_then(serde_json::Value::as_array)
-        .map(|columns| {
-            columns
-                .iter()
-                .filter_map(|column| {
-                    column
-                        .get("label")
-                        .and_then(serde_json::Value::as_str)
-                        .or_else(|| column.as_str())
-                        .map(str::to_string)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let title = if !record.title.trim().is_empty() {
-        record.title.clone()
-    } else if !columns.is_empty() {
-        format!("{} table", columns.join(", "))
-    } else {
-        format!(
-            "Saved {}",
-            record.semantic_type.replace(['_', '-', '.'], " ")
-        )
-    };
-    let bytes = serde_json::to_vec_pretty(&record.payload).unwrap_or_default();
     let space = vak_session::trace::local::space(state.core.cwd()).to_string();
     let agent = state
         .core
@@ -1223,9 +1192,9 @@ async fn save_card(State(state): State<AppState>, Json(body): Json<CardSave>) ->
         .declare(
             &space,
             &agent,
-            &format!("cards/{}.json", body.presentation),
-            vak_core::artifacts::ArtifactKind::Card,
-            Some(title),
+            &format!("answers/{}-{}.md", body.session, body.turn),
+            vak_core::artifacts::ArtifactKind::File,
+            (!title.is_empty()).then_some(title),
             None,
             None,
             actor,
@@ -1235,10 +1204,10 @@ async fn save_card(State(state): State<AppState>, Json(body): Json<CardSave>) ->
                 id,
                 NewVersion {
                     parent: None,
-                    bytes: &bytes,
+                    bytes: document.as_bytes(),
                     source: VersionSource::Call {
                         session: body.session.clone(),
-                        call: body.presentation.clone(),
+                        call: body.turn.clone(),
                     },
                 },
                 None,
@@ -1883,7 +1852,7 @@ pub(crate) fn routes() -> Router<AppState> {
             "/library/{id}/versions/{version}/checks",
             post(version_check),
         )
-        .route("/library/cards", post(save_card))
+        .route("/library/answers", post(save_answer))
         .route("/library/{id}/versions", post(person_version))
         .route("/library/{id}/shares", get(shares).post(share))
         .route(

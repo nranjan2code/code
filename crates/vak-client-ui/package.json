@@ -11,7 +11,6 @@
     "build:web": "tsc --noEmit && VAK_HOST=web vite build && node scripts/stamp.mjs dist-web",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:renderer-coverage": "node --test src/harness/coverage.test.mjs",
     "typecheck:mail-calendar-fixture": "tsc --noEmit -p tsconfig.mail-calendar-fixture.json"
   },
   "dependencies": {

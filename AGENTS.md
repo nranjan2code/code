@@ -64,6 +64,8 @@ Read before changing behaviour in these areas:
   the one to start from when adding a renderer).
 - **Decision and capability layers** — `86-model-plans-runtime-checks.md`
   (the model's declared plan and the runtime's receipt check; read first),
+  `87-composed-answers.md` (answer blocks; stage 1 shipped, stage 2's
+  outline and layout built, the rest waits on doc 88),
   `41-capability-registry.md`,
   `42-managed-work-contracts.md`, `45-prompt-layers.md`,
   `47-commitment-kernel.md` (the intent kernel — strands, resolver tiers,
@@ -174,7 +176,14 @@ Read before changing behaviour in these areas:
   acceptance remain open);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
-- **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
+- **Proposals, not behaviour** — `88-control-plane.md` (the proposed
+  control plane: the model proposes, the runtime decides at a closed set of
+  decision points and records each decision; a step contract sets
+  reasoning, sampling, tools and output form from discovered model
+  capabilities; one correction ladder; `vak-control` and `vak-judge` as
+  their own crates. Next to be built; start from
+  `docs/plans/handover-2026-10-11-control-plane.md`),
+  `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
   `74-lifecycle-and-data-administration.md` (the pending data architecture
   refactor; see "Pending" below),

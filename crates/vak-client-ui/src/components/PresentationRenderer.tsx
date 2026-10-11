@@ -965,7 +965,7 @@ function ResultEvidence(props: { item: OutputItem }) {
 
 /** Ask for changes on a result that is not a single file; a single file's
  * card carries it (`ResultCard`). */
-function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string; resultId?: string }) {
+function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string; turnId: string; resultId?: string }) {
   const files = () => props.material.filter((item) => item.content.type === "artifact").length;
   const isPlan = createMemo(() => [props.answer, ...props.material].some((item) => {
     if (item.content.type === "adaptive") return item.content.tree.root.primitive === "timeline";
@@ -981,6 +981,7 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
   return <Show when={files() !== 1 && props.resultId}>
     <nav class="primary-result-actions" aria-label="Result actions">
       <button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for changes"}</button>
+      <Show when={files() === 0}><SaveAnswerToLibrary sessionId={props.sessionId} turnId={props.turnId} /></Show>
     </nav>
   </Show>;
 }
@@ -1036,25 +1037,19 @@ function AnswerCard(props: { item: OutputItem; document: PresentationDocument })
   );
 }
 
-/** The Save to Library control for a card the ledger recorded. */
-function saveCard(sessionId: string | undefined, item: OutputItem): JSX.Element {
-  const presentation = item.provenance?.presentation_id;
-  return sessionId && presentation ? <SaveCardToLibrary sessionId={sessionId} presentationId={presentation} /> : null;
-}
-
-/** Keeps a card in the Library (plan M8.4b): an everyday action, shown on
- *  every recorded card, never behind technical details. */
-function SaveCardToLibrary(props: { sessionId: string; presentationId: string }) {
+/** Keeps an answer in the Library as one document (docs/design/82-library.md §3).
+ *  An answer is saved whole, never card by card; one that delivered a file
+ *  has that file in the Library already and shows no Save. */
+function SaveAnswerToLibrary(props: { sessionId: string; turnId: string }) {
   const [status, setStatus] = createSignal("");
-  return <div class="presentation-save">
+  return <>
     <button
       type="button"
-      class="btn sm"
       disabled={status() === "Saving…" || status() === "Saved to Library"}
       onClick={async () => {
         setStatus("Saving…");
         try {
-          await api.librarySaveCard(props.sessionId, props.presentationId);
+          await api.librarySaveAnswer(props.sessionId, props.turnId);
           setStatus("Saved to Library");
         } catch {
           setStatus("Could not save");
@@ -1064,7 +1059,7 @@ function SaveCardToLibrary(props: { sessionId: string; presentationId: string })
       {status() === "Saved to Library" ? "Saved to Library" : "Save to Library"}
     </button>
     <Show when={status() === "Could not save"}><small role="status">{status()}</small></Show>
-  </div>;
+  </>;
 }
 
 function PresentationFeedback(props: { sessionId: string; semanticType: string; presentationId?: string }) {
@@ -1116,7 +1111,7 @@ function optionInteractionFor(sessionId?: string, resultId?: string) {
   } };
 }
 
-export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string; showSaveAction?: boolean }) {
+export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
   const fallback = () => props.fallback && !parseVakFence(props.fallback)
     ? <MarkdownView text={props.fallback} />
@@ -1130,9 +1125,6 @@ export function StructuredView(props: { output: import("../types").StructuredOut
               <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
             </PresentationInteractionContext.Provider>
           </PresentationSessionContext.Provider>
-          <Show when={props.showSaveAction !== false && props.sessionId && props.presentationId}>
-            <SaveCardToLibrary sessionId={props.sessionId!} presentationId={props.presentationId!} />
-          </Show>
           <Show when={showOperatorChrome() && props.sessionId}>
             <PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} presentationId={props.presentationId} />
           </Show>
@@ -1374,7 +1366,42 @@ function StructuredRenderer(props: { output: import("../types").StructuredOutput
 }
 
 
-function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean }) {
+/** The block a card item is, from the tool that recorded it (`emit_stats_card` → `stats`). */
+function blockOf(item: OutputItem): string {
+  const source = item.provenance?.source ?? "";
+  return source.startsWith("emit_") && source.endsWith("_card") ? source.slice(5, -5) : "";
+}
+
+/** Blocks narrow enough to sit beside a neighbour of the same kind on a wide screen. */
+const SMALL_BLOCKS = new Set(["stats", "callout"]);
+
+/** Lays out an answer's blocks as one document (docs/design/87-composed-answers.md §2):
+ *  the summary leads, then the plan's sections in the order the model declared them,
+ *  then every block that named no section, in the order it was produced. Nothing is
+ *  placed in a section it did not name. */
+function composeAnswer(
+  entries: { item: OutputItem; node: JSX.Element }[],
+  outline: import("../types").AnswerOutline | undefined,
+): JSX.Element {
+  const block = (entry: { item: OutputItem; node: JSX.Element }) => (
+    <div class="answer-block" data-block={blockOf(entry.item) || undefined} data-small={SMALL_BLOCKS.has(blockOf(entry.item)) ? "" : undefined}>
+      {entry.node}
+    </div>
+  );
+  const lead = entries.filter((entry) => blockOf(entry.item) === "summary");
+  const body = entries.filter((entry) => blockOf(entry.item) !== "summary");
+  const sections = (outline?.sections ?? [])
+    .map((section) => ({ name: section.name, entries: body.filter((entry) => section.items.includes(entry.item.id)) }))
+    .filter((section) => section.entries.length > 0);
+  const placed = new Set(sections.flatMap((section) => section.entries.map((entry) => entry.item.id)));
+  return <>
+    {lead.map(block)}
+    {sections.map((section) => <section class="answer-section" aria-label={section.name}>{section.entries.map(block)}</section>)}
+    {body.filter((entry) => !placed.has(entry.item.id)).map(block)}
+  </>;
+}
+
+function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allowContinuation: boolean; outline?: import("../types").AnswerOutline }) {
   const continuationPrompt = () => {
     // The original request and completed tool receipts are already in the
     // append-only ledger. Repeating its imperative text here causes the intent
@@ -1474,7 +1501,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       if (!item.content.document) return null;
       return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></AssistantMessage>;
     }
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} showSaveAction={false} />;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} />;
     if (item.kind === "error") {
       if (item.content.type === "error" && item.content.message === "max_turns") {
@@ -1530,9 +1557,9 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       out.push(<AssistantMessage sessionId={props.sessionId}>
         <article class="primary-result" data-result-id={anchor?.outcome?.result_id} aria-label="Agent result">
           <Show when={anchor && anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-          <Show when={cards.length > 0}><div class="primary-result-material">{cards.map((entry) => <>{entry.node}{saveCard(props.sessionId, entry.item)}</>)}</div></Show>
+          <Show when={cards.length > 0}><div class="primary-result-material">{cards.map((entry) => entry.node)}</div></Show>
           <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} />
-          <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item().outcome?.result_id ?? uniqueResultId() ?? item().id} /></>}</Show>
+          <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions turnId={props.id} answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item().outcome?.result_id ?? uniqueResultId() ?? item().id} /></>}</Show>
         </article>
       </AssistantMessage>);
       lead = [];
@@ -1632,7 +1659,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               <Show when={item.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
               <Show when={material.some((entry) => entry.item.kind !== "artifact")}>
                 <div class="primary-result-material" aria-label="Result material">
-                  {material.filter((entry) => entry.item.kind !== "artifact").map((entry) => <>{entry.node}{saveCard(props.sessionId, entry.item)}</>)}
+                  {composeAnswer(material.filter((entry) => entry.item.kind !== "artifact"), props.outline)}
                 </div>
               </Show>
               <Show when={hasCard}
@@ -1641,7 +1668,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               </Show>
               <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={item} sessionId={props.sessionId} />
               <ResultEvidence item={item} />
-              <ResultActions answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} />
+              <ResultActions turnId={props.id} answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} />
             </article>
           </AssistantMessage>;
         out.push(result);
@@ -1725,7 +1752,8 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       // changed. Reuse its item list so Turn does not rebuild every result.
       const items = createMemo(() => props.timeline.items.filter((item) =>
         item.turn_id === id && !(props.hideUser && item.role === "user")), undefined, { equals: sameItems });
-      return <Turn id={id} items={items()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />;
+      const outline = createMemo(() => props.timeline.answers?.find((answer) => answer.turn_id === id));
+      return <Turn id={id} items={items()} outline={outline()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />;
     }}</For>
   </div>;
 }

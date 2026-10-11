@@ -1,7 +1,8 @@
 # 87 — Composed answers
 
-Status: direction approved by the maintainer on 2026-10-11; stage 1 in
-progress. Builds on docs/design/86-model-plans-runtime-checks.md (the plan
+Status: direction approved by the maintainer on 2026-10-11; stage 1 done,
+stage 2's outline and layout built and awaiting a decision on how the
+model writes an answer (docs/plans/handover-2026-10-11.md, item 4). Builds on docs/design/86-model-plans-runtime-checks.md (the plan
 and its receipt check). Replaces the model-facing card vocabulary of
 doc 30-render-architecture §30.1 (twelve `emit_*_card` tools over 109
 domain-labelled `semantic_type`s); the rendering contract of
@@ -41,10 +42,12 @@ A turn's answer is composed by the runtime, not left to emit order:
   deliverables, in order, are the answer's sections. A turn with no plan
   is one section.
 - **Blocks.** Every card and the final text are blocks. A card names its
-  section with `answers`; one that names none goes to the next section
-  still waiting for one of its form, as the plan check reads it. Prose is
-  a block too: it renders where its section is, never as a trailing essay
-  under the cards.
+  section with `answers`; one that names none is in no section and is
+  shown after the sections in the order it was produced, because the
+  runtime did not see where it belongs (the plan check counts such cards
+  the same way). The reply's text is in the one text section when the plan
+  has exactly one. The projection publishes this as the answer's outline
+  (`OutputTimeline.answers`), and the client lays the answer out from it.
 - **Layout.** The client lays out the answer from the blocks' shapes,
   deterministically: a summary block leads as the headline; a comparison
   renders its options as columns; steps as a numbered flow; stats as one

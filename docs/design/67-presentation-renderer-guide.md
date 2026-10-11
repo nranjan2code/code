@@ -312,11 +312,10 @@ does not re-litigate it.
 
 ## Layout stress check
 
-Short fixtures hide layout bugs: text that escapes its container only shows up
-with real-world lengths (long titles, snippets, URLs). Open the card harness
-with `?stress=1` (`/app/harness.html?stress=1` under `npm run dev:web`) and it
-pads every string in every fixture with long prose plus an unbroken URL. Then
-measure, per element, whether it spills its parent or the card
+Short text hides layout bugs: text that escapes its container only shows up
+with real-world lengths (long titles, snippets, URLs). Check a card in the
+running app with a real turn whose strings are long and include an unbroken
+URL. Then measure, per element, whether it spills its parent or the card
 (`scrollWidth > clientWidth` with `overflow: visible`, or a bounding box past
 its parent's edge), ignoring intentional scrollers (`.diff-code-area`,
 `.semantic-table-wrap`) and hover-only popovers. Run it at a narrow viewport as

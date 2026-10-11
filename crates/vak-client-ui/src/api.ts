@@ -2572,9 +2572,9 @@ export function libraryPersonVersion(id: string, body: { text?: string; data?: s
   return req(`/library/${encodeURIComponent(id)}/versions`, { method: "POST", body: JSON.stringify(body) });
 }
 
-/** Keeps a chat card in the Library. */
-export function librarySaveCard(session: string, presentation: string): Promise<{ id: string }> {
-  return req("/library/cards", { method: "POST", body: JSON.stringify({ session, presentation }) });
+/** Keeps a whole answer (its cards and its reply) in the Library as one document. */
+export function librarySaveAnswer(session: string, turn: string): Promise<{ id: string }> {
+  return req("/library/answers", { method: "POST", body: JSON.stringify({ session, turn }) });
 }
 
 

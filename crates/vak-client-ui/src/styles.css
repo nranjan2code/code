@@ -3177,6 +3177,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .semantic-assistant .semantic-document { color: var(--text); line-height: 1.62; max-width: 760px; padding: 0; }
 .primary-result {
   width: min(760px, 100%);
+  container-type: inline-size;
 }
 .primary-result-followup { margin-top: 10px; }
 .primary-result-caution { display: flex; align-items: center; gap: var(--space-2); padding: 10px 14px; margin-bottom: 10px; border-radius: var(--radius); background: color-mix(in srgb, var(--yellow) 9%, var(--surface)); color: var(--text); font-size: var(--fs-meta); line-height: 1.4; }
@@ -3184,12 +3185,22 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .primary-result-answer .semantic-heading:first-child { margin-top: 0; }
 .primary-result-material {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-3);
   padding: 0 0 var(--space-2);
 }
-.primary-result-material > .rich-structured-card,
-.primary-result-material > .adaptive-presentation,
-.primary-result-material > .adaptive-node {
+/* An answer is one document: its sections add no box of their own, every
+   block spans the answer, and two small neighbours share a row when the
+   answer is wide enough. */
+.answer-section { display: contents; }
+.answer-block { grid-column: 1 / -1; min-width: 0; }
+@container (min-width: 560px) {
+  .answer-block[data-small]:has(+ .answer-block[data-small]),
+  .answer-block[data-small] + .answer-block[data-small] { grid-column: span 1; }
+}
+.answer-block > .rich-structured-card,
+.answer-block > .adaptive-presentation,
+.answer-block > .adaptive-node {
   max-width: none;
   margin: 0;
 }
@@ -4201,7 +4212,6 @@ body.is-resizing .split-divider {
 .library-preview { margin: 0 0 16px; max-height: 420px; overflow: auto; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-control); }
 .library-document { max-height: 640px; padding: 0; white-space: normal; overflow-wrap: normal; }
 .library-note { font-size: var(--fs-control); color: var(--text-soft); }
-.presentation-save { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .library-edit { margin: 0 0 16px; }
 .library-edit textarea { width: 100%; min-height: 240px; box-sizing: border-box; padding: var(--space-3); border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-family: var(--mono); font-size: var(--fs-control); }
 .library-share { margin: 0 0 16px; padding: var(--space-3); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }

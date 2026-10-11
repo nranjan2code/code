@@ -186,6 +186,30 @@ pub struct OutputTimeline {
     pub diagnostics: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal: Option<vak_intent::GoalState>,
+    /// The answers that have an outline: one for each turn whose model
+    /// declared a plan (docs/design/87-composed-answers.md §2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub answers: Vec<AnswerOutline>,
+}
+
+/// One turn's answer as a document: the plan's deliverables, in the order
+/// the model declared them, are its sections.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnswerOutline {
+    pub turn_id: String,
+    pub sections: Vec<AnswerSection>,
+}
+
+/// One section of an answer and the items that deliver it. An item is
+/// listed only where the record says so: a card under the deliverable its
+/// `answers` names, the reply's text under the one text deliverable. An
+/// item that names no section is in none, and a client shows it after the
+/// sections in the order it was produced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnswerSection {
+    pub name: String,
+    pub form: String,
+    pub items: Vec<String>,
 }
 
 impl OutputTimeline {
@@ -197,6 +221,7 @@ impl OutputTimeline {
             items: Vec::new(),
             diagnostics: Vec::new(),
             goal: None,
+            answers: Vec::new(),
         }
     }
 }

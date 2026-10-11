@@ -15,7 +15,7 @@ const files = [];
 const walk = (dir) => {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
-    if (statSync(path).isDirectory()) { if (name !== "harness") walk(path); }
+    if (statSync(path).isDirectory()) walk(path);
     else if (name.endsWith(".tsx")) files.push(path);
   }
 };

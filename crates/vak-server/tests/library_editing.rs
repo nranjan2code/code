@@ -126,7 +126,7 @@ async fn edits_become_the_file_and_late_put_backs_become_siblings() {
 }
 
 #[tokio::test]
-async fn a_saved_card_is_kept_in_the_library() {
+async fn a_saved_answer_is_kept_in_the_library_whole() {
     vak_config::paths::isolate_home_for_tests();
     let data = vak_config::paths::data_home();
     let cwd = tempfile::tempdir().unwrap();
@@ -143,24 +143,18 @@ async fn a_saved_card_is_kept_in_the_library() {
     }))
     .unwrap();
     let mut log = vak_session::SessionLog::create(path, header).unwrap();
-    let payload = json!({"columns": ["Harbour", "Country"], "rows": [["Sydney", "Australia"]]});
-    let presented = log
-        .append_presentation(vak_session::types::PresentationRecord {
-            turn_id: "t".into(),
-            source: vak_session::types::PresentationSource::ToolCall {
-                tool_use_id: "toolu_1".into(),
-            },
-            semantic_type: "data_table".into(),
-            skill_id: "s".into(),
-            skill_version: "1".into(),
-            schema_version: 2,
-            payload_digest: vak_session::types::payload_digest(&payload),
-            payload,
-            derived_from: Vec::new(),
-            title: "Famous harbours".into(),
-            identity_digest: "d".into(),
+    for message in [
+        vak_llm::Message::user_text("Which harbours are famous?"),
+        vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(
+            "Sydney and Hong Kong are the best known.",
+        )]),
+    ] {
+        log.append_message(vak_session::types::MessageRecord {
+            message,
+            meta: None,
         })
         .unwrap();
+    }
     drop(log);
 
     let core = vak_core::Core::new(cwd.path().to_path_buf()).unwrap();
@@ -169,19 +163,19 @@ async fn a_saved_card_is_kept_in_the_library() {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let res = reqwest::Client::new()
-        .post(format!("http://{addr}/library/cards"))
+        .post(format!("http://{addr}/library/answers"))
         .bearer_auth(&token)
-        .json(&json!({"session": id, "presentation": presented.id}))
+        .json(&json!({"session": id, "turn": "turn-1"}))
         .send()
         .await
         .unwrap();
     assert_eq!(res.status(), 201);
     let saved: Value = res.json().await.unwrap();
     let artifact = core.artifacts().get(saved["id"].as_str().unwrap()).unwrap();
-    assert_eq!(artifact.kind, ArtifactKind::Card);
-    assert_eq!(artifact.name(), "Famous harbours");
+    assert_eq!(artifact.kind, ArtifactKind::File);
+    assert_eq!(artifact.name(), "Which harbours are famous?");
     let head = artifact.head().unwrap();
-    assert!(head.saved, "a saved card's version is kept");
+    assert!(head.saved, "a saved answer's version is kept");
     let bytes = core.artifacts().bytes(&artifact, &head.id).unwrap();
     assert!(String::from_utf8(bytes).unwrap().contains("Sydney"));
 }

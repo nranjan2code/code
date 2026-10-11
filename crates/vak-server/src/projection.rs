@@ -148,6 +148,63 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
     }
 }
 
+/// One turn's answer as a document a person can keep: its request as the
+/// title, its cards' text in the order shown, then the reply (beside cards,
+/// only what the reply adds to them). `None` when the turn has no answer.
+pub(crate) fn answer_document(timeline: &OutputTimeline, turn: &str) -> Option<(String, String)> {
+    let of_turn = || timeline.items.iter().filter(|item| item.turn_id == turn);
+    let cards: Vec<&str> = of_turn()
+        .filter(|item| {
+            item.kind == OutputKind::Card
+                && matches!(
+                    item.content,
+                    OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
+                )
+        })
+        .map(|item| item.fallback_text.trim())
+        .map(|text| {
+            text.split_once("\n\n```json")
+                .map_or(text, |(body, _)| body)
+        })
+        .filter(|text| !text.is_empty())
+        .collect();
+    let reply = of_turn()
+        .rev()
+        .filter(|item| item.role == OutputRole::Assistant)
+        .find_map(|item| match &item.content {
+            OutputContent::Document { document } => Some(document.source_markdown.clone()),
+            OutputContent::Outcome {
+                document: Some(document),
+                ..
+            } => Some(document.source_markdown.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let reply = if cards.is_empty() {
+        reply.trim().to_string()
+    } else {
+        vak_delivery::visible_card_followup(&reply).unwrap_or_default()
+    };
+    let body: Vec<&str> = cards
+        .into_iter()
+        .chain(std::iter::once(reply.as_str()))
+        .filter(|part| !part.is_empty())
+        .collect();
+    if body.is_empty() {
+        return None;
+    }
+    let title = of_turn()
+        .find(|item| item.role == OutputRole::User)
+        .and_then(|item| {
+            item.fallback_text
+                .lines()
+                .find(|line| !line.trim().is_empty())
+        })
+        .map(|line| line.trim().to_string())
+        .unwrap_or_default();
+    Some((title, body.join("\n\n")))
+}
+
 /// Keep the model's short narration separate from the structured cards.
 /// Channel bridges have native card projections; including these same cards
 /// in the narration made Discord/Slack show each result twice.
@@ -1604,9 +1661,117 @@ fn snapshot_inner(
         }
     }
     timeline.items = deduplicated;
+    timeline.answers = answer_outlines(session, &timeline.items);
     timeline.cursor = chain_cursor(session);
     log_turns_with_no_visible_answer(session_id, &timeline);
     timeline
+}
+
+/// The outline of each answer whose model declared a plan
+/// (docs/design/87-composed-answers.md §2): the latest plan the turn
+/// recorded gives the sections, and each item is listed where the ledger
+/// says it belongs. Nothing is attributed by position: a card that names no
+/// planned deliverable is in no section.
+fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delivery::AnswerOutline> {
+    use std::collections::HashMap;
+    // Per ledger turn: the plan it settled on. Per call: its ledger turn
+    // and the deliverable it says it answers.
+    let mut plans: HashMap<String, Vec<vak_tools::Deliverable>> = HashMap::new();
+    let mut proposed: HashMap<String, (String, Vec<vak_tools::Deliverable>)> = HashMap::new();
+    let mut calls: HashMap<String, (String, Option<String>)> = HashMap::new();
+    for entry in session.chain_to_root() {
+        let (Some(turn), vak_session::EntryPayload::Message(record)) =
+            (entry.at_turn.as_ref(), &entry.payload)
+        else {
+            continue;
+        };
+        for block in &record.message.content {
+            match block {
+                ContentBlock::ToolUse { id, name, input } => {
+                    if name == "plan"
+                        && let Ok(plan) = vak_tools::parse_plan_args(input)
+                    {
+                        proposed.insert(id.clone(), (turn.clone(), plan));
+                    }
+                    let answers = input
+                        .get("answers")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_string);
+                    calls.insert(id.clone(), (turn.clone(), answers));
+                }
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error: false,
+                    ..
+                } => {
+                    if let Some((turn, plan)) = proposed.remove(tool_use_id) {
+                        plans.insert(turn, plan);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if plans.is_empty() {
+        return Vec::new();
+    }
+    let call_of = |item: &OutputItem| {
+        item.provenance
+            .as_ref()
+            .and_then(|provenance| provenance.tool_call_id.as_ref())
+            .and_then(|call| calls.get(call))
+    };
+    let mut turns: Vec<&str> = Vec::new();
+    for item in items {
+        if !turns.contains(&item.turn_id.as_str()) {
+            turns.push(&item.turn_id);
+        }
+    }
+    let mut outlines = Vec::new();
+    for turn_id in turns {
+        let of_turn = || items.iter().filter(|item| item.turn_id == turn_id);
+        let Some(plan) =
+            of_turn().find_map(|item| call_of(item).and_then(|(turn, _)| plans.get(turn)))
+        else {
+            continue;
+        };
+        let mut sections: Vec<vak_delivery::AnswerSection> = plan
+            .iter()
+            .map(|deliverable| vak_delivery::AnswerSection {
+                name: deliverable.name.clone(),
+                form: deliverable.form.as_str().to_string(),
+                items: Vec::new(),
+            })
+            .collect();
+        for item in of_turn().filter(|item| item.kind == OutputKind::Card) {
+            let Some(named) = call_of(item).and_then(|(_, answers)| answers.as_deref()) else {
+                continue;
+            };
+            if let Some(section) = sections.iter_mut().find(|section| {
+                section.form == "card" && section.name.trim().eq_ignore_ascii_case(named)
+            }) {
+                section.items.push(item.id.clone());
+            }
+        }
+        // The reply's text is one block: it has a section only when the
+        // plan has exactly one text deliverable.
+        let mut texts = sections.iter_mut().filter(|section| section.form == "text");
+        if let (Some(section), None) = (texts.next(), texts.next())
+            && let Some(reply) = of_turn().rev().find(|item| {
+                item.role == OutputRole::Assistant
+                    && matches!(item.kind, OutputKind::Outcome | OutputKind::Message)
+            })
+        {
+            section.items.push(reply.id.clone());
+        }
+        outlines.push(vak_delivery::AnswerOutline {
+            turn_id: turn_id.to_string(),
+            sections,
+        });
+    }
+    outlines
 }
 
 /// Mirrors the client's `Turn` filter (vak-client-ui's
@@ -4824,6 +4989,123 @@ mod tests {
             "{} unusable packs:\n{}",
             failures.len(),
             failures.join("\n")
+        );
+    }
+
+    /// The answer outline (docs/design/87-composed-answers.md §2): the
+    /// plan's deliverables are the sections, a card is in the section its
+    /// `answers` names, a card that names none is in no section, and the
+    /// reply's text is in the one text section.
+    #[test]
+    fn an_answer_with_a_plan_has_an_outline_and_nothing_is_placed_by_position() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "outline");
+        log.append_message(MessageRecord {
+            message: Message::user_text("compare the two and list what to pack"),
+            meta: None,
+        })
+        .expect("directive");
+        let call = |log: &mut SessionLog, id: &str, name: &str, input: serde_json::Value| {
+            log.append_message(MessageRecord {
+                message: Message::assistant(vec![ContentBlock::ToolUse {
+                    id: id.into(),
+                    name: name.into(),
+                    input: input.clone(),
+                }]),
+                meta: None,
+            })
+            .expect("call");
+            log.append_message(MessageRecord {
+                message: Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id: id.into(),
+                        content: "ok".into(),
+                        is_error: false,
+                    }],
+                },
+                meta: None,
+            })
+            .expect("result");
+            if name != "plan" {
+                append_presentation_for_call(log, name, id, &input);
+            }
+        };
+        call(
+            &mut log,
+            "p1",
+            "plan",
+            serde_json::json!({"deliverables": [
+                {"name": "comparison", "form": "card"},
+                {"name": "packing list", "form": "card"},
+                {"name": "advice", "form": "text"}
+            ]}),
+        );
+        // Emitted in the other order from the plan, and one names nothing.
+        call(
+            &mut log,
+            "c1",
+            "emit_checklist_card",
+            serde_json::json!({"items": ["Charger"], "answers": "Packing list"}),
+        );
+        call(
+            &mut log,
+            "c2",
+            "emit_callout_card",
+            serde_json::json!({"text": "Book early."}),
+        );
+        call(
+            &mut log,
+            "c3",
+            "emit_checklist_card",
+            serde_json::json!({"items": ["Train", "Car"], "answers": "comparison"}),
+        );
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("Take the train.")]),
+            meta: None,
+        })
+        .expect("reply");
+
+        let timeline = snapshot("outline", &log);
+        let [outline] = timeline.answers.as_slice() else {
+            panic!("one outline: {:?}", timeline.answers);
+        };
+        let item_of = |call: &str| {
+            timeline
+                .items
+                .iter()
+                .find(|item| {
+                    item.provenance
+                        .as_ref()
+                        .and_then(|provenance| provenance.tool_call_id.as_deref())
+                        == Some(call)
+                        && item.kind == OutputKind::Card
+                })
+                .map(|item| item.id.clone())
+                .unwrap_or_else(|| panic!("card for {call}"))
+        };
+        let names: Vec<&str> = outline.sections.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["comparison", "packing list", "advice"],
+            "plan order"
+        );
+        assert_eq!(outline.sections[0].items, [item_of("c3")]);
+        assert_eq!(outline.sections[1].items, [item_of("c1")]);
+        assert_eq!(
+            outline.sections[2].items.len(),
+            1,
+            "the reply's text: {:?}",
+            timeline
+                .items
+                .iter()
+                .map(|item| (item.kind, item.role, item.turn_id.clone()))
+                .collect::<Vec<_>>()
+        );
+        let placed: Vec<&String> = outline.sections.iter().flat_map(|s| &s.items).collect();
+        assert!(
+            !placed.contains(&&item_of("c2")),
+            "a card that names no deliverable is in no section"
         );
     }
 
