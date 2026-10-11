@@ -1,3 +1,4 @@
+import { isThemeChoice, type ThemeChoice } from "./theme";
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
 import { fileSubject, matchExecutionArtifact, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
@@ -641,7 +642,7 @@ export interface UiPreferences {
   /** "system" follows the OS/browser, which is the only sane default for
    *  a surface that can be a browser tab on a phone in daylight
    *  (docs/design/48-web-client.md §7.1). */
-  theme: "system" | "light" | "dark" | "contrast";
+  theme: ThemeChoice;
   visualPack: "classic" | "dimensional";
   interfaceFont: InterfaceFont;
   contentFont: ContentFont;
@@ -670,7 +671,7 @@ export interface UiPreferences {
 const defaultUiPreferences: UiPreferences = {
   theme: "system",
   visualPack: "classic",
-  interfaceFont: "system",
+  interfaceFont: "inter",
   contentFont: "inherit",
   codeFont: "system",
   textScale: 100,
@@ -695,9 +696,9 @@ function loadUiPreferences(): UiPreferences {
   try {
     const stored: UiPreferences = { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vak.uiPreferences") ?? "{}") };
     // A theme that no longer exists resolves to Match system (DESIGN.md).
-    if (!["system", "light", "dark", "contrast"].includes(stored.theme)) stored.theme = "system";
+    if (!isThemeChoice(stored.theme)) stored.theme = "system";
     if (!["classic", "dimensional"].includes(stored.visualPack)) stored.visualPack = "classic";
-    if (!Object.prototype.hasOwnProperty.call(interfaceFonts, stored.interfaceFont)) stored.interfaceFont = "system";
+    if (!Object.prototype.hasOwnProperty.call(interfaceFonts, stored.interfaceFont)) stored.interfaceFont = "inter";
     if (!Object.prototype.hasOwnProperty.call(contentFonts, stored.contentFont)) stored.contentFont = "inherit";
     if (!Object.prototype.hasOwnProperty.call(codeFonts, stored.codeFont)) stored.codeFont = "system";
     stored.textScale = Number.isFinite(stored.textScale) ? Math.max(75, Math.min(125, stored.textScale)) : 100;

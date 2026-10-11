@@ -99,6 +99,7 @@ import {
   requestCanvasClose,
   type ReplyTarget,
 } from "./store";
+import { resolveTheme, themeIsLight } from "./theme";
 import { startCanvasSync } from "./canvasSync";
 import { recordAgentOpened } from "./agentRecents";
 import type { SessionSummary } from "./types";
@@ -1443,12 +1444,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    const theme =
-      uiPreferences.theme === "system"
-        ? systemDark()
-          ? "dark"
-          : "light"
-        : uiPreferences.theme;
+    const theme = resolveTheme(uiPreferences.theme, systemDark());
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.visualPack = uiPreferences.visualPack;
     void host.setWindowIcon?.(uiPreferences.visualPack).catch((error) => {
@@ -1463,7 +1459,7 @@ export default function App() {
     }
     // Tells the browser which way to paint its own chrome: form controls,
     // scrollbars, and the space behind the page during load.
-    document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
+    document.documentElement.style.colorScheme = themeIsLight(theme) ? "light" : "dark";
     document.documentElement.dataset.compactSidebar = String(uiPreferences.compactSidebar);
     document.documentElement.dataset.reduceMotion = String(uiPreferences.reduceMotion);
     document.documentElement.style.setProperty("--text-scale", String(uiPreferences.textScale / 100));

@@ -192,6 +192,7 @@ All five were locked by the maintainer on 2026-09-25.
 | D2 | **Display face: Newsreader**, the headline serif `docs/brand/README.md` already names. | Bundled as WOFF2 in the client; Source Serif 4 is not used. |
 | D3 | **Technical details off for new installs**, offered once in onboarding ("Do you build software?") and kept as a switch in General. | The disclosure setting (§8) replaces Transcript detail; no second switch. |
 | D4 | **Four theme choices: Match system, Light, Dark and High contrast.** | Light and Dark are rebuilt as Ink and Saffron. The Warm dark, Sage, Paper, Mist and Dawn palettes retire, and Midnight's slot becomes the new indigo-night Dark. A stored retired theme id resolves to Match system; there is no migration. |
+| D4a | **Two more theme choices: Frosted light and Frosted dark** (maintainer request, 2026-10-11). | They join the four of D4 and replace none. Translucent surfaces with backdrop blur over a tinted backdrop, built from tokens (`--surface-alpha`, `--surface-blur`, `--surface-filter`, `--backdrop`), opaque where transparency is reduced or unsupported. `DESIGN.md`, Themes, holds the values and the contrast rule. |
 | D5 | **Order: V1, then V2, before any screen work (V3), then V4.** | V1 fixes may ship one by one; no V3 screen starts before the V2 tokens have merged. |
 
 The directions considered for D1 are recorded in the visual reference: A,
@@ -330,6 +331,9 @@ shield today.
   layout; the narrow layout keeps approvals full width.
 - The default theme is `system`, resolved in script to a concrete
   `data-theme`.
+- The frosted themes keep every rule above: their surfaces are the same
+  tokens at `--surface-alpha`, and each text token clears AA with black
+  behind the light veil and white behind the dark one.
 
 ### 5.9 What changes in DESIGN.md
 

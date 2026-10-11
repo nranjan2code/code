@@ -8,7 +8,15 @@ let renderIdSeq = 0;
  * future one) is covered without a second palette to keep in step. */
 function tokenThemeVariables(): Record<string, string | boolean> {
   const style = getComputedStyle(document.documentElement);
-  const token = (name: string) => style.getPropertyValue(name).trim();
+  // A token may be any CSS colour (a frosted surface is a `color-mix`), and
+  // the diagram library reads only hex and rgb forms; a canvas reports both.
+  const canvas = document.createElement("canvas").getContext("2d");
+  const token = (name: string) => {
+    const value = style.getPropertyValue(name).trim();
+    if (!canvas) return value;
+    canvas.fillStyle = value;
+    return canvas.fillStyle;
+  };
   return {
     darkMode: style.colorScheme.includes("dark"),
     background: token("--surface"),

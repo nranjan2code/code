@@ -1,4 +1,5 @@
 export const interfaceFonts = {
+  inter: { label: "Inter", stack: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, Cantarell, sans-serif' },
   system: { label: "System", stack: '-apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu, Cantarell, sans-serif' },
   arial: { label: "Arial", stack: 'Arial, "Liberation Sans", sans-serif' },
   verdana: { label: "Verdana", stack: 'Verdana, "DejaVu Sans", sans-serif' },

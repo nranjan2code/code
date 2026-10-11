@@ -1,3 +1,4 @@
+import { themeIsLight } from "./theme";
 //! Syntax highlighting, shared by the editor pane and chat code blocks.
 //!
 //! Shiki is loaded lazily and only for the languages actually asked for, so
@@ -139,7 +140,7 @@ export function languageFor(path: string): string | null {
 export function currentShikiTheme(): "vitesse-light" | "vitesse-dark" | "vitesse-black" {
   if (typeof document === "undefined") return "vitesse-dark";
   const theme = document.documentElement.dataset.theme;
-  if (theme === "light") return "vitesse-light";
+  if (themeIsLight(theme)) return "vitesse-light";
   if (theme === "contrast") return "vitesse-black";
   return "vitesse-dark";
 }

@@ -36,6 +36,7 @@ import {
   setTranscriptViewId,
 } from "../store";
 import type { SettingsPageId } from "../store";
+import { themeChoices } from "../theme";
 import type { ConfigSnapshot, SessionSummary, Trigger } from "../types";
 import * as api from "../api";
 import { interfaceFonts, contentFonts, codeFonts } from "../typography";
@@ -2106,7 +2107,7 @@ export default function Settings() {
             <Show when={page() === "appearance"}>
               <header><h1>Appearance</h1><p>Make the workspace comfortable for long sessions.</p></header>
               <Group title="Theme">
-                <div class="theme-grid"><For each={[{ id: "system", label: "Match system" }, { id: "light", label: "Light" }, { id: "dark", label: "Dark" }, { id: "contrast", label: "High contrast" }] as const}>{(theme) => <button class="theme-choice" classList={{ active: uiPreferences.theme === theme.id }} onClick={() => updateUiPreference("theme", theme.id)}><span class={`theme-preview ${theme.id}`}><i /><i /><i /></span><strong>{theme.label}</strong><Show when={uiPreferences.theme === theme.id}><Icon name="check" /></Show></button>}</For></div>
+                <div class="theme-grid"><For each={themeChoices}>{(theme) => <button class="theme-choice" classList={{ active: uiPreferences.theme === theme.id }} onClick={() => updateUiPreference("theme", theme.id)}><span class={`theme-preview ${theme.id}`}><i /><i /><i /></span><strong>{theme.label}</strong><Show when={uiPreferences.theme === theme.id}><Icon name="check" /></Show></button>}</For></div>
               </Group>
               <Group title="Artwork">
                 <Row title="Visual pack" description="Switch the in-app Songbird, agent artwork, compact character marks, and browser icon. Pages at the same address remember this choice."><select aria-label="Visual pack" value={uiPreferences.visualPack} onChange={(event) => updateUiPreference("visualPack", event.currentTarget.value as "classic" | "dimensional")}><option value="classic">Classic</option><option value="dimensional">Dimensional 3D</option></select></Row>

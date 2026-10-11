@@ -213,15 +213,58 @@ wash) step every text token up one level and re-measure.
 
 ### Themes
 
-Four choices: **Match system** (the default, resolved in script to a concrete
+Six choices: **Match system** (the default, resolved in script to a concrete
 `data-theme` so every reader of a token sees the same answer), **Light**,
-**Dark** and **High contrast**. A stored theme id that no longer exists
-resolves to Match system.
+**Dark**, **High contrast**, **Frosted light** and **Frosted dark**. A stored
+theme id that no longer exists resolves to Match system. The list is
+`themeChoices` in `crates/vak-client-ui/src/theme.ts`; Settings and the
+stored-value check both read it.
+
+**Frosted light and Frosted dark** (added 2026-10-11 at the maintainer's
+request; they join the four above and replace none). Glass is three tokens,
+set in every theme block:
+
+| Token | Other themes | Frosted light | Frosted dark |
+|---|---|---|---|
+| `--surface-alpha` | `100%` | `78%` | `84%` |
+| `--surface-blur` | `0px` | `24px` | `28px` |
+| `--surface-filter` | `none` | `blur(var(--surface-blur)) saturate(170%)` | the same |
+| `--backdrop` | `var(--bg)` | indigo, blue and violet glows on a pale ground | the same hues on indigo night |
+
+- `--bg`, `--surface`, `--surface-raised` and `--sidebar` are the theme's
+  colour at `--surface-alpha`; the page itself is `--backdrop`. Borders are
+  thin and light (a white edge on cards and panels), and the shadow tokens
+  are gentle with a one-pixel inner highlight.
+- Anything that floats over content (menus, the sidebar, the dock, Settings,
+  the canvas, sticky headers, tooltips) carries
+  `backdrop-filter: var(--surface-filter)` in its own rule. That is `none`
+  everywhere else, so no other theme changes. A dialog is blurred by its
+  scrim (`blur(max(5px, var(--surface-blur)))`), and the scrim tokens are
+  lighter in the frosted themes so the glass is not greyed.
+- A blurred element blurs only what is inside the nearest blurred ancestor.
+  Never put the filter on a container whose menus open outside its box (the
+  composer has none for that reason), or those menus show sharp text
+  through the veil.
+- The conversation pane has no fill of its own: text there sits on
+  `--backdrop`, whose every colour clears AA against each text token.
+- **The veil decides readability, not the backdrop.** Every text token clears
+  WCAG AA (4.5:1) on every surface with pure black behind the light veil and
+  pure white behind the dark one, hover and selected washes included, so no
+  backdrop and nothing scrolled under a menu can cost a reading. Change an
+  alpha or a text token only with that sum re-run.
+- Indigo is still the only action colour and saffron still means live; the
+  backdrop has no saffron in it.
+- With `prefers-reduced-transparency: reduce`, or where `backdrop-filter` is
+  not supported, the frosted themes set `--surface-alpha: 100%` and
+  `--surface-filter: none`: the same colours, opaque.
 
 ## Typography
 
-- **Default: the system sans font**, including titles and greetings. The bundled
-  Newsreader face remains an optional choice for people who prefer a serif.
+- **Default: Inter**, one bundled variable file (SIL OFL 1.1,
+  `crates/vak-client-ui/public/fonts/`), in every theme, in the client and
+  the admin console, including titles and greetings (maintainer request,
+  2026-10-11). The system sans stays a choice, and so does the bundled
+  Newsreader for people who prefer a serif.
 - **Font choices:** interface, conversation/results, and code each have their
   own setting. Installed-font presets fall back to common platform fonts.
 - **Text size:** 75–125% scales the shared role tokens across the client;
@@ -229,15 +272,20 @@ resolves to Match system.
 
 | Role | Size / line | Face and weight |
 |---|---|---|
-| Hero | 36 / 42 | System 500 |
-| Greeting | 28 / 34 | System 500 |
-| Page title | 22 / 28 | System 600 |
-| Section | 18 / 26 | System 600 |
-| Reading | 16 / 26 | System 400 |
-| Interface | 15 / 22 | System 400 |
-| Control | 14 / 20 | System 500 |
-| Meta | 13 / 18 | System 400 |
-| Caption | 12 / 16 | System 500 |
+| Hero | 30 / 36 | Inter 500 |
+| Greeting | 28 / 34 | Inter 500 |
+| Page title | 22 / 28 | Inter 600 |
+| Section | 18 / 26 | Inter 600 |
+| Reading | 16 / 26 | Inter 400 |
+| Interface | 14 / 21 | Inter 400 |
+| Control | 14 / 20 | Inter 500 |
+| Meta | 13 / 18 | Inter 400 |
+| Caption | 12 / 16 | Inter 500 |
+
+Interface and Control share 14px: one size for everything a person clicks or
+reads in the chrome, so a screen shows 12, 13, 14 and 16 and no 15. Emphasis
+is 500 or 600; no in-between weight. The admin console uses the same sizes
+in whole pixels (12, 13, 14, then 16 to 28 for headings).
 
 ### Named rules
 

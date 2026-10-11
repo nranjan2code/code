@@ -50,6 +50,7 @@ Locked by the maintainer on 2026-09-25.
 | D2 | **Display face: Newsreader**, bundled as WOFF2. | Only for the wordmark, agent names, page titles, the greeting and result headlines. |
 | D3 | **Technical details off for new installs**, offered once in onboarding and kept as a switch in General. | One disclosure setting replaces Transcript detail (`Density`). |
 | D4 | **Four theme choices:** Match system, Light, Dark, High contrast. | Warm dark, Sage, Paper, Mist and Dawn retire; Midnight's slot becomes the new Dark. A stored retired id resolves to Match system, with no migration. |
+| D4a | **Two more theme choices: Frosted light and Frosted dark** (maintainer request, 2026-10-11). | They join the four of D4 and replace none. Translucent surfaces with backdrop blur over a tinted backdrop, built from tokens (`--surface-alpha`, `--surface-blur`, `--surface-filter`, `--backdrop`), opaque where transparency is reduced or unsupported. `DESIGN.md`, Themes, holds the values and the contrast rule. |
 | D5 | **Order: V1, V2, then V3, then V4.** | V1 items may ship one at a time. No V3 screen starts before the V2 tokens merge. |
 
 ## 2. Rules for every stage
@@ -1168,3 +1169,45 @@ what was not.
   390, and the two-column layout returns at 1150 and 1440. The browser
   pane's emulated resize sent no resize or change events after a fresh
   load, which is how an open drawer had stayed open as a strip at the edge.
+- 2026-10-11: a maintainer request, outside the staged checklist (D4a): two
+  more theme choices, **Frosted light** and **Frosted dark**, and one
+  typeface and a calmer scale for every theme.
+  *Frosted themes.* Built from tokens: `--surface-alpha`, `--surface-blur`,
+  `--surface-filter` and `--backdrop` are set in every theme block (opaque,
+  no blur and the plain ground outside the frosted pair), the frosted blocks
+  give the existing surface tokens at that alpha with thin light borders and
+  gentle shadows, and what floats over content carries
+  `backdrop-filter: var(--surface-filter)` in its own rule. The page ground
+  moved from `.main` to the app's backdrop, which is `--bg` in the other
+  themes. The list of themes is `themeChoices` in `src/theme.ts`, read by
+  Settings and by the stored-value check. Opaque under
+  `prefers-reduced-transparency` and where `backdrop-filter` is missing.
+  Contrast, by calculation: every text token is at least 4.5:1 on every
+  surface with black behind the light veil (78%) and white behind the dark
+  one (84%), hover and selected washes included, and on every backdrop
+  colour for text in the conversation pane.
+  *Type.* Inter (variable, SIL OFL, bundled) is the default face in the
+  client and the admin console; the system sans and Newsreader remain
+  choices. Interface text is 14px (was 15), the greeting 30px (was 36), the
+  sidebar wordmark 108px wide (was 132), weight 550 became 600, and the admin
+  console's fractional sizes (12.5, 13.5, 14.5 and rem values down to 10.9px)
+  moved to whole pixels with a 14px base.
+  Checked in the running dev build in Chrome, at 1440 x 900 and 390 x 844,
+  both frosted variants, on the conversation, Settings (Appearance), the
+  Library, the Keyboard shortcuts dialog and the More options menu
+  (`after/D4a-frosted-*`, 20 screens): a script read every visible text
+  element's colour against its composited ground and found none under AA,
+  no translucent floating surface without blur, and no fixed element
+  trapped inside a blurred ancestor. Light, Dark and High contrast at both
+  sizes on the same five screens passed the same script
+  (`after/D4a-themes-*`, 1440 saved); their ground colours and
+  `--surface-filter: none` were read from the page. Reduced transparency
+  was emulated in Frosted dark (`after/D4a-frosted-reduced-transparency-*`).
+  Result cards were checked in the component harnesses (presentation,
+  result card, chat stability) in both variants. The admin console's Home
+  was looked at in Dark (`after/D4a-admin-home-*`); a health label that ran
+  over its neighbour now truncates. Not checked: the desktop app's window,
+  Safari and Firefox, the admin console's other screens and its Light and
+  High contrast themes, cards from a real turn (the one live turn produced
+  no card, because the model's `answer` calls were refused; see the
+  transcript note in the session report), and a real device at 390.
