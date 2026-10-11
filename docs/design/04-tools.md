@@ -7,6 +7,34 @@ Tools never panic and never return `Err`. Every failure is a
 `ToolOutput { content, is_error: true }` the model reads and self-corrects.
 `ToolContext` carries cwd, cancellation child-token, output limits.
 
+## Reading arguments
+
+Every tool call's arguments pass through one reader before validation
+(`vak_tools::read_arguments`, `crates/vak-tools/src/arguments.rs`), for
+built-in, loop-owned and runtime-added tools alike. It is driven by the
+tool's own schema and never by its name, and it converts only where nothing
+is lost and nothing is guessed:
+
+| Sent | Schema asks for | Read as |
+|---|---|---|
+| JSON text of a list or record | that list or record | the parsed value |
+| text | a list | one item for each line; list markers dropped only when every line has one |
+| one record that has the item's required fields | a list of records | a one-item list |
+| text | a record with exactly one required free-text field | that field |
+| a number or boolean | text | its text |
+| text that is exactly a number or boolean | a number or boolean | that value |
+| `null` for a field that may be absent | anything | absent |
+
+It never cuts one text into two fields, never joins a list into one text,
+and never fills a field with a value the call did not send (a `plan`
+deliverable sent as a bare name still lacks its `form`). Whatever it cannot
+read is left as sent, and validation refuses it by name.
+
+A shape only one tool can read (a table's nested rows, a list for a field
+that tool splits itself) belongs to that tool's `Tool::fill_defaults`,
+which runs after the reader and before validation. There is no third
+place: a conversion is never added to the agent loop or to a builder.
+
 ## Built-ins
 
 | tool | notes |

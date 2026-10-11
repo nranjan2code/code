@@ -119,143 +119,6 @@ fn copy(args: &Map<String, Value>, keys: &[&str]) -> Map<String, Value> {
         .collect()
 }
 
-/// A field the schema declares as an array, sent as one string, in either
-/// unambiguous shape a model writes: the array as JSON text, or its items
-/// one per line (a Markdown table, a bulleted list). Anything else is left
-/// for schema admission to refuse with the field's name.
-fn arrays_from_strings(fields: &mut Map<String, Value>, schema: &Value) {
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
-        return;
-    };
-    for (key, property) in properties {
-        if property.get("type").and_then(Value::as_str) != Some("array") {
-            continue;
-        }
-        let Some(Value::String(text)) = fields.get(key) else {
-            continue;
-        };
-        let text = text.trim();
-        if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(text) {
-            fields.insert(key.clone(), Value::Array(items));
-            continue;
-        }
-        // One item per line, for a list of strings or of labelled records
-        // (`records_from_strings` then reads each line as a record).
-        let items_schema = property.get("items");
-        let strings = items_schema
-            .and_then(|items| items.get("type"))
-            .and_then(Value::as_str)
-            == Some("string");
-        let labelled = items_schema
-            .and_then(|items| items.get("required"))
-            .and_then(Value::as_array)
-            .is_some_and(|required| required.iter().any(|name| name == "label"));
-        if !strings && !labelled {
-            continue;
-        }
-        let items: Vec<Value> = text
-            .lines()
-            .map(|line| strip_item_marker(line.trim()))
-            .filter(|line| !line.is_empty())
-            .map(|line| Value::String(line.to_string()))
-            .collect();
-        if !items.is_empty() {
-            fields.insert(key.clone(), Value::Array(items));
-        }
-    }
-}
-
-/// A text field of a record sent as a list of short texts: the same items
-/// as one text, joined with `; ` (found live: a comparison's `strengths`
-/// sent as a list and refused).
-fn strings_from_lists(fields: &mut Map<String, Value>, schema: &Value) {
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
-        return;
-    };
-    for (key, property) in properties {
-        let Some(item_fields) = property
-            .get("items")
-            .and_then(|items| items.get("properties"))
-            .and_then(Value::as_object)
-        else {
-            continue;
-        };
-        let Some(Value::Array(records)) = fields.get_mut(key) else {
-            continue;
-        };
-        for record in records.iter_mut().filter_map(Value::as_object_mut) {
-            for (name, field) in item_fields {
-                if field.get("type").and_then(Value::as_str) != Some("string") {
-                    continue;
-                }
-                let Some(Value::Array(parts)) = record.get(name) else {
-                    continue;
-                };
-                let parts: Option<Vec<&str>> = parts.iter().map(Value::as_str).collect();
-                if let Some(parts) = parts {
-                    let joined = parts.join("; ");
-                    record.insert(name.clone(), Value::String(joined));
-                }
-            }
-        }
-    }
-}
-
-/// A list of records whose items need a `label`, sent as plain strings: each
-/// string is the label, with a detail after its first `: ` or ` — ` (found
-/// with steps written as `"Restock: Saturday morning"`).
-fn records_from_strings(fields: &mut Map<String, Value>, schema: &Value) {
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
-        return;
-    };
-    for (key, property) in properties {
-        let labelled = property
-            .get("items")
-            .and_then(|items| items.get("required"))
-            .and_then(Value::as_array)
-            .is_some_and(|required| required.iter().any(|name| name == "label"));
-        if !labelled {
-            continue;
-        }
-        let Some(Value::Array(items)) = fields.get_mut(key) else {
-            continue;
-        };
-        for item in items.iter_mut() {
-            let Value::String(text) = item else {
-                continue;
-            };
-            let text = strip_item_marker(text.trim()).to_string();
-            let split = [": ", " — ", " – "]
-                .iter()
-                .find_map(|mark| text.split_once(mark));
-            *item = match split {
-                Some((label, detail)) if !label.trim().is_empty() => {
-                    serde_json::json!({"label": label.trim(), "detail": detail.trim()})
-                }
-                _ => serde_json::json!({"label": text}),
-            };
-        }
-    }
-}
-
-/// `- item`, `* item`, `• item`, `1. item`, `1) item` → `item`.
-fn strip_item_marker(line: &str) -> &str {
-    for bullet in ["- ", "* ", "• "] {
-        if let Some(rest) = line.strip_prefix(bullet) {
-            return rest.trim_start();
-        }
-    }
-    let digits = line.chars().take_while(char::is_ascii_digit).count();
-    if digits > 0
-        && let Some(rest) = line[digits..]
-            .strip_prefix(". ")
-            .or_else(|| line[digits..].strip_prefix(") "))
-    {
-        return rest.trim_start();
-    }
-    line
-}
-
 fn records<'a>(args: &'a Map<String, Value>, key: &str) -> &'a [Value] {
     args.get(key)
         .and_then(Value::as_array)
@@ -1772,9 +1635,6 @@ impl Tool for EmitCardTool {
 
     fn fill_defaults(&self, args: &mut Value) {
         if let Some(fields) = args.as_object_mut() {
-            arrays_from_strings(fields, &(self.shape.fields)());
-            records_from_strings(fields, &(self.shape.fields)());
-            strings_from_lists(fields, &(self.shape.fields)());
             // A block with one type takes no `semantic_type`; a model that
             // sends one anyway (a topic name from habit) gets the block's own.
             if let [only] = self.shape.semantic_types {
@@ -1783,6 +1643,28 @@ impl Tool for EmitCardTool {
                 && !fields.contains_key("semantic_type")
             {
                 fields.insert("semantic_type".into(), Value::String(default.into()));
+            }
+            // Strengths and weaknesses are texts this block splits at
+            // semicolons; a list of them is the same points.
+            if self.shape.name == "emit_comparison_card"
+                && let Some(options) = fields.get_mut("options").and_then(Value::as_array_mut)
+            {
+                for option in options.iter_mut().filter_map(Value::as_object_mut) {
+                    for key in ["strengths", "weaknesses"] {
+                        let joined = option
+                            .get(key)
+                            .and_then(Value::as_array)
+                            .and_then(|points| {
+                                points
+                                    .iter()
+                                    .map(Value::as_str)
+                                    .collect::<Option<Vec<&str>>>()
+                            });
+                        if let Some(points) = joined {
+                            option.insert(key.into(), Value::String(points.join("; ")));
+                        }
+                    }
+                }
             }
             if self.shape.name == "emit_chart_card"
                 && matches!(
@@ -2352,6 +2234,13 @@ pub fn identity_digest(semantic_type: &str, payload: &Value) -> String {
 mod tests {
     use super::*;
 
+    /// A call's arguments as they reach the builder: read by the one
+    /// argument reader, then given the tool's own defaults.
+    fn sent(tool: &EmitCardTool, args: &mut Value) {
+        vak_tools::read_arguments(&tool.schema(), args);
+        tool.fill_defaults(args);
+    }
+
     fn shape(name: &str) -> &'static CardShape {
         SHAPES.iter().find(|shape| shape.name == name).unwrap()
     }
@@ -2401,7 +2290,7 @@ mod tests {
             {"name": "Train", "strengths": ["No parking", "Can read"], "weaknesses": []},
             {"name": "Drive", "strengths": "Faster"}
         ]});
-        tool.fill_defaults(&mut args);
+        sent(&tool, &mut args);
         vak_tools::validate_input(&tool.schema(), &args).unwrap();
         let payload = built("emit_comparison_card", args).unwrap();
         assert_eq!(
@@ -2455,14 +2344,14 @@ mod tests {
                 }
             }
             for mut call in calls {
-                let sent = call.clone();
+                let given = call.clone();
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    tool.fill_defaults(&mut call);
+                    sent(&tool, &mut call);
                     if vak_tools::validate_input(&tool.schema(), &call).is_ok() {
                         let _ = validate_call(shape, &call, &registry);
                     }
                 }));
-                assert!(outcome.is_ok(), "{} crashed on {sent}", shape.name);
+                assert!(outcome.is_ok(), "{} crashed on {given}", shape.name);
             }
         }
     }
@@ -2572,13 +2461,13 @@ mod tests {
                 .unwrap()
         };
         let mut table = serde_json::json!({"rows": ["A", "1"]});
-        tool("emit_table_card").fill_defaults(&mut table);
+        sent(&tool("emit_table_card"), &mut table);
         assert_eq!(table["semantic_type"], "table");
         let mut chosen = serde_json::json!({"semantic_type": "budget", "rows": ["A", "1"]});
-        tool("emit_table_card").fill_defaults(&mut chosen);
+        sent(&tool("emit_table_card"), &mut chosen);
         assert_eq!(chosen["semantic_type"], "table");
         let mut details = serde_json::json!({"title": "T"});
-        tool("emit_details_card").fill_defaults(&mut details);
+        sent(&tool("emit_details_card"), &mut details);
         assert_eq!(details["semantic_type"], "details");
     }
 
@@ -2689,7 +2578,7 @@ mod tests {
             "semantic_type": "comparison_table",
             "rows": "| Method | Upper shelf | Lower shelf |\n|---|---|---|\n| By kind | Rice | Snacks |\n| By meal | Breakfast | Dinner |"
         });
-        tool.fill_defaults(&mut markdown);
+        sent(&tool, &mut markdown);
         vak_tools::validate_input(&tool.schema(), &markdown).unwrap();
         let payload = built("emit_table_card", markdown).unwrap();
         assert_eq!(payload["columns"].as_array().unwrap().len(), 3);
@@ -2699,7 +2588,7 @@ mod tests {
             "semantic_type": "table",
             "rows": "[\"Step | When\", \"Restock | Saturday\"]"
         });
-        tool.fill_defaults(&mut json_text);
+        sent(&tool, &mut json_text);
         vak_tools::validate_input(&tool.schema(), &json_text).unwrap();
         let payload = built("emit_table_card", json_text).unwrap();
         assert_eq!(payload["rows"][0]["When"], "Saturday");
@@ -2713,20 +2602,18 @@ mod tests {
             "summary": "S",
             "fields": "- Owner: Ada\n- Due: Friday"
         });
-        checklist.fill_defaults(&mut listed);
+        sent(&checklist, &mut listed);
         assert_eq!(
             listed["fields"],
-            serde_json::json!([
-                {"label": "Owner", "detail": "Ada"},
-                {"label": "Due", "detail": "Friday"}
-            ])
+            serde_json::json!(["Owner: Ada", "Due: Friday"]),
+            "one line is one item; a line is never cut into a record's two fields"
         );
     }
 
     /// Steps sent as plain strings become labelled steps before schema
     /// admission (moved from the agent loop, which knew one card's shape).
     #[test]
-    fn steps_sent_as_strings_become_labelled_steps() {
+    fn a_step_sent_as_text_is_its_label() {
         let tool = EmitCardTool {
             shape: shape("emit_steps_card"),
         };
@@ -2735,15 +2622,16 @@ mod tests {
             "Day 2 — Look for yellow leaves",
             {"label": "Day 3", "detail": "Check light"}
         ]});
-        tool.fill_defaults(&mut args);
+        sent(&tool, &mut args);
         vak_tools::validate_input(&tool.schema(), &args).unwrap();
         assert_eq!(
             args["items"],
             serde_json::json!([
-                {"label": "Day 1 (Sunday)", "detail": "Check soil; water only if dry"},
-                {"label": "Day 2", "detail": "Look for yellow leaves"},
+                {"label": "Day 1 (Sunday): Check soil; water only if dry"},
+                {"label": "Day 2 — Look for yellow leaves"},
                 {"label": "Day 3", "detail": "Check light"}
-            ])
+            ]),
+            "a step sent as text is its label, whole"
         );
         assert!(built("emit_steps_card", args).is_ok());
     }
@@ -2762,7 +2650,7 @@ mod tests {
                 ["Extend existing app", "1 week", "$4k", "Medium"]
             ]
         });
-        tool.fill_defaults(&mut arguments);
+        sent(&tool, &mut arguments);
         vak_tools::validate_input(&tool.schema(), &arguments).unwrap();
         let payload = built("emit_table_card", arguments).unwrap();
         assert_eq!(payload["columns"][0]["label"], "Option");
@@ -2787,7 +2675,7 @@ mod tests {
             "semantic_type": "table",
             "rows": [["Team", "Open"], ["Team A", 14], ["Team B", 10]]
         });
-        tool.fill_defaults(&mut numeric);
+        sent(&tool, &mut numeric);
         vak_tools::validate_input(&tool.schema(), &numeric).unwrap();
         let numeric = built("emit_table_card", numeric).unwrap();
         assert_eq!(numeric["rows"][0]["Open"], 14);
@@ -2849,7 +2737,7 @@ mod tests {
                 {"label": "Wrap-up", "detail": "10 min (Clean up/Debrief)"}
             ]
         });
-        tool.fill_defaults(&mut args);
+        sent(&tool, &mut args);
         let payload = built("emit_steps_card", args).unwrap();
         assert_eq!(payload["items"][0]["time"], "5 min");
         assert_eq!(payload["items"][0]["detail"], "Get games ready");
@@ -2874,7 +2762,7 @@ mod tests {
             args["items"][0][alias] = serde_json::json!(20);
             args["items"][1][alias] = serde_json::json!(30);
             args["items"][2][alias] = serde_json::json!(10);
-            tool.fill_defaults(&mut args);
+            sent(&tool, &mut args);
             assert!(args["items"][0].get(alias).is_none());
             assert_eq!(args["items"][0]["duration_minutes"], 20);
             let payload = built("emit_steps_card", args).unwrap();
@@ -2897,7 +2785,7 @@ mod tests {
                 {"label":"Wrap up", "duration_minutes":"20 mins"}
             ]
         });
-        tool.fill_defaults(&mut args);
+        sent(&tool, &mut args);
         assert_eq!(args["total_duration_minutes"], 90);
         assert_eq!(args["items"][0]["duration_minutes"], 10);
         let payload = built("emit_steps_card", args).unwrap();
@@ -2912,7 +2800,7 @@ mod tests {
             .find(|tool| tool.name() == "emit_chart_card")
             .unwrap();
         let mut call = serde_json::json!({"semantic_type":"line","chart_type":"line","points":[{"series":"Requests","x":"Mon","y":12}]});
-        tool.fill_defaults(&mut call);
+        sent(&tool, &mut call);
         assert_eq!(call["semantic_type"], "chart");
         vak_tools::validate_input(&tool.schema(), &call)
             .expect("normalized call passes pre-execution schema");
@@ -3107,7 +2995,7 @@ mod tests {
             "readings": {"start_time": "6 pm", "total_budget": "$60"}
         });
 
-        tool.fill_defaults(&mut args);
+        sent(&tool, &mut args);
 
         assert_eq!(
             args["readings"],
@@ -3125,7 +3013,7 @@ mod tests {
             "semantic_type": "metric",
             "readings": {"nested": {"value": "not an ordinary reading"}}
         });
-        tool.fill_defaults(&mut nested);
+        sent(&tool, &mut nested);
         assert!(nested["readings"].is_object());
         assert!(vak_tools::validate_input(&tool.schema(), &nested).is_err());
     }
@@ -3139,18 +3027,15 @@ mod tests {
             "title": "Eiffel Tower",
             "fields": [
                 {"label": "Year built", "detail": "1889"},
-                "Location: Paris: Champ de Mars",
+                {"label": "Location", "detail": "Paris: Champ de Mars"},
                 {"label": "Is it open daily?", "detail": "Yes."}
             ]
         });
-        tool.fill_defaults(&mut args);
+        sent(&tool, &mut args);
         vak_tools::validate_input(&tool.schema(), &args).unwrap();
         let payload = built("emit_details_card", args).unwrap();
         assert_eq!(payload["Year built"], "1889");
-        assert_eq!(
-            payload["Location"], "Paris: Champ de Mars",
-            "a fact sent as one string is split at its first colon"
-        );
+        assert_eq!(payload["Location"], "Paris: Champ de Mars");
         assert_eq!(payload["Is it open daily?"], "Yes.");
         for refused in [
             serde_json::json!({"title": "T"}),
@@ -3327,7 +3212,7 @@ mod tests {
                 .iter()
                 .find(|tool| tool.name() == name)
                 .expect("shape tool exists");
-            tool.fill_defaults(&mut args);
+            sent(tool, &mut args);
             if let Err(error) = vak_tools::validate_input(&tool.schema(), &args) {
                 failures.push(format!("{semantic_type} via {name}: {error}"));
                 continue;

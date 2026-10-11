@@ -393,9 +393,10 @@ source of evidence:
    compact referent, not new output. A new unrelated request has no historical
    card to re-emit.
 2. **Provider response.** The adapter decodes tool calls. Before the assistant
-   response is appended, `normalize_response_tool_uses` canonicalizes wrappers,
-   timeline string items, card ownership and shape defaults. `fill_defaults`
-   is part of this boundary. This is where provider-specific output drift is
+   response is appended, `normalize_response_tool_uses` reads the arguments with the one
+   reader every tool shares (`vak_tools::read_arguments`,
+   docs/design/04-tools.md), then settles wrappers, card ownership and the
+   tool's own `fill_defaults`. This is where provider-specific output drift is
    made canonical; do not silently mutate the saved presentation later.
 3. **Admission.** `authorize` validates the normalized arguments against the
    admitted tool schema and checks permissions. A call rejected here never

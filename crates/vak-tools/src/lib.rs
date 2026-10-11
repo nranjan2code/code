@@ -5,6 +5,7 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
 
+pub mod arguments;
 pub mod artifact;
 pub mod bash;
 pub mod broker;
@@ -35,6 +36,7 @@ pub mod write;
 use async_trait::async_trait;
 use serde_json::Value;
 
+pub use arguments::read_arguments;
 pub use context::ToolContext;
 pub use contract::validate_input;
 pub use find_tools::FindToolsTool;

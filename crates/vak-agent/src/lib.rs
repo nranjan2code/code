@@ -7376,106 +7376,16 @@ fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) 
         return call;
     };
     let schema = tool.schema();
-    let input = normalize_encoded_collections(&schema, &call.input);
-    let input = with_scalar_strings(&schema, &input);
-    call.input = if let Some(input) = unwrapped_schema_input(&schema, &call.name, &input) {
-        with_scalar_strings(&schema, &input)
-    } else if let Some(input) = merged_wrapper(&schema, &input) {
-        input
-    } else {
-        input
-    };
-    call
-}
-
-/// Some providers return a structured array/object argument as a JSON string
-/// even though the admitted schema asks for the structured value. Restore the
-/// expected container type only when the string parses to that same type;
-/// later tool normalization and the ordinary authorization validator still
-/// enforce the full admitted schema before dispatch.
-fn normalize_encoded_collections(schema: &Value, value: &Value) -> Value {
-    let accepts = |schema: &Value, kind: &str| {
-        schema.get("type").is_some_and(|types| match types {
-            Value::String(expected) => expected == kind,
-            Value::Array(expected) => expected.iter().any(|item| item.as_str() == Some(kind)),
-            _ => false,
-        })
-    };
-
-    if let Some(decoded) = value
-        .as_str()
-        .and_then(|encoded| serde_json::from_str::<Value>(encoded).ok())
-        && ((accepts(schema, "array") && decoded.is_array())
-            || (accepts(schema, "object") && decoded.is_object()))
+    let mut input = call.input.clone();
+    vak_tools::read_arguments(&schema, &mut input);
+    if let Some(unwrapped) = unwrapped_schema_input(&schema, &call.name, &input)
+        .or_else(|| merged_wrapper(&schema, &input))
     {
-        return decoded;
+        input = unwrapped;
+        vak_tools::read_arguments(&schema, &mut input);
     }
-
-    if let (Some(items_schema), Some(items)) = (schema.get("items"), value.as_array()) {
-        return Value::Array(
-            items
-                .iter()
-                .map(|item| normalize_encoded_collections(items_schema, item))
-                .collect(),
-        );
-    }
-
-    if let (Some(properties), Some(object)) = (
-        schema.get("properties").and_then(Value::as_object),
-        value.as_object(),
-    ) {
-        return Value::Object(
-            object
-                .iter()
-                .map(|(key, item)| {
-                    let normalized = properties
-                        .get(key)
-                        .map(|child_schema| normalize_encoded_collections(child_schema, item))
-                        .unwrap_or_else(|| item.clone());
-                    (key.clone(), normalized)
-                })
-                .collect(),
-        );
-    }
-
-    value.clone()
-}
-
-/// `input` with a number or boolean given for a string property written as
-/// its text, through nested objects and lists of records. Nothing else
-/// changes: a value of any other wrong type is left for validation to name.
-fn with_scalar_strings(schema: &Value, input: &Value) -> Value {
-    let (Some(properties), Some(object)) = (
-        schema.get("properties").and_then(Value::as_object),
-        input.as_object(),
-    ) else {
-        return input.clone();
-    };
-    let fixed = object
-        .iter()
-        .map(|(key, value)| {
-            let Some(property) = properties.get(key) else {
-                return (key.clone(), value.clone());
-            };
-            let fixed = match (property.get("type").and_then(Value::as_str), value) {
-                (Some("string"), Value::Number(number)) => Value::String(number.to_string()),
-                (Some("string"), Value::Bool(flag)) => Value::String(flag.to_string()),
-                (Some("object"), Value::Object(_)) => with_scalar_strings(property, value),
-                (Some("array"), Value::Array(items)) => match property.get("items") {
-                    Some(item_schema) => Value::Array(
-                        items
-                            .iter()
-                            .map(|item| with_scalar_strings(item_schema, item))
-                            .collect(),
-                    ),
-                    None => value.clone(),
-                },
-                _ => value.clone(),
-            };
-            (key.clone(), fixed)
-        })
-        .collect();
-    Value::Object(fixed)
+    call.input = input;
+    call
 }
 
 /// The arguments with one wrapper lifted beside the fields given with it:
@@ -7506,7 +7416,8 @@ fn merged_wrapper(schema: &Value, input: &Value) -> Option<Value> {
             .iter()
             .map(|(field, value)| (field.clone(), value.clone())),
     );
-    let merged = with_scalar_strings(schema, &Value::Object(merged));
+    let mut merged = Value::Object(merged);
+    vak_tools::read_arguments(schema, &mut merged);
     vak_tools::validate_input(schema, &merged)
         .is_ok()
         .then_some(merged)
@@ -8982,7 +8893,7 @@ fn queue_stream_event(pending: &mut VecDeque<StreamEvent>, event: StreamEvent) {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tool_recovery_tests {
-    use super::{freshness_retrieval_hint, normalize_encoded_collections, tool_recovery_hint};
+    use super::{freshness_retrieval_hint, tool_recovery_hint};
 
     #[test]
     fn freshness_repair_names_only_admitted_generic_retrieval_routes() {
@@ -9049,39 +8960,6 @@ mod tool_recovery_tests {
         assert!(tool_recovery_hint("capability denied by channel policy").is_none());
         assert!(tool_recovery_hint("cancelled").is_none());
         assert!(tool_recovery_hint("429 rate limit").is_none());
-    }
-
-    #[test]
-    fn encoded_structured_arguments_are_restored_before_final_schema_validation() {
-        let schema = serde_json::json!({
-            "type":"object",
-            "properties":{
-                "rows":{
-                    "type":"array",
-                    "items":{"type":"string"}
-                }
-            },
-            "required":["rows"]
-        });
-        let encoded = serde_json::json!({"rows":"[\"Item | Amount\",\"Soil | $12\"]"});
-        let normalized = normalize_encoded_collections(&schema, &encoded);
-        assert_eq!(normalized["rows"][1], "Soil | $12");
-        vak_tools::validate_input(&schema, &normalized).unwrap();
-
-        // A provider can stringify a matrix which the card normalizer accepts
-        // before authorization. Container recovery does not authorize it; the
-        // final tool schema check still runs after that normalization.
-        let matrix = serde_json::json!({"rows":"[[\"Item\",\"Amount\"],[\"Soil\",12]]"});
-        assert!(normalize_encoded_collections(&schema, &matrix)["rows"].is_array());
-
-        let invalid = serde_json::json!({"rows":"not a JSON array"});
-        assert_eq!(normalize_encoded_collections(&schema, &invalid), invalid);
-
-        let wrong_shape = serde_json::json!({"rows":"{\"unexpected\":true}"});
-        assert_eq!(
-            normalize_encoded_collections(&schema, &wrong_shape),
-            wrong_shape
-        );
     }
 
     #[test]
@@ -9266,7 +9144,7 @@ mod tool_recovery_tests {
 
     #[test]
     fn a_wrapper_beside_the_cards_type_is_lifted_and_numbers_are_text() {
-        use super::{merged_wrapper, with_scalar_strings};
+        use super::merged_wrapper;
         let schema = metric_schema();
         let flat = serde_json::json!({"semantic_type": "metric", "label": "Sum", "value": "42"});
         // Live 2026-10-09, the schema still withheld.
@@ -9280,20 +9158,6 @@ mod tool_recovery_tests {
                 "{wrapped}"
             );
         }
-        assert_eq!(
-            with_scalar_strings(
-                &schema,
-                &serde_json::json!({"semantic_type": "metric", "label": "Sum", "value": 42})
-            ),
-            flat
-        );
-        assert_eq!(
-            with_scalar_strings(
-                &schema,
-                &serde_json::json!({"readings": [{"label": "a", "value": 1.5}]})
-            ),
-            serde_json::json!({"readings": [{"label": "a", "value": "1.5"}]})
-        );
         // What the wrapper holds is not the card's fields, or collides with
         // what is beside it, or there are two unknown keys: nothing is lifted.
         for refused in [

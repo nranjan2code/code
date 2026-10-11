@@ -22,13 +22,8 @@ pub struct Deliverable {
 /// Reads a `plan` call's arguments. Every entry needs a name and a form;
 /// the error names the entry and the field.
 pub fn parse_plan_args(args: &Value) -> Result<Vec<Deliverable>, String> {
-    let entries = match args.get("deliverables") {
-        Some(Value::Array(entries)) => entries.clone(),
-        Some(Value::String(text)) => match serde_json::from_str::<Value>(text.trim()) {
-            Ok(Value::Array(entries)) => entries,
-            _ => return Err("deliverables must be a list of {name, form}".into()),
-        },
-        _ => return Err("deliverables must be a list of {name, form}".into()),
+    let Some(Value::Array(entries)) = args.get("deliverables") else {
+        return Err("deliverables must be a list of {name, form}".into());
     };
     if entries.is_empty() {
         return Err("deliverables needs at least one entry".into());
@@ -142,15 +137,6 @@ mod tests {
         assert_eq!(plan.len(), 3);
         assert_eq!(plan[1].form, DeliverableForm::Card);
         assert_eq!(plan[2].form, DeliverableForm::Text);
-    }
-
-    #[test]
-    fn a_list_sent_as_json_text_is_read() {
-        let plan = parse_plan_args(&json!({
-            "deliverables": "[{\"name\": \"fix\", \"form\": \"change\"}]"
-        }))
-        .unwrap();
-        assert_eq!(plan[0].form, DeliverableForm::Change);
     }
 
     #[test]

@@ -1486,13 +1486,18 @@ in progress, and the rest of V4 follows it.
   `Retry`, which chat views fold away (doc 30-output-engineering). When a
   **The card path has two validation gates.** After provider decoding,
   `normalize_response_tool_uses` / `normalize_card_type` canonicalize the
-  provider call and invoke `Tool::fill_defaults`; this happens before the
+  provider call: the one argument reader for every tool
+  (`vak_tools::read_arguments`, docs/design/04-tools.md "Reading
+  arguments"), then the tool's own `Tool::fill_defaults`; this happens before the
   assistant message is ledgered. `authorize` then validates against the
   advertised tool schema, and only an authorized call reaches `execute`, the
   shape builder, and `SkillRegistry::validate`. A repair inside `execute` is
   too late to fix a value rejected by schema admission. Any compatibility
-  normalization must therefore run before `authorize`, and its test must run
-  `fill_defaults` followed by `validate_input` and then the real builder path.
+  reading of arguments must therefore run before `authorize`, in the reader
+  when the schema alone decides it and in the tool's `fill_defaults` when
+  only that tool can read the shape, never in the loop or a builder; its
+  test runs the reader, `fill_defaults`, `validate_input` and then the real
+  builder path.
   After validation, the call and its result are ledgered and a
   `PresentationRecord` is appended; `vak-server` projects that record by
   `tool_use_id`, and the client resolves `semantic_type` through the single
@@ -1833,7 +1838,8 @@ crates/vak-sandbox   the isolated-execution contract, deliberately ignorant
                      destination (docs/design/25-docker-sandbox.md,
                      54-task-environments-and-promotion.md)
 crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse/
-                     find_tools/recall behind Tool trait, versioned
+                     find_tools/recall behind Tool trait, the one reader
+                     of every call's arguments (arguments.rs), versioned
                      broker-worker protocol, bounded subprocess
                      environment, resource claims, sandbox backends
                      (Seatbelt/Landlock). `find_tools` ranks the deferred
