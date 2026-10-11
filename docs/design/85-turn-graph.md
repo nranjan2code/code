@@ -398,7 +398,7 @@ ledger (invariant 1); a card records its skill version and schema version.
 | Edge extraction, anchors, the walk, scoring | Deterministic code. No model. |
 | Thread capsules | The existing summariser, once per quiet thread, cached, off the turn path |
 | Linking with no shared artifact, evidence or word | Optional: an embedding index behind the catalog's search interface (doc 73 §9 allows one). A small local embedding model, not an LLM. G3. |
-| Edge weights | Optional and offline: learned from what the model actually used. A `recalled` edge to a turn the plan left as a card is a measured miss, the same epistemics as `crates/vak-core/src/misread.rs`. G3. |
+| Edge weights | Optional and offline: learned from what the model actually used. A `recalled` edge to a turn the plan left as a card is a measured miss. G3. |
 | Ambiguous lineage | The existing intent tiers 2 and 3, unchanged. |
 
 ## 10. Phases
