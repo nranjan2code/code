@@ -252,6 +252,20 @@ the build refuses a stale bundle.
 
 ## Traps found this session
 
+- A full `cargo test --workspace` compiles its doctests last: sources
+  edited during the run failed that step for a tree that was otherwise
+  green. Do not edit until the run has ended.
+- When the web app says "Your session expired", Settings silently drops
+  back to General on a scope change. Open the sign-in link again.
+- The client's Time limits and "How the model thinks" groups are on an
+  Agent's Overview after "Change the shared defaults for every agent
+  instead"; they are on no page of their own.
+- A live check that changes a shared setting changes the maintainer's real
+  home: put it back (`PUT /config/control?scope=user`) before stopping.
+- A separate session is adding a frosted-glass theme to
+  `crates/vak-client-ui` on main (started 2026-10-11): pull before work and
+  before each commit, and rebuild `dist-web` rather than merging it.
+
 - Editing sources while a background `cargo test` is still compiling gives
   results for a mixed tree. Wait for it, or stop it first.
 - Two `vak-server` `http_e2e` tests time out under the full parallel run
