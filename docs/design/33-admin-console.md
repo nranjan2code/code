@@ -170,7 +170,7 @@ SDKs to preflight a model.
 | Endpoint | Verb | Purpose |
 |---|---|---|
 | `/sessions` | GET | Every workspace's sessions, from the data catalog |
-| `/sessions/:id/transcript` | GET | Paginated ledger entries, read from the ledger |
+| `/sessions/:id/transcript` | GET | Paginated ledger entries, read from the ledger; with no `offset` the newest page, so the latest turn is always on it |
 | `/approvals` | GET | Pending gates across all live sessions (oldest first) |
 | `/bestofn` | GET | Active candidate runs |
 | `/events` | GET | SSE stream of SystemEvents |

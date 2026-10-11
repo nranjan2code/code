@@ -254,7 +254,6 @@ pub(crate) async fn session_transcript_admin(
         return Json(serde_json::json!({ "error": "session is in the trash" }));
     }
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
-    let offset = q.offset.unwrap_or(0);
     let Some(ledger) = crate::session_ledger_dir(&state, &session_id).await else {
         return Json(serde_json::json!({ "error": "no such session" }));
     };
@@ -280,7 +279,7 @@ pub(crate) async fn session_transcript_admin(
     .await
     .unwrap_or_default();
     let total = rows.len();
-    let has_more = offset.saturating_add(limit) < total;
+    let (offset, has_more) = transcript_page(total, limit, q.offset);
     // A runtime-authored row is tagged from the ledger's own typed marker.
     let controls = control_kinds_by_entry(&state, &session_id);
     let page: Vec<serde_json::Value> = rows
@@ -324,6 +323,14 @@ pub(crate) async fn session_transcript_admin(
         // Per-turn routing: a contract snapshot is never a mismatch.
         "configuration_mismatch": false,
     }))
+}
+
+/// Where a transcript page starts and whether entries follow it. With no
+/// offset the page is the newest one, so the turn that just ended is on it
+/// however long the conversation; an offset reads an earlier page.
+fn transcript_page(total: usize, limit: usize, offset: Option<usize>) -> (usize, bool) {
+    let offset = offset.unwrap_or_else(|| total.saturating_sub(limit));
+    (offset, offset.saturating_add(limit) < total)
 }
 
 /// One ledger entry as the forensics transcript lists it.
@@ -1739,6 +1746,14 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    #[test]
+    fn transcript_page_without_offset_ends_at_the_newest_entry() {
+        assert_eq!(super::transcript_page(1200, 500, None), (700, false));
+        assert_eq!(super::transcript_page(40, 500, None), (0, false));
+        assert_eq!(super::transcript_page(1200, 500, Some(0)), (0, true));
+        assert_eq!(super::transcript_page(1200, 500, Some(700)), (700, false));
+    }
 
     fn test_state() -> AppState {
         // Isolates the trust-marker store as well as the session ledger:

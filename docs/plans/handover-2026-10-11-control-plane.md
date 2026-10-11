@@ -75,9 +75,11 @@ Done since, in the next session (2026-10-11):
   gate was green on this tree (289 suites).
 
 Next, in order:
-1. Seen in the live check and not looked into: the admin transcript route
-   (`/admin/api/sessions/{id}/transcript`) did not contain the newest
-   turn of a long conversation, while `/sessions/{id}/transcript` did.
+1. Done: the admin transcript route paged from the oldest entry and both
+   admin screens asked for one page, so a conversation past 500 rows lost
+   its newest turn. With no `offset` it now returns the newest page, and
+   Session Forensics has "Show earlier entries" (seen live on
+   `ses_01a12500…`, 3226 rows).
 2. §5a's three open points: bash's 600 s `MAX_TIMEOUT_MS` (also in its
    schema), the fixed 600 s `request_timeout` in the `vak flow` and
    `vak plan` executors, and an operator-limit ending recorded in the

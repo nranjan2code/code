@@ -1492,9 +1492,26 @@ export function SessionForensics(props: { sessionId: string }) {
     (id) => api.workers(id),
   );
 
+  // The newest entries first: a long conversation shows its latest turn,
+  // and "Show earlier entries" reaches back a page at a time. The ledger is
+  // append-only, so an earlier page's offsets never move.
+  const PAGE = 500;
+  const [shown, setShown] = createSignal(PAGE);
   const [transcriptData, { refetch: refetchTranscript }] = createResource(
-    () => ({ id: props.sessionId, refresh: true }),
-    ({ id, refresh }) => api.transcript(id, { limit: 500, offset: 0, refresh }),
+    () => ({ id: props.sessionId, want: shown() }),
+    async ({ id, want }) => {
+      const newest = await api.transcript(id, { limit: PAGE, refresh: true });
+      let entries = newest.entries;
+      let offset = newest.offset;
+      const start = Math.max(0, newest.total - want);
+      while (offset > start) {
+        const from = Math.max(start, offset - PAGE);
+        const page = await api.transcript(id, { limit: offset - from, offset: from });
+        entries = [...page.entries, ...entries];
+        offset = from;
+      }
+      return { ...newest, entries, offset };
+    },
   );
 
   const [receiptsData, { refetch: refetchReceipts }] = createResource(
@@ -2268,6 +2285,9 @@ export function SessionForensics(props: { sessionId: string }) {
               <span class="dim small" style="margin-left: auto;">
                 Showing {filteredLogEntries().length} of {transcriptData()?.total ?? 0} entries
               </span>
+              <Show when={(transcriptData()?.offset ?? 0) > 0}>
+                <button type="button" class="ghost small" onClick={() => setShown((n) => n + PAGE)}>Show earlier entries</button>
+              </Show>
             </div>
 
             <div class="transcript-feed">
