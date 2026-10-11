@@ -422,9 +422,9 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
         server.inbox().await
     );
 
-    // Each run is two model calls: the turn, and the one freshness redo
-    // the runtime asks for when a turn about recent mail retrieved nothing.
-    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 2 }).await);
+    // Each run is one model call: the scripted turn answers at once, and
+    // no check sends an answer back for the words of its request.
+    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 1 }).await);
     assert!(
         eventually(15, || async {
             server.last_run_status(task_id).await == "completed"
@@ -433,7 +433,7 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
         "routine reaches a settled successful state"
     );
     assert_eq!(server.run_now(task_id).await, reqwest::StatusCode::ACCEPTED);
-    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 4 }).await);
+    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 2 }).await);
     assert!(
         eventually(15, || async {
             server.last_run_status(task_id).await == "completed"
@@ -452,7 +452,7 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     assert_eq!(history["runs"][0]["trigger"], "manual");
     assert_eq!(history["runs"][0]["status"], "complete");
     assert_eq!(history["runs"][0]["session_id"], session_id);
-    assert_eq!(dispatches.load(Ordering::SeqCst), 4);
+    assert_eq!(dispatches.load(Ordering::SeqCst), 2);
     assert_eq!(refresh_calls.load(Ordering::SeqCst), 2);
     assert_eq!(
         vault.access_token(&account_id).unwrap().as_str(),
