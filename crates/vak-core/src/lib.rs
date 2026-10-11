@@ -602,8 +602,10 @@ struct CoreInner {
     /// respawned more than once per [`Core::CAPACITY_PROBE_MIN_INTERVAL`].
     capacity_probe_attempted:
         Arc<std::sync::Mutex<HashMap<vak_context::capacity::ProfileKey, std::time::Instant>>>,
-    /// Per session, the tool names any of its turns loaded: they stay loaded
-    /// (`capability::build_tool_surface`) so the cached tools array holds.
+    /// Per session, the non-presentation tool names any of its turns loaded:
+    /// they stay loaded (`capability::build_tool_surface`) so the cached tools
+    /// array holds. Admitted presentation schemas are always loaded and carry
+    /// no historical card content, so they need no session-level carry state.
     loaded_tools: std::sync::Mutex<HashMap<String, std::collections::BTreeSet<String>>>,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
@@ -3397,70 +3399,44 @@ impl Core {
     /// The full composition, with the per-layer descriptors the ledger and
     /// the editing surfaces need (docs/design/45-prompt-layers.md).
     pub fn resolve_prompt(&self, capabilities: &[CapabilityDescriptor]) -> prompts::Resolution {
-        self.resolve_prompt_with_stance(capabilities, None)
-    }
-
-    /// Compose the prompt, optionally informing the runtime of the epistemic cognitive stance.
-    pub fn resolve_prompt_with_stance(
-        &self,
-        capabilities: &[CapabilityDescriptor],
-        stance: Option<vak_intent::EpistemicStance>,
-    ) -> prompts::Resolution {
-        self.resolve_prompt_with_stance_parts(capabilities, stance, "")
-            .0
+        self.resolve_prompt_parts(capabilities, "").0
     }
 
     /// The prompt's catalogue of admitted tools a turn may defer: every one
-    /// in `admitted` that is not always loaded. Read from the tools' own
+    /// in `admitted` that is neither always loaded nor a presentation tool. Read from the tools' own
     /// declarations, so it matches what `build_tool_surface` can defer.
     fn tool_catalogue_for(&self, admitted: &std::collections::BTreeSet<String>) -> String {
         let tools: Vec<Arc<dyn vak_tools::Tool>> = self
             .scoped_tools(&ToolScope::default())
             .into_iter()
-            .filter(|tool| admitted.contains(tool.name()) && !tool.always_loaded())
-            .collect();
-        let mut entries: Vec<(&str, &str, Vec<String>)> = tools
-            .iter()
-            .map(|tool| {
-                let fields = if tool.presents_cards() {
-                    tool.schema()["properties"]
-                        .as_object()
-                        .map(|properties| {
-                            properties
-                                .keys()
-                                .filter(|key| key.as_str() != "semantic_type")
-                                .cloned()
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-                (tool.name(), tool.description(), fields)
+            .filter(|tool| {
+                admitted.contains(tool.name()) && !tool.always_loaded() && !tool.presents_cards()
             })
             .collect();
+        let mut entries: Vec<(&str, &str)> = tools
+            .iter()
+            .map(|tool| (tool.name(), tool.description()))
+            .collect();
         if admitted.contains("task") {
-            entries.push(("task", vak_agent::TaskTool::DESCRIPTION, Vec::new()));
+            entries.push(("task", vak_agent::TaskTool::DESCRIPTION));
         }
         if admitted.contains("workers") {
-            entries.push(("workers", vak_agent::WorkersTool::DESCRIPTION, Vec::new()));
+            entries.push(("workers", vak_agent::WorkersTool::DESCRIPTION));
         }
         capability::tool_catalogue(entries)
     }
 
-    /// Same composition as [`Core::resolve_prompt_with_stance`], additionally
-    /// returning the raw temporal and epistemic-stance text that fed
-    /// `Resolution::tail` — the per-turn place that assembles
-    /// `AgentConfig::tail` needs both pieces under their own tag rather than
-    /// the single concatenated blob, and re-deriving them from a second call
-    /// would both duplicate the formatting and risk a different clock
-    /// instant (docs/design/68-context-engine.md §6).
-    fn resolve_prompt_with_stance_parts(
+    /// Same composition as [`Core::resolve_prompt`], additionally returning
+    /// the raw temporal text that fed `Resolution::tail`, so the per-turn
+    /// tail uses the same clock instant rather than a second call's
+    /// (docs/design/68-context-engine.md §6). No stance is composed: one
+    /// chosen from a guessed act steered the model (docs/design/
+    /// 86-model-plans-runtime-checks.md).
+    fn resolve_prompt_parts(
         &self,
         capabilities: &[CapabilityDescriptor],
-        stance: Option<vak_intent::EpistemicStance>,
         tool_catalogue: &str,
-    ) -> (prompts::Resolution, String, String) {
+    ) -> (prompts::Resolution, String) {
         let server_caps = capabilities
             .iter()
             .filter(|capability| capability.kind == CapabilityKind::McpServer)
@@ -3513,14 +3489,6 @@ impl Core {
         let has_office = capabilities
             .iter()
             .any(|c| c.kind == CapabilityKind::Tool && c.name == "office_apply");
-        let epistemic_stance = match stance {
-            Some(s) => format!(
-                "\nEpistemic stance: {}\n- {}",
-                s.as_str(),
-                s.guideline_prompt()
-            ),
-            None => String::new(),
-        };
         // Each code-owned contract appears only where it is true: cards where
         // card tools are admitted, the sandbox where `bash` is.
         let runtime = prompts::RuntimeSections {
@@ -3544,13 +3512,12 @@ impl Core {
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&server_caps),
             standing,
-            epistemic_stance: epistemic_stance.clone(),
             tool_index: tool_catalogue.to_string(),
             temporal: temporal_context(&self.surface, chrono::Utc::now()),
         };
         let resolution = prompts::resolve(&self.prompt_layers(seed.content), &runtime);
         let temporal = runtime.temporal;
-        (resolution, temporal, epistemic_stance)
+        (resolution, temporal)
     }
 
     /// Whether a session's frozen prompt still matches what this workspace
@@ -3851,6 +3818,7 @@ impl Core {
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
         let mut tools = vak_tools::brokered_tools(worker, &self.new_documents);
         tools.push(Arc::new(vak_tools::RecallTool));
+        tools.push(Arc::new(vak_tools::PlanTool));
         tools.push(Arc::new(tools_automations::AutomationsTool {
             shared: self.shared_scope(),
             runs: self.runs(),
@@ -5119,14 +5087,25 @@ impl Core {
         // and survives a restart, but a background probe (§1: "only while
         // that model is idle") updates only the process cache, so it can
         // now be strictly newer than what this session has ever logged.
-        let from_session =
+        let mut from_session =
             session.latest_capacity_profile::<_, vak_context::capacity::CapacityProfile>(&key);
-        let from_cache = self
+        let mut from_cache = self
             .inner
             .capacity_cache
             .lock()
             .ok()
             .and_then(|cache| cache.get(&key).cloned());
+        // Older builds persisted the ladder's first rung as a 4k horizon
+        // even when every accepted sample failed to call the probe tool.
+        // That is no evidence about usable context and can make the stable
+        // system/tool prefix exceed the ceiling before the user's turn is
+        // dispatched. Repair both sources before choosing the newest one.
+        if let Some(profile) = &mut from_session {
+            profile.discard_unproven_instruction_horizon();
+        }
+        if let Some(profile) = &mut from_cache {
+            profile.discard_unproven_instruction_horizon();
+        }
         let cached = match (from_session, from_cache) {
             (Some(a), Some(b)) => Some(if b.provenance.probed_at > a.provenance.probed_at {
                 b
@@ -5348,6 +5327,7 @@ impl Core {
         let mut prefill_tps_hint = 0.0_f64;
         // A transport failure ended the ladder before it settled.
         let mut incomplete = false;
+        let mut previous_request_messages: Option<Vec<vak_llm::Message>> = None;
 
         while let Some(target) = ladder.next_rung() {
             if cancel.is_cancelled() {
@@ -5366,6 +5346,19 @@ impl Core {
             }
             let request =
                 vak_context::capacity::probe_request(target, tokens_per_char_hint, &leg.model);
+            // Probe fillers are whole turns. Once lower nominal rungs produce
+            // the same framed request, another dispatch cannot measure a
+            // smaller horizon and only spends local inference time.
+            if previous_request_messages
+                .as_ref()
+                .is_some_and(|previous| previous == &request.messages)
+            {
+                signals.push(format!(
+                    "rung {target} skipped: generated request is unchanged below its framing floor"
+                ));
+                break;
+            }
+            previous_request_messages = Some(request.messages.clone());
             // One completion from a sampling model is one coin flip; a rung
             // is decided by the majority of up to PROBE_SAMPLES_PER_RUNG
             // identical requests (identical on purpose: the prefix is
@@ -5519,11 +5512,17 @@ impl Core {
                 .filter(|r| r.followed_instruction == Some(true))
                 .map(|r| r.tokens)
                 .max();
+            if largest_followed.is_none() {
+                signals.push(
+                    "probe inconclusive: no sample followed the tool instruction; using the published window only".into(),
+                );
+            }
             vak_context::capacity::Horizon {
-                // Nothing followed: the ladder's own first rung, never more
-                // than a known window.
+                // A no-follow result does not measure an instruction
+                // horizon. Use the published window with low confidence;
+                // the rung results remain visible in probe provenance.
                 tokens: largest_followed
-                    .unwrap_or_else(|| declared_window.map_or(4_000, |window| window.min(4_000))),
+                    .unwrap_or_else(|| declared_window.unwrap_or(u64::MAX)),
                 confidence: if largest_followed.is_some() { 0.5 } else { 0.3 },
                 last_confirmed: probed_at,
             }
@@ -5533,6 +5532,31 @@ impl Core {
         // identical requests sent back to back at a fixed, modest size —
         // separate from the horizon ladder, which varies size to find the
         // instruction-following boundary rather than to probe caching.
+        if !rungs
+            .iter()
+            .any(|rung| rung.followed_instruction == Some(true))
+        {
+            // This probe did not establish an instruction horizon. Keep the
+            // failed samples for diagnosis, use provider metadata as the
+            // low-confidence bound, and skip the unrelated cache experiment.
+            let mut profile = vak_context::capacity::CapacityProfile::from_probe(
+                declared_window,
+                verified_window,
+                horizon,
+                vak_context::capacity::CacheBehaviour::Unknown,
+                output_reserve,
+                vak_context::capacity::ProbeProvenance {
+                    probed_at,
+                    rungs,
+                    signals,
+                    metadata_digest,
+                    quantisation: None,
+                },
+            );
+            profile.needs_reprobe = incomplete;
+            return Some(profile);
+        }
+
         let cache = if cancel.is_cancelled() {
             vak_context::capacity::CacheBehaviour::Unknown
         } else {
@@ -6164,7 +6188,10 @@ impl Core {
         session: &SessionLog,
         prompt: &vak_llm::Message,
     ) -> vak_intent::Intent {
-        self.resolve_turn_free_tiers(session, prompt, "").intent()
+        let text = prompt.text_content();
+        let mut intent = self.resolve_turn_free_tiers(session, prompt, "").intent();
+        intent::complete_output_contract(&mut intent, &text);
+        intent
     }
 
     /// Whether `reading` decided which admitted tools a turn loaded — the
@@ -6813,7 +6840,7 @@ impl Core {
             chrono::Utc::now(),
         );
         let envelopes = episode_plan.envelopes();
-        let resolved_intent = if envelopes.is_empty() {
+        let mut resolved_intent = if envelopes.is_empty() {
             resolved_intent
         } else {
             vak_intent::apply_envelopes(
@@ -6823,14 +6850,21 @@ impl Core {
                 chrono::Utc::now(),
             )
         };
+        let mut admitted_outcome =
+            intent::complete_output_contract(&mut resolved_intent, &prompt_text);
+        admitted_outcome.evidence_max_age_secs = Some(self.effective_evidence_max_age_secs());
+        // `Author` alone means produce content in the conversation. A named
+        // file or Office deliverable is known only after the outcome contract
+        // has the original request text, so add its document capability here
+        // and record the same effective decision in the intent ledger.
+        // Card shape is a request-level output property. Feed the existing
+        // presentation prediction into route demand so structured requests
+        // are not scored like an unstructured prose answer.
         let engagement = resolved_intent.engagement.clone();
         debug_assert!(
             intent::projection_is_narrowing(&engagement.limits),
             "a derived engagement widened the baseline"
         );
-        let mut admitted_outcome =
-            vak_intent::OutcomeSpec::from_intent(prompt.text_content(), &resolved_intent);
-        admitted_outcome.evidence_max_age_secs = Some(self.effective_evidence_max_age_secs());
         cfg.continued_saved_file =
             continued_saved_file(&session, &resolved_intent, &self.inner.cwd);
         cfg.outcome = Some(admitted_outcome.clone());
@@ -6906,12 +6940,6 @@ impl Core {
             }));
         }
         {
-            let recipes = vak_delivery::built_in_recipes();
-            cfg.presentation_check = Some(Arc::new(move |text, offered| {
-                presentation_tools::presentation_check_nudge(text, offered, &recipes)
-            }));
-        }
-        {
             // Presentations are ledger entries (docs/design/68-context-engine.md
             // §10): the agent loop has no card-shape or skill-registry
             // knowledge (AGENTS.md invariant 14 — the tool itself executes
@@ -6967,9 +6995,9 @@ impl Core {
         // a removed or withheld capability cannot remain in prose.
         //
         // The prefix (identity, contract, guardrails, tool surface) is
-        // byte-stable and carried as `system_prefix`; the clock instant and
-        // epistemic stance are per-turn and carried separately as `tail` so
-        // the request assembler can render them into the moving tail instead
+        // byte-stable and carried as `system_prefix`; the clock instant is
+        // per-turn and carried separately as `tail` so the request
+        // assembler can render it into the moving tail instead
         // of the cached prefix (docs/design/68-context-engine.md §4/§6).
         // Progressive disclosure: with it on, the reading decides which admitted
         // tools are loaded and the rest are listed in the stable catalogue;
@@ -6986,15 +7014,11 @@ impl Core {
         } else {
             String::new()
         };
-        let (turn_resolution, turn_temporal, turn_stance) = self.resolve_prompt_with_stance_parts(
-            &turn_capabilities.descriptors,
-            Some(engagement.posture.epistemic_stance),
-            &tool_catalogue,
-        );
+        let (turn_resolution, turn_temporal) =
+            self.resolve_prompt_parts(&turn_capabilities.descriptors, &tool_catalogue);
         cfg.system_prefix = turn_resolution.text;
         cfg.tail = vak_agent::TailInput {
             temporal: turn_temporal.trim().to_string(),
-            stance: prompts::stance_with_card_clarifier(&turn_stance),
         };
 
         let work_config = self.effective_work();
@@ -7479,10 +7503,6 @@ impl Core {
                 None,
             );
         }
-        let predicted_cards = presentation_tools::predicted_card_tools(
-            &prompt_text,
-            &vak_delivery::built_in_recipes(),
-        );
         let carried = self
             .inner
             .loaded_tools
@@ -7490,16 +7510,21 @@ impl Core {
             .ok()
             .and_then(|loaded| loaded.get(&sid).cloned())
             .unwrap_or_default();
-        let surface =
-            capability::build_tool_surface(&tools, &loaded_domains, &predicted_cards, &carried);
+        let surface = capability::build_tool_surface(&tools, &loaded_domains, &carried);
+        let card_tools: std::collections::HashSet<String> = tools
+            .iter()
+            .filter(|tool| tool.presents_cards())
+            .map(|tool| tool.name().to_string())
+            .collect();
         if let Ok(mut loaded) = self.inner.loaded_tools.lock() {
             if loaded.len() >= 512 && !loaded.contains_key(&sid) {
                 loaded.clear();
             }
-            loaded
-                .entry(sid.clone())
-                .or_default()
-                .extend(surface.core.iter().map(|tool| tool.name.clone()));
+            let carried = loaded.entry(sid.clone()).or_default();
+            carried.extend(surface.core.iter().filter_map(|definition| {
+                let tool = tools.iter().find(|tool| tool.name() == definition.name)?;
+                (!tool.presents_cards()).then(|| definition.name.clone())
+            }));
         }
         // `find_tools` is synthetic and never itself deferred. Search spans
         // every admitted tool, not only the deferred subset: weaker/local
@@ -7772,9 +7797,12 @@ impl Core {
         // the model either, because both come from the same entry.
         let mut session = session;
 
-        // Only an explicit command corrects or replaces the goal; ordinary
-        // text adds to it (docs/design/47, control plane).
-        let goal_update = session.next_goal_update(&request.text_content());
+        // The intent kernel already resolved whether this request continues
+        // an open strand. Use that durable relationship so a new topic does
+        // not become an addition to (or receive context from) an unrelated
+        // explicitly declared objective.
+        let goal_update =
+            session.next_goal_update_for_intent(&request.text_content(), &resolved_intent);
         if let Err(error) = session.append_goal_update(goal_update) {
             tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a request relationship was not recorded");
         }
@@ -8081,7 +8109,13 @@ impl Core {
                                 )
                                 .then(|| input.to_string().to_ascii_lowercase());
                                 tool_calls.insert(id.clone(), (path, effect_input));
-                                failures.call(id, canonical);
+                                // A card that was not shown changed nothing
+                                // and may be delivered another way; whether
+                                // a planned card is missing is the plan
+                                // check's to say, from receipts.
+                                if !card_tools.contains(canonical) {
+                                    failures.call(id, canonical);
+                                }
                             }
                             vak_llm::ContentBlock::ToolResult {
                                 tool_use_id,
@@ -8104,7 +8138,8 @@ impl Core {
                                 ..
                             } if tool_calls.contains_key(tool_use_id)
                                 && vak_tools::ToolErrorKind::classify(content)
-                                    != vak_tools::ToolErrorKind::Cancelled =>
+                                    != vak_tools::ToolErrorKind::Cancelled
+                                && !vak_tools::never_ran(content) =>
                             {
                                 failures.failed(tool_use_id);
                             }
@@ -11751,6 +11786,47 @@ mod capacity_probe_tests {
         capacity_key: String,
     }
 
+    struct NeverFollowsProbe {
+        capacity_key: String,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for NeverFollowsProbe {
+        fn name(&self) -> &str {
+            "ollama"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.capacity_key.clone()
+        }
+
+        async fn stream(
+            &self,
+            request: ChatRequest,
+            _cancel: CancellationToken,
+        ) -> Result<vak_llm::EventStream, LlmError> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let input_tokens =
+                vak_context::assemble::chat_request_chars(&request).saturating_add(3) / 4;
+            let (mut sink, rx) = vak_llm::stream::channel(4);
+            sink.close_message(AssistantMessage {
+                content: vec![ContentBlock::text("I did not call a tool.")],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage {
+                    input_tokens,
+                    output_tokens: 8,
+                    ..Default::default()
+                },
+                model: request.model,
+                response_id: None,
+            })
+            .await;
+            Ok(rx)
+        }
+    }
+
     #[async_trait::async_trait]
     impl Provider for AlwaysFollowsProbe {
         fn name(&self) -> &str {
@@ -11968,6 +12044,53 @@ mod capacity_probe_tests {
         );
 
         vak_config::clear_override("VAK_OLLAMA_BASE_URL");
+    }
+
+    #[tokio::test]
+    async fn accepted_but_unfollowed_probe_is_inconclusive_and_stops_at_framing_floor() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = Arc::new(NeverFollowsProbe {
+            capacity_key: capacity_key(),
+            calls: calls.clone(),
+        });
+        let leg = vak_llm::RouteLeg {
+            provider: "ollama".into(),
+            model: "never-follows-test-model".into(),
+            dialect: vak_llm::EndpointDialect::default(),
+            credential_id: None,
+        };
+        let now = std::time::SystemTime::now();
+        let profile = core
+            .run_capacity_probe(
+                &leg,
+                provider,
+                super::ProbeMetadata {
+                    declared_window: Some(32_768),
+                    output_reserve: 0,
+                    metadata_digest: "test".into(),
+                    probed_at: now,
+                },
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("accepted responses produce an auditable inconclusive profile");
+
+        assert_eq!(profile.instruction_horizon.tokens, 32_768);
+        assert_eq!(profile.instruction_horizon.confidence, 0.3);
+        assert_eq!(
+            profile.cache,
+            vak_context::capacity::CacheBehaviour::Unknown
+        );
+        assert!(
+            profile
+                .provenance
+                .signals
+                .iter()
+                .any(|signal| signal.contains("probe inconclusive"))
+        );
+        assert!(calls.load(std::sync::atomic::Ordering::Relaxed) < 14);
     }
 
     /// Always follows the probe instruction; a request identical to the

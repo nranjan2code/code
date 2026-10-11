@@ -8,6 +8,9 @@ use crate::outcome::Command;
 pub enum GoalRelation {
     New,
     AddsTo,
+    /// A separate request in the conversation. It is recorded for audit but
+    /// leaves the currently declared objective and its additions untouched.
+    Independent,
     Corrects,
     Replaces,
     Status,
@@ -86,6 +89,7 @@ impl GoalState {
                     current.additions.push(update.request);
                     current.control = GoalControlState::Active;
                 }
+                GoalRelation::Independent => {}
                 GoalRelation::Pauses => current.control = GoalControlState::Paused,
                 GoalRelation::Resumes => current.control = GoalControlState::Active,
                 GoalRelation::Cancels => current.control = GoalControlState::Cancelled,
@@ -146,8 +150,25 @@ pub fn next_goal_update(
     goal: Option<&GoalState>,
     latest_revision: Option<u64>,
 ) -> GoalUpdate {
+    next_goal_update_with_relationship(text, goal, latest_revision, None)
+}
+
+/// Like [`next_goal_update`], with the intent kernel's thread decision for a
+/// newly admitted request. `Some(false)` means this request starts an
+/// independent thread, so it must not silently become part of a declared
+/// active objective. `None` preserves the ordinary steering behavior: while
+/// a turn is running, unclassified steering text remains an addition.
+pub fn next_goal_update_with_relationship(
+    text: &str,
+    goal: Option<&GoalState>,
+    latest_revision: Option<u64>,
+    continues_active_goal: Option<bool>,
+) -> GoalUpdate {
     let command = crate::outcome::parse_command(text);
-    let relation = goal_relation(command.as_ref(), goal);
+    let relation = match (command.as_ref(), goal, continues_active_goal) {
+        (None, Some(goal), Some(false)) if goal.is_live() => GoalRelation::Independent,
+        _ => goal_relation(command.as_ref(), goal),
+    };
     let explicit = matches!(
         command,
         Some(Command::GoalFix { .. } | Command::GoalReplace { .. })
@@ -241,6 +262,24 @@ mod tests {
             next,
         ]);
         assert_eq!(after.objective, "book a table for two");
+        assert_eq!(after.control, GoalControlState::Active);
+    }
+
+    #[test]
+    fn an_independent_request_does_not_replace_or_extend_a_live_goal() {
+        let active = state(&[update(GoalRelation::New, "prepare a briefing", 1)]);
+        let next = next_goal_update_with_relationship(
+            "how many tags remain",
+            Some(&active),
+            Some(1),
+            Some(false),
+        );
+        assert_eq!(next.relation, GoalRelation::Independent);
+        let after =
+            GoalState::from_updates([update(GoalRelation::New, "prepare a briefing", 1), next])
+                .unwrap();
+        assert_eq!(after.objective, "prepare a briefing");
+        assert!(after.additions.is_empty());
         assert_eq!(after.control, GoalControlState::Active);
     }
 

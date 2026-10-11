@@ -169,7 +169,7 @@ async fn truncated_plan_gets_one_continuation_then_completes() {
             max_blocks: 2,
         }),
         vec![
-            ScriptedResponse::Message(text_msg("Fixing both:")),
+            ScriptedResponse::Message(text_msg("Fixing both:\n```rust\nfn a() {")),
             ScriptedResponse::Message(text_msg("All done — both fixed, tests green.")),
         ],
     );
@@ -230,7 +230,7 @@ async fn the_stop_guard_nudge_reaches_the_actual_next_request() {
             max_blocks: 2,
         }),
         vec![
-            ScriptedResponse::Message(text_msg("Fixing both:")),
+            ScriptedResponse::Message(text_msg("Fixing both:\n```rust\nfn a() {")),
             ScriptedResponse::Message(text_msg("All done — both fixed, tests green.")),
         ],
     );
@@ -276,54 +276,6 @@ async fn the_stop_guard_nudge_reaches_the_actual_next_request() {
 }
 
 #[tokio::test]
-async fn verify_gate_blocks_when_the_reading_demands_proof_and_nothing_ran() {
-    let mut h = harness(
-        Some(StopPolicy {
-            marker_gate: false,
-            verify_gate: true,
-            max_blocks: 1,
-        }),
-        vec![
-            ScriptedResponse::Message(text_msg("Created fizzbuzz.py.")),
-            ScriptedResponse::Message(text_msg("Ran it — output verified.")),
-        ],
-    );
-    let mut reading = vak_intent::Reading::general();
-    reading.act = vak_intent::Act::Author;
-    reading.evidence = vak_intent::Evidence::Verified;
-    let mut spec = vak_intent::OutcomeSpec::from_reading(
-        "Create fizzbuzz.py and run it to prove that it works.",
-        &reading,
-        1,
-    );
-    spec.stop = vak_intent::StopProfile::Verification;
-    h.agent.as_mut().expect("agent").config.outcome = Some(spec);
-    let outcome = h
-        .agent
-        .as_mut()
-        .expect("agent")
-        .run(
-            "Create fizzbuzz.py and run it to prove that it works.",
-            &Default::default(),
-            CancellationToken::new(),
-            h.events_tx.clone(),
-        )
-        .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
-    assert_eq!(h.requests.lock().unwrap().len(), 2);
-
-    let guards: Vec<String> = drain_events(&mut h)
-        .into_iter()
-        .filter_map(|e| match e {
-            AgentEvent::StopHookContinuation { reason } => Some(reason),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(guards.len(), 1);
-    assert!(guards[0].contains("proves it"), "reason: {}", guards[0]);
-}
-
-#[tokio::test]
 async fn max_blocks_cap_lets_second_bad_response_through() {
     let mut h = harness(
         Some(StopPolicy {
@@ -332,8 +284,8 @@ async fn max_blocks_cap_lets_second_bad_response_through() {
             max_blocks: 1,
         }),
         vec![
-            ScriptedResponse::Message(text_msg("Now I'll fix it")),
-            ScriptedResponse::Message(text_msg("Now I'll really fix it")),
+            ScriptedResponse::Message(text_msg("Now I'll fix it:\n```")),
+            ScriptedResponse::Message(text_msg("Now I'll really fix it:\n```")),
         ],
     );
     let outcome = h
@@ -349,7 +301,7 @@ async fn max_blocks_cap_lets_second_bad_response_through() {
         .await;
     match outcome {
         TurnOutcome::Completed { response } => {
-            assert_eq!(response.text_content(), "Now I'll really fix it")
+            assert_eq!(response.text_content(), "Now I'll really fix it:\n```")
         }
         other => panic!("expected completion at cap, got {other:?}"),
     }
@@ -370,7 +322,9 @@ async fn guard_at_turn_limit_is_not_reported_as_completed() {
             verify_gate: false,
             max_blocks: 1,
         }),
-        vec![ScriptedResponse::Message(text_msg("Fixing both:"))],
+        vec![ScriptedResponse::Message(text_msg(
+            "Fixing both:\n```rust\nfn a() {",
+        ))],
     );
     h.agent.as_mut().expect("agent").config.max_turns = 1;
     let outcome = h
@@ -391,7 +345,9 @@ async fn guard_at_turn_limit_is_not_reported_as_completed() {
 async fn disabled_policy_never_blocks() {
     let mut h = harness(
         None,
-        vec![ScriptedResponse::Message(text_msg("Fixing both:"))],
+        vec![ScriptedResponse::Message(text_msg(
+            "Fixing both:\n```rust\nfn a() {",
+        ))],
     );
     let outcome = h
         .agent

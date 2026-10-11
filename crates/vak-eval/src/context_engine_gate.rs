@@ -23,10 +23,9 @@ use crate::scorecard::{ContextScorecard, MetricDirection, QualityMetric};
 /// so the planner's Card/Packet tiers are actually exercised.
 const HORIZON_TOKENS: u64 = 13_000;
 
-/// The "small model" horizon for the two-model replay: tight enough that
-/// the 30-turn fixture cannot even fit every card, so the plan packets the
-/// oldest turns and writes a `Compaction` entry — the state the replay
-/// then re-projects under a large model.
+/// The "small model" horizon for the packet replay: too tight for the
+/// 30-turn fixture's cards, so a stored packet would show here if the
+/// projection ever treated one as a boundary.
 const REPLAY_SMALL_HORIZON_TOKENS: u64 = 1_500;
 
 fn header(cwd: &Path, session_id: &str) -> SessionHeader {
@@ -264,48 +263,57 @@ fn plan_now(log: &SessionLog, profile: &CapacityProfile) -> WorkingSetPlan {
     planner::plan_for_session(log, profile, 400, 100)
 }
 
-/// Every non-open turn with a card must appear in EXACTLY one place: either
-/// `per_turn` (Full or Card) or inside `packet_range` — never both, never
-/// neither ("never splits a turn").
-fn every_turn_accounted_exactly_once(index: &TurnIndex, plan: &WorkingSetPlan) -> bool {
-    let closed_carded: Vec<&str> = index
-        .turns
-        .iter()
-        .filter(|t| t.closed && t.card.is_some())
-        .map(|t| t.id.as_str())
-        .collect();
+/// Every selected turn must be a complete, addressable closed turn; packets
+/// must describe a valid contiguous range and may not overlap selected turns.
+/// Other history is deliberately absent and remains available through recall.
+fn selection_is_bounded_and_non_overlapping(index: &TurnIndex, plan: &WorkingSetPlan) -> bool {
     let position: std::collections::HashMap<&str, usize> = index
         .turns
         .iter()
         .enumerate()
         .map(|(i, t)| (t.id.as_str(), i))
         .collect();
-    let packet_bounds = plan.packet_range.as_ref().map(|(first, last)| {
-        (
-            position.get(first.as_str()).copied().unwrap_or(usize::MAX),
-            position.get(last.as_str()).copied().unwrap_or(0),
-        )
-    });
+    let packet_bounds = match &plan.packet_range {
+        Some((first, last)) => {
+            let (Some(lo), Some(hi)) = (position.get(first.as_str()), position.get(last.as_str()))
+            else {
+                return false;
+            };
+            if lo > hi
+                || index.turns[*lo..=*hi]
+                    .iter()
+                    .any(|turn| !turn.closed || turn.card.is_none())
+            {
+                return false;
+            }
+            Some((*lo, *hi))
+        }
+        None => None,
+    };
     let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for (id, _) in &plan.per_turn {
         if !seen.insert(id.as_str()) {
             return false; // duplicate: split/double-counted turn
         }
+        if !position
+            .get(id.as_str())
+            .is_some_and(|&at| index.turns[at].closed && index.turns[at].card.is_some())
+        {
+            return false;
+        }
     }
-    closed_carded.iter().all(|id| {
-        let in_per_turn = seen.contains(id);
-        let in_packet = packet_bounds.is_some_and(|(lo, hi)| {
-            let pos = position[id];
-            pos >= lo && pos <= hi
-        });
-        in_per_turn ^ in_packet
+    !seen.iter().any(|id| {
+        packet_bounds.is_some_and(|(lo, hi)| {
+            let at = position[id];
+            at >= lo && at <= hi
+        })
     })
 }
 
-/// The no-cut invariant (docs/design/68 "No-cut invariant"): every tool
-/// result in the ledger is either verbatim (the open turn), a digest
-/// carrying its evidence id in its paired `tool_result` (a `Full` turn), or
-/// named in a card/packet — never silently absent and never a raw replay.
+/// Selected tool results are complete and reversible: open turns stay
+/// verbatim, selected Full turns carry evidence digests, selected Cards name
+/// evidence ids, and packets cover their declared range. Omitted closed turns
+/// remain in the ledger and are addressable through recall.
 fn no_cut_invariant_holds(log: &SessionLog, index: &TurnIndex, plan: &WorkingSetPlan) -> bool {
     let messages = log.derive_with_plan(plan);
     let joined: String = messages
@@ -377,7 +385,7 @@ fn no_cut_invariant_holds(log: &SessionLog, index: &TurnIndex, plan: &WorkingSet
             }
             Some(Fidelity::Packet) | None => {
                 if joined.contains(&turn.directive.text_content()) {
-                    return false; // leaked raw despite being packeted
+                    return false; // omitted/packeted turns were reintroduced
                 }
             }
         }
@@ -430,7 +438,7 @@ fn steps_are_append_only_with_a_stable_prefix(dir: &Path) -> Result<bool, String
         .all(|(a, b)| serde_json::to_value(a).ok() == serde_json::to_value(b).ok()))
 }
 
-/// A profile with the given usable horizon, for the two-model replay.
+/// A profile with the given usable horizon, for the packet replay.
 fn profile_with_horizon(horizon: u64) -> CapacityProfile {
     CapacityProfile::from_probe(
         Some(horizon),
@@ -452,125 +460,105 @@ fn profile_with_horizon(horizon: u64) -> CapacityProfile {
     )
 }
 
-/// The two-model replay (docs/design/68-context-engine.md, principle 1 and
-/// §4): the projection is a function of `(ledger, the bound model's
-/// profile)` and nothing else. A session that ran on a small model —
-/// whose plan packeted the oldest turns and wrote a `Compaction` entry for
-/// them — is then bound to a model with a horizon large enough to hold
-/// every turn at `Full`. The large model's plan says `Full` for the turns
-/// the small model packeted, so its projection must carry those turns'
-/// real records, not the small model's packet summary. Then bound back to
-/// the small model, the stored packet is reused (no second summariser
-/// call) and the projection is the same as before the switch. Nothing in
-/// the ledger is ever cut; only the projection changes with the model.
+/// The packet replay (docs/design/68-context-engine.md, principle 1 and
+/// §4): the projection is a function of `(ledger, plan)` and nothing else,
+/// and a stored packet is a cache keyed by its turn range, never a
+/// boundary. The standard planner selects no packet, so the range here is
+/// asked for by a plan built for it, as an over-length rejection would. A
+/// packet written under that plan must then be absent from every planner
+/// projection, whatever the bound model's horizon, present only for the
+/// exact range it summarises, and reused without a second summariser call.
+/// Nothing in the ledger is ever cut; only the projection changes.
 ///
 /// Returns one flag per property so the scorecard can name which one
 /// broke.
 struct ReplayVerdict {
-    /// The large model's plan puts the small model's packeted turns at
-    /// `Full` (the planner is model-driven, not boundary-driven).
-    large_plan_promotes_packeted_turns: bool,
-    /// The large model's projection carries those turns' directives
-    /// verbatim and no `<context_summary>` at all.
-    large_projection_follows_its_plan: bool,
-    /// Bound back to the small model, the packet already stored is reused:
-    /// no compaction is needed and the projection matches the pre-switch
-    /// one byte for byte.
-    small_model_reuses_its_packet: bool,
+    /// The planner's own projection, under a small and a large horizon,
+    /// carries neither the stored packet nor any `<context_summary>`.
+    stored_packet_is_not_a_boundary: bool,
+    /// A plan naming another range does not render the stored packet and
+    /// still needs its own summariser call.
+    packet_renders_only_for_its_range: bool,
+    /// A plan naming the stored range again needs no compaction and
+    /// projects the same messages byte for byte.
+    stored_packet_is_reused: bool,
 }
 
-fn two_model_replay(dir: &Path) -> Result<ReplayVerdict, String> {
-    let (mut log, _open_result) = build_fixture(dir, "gate-two-model-replay")?;
+fn joined_text(messages: &[Message]) -> String {
+    messages
+        .iter()
+        .map(Message::text_content)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn packet_replay(dir: &Path) -> Result<ReplayVerdict, String> {
+    let (mut log, _open_result) = build_fixture(dir, "gate-packet-replay")?;
     let small = profile_with_horizon(REPLAY_SMALL_HORIZON_TOKENS);
-    // Large enough that every closed turn fits at Full with room to spare.
     let large = profile_with_horizon(2_000_000);
 
-    // 1) The small model runs: its plan packets the oldest turns, and the
-    //    agent loop writes the packet (a stand-in summary here; the
-    //    summariser's wording is irrelevant to the property).
-    let small_plan = plan_now(&log, &small);
-    let Some((first_packeted, last_packeted)) = small_plan.packet_range.clone() else {
-        return Err(
-            "the small profile must packet at least one turn for the replay to mean anything"
-                .into(),
-        );
+    let index = TurnIndex::from_log(&log);
+    let carded: Vec<&vak_session::Turn> = index
+        .turns
+        .iter()
+        .filter(|turn| turn.closed && turn.card.is_some())
+        .collect();
+    let [first, second, ..] = carded.as_slice() else {
+        return Err("the fixture must hold closed turns with cards".into());
     };
-    if !log.packet_needs_compaction(&first_packeted, &last_packeted) {
+    let Some(last) = carded.get(4) else {
+        return Err("the fixture must hold at least five closed turns with cards".into());
+    };
+    let base = plan_now(&log, &small);
+    let with_range = |first: &str, last: &str| WorkingSetPlan {
+        packet_range: Some((first.to_string(), last.to_string())),
+        ..base.clone()
+    };
+
+    // 1) A plan asks for a packet over the oldest five turns, and the agent
+    //    loop writes it (a stand-in summary here; the summariser's wording
+    //    is irrelevant to the property).
+    let packeting = with_range(&first.id, &last.id);
+    if !log.packet_needs_compaction(&first.id, &last.id) {
         return Err("a fresh ledger cannot already carry a packet".into());
     }
+    let other = with_range(&second.id, &last.id);
     log.append_incremental_compaction(
-        &first_packeted,
-        &last_packeted,
+        &first.id,
+        &last.id,
         "small-model",
         "SMALL-MODEL-PACKET".into(),
         1_000,
     )
     .map_err(|e| e.to_string())?;
-    let small_messages_before = log.derive_with_plan(&plan_now(&log, &small));
-    let small_joined_before = small_messages_before
-        .iter()
-        .map(Message::text_content)
-        .collect::<Vec<_>>()
-        .join("\n");
-    if !small_joined_before.contains("SMALL-MODEL-PACKET") {
-        return Err("the small model's own projection must carry its packet".into());
+    let before = log.derive_with_plan(&packeting);
+    if !joined_text(&before).contains("SMALL-MODEL-PACKET") {
+        return Err("the plan that asked for the packet must project it".into());
     }
 
-    let index = TurnIndex::from_log(&log);
-    let position: std::collections::HashMap<&str, usize> = index
-        .turns
-        .iter()
-        .enumerate()
-        .map(|(i, t)| (t.id.as_str(), i))
-        .collect();
-    let lo = position[first_packeted.as_str()];
-    let hi = position[last_packeted.as_str()];
-    let packeted: Vec<&vak_session::Turn> = index.turns[lo..=hi].iter().collect();
+    // 2) The planner's own plan, under either model, never sees it.
+    let stored_packet_is_not_a_boundary = [&small, &large].into_iter().all(|profile| {
+        let plan = plan_now(&log, profile);
+        let joined = joined_text(&log.derive_with_plan(&plan));
+        plan.packet_range.is_none()
+            && !joined.contains("<context_summary>")
+            && !joined.contains("SMALL-MODEL-PACKET")
+    });
 
-    // 2) The same session, now bound to the large model.
-    let large_plan = plan_now(&log, &large);
-    let large_fidelity: std::collections::HashMap<&str, Fidelity> = large_plan
-        .per_turn
-        .iter()
-        .map(|(id, f)| (id.as_str(), *f))
-        .collect();
-    let large_plan_promotes_packeted_turns = large_plan.packet_range.is_none()
-        && packeted
-            .iter()
-            .all(|t| large_fidelity.get(t.id.as_str()) == Some(&Fidelity::Full));
+    // 3) Another range is another packet.
+    let packet_renders_only_for_its_range = log.packet_needs_compaction(&second.id, &last.id)
+        && !joined_text(&log.derive_with_plan(&other)).contains("SMALL-MODEL-PACKET");
 
-    let large_messages = log.derive_with_plan(&large_plan);
-    let large_joined = large_messages
-        .iter()
-        .map(Message::text_content)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let large_projection_follows_its_plan = !large_joined.contains("<context_summary>")
-        && !large_joined.contains("SMALL-MODEL-PACKET")
-        && packeted
-            .iter()
-            .all(|t| large_joined.contains(&t.directive.text_content()));
-
-    // 3) Back to the small model: the stored packet covers exactly the
-    //    range its plan needs again, so nothing is re-summarised and the
-    //    projection is unchanged.
-    let small_plan_after = plan_now(&log, &small);
-    let reuses = small_plan_after
-        .packet_range
-        .as_ref()
-        .is_some_and(|(first, last)| !log.packet_needs_compaction(first, last));
-    let small_messages_after = log.derive_with_plan(&small_plan_after);
-    let same_projection = small_messages_before.len() == small_messages_after.len()
-        && small_messages_before
-            .iter()
-            .zip(small_messages_after.iter())
-            .all(|(a, b)| a.text_content() == b.text_content());
-    let small_model_reuses_its_packet = reuses && same_projection;
+    // 4) The same range again: nothing is re-summarised and the projection
+    //    is unchanged.
+    let after = log.derive_with_plan(&with_range(&first.id, &last.id));
+    let stored_packet_is_reused = !log.packet_needs_compaction(&first.id, &last.id)
+        && serde_json::to_value(&before).ok() == serde_json::to_value(&after).ok();
 
     Ok(ReplayVerdict {
-        large_plan_promotes_packeted_turns,
-        large_projection_follows_its_plan,
-        small_model_reuses_its_packet,
+        stored_packet_is_not_a_boundary,
+        packet_renders_only_for_its_range,
+        stored_packet_is_reused,
     })
 }
 
@@ -585,10 +573,10 @@ pub fn run_context_engine_scorecard() -> Result<ContextScorecard, String> {
     let index = TurnIndex::from_log(&log);
 
     let budget_ok = plan.spent <= plan.budget;
-    let accounted_ok = every_turn_accounted_exactly_once(&index, &plan);
+    let accounted_ok = selection_is_bounded_and_non_overlapping(&index, &plan);
     let no_cut_ok = no_cut_invariant_holds(&log, &index, &plan);
     let append_only_ok = steps_are_append_only_with_a_stable_prefix(dir.path())?;
-    let replay = two_model_replay(dir.path())?;
+    let replay = packet_replay(dir.path())?;
 
     let metric = |name: &'static str, ok: bool| QualityMetric {
         name,
@@ -600,20 +588,20 @@ pub fn run_context_engine_scorecard() -> Result<ContextScorecard, String> {
     Ok(ContextScorecard {
         metrics: vec![
             metric("plan_never_exceeds_budget", budget_ok),
-            metric("every_turn_accounted_exactly_once", accounted_ok),
+            metric("selection_is_bounded_and_non_overlapping", accounted_ok),
             metric("no_cut_invariant_holds", no_cut_ok),
             metric("steps_append_only_with_stable_prefix", append_only_ok),
             metric(
-                "replay_large_plan_promotes_packeted_turns",
-                replay.large_plan_promotes_packeted_turns,
+                "replay_stored_packet_is_not_a_boundary",
+                replay.stored_packet_is_not_a_boundary,
             ),
             metric(
-                "replay_large_projection_follows_its_plan",
-                replay.large_projection_follows_its_plan,
+                "replay_packet_renders_only_for_its_range",
+                replay.packet_renders_only_for_its_range,
             ),
             metric(
-                "replay_small_model_reuses_its_packet",
-                replay.small_model_reuses_its_packet,
+                "replay_stored_packet_is_reused",
+                replay.stored_packet_is_reused,
             ),
         ],
     })
@@ -636,23 +624,23 @@ mod tests {
         assert!(card.passed(), "scorecard failed: {card}");
     }
 
-    /// The two-model replay on its own, so a regression names the exact
+    /// The packet replay on its own, so a regression names the exact
     /// property instead of failing the whole scorecard.
     #[test]
-    fn projection_is_a_function_of_the_bound_model_not_of_earlier_models() {
+    fn a_stored_packet_is_a_cache_for_its_range_never_a_boundary() {
         let dir = tempfile::tempdir().unwrap();
-        let verdict = two_model_replay(dir.path()).expect("replay harness");
+        let verdict = packet_replay(dir.path()).expect("replay harness");
         assert!(
-            verdict.large_plan_promotes_packeted_turns,
-            "the large model's plan must put the small model's packeted turns at Full"
+            verdict.stored_packet_is_not_a_boundary,
+            "the planner's projection must not carry a packet its plan did not ask for"
         );
         assert!(
-            verdict.large_projection_follows_its_plan,
-            "the large model's projection must carry the packeted turns' records, not the small model's packet"
+            verdict.packet_renders_only_for_its_range,
+            "a plan naming another range must not render the stored packet"
         );
         assert!(
-            verdict.small_model_reuses_its_packet,
-            "bound back to the small model, the stored packet must be reused and the projection unchanged"
+            verdict.stored_packet_is_reused,
+            "a plan naming the stored range must reuse the packet and project the same messages"
         );
     }
 }

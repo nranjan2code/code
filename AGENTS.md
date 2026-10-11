@@ -62,7 +62,9 @@ Read before changing behaviour in these areas:
   `57-adaptive-presentation-runtime.md` (packs),
   `67-presentation-renderer-guide.md` (the step-by-step contributor guide, and
   the one to start from when adding a renderer).
-- **Decision and capability layers** — `41-capability-registry.md`,
+- **Decision and capability layers** — `86-model-plans-runtime-checks.md`
+  (the model's declared plan and the runtime's receipt check; read first),
+  `41-capability-registry.md`,
   `42-managed-work-contracts.md`, `45-prompt-layers.md`,
   `47-commitment-kernel.md` (the intent kernel — strands, resolver tiers,
   authority, the control plane; it subsumes skill intent-discovery),
@@ -1168,11 +1170,12 @@ in progress, and the rest of V4 follows it.
     `tool_result` pairs, thinking dropped, results replaced by a
     schema-driven digest and cards by their short ack — never a
     prose-narrated trace, which a small model imitates as prose), `Card`
-    (one `TurnCard` line) or `Packet` fidelity chosen by the
-    `WorkingSetPlanner` against the measured budget by descending
-    `max(recency, relevance, anaphora, link)` value, never a reserved share
-    (`link`: what the turn shares with the open turn through a thread, a
-    file or a commitment, docs/design/85-turn-graph.md). A
+    (one `TurnCard` line) or `Packet` fidelity as its plan says. The
+    `WorkingSetPlanner` carries the compact card of the turn the request
+    follows (the last turn of the thread it continues, else the last
+    turn), within the measured budget, and nothing older; no reading of
+    the request's words decides it, and older turns are reached through
+    `recall` (docs/design/85-turn-graph.md). A
     compaction packet is a cache keyed by the turn range it summarises,
     never a boundary: the projection renders it only when the current plan
     asks for exactly that range, so a packet written under a small model
@@ -1199,9 +1202,11 @@ in progress, and the rest of V4 follows it.
     run is a `[freshness-check]` redo, then fails closed with an honest
     last-known statement rather than presenting a carried-over figure as
     current; a thinking-only step is one `[empty-step]` redo unless a card
-    already answered; three consecutive steps that repeat a prior turn's
-    answer verbatim end the turn via the same degraded outcome as
-    tool-repair exhaustion.
+    already answered; an answer that repeats a prior turn's answer verbatim
+    is nudged once and redone, and one that repeats again stands as the
+    model's own with a diagnostic. A tool whose
+    calls keep failing is shown its schema and then withdrawn for the turn;
+    the turn itself goes on (docs/design/15-reliability.md).
     Vendor and topic names (a search provider, a weather API) are never
     behaviour keys; `vak-eval`'s banned-token gate enforces it.
 37. **Agent ownership is mandatory for new work and isolates workspaces,
@@ -1438,9 +1443,12 @@ in progress, and the rest of V4 follows it.
   real validated payloads. Universal semantic shapes compose across domains;
   they are not a coding-only card taxonomy. The step-by-step contributor
   guide is `docs/design/67-presentation-renderer-guide.md`. A model emits a
-  card preferentially by calling one of the twelve `emit_*_card` tools
-  (`vak-core/src/presentation_tools.rs`, one per payload shape, not per
-  `semantic_type`) rather than writing an inline ` ```vak ` fence — measured
+  card preferentially by calling one of the `emit_*_card` block tools
+  (`vak-core/src/presentation_tools.rs`, one per block shape:
+  summary, steps, checklist, comparison, table, stats, chart, callout,
+  details, research, recipe, media, UI preview, diff, test report and
+  terminal; docs/design/87-composed-answers.md) rather than writing an
+  inline ` ```vak ` fence — measured
   far more reliable against the local models this app ships (see
   `docs/design/07-prompt.md` v3.4.5, `docs/design/30-render-architecture.md`
   §30.1). The fence path is the fallback when no matching tool is present,
@@ -1455,7 +1463,15 @@ in progress, and the rest of V4 follows it.
   card call goes to the card tool that owns its `semantic_type`
   (`normalize_card_type` in vak-agent) (measured, §30.1;
   `every_card_schema_is_flat_and_portable`); each shape's `build` turns them
-  into the stored card. The card travels in the call's *arguments*
+  into the stored card. **A card tool leaves nothing to guess:** every
+  argument, and every field of a record argument, is typed and described,
+  one the call must send is never described as optional, the same idea has
+  the same name on every block (prose is `text`, a record's name is
+  `label`), a builder checks structure and never a topic, and no argument
+  shape crashes a builder (`every_card_argument_is_described`,
+  `no_argument_shape_crashes_a_card_tool`). Both checks run over whatever
+  tools exist, because tools are added and removed at runtime; a tool is
+  never made to work by naming it in the prompt. The card travels in the call's *arguments*
   (recorded untruncated in the ledger); the tool result is only a short ack
   or a repairable validation error naming the field, and the card is written
   as a `Presentation` ledger entry when it validates, which `vak-server`'s
@@ -1468,11 +1484,63 @@ in progress, and the rest of V4 follows it.
   its id in the result, so the user sees it and the parent can recall it. A
   projected card carries `OutputKind::Card`, never `Information`/`Progress`/
   `Retry`, which chat views fold away (doc 30-output-engineering). When a
-  model answers in prose what the app's own signal/recipe detection says is a
-  card, the agent loop gives it one
-  bounded `[presentation-check]` nudge (`AgentConfig::presentation_check`,
-  supplied by `Core` from `RecipeCatalog::intended_outputs`); like the other
-  repair nudges it is scaffolding and never shown as a user message.
+  **The card path has two validation gates.** After provider decoding,
+  `normalize_response_tool_uses` / `normalize_card_type` canonicalize the
+  provider call and invoke `Tool::fill_defaults`; this happens before the
+  assistant message is ledgered. `authorize` then validates against the
+  advertised tool schema, and only an authorized call reaches `execute`, the
+  shape builder, and `SkillRegistry::validate`. A repair inside `execute` is
+  too late to fix a value rejected by schema admission. Any compatibility
+  normalization must therefore run before `authorize`, and its test must run
+  `fill_defaults` followed by `validate_input` and then the real builder path.
+  After validation, the call and its result are ledgered and a
+  `PresentationRecord` is appended; `vak-server` projects that record by
+  `tool_use_id`, and the client resolves `semantic_type` through the single
+  renderer registry. Diagnose a missing or wrong card at each boundary in
+  that order; a successful tool acknowledgement proves ledger admission, not
+  UI projection. Keep this path and turn state consistent with
+  `docs/design/30-render-architecture.md` and the ledger/context rules in
+  `docs/design/68-context-engine.md`.
+  **Turn context is planner-selected.** Do not add the full transcript to each
+  request or create a second session to test cards. The ledger remains complete;
+  `vak-context` chooses whole turns, TurnCards, and recallable evidence for the
+  current model and directive. A new direct user request resets turn-local
+  card duplicate/retry state, including image-only requests; typed runtime
+  controls do not count as new turns. Same-turn distinct cards must retain
+  their emit order, while identical retries are suppressed or superseded only
+  under the documented repair rules.
+  When prompt guidance, context, schema, tool call, ledger, projection and UI
+  disagree, record the exact stage and evidence before changing the model
+  prompt. These boundaries and the conformance gaps are documented in
+  `docs/design/30-render-architecture.md` §30.1 and
+  `docs/design/68-context-engine.md` §10.
+  The standard request planner carries only the compact card of the turn
+  the request follows, whatever its words. A request gets no older turn just
+  because topic words match or prompt space remains; the model uses indexed
+  `recall` when an older result is needed, even if it is many turns back. Full
+  session history remains in the ledger. Inspect the recorded context plan and
+  recall calls before attributing a cross-turn card to UI projection. Channel
+  narration must inspect cards in the latest turn only; an older card must not
+  suppress a current prose answer.
+  **Presentation schema access is independent of request vocabulary.** The
+  shared tool surface loads every admitted `presents_cards` schema from the
+  first call on every provider. Schemas carry no historical card content and
+  do not make ordinary conversation require structured output. Recipes and
+  request predictions inform output demand and composition, not access to
+  alternative shapes. **The model plans, the runtime checks**
+  (docs/design/86-model-plans-runtime-checks.md): the model declares its
+  deliverables with the loop-owned `plan` tool (each a name and a form:
+  card, text, file, change or check) and names the one a card delivers in
+  its `answers` field; when the turn ends, `plan_check` compares the plan
+  with receipts (cards recorded, final text, files delivered, commands and
+  changes) and a `[plan-check]` control names only what is missing, once,
+  without discarding anything already produced. No reading of the request
+  or the answer sends a turn back: the request-vocabulary presentation check
+  and the card-completeness self-audit are removed, and the stop gate holds
+  a turn only on observed facts (an unclosed fence, an unreported tool
+  failure, code changed after its check). Never add a check that guesses
+  from words or a threshold. The registry and live-run coverage checkpoint
+  is `docs/audits/presentation-registry-and-live-coverage-2026-10-10.md`.
   Runtime-authored traffic is **typed, never sniffed**: every user-role
   message the agent loop appends (repair nudges, stop guards) is created with
   `MessageRecord::control(kind, body)`, which sets `MessageMeta::control` to a
@@ -1499,8 +1567,8 @@ in progress, and the rest of V4 follows it.
   (`task.rs::next_child_session_id`), because ids that were the clock's
   nanoseconds alone collided when tasks launched in the same wave. The chat
   pairs turns through `vak-client-ui/src/turnPairing.ts`. What remains
-  judgement (the keyword signals behind the presentation check, which card the
-  model picks, inline tool-result hints) is listed in
+  judgement (which card the model picks, inline tool-result hints) is
+  listed in
   `docs/design/30-output-engineering.md`. Whether a call is *retrieval* is
   never guessed from a tool's name or output: `AgentConfig::retrieval_check`
   is built by `Core` from each capability's declared `serves` domains
@@ -1509,7 +1577,7 @@ in progress, and the rest of V4 follows it.
   `serves = ["web"]` (or `documents`, etc.); a server that declares nothing
   inherits the `mcp` broker's web/live-data claim. A tool names the file a
   successful call delivers for review with `Tool::delivered_file`
-  (`office_apply`'s draft): the presentation check stands down for the run,
+  (`office_apply`'s draft): the file is a receipt for the plan check,
   an identical call gets the first call's result instead of a second draft,
   and a card whose `artifact_path` previews that file is not shown.
 - The shipped prompt seed stays under 1800 tokens and carries its
@@ -1722,7 +1790,7 @@ crates/vak-presentation  the CLOSED primitive vocabulary (Primitive enum in
                      PACKS (StoredPresentation/PresentationSpec, PresentationOrigin,
                      LibraryScope) are runtime-pluggable and compose existing
                      primitives with ZERO code change; seeds.rs is the worked
-                     example (88 disabled built-in starter definitions).
+                     example (87 disabled built-in starter definitions).
                      Four independently installed social add-ons contribute
                      12 more package-owned presentation layouts (three each),
                      seeded disabled and outside the built-in catalog. Adding a
@@ -1852,11 +1920,10 @@ crates/vak-context   the context engine, pure functions over the ledger
                      majority-of-three samples per rung) and usage/latency
                      feedback -- Core drives the probe and records it, this
                      crate owns the math. `planner.rs`: the pure
-                     `WorkingSetPlan` -- per closed turn, `Full`/`Card` fill
-                     by descending max(recency, relevance, anaphora,
-                     link) value
-                     against the measured budget, overflow collapses into
-                     one packet, never a reserved share; `plan_for_session`
+                     `WorkingSetPlan` -- the open turn verbatim plus the
+                     compact card of the turn it follows, within the
+                     measured budget; older turns are reached through
+                     `recall`, never preloaded; `plan_for_session`
                      is the one entry point the loop, `/compact` and the
                      eval gate all plan through. `assemble.rs`: the
                      byte-stable prefix and its digest, the per-turn tail
@@ -2160,6 +2227,32 @@ it, with the evidence, and leave it as an open question rather than a
 verdict about the model. (Recorded 2026-10-07: a "small model" verdict
 hid that `emit_table_card` refused a correct flat `{columns, rows}`
 table; its envelope was the cause.)
+
+## No word lists, no tuned limits
+
+Behaviour is never decided by a list of words or a number picked to make a
+case pass. A failure is not fixed by adding a phrase to a list, a topic rule
+to a builder, or a threshold or cap to a loop; when one is found it is
+removed, and the change is verified with real turns.
+
+- Whether a request refers back, needs a tool or asks for a card is not read
+  from its vocabulary. The planner carries the card of the turn a request
+  follows and nothing older; the model plans its own deliverables and the
+  runtime checks receipts (docs/design/86-model-plans-runtime-checks.md).
+- A loop that must end does so by a sequence of observed states, never a
+  count: a failing tool is hinted, then shown its schema, then withdrawn for
+  the turn; a repeated answer or a repeated card is told once, and the next
+  one stands as the model's answer. The operator's configured turn limit is
+  the only number that bounds a run.
+- No runtime ending replaces the model's answer with words it did not write,
+  and nothing already produced is discarded to end a turn.
+- No domain, provider or tool is first-class: nothing names one to make it
+  work.
+
+Still to be brought under this rule (found 2026-10-11, not yet changed):
+`ToolErrorKind::classify`, which sorts tool errors by words in their text,
+and the agent loop's `DOOM_LOOP_THRESHOLD`, `READ_REPEAT_LIMIT` and
+`WORKERS_GATE_BLOCKS`.
 
 ## Verification before every commit
 

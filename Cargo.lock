@@ -7693,6 +7693,7 @@ dependencies = [
  "tracing",
  "vak-config",
  "vak-intake",
+ "vak-intent",
  "vak-llm",
  "vak-ooxml",
  "vak-pdf",

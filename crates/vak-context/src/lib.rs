@@ -9,7 +9,7 @@
 //!   every receipt. Nothing in a request is sized from a declared number.
 //! - [`planner`] — `WorkingSetPlanner`: which closed turns ride along at
 //!   `Full`, `Card` or `Packet` fidelity for this request, chosen against
-//!   the measured budget by `max(recency, relevance, anaphora)`. A turn is
+//!   the measured budget by `max(recency, relevance, link)`. A turn is
 //!   never split; nothing model-visible is cut by a character count.
 //! - [`assemble`] — the request assembler: the byte-stable prefix and its
 //!   digest, the per-turn tail attached to the last user message, cache

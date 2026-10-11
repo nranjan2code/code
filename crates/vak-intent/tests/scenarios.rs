@@ -1460,7 +1460,7 @@ fn engagement_output_shape_per_act() {
         (Act::Answer, OutputShape::Prose),
         (Act::Locate, OutputShape::Findings),
         (Act::Analyze, OutputShape::Prose),
-        (Act::Author, OutputShape::Artifact),
+        (Act::Author, OutputShape::Prose),
         (Act::Modify, OutputShape::Diff),
         (Act::Operate, OutputShape::Report),
         (Act::Verify, OutputShape::Matrix),
@@ -1699,7 +1699,7 @@ fn engagement_domain_requirements_per_act() {
         (Act::Answer, &["live-data", "web"]),
         (Act::Locate, &["live-data", "web", "vcs"]),
         (Act::Analyze, &["live-data", "web", "code-exec", "vcs"]),
-        (Act::Author, &["documents", "web"]),
+        (Act::Author, &[]),
         (Act::Modify, &["documents", "code-exec", "vcs"]),
         (
             Act::Operate,
@@ -1730,6 +1730,22 @@ fn engagement_domain_requirements_per_act() {
             );
         }
     }
+
+    let authoring = derive(
+        &reading_simple(
+            Act::Author,
+            Horizon::Turn,
+            Stakes::Reversible,
+            Evidence::None,
+        ),
+        &Authority::default(),
+        true,
+    );
+    assert_eq!(
+        authoring.limits.required_domains,
+        vak_intent::DomainSet::only(["filesystem", "memory"]),
+        "authoring in the conversation does not imply web research or a saved document"
+    );
 }
 
 #[test]

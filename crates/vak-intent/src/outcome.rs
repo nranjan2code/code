@@ -388,6 +388,52 @@ use crate::{Evidence, Reading};
 pub enum RequirementOrigin {
     Explicit,
     Inferred,
+    /// Declared by the model in its plan for the turn
+    /// (docs/design/86-model-plans-runtime-checks.md §2.1).
+    Declared,
+}
+
+/// How a declared deliverable reaches the person, and so which receipt shows
+/// it was produced (docs/design/86-model-plans-runtime-checks.md §2.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliverableForm {
+    /// A presentation card recorded this turn.
+    Card,
+    /// The turn's final text.
+    Text,
+    /// A file delivered for review.
+    File,
+    /// A change made in the workspace or outside Vak.
+    Change,
+    /// Something run to prove a result, after the last change.
+    Check,
+}
+
+impl DeliverableForm {
+    pub const ALL: [DeliverableForm; 5] = [
+        DeliverableForm::Card,
+        DeliverableForm::Text,
+        DeliverableForm::File,
+        DeliverableForm::Change,
+        DeliverableForm::Check,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeliverableForm::Card => "card",
+            DeliverableForm::Text => "text",
+            DeliverableForm::File => "file",
+            DeliverableForm::Change => "change",
+            DeliverableForm::Check => "check",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|form| form.as_str().eq_ignore_ascii_case(text.trim()))
+    }
 }
 
 /// How strongly a requirement affects completion.
@@ -418,6 +464,9 @@ pub struct OutcomeRequirement {
     pub importance: RequirementImportance,
     #[serde(default)]
     pub target: Option<String>,
+    /// For a deliverable the model declared, how it is delivered.
+    #[serde(default)]
+    pub form: Option<DeliverableForm>,
 }
 
 /// The user's requested result as understood at turn admission.
@@ -1043,6 +1092,42 @@ impl OutcomeSpec {
         self.saved_file_target().is_some()
     }
 
+    /// Whether a text file is an explicitly requested output of an authoring
+    /// turn. A plan, list, or other authored answer is delivered in the
+    /// conversation unless the request names a file or directly asks to save
+    /// one. Effectful acts such as modifying an existing workspace file keep
+    /// their normal write path.
+    pub fn permits_authored_text_file(&self) -> bool {
+        if self.expects_saved_file() || self.acts.iter().any(|act| act.requires_execution()) {
+            return true;
+        }
+        if !self.acts.contains(&Act::Author) {
+            return true;
+        }
+
+        let words: Vec<String> = self
+            .objective
+            .to_ascii_lowercase()
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .filter(|word| !word.is_empty())
+            .map(str::to_string)
+            .collect();
+        let output_verbs = ["write", "create", "make", "generate", "save", "export"];
+        let file_targets = ["file", "filename", "disk", "workspace"];
+        let negation = ["not", "never", "avoid", "dont", "don", "no"];
+        words.iter().enumerate().any(|(at, word)| {
+            output_verbs.contains(&word.as_str())
+                && !words[at.saturating_sub(2)..at]
+                    .iter()
+                    .any(|previous| negation.contains(&previous.as_str()))
+                && words
+                    .iter()
+                    .skip(at + 1)
+                    .take(6)
+                    .any(|next| file_targets.contains(&next.as_str()))
+        })
+    }
+
     /// Build the conservative baseline contract for an ordinary turn.
     ///
     /// The request text is preserved as the objective; inferred requirements
@@ -1059,6 +1144,7 @@ impl OutcomeSpec {
             origin: RequirementOrigin::Inferred,
             importance: RequirementImportance::Must,
             target: Some("primary".into()),
+            form: None,
         }];
         if reading.evidence != Evidence::None {
             requirements.push(OutcomeRequirement {
@@ -1068,6 +1154,7 @@ impl OutcomeSpec {
                 origin: RequirementOrigin::Inferred,
                 importance: RequirementImportance::Must,
                 target: Some("primary".into()),
+                form: None,
             });
         }
         OutcomeSpec {
@@ -1135,7 +1222,6 @@ impl OutcomeSpec {
             "document",
             "powerpoint",
             "power point",
-            "presentation",
             "slide deck",
             "slides",
             "pptx",
@@ -1224,6 +1310,7 @@ impl OutcomeSpec {
             origin: RequirementOrigin::Inferred,
             importance,
             target,
+            form: None,
         });
         Ok(())
     }
@@ -1252,11 +1339,18 @@ mod tests {
         assert!(!plan.expects_artifact());
         let note = OutcomeSpec::from_reading("Write a short note to my neighbour", &authoring, 1);
         assert!(!note.expects_artifact());
+        let native_cards = OutcomeSpec::from_reading(
+            "Make a practical plan and use suitable native presentation cards",
+            &authoring,
+            1,
+        );
+        assert!(!native_cards.expects_artifact());
         for request in [
             "Make an Excel document",
             "Create a spreadsheet dashboard",
             "Write a Word document",
             "Build a PowerPoint presentation",
+            "Create a slide deck for the team",
             "Generate a PDF report",
         ] {
             let output = OutcomeSpec::from_reading(request, &authoring, 1);
@@ -1270,6 +1364,43 @@ mod tests {
             OutcomeSpec::from_reading("explain how to write a README.md", &Reading::general(), 1);
         assert!(!explanation.expects_saved_file());
         assert!(!explanation.requires_execution());
+    }
+
+    #[test]
+    fn authored_text_file_permission_tracks_the_requested_outcome() {
+        let authoring = Reading {
+            act: Act::Author,
+            ..Reading::general()
+        };
+        let plan =
+            OutcomeSpec::from_reading("Make an easy-to-share plan and supply list", &authoring, 1);
+        assert!(!plan.permits_authored_text_file());
+        let declined_file =
+            OutcomeSpec::from_reading("Do not create a file for this", &authoring, 1);
+        assert!(!declined_file.permits_authored_text_file());
+
+        for request in [
+            "Write a file with the plan",
+            "Save this to a file",
+            "Create a file for the supply list",
+            "Save the notes in the workspace",
+            "Write the plan to workshop.md",
+        ] {
+            assert!(
+                OutcomeSpec::from_reading(request, &authoring, 1).permits_authored_text_file(),
+                "{request}"
+            );
+        }
+
+        let modification = OutcomeSpec::from_reading(
+            "Update the existing notes",
+            &Reading {
+                act: Act::Modify,
+                ..Reading::general()
+            },
+            1,
+        );
+        assert!(modification.permits_authored_text_file());
     }
 
     #[test]

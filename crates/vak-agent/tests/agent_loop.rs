@@ -556,6 +556,62 @@ async fn malformed_tool_input_is_rejected_by_the_admitted_schema() {
 }
 
 #[tokio::test]
+async fn provider_tool_call_format_failure_gets_one_same_turn_repair() {
+    let h = harness(
+        vec![
+            ScriptedResponse::Error(LlmError::ToolCallFormat(
+                "XML syntax error in generated tool call".into(),
+            )),
+            ScriptedResponse::Message(assistant_text("recovered answer")),
+        ],
+        vec![Arc::new(BashTool)],
+    );
+    let mut agent = h.agent;
+    agent.config.stop_policy = None;
+    let outcome = agent
+        .run(
+            "answer this request",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+
+    assert!(matches!(
+        outcome,
+        TurnOutcome::Completed { response } if response.text_content() == "recovered answer"
+    ));
+    {
+        let requests = h.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2, "one repair dispatch follows the error");
+        assert_eq!(requests[1].messages.len(), requests[0].messages.len() + 1);
+        assert!(
+            requests[1].messages.iter().any(|message| {
+                message.content.iter().any(|block| {
+                matches!(block, ContentBlock::Text { text } if text.contains("[tool-call-repair]"))
+            })
+            }),
+            "repair directive must be included in the second request"
+        );
+    }
+
+    let session = agent.session.lock().await;
+    let records = session.message_chain();
+    assert!(records.iter().any(|(_, message)| {
+        message.content.iter().any(|block| {
+            matches!(block, ContentBlock::Text { text } if text.contains("[tool-call-repair]"))
+        })
+    }));
+    assert!(
+        !records.iter().any(|(_, message)| message
+            .content
+            .iter()
+            .any(|block| { matches!(block, ContentBlock::ToolResult { .. }) })),
+        "the malformed envelope must not execute a tool"
+    );
+}
+
+#[tokio::test]
 async fn unknown_tool_becomes_error_value_not_crash() {
     let h = harness(
         vec![
@@ -627,6 +683,9 @@ async fn skill_name_tool_call_returns_typed_loader_recovery() {
     assert!(result.contains("capability_kind_mismatch"));
     assert!(result.contains("\"tool\":\"skill\""));
     assert!(result.contains("\"name\":\"code-task\""));
+    assert!(result.contains("registered as a skill, not a callable tool"));
+    assert!(result.contains("call `skill` with arguments `{\"name\":\"code-task\"}`"));
+    assert!(result.contains("Do not retry `code-task` as a tool"));
 }
 
 #[tokio::test]
@@ -799,7 +858,7 @@ async fn projection_invariant_every_request_message_is_logged() {
     }
 }
 
-/// Invariant 1: the host-supplied tail (clock and stance) reaches the model
+/// Invariant 1: the host-supplied tail (the clock) reaches the model
 /// only after its exact bytes are in the ledger.
 #[tokio::test]
 async fn the_turn_context_the_model_reads_is_recorded_first() {
@@ -809,7 +868,6 @@ async fn the_turn_context_the_model_reads_is_recorded_first() {
     );
     h.agent.config.tail = vak_agent::TailInput {
         temporal: "Current time: 2026-09-30 10:00 UTC.".into(),
-        stance: "Answer directly.".into(),
     };
     let outcome = h
         .agent
@@ -839,10 +897,7 @@ async fn the_turn_context_the_model_reads_is_recorded_first() {
         recorded.detail.as_deref(),
         Some("Current time: 2026-09-30 10:00 UTC.")
     );
-    assert_eq!(
-        recorded.data.get("stance").map(String::as_str),
-        Some("Answer directly.")
-    );
+    assert_eq!(recorded.data.get("stance"), None);
     drop(session);
     let request = h.requests.lock().unwrap()[0].clone();
     let sent = request

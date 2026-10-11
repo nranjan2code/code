@@ -72,10 +72,29 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// invented ones; plural conversation nouns ("recent conversations") stay
 /// local. 13 — a greeting followed only by a word for when ("how are you
 /// today?") is social and asks for no current value; the lexicon is
-/// unchanged. The test
-/// `lexicon_digest_matches_resolver_version` pins the tables to this number
-/// so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 13;
+/// unchanged. 14 — a nearby determiner makes `schedule` a noun rather than
+/// an external-operation verb (`keep the three-hour schedule`); explicit
+/// scheduling requests still read as `Operate`. 15 — deixis in a later part
+/// of the same message binds to that message's earlier part, not to an older
+/// conversation thread. 16 — inferred continuation requires two shared
+/// content words, the existing merge threshold. 17 — local pronouns in a
+/// self-contained request do not identify older work, and presentation
+/// language does not establish topic overlap. 18 — a dependent or sequential
+/// part inherits its relationship from the preceding part in this message;
+/// it cannot independently bind to an unrelated older thread. 19 — a
+/// sentence that only shapes how that preceding answer is presented remains
+/// part of the same request. The test
+/// 20 — a lexical continuation must cover at least half of the older thread's
+/// topic words, so a few broad nouns in a detailed new request cannot attach
+/// it to a different scenario. 21 — colon-led, comma-separated timed items
+/// are schedule labels rather than imperative actions, and `list` without a
+/// direct object is read as a noun. 22 — comma-separated timed phases after
+/// a context phrase receive the same reading without a colon, so a phase
+/// label that resembles a workspace command does not widen an in-chat plan.
+/// The test
+/// `lexicon_digest_matches_resolver_version` pins the tables to this number so
+/// a change to either without the other fails CI.
+pub const RESOLVER_VERSION: u32 = 22;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -372,20 +391,51 @@ pub fn resolve(
                 },
                 None => StrandRelation::Independent,
             },
-            Boundary::Addition => match strands.last() {
+            Boundary::Addition | Boundary::Sentence => match strands.last() {
                 Some(previous) if extraction.deictic => StrandRelation::Dependent {
                     on: previous.strand_id.clone(),
                 },
                 _ => StrandRelation::Independent,
             },
         };
-        let lineage = lineage_for(
-            &reading,
-            extraction.deictic,
-            &text,
-            &request.history.open_threads,
-            request.lineage_hint,
-        );
+        // Deixis inside a compound request points to an earlier part of this
+        // same message before it can point to a thread from an older turn.
+        // `relation` records that local dependency; allowing `lineage_for` to
+        // search session threads here made "A box has 31 crayons ...? Show it
+        // clearly" continue whichever old answer thread happened to be open.
+        // Explicit `/goal fix` and `/goal replace` remain authoritative.
+        let same_message_parent = match &relation {
+            StrandRelation::Sequential { after } | StrandRelation::Dependent { on: after } => {
+                strands.iter().find(|previous| previous.strand_id == *after)
+            }
+            StrandRelation::Independent => None,
+        };
+        let local_lineage = same_message_parent.map(|parent| match &parent.lineage {
+            // A local child of work already attached to an older thread stays
+            // with that thread. A child of a new or replaced strand must not
+            // reach back to the replaced or merely recent thread by pronoun.
+            Lineage::Continues { .. } | Lineage::Corrects { .. } => parent.lineage.clone(),
+            Lineage::New | Lineage::Replaces { .. } => Lineage::New,
+        });
+        let lineage = if request.lineage_hint.is_none() {
+            local_lineage.unwrap_or_else(|| {
+                lineage_for(
+                    &reading,
+                    extraction.deictic && index == 0,
+                    &text,
+                    &request.history.open_threads,
+                    request.lineage_hint,
+                )
+            })
+        } else {
+            lineage_for(
+                &reading,
+                extraction.deictic && index == 0,
+                &text,
+                &request.history.open_threads,
+                request.lineage_hint,
+            )
+        };
         let thread_id = lineage
             .continued_thread()
             .map(str::to_string)
@@ -457,8 +507,8 @@ pub fn resolve(
     }
 }
 
-/// The turn's engagement from its strands: [`Engagement::compose`], plus the
-/// model-visible note that lists the parts when there are several.
+/// The turn's engagement from its strands: [`Engagement::compose`], plus a
+/// model-visible note only when it carries relationship or per-part guidance.
 fn recompose(strands: &[Strand]) -> Engagement {
     let mut engagement = Engagement::compose(
         &strands
@@ -467,7 +517,10 @@ fn recompose(strands: &[Strand]) -> Engagement {
             .collect::<Vec<_>>(),
     );
     if strands.len() > 1 {
-        engagement.posture.note = Some(strand_note(strands));
+        let note = strand_note(strands);
+        if !note.is_empty() {
+            engagement.posture.note = Some(note);
+        }
     }
     engagement
 }
@@ -477,14 +530,41 @@ fn recompose(strands: &[Strand]) -> Engagement {
 /// An explicit hint always wins and always names a thread — the most
 /// specific match, or the most recent open thread when nothing matches.
 /// Otherwise a strand continues a thread when it shares the act and either
-/// points at something ("it", "that") or shares a content word. A reading
+/// shares at least two topic words covering half the older thread, or is a
+/// short deictic follow-up. A long,
+/// self-contained request may contain local words like "that" or "it"; they
+/// do not identify an older thread. Generic presentation preferences do not
+/// establish topic overlap. A reading
 /// that matches nothing starts a thread of its own; a wrong `New` costs a
 /// duplicate thread, a wrong `Continues` merges unrelated work, so the tie
 /// goes to `New`.
-/// Content words a clause must share with a second open thread before it is
-/// read as merging that thread into the one it continues. Stricter than the
-/// one word that makes a continuation: a wrong merge joins unrelated work.
+/// Content words a clause must share with another open thread before it is
+/// read as merging that thread into the one it continues. The overlap must
+/// also cover half the other thread's subject. A single shared word is too
+/// weak to establish either a merge or a continuation: common
+/// planning words linked otherwise unrelated scenarios and pulled their full
+/// histories into later requests. Short follow-ups such as "refactor it"
+/// can still identify a continuation on their own.
 const MERGE_MIN_OVERLAP: usize = 2;
+
+/// A continuation must account for enough of the older thread's subject to
+/// distinguish it from a new request that happens to reuse a few broad words.
+/// Measure against the stored thread so concise follow-ups need not repeat
+/// every current detail.
+fn enough_topic_overlap(shared: usize, thread: &ThreadFact) -> bool {
+    shared >= MERGE_MIN_OVERLAP && shared.saturating_mul(2) >= thread.keywords.len()
+}
+
+const PRESENTATION_WORDS: &[&str] = &[
+    "easy", "scan", "share", "simple", "clear", "short", "brief", "concise", "readable",
+];
+
+fn topic_keywords(text: &str) -> BTreeSet<String> {
+    crate::strand::keywords(text)
+        .into_iter()
+        .filter(|word| !PRESENTATION_WORDS.contains(&word.as_str()))
+        .collect()
+}
 
 fn lineage_for(
     reading: &Reading,
@@ -493,7 +573,8 @@ fn lineage_for(
     open_threads: &[ThreadFact],
     hint: Option<LineageHint>,
 ) -> Lineage {
-    let keywords = crate::strand::keywords(text);
+    let keywords = topic_keywords(text);
+    let short_deictic_follow_up = deictic && crate::strand::keywords(text).len() <= 3;
     let overlap = |thread: &ThreadFact| thread.keywords.intersection(&keywords).count();
     let candidates: Vec<&ThreadFact> = open_threads
         .iter()
@@ -503,7 +584,10 @@ fn lineage_for(
         .iter()
         .copied()
         .max_by_key(|thread| (overlap(thread), reading.acts().contains(&thread.act)))
-        .filter(|thread| overlap(thread) > 0 || (deictic && reading.acts().contains(&thread.act)));
+        .filter(|thread| {
+            enough_topic_overlap(overlap(thread), thread)
+                || (short_deictic_follow_up && reading.acts().contains(&thread.act))
+        });
     match hint {
         Some(LineageHint::Corrects) => {
             let thread = best.or(open_threads.last());
@@ -527,7 +611,9 @@ fn lineage_for(
         thread_id: t.thread_id.clone(),
         merges: candidates
             .iter()
-            .filter(|other| other.thread_id != t.thread_id && overlap(other) >= MERGE_MIN_OVERLAP)
+            .filter(|other| {
+                other.thread_id != t.thread_id && enough_topic_overlap(overlap(other), other)
+            })
             .map(|other| other.thread_id.clone())
             .collect(),
     })
@@ -592,98 +678,36 @@ fn composite_reading(strands: &[Strand]) -> Reading {
     out
 }
 
-/// How many parts the note names one by one. Beyond this the parts still
-/// exist — every one is read, threaded and governed — but the note says
-/// they continue rather than listing each.
-const LISTED_PARTS: usize = 12;
-
-/// `[1, 2, 3, 7]` → `1–3, 7`.
-fn format_parts(parts: &[usize]) -> String {
-    let mut out: Vec<String> = Vec::new();
-    let mut index = 0;
-    while index < parts.len() {
-        let start = parts[index];
-        let mut end = start;
-        while index + 1 < parts.len() && parts[index + 1] == end + 1 {
-            index += 1;
-            end = parts[index];
-        }
-        out.push(if end > start {
-            format!("{start}–{end}")
-        } else {
-            start.to_string()
-        });
-        index += 1;
-    }
-    out.join(", ")
-}
-
-/// The model-visible note for a multi-strand turn: how many parts there are,
-/// how they depend on each other, then the guidance their engagements carry —
-/// each line once, naming the parts it applies to.
-///
-/// Parts are named by their order in the user's own message, never quoted:
-/// this note rides in the per-turn tail, and restating the request there
-/// reads as the user asking again (docs/design/68-context-engine.md §6). Nor
-/// are they labelled by act: "Part 2: author" is this runtime's vocabulary,
-/// not the user's, and a small model copied it into its answer as a heading.
-/// Order and dependency are plain sentences, and a part with neither gets no
-/// line at all.
+/// The model-visible note for a multi-strand turn: guidance that holds for
+/// every part of the request, unlabelled. Nothing here names a part by
+/// number or says one part uses another or continues earlier work: the
+/// model was never shown the parts, and "Part 3 uses the result of part 2"
+/// sent a model looking for work that did not exist (found live 2026-10-11,
+/// docs/design/86-model-plans-runtime-checks.md §1). Relations and lineage
+/// stay in the intent record for audit; what the request asks for is the
+/// model's own plan. Parts are never quoted either: this note rides in the
+/// per-turn tail, and restating the request there reads as the user asking
+/// again (docs/design/68-context-engine.md §6).
 fn strand_note(strands: &[Strand]) -> String {
-    let mut lines = vec![format!(
-        "The user's message has {} parts, in the order written. Address each; do not stop after the first.",
-        strands.len()
-    )];
-    let position = |id: &str, fallback: usize| {
-        strands
-            .iter()
-            .position(|s| s.strand_id == id)
-            .map(|p| p + 1)
-            .unwrap_or(fallback)
+    let mut lines: Vec<&str> = Vec::new();
+    let Some((first, rest)) = strands.split_first() else {
+        return String::new();
     };
-    for (index, strand) in strands.iter().enumerate().take(LISTED_PARTS) {
-        let part = index + 1;
-        match &strand.relation {
-            StrandRelation::Independent => {}
-            StrandRelation::Sequential { after } => {
-                lines.push(format!(
-                    "Do part {part} after part {}.",
-                    position(after, index)
-                ));
-            }
-            StrandRelation::Dependent { on } => {
-                lines.push(format!(
-                    "Part {part} uses the result of part {}.",
-                    position(on, index)
-                ));
-            }
+    let Some(note) = &first.engagement.posture.note else {
+        return String::new();
+    };
+    for line in note.lines() {
+        let shared = rest.iter().all(|strand| {
+            strand
+                .engagement
+                .posture
+                .note
+                .as_deref()
+                .is_some_and(|other| other.lines().any(|candidate| candidate == line))
+        });
+        if shared && !lines.contains(&line) {
+            lines.push(line);
         }
-        match &strand.lineage {
-            Lineage::New => {}
-            Lineage::Continues { .. } => lines.push(format!("Part {part} continues earlier work.")),
-            Lineage::Corrects { .. } => lines.push(format!("Part {part} corrects earlier work.")),
-            Lineage::Replaces { .. } => lines.push(format!("Part {part} replaces earlier work.")),
-        }
-    }
-    let mut grouped: Vec<(String, Vec<usize>)> = Vec::new();
-    for (index, strand) in strands.iter().enumerate() {
-        let Some(note) = &strand.engagement.posture.note else {
-            continue;
-        };
-        for line in note.lines() {
-            match grouped.iter_mut().find(|(text, _)| text == line) {
-                Some((_, parts)) => parts.push(index + 1),
-                None => grouped.push((line.to_string(), vec![index + 1])),
-            }
-        }
-    }
-    for (line, parts) in grouped {
-        let label = if parts.len() == 1 {
-            format!("For part {}", parts[0])
-        } else {
-            format!("For parts {}", format_parts(&parts))
-        };
-        lines.push(format!("{label}: {line}"));
     }
     lines.join("\n")
 }
@@ -1392,8 +1416,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            13,
-            "7b2e45638aca545669738ff350e5778d1291a8b3458f3255b77c573b489bd120",
+            22,
+            "0053b8ab40fb608ff7145771fc6f38c557612cbd3314f50c8c8be55a7db4f49c",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(
@@ -1713,14 +1737,174 @@ mod tests {
         let domains = &intent.engagement.limits.required_domains;
         assert!(domains.contains("live-data"), "answer's domains lost");
         assert!(domains.contains("code-exec"), "modify's domains lost");
-        // And the model is told there are two parts, without the request
-        // being quoted back at it.
-        let note = intent.engagement.posture.note.as_deref().unwrap();
-        assert!(note.contains("2 parts"), "{note}");
-        assert!(note.contains("after part 1"), "{note}");
+        // The order is in the user's own words; the model is not told about
+        // parts it was never shown, nor is the request quoted back at it.
+        let note = intent
+            .engagement
+            .posture
+            .note
+            .as_deref()
+            .unwrap_or_default();
+        assert!(!note.to_lowercase().contains("part "), "{note}");
         for strand in &intent.strands {
             assert!(!note.contains(strand.text.trim()), "quoted: {note}");
         }
+    }
+
+    #[test]
+    fn independent_new_outputs_do_not_add_a_count_only_model_note() {
+        let intent = resolve_text(
+            "For a 50-minute science club session with 12 students, use this schedule: welcome 10 minutes, build a simple model 25 minutes, clean up 15 minutes. Budget is $40: materials $28 and safety supplies $12. Give me a practical plan with a short checklist and the exact budget split, easy to share.",
+        )
+        .intent();
+        assert!(intent.strands.len() > 1);
+        assert!(intent.model_visible().is_none());
+    }
+
+    #[test]
+    fn timeboxed_schedule_labels_and_supply_list_do_not_expand_work_or_history() {
+        let intent = resolve_text(
+            "At the library, we're holding a 35-minute art session for 8 children: set up 5 minutes, painting 20 minutes, tidy up 10 minutes. We have $28: paper $16 and paint $12. Make an easy-to-share plan and supply list, with the budget adding up exactly.",
+        )
+        .intent();
+
+        assert_eq!(intent.reading.act, Act::Author);
+        assert_eq!(intent.strands.len(), 1);
+        assert_eq!(
+            intent.strands[0].engagement.posture.context,
+            crate::engage::ContextProfile::Recall
+        );
+        assert!(
+            !intent
+                .engagement
+                .limits
+                .required_domains
+                .contains("code-exec"),
+            "a timed activity label must not load code execution"
+        );
+        assert!(
+            !intent.engagement.limits.required_domains.contains("vcs"),
+            "a timed activity label or noun `list` must not request repository search"
+        );
+        assert!(!intent.reading.alternate_acts.contains(&Act::Modify));
+        assert!(!intent.reading.alternate_acts.contains(&Act::Locate));
+    }
+
+    #[test]
+    fn timed_phases_without_a_colon_do_not_turn_a_plan_into_workspace_changes() {
+        let intent = resolve_text(
+            "For our 30-minute neighborhood book swap for 6 people, welcome 5 minutes, exchanging 20 minutes, tidy up 5 minutes. Budget is $18: labels $6 and refreshments $12. Make a plan and cost breakdown suitable to share.",
+        )
+        .intent();
+
+        assert_ne!(
+            intent.reading.act,
+            Act::Modify,
+            "{:?}",
+            intent.provenance.signals
+        );
+        assert!(!intent.reading.alternate_acts.contains(&Act::Modify));
+        assert!(
+            intent
+                .strands
+                .iter()
+                .all(|strand| strand.reading.act != Act::Modify)
+        );
+        assert!(
+            !intent
+                .engagement
+                .limits
+                .required_domains
+                .contains("code-exec")
+        );
+        assert!(
+            !intent
+                .engagement
+                .limits
+                .required_domains
+                .contains("documents")
+        );
+    }
+
+    #[test]
+    fn list_remains_a_verb_when_it_has_a_direct_object() {
+        assert_eq!(
+            resolve_text("List the supplies and their prices")
+                .intent()
+                .reading
+                .act,
+            Act::Locate
+        );
+    }
+
+    #[test]
+    fn timed_labels_do_not_hide_a_direct_action_outside_the_schedule() {
+        let intent = resolve_text(
+            "Fix the projector before the 30-minute workshop: introduction 5 minutes, painting 20 minutes, cleanup 5 minutes.",
+        )
+        .intent();
+        assert!(intent.reading.acts().contains(&Act::Modify));
+    }
+
+    #[test]
+    fn same_message_presentation_refinement_does_not_continue_an_unrelated_open_thread() {
+        let mut request =
+            request("A box has 31 crayons and 8 are missing. How many remain? Show it clearly.");
+        request.history.open_threads.push(ThreadFact {
+            thread_id: "older-garden-thread".into(),
+            act: Act::Answer,
+            domains: BTreeSet::new(),
+            keywords: ["garden".into(), "plan".into()].into(),
+        });
+        let intent = resolve(
+            &request,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+
+        assert_eq!(intent.strands.len(), 1);
+        assert_eq!(intent.strands[0].lineage, Lineage::New);
+        assert!(intent.model_visible().is_none());
+    }
+
+    #[test]
+    fn a_sequenced_same_message_step_keeps_a_real_parent_thread() {
+        let mut request = request("How many garden plants remain? Then show it clearly.");
+        request.history.open_threads.push(ThreadFact {
+            thread_id: "active-garden-thread".into(),
+            act: Act::Answer,
+            domains: BTreeSet::new(),
+            keywords: ["garden".into(), "plants".into()].into(),
+        });
+        let intent = resolve(
+            &request,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+
+        assert_eq!(intent.strands.len(), 2);
+        assert!(matches!(
+            intent.strands[0].lineage,
+            Lineage::Continues { ref thread_id, .. } if thread_id == "active-garden-thread"
+        ));
+        assert_eq!(
+            intent.strands[1].lineage, intent.strands[0].lineage,
+            "a local dependent step must remain attached to its parent work"
+        );
+    }
+
+    #[test]
+    fn explicit_addition_remains_a_distinct_part_after_sentence_refinement() {
+        let intent = resolve_text("How many crayons remain? Also show it clearly.").intent();
+        assert_eq!(intent.strands.len(), 2);
+        assert!(matches!(
+            intent.strands[1].relation,
+            StrandRelation::Dependent { .. }
+        ));
     }
 
     /// Strand ids come from the host's turn id, so a thread — and the
@@ -1801,6 +1985,154 @@ mod tests {
             }
         );
         assert_eq!(intent.strands[0].thread_id, "s0.0");
+    }
+
+    #[test]
+    fn two_shared_content_words_continue_without_a_pronoun() {
+        let mut req = request("Refactor the parser module");
+        req.history.turn_index = 2;
+        req.history.open_threads = vec![ThreadFact {
+            thread_id: "parser-work".into(),
+            act: Act::Modify,
+            domains: BTreeSet::new(),
+            keywords: crate::strand::keywords("refactor the parser module"),
+        }];
+
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+
+        assert_eq!(
+            intent.strands[0].lineage,
+            Lineage::Continues {
+                thread_id: "parser-work".into(),
+                merges: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_detailed_new_plan_does_not_attach_to_an_older_club_plan_by_common_nouns() {
+        let text = "For a 24-minute book club, use this schedule: welcome 4 minutes, reading 16 minutes, wrap-up 4 minutes. Budget: tea $10 and fruit $8, total $18. Make it easy to share.";
+        let mut req = request(text);
+        req.history.turn_index = 112;
+        req.history.previous_act = Some(Act::Answer);
+        req.history.open_threads = vec![ThreadFact {
+            thread_id: "older-art-club-plan".into(),
+            act: Act::Answer,
+            domains: BTreeSet::new(),
+            keywords: crate::strand::keywords(
+                "Plan a 35-minute art club for 8 kids: setup, painting, and cleanup. Budget $28 for materials and paint; include a supply checklist.",
+            ),
+        }];
+
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+
+        assert!(
+            intent
+                .strands
+                .iter()
+                .all(|strand| matches!(strand.lineage, Lineage::New)),
+            "{:?}",
+            intent
+                .strands
+                .iter()
+                .map(|strand| (&strand.text, &strand.lineage))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            intent
+                .model_visible()
+                .is_none_or(|note| !note.contains("continues earlier work")),
+            "{:?}",
+            intent.model_visible()
+        );
+    }
+
+    #[test]
+    fn a_later_part_pronoun_stays_with_its_own_request() {
+        let mut req = request("Write a short event plan. Also make it easy to share.");
+        req.history.turn_index = 2;
+        req.history.open_threads = vec![ThreadFact {
+            thread_id: "older-plan".into(),
+            act: Act::Author,
+            domains: BTreeSet::new(),
+            keywords: crate::strand::keywords("prepare a release timeline"),
+        }];
+
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+
+        assert_eq!(intent.strands.len(), 2);
+        assert_eq!(
+            intent.strands[1].relation,
+            StrandRelation::Dependent {
+                on: intent.strands[0].strand_id.clone(),
+            }
+        );
+        assert_eq!(intent.strands[1].lineage, Lineage::New);
+    }
+
+    #[test]
+    fn one_shared_planning_word_does_not_continue_an_unrelated_thread() {
+        let mut req = request("Write a short book-club schedule.");
+        req.history.turn_index = 2;
+        req.history.open_threads = vec![ThreadFact {
+            thread_id: "older-event".into(),
+            act: Act::Author,
+            domains: BTreeSet::new(),
+            keywords: BTreeSet::from(["schedule".into()]),
+        }];
+
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+
+        assert_eq!(intent.strands.len(), 1);
+        assert_eq!(intent.strands[0].lineage, Lineage::New);
+    }
+
+    #[test]
+    fn local_deixis_and_presentation_words_do_not_link_a_new_scenario() {
+        let mut req = request(
+            "A few of us are meeting tomorrow to plan a community garden. There will be 6 neighbors, we have about an hour and a half, and I can spend up to $45 on seed packets, drinks and plant labels. Could you suggest an easy plan for the time, a small shopping list, and a way to use the money that adds up to $45? I'd like to share it in our group chat.",
+        );
+        req.history.turn_index = 20;
+        req.history.open_threads = vec![ThreadFact {
+            thread_id: "older-event-style".into(),
+            act: Act::Author,
+            domains: BTreeSet::new(),
+            keywords: crate::strand::keywords("Make it easy to scan and share"),
+        }];
+
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+
+        assert_eq!(intent.strands[0].lineage, Lineage::New);
     }
 
     /// A clause that names two open threads continues the closer one and
@@ -2210,18 +2542,22 @@ mod tests {
         assert_eq!(intent.reading.act, Act::Analyze);
     }
 
-    /// Any number of real parts is supported; the note stays bounded.
+    /// Any number of real parts is read; the note names none of them.
     #[test]
-    fn many_parts_are_all_read_and_the_note_stays_bounded() {
+    fn many_parts_are_all_read_and_the_note_names_no_part() {
         let mut text = String::from("do these:\n");
         for i in 0..20 {
             text.push_str(&format!("{}. fix the parser case {i}\n", i + 1));
         }
         let intent = resolve_text(&text).intent();
         assert_eq!(intent.strands.len(), 20);
-        let note = intent.engagement.posture.note.as_deref().unwrap();
-        assert!(note.contains("20 parts"), "{note}");
-        assert!(note.lines().count() <= 2 * LISTED_PARTS + 4, "{note}");
+        let note = intent
+            .engagement
+            .posture
+            .note
+            .as_deref()
+            .unwrap_or_default();
+        assert!(!note.to_lowercase().contains("part "), "{note}");
         // No part is labelled with the runtime's own act names.
         for act in Act::ALL {
             assert!(!note.contains(&format!(": {}", act.as_str())), "{note}");

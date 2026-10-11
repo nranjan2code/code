@@ -105,14 +105,13 @@ Five bounded, system-authored checks run inside the loop, each with its own
   repeats a prior turn's `TurnCard` narration verbatim instead of addressing
   the current directive — domain no longer enters the check. The nudge
   points at the user's latest message and never quotes it — an echo reads as
-  the user asking again. Three consecutive events end the turn via
-  `degraded_drift_outcome()`, the same shape as the tool-repair exhaustion
-  below.
+  the user asking again. It is sent once and the answer redone; an answer
+  that drifts again straight after it stands as the model's own, with a
+  `model-drift` diagnostic. No count of events ends a turn.
 - **Identical-card repeat breaker**: an `emit_*_card` call identical to one
-  already shown this run is acknowledged as a no-op (not an error). After
-  three consecutive all-repeat batches, `card_repeat_outcome()` closes the
-  turn on that card as its answer instead of spending the turn budget on
-  acknowledgements.
+  already shown this run is acknowledged as a no-op (not an error). A step
+  that only repeats shown cards again, straight after that acknowledgement,
+  closes the turn on that card as its answer (`card_repeat_outcome()`).
 - **`[grounding-check]`**: the step right after a retrieval gave an answer
   that shows no sign of using it. "Uses" is judged from the result, not the
   answer's format: the answer repeats a host or a figure the retrieval
@@ -121,9 +120,12 @@ Five bounded, system-authored checks run inside the loop, each with its own
   retrieval clears the check, and a result with nothing checkable in it never
   triggers one. It used to pass only answers containing a `vak` fence, which
   sent correct cited prose back for a redo.
-- The `[fence-check]`, `[duplicate-card-check]` and `[presentation-check]`
-  nudges are unchanged, except that a presentation check loads the card tool
-  it names for the redo; all `ControlKind` variants are enumerated in
+- The `[fence-check]`, `[duplicate-card-check]`, `[presentation-check]` and
+  `[card-completion-check]` nudges keep repairs within the current logical
+  turn. A card-completion check catches structured final text that the card
+  contract would hide, then asks the model to emit missing parts or repair
+  incomplete cards; a presentation check loads the card tool it names for the
+  redo. All `ControlKind` variants are enumerated in
   `vak-intent/src/control.rs`.
 
 Every one of these was found by replaying a real failing session against a

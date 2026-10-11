@@ -83,10 +83,11 @@ pub use engage::{
 pub use engage::{DOMAIN_VOCABULARY, FLOOR_DOMAINS};
 pub use goal::{
     GoalControlState, GoalRelation, GoalState, GoalUpdate, goal_relation, next_goal_update,
+    next_goal_update_with_relationship,
 };
 pub use limits::{DomainSet, Limits};
 pub use outcome::{
-    Command, CompletionVerdict, ControlSource, EvidenceReceipt, EvidenceState,
+    Command, CompletionVerdict, ControlSource, DeliverableForm, EvidenceReceipt, EvidenceState,
     InterventionDecision, InterventionEvaluation, InterventionKind, InterventionRequest,
     OutcomeRequirement, OutcomeSpec, OutcomeStatus, RequirementEvaluation, RequirementImportance,
     RequirementKind, RequirementOrigin, RequirementStatus, ToolFailureLedger, TurnFacts,

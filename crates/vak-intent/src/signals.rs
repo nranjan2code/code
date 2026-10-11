@@ -900,9 +900,27 @@ const DETERMINERS: &[&str] = &[
     "the", "a", "an", "this", "that", "our", "my", "your", "its", "their", "each", "of",
 ];
 
+/// Words that commonly complete the noun phrase "a list …" rather than act
+/// as the direct object of the verb "list". A request to "list the supplies"
+/// has an object after `list`; "a supply list, with costs" does not.
+const LIST_NOUN_FOLLOWERS: &[&str] = &["and", "for", "including", "of", "or", "with"];
+
 /// Deictic markers: the request points at something it does not contain.
 pub(crate) const DEICTIC_WORDS: &[&str] = &[
     "this", "that", "it", "these", "those", "here", "there", "again", "same",
+];
+
+/// Verbs that shape how the immediately preceding answer is shown, rather
+/// than asking for another result. Used only with a same-message deictic and
+/// a sentence boundary; explicit sequence/addition markers still start work.
+pub(crate) const OUTPUT_REFINEMENT_VERBS: &[&str] = &[
+    "display",
+    "format",
+    "present",
+    "render",
+    "show",
+    "visualise",
+    "visualize",
 ];
 
 /// Pronouns that leave a request with no object of its own when they end
@@ -1319,6 +1337,20 @@ impl ClauseRead {
     /// question, or an instruction or wish that names something to do.
     /// Everything else is context for the part beside it.
     pub(crate) fn starts_part(&self) -> bool {
+        if self.boundary == crate::strand::Boundary::Sentence
+            && self
+                .tokens
+                .words
+                .iter()
+                .any(|word| DEICTIC_WORDS.contains(&word.as_str()))
+            && self
+                .tokens
+                .words
+                .first()
+                .is_some_and(|word| OUTPUT_REFINEMENT_VERBS.contains(&word.as_str()))
+        {
+            return false;
+        }
         match self.kind {
             ClauseKind::Question => true,
             ClauseKind::Imperative | ClauseKind::Request => self.has_act_votes(),
@@ -1329,12 +1361,68 @@ impl ClauseRead {
     /// Whether this clause votes for any act at all.
     fn has_act_votes(&self) -> bool {
         match self.kind {
-            ClauseKind::Statement | ClauseKind::Social => {
-                (1..self.tokens.len()).any(|i| self.is_head(i) && is_lexicon_verb(&self.tokens, i))
-            }
-            _ => (0..self.tokens.len())
-                .any(|i| !self.consumed[i] && is_lexicon_verb(&self.tokens, i)),
+            ClauseKind::Statement | ClauseKind::Social => (1..self.tokens.len()).any(|i| {
+                self.opens_instruction(i)
+                    && !self.is_timed_activity_label(i)
+                    && !self.is_noun_list(i)
+                    && is_lexicon_verb(&self.tokens, i)
+            }),
+            _ => (0..self.tokens.len()).any(|i| {
+                !self.consumed[i]
+                    && !self.is_timed_activity_label(i)
+                    && !self.is_noun_list(i)
+                    && is_lexicon_verb(&self.tokens, i)
+            }),
         }
+    }
+
+    /// A clause can contain a comma-separated schedule whose activity labels
+    /// happen to look like commands ("tidy up 10 minutes"). A colon is a
+    /// common introduction, but users also write phases directly after a
+    /// duration/context phrase. When at least two items after the introduction
+    /// each carry a duration, their verbs describe the schedule; they do not
+    /// request separate workspace actions.
+    fn is_timed_activity_label(&self, index: usize) -> bool {
+        let (prefix, list) = if let Some((prefix, list)) = self.text.split_once(':') {
+            (prefix, list)
+        } else {
+            let Some((prefix, list)) = self.text.split_once(',') else {
+                return false;
+            };
+            // Without a colon, require a three-or-more item comma series:
+            // the first segment introduces context, and the remaining two
+            // or more are the timed phases.
+            if list.matches(',').count() < 1 {
+                return false;
+            }
+            (prefix, list)
+        };
+        let items: Vec<&str> = list.split(',').collect();
+        if items.len() < 2 || !items.iter().all(|item| has_duration_measure(item)) {
+            return false;
+        }
+        index >= words(prefix).len()
+    }
+
+    /// `list` is a request verb when it takes an object ("list the supplies");
+    /// at the end of "a supply list, with costs" it is a noun.
+    fn is_noun_list(&self, index: usize) -> bool {
+        self.tokens.matches(index, &Target::new("list"))
+            && (self
+                .tokens
+                .get(index + 1)
+                .is_none_or(|next| LIST_NOUN_FOLLOWERS.contains(&next)))
+    }
+
+    /// Whether a verb at `index`, inside a clause that did not open with it,
+    /// starts an instruction of its own. A verb joined only by `and` or `or`
+    /// shares the subject already given ("we restock on Saturdays and check
+    /// the dates" describes what we do); a break in the sentence or a
+    /// sequencing word ("the build is broken, fix it", "then run it") does
+    /// not.
+    fn opens_instruction(&self, index: usize) -> bool {
+        self.is_head(index)
+            && !(index > 0 && matches!(self.tokens.get(index - 1), Some("and" | "or")))
     }
 
     /// Whether the token at `index` heads its (sub-)clause: first word, or
@@ -1371,6 +1459,22 @@ impl ClauseRead {
         }
         false
     }
+}
+
+fn has_duration_measure(text: &str) -> bool {
+    const UNITS: &[&str] = &[
+        "minute", "minutes", "min", "mins", "hour", "hours", "hr", "hrs", "second", "seconds",
+        "sec", "secs",
+    ];
+    let tokens = words(text);
+    tokens
+        .windows(2)
+        .any(|pair| pair[0].parse::<u64>().is_ok() && UNITS.contains(&pair[1].as_str()))
+        || tokens.iter().any(|token| {
+            token.split_once('-').is_some_and(|(amount, unit)| {
+                amount.parse::<u64>().is_ok() && UNITS.contains(&unit)
+            })
+        })
 }
 
 fn starts_with_words(tokens: &[String], phrase: &str) -> Option<usize> {
@@ -1553,7 +1657,12 @@ fn classify(
     }
     // A verb heading a later sub-clause ("the build is broken, fix it")
     // makes the clause an instruction whatever its first words say.
-    if (1..tokens.len()).any(|i| read.is_head(i) && is_lexicon_verb(tokens, i)) {
+    if (1..tokens.len()).any(|i| {
+        read.opens_instruction(i)
+            && !read.is_timed_activity_label(i)
+            && !read.is_noun_list(i)
+            && is_lexicon_verb(tokens, i)
+    }) {
         return ClauseKind::Imperative;
     }
     // "Build fails on CI", "the deploy failed", "move occurs because…": a
@@ -1764,6 +1873,9 @@ pub fn lexicon_digest() -> String {
     for word in DEICTIC_WORDS {
         out.push_str(&format!("deictic:{word}\n"));
     }
+    for verb in OUTPUT_REFINEMENT_VERBS {
+        out.push_str(&format!("output-refinement:{verb}\n"));
+    }
     for word in BARE_PRONOUNS {
         out.push_str(&format!("bare:{word}\n"));
     }
@@ -1775,6 +1887,10 @@ pub fn lexicon_digest() -> String {
     }
     out.push_str(&format!("floor:{}\n", Votes::<Act>::ESCALATION_FLOOR));
     out.push_str(&format!("imperative-bonus:{IMPERATIVE_BONUS}\n"));
+    out.push_str(
+        "act-context:comma-separated-items-after-an-introduction-with-a-duration-each-are-schedule-labels\n",
+    );
+    out.push_str("act-context:list-followed-by-a-noun-phrase-continuation-is-a-noun\n");
     crate::strand::segmentation_fingerprint(&mut out);
     format!("{:x}", Sha256::digest(out.as_bytes()))
 }
@@ -1999,6 +2115,11 @@ pub(crate) fn extract_part(
 
     // --- session ----------------------------------------------------------
     if out.act.is_empty()
+        // The previous turn can disambiguate a short pointer such as "that
+        // again". A long request may contain local determiners like "this
+        // schedule" while giving the full facts; do not let one such word
+        // copy the previous act into an otherwise self-contained request.
+        && part_words.len() <= 3
         && part_words
             .iter()
             .any(|word| DEICTIC_WORDS.contains(&word.as_str()))
@@ -2054,6 +2175,23 @@ fn read_acts(clause: &ClauseRead, out: &mut Extraction) {
         let Some(position) = tokens.position(target, &clause.consumed) else {
             continue;
         };
+        if clause.is_timed_activity_label(position) || clause.is_noun_list(position) {
+            continue;
+        }
+        // `schedule` is both an action ("schedule a reminder") and a common
+        // noun ("keep the three-hour schedule"). A nearby determiner before
+        // it makes the noun reading much more likely; treating that noun as
+        // an external effect blocks an ordinary planning answer at the stop
+        // gate.
+        if target.word == "schedule"
+            && (position.saturating_sub(5)..position).any(|index| {
+                tokens
+                    .get(index)
+                    .is_some_and(|word| DETERMINERS.contains(&word))
+            })
+        {
+            continue;
+        }
         let head = clause.is_head(position);
         let weight = match clause.kind {
             // A statement's first word is its subject, and its other nouns
@@ -2495,6 +2633,45 @@ mod tests {
             extraction.stakes_from_words.winner().map(|w| w.0),
             Some(Stakes::Irreversible)
         );
+    }
+
+    #[test]
+    fn a_schedule_as_a_plan_does_not_become_an_external_operation() {
+        for text in [
+            "keep the three-hour schedule",
+            "make a simple schedule for the cleanup",
+            "show the cleanup schedule",
+        ] {
+            let extraction = extract(&request(text));
+            assert_ne!(
+                extraction.act.winner().map(|winner| winner.0),
+                Some(Act::Operate),
+                "{text}: {:?}",
+                extraction.act.ranked()
+            );
+            assert_ne!(
+                extraction.stakes_from_words.winner().map(|winner| winner.0),
+                Some(Stakes::Irreversible),
+                "{text}: {:?}",
+                extraction.stakes_from_words.ranked()
+            );
+        }
+    }
+
+    #[test]
+    fn explicitly_scheduling_something_still_reads_as_an_operation() {
+        for text in [
+            "schedule a reminder for Saturday",
+            "please schedule the cleanup for Saturday",
+        ] {
+            let extraction = extract(&request(text));
+            assert_eq!(
+                extraction.act.winner().map(|winner| winner.0),
+                Some(Act::Operate),
+                "{text}: {:?}",
+                extraction.act.ranked()
+            );
+        }
     }
 
     #[test]

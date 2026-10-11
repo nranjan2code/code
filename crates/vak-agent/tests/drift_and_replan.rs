@@ -147,14 +147,13 @@ fn header(session_id: &str, dir: &std::path::Path) -> SessionHeader {
     }
 }
 
-/// Three consecutive verbatim repeats of a prior turn's answer -- the one
-/// surviving drift trigger (docs/design/68-context-engine.md §7: subject
-/// domains must never drive control flow, so a tool's declared capability
-/// domain is no longer compared against the reading's domains here) -- end
-/// the turn at the third drift event without even needing a fourth
-/// scripted response.
+/// A verbatim repeat of a prior turn's answer (the one drift trigger,
+/// docs/design/68-context-engine.md §7) is nudged once and redone. A repeat
+/// straight after the nudge stands as the model's own answer, with a
+/// diagnostic: the turn is never ended with words the model did not write,
+/// and no count of events decides it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn three_consecutive_drift_events_end_the_turn_degraded() {
+async fn an_answer_that_drifts_again_after_the_nudge_stands_as_given() {
     let dir = tempdir().unwrap();
     let mut log =
         SessionLog::create(dir.path().join("s.jsonl"), header("drift3", dir.path())).unwrap();
@@ -185,7 +184,6 @@ async fn three_consecutive_drift_events_end_the_turn_degraded() {
         responses: Mutex::new(VecDeque::from(vec![
             text("Paris is the capital."),
             text("Paris is the capital."),
-            text("Paris is the capital."),
         ])),
     });
     let cfg = AgentConfig::new("sys");
@@ -201,23 +199,25 @@ async fn three_consecutive_drift_events_end_the_turn_degraded() {
         .await;
     match outcome {
         TurnOutcome::Completed { response } => {
-            assert!(
-                response.text_content().contains("drifting"),
-                "expected the degraded drift message, got: {}",
-                response.text_content()
-            );
+            assert_eq!(response.text_content(), "Paris is the capital.");
         }
-        other => panic!("expected a degraded Completed outcome, got {other:?}"),
+        other => panic!("expected the model's own answer, got {other:?}"),
     }
 
     let session = agent.session.lock().await;
-    let saw_exhaustion = session.chain_to_root().iter().any(
-        |e| matches!(&e.payload, EntryPayload::Activity(a) if a.label == "model-drift-exhausted"),
-    );
+    let chain = session.chain_to_root();
     assert!(
-        saw_exhaustion,
-        "expected a model-drift-exhausted diagnostic"
+        chain
+            .iter()
+            .any(|e| matches!(&e.payload, EntryPayload::Activity(a) if a.label == "model-drift")),
+        "expected a model-drift diagnostic"
     );
+    let nudges = session
+        .message_chain()
+        .iter()
+        .filter(|(_, message)| message.text_content().contains("[steering-drift]"))
+        .count();
+    assert_eq!(nudges, 1, "one steering nudge, never a second");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

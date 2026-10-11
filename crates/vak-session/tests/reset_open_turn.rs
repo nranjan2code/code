@@ -182,3 +182,34 @@ fn a_reset_that_does_not_keep_the_open_turn_hides_it_for_the_summary_to_stand_in
     assert!(seen.contains("HANDOFF SUMMARY"));
     assert!(!seen.contains("a directive too large") && !seen.contains("EARLY-RESULT"));
 }
+
+#[test]
+fn a_handoff_summary_stops_after_its_turn_and_does_not_pollute_a_fresh_request() {
+    let dir = tempdir().unwrap();
+    let mut log = open(dir.path());
+    log.append_message(rec(Message::user_text("continue the long garden task")))
+        .unwrap();
+    log.append_message(rec(call("t1"))).unwrap();
+    log.append_message(rec(result("t1", "garden evidence")))
+        .unwrap();
+    log.append_handoff_reset("SUMMARY OF THE GARDEN TASK".into(), 1_000, false)
+        .unwrap();
+    let (during_handoff, _) = log.derive_with_plan_and_directive(&WorkingSetPlan::default());
+    assert!(text(&during_handoff).contains("SUMMARY OF THE GARDEN TASK"));
+
+    log.append_message(rec(Message::assistant(vec![ContentBlock::text(
+        "The garden task is complete.",
+    )])))
+    .unwrap();
+    log.append_message(rec(Message::user_text(
+        "A new art club needs a 35-minute schedule and a $28 supply budget.",
+    )))
+    .unwrap();
+    let (fresh_request, _) = log.derive_with_plan_and_directive(&WorkingSetPlan::default());
+    let seen = text(&fresh_request);
+    assert!(seen.contains("A new art club"), "{seen}");
+    assert!(
+        !seen.contains("SUMMARY OF THE GARDEN TASK"),
+        "a completed handoff must not become context for a later request: {seen}"
+    );
+}

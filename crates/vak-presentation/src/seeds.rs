@@ -12,7 +12,6 @@ const EVERYDAY: &[(&str, &str)] = &[
     ("overview", "overview"),
     ("checklist", "checklist"),
     ("schedule", "schedule"),
-    ("comparison", "comparison"),
     ("decision", "decision"),
     ("budget", "budget"),
     ("collection", "collection"),
@@ -238,6 +237,36 @@ fn list(primitive: Primitive, path: &str, item: SpecNode) -> SpecNode {
     }
 }
 
+fn raw_text_list(primitive: Primitive, path: &str) -> SpecNode {
+    SpecNode {
+        primitive,
+        props: BTreeMap::new(),
+        children: Vec::new(),
+        each: Some(Binding {
+            path: path.into(),
+            required: true,
+            empty: EmptyValue::Omit,
+        }),
+        item: Some(Box::new(SpecNode {
+            primitive: Primitive::Row,
+            props: BTreeMap::from([
+                ("raw".into(), SpecValue::Boolean { value: true }),
+                (
+                    "text".into(),
+                    SpecValue::Binding(Binding {
+                        path: "$".into(),
+                        required: true,
+                        empty: EmptyValue::Omit,
+                    }),
+                ),
+            ]),
+            children: Vec::new(),
+            each: None,
+            item: None,
+        })),
+    }
+}
+
 #[allow(clippy::manual_unwrap_or_default)]
 fn seed(id: &str, accepts: &str) -> StoredPresentation {
     let mut root_primitive = match accepts {
@@ -345,26 +374,8 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         root.item = Some(Box::new(row(Primitive::Row, &[("*", "$")])));
     } else if RECIPE_TYPES.contains(&accepts[0].as_str()) {
         root.children = vec![
-            list(
-                Primitive::IngredientList,
-                "$.ingredients",
-                row(
-                    Primitive::Row,
-                    &[
-                        ("name", "$.name"),
-                        ("amount", "$.amount"),
-                        ("unit", "$.unit"),
-                    ],
-                ),
-            ),
-            list(
-                Primitive::StepList,
-                "$.steps",
-                row(
-                    Primitive::Section,
-                    &[("text", "$.text"), ("timer_seconds", "$.timer_seconds")],
-                ),
-            ),
+            raw_text_list(Primitive::IngredientList, "$.ingredients"),
+            raw_text_list(Primitive::StepList, "$.steps"),
         ];
     } else if RESEARCH_TYPES.contains(&accepts[0].as_str()) {
         root.children = vec![
@@ -467,7 +478,7 @@ mod tests {
     #[test]
     fn seed_pack_is_rich_disabled_and_validated_by_host_types() {
         let pack = built_in_seed_pack();
-        assert_eq!(pack.len(), 88);
+        assert_eq!(pack.len(), 87);
         assert!(pack.iter().all(|record| !record.enabled));
         assert!(
             pack.iter()
@@ -561,8 +572,8 @@ mod tests {
                 serde_json::json!({
                     "title": "Weeknight dal",
                     "summary": "A fast lentil dal",
-                    "ingredients": [{"name":"Lentils","amount":1,"unit":"cup"}],
-                    "steps": [{"text":"Rinse lentils"},{"text":"Simmer 20 minutes"}],
+                    "ingredients": ["1 cup lentils"],
+                    "steps": ["Rinse lentils", "Simmer 20 minutes"],
                 }),
             ),
             (
@@ -666,7 +677,7 @@ mod tests {
             ),
             (
                 "recipe.card",
-                serde_json::json!({"title":"Dal", "ingredients":[{"name":"Lentils","amount":1}], "steps":[{"text":"Rinse"}]}),
+                serde_json::json!({"title":"Dal", "ingredients":["1 cup lentils"], "steps":["Rinse"]}),
                 2,
             ),
             (
@@ -700,7 +711,10 @@ mod tests {
                 "plan.timeline" => assert_eq!(tree.root.children[0].props["label"], "Leave"),
                 "table" => assert_eq!(tree.root.children[0].props["name"], "Train"),
                 "recipe.card" => {
-                    assert_eq!(tree.root.children[0].children[0].props["name"], "Lentils")
+                    assert_eq!(
+                        tree.root.children[0].children[0].props["text"],
+                        "1 cup lentils"
+                    )
                 }
                 "research.synthesis" => assert_eq!(
                     tree.root.children[0].children[0].props["text"],
@@ -709,5 +723,49 @@ mod tests {
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn recipe_seed_preserves_the_recipe_emitter_strings_for_display() {
+        let seed = built_in_seed_pack()
+            .into_iter()
+            .find(|record| record.spec.id == "seed.recipe")
+            .expect("recipe seed");
+        let payload = serde_json::json!({
+            "title": "Simple Tomato Pasta",
+            "servings": 2,
+            "ingredients": ["200 g pasta", "150 g tomatoes"],
+            "steps": ["Boil pasta", "Cook tomatoes and garlic", "Combine and serve"],
+        });
+        let CompiledPresentation::Rich(tree) = compile(
+            &seed.spec,
+            &CompileInput {
+                semantic_type: "recipe.card".into(),
+                payload,
+                fallback_text: "Recipe".into(),
+            },
+        ) else {
+            panic!("recipe seed must compile rich");
+        };
+
+        let ingredient_text: Vec<&str> = tree.root.children[0]
+            .children
+            .iter()
+            .filter_map(|item| item.props.get("text").and_then(serde_json::Value::as_str))
+            .collect();
+        let step_text: Vec<&str> = tree.root.children[1]
+            .children
+            .iter()
+            .filter_map(|item| item.props.get("text").and_then(serde_json::Value::as_str))
+            .collect();
+        assert_eq!(ingredient_text, ["200 g pasta", "150 g tomatoes"]);
+        assert_eq!(
+            step_text,
+            [
+                "Boil pasta",
+                "Cook tomatoes and garlic",
+                "Combine and serve"
+            ]
+        );
     }
 }

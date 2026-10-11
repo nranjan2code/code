@@ -246,11 +246,24 @@ fn append_message(
     Ok(())
 }
 
-fn map_status_error(status: u16, body: &str) -> LlmError {
+fn map_status_error(status: u16, body: &str, has_tools: bool) -> LlmError {
     let message = serde_json::from_str::<Value>(body)
         .ok()
         .and_then(|v| v.get("error").and_then(|m| m.as_str().map(String::from)))
         .unwrap_or_else(|| body.chars().take(500).collect());
+    let lower = message.to_ascii_lowercase();
+    if status == 400
+        && has_tools
+        && [
+            "xml syntax error",
+            "tool call parsing failed",
+            "failed to parse tool call",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        return LlmError::ToolCallFormat(message);
+    }
     match status {
         401 | 403 => LlmError::Auth(message),
         400 => LlmError::classify_400(message),
@@ -311,15 +324,20 @@ impl NdjsonDecoder {
 
 struct Accumulator {
     message: AssistantMessage,
+    /// Whether this request offered tools. Ollama reports some generated
+    /// tool-call parse failures as NDJSON stream records rather than HTTP
+    /// errors, and those need the same typed recovery classification.
+    has_tools: bool,
     /// Count of tool-call blocks materialized so far, used to synthesize
     /// `call_<n>` ids when Ollama omits them.
     tool_calls_seen: usize,
 }
 
 impl Accumulator {
-    fn new(model: &str) -> Self {
+    fn new(model: &str, has_tools: bool) -> Self {
         Accumulator {
             message: AssistantMessage::empty(model),
+            has_tools,
             tool_calls_seen: 0,
         }
     }
@@ -329,7 +347,8 @@ impl Accumulator {
             .map_err(|e| LlmError::Parse(format!("bad ndjson line: {e}")))?;
 
         if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
-            return Err(LlmError::classify_400(err.to_string()));
+            let body = serde_json::json!({"error": err}).to_string();
+            return Err(map_status_error(400, &body, self.has_tools));
         }
 
         let mut event = None;
@@ -505,14 +524,18 @@ impl Provider for OllamaProvider {
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
-            return Err(map_status_error(status.as_u16(), &text));
+            return Err(map_status_error(
+                status.as_u16(),
+                &text,
+                !request.tools.is_empty(),
+            ));
         }
 
         let model = request.model.clone();
         let (mut sink, stream_rx) = channel(256);
         let mut byte_stream = response.bytes_stream();
         let mut decoder = NdjsonDecoder::default();
-        let mut acc = Accumulator::new(&model);
+        let mut acc = Accumulator::new(&model, !request.tools.is_empty());
 
         tokio::spawn(async move {
             let mut saw_end = false;
@@ -682,14 +705,49 @@ mod tests {
         let error = map_status_error(
             400,
             r#"{"error":"POST predict: this model's max context length (4096) exceeds the model's maximum context length"}"#,
+            true,
         );
         assert!(matches!(error, LlmError::Context(_)));
     }
 
     #[test]
     fn unrelated_400_stays_invalid_request() {
-        let error = map_status_error(400, r#"{"error":"model 'x' not found"}"#);
+        let error = map_status_error(400, r#"{"error":"model 'x' not found"}"#, true);
         assert!(matches!(error, LlmError::InvalidRequest(_)));
+    }
+
+    #[test]
+    fn malformed_generated_tool_xml_is_recoverable_output_format_error() {
+        let error = map_status_error(
+            400,
+            r#"{"error":"XML syntax error on line 15: element <function> closed by </parameter>"}"#,
+            true,
+        );
+        assert!(matches!(error, LlmError::ToolCallFormat(_)));
+
+        let without_tools = map_status_error(
+            400,
+            r#"{"error":"XML syntax error on line 15: element <function> closed by </parameter>"}"#,
+            false,
+        );
+        assert!(matches!(without_tools, LlmError::InvalidRequest(_)));
+    }
+
+    #[test]
+    fn streamed_malformed_tool_xml_uses_the_same_recovery_classification() {
+        let line =
+            r#"{"error":"XML syntax error on line 15: element <function> closed by </parameter>"}"#;
+        let mut with_tools = Accumulator::new("qwen3.5:4b-mlx", true);
+        assert!(matches!(
+            with_tools.convert(line),
+            Err(LlmError::ToolCallFormat(_))
+        ));
+
+        let mut without_tools = Accumulator::new("qwen3.5:4b-mlx", false);
+        assert!(matches!(
+            without_tools.convert(line),
+            Err(LlmError::InvalidRequest(_))
+        ));
     }
 
     const FIXTURE_LINES: &[&str] = &[
@@ -702,7 +760,7 @@ mod tests {
 
     #[test]
     fn stream_fixture_accumulates_text_thinking_and_usage() {
-        let mut acc = Accumulator::new("gemma3:e2b");
+        let mut acc = Accumulator::new("gemma3:e2b", false);
         let mut end = None;
         for line in FIXTURE_LINES {
             if let Some(event) = acc.convert(line).unwrap()
@@ -736,7 +794,7 @@ mod tests {
 
     #[test]
     fn stream_fixture_generates_call_id_when_ollama_omits_one() {
-        let mut acc = Accumulator::new("gemma3:e2b");
+        let mut acc = Accumulator::new("gemma3:e2b", true);
         let mut end = None;
         for line in TOOL_CALL_LINES {
             if let Some(event) = acc.convert(line).unwrap()

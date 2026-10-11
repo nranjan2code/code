@@ -14,9 +14,9 @@ use vak_agent::{Agent, AgentConfig, SteeringQueues, TurnOutcome};
 use vak_context::capacity::{CacheBehaviour, CapacityProfile, Horizon, ProbeProvenance};
 use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
-use vak_llm::{EventStream, LlmError, Provider};
+use vak_llm::{EventStream, LlmError, Message, Provider};
 use vak_session::SessionLog;
-use vak_session::types::{FrozenContract, SessionHeader};
+use vak_session::types::{FrozenContract, MessageRecord, SessionHeader};
 
 struct Script {
     replies: Mutex<VecDeque<AssistantMessage>>,
@@ -192,5 +192,91 @@ async fn a_turn_that_cannot_fit_still_takes_the_rescue_and_fails_loudly() {
             }
         ),
         "{outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn handoff_summary_uses_the_current_working_set_instead_of_full_session_history() {
+    let dir = tempdir().unwrap();
+    let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
+        agent: None,
+        session_id: "s-handoff-projection".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0.1.0".into(),
+            provider: "scripted".into(),
+            model: "m".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "full-access".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let mut log = SessionLog::create(dir.path().join("handoff.jsonl"), header).unwrap();
+    log.append_message(MessageRecord {
+        message: Message::user_text("a previous community garden budget and schedule"),
+        meta: None,
+    })
+    .unwrap();
+    log.append_message(MessageRecord {
+        message: Message::assistant(vec![ContentBlock::text("The old garden plan is complete.")]),
+        meta: None,
+    })
+    .unwrap();
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = Arc::new(Script {
+        replies: Mutex::new(
+            vec![AssistantMessage {
+                content: vec![ContentBlock::text("Handoff summary")],
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                model: "m".into(),
+                response_id: None,
+            }]
+            .into(),
+        ),
+        requests: requests.clone(),
+    });
+    let mut cfg = AgentConfig::new("x".repeat(56_000));
+    cfg.capacity = Some(profile(32_768, 13_000, 4_096));
+    cfg.handoff_reset = true;
+    let mut agent = Agent::new(provider, log, cfg);
+    let (tx, _rx) = mpsc::channel(4096);
+    let outcome = agent
+        .run("hi", &SteeringQueues::new(), CancellationToken::new(), tx)
+        .await;
+    assert!(
+        matches!(
+            outcome,
+            TurnOutcome::Failed {
+                error: LlmError::Context(_)
+            }
+        ),
+        "the oversized system prefix remains a context failure: {outcome:?}"
+    );
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1, "one bounded handoff summarizer call");
+    let prompt = captured[0]
+        .messages
+        .iter()
+        .map(Message::text_content)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(prompt.contains("Original task: hi"), "{prompt}");
+    assert!(
+        !prompt.contains("community garden"),
+        "the handoff prompt must not pull unrelated full-session history: {prompt}"
     );
 }

@@ -308,11 +308,11 @@ the `vak_tools::Tool` trait — the harness keeps no table of tool names:
 - `serves()` — a tool is loaded when it serves a domain the reading requires;
   an undeclared tool is always loaded (deferring saves context, it is not
   policy);
-- `presents_cards()` — a card tool is loaded when the request itself reads as
-  that card (`presentation_tools::predicted_card_tools`, the same recipe
-  detection the presentation check runs over the answer); otherwise it waits
-  for `find_tools` or for the presentation-check nudge, which loads the tool
-  it names for the redo.
+- `presents_cards()` — every admitted presentation tool is loaded from the
+  first model call, on every provider. Its schema is the output vocabulary,
+  not historical content or a requirement to emit a card. Request prediction
+  still informs output demand and composition; it does not hide alternative
+  shapes behind a keyword match or an extra discovery call.
 
 Everything else is deferred: named in the prompt's "More tools" catalogue
 (`tool_catalogue`: name and first sentence, sorted, a function of the

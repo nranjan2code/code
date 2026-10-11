@@ -37,8 +37,15 @@ pub enum ControlKind {
     FenceCheck,
     /// The answer restated a card that a tool call had already shown.
     DuplicateCardCheck,
-    /// The answer reads as a card but was written as prose.
+    /// Recorded history only: no longer written. It asked for a card where
+    /// a request-vocabulary guess expected one (replaced by `PlanCheck`,
+    /// docs/design/86-model-plans-runtime-checks.md).
     PresentationCheck,
+    /// Recorded history only: no longer written.
+    CardCompletionCheck,
+    /// Recorded history only: no longer written. It asked the model to audit
+    /// its own cards against the request (replaced by `PlanCheck`).
+    CardCompletenessCheck,
     /// A current value was asked for and nothing was retrieved this turn
     /// (docs/design/68-context-engine.md §7).
     FreshnessCheck,
@@ -60,21 +67,31 @@ pub enum ControlKind {
     /// Correctable tool failures went unrepaired across steps: the admitted
     /// schema of each failing tool, re-surfaced with the retries left.
     RepairDirective,
+    /// Deliverables the model's own plan named that the turn has not
+    /// produced (docs/design/86-model-plans-runtime-checks.md §2.2).
+    PlanCheck,
+    /// The provider rejected a generated structured tool call before it
+    /// reached the tool broker; regenerate it against the admitted schema.
+    ToolCallRepair,
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 11] = [
+    pub const ALL: [ControlKind; 15] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
         ControlKind::GroundingCheck,
         ControlKind::FenceCheck,
         ControlKind::DuplicateCardCheck,
         ControlKind::PresentationCheck,
+        ControlKind::CardCompletionCheck,
+        ControlKind::CardCompletenessCheck,
         ControlKind::FreshnessCheck,
         ControlKind::EmptyStep,
         ControlKind::SteeringDrift,
         ControlKind::TopicMismatchCheck,
         ControlKind::RepairDirective,
+        ControlKind::PlanCheck,
+        ControlKind::ToolCallRepair,
     ];
 
     /// The literal the message body begins with, for the model's benefit.
@@ -87,11 +104,15 @@ impl ControlKind {
             ControlKind::FenceCheck => "[fence-check]",
             ControlKind::DuplicateCardCheck => "[duplicate-card-check]",
             ControlKind::PresentationCheck => "[presentation-check]",
+            ControlKind::CardCompletionCheck => "[card-completion-check]",
+            ControlKind::CardCompletenessCheck => "[card-completeness-check]",
             ControlKind::FreshnessCheck => "[freshness-check]",
             ControlKind::EmptyStep => "[empty-step]",
             ControlKind::SteeringDrift => "[steering-drift]",
             ControlKind::TopicMismatchCheck => "[topic-mismatch]",
             ControlKind::RepairDirective => "[repair-directive]",
+            ControlKind::PlanCheck => "[plan-check]",
+            ControlKind::ToolCallRepair => "[tool-call-repair]",
         }
     }
 
@@ -105,10 +126,18 @@ impl ControlKind {
                 | ControlKind::FenceCheck
                 | ControlKind::DuplicateCardCheck
                 | ControlKind::PresentationCheck
+                | ControlKind::CardCompletionCheck
                 | ControlKind::FreshnessCheck
                 | ControlKind::EmptyStep
                 | ControlKind::TopicMismatchCheck
         )
+    }
+
+    /// Whether the preceding assistant text is an internal draft that should
+    /// be hidden after this control. A plan check keeps what was produced:
+    /// it asks only for what is missing.
+    pub const fn discards_assistant_draft(self) -> bool {
+        self.retries_answer() || matches!(self, ControlKind::CardCompletenessCheck)
     }
 }
 
@@ -398,11 +427,14 @@ mod tests {
                 ControlKind::FenceCheck,
                 ControlKind::DuplicateCardCheck,
                 ControlKind::PresentationCheck,
+                ControlKind::CardCompletionCheck,
                 ControlKind::FreshnessCheck,
                 ControlKind::EmptyStep,
                 ControlKind::TopicMismatchCheck,
             ]
         );
+        assert!(!ControlKind::CardCompletenessCheck.retries_answer());
+        assert!(ControlKind::CardCompletenessCheck.discards_assistant_draft());
     }
 
     #[test]

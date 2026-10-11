@@ -2189,7 +2189,7 @@ async fn run_eval(
         }
         // Deterministic context-engine gate (docs/design/68-context-engine.md
         // "Verification") — no model calls; planner, projection and
-        // two-model replay properties over a fixture ledger.
+        // packet replay properties over a fixture ledger.
         let card = match vak_eval::run_context_engine_scorecard() {
             Ok(card) => card,
             Err(e) => {

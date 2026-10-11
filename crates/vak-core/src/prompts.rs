@@ -334,8 +334,6 @@ pub struct RuntimeSections {
     /// can name the gap instead of discovering it one denied call at a
     /// time; never a grant.
     pub standing: String,
-    /// Per-turn epistemic cognitive stance and guidelines derived from intent.
-    pub epistemic_stance: String,
     /// Per-turn clock context; calendar reasoning must not rely on stale history.
     pub temporal: String,
     /// One line per deferred tool (docs/design/68-context-engine.md §5): no
@@ -348,7 +346,7 @@ pub struct RuntimeSections {
 /// Split in two (docs/design/68-context-engine.md §4/§6): `text` is the
 /// stable prefix — byte-identical for a given layer set and capability
 /// packet, so a provider's prefix cache can key on it — and `tail` is the
-/// per-turn content (the clock instant, the epistemic stance) that the
+/// per-turn content (the clock instant) that the
 /// request assembler renders into the moving tail instead. Nothing in
 /// `tail` is layer-contributed, so it never appears in `descriptors` or the
 /// drift fingerprint.
@@ -357,9 +355,7 @@ pub struct Resolution {
     /// Exactly what is sent to the provider as the system prompt prefix.
     pub text: String,
     /// Per-turn content that must never enter the stable prefix: the
-    /// epistemic stance (with the card-tool clarifier) and the temporal
-    /// context, in that order, blank-line separated. Empty when the caller
-    /// supplied neither.
+    /// temporal context. Empty when the caller supplied none.
     pub tail: String,
     /// One entry per *winning* contribution. A layer shadowed by a narrower
     /// one does not appear: the question a reader has is where the text came
@@ -610,18 +606,7 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     // Per-turn content never joins the stable prefix (docs/design/68 §4/§6):
     // it moves to `tail`, rendered by the request assembler as the moving
     // control block instead of baked into text the provider would cache.
-    let stance_text = stance_with_card_clarifier(&runtime.epistemic_stance);
-    let temporal_text = runtime.temporal.trim();
-    let mut tail = String::new();
-    if !stance_text.is_empty() {
-        tail.push_str(&stance_text);
-    }
-    if !temporal_text.is_empty() {
-        if !tail.is_empty() {
-            tail.push_str("\n\n");
-        }
-        tail.push_str(temporal_text);
-    }
+    let tail = runtime.temporal.trim().to_string();
 
     // Order by layer *breadth*, not by the wire name's spelling: for the
     // concatenating blocks the order is the composition order, and sorting
@@ -655,26 +640,6 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
         tail,
         descriptors,
         blocks,
-    }
-}
-
-/// Fixed clarifier appended once to a non-empty epistemic stance so the
-/// stance's own language (e.g. "answer from what you already know") can
-/// never be read as overriding the capability contract's card instruction
-/// (docs/design/68-context-engine.md §6).
-const CARD_STILL_APPLIES: &str =
-    "Still call the matching `emit_*_card` tool when a card type fits the answer.";
-
-/// Renders a raw epistemic-stance section with the card clarifier appended,
-/// or an empty string when there is no stance to render. Shared by
-/// [`resolve`] (which folds it into [`Resolution::tail`]) and by callers
-/// that render the same stance text into their own tail wrapper tag.
-pub fn stance_with_card_clarifier(stance: &str) -> String {
-    let stance = stance.trim();
-    if stance.is_empty() {
-        String::new()
-    } else {
-        format!("{stance}\n{CARD_STILL_APPLIES}")
     }
 }
 
@@ -903,6 +868,32 @@ mod tests {
     fn the_seed_carries_no_card_payload_examples() {
         let seed = seed("test");
         assert!(seed.presentation_contract.contains("emit_*_card"));
+        assert!(
+            seed.presentation_contract
+                .contains("cards are context, not new work")
+        );
+        assert!(
+            seed.presentation_contract
+                .contains("order the user requested")
+        );
+        assert!(seed.presentation_contract.contains("`answers`"));
+        assert!(
+            seed.presentation_contract
+                .contains("Do not create a workspace file")
+        );
+        assert!(
+            seed.presentation_contract
+                .contains("include that text verbatim")
+        );
+        let requested_text_rule = seed
+            .presentation_contract
+            .find("include that text verbatim")
+            .expect("requested-text exception is explicit");
+        let empty_text_rule = seed
+            .presentation_contract
+            .find("Otherwise, when the cards answer fully")
+            .expect("empty-text rule has an explicit condition");
+        assert!(requested_text_rule < empty_text_rule);
         assert!(!seed.capability_contract.contains("emit_*_card"));
         for block in [&seed.capability_contract, &seed.presentation_contract] {
             assert!(!block.contains("```vak"));
@@ -935,6 +926,7 @@ mod tests {
                 .contains("Look before you act")
         );
         assert!(contract.contains("find_tools"));
+        assert!(contract.contains("follow the newest message"));
         assert!(
             sandbox.contains("sandbox"),
             "sandbox_contract block missing"
@@ -1130,10 +1122,11 @@ mod tests {
         );
         assert!(out.text.contains("Respond concisely."));
         for required in [
-            "omitted history remains searchable",
+            "omitted history stays searchable",
             "`recall`",
-            "treat lexical matches as candidates, not proof",
-            "Do not call either tool for a fresh or unrelated request",
+            "however long ago",
+            "candidates, not proof",
+            "Do not call either for a fresh request",
             "For a current fact with no known source URL",
             "Unavailable history differs from",
         ] {
@@ -1311,9 +1304,8 @@ mod tests {
     }
 
     #[test]
-    fn epistemic_stance_and_temporal_land_in_the_tail_not_the_prefix() {
+    fn temporal_lands_in_the_tail_not_the_prefix() {
         let runtime = RuntimeSections {
-            epistemic_stance: "\nEpistemic stance: analytical\n- Scrutinize claims objectively. Separate verified facts from inferences.".into(),
             temporal: "\nTemporal context: current UTC instant 2026-09-19T00:00:00Z.".into(),
             ..Default::default()
         };
@@ -1321,20 +1313,13 @@ mod tests {
             &[LayerInput::new(PromptLayer::Seed, None, seed_content())],
             &runtime,
         );
-        assert!(!out.text.contains("Epistemic stance: analytical"));
-        assert!(!out.text.contains("Scrutinize claims objectively"));
         assert!(!out.text.contains("Temporal context"));
-        assert!(out.tail.contains("Epistemic stance: analytical"));
-        assert!(out.tail.contains("Scrutinize claims objectively"));
         assert!(out.tail.contains("Temporal context"));
-        assert!(
-            out.tail
-                .contains("Still call the matching `emit_*_card` tool")
-        );
+        assert!(!out.tail.contains("stance"), "{}", out.tail);
     }
 
     #[test]
-    fn tail_is_empty_when_runtime_supplies_neither_stance_nor_temporal() {
+    fn tail_is_empty_when_runtime_supplies_no_temporal() {
         let runtime = RuntimeSections::default();
         let out = resolve(
             &[LayerInput::new(PromptLayer::Seed, None, seed_content())],
@@ -1352,7 +1337,6 @@ mod tests {
         let a = resolve(
             &layers,
             &RuntimeSections {
-                epistemic_stance: "\nEpistemic stance: analytical\n- x".into(),
                 temporal: "\nTemporal context: instant A.".into(),
                 ..Default::default()
             },
@@ -1360,7 +1344,6 @@ mod tests {
         let b = resolve(
             &layers,
             &RuntimeSections {
-                epistemic_stance: "\nEpistemic stance: operational\n- y".into(),
                 temporal: "\nTemporal context: instant B.".into(),
                 ..Default::default()
             },

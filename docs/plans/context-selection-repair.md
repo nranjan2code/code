@@ -95,34 +95,31 @@ restarted as part of this check.
 - History remains append-only and recallable, subject to trash/access rules.
 - Request size and request-path work must be independent of total history size.
 
-## Immediate repair
+## Current request policy, 2026-10-10
 
-Full-context admission requires relevance or a reference. Recency ranks
-eligible context; it does not admit it. Generic intent labels, interrogatives,
-temporal qualifiers, and substring coincidences are not topic evidence.
-Unselected turns retain compact, recallable references. The planner measures
-the actual rendered Full records, including tool arguments, and Card lines
-with the current capacity profile instead of trusting old recorded costs.
-Automatic Full history is now capped at 12,000 tokens per run even when the
-model's remaining horizon is much larger; further detail is reopened on demand.
-The intent kernel recognizes a prior-assistant-response reference as historical,
-so “latest answer you reported” does not trigger current-world freshness.
-The system prompt now tells the model to interpret continuity semantically,
-use indexed matches as candidates, and ask a brief question when candidates
-remain ambiguous. The resolver and working-set selection are still partly
-lexical; semantic candidate reranking is not implemented yet.
+The former relevance-first policy still admitted full historical records up to
+12,000 tokens and filled remaining capacity with compact cards. A real Ollama
+run showed that a self-contained new request could inherit facts from an older
+scenario. That policy is superseded: the standard planner now carries only the
+compact card for a clear immediate anaphoric referent. A fresh topic, topical
+overlap, or spare model capacity admits no historical turn. Full records,
+older-topic returns, and additional details are loaded through the existing
+indexed `recall` tool when the current request needs them. An explicit prior
+reference is searchable no matter how old the turn is; the N-turn ledger stays
+complete.
 
-Tests cover a fresh weather question after large market/document turns,
-return to a matching topic 100 turns back, immediate anaphora, old-card cost
-underestimates, no turn splitting, packet batching and reset boundaries.
-This is deterministic lexical candidate selection with model-driven recall
-available; it is not a proven semantic selector for every paraphrase or
-ambiguous reference.
-A short desktop comparison later found generic arithmetic/output words ("times",
-"reply", "number") matching old report cards and promoting large tool histories.
-They, generic instruction verbs, and response-shape words are now excluded as
-topic evidence. The focused regression passes; the installed app still needs a
-repeat run to verify the reduction in its actual provider request.
+The prompt and `recall` tool description tell the model to search regardless
+of turn distance when the user asks about earlier work, and not to search for
+a fresh or unrelated request. `recall` returns compact indexed candidates;
+the model reopens the selected turn or evidence. Candidate matches are not
+proof, unavailable history is not an empty result, and current facts still
+require fresh evidence.
+
+Planner regressions now cover unused spare capacity, ordinary “make it” in a
+self-contained request, a one-card immediate follow-up, old-topic requests
+left to recall, broad shared words, and ignored stale packets. The planner
+suite passes. A 1,000-turn indexed search plus a live Ollama explicit-history
+request are still required before the far-history path is verified end to end.
 
 ## Lifetime-scale algorithm and remaining work
 

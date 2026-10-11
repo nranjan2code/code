@@ -168,6 +168,16 @@ probe: the probe is free apart from time, and time is exactly what it saves.
   horizon to that request size with confidence 0.6 and schedules a re-probe.
 - Horizon loosening: only a re-probe can raise it. Feedback never widens.
 
+A probe that receives provider-accepted responses but no `probe_ack` at any
+rung has not measured an instruction horizon: tool-call behavior or the probe
+shape may have failed independently of context capacity. Keep its samples as
+provenance and use the published window with low confidence; do not substitute
+the first rung (4k) as a measured limit. When rebuilding from an older profile
+with this no-follow shape, discard that unsupported horizon before planning.
+As the ladder shrinks whole turn-shaped fillers, it stops when the generated
+request is unchanged, so lower nominal rungs do not repeat identical local
+inference work. A completed inconclusive probe is not retried on every turn.
+
 ### 2. TurnIndex
 
 Built from `chain_to_root()` once per request. A `Turn` is:
@@ -222,8 +232,8 @@ earlier ids. In the request the model sees:
   - Command output: exit code, first and last 10 lines.
   - Errors: verbatim (they are short and the model must see them).
   Each digest ends with `[evidence:<id> — <n> chars; call recall to expand]`.
-- **Turns outside the working set:** nothing; the compaction packet lists
-  their evidence ids with one-line descriptions.
+- **Turns outside the working set:** nothing in the prompt. Their records stay
+  in the ledger and indexed recall can find them when the request needs them.
 
 `recall({ id, range? })` is a core tool that returns the full result (or a
 line range). The summariser requests (compaction, handoff) show results the
@@ -238,35 +248,21 @@ Inputs: `CapacityProfile`, `TurnIndex`, the incoming directive, the assembled
 prefix size (measured, see §6), the tail size.
 
 ```
-ceiling     = min(horizon.tokens, declared_window − output_reserve)
-              # the horizon is a measured prompt size, so output is charged
-              # only against the declared window an unprobed horizon starts at;
-              # output_reserve is the max_tokens the agent requests, never the
-              # model's listed maximum
-budget      = ceiling
-            − prefix_tokens              (system + tool surface, measured)
-            − tail_tokens                (time, intent, thread, nudges)
-            − current_turn_reserve       (= max observed current-turn size for this model, EWMA)
-# never split a turn: every cost check is turn-whole
-value(turn) = max(recency, relevance, anaphora, link)
-              recency   = 1 / (1 + age), only for a relevant, referenced or linked turn
-              relevance = subject-token search of the directive / best score
-              anaphora  = 1.0 for the turn the directive refers back to: the last
-                          turn of the thread the open turn continues, else the
-                          preceding turn
-              link      = shared threads, files and commitments with the open
-                          turn, and files the directive names, weighted and
-                          hub-discounted
-                          (docs/design/85-turn-graph.md §6.1)
-cost each rendered Full record and Card line with the current profile;
-never trust a stored estimate that omits tool arguments
-full_history_budget = min(budget, 12,000 tokens)
-fill eligible turns at Full in descending value while their combined cost ≤
-full_history_budget, skipping one that does not fit for a cheaper one further
-down; the rest as cards
-newest → oldest while they fit; the overflow collapses into one packet.
-summary     = compaction packet over the packet range, or the stored one
+ceiling       = min(horizon.tokens, declared_window − output_reserve)
+                # output is charged only against the declared window
+budget        = ceiling − prefix_tokens − tail_tokens − current_turn_reserve
+                # reserve is model-specific and learned from observed turns
+# never split a turn
+direct follow-up = include at most the immediately preceding turn's compact card
+older reference  = search indexed turns with recall; reopen only a needed match
+fresh request    = include no historical turns; unused budget stays unused
 ```
+
+An older reference may point back hundreds or thousands of turns. The model
+should call `recall` when the request depends on a prior result, decision, or
+detail, regardless of distance. A fresh unrelated request should not search
+history simply because history exists. Search returns bounded candidate
+records; the model reopens a selected `turn_id` when exact evidence is needed.
 
 Properties:
 
@@ -280,19 +276,22 @@ Properties:
   model would hold a summary and no task). When the directive itself does not
   fit, the entry hides the turn and the summary, which carries the original
   task, stands in for it. Turns that had already finished are always hidden.
-  The summariser's transcript is sized from the model's prompt ceiling rather
-  than a constant, drops only whole messages, and says how many it dropped.
-- On a small model with a 13k horizon and a 12k prefix, the working set is
-  the current turn only, and the model is told so (the summary says what it
-  is missing and how to `recall`). That is the correct outcome for that model
-  and it is reached by measurement, not by a constant.
-- On a frontier model the same session keeps dozens of turns whole.
-- Compaction is incremental, never an overflow emergency: the packet is
-  refreshed whenever a turn leaves the working set, so the summariser call
-  is amortised and the request never overshoots. Turns evicted past the
-  working set move into the packet in fixed-size batches
-  (`PACKET_BATCH_TURNS`, 8), never one at a time, so the packet's boundary
-  holds steady across several turns instead of growing every request.
+  The handoff summary is derived from the interrupted turn's planned
+  projection, not from plan-free full history. It is included only while that
+  same turn remains open; once the turn closes, later requests can retrieve
+  older evidence on demand. The summariser's transcript is sized from the
+  model's prompt ceiling rather than a constant, drops only whole messages,
+  and says how many it dropped.
+- The standard request path does not fill spare capacity with historical
+  cards or full records. Every request carries the preceding turn's
+  compact card, and no reading of its words decides that; a topic match or available capacity alone does not admit
+  history. When older detail is needed, `recall` searches and reopens only the
+  requested record. Its result remains in the current turn as ordinary tool
+  evidence. The complete N-turn ledger stays intact and searchable.
+- This policy is independent of model horizon: a larger model does not receive
+  more historical content just because it can fit. Current-turn content,
+  system/tool prefix, and output reserve continue to use the measured
+  `CapacityProfile`.
 - **A packet is a cache, never a boundary.** A `Compaction` entry is keyed
   by the inclusive turn range it summarises (`first_turn_id..=last_turn_id`)
   and records the model whose plan asked for it. The projection renders a
@@ -329,35 +328,52 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
 - **Loaded**: tools that declare `always_loaded` (`read`, `glob`, `grep`,
   `find_tools`, `recall`, `skill`, `mcp`, `session_search`, `commitments`);
   tools whose `serves` meets the reading's required domains; undeclared
-  tools; and the card tools the request itself reads as. An uncertain reading
+  tools; and every admitted tool that declares `presents_cards`. Output-shape
+  selection needs the schema on the first call and is not gated by request
+  vocabulary. Availability alone does not require a card. An uncertain reading
   arrives as the explicit *orientation floor* (`Engagement::orienting`,
   docs/design/47-commitment-kernel.md), so it loads the filesystem and memory
   tools. `DomainSet::All` loads everything and is what a *disabled* kernel or
   `slice_capabilities = false` produces — never a fallback for uncertainty.
-- **Catalogue** ("More tools"), one line per admitted tool that is not
-  always loaded (`name — first sentence`), sorted, in the stable prefix. It
+- **Carried tools**: non-presentation tools loaded on an earlier turn remain
+  loaded to preserve the stable tool prefix. Admitted presentation schemas
+  are loaded independently of history, for a stable output vocabulary across
+  providers. Schemas contain no earlier card payloads; those stay subject to
+  the working-set planner and current-turn evidence rules. Request prediction
+  still informs output demand and composition, rather than schema availability.
+- **Catalogue** ("More tools"), one line per admitted tool that can be deferred
+  (`name — first sentence`), sorted, in the stable prefix. Always-loaded tools
+  and presentation tools are excluded because their schemas are already visible. It
   depends on the admitted set only, never on the reading, so it does not move
-  when the loaded set does. No schemas, but a card tool's line ends with its
-  argument names ("Takes `label`, `value`, …"): the prompt tells the
-  model to present a card by calling the matching `emit_*_card` tool, and a
-  model shown only the name called it at once with names it guessed. Measured
-  2026-10-09 on local `gemma4:e2b-mlx` ("Verify that the sum of 17 and 25 is
-  42…", 8 runs each): 3 of 5 card-using runs had a refused first call before,
-  0 of 7 calls after; telling the model in the seed to call `find_tools`
-  first made it worse (8 of 8 runs refused at least once, none called it).
-- **`find_tools({ query })`** returns full schemas for matching deferred
-  tools and promotes them to loaded definitions for the rest of the turn on
+  when the loaded set does. Presentation emitters previously appeared here
+  without schemas; live runs guessed fields or emitted prose without searching.
+  Loading their full schemas from the start removes that discovery dependency.
+- **`find_tools({ query })`** returns full schemas for matching admitted
+  tools and promotes deferred matches to loaded definitions for the rest of the turn on
   every provider (`vak_agent::load_discovered`). Its result reports how many
-  tool names are new to the current turn; repeating discovery with a different
-  wording that returns only already surfaced schemas says so explicitly. The
-  prompt tells the model to stop rephrasing that search and use an available
-  tool or state the missing capability. The presentation-check nudge loads
-  the card tool it names the same way. A deferred tool the reading did not
-  predict and the model then used is the measured misread. On a wire whose
-  adapter defers tools (`Provider::defers_tools`, today Anthropic's) the
-  deferred schemas additionally ride `defer_loading: true` with the
-  server-side tool search tool (§11); every other leg is sent the loaded
-  set only.
+  tool names are new to the current turn. Search covers tool names,
+  descriptions, argument names/descriptions at every schema depth, and schema
+  enum values (for example a card's `semantic_type` choices), so a model can
+  discover a deferred card emitter by the kind of result it needs to present.
+  An exact enum-value match ranks ahead of partial matches. Remaining matching
+  is case-insensitive substring and token overlap, not semantic retrieval, so
+  colloquial or ambiguous queries can rank poorly or miss an emitter. It does
+  not search individual presentation-pack definitions: the model selects the
+  card semantic type, then the server resolves the active compatible pack.
+  Repeating discovery with a different wording that returns only already
+  surfaced schemas says so explicitly. The prompt tells the model to stop
+  rephrasing that search and use an available tool or state the missing
+  capability. The presentation-check nudge can also expose admitted schemas
+  when a substantial structured draft misses presentation selection. This is
+  a single optional reconsideration, not a model-capacity failure. If a successful card is followed by structured answer text,
+  `[card-completion-check]` asks for any missing or incomplete parts to be
+  emitted as cards within the same logical turn. The answer projection still
+  preserves the assistant's text and gives it no special prefix semantics. A
+  deferred tool the reading did not predict and the model then used
+  is the measured misread. On a wire whose adapter defers tools
+  (`Provider::defers_tools`, today Anthropic's) the deferred schemas additionally
+  ride `defer_loading: true` with the server-side tool search tool (§11); every
+  other leg is sent the loaded set only.
 - **MCP**: reached only through `mcp`, and started only by that demand
   (docs/design/41-capability-registry.md). The prompt names each admitted
   server with the tool *names* the pool last observed (none before its first
@@ -382,9 +398,10 @@ SHA-256. `docs/design/83-prompt-system.md` §10 shows the current tail.
 [system]   static layers only: identity, contract, guardrails, surface,
            skill list, MCP server names, tool catalogue.  ← byte-identical across turns
 [tools]    core schemas in a fixed order, then any find_tools additions
-[messages] retrieved older turns (whole)
-           compaction packet (if any)
-           working-set turns (whole, digested evidence)
+[messages] only turns explicitly selected by the working-set plan
+           compaction packet (if this exact range was requested)
+           selected Full records or compact Cards
+           omitted history stays in the ledger for on-demand recall
            current turn's directive ─┬─ tail block inserted here, before the
                                       │  directive's own text:
                                       │  <turn_context> UTC instant, local
@@ -395,9 +412,11 @@ SHA-256. `docs/design/83-prompt-system.md` §10 shows the current tail.
                                       │    prompt asks for ("answer directly;
                                       │    still use emit_*_card when a card
                                       │    type fits")
-                                      │  <thread> directives NOT in the
-                                      │    working set verbatim
-                                      │  <work_contract> if active
+                                      │  <thread> active user-stated
+                                      │    objective only when this turn's
+                                      │    resolved intent continues it
+                                      │  <work_contract> while this turn
+                                      │    continues its source thread
            current turn's later steps (tool_use/tool_result pairs, nudges) ──
            appended after the directive, unmodified, one per step
 ```
@@ -433,9 +452,17 @@ turn. Also measured: with the tail appended after the directive,
 can handle tasks…") instead of the question.
 
 **Repeated cards.** An `emit_*_card` call identical to one already shown
-is acknowledged as a no-op; after three consecutive all-repeat batches the
-turn closes on that card as its answer instead of spending the turn budget
-on acknowledgements.
+is acknowledged as a no-op; a step that only repeats shown cards again,
+straight after that acknowledgement, closes the turn on that card as its
+answer. No count of repeats decides it.
+
+**Historical cards are context only.** The standard planner includes only the
+compact card of the turn the request follows, whatever its words. Topic similarity and spare
+capacity do not preload historical turns. The model can search and reopen
+history through `recall`; its returned evidence is scoped to the current turn.
+This avoids paying prompt and latency costs for details the request may not
+need while keeping the complete ledger available. See docs 07 and
+30-render-architecture §30.1.
 
 **Empty steps.** A response with neither text nor a tool call (a
 thinking-only completion — the model planned an action in its reasoning
@@ -496,9 +523,9 @@ tolerate topic changes:
   detection was tried and dropped: it also fired on a legitimately related
   follow-up): the `[steering-drift]` nudge fires with the *specific*
   directive it should serve, and the event lowers horizon confidence if the
-  request was near the horizon. Three consecutive model-drift events end the
-  turn with the system-authored degraded outcome (same shape as tool-repair
-  exhaustion, docs/design/15-reliability.md).
+  request was near the horizon. The nudge is sent once; an answer that
+  drifts again straight after it stands as the model's own, with a
+  `model-drift` diagnostic.
 - **Topic mismatch** (a card's own content is unrelated to both the
   directive and this turn's own retrieval, found in real post-release use:
   asked "what is the current top news in AI", the model correctly called
@@ -680,6 +707,13 @@ Consequences:
   The current turn sees the card through the `tool_use` input it wrote; past
   turns see it through the TurnCard or the full-record rendering, both of
   which read the entry.
+- Follow-up context is a planner decision over the completed turn records,
+  not a replay of the whole transcript. The directive, intent and relevant
+  whole-turn evidence determine whether a prior card or its evidence belongs
+  in the request; an unrelated prior presentation stays durable in the
+  ledger without being resent on every turn. `asked`, the presentation refs,
+  and the trace in a TurnCard make a past result discoverable and expandable
+  through recall when needed.
 - The inline-fence fallback (models without tool calling) converges on the
   same entry: a fence that parses and validates is written as
   `PresentationSource::Fence`. Duplicate detection is one rule — a second
@@ -691,6 +725,14 @@ Consequences:
 - Replay fidelity: the presentation the user saw on 12 September can be
   re-rendered from the chain months later, and the TurnCard index is
   rebuildable from entries alone.
+
+The UI projection has separate, turn-local duplicate and repair state. It
+resets at each direct user request (text or image), never at runtime-authored
+control messages. Within one answer, identical card payloads do not appear
+twice; distinct same-type cards retain emit order. A typed repair nudge may
+replace an earlier same-type attempt for that answer. This projection rule
+does not replace ledger duplicate detection: the ledger records each validated
+presentation fact with its own source and digest.
 
 `presentations.json` stays what it is — the definition library — and is not
 part of the chain.
@@ -762,34 +804,36 @@ emitted by tool is a duplicate and is dropped from the ledger's
 model-visible projection (the "no repeats" rule already governs display;
 this applies it to what the model sees of its own history too).
 
-A follow-up turn then sees past turns at one of three fidelities, chosen by
-the planner, never by a constant:
+The standard request path keeps the full ledger and uses a recall-first
+working set:
 
 | Fidelity | Shape | When |
 |---|---|---|
-| **Full record** | two messages — `user: directive` / `assistant: trace lines + final answer` | the last K turns, where K is however many fit after the horizon budget is met (§4); and any older turn the retrieval step selects for the current directive |
-| **Card** | one line in a `<turns>` block: `#17 asked: … → did: search×2 → research.synthesis "Sensex 15 Sep" (4 takeaways) [pres:a1; ev:9f2,9f3]` | every other turn in the session |
-| **Packet** | a compaction summary over a *range* of cards | when even the cards would not fit; the packet names the range so `recall` can reopen a turn |
+| **Full record** | two messages — `user: directive` / `assistant: trace lines + final answer` | only a targeted `recall` result or an explicitly scoped projection |
+| **Card** | one line in a `<turns>` block: `#17 asked: … → did: search×2 → research.synthesis "Sensex 15 Sep" (4 takeaways) [pres:a1; ev:9f2,9f3]` | one immediate anaphoric referent; otherwise no historical card |
+| **Packet** | a compaction summary over a *range* of cards | explicit compaction or a plan that requests that exact stored range; never to fill spare prompt space |
 
-Relevance is intent-driven: the current directive's reading (act, domains,
-entities) and its text are matched against the card index; the top matches
-are promoted to full record inside the 12,000-token history slice. A large
-model horizon does not authorize filling the prompt with every lexical match.
-A turn that shares no domain, entity, or lexical overlap with the directive
-stays a card. Lexical matching finds candidates; it is not semantic proof that
-the user meant a candidate. Anaphora ("do that again", "the second one")
-promotes the immediately preceding turn when it fits the same slice. The model
-can reopen specific records with `recall` rather than receiving an unbounded
-collection of them up front.
+Topic overlap is a reason to search, not a reason to preload a full record.
+Recall search filters FTS-ranked hits before exposing them: a one- or two-term
+query must match every subject term, while a longer query must match at least
+half its subject terms and at least two terms. BM25 ranks the remaining
+candidates; it is not a probability or a relevance guarantee. Weak lexical
+matches stay out of model context, while an exact turn id can still reopen any
+retained turn directly.
+Every request carries the preceding turn's compact card (so "do that
+again" has its referent without a word list deciding it). A request about older work uses indexed `recall` regardless of
+turn distance; the model reopens only the candidate it needs. Unselected turns
+stay durable and searchable in the N-turn ledger.
 
 Any turn at card or packet fidelity can be reopened by the model with
 `recall({ turn: 17 })`, which returns its full record; the model sees the
 evidence ids on every card so it can go one level deeper with
 `recall({ id })`. Nothing is unreachable; the default is just small.
 
-Typical shape for a 31-turn session on a small model: ~2 turns full
-(~500 tokens), ~29 cards (~80 tokens each ≈ 2.3k), no packet — under 3k
-tokens of history for the whole session.
+Typical shape under the recall-first request policy: a fresh request carries
+no older turn, regardless of how much prompt space remains. Every request
+carries the one compact card of the turn it follows. A direct request about
+older history searches and reopens only the selected record through `recall`.
 
 The full record, when used, is the turn as recorded with thinking dropped,
 every evidence result replaced by its digest and every card result by the
@@ -926,9 +970,10 @@ an attached artifact's block carries no conversation text.
   ≥5.
 - **Cache test**: two consecutive turns must share a prefix digest; Ollama
   log `matched` must be ≥ prefix_tokens on the second.
-- **No-cut invariant**: a property test that every tool result present in the
-  ledger is either verbatim, a digest carrying its evidence id, or named in a
-  compaction packet — never absent and never cut.
+- **History integrity**: omitting a closed turn from a request leaves its
+  ledger entries and indexed recall addressable. Selected Full records keep
+  reversible evidence digests; selected Cards keep evidence ids; open-turn
+  tool results remain verbatim. No selection is inferred from spare capacity.
 - **Two-model replay** (`context_engine_gate`): the fixture session planned
   under a small profile writes a packet; re-planned under a large profile,
   the packeted turns must come back at `Full` in the plan *and* in the
@@ -936,8 +981,7 @@ an attached artifact's block carries no conversation text.
   profile again, the stored packet must be reused with no compaction needed
   and a byte-identical projection.
 - **Uniqueness invariant**: no tool name appears twice across schemas, index,
-  and system prompt; no directive text appears both in a working-set turn and
-  in the thread.
+  and system prompt; the tail carries no historical request timeline.
 
 ### Context selection repair, 2026-09-30
 
@@ -960,6 +1004,21 @@ not be dispatched as a broad history search. Focused tool tests cover this
 contract. Live model behavior and million-turn scaling remain unproven; see
 [the repair plan](../plans/context-selection-repair.md).
 
+### Live review, 2026-10-10
+
+A local Ollama run showed a self-contained request continuing an older task
+because inferred thread lineage linked it through broad shared nouns. The
+model then called recall with terms copied from that request; the OR-ranked
+search returned an adjacent but unrelated art-club plan with quantities and
+checklist details. Lineage now requires shared words to cover half the older
+thread's topic, and recall candidates must match a substantial share of the
+query's subject terms before their summaries reach the model. The planner
+still includes only the compact card of the preceding turn; topic overlap, inferred links and spare capacity do not preload old
+turns. Exact turn-id recall remains available at any distance. The N-turn
+ledger and its searchable history remain intact. Live follow-up and historical-
+recall acceptance remain necessary before claiming all local models use this
+path well.
+
 ### Review follow-ups, 2026-10-02
 
 A line-by-line review of the engine against its own contract found the
@@ -972,13 +1031,13 @@ following, all fixed with regression tests:
   (call, empty summary or write) records `compaction-failed` and the turn
   carries on with cards, once per turn. `/compact` plans against the bound
   model's cached profile, as the loop does.
-- **Relevance.** Term weights are inverse document frequency over the
-  conversation's own cards, and a turn needs at least half of the query's
-  subject terms to be a candidate at all. Anaphora promotes the preceding turn
-  even when words also match an older one. The 12,000-token cap on automatic
-  Full history remains a backstop, not the selector.
-- **Projection.** Card lines sit after the Full turns, just before the open
-  turn, so Full records stay byte-identical while cards accumulate. The tool
+- **Admission.** Every request carries the compact card of the turn it
+  follows, and nothing older; no word list decides it. Topic similarity alone and spare capacity admit no
+  history. A request about an older result uses indexed `recall` search and
+  reopens the chosen turn after candidate verification.
+- **Projection.** The selected card sits just before the open turn. Other
+  historical turns stay out of the request while remaining in the ledger and
+  recall index. The tool
   array only grows within a session (`loaded_tools`), so it stops moving the
   provider's cache with each turn's reading. A closed record drops the
   assistant's narration between calls, as §10 always said. A packet names the

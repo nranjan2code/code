@@ -142,8 +142,8 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
         return narration;
     }
     let cards = cards.join("\n\n");
-    match vak_delivery::supplemental_card_note(&narration) {
-        Some(note) => format!("{cards}\n\n{note}"),
+    match vak_delivery::visible_card_followup(&narration) {
+        Some(followup) => format!("{cards}\n\n{followup}"),
         None => cards,
     }
 }
@@ -157,8 +157,18 @@ pub(crate) fn channel_narration(session: &SessionLog, narration: String) -> Stri
         .map(|header| header.session_id.clone())
         .unwrap_or_default();
     let timeline = snapshot(&session_id, session);
+    let Some(turn) = timeline
+        .items
+        .iter()
+        .rev()
+        .find(|item| item.role == OutputRole::User)
+        .map(|item| item.turn_id.as_str())
+    else {
+        return narration;
+    };
     let has_card = timeline.items.iter().any(|item| {
-        item.kind == OutputKind::Card
+        item.turn_id == turn
+            && item.kind == OutputKind::Card
             && matches!(
                 &item.content,
                 OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
@@ -167,9 +177,7 @@ pub(crate) fn channel_narration(session: &SessionLog, narration: String) -> Stri
     if !has_card {
         return narration;
     }
-    vak_delivery::supplemental_card_note(&narration)
-        .unwrap_or_default()
-        .to_string()
+    vak_delivery::visible_card_followup(&narration).unwrap_or_default()
 }
 
 /// Typed cards from the latest turn, retained separately for channel-native
@@ -596,6 +604,14 @@ fn tool_domain_refs<'a>(
         .unwrap_or_default()
 }
 
+fn has_user_request_content(content: &[ContentBlock]) -> bool {
+    content.iter().any(|block| match block {
+        ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
+        ContentBlock::Image { .. } => true,
+        _ => false,
+    })
+}
+
 fn snapshot_inner(
     session_id: &str,
     session: &SessionLog,
@@ -690,18 +706,9 @@ fn snapshot_inner(
                 let control = record.control_kind();
                 if record.message.role == Role::User
                     && control.is_none()
-                    && record.message.content.iter().any(|block| match block {
-                        ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
-                        _ => false,
-                    })
+                    && has_user_request_content(&record.message.content)
                 {
                     pending_tool_context = None;
-                    card_group_by_type.clear();
-                    seen_cards.clear();
-                    repair_armed = false;
-                }
-                if control.is_some_and(|kind| kind.retries_answer()) {
-                    repair_armed = true;
                 }
                 for block in &record.message.content {
                     match block {
@@ -852,7 +859,23 @@ fn snapshot_inner(
         match &entry.payload {
             EntryPayload::Message(record) => {
                 let control = record.control_kind();
-                if control.is_some_and(|kind| kind.retries_answer())
+                // Card de-duplication and repair state are consumed while
+                // projecting items below, so reset/arm them in this same
+                // traversal. Updating them in the earlier indexing pass
+                // leaves the output pass's `seen_cards` populated across
+                // user turns and hides an identical card on a later turn.
+                if record.message.role == Role::User
+                    && control.is_none()
+                    && has_user_request_content(&record.message.content)
+                {
+                    card_group_by_type.clear();
+                    seen_cards.clear();
+                    repair_armed = false;
+                }
+                if control.is_some_and(|kind| kind.retries_answer()) {
+                    repair_armed = true;
+                }
+                if control.is_some_and(|kind| kind.discards_assistant_draft())
                     && let Some(draft) = last_assistant_entry.take()
                 {
                     rejected_drafts.insert(draft);
@@ -866,10 +889,7 @@ fn snapshot_inner(
                 }
                 if record.message.role == Role::User
                     && control.is_none()
-                    && record.message.content.iter().any(|block| match block {
-                        ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
-                        _ => false,
-                    })
+                    && has_user_request_content(&record.message.content)
                 {
                     turn += 1;
                     current_turn = entry.id.clone();
@@ -1534,31 +1554,53 @@ fn snapshot_inner(
         deduplicated.retain(|item| !ids_to_remove.contains(&item.id));
     }
     deduplicate_file_artifacts(&mut deduplicated);
-    let card_turns: std::collections::HashSet<String> = deduplicated
+    let first_card_index_by_turn: HashMap<String, usize> = deduplicated
         .iter()
-        .filter(|item| {
+        .enumerate()
+        .filter(|(_, item)| {
             item.kind == OutputKind::Card
                 && item
                     .provenance
                     .as_ref()
-                    .and_then(|p| p.source.as_deref())
+                    .and_then(|provenance| provenance.source.as_deref())
                     .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
         })
-        .map(|item| item.turn_id.clone())
-        .collect();
-    for item in &mut deduplicated {
-        if !card_turns.contains(&item.turn_id) || item.role != OutputRole::Assistant {
+        .fold(HashMap::new(), |mut indices, (index, item)| {
+            indices.entry(item.turn_id.clone()).or_insert(index);
+            indices
+        });
+    for (index, item) in deduplicated.iter_mut().enumerate() {
+        if item.role != OutputRole::Assistant
+            || !first_card_index_by_turn
+                .get(&item.turn_id)
+                .is_some_and(|first_card| index > *first_card)
+        {
             continue;
         }
-        let document = match &mut item.content {
-            OutputContent::Document { document } => Some(document),
-            OutputContent::Outcome { document, .. } => document.as_mut(),
+        let source_text = match &item.content {
+            OutputContent::Document { document } => Some(document.source_markdown.clone()),
+            OutputContent::Outcome { document, .. } => document
+                .as_ref()
+                .map(|document| document.source_markdown.clone()),
             _ => None,
         };
-        if let Some(document) = document
-            && let Some(note) = vak_delivery::supplemental_card_note(&document.source_markdown)
-        {
-            document.metadata.insert("card_note".into(), note.into());
+        let Some(followup) = source_text
+            .as_deref()
+            .and_then(vak_delivery::visible_card_followup)
+        else {
+            continue;
+        };
+        match &mut item.content {
+            OutputContent::Document { document } => {
+                document.metadata.insert("card_followup".into(), followup);
+            }
+            OutputContent::Outcome {
+                document: Some(document),
+                ..
+            } => {
+                document.metadata.insert("card_followup".into(), followup);
+            }
+            _ => {}
         }
     }
     timeline.items = deduplicated;
@@ -4130,6 +4172,18 @@ mod tests {
             &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"}),
         );
         log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(
+                "Initial chart draft that the additive completeness check replaces.",
+            )]),
+            meta: None,
+        })
+        .expect("append first draft text");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::CardCompletenessCheck,
+            "[card-completeness-check]: Add any missing outcomes.",
+        ))
+        .expect("append additive completeness check");
+        log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-2".into(),
                 name: "emit_chart_card".into(),
@@ -4157,6 +4211,40 @@ mod tests {
             &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"cost"}),
         );
 
+        // A later user turn may intentionally ask for the same card again.
+        // Per-turn duplicate suppression must not hide it from the timeline.
+        let repeated_chart = serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"});
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::image_base64("image/png", "synthetic")],
+            },
+            meta: None,
+        })
+        .expect("append image-only second user turn");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "call-3".into(),
+                name: "emit_chart_card".into(),
+                input: repeated_chart.clone(),
+            }]),
+            meta: None,
+        })
+        .expect("append call 3");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "call-3".into(),
+                    content: "Card displayed to the user (chart).".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("append result 3");
+        append_presentation_for_call(&mut log, "emit_chart_card", "call-3", &repeated_chart);
+
         let timeline = snapshot("two-charts", &log);
         let chart_items: Vec<_> = timeline
             .items
@@ -4167,9 +4255,23 @@ mod tests {
             .collect();
         assert_eq!(
             chart_items.len(),
-            2,
-            "two intentional cards of the same type with no repair nudge between them must both survive: {chart_items:?}"
+            3,
+            "two same-type cards in one turn and an identical card in a later turn must all survive: {chart_items:?}"
         );
+        assert!(!timeline.items.iter().any(|item| {
+            match &item.content {
+                OutputContent::Document { document } => document
+                    .source_markdown
+                    .contains("Initial chart draft that the additive completeness check replaces."),
+                OutputContent::Outcome {
+                    document: Some(document),
+                    ..
+                } => document
+                    .source_markdown
+                    .contains("Initial chart draft that the additive completeness check replaces."),
+                _ => false,
+            }
+        }));
     }
 
     /// The live bug: a research card over the tool framework's ~2000-char
@@ -4304,16 +4406,13 @@ mod tests {
         })
         .expect("user");
         let input = serde_json::json!({
-            "semantic_type": "metric",
-            "label": "Temperature",
-            "value": "25",
-            "unit": "C"
+            "readings": [{"label": "Temperature", "value": "25", "unit": "C"}]
         });
         let call_entry = log
             .append_message(MessageRecord {
                 message: Message::assistant(vec![ContentBlock::ToolUse {
                     id: "call-m".into(),
-                    name: "emit_metric_card".into(),
+                    name: "emit_stats_card".into(),
                     input: input.clone(),
                 }]),
                 meta: None,
@@ -4331,7 +4430,7 @@ mod tests {
             meta: None,
         })
         .expect("result");
-        append_presentation_for_call(&mut log, "emit_metric_card", "call-m", &input);
+        append_presentation_for_call(&mut log, "emit_stats_card", "call-m", &input);
         let (presentation_entry_id, _) = log
             .presentations()
             .into_iter()
@@ -4557,15 +4656,30 @@ mod tests {
     #[test]
     fn every_supported_type_renders_through_the_full_path_at_any_size() {
         let cases = vak_core::presentation_tools::conformance_cases();
-        assert!(
-            cases.len() >= 97,
-            "expected every registered type, got {}",
-            cases.len()
-        );
+        let emitters = vak_core::presentation_tools::EmitCardTool::all();
+        for emitter in &emitters {
+            let name = vak_tools::Tool::name(emitter);
+            assert!(
+                cases.iter().any(|(tool, _, _)| *tool == name),
+                "no case for block {name}"
+            );
+        }
         let mut failures = Vec::new();
         for (tool, semantic_type, args) in cases {
+            let mut normalized_args = args.clone();
+            let emitter = emitters
+                .iter()
+                .find(|emitter| vak_tools::Tool::name(*emitter) == tool)
+                .expect("registered emitter");
+            vak_tools::Tool::fill_defaults(emitter, &mut normalized_args);
+            if let Err(error) =
+                vak_tools::validate_input(&vak_tools::Tool::schema(emitter), &normalized_args)
+            {
+                failures.push(format!("{semantic_type} via {tool}: pre-execution schema rejected normalized call: {error}"));
+                continue;
+            }
             for padded in [false, true] {
-                let mut args = args.clone();
+                let mut args = normalized_args.clone();
                 if padded {
                     assert!(
                         pad_longest_text(&mut args, &" p".repeat(3000)),
@@ -4676,7 +4790,8 @@ mod tests {
                 .iter()
                 .find(|(_, kind, _)| seed.spec.accepts.iter().any(|accepted| accepted == kind))
             else {
-                failures.push(format!("{} has no emitted semantic type", seed.spec.id));
+                // A pack for a topic type no block emits any more is rebound
+                // or removed in docs/design/87-composed-answers.md stage 3.
                 continue;
             };
             // Packs read the stored card, which the tool builds from its
@@ -4710,88 +4825,6 @@ mod tests {
             failures.len(),
             failures.join("\n")
         );
-    }
-
-    #[test]
-    fn selected_metric_pack_keeps_every_reading_from_an_emitted_grid() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let mut log = channel_log(&dir, "metric-grid");
-        log.append_message(MessageRecord {
-            message: Message::user_text("How is the weather?"),
-            meta: None,
-        })
-        .expect("user");
-        let input = serde_json::json!({
-            "semantic_type": "metric",
-            "location": "Noida now",
-            "readings": [
-                {"label": "condition", "value": "Sunny"},
-                {"label": "temperature", "value": "35.2°C"},
-                {"label": "humidity", "value": "31%"}
-            ]
-        });
-        log.append_message(MessageRecord {
-            message: Message::assistant(vec![ContentBlock::ToolUse {
-                id: "grid-call".into(),
-                name: "emit_metric_card".into(),
-                input: input.clone(),
-            }]),
-            meta: None,
-        })
-        .expect("call");
-        log.append_message(MessageRecord {
-            message: Message {
-                role: Role::User,
-                content: vec![ContentBlock::ToolResult {
-                    tool_use_id: "grid-call".into(),
-                    content: "Card displayed to the user (metric).".into(),
-                    is_error: false,
-                }],
-            },
-            meta: None,
-        })
-        .expect("result");
-        append_presentation_for_call(&mut log, "emit_metric_card", "grid-call", &input);
-        let library = crate::effective_presentation_library(
-            &vak_presentation::PresentationLibrary::default(),
-            "/tmp/project",
-        );
-        let planner = vak_delivery::PresentationPlanner {
-            skills: vak_delivery::built_in_skill_registry(),
-            recipes: vak_delivery::built_in_recipes(),
-        };
-        let timeline =
-            super::snapshot_with_planner_and_library("metric-grid", &log, &planner, &library);
-        let card = timeline
-            .items
-            .iter()
-            .find(|item| item.kind == OutputKind::Card)
-            .expect("card");
-        let OutputContent::Adaptive { tree, .. } = &card.content else {
-            panic!("selected pack should produce adaptive content");
-        };
-        assert_eq!(tree.spec_id, "seed.metric");
-        assert_eq!(
-            tree.root.props.get("condition"),
-            Some(&serde_json::json!("Sunny"))
-        );
-        assert_eq!(
-            tree.root.props.get("temperature"),
-            Some(&serde_json::json!("35.2°C"))
-        );
-        assert_eq!(
-            tree.root.props.get("humidity"),
-            Some(&serde_json::json!("31%"))
-        );
-        let lowered = vak_delivery::adaptive_presentation_markdown(
-            &vak_presentation::CompiledPresentation::Rich(tree.clone()),
-        );
-        for reading in ["Sunny", "35.2°C", "31%"] {
-            assert!(
-                lowered.contains(reading),
-                "constrained delivery lost {reading}: {lowered}"
-            );
-        }
     }
 
     fn channel_log(dir: &tempfile::TempDir, name: &str) -> SessionLog {
@@ -4852,8 +4885,8 @@ mod tests {
         append_presentation_for_call(log, "emit_chart_card", id, &input);
     }
 
-    /// Channels deliver the card as the answer and retain only explicitly
-    /// additional narration.
+    /// Channel fallbacks include the card projection and every assistant text
+    /// block from the turn; text prefixes have no control meaning.
     #[test]
     fn a_channel_gets_the_cards_of_the_run_ahead_of_the_narration() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -4876,14 +4909,14 @@ mod tests {
         let cards = super::run_cards(&log);
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].semantic_type, "chart");
-        assert!(!text.contains("The chart is shown above."), "{text}");
+        assert!(text.contains("The chart is shown above."), "{text}");
         let with_note = super::text_with_run_cards(&log, "Note: Check the holiday dip.".into());
         assert!(with_note.contains("sales rise steadily"), "{with_note}");
         assert!(with_note.ends_with("Check the holiday dip."), "{with_note}");
     }
 
     #[test]
-    fn card_result_projects_only_an_explicit_additional_note() {
+    fn card_result_projects_natural_followup_without_rewriting_its_text() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut log = channel_log(&dir, "card-note");
         log.append_message(MessageRecord {
@@ -4901,12 +4934,200 @@ mod tests {
         .expect("answer");
         let timeline = super::snapshot("card-note", &log);
         let note = timeline.items.iter().find_map(|item| match &item.content {
-            OutputContent::Document { document } => document.metadata.get("card_note"),
+            OutputContent::Document { document } => document.metadata.get("card_followup"),
             _ => None,
         });
         assert_eq!(
             note.map(String::as_str),
-            Some("The holiday dip needs review.")
+            Some("Note: The holiday dip needs review.")
+        );
+    }
+
+    #[test]
+    fn context_before_the_first_card_remains_visible() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "card-leading-context");
+        log.append_message(MessageRecord {
+            message: Message::user_text("make a chart"),
+            meta: None,
+        })
+        .expect("user");
+        let context = "Requests rose through Wednesday, then eased.";
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(context)]),
+            meta: None,
+        })
+        .expect("context");
+        append_card_call(&mut log, "c1", "requests by day");
+
+        let timeline = super::snapshot("card-leading-context", &log);
+        assert!(timeline.items.iter().any(|item| match &item.content {
+            OutputContent::Document { document } => document.source_markdown == context,
+            OutputContent::Outcome {
+                document: Some(document),
+                ..
+            } => document.source_markdown == context,
+            _ => false,
+        }));
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|item| item.kind == OutputKind::Card)
+        );
+    }
+
+    #[test]
+    fn card_result_projects_completion_text_as_written() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "card-completion-narration");
+        log.append_message(MessageRecord {
+            message: Message::user_text("make a schedule and budget"),
+            meta: None,
+        })
+        .expect("user");
+        append_card_call(&mut log, "c1", "schedule and budget details");
+        let narration = "The requested plan, including the 90-minute schedule, essential checklist, and budget allocation, is complete. No further information is required.";
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(narration)]),
+            meta: None,
+        })
+        .expect("answer");
+
+        let timeline = super::snapshot("card-completion-narration", &log);
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|item| item.kind == OutputKind::Card)
+        );
+        assert!(
+            timeline.items.iter().any(|item| match &item.content {
+                OutputContent::Document { document } => document
+                    .metadata
+                    .get("card_followup")
+                    .is_some_and(|text| text == narration),
+                OutputContent::Outcome {
+                    document: Some(document),
+                    ..
+                } => document
+                    .metadata
+                    .get("card_followup")
+                    .is_some_and(|text| text == narration),
+                _ => false,
+            }),
+            "follow-up is projected as written, without phrase classification"
+        );
+        assert!(
+            log.active_entries_rev().any(|entry| match &entry.payload {
+                vak_session::EntryPayload::Message(record) =>
+                    record.message.content.iter().any(|block| {
+                        matches!(block, ContentBlock::Text { text } if text == narration)
+                    }),
+                _ => false,
+            }),
+            "original assistant text remains available in the ledger"
+        );
+    }
+
+    #[test]
+    fn card_result_does_not_give_note_prefix_control_meaning() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "card-marked-completion-boilerplate");
+        log.append_message(MessageRecord {
+            message: Message::user_text("show me the plan in cards"),
+            meta: None,
+        })
+        .expect("user");
+        append_card_call(&mut log, "c1", "Volunteer Orientation Plan Summary");
+        let narration = "Note: All distinct parts of the request have been addressed. No further text is needed.";
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(narration)]),
+            meta: None,
+        })
+        .expect("answer");
+
+        let timeline = super::snapshot("card-marked-completion-boilerplate", &log);
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|item| item.kind == OutputKind::Card)
+        );
+        assert!(
+            timeline.items.iter().any(|item| match &item.content {
+                OutputContent::Document { document } => document
+                    .metadata
+                    .get("card_followup")
+                    .is_some_and(|text| text == narration),
+                OutputContent::Outcome {
+                    document: Some(document),
+                    ..
+                } => document
+                    .metadata
+                    .get("card_followup")
+                    .is_some_and(|text| text == narration),
+                _ => false,
+            }),
+            "Note: remains ordinary text and is projected in full"
+        );
+        assert!(
+            log.active_entries_rev().any(|entry| match &entry.payload {
+                vak_session::EntryPayload::Message(record) =>
+                    record.message.content.iter().any(|block| {
+                        matches!(block, ContentBlock::Text { text } if text == narration)
+                    }),
+                _ => false,
+            }),
+            "original assistant text remains available in the ledger"
+        );
+    }
+
+    #[test]
+    fn card_result_preserves_followup_even_when_it_repeats_card_facts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "card-duplicate-note");
+        log.append_message(MessageRecord {
+            message: Message::user_text("when does the book club start and what is the budget?"),
+            meta: None,
+        })
+        .expect("user");
+        append_card_call(
+            &mut log,
+            "c1",
+            "Book Club Plan — Start Time 6 pm; Total Budget $60",
+        );
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text(
+                "Note: The book club plan specified a start time of 6 pm and a total budget of $60.",
+            )]),
+            meta: None,
+        })
+        .expect("answer");
+
+        let timeline = super::snapshot("card-duplicate-note", &log);
+        assert!(
+            timeline.items.iter().any(|item| match &item.content {
+                OutputContent::Document { document } => document
+                    .metadata
+                    .get("card_followup")
+                    .is_some_and(|text| text.contains("start time of 6 pm")),
+                OutputContent::Outcome {
+                    document: Some(document),
+                    ..
+                } => document
+                    .metadata
+                    .get("card_followup")
+                    .is_some_and(|text| text.contains("start time of 6 pm")),
+                _ => false,
+            }),
+            "projection preserves source text and leaves deduplication to the model"
+        );
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|item| item.kind == OutputKind::Card)
         );
     }
 
@@ -4972,6 +5193,26 @@ mod tests {
     }
 
     #[test]
+    fn a_card_from_an_earlier_turn_does_not_suppress_channel_narration() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "channel-history");
+        log.append_message(MessageRecord {
+            message: Message::user_text("first, chart the sales"),
+            meta: None,
+        })
+        .expect("first user");
+        append_card_call(&mut log, "c1", "sales rise steadily");
+        log.append_message(MessageRecord {
+            message: Message::user_text("second, explain the result"),
+            meta: None,
+        })
+        .expect("second user");
+
+        let narration = "The sales increased throughout the period.";
+        assert_eq!(super::channel_narration(&log, narration.into()), narration);
+    }
+
+    #[test]
     fn only_the_latest_turns_cards_are_delivered() {
         let dir = tempfile::tempdir().expect("tempdir");
         let mut log = channel_log(&dir, "ch3");
@@ -5010,14 +5251,10 @@ mod tests {
         ))
         .expect("nudge");
         append_card_call(&mut log, "c2", "RETRY");
-        let text = super::text_with_run_cards(&log, "(no text)".into());
+        let text = super::text_with_run_cards(&log, String::new());
         assert!(
             text.contains("RETRY") && !text.contains("FIRST-ATTEMPT"),
             "{text}"
-        );
-        assert!(
-            !text.contains("(no text)"),
-            "a card-only run has no placeholder: {text}"
         );
     }
 

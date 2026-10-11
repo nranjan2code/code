@@ -12,7 +12,10 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 
 use vak_llm::Message;
-use vak_session::types::{FrozenContract, IntentRecord, MessageRecord, SessionHeader};
+use vak_session::types::{
+    FrozenContract, IntentRecord, MessageRecord, SessionHeader, WorkContract, WorkEvent,
+    WorkEventKind, WorkItemDefinition, WorkOwner,
+};
 use vak_session::{SessionLog, SessionPath};
 
 fn header() -> SessionHeader {
@@ -75,6 +78,24 @@ fn user(text: &str) -> MessageRecord {
     }
 }
 
+fn strand(thread_id: &str, text: &str, lineage: vak_intent::Lineage) -> vak_intent::Strand {
+    vak_intent::Strand {
+        strand_id: format!("{thread_id}.0"),
+        thread_id: thread_id.into(),
+        text: text.into(),
+        reading: vak_intent::Reading::general(),
+        relation: vak_intent::StrandRelation::Independent,
+        lineage,
+        engagement: vak_intent::Engagement::general(),
+    }
+}
+
+fn intent_with_strand(strand: vak_intent::Strand) -> IntentRecord {
+    let mut record = record(None);
+    record.strands.push(strand);
+    record
+}
+
 /// The intent note reaches the model through the request tail
 /// (docs/design/68-context-engine.md §6/§10), not spliced into the
 /// projection: `derive_messages()` carries only the conversation, and
@@ -106,6 +127,138 @@ fn an_intent_note_reaches_the_model_through_the_tail_not_the_projection() {
     let intent = tail.intent.expect("intent tail section present");
     assert!(intent.contains("Cite your sources."));
     assert!(intent.starts_with("<intent>"));
+}
+
+#[test]
+fn an_unrelated_request_does_not_join_or_receive_an_explicit_goal() {
+    let dir = tempdir().unwrap();
+    let mut log = open(dir.path());
+    log.begin_turn("goal-turn").unwrap();
+    log.append_goal_update(vak_intent::GoalUpdate {
+        revision: 1,
+        relation: vak_intent::GoalRelation::New,
+        request: "prepare the community garden plan".into(),
+        supersedes_revision: None,
+        explicit: true,
+    })
+    .unwrap();
+    log.append_intent(intent_with_strand(strand(
+        "garden-thread",
+        "prepare the community garden plan",
+        vak_intent::Lineage::New,
+    )))
+    .unwrap();
+    let source_entry = log
+        .append_message(user("prepare the community garden plan"))
+        .unwrap()
+        .id;
+    log.append_message(vak_session::types::MessageRecord {
+        message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text("Plan ready.")]),
+        meta: None,
+    })
+    .unwrap();
+    let contract_id = "garden-contract";
+    log.append_work(WorkEvent {
+        contract_id: contract_id.into(),
+        revision: 0,
+        kind: WorkEventKind::ContractCreated {
+            contract: WorkContract {
+                contract_id: contract_id.into(),
+                revision: 0,
+                source_entry_id: source_entry,
+                objective: "prepare the community garden plan".into(),
+                constraints: Vec::new(),
+                assumptions: Vec::new(),
+                criteria: Vec::new(),
+                items: vec![WorkItemDefinition {
+                    item_id: "plan".into(),
+                    title: "Prepare plan".into(),
+                    instructions: "Prepare the garden plan".into(),
+                    dependencies: Vec::new(),
+                    owner: WorkOwner::ParentAgent,
+                    required: true,
+                    readonly: false,
+                    path_claims: Vec::new(),
+                    criterion_ids: Vec::new(),
+                }],
+            },
+        },
+    })
+    .unwrap();
+    log.append_work(WorkEvent {
+        contract_id: contract_id.into(),
+        revision: 0,
+        kind: WorkEventKind::ContractStatusChanged {
+            from: vak_session::types::WorkContractStatus::Draft,
+            to: vak_session::types::WorkContractStatus::Active,
+            reason: "test".into(),
+        },
+    })
+    .unwrap();
+
+    let unrelated = vak_intent::Intent {
+        reading: vak_intent::Reading::general(),
+        engagement: vak_intent::Engagement::general(),
+        provenance: vak_intent::Provenance::new(
+            vak_intent::Tier::Signals,
+            vak_intent::RESOLVER_VERSION,
+            Vec::new(),
+        ),
+        strands: vec![strand(
+            "tags-thread",
+            "how many name tags remain",
+            vak_intent::Lineage::New,
+        )],
+    };
+    log.begin_turn("tags-turn").unwrap();
+    let update = log.next_goal_update_for_intent("how many name tags remain", &unrelated);
+    assert_eq!(update.relation, vak_intent::GoalRelation::Independent);
+    log.append_goal_update(update).unwrap();
+    log.append_intent(intent_with_strand(strand(
+        "tags-thread",
+        "how many name tags remain",
+        vak_intent::Lineage::New,
+    )))
+    .unwrap();
+    log.append_message(user("how many name tags remain"))
+        .unwrap();
+
+    let goal = log.goal_state().unwrap();
+    assert_eq!(goal.objective, "prepare the community garden plan");
+    assert!(goal.additions.is_empty());
+    assert!(log.tail_sections(None).thread.is_none());
+    assert!(log.tail_sections(None).work_contract.is_none());
+
+    let follow_up = vak_intent::Intent {
+        strands: vec![strand(
+            "garden-thread",
+            "include a supply list",
+            vak_intent::Lineage::Continues {
+                thread_id: "garden-thread".into(),
+                merges: Vec::new(),
+            },
+        )],
+        ..unrelated
+    };
+    log.begin_turn("garden-follow-up").unwrap();
+    let update = log.next_goal_update_for_intent("include a supply list", &follow_up);
+    assert_eq!(update.relation, vak_intent::GoalRelation::AddsTo);
+    log.append_goal_update(update).unwrap();
+    log.append_intent(intent_with_strand(strand(
+        "garden-thread",
+        "include a supply list",
+        vak_intent::Lineage::Continues {
+            thread_id: "garden-thread".into(),
+            merges: Vec::new(),
+        },
+    )))
+    .unwrap();
+    let resumed_tail = log.tail_sections(None);
+    assert!(resumed_tail.work_contract.is_some());
+    assert!(
+        resumed_tail.thread.is_none(),
+        "the active work contract is the one source for this objective"
+    );
 }
 
 /// A long note in a non-Latin script reaches the tail whole. The tail used

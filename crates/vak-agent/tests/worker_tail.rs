@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Worker tail (docs/design/68-context-engine.md §6/§10): a spawned child
-//! agent must carry the same turn context block (clock instant + epistemic
-//! stance) as its parent turn, not an empty one — see `TaskDeps::tail` and
+//! agent must carry the same turn context block (the clock instant) as its
+//! parent turn, not an empty one — see `TaskDeps::tail` and
 //! `Core`'s `TaskDeps` construction, which now thread the parent's
 //! `AgentConfig::tail` through instead of leaving the child's default.
 //! Assembly and single-turn stability of the tail itself are covered by
@@ -147,7 +147,6 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
 
     let parent_tail = TailInput {
         temporal: "current UTC instant 2026-09-19T00:00:00Z".into(),
-        stance: "Provide a clear, direct answer.".into(),
     };
 
     let mut cfg = AgentConfig::new("sys");
@@ -264,10 +263,5 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
     assert!(
         tail_text.contains("current UTC instant 2026-09-19T00:00:00Z"),
         "worker must carry the PARENT turn's temporal context, not an empty one: {tail_text}"
-    );
-    assert!(tail_text.contains("<stance>"));
-    assert!(
-        tail_text.contains("Provide a clear, direct answer."),
-        "worker must carry the parent turn's epistemic stance: {tail_text}"
     );
 }

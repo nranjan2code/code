@@ -208,6 +208,7 @@ export default function WorkspaceGate() {
             </form>
           }
         >
+          <Show when={authed() === true} fallback={<p class="gate-lead" role="status">Checking sign-in…</p>}>
           <Show when={recovered()}>
             <div>
               <h1>Replace your passkey</h1>
@@ -284,6 +285,7 @@ export default function WorkspaceGate() {
                 </div>
               </>
             )}
+          </Show>
           </Show>
           </Show>
         </Show>

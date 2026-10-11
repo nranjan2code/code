@@ -898,98 +898,60 @@ fn unchanged_capabilities_not_rewritten() {
 /// longer verbatim among `derive_messages()` — one still present in the
 /// working set needs no restating (§6 "one source per fact").
 #[test]
-fn conversation_thread_lists_only_directives_dropped_by_compaction() {
+fn conversation_thread_does_not_replay_old_request_timelines() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("thread.jsonl"), header()).unwrap();
-
-    // Turn 1
-    log.append_goal_update(vak_intent::GoalUpdate {
-        revision: 1,
-        relation: vak_intent::GoalRelation::New,
-        request: "initial research on WEF".into(),
-        supersedes_revision: None,
-        explicit: false,
-    })
-    .unwrap();
-    log.append_message(user_msg("initial research on WEF"))
+    for (revision, request) in [
+        "initial research on WEF",
+        "use python sandbox",
+        "now evaluate global GDP past 5 years",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        log.append_goal_update(vak_intent::GoalUpdate {
+            revision: revision as u64 + 1,
+            relation: if revision == 0 {
+                vak_intent::GoalRelation::New
+            } else {
+                vak_intent::GoalRelation::AddsTo
+            },
+            request: request.into(),
+            supersedes_revision: None,
+            explicit: false,
+        })
         .unwrap();
-    log.append_message(assistant_msg("here are findings"))
-        .unwrap();
-
-    // Turn 2
-    log.append_goal_update(vak_intent::GoalUpdate {
-        revision: 2,
-        relation: vak_intent::GoalRelation::AddsTo,
-        request: "use python sandbox".into(),
-        supersedes_revision: None,
-        explicit: false,
-    })
-    .unwrap();
-    log.append_message(user_msg("use python sandbox")).unwrap();
-    log.append_message(assistant_msg("running in sandbox"))
-        .unwrap();
-
-    // Turn 3: User drifts to GDP task
-    log.append_goal_update(vak_intent::GoalUpdate {
-        revision: 3,
-        relation: vak_intent::GoalRelation::AddsTo,
-        request: "now evaluate global GDP past 5 years".into(),
-        supersedes_revision: None,
-        explicit: false,
-    })
-    .unwrap();
-    log.append_message(user_msg("now evaluate global GDP past 5 years"))
-        .unwrap();
-
-    // While every directive is still verbatim in the working set, the
-    // projection carries none of them (they moved to the tail) and the
-    // tail itself has nothing to add — restating a directive already in
-    // `derive_messages()` would duplicate a fact already sent.
-    assert!(
-        log.derive_messages()
-            .iter()
-            .all(|m| !m.text_content().contains("<conversation_thread")),
-        "the thread must never be spliced into the projection"
-    );
+        log.append_message(user_msg(request)).unwrap();
+        if revision < 2 {
+            log.append_message(assistant_msg("completed")).unwrap();
+        }
+    }
     assert!(
         log.tail_sections(None).thread.is_none(),
-        "nothing is dropped from the working set yet, so the thread has nothing to add"
+        "ordinary request history is available through recall, not copied into the tail"
     );
 
-    // Packet turns 1 and 2 away; only turn 3's directive stays verbatim.
     let index = vak_session::TurnIndex::from_log(&log);
-    let (t1, t2) = (index.turns[0].id.clone(), index.turns[1].id.clone());
-    log.append_packet(&t1, &t2, "m", "summary of turns 1-2".into(), 999)
-        .unwrap();
+    let t1 = index.turns[0].id.clone();
     let plan = WorkingSetPlan {
-        packet_range: Some((t1, t2)),
+        packet_range: Some((t1.clone(), t1.clone())),
         ..WorkingSetPlan::default()
     };
+    assert!(log.tail_sections(Some(&plan)).thread.is_none());
 
-    let joined = log
-        .derive_with_plan(&plan)
-        .iter()
-        .map(|m| m.text_content())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        !joined.contains("<conversation_thread"),
-        "the thread must never be spliced into the projection"
-    );
-
-    let thread_text = log
-        .tail_sections(Some(&plan))
-        .thread
-        .expect("packeted-away directives surface in the thread");
-    assert!(thread_text.contains("revision=\"3\""));
-    assert!(thread_text.contains("initial research on WEF"));
-    assert!(thread_text.contains("use python sandbox"));
-    // Turn 3's directive is still verbatim in the working set (it was kept,
-    // not compacted), so restating it in the thread would duplicate it.
-    assert!(!thread_text.contains("now evaluate global GDP past 5 years"));
-    assert!(thread_text.contains("Follow the user's intent across conversational drifts"));
-    assert!(thread_text.contains("Conversational drift across turns is expected: follow along smoothly and adapt immediately."));
-    assert!(thread_text.contains("If genuinely confused, ask a brief clarification, but NEVER use asking clarification as an exception-handling escape hatch"));
+    log.append_goal_update(vak_intent::GoalUpdate {
+        revision: 4,
+        relation: vak_intent::GoalRelation::New,
+        request: "Prepare the volunteer briefing".into(),
+        supersedes_revision: None,
+        explicit: true,
+    })
+    .unwrap();
+    let thread = log.tail_sections(None).thread.unwrap();
+    assert!(thread.contains("Active user-stated objective: Prepare the volunteer briefing"));
+    assert!(!thread.contains("initial research on WEF"));
+    assert!(!thread.contains("use python sandbox"));
+    assert!(!thread.contains("User request timeline"));
 }
 
 /// Replaces the old character-count trim: a closed turn's historical tool

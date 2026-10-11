@@ -281,13 +281,21 @@ async fn abort_preserves_partial_research_notes() {
     assert!(partial.contains("source A reviewed"));
 }
 
-/// A report task that demands verification cannot finish with zero executed
-/// commands; the built-in stop gate forces one continuation, then the run
-/// completes only after real verification ran.
+/// A plan that declares a check cannot end with nothing run: the runtime
+/// names the missing check once (docs/design/86-model-plans-runtime-checks.md
+/// §2.2), and the run completes after the check really ran.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn stop_gate_blocks_premature_report_until_verified() {
+async fn a_declared_check_is_held_until_something_runs_it() {
     let (mut agent, _provider, dir) = setup(
         vec![
+            tool_call(
+                "p1",
+                "plan",
+                serde_json::json!({"deliverables": [
+                    {"name": "report with the Q1 total", "form": "change"},
+                    {"name": "proof the total is in the file", "form": "check"}
+                ]}),
+            ),
             text_msg("Done. The report is ready."),
             tool_call(
                 "t1",
@@ -299,80 +307,48 @@ async fn stop_gate_blocks_premature_report_until_verified() {
             text_msg("Verified. Q1 total recorded as 4200 in report.md."),
         ],
         vec![Arc::new(BashTool)],
-        |cfg| {
-            // What the reading of this request admits: proof is demanded.
-            let mut reading = vak_intent::Reading::general();
-            reading.act = vak_intent::Act::Author;
-            reading.evidence = vak_intent::Evidence::Verified;
-            let mut spec = vak_intent::OutcomeSpec::from_reading(
-                "Compute the totals into report.md and verify the number appears in the file before you finish.",
-                &reading,
-                1,
-            );
-            spec.stop = vak_intent::StopProfile::Verification;
-            cfg.outcome = Some(spec);
-        },
+        |_| {},
     );
-
-    let (ev_tx, ev_rx) = mpsc::channel(256);
-    let collector = spawn_collector(ev_rx);
 
     let outcome = agent
         .run(
             "Compute the totals into report.md and verify the number appears in the file before you finish.",
             &Default::default(),
             CancellationToken::new(),
-            ev_tx,
+            mpsc::channel(256).0,
         )
         .await;
-    let events = collector.await.unwrap();
-
     match outcome {
         TurnOutcome::Completed { response } => {
             assert!(response.text_content().contains("Verified"));
         }
-        other => panic!("expected completed after gate continuation, got {other:?}"),
+        other => panic!("expected completed after the plan check, got {other:?}"),
     }
-
-    let continuations = events
-        .iter()
-        .filter(|e| matches!(e, AgentEvent::StopHookContinuation { .. }))
-        .count();
-    assert_eq!(continuations, 1, "gate must block exactly once");
-
-    // Raw ledger: a control nudge is scaffolding for the turn still in
-    // progress and is dropped once the turn closes
-    // (docs/design/68-context-engine.md §10) — this checks it was recorded
-    // at all, not that the final projection still carries it.
-    let guard_msgs = agent
+    let checks: Vec<String> = agent
         .session
         .lock()
         .await
         .message_chain()
         .iter()
-        .filter(|(_, m)| m.text_content().contains("[stop-guard]"))
-        .count();
-    assert_eq!(guard_msgs, 1, "guard continuation must be logged once");
-
-    // Agent bash works in the workspace, where the file tools read, so the
-    // verified report is where the user and the next tool call look for it.
+        .map(|(_, m)| m.text_content())
+        .filter(|text| text.contains("[plan-check]"))
+        .collect();
+    assert_eq!(checks.len(), 1, "{checks:?}");
+    assert!(
+        checks[0].contains("proof the total is in the file"),
+        "{checks:?}"
+    );
     let report = std::fs::read_to_string(dir.path().join("report.md"))
         .expect("verified report is in the workspace");
     assert!(report.contains("4200"));
 }
 
-/// A long research session crosses the context trigger; compaction
-/// summarizes older turns into a ledger entry (never deleting them), the
-/// projection carries the summary forward, and the run completes.
+/// A long ledger of closed, unrelated research turns does not force a
+/// compaction packet into a self-contained request. The original history
+/// remains available in the ledger while the run reads and summarizes its
+/// current source files.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn compaction_during_long_research_session() {
-    // Compaction works in whole closed turns
-    // (docs/design/68-context-engine.md §10: a turn is never split), so
-    // there has to be at least one closed turn for it to summarize away —
-    // the still-open research turn below is never itself a compaction
-    // candidate (§10: "current turn: every result verbatim, always"), so
-    // the source files stay modest here; what pushes the budget over is
-    // the seeded prior research, which compaction then drops.
+async fn long_unrelated_research_history_does_not_trigger_compaction() {
     let big_a = "Research note on climate data points.\n".repeat(6);
     let big_b = "Research note on energy market shifts.\n".repeat(6);
 
@@ -410,11 +386,9 @@ async fn compaction_during_long_research_session() {
         header,
     )
     .unwrap();
-    // These relevant, carded turns collectively exceed the small history
-    // budget even at card fidelity, so incremental compaction (docs/design/
-    // 68-context-engine.md §4) fires on the first plan. Each seeded turn
-    // gets a real `TurnCard`, as the turn-close hook would write; only
-    // carded turns can be collapsed into a packet.
+    // These carded turns are deliberately large. The current request is
+    // self-contained and does not depend on them, so spare context capacity
+    // must not make them part of the request or trigger compaction.
     let seed_filler = "prior research finding ".repeat(220);
     for i in 0..30 {
         let turn_id = log
@@ -444,9 +418,6 @@ async fn compaction_during_long_research_session() {
     let provider = Arc::new(Scripted {
         capacity_key: crate::support::capacity_key(),
         responses: std::sync::Mutex::new(VecDeque::from(vec![
-            text_msg(
-                "Summary: prior research condensed; key climate and energy findings retained for the brief.",
-            ),
             tool_call("r1", "read", serde_json::json!({"path": "big-a.txt"})),
             tool_call("r2", "read", serde_json::json!({"path": "big-b.txt"})),
             tool_call(
@@ -467,14 +438,11 @@ async fn compaction_during_long_research_session() {
     cfg.mode = Mode::FullAccess;
     cfg.permission = Some(Arc::new(PermissionEngine::default()));
     cfg.approver = Some(Arc::new(vak_agent::AutoApprove));
-    // Small enough that the three heavily-padded seeded turns above cannot
-    // all fit even as cards, forcing a packet on the very first plan, and
-    // large enough for the tools' schemas beside one packet.
+    // Keep a narrow discovered horizon to ensure irrelevant old turns do
+    // not provoke compaction just because they exceed available capacity.
     cfg.declared_window = Some(1700);
     cfg.max_output = 100;
-    // The handoff-reset rescue is a different mechanism (Phase H) from
-    // incremental compaction and would consume its own scripted response
-    // if it fired; keep this test isolated to compaction alone.
+    // Handoff reset is independent; this test isolates request projection.
     cfg.handoff_reset = false;
     let mut agent = Agent::new(provider.clone(), log, cfg);
 
@@ -505,41 +473,32 @@ async fn compaction_during_long_research_session() {
         .iter()
         .filter(|e| matches!(e, AgentEvent::ContextCompacting { .. }))
         .count();
-    assert_eq!(continuations, 1, "compaction must trigger exactly once");
-    let compacted = events.iter().find_map(|e| match e {
-        AgentEvent::ContextCompacted {
-            before_tokens,
-            after_tokens,
-            ..
-        } => Some((*before_tokens, *after_tokens)),
-        _ => None,
-    });
-    let (before, after) = compacted.expect("compacted event");
+    assert_eq!(
+        continuations, 0,
+        "unrelated history does not trigger compaction"
+    );
     assert!(
-        after < before,
-        "compaction must shrink the estimate: before={before}, after={after}"
+        !events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::ContextCompacted { .. }))
     );
 
-    // The summarizer ran as its own model call against the transcript
-    // BEFORE the real research turn dispatched at all (the seeded prior
-    // research alone was already over budget), and the whole run consumed
-    // exactly the scripted trajectory: compaction + two reads + write +
-    // final.
+    // The model receives the current task trajectory and at most the
+    // preceding turn's compact card: no compaction call and no seeded
+    // research turn's record.
     {
         let reqs = provider.requests.lock().unwrap();
-        assert_eq!(reqs.len(), 5, "compaction + two reads + write + final");
-        assert!(
-            reqs[0]
-                .system
-                .as_deref()
-                .unwrap_or("")
-                .contains("compactor"),
-            "first request must be the compaction call"
-        );
+        assert_eq!(reqs.len(), 4, "two reads + write + final");
+        assert!(reqs.iter().all(|request| {
+            !request
+                .messages
+                .iter()
+                .any(|message| message.text_content().contains(seed_filler.as_str()))
+        }));
     }
 
-    // Append-only invariant: raw ledger still holds pre-compaction history
-    // plus exactly one compaction entry; projection carries the summary.
+    // History remains append-only and recallable in the source ledger; no
+    // compaction entry was needed for this unrelated request.
     let session_file =
         SessionPath::new_session_file(&dir.path().join(".vak-home"), dir.path(), "general-flow");
     let raw = vak_session::SessionLog::text(&session_file);
@@ -547,24 +506,22 @@ async fn compaction_during_long_research_session() {
         .lines()
         .filter(|l| l.contains("\"kind\":\"compaction\""))
         .count();
-    assert_eq!(compaction_lines, 1, "exactly one compaction entry expected");
+    assert_eq!(compaction_lines, 0, "no compaction entry expected");
     assert!(
         raw.contains("prior research finding"),
         "original history must never be deleted from the ledger"
     );
 
-    // The packet reached the model: every request after the compaction
-    // call led with the summary. The plan-free projection, by contrast,
-    // still carries the raw history — a packet is a cache for the plan
-    // that asked for it, never a boundary in the ledger.
+    // No packet is introduced into any request, while the plan-free ledger
+    // projection still makes the old turns available to explicit recall.
     {
         let reqs = provider.requests.lock().unwrap();
-        for req in &reqs[1..] {
+        for req in reqs.iter() {
             assert!(
-                req.messages[0]
-                    .text_content()
-                    .starts_with("<context_summary>"),
-                "every request after compaction must lead with the packet"
+                !req.messages
+                    .iter()
+                    .any(|message| { message.text_content().contains("<context_summary>") }),
+                "unrelated history must not be summarized into the request"
             );
         }
     }
@@ -573,7 +530,7 @@ async fn compaction_during_long_research_session() {
         projected
             .iter()
             .any(|m| m.text_content().contains("prior research finding")),
-        "the packet must not hide history from the plan-free projection"
+        "omitting history from this request must not remove it from the ledger"
     );
 
     let digest = std::fs::read_to_string(dir.path().join("digest.txt")).unwrap();

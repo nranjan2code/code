@@ -1,7 +1,6 @@
-//! `WorkingSetPlanner` (docs/design/68-context-engine.md §4, §10): decides,
-//! for one request, which closed turns ride along at `Full` fidelity, which
-//! collapse to a one-line `Card`, and which are pushed into a `Packet` —
-//! from measured costs against a measured budget, never a fixed count.
+//! `WorkingSetPlanner` (docs/design/68-context-engine.md §4, §10): keeps the
+//! current turn verbatim and admits only the compact card of the turn it
+//! follows. Historical records are reopened through `recall`.
 //! Pure: no I/O, no locks, no network. The caller
 //! (`vak-agent`'s turn loop) supplies the `CapacityProfile`, the
 //! `TurnIndex`, and the incoming directive; `plan()` returns a `WorkingSetPlan`
@@ -12,16 +11,6 @@ use vak_session::{LinkKind, ReadingKey, SessionLog, TurnIndex};
 
 use crate::assemble::messages_chars;
 use crate::capacity::CapacityProfile;
-
-/// Directive fragments that refer back to the immediately preceding turn
-/// without repeating its subject (§4/§10: "anaphora ... always promotes the
-/// immediately preceding turn"). Matched as a case-insensitive substring of
-/// the directive text — deliberately loose, since a false positive costs
-/// one extra `Full` turn and a false negative costs nothing the relevance
-/// search wouldn't otherwise catch.
-pub const ANAPHORA_PHRASES: [&str; 8] = [
-    "that", "it", "again", "the same", "previous", "above", "this one", "continue",
-];
 
 /// Inputs to one planning pass. `reading` is the current directive's own
 /// reading, already resolved by the intent tier before planning runs.
@@ -37,50 +26,6 @@ pub struct PlanInput<'a> {
     pub prefix_tokens: u64,
     pub tail_tokens: u64,
     pub current_turn_tokens: u64,
-}
-
-/// Whether `directive` contains an anaphoric reference to "the last thing"
-/// (§4/§10's anaphora word list).
-fn is_anaphoric(directive: &str) -> bool {
-    let lower = directive.to_lowercase();
-    let words: Vec<&str> = lower
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .collect();
-    ANAPHORA_PHRASES.iter().any(|phrase| {
-        if phrase.contains(' ') {
-            lower.contains(phrase)
-        } else {
-            words.contains(phrase)
-        }
-    })
-}
-
-/// When the card tier overflows, the number of turns evicted into the
-/// packet is rounded UP to a multiple of this many (item 3 fix). Without
-/// batching, a fixed budget means every new turn displaces exactly the one
-/// turn that just aged out of the card tier, so `packet_range`'s newest
-/// (`last`) boundary moves by one turn on every subsequent turn once
-/// overflow starts — and `SessionLog::packet_needs_compaction` needs an
-/// EXACT range match to reuse a stored packet, so a boundary that creeps by
-/// one turn reran the summariser on almost every turn of a long session.
-/// Rounding evicts a few turns early, leaving headroom so the boundary
-/// holds for this many turns before jumping by that many at once.
-const PACKET_BATCH_TURNS: usize = 8;
-
-/// Maximum total tokens of historical full records admitted automatically on
-/// one request. A large model horizon is not a relevance budget: if a query
-/// matches many old turns, keep the best compact cards in context and let the
-/// model reopen specific records through `recall` as needed.
-const MAX_FULL_HISTORY_TOKENS: u64 = 12_000;
-
-/// A turn's value from recency alone: `1 / (1 + age)` where `age` is how
-/// many closed turns came after it. The most recent closed turn is worth
-/// 1.0, the one before it 0.5, and so on — a parameter-free decay that a
-/// perfectly relevant older turn (normalised lexical score 1.0) ties with
-/// rather than loses to.
-fn recency_value(age: usize) -> f64 {
-    1.0 / (1.0 + age as f64)
 }
 
 /// How much a link of each kind says two turns belong together
@@ -251,17 +196,9 @@ fn link_values(
         .collect()
 }
 
-/// Match the subject the person named. Generic intent labels such as
-/// `answer`/`information` occur in unrelated cards and are not evidence that
-/// their full records belong in this request.
-fn relevance_query(directive: &str) -> String {
-    directive.to_string()
-}
-
 /// Builds the working-set plan for one request (§4, §10). Never splits a
-/// turn: every cost check is turn-whole, and a turn that does not fit is
-/// deferred to the next tier down (Full → Card → Packet) rather than
-/// truncated.
+/// turn: the current turn is verbatim; at most the compact card of the
+/// turn it follows is included. Historical detail is on demand.
 pub fn plan(input: PlanInput) -> WorkingSetPlan {
     let reserve = input
         .profile
@@ -270,11 +207,9 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
         .profile
         .budget(input.prefix_tokens, input.tail_tokens, reserve);
 
-    // Only closed turns with a written card are plannable at all — the
-    // still-open turn (last, uncarded) is never planned; it is always sent
-    // verbatim by the caller.
-    // Turns behind a reset-with-handoff are invisible to the model: not
-    // candidates for any tier, and never the start of a packet range.
+    // Only closed turns with a written card can supply a compact referent.
+    // The open turn is always sent verbatim by the caller; turns behind a
+    // reset-with-handoff are invisible to the model.
     let closed: Vec<&vak_session::Turn> = input
         .index
         .turns
@@ -283,18 +218,11 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
         .collect();
 
     let mut spent: u64 = 0;
-    let mut full_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut retrieved: Vec<String> = Vec::new();
+    let retrieved: Vec<String> = Vec::new();
 
-    // Every closed turn is scored once. Relevance selects which records may
-    // be reopened automatically, but it does not grant the whole model
-    // horizon to history: a broad query could otherwise promote enough full
-    // records to produce a 100k-token prompt. The rest stays as compact cards
-    // for targeted `recall` calls.
-    let anaphoric = is_anaphoric(input.directive);
     let open = input.index.turns.last().filter(|turn| !turn.closed);
-    // "that" points at the last turn of the thread the open turn continues,
-    // when it continues one; otherwise at the last turn.
+    // The open turn follows the last turn of the thread it continues, when
+    // it continues one; otherwise the last turn.
     let continued: Vec<&str> = open
         .map(|turn| {
             turn.links
@@ -314,161 +242,39 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
         })
         .or(closed.last())
         .map(|turn| turn.id.clone());
-    // `ContextProfile::Minimal` (docs/design/47-commitment-kernel.md): just
-    // the conversation. No relevance retrieval promotes an older turn, and
-    // only a referenced preceding turn is eligible for `Full`; a greeting does
-    // not pay for last Tuesday. Anaphora still promotes the preceding turn —
-    // "thanks, do that again" points at it.
+    // `ContextProfile::Minimal` suppresses link expansion. The preceding
+    // turn's compact card is carried at any context level.
     let minimal = input
         .reading
         .is_some_and(vak_session::ReadingKey::is_minimal);
-    let query = relevance_query(input.directive);
-    let lexical: std::collections::HashMap<String, f64> = if minimal {
-        std::collections::HashMap::new()
-    } else {
-        input.index.search(&query).into_iter().collect()
-    };
-    let best_lexical = lexical.values().copied().fold(0.0_f64, f64::max);
     let linked = if minimal {
         std::collections::HashMap::new()
     } else {
         link_values(&closed, open, input.directive)
     };
-    let mut ranked: Vec<(f64, f64, usize, &vak_session::Turn)> = closed
+    // Whether a request refers back is not read from its words: the turn it
+    // follows is always present as one compact card, and nothing older is.
+    // The always-loaded `recall` tool searches older turns when the model
+    // finds that the current request depends on them.
+    let candidate_id = preceding.as_deref();
+    let candidates: Vec<&vak_session::Turn> = closed
         .iter()
-        .enumerate()
-        .map(|(position, turn)| {
-            let age = closed.len() - 1 - position;
-            let relevance = if best_lexical > 0.0 {
-                lexical.get(&turn.id).copied().unwrap_or(0.0) / best_lexical
-            } else {
-                0.0
-            };
-            // "that"/"it" point at the last thing whatever else the words
-            // match: a lexical hit on an older turn must not displace it.
-            let anaphora = if anaphoric && preceding.as_deref() == Some(turn.id.as_str()) {
-                1.0
-            } else {
-                0.0
-            };
-            // Recency ranks admitted context; it cannot admit unrelated
-            // full records merely because the model has spare capacity.
-            // Cards retain the rest of the conversation for recall.
-            let link = linked.get(&turn.id).map_or(0.0, |(value, _)| *value);
-            let recency = if relevance > 0.0 || anaphora > 0.0 || link > 0.0 {
-                recency_value(age)
-            } else {
-                0.0
-            };
-            (
-                recency.max(relevance).max(anaphora).max(link),
-                recency,
-                position,
-                *turn,
-            )
-        })
-        .collect();
-    ranked.sort_by(|a, b| {
-        b.0.partial_cmp(&a.0)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(b.2.cmp(&a.2))
-    });
-    let full_history_budget = budget.min(MAX_FULL_HISTORY_TOKENS);
-    let mut full_history_spent = 0_u64;
-    for (value, recency, _, turn) in &ranked {
-        // A turn worth nothing is not promoted to `Full`, whatever the
-        // budget; it still gets a card below.
-        if *value <= 0.0 {
-            continue;
-        }
-        let cost = turn.card.as_ref().map(|c| c.tokens_full).unwrap_or(0);
-        if full_history_spent.saturating_add(cost) <= full_history_budget
-            && spent.saturating_add(cost) <= budget
-        {
-            spent += cost;
-            full_history_spent += cost;
-            full_ids.insert(turn.id.clone());
-            if *value > *recency {
-                retrieved.push(turn.id.clone());
-            }
-        }
-    }
-
-    // 3) Card tier over everything still not Full, newest -> oldest, while
-    // it fits in what remains of `budget`. When some (oldest) not-full
-    // turns do not fit, they collapse into a single packet range (never
-    // split, never scattered) — and the number evicted is rounded UP to a
-    // multiple of `PACKET_BATCH_TURNS` so the packet's boundary does not
-    // move on every turn (see the constant's doc comment).
-    let not_full: Vec<&vak_session::Turn> = closed
-        .iter()
-        .rev()
-        .filter(|turn| !full_ids.contains(&turn.id))
+        .filter(|turn| candidate_id == Some(turn.id.as_str()))
         .copied()
         .collect();
-    // The number of newest not-full turns kept as cards under `card_budget`.
-    let keep_under = |card_budget: u64| -> usize {
-        // Dry run: the minimal number that fit at Card cost; only used to
-        // derive how many must be evicted at minimum, then rounded up to a
-        // batch.
-        let mut keep_count = 0usize;
-        let mut dry_run_spent = spent;
-        for turn in &not_full {
-            let cost = turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
-            if dry_run_spent.saturating_add(cost) <= card_budget {
-                dry_run_spent += cost;
-                keep_count += 1;
-            } else {
-                break;
-            }
+    let mut per_turn: Vec<(String, Fidelity)> = Vec::new();
+    for turn in candidates {
+        let cost = turn.card.as_ref().map(|card| card.tokens_card).unwrap_or(0);
+        if spent.saturating_add(cost) <= budget {
+            spent += cost;
+            per_turn.push((turn.id.clone(), Fidelity::Card));
         }
-        let evict_count = not_full.len() - keep_count;
-        if evict_count == 0 {
-            keep_count
-        } else {
-            let batches = evict_count.saturating_add(PACKET_BATCH_TURNS - 1) / PACKET_BATCH_TURNS;
-            let rounded_evict = batches
-                .saturating_mul(PACKET_BATCH_TURNS)
-                .min(not_full.len());
-            not_full.len() - rounded_evict
-        }
-    };
-    // A stored packet rides in the request too: its size comes out of what the
-    // cards may use, or the request overshoots the budget by the summary.
-    let range_of = |keep: usize| -> Option<(String, String)> {
-        (keep < not_full.len()).then(|| {
-            (
-                not_full[not_full.len() - 1].id.clone(),
-                not_full[keep].id.clone(),
-            )
-        })
-    };
-    let stored_packet_tokens = |range: &(String, String)| -> Option<u64> {
-        input
-            .index
-            .packets
-            .iter()
-            .rev()
-            .find(|p| p.first_turn_id == range.0 && p.last_turn_id == range.1)
-            .map(|p| input.profile.estimate_tokens(p.summary.len() as u64))
-    };
-    let mut keep_count = keep_under(budget);
-    if let Some(tokens) = range_of(keep_count).and_then(|range| stored_packet_tokens(&range)) {
-        keep_count = keep_under(budget.saturating_sub(tokens));
-    }
-    let packet_range = range_of(keep_count);
-    if let Some(tokens) = packet_range.as_ref().and_then(stored_packet_tokens) {
-        spent += tokens;
     }
 
-    let mut per_turn: Vec<(String, Fidelity)> = Vec::new();
-    for turn in not_full.iter().take(keep_count) {
-        spent += turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
-        per_turn.push((turn.id.clone(), Fidelity::Card));
-    }
-    for id in full_ids {
-        per_turn.push((id, Fidelity::Full));
-    }
+    // Deliberately do not fill spare capacity with other history or build a
+    // packet from unselected turns. Omitted turns remain in the ledger and
+    // are searchable through `recall`.
+    let packet_range = None;
 
     // Render in chronological order (oldest first), matching `index.turns`.
     let order: std::collections::HashMap<&str, usize> = closed
@@ -480,7 +286,6 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
 
     let links = per_turn
         .iter()
-        .filter(|(_, fidelity)| *fidelity == Fidelity::Full)
         .filter_map(|(id, _)| linked.get(id).map(|(_, nodes)| (id.clone(), nodes.clone())))
         .collect();
     WorkingSetPlan {
@@ -673,6 +478,22 @@ mod tests {
     /// Builds `n` closed turns, each with a directly-constructed `TurnCard`
     /// (so `tokens_full`/`tokens_card` are exact, not derived from rendered
     /// text) and returns the log plus the turn ids in chronological order.
+    /// The contract for history: nothing but the compact card of the turn
+    /// the open one follows.
+    fn carries_only_the_preceding_card(index: &TurnIndex, plan: &WorkingSetPlan) -> bool {
+        let preceding = index
+            .turns
+            .iter()
+            .rev()
+            .find(|turn| turn.closed && turn.card.is_some() && !turn.behind_reset)
+            .map(|turn| turn.id.as_str());
+        plan.per_turn.len() <= 1
+            && plan
+                .per_turn
+                .iter()
+                .all(|(id, fidelity)| Some(id.as_str()) == preceding && *fidelity == Fidelity::Card)
+    }
+
     fn fixture(
         dir: &std::path::Path,
         specs: &[(&str, u64, u64, &[&str])],
@@ -819,12 +640,6 @@ mod tests {
         })
     }
 
-    fn is_full(plan: &WorkingSetPlan, id: &str) -> bool {
-        plan.per_turn
-            .iter()
-            .any(|(turn, fidelity)| turn == id && *fidelity == Fidelity::Full)
-    }
-
     #[test]
     fn linked_turn_promoted_without_shared_words() {
         let dir = tempfile::tempdir().unwrap();
@@ -834,7 +649,7 @@ mod tests {
             files: &[],
             thread: None,
         };
-        let (log, ids) = linked_fixture(
+        let (log, _ids) = linked_fixture(
             dir.path(),
             &[
                 LinkedTurn {
@@ -857,20 +672,11 @@ mod tests {
         let index = TurnIndex::from_log(&log);
         let result = plan_for(&index, 2_000, "fix the failing tests");
         assert!(
-            is_full(&result, &ids[0]),
-            "the turn that wrote the file rides Full: {result:?}"
+            carries_only_the_preceding_card(&index, &result),
+            "only the preceding card: {result:?}"
         );
-        for id in &ids[1..] {
-            assert!(
-                !is_full(&result, id),
-                "an unlinked turn stays a card: {result:?}"
-            );
-        }
-        assert_eq!(
-            result.links.get(&ids[0]),
-            Some(&vec!["file:src/parser.rs".to_string()])
-        );
-        assert!(result.retrieved.contains(&ids[0]));
+        assert!(result.links.is_empty());
+        assert!(result.retrieved.is_empty());
         let (replayed, _) =
             WorkingSetPlan::from_activity_data(&result.to_activity_data(Some("leaf"))).unwrap();
         assert_eq!(
@@ -1006,7 +812,7 @@ mod tests {
             files: &[],
             thread: None,
         };
-        let (log, ids) = linked_fixture(
+        let (log, _ids) = linked_fixture(
             dir.path(),
             &[
                 LinkedTurn {
@@ -1028,19 +834,14 @@ mod tests {
         );
         let index = TurnIndex::from_log(&log);
         let result = plan_for(&index, 2_000, "shorten plan.md to two lines");
-        assert!(is_full(&result, &ids[0]), "{result:?}");
         assert!(
-            !is_full(&result, &ids[1]) && !is_full(&result, &ids[2]),
-            "{result:?}"
-        );
-        assert_eq!(
-            result.links.get(&ids[0]),
-            Some(&vec!["file:notes/plan.md".to_string()])
+            carries_only_the_preceding_card(&index, &result),
+            "file-name match alone uses recall: {result:?}"
         );
     }
 
     #[test]
-    fn anaphora_follows_the_thread() {
+    fn the_preceding_turn_follows_the_thread() {
         let dir = tempfile::tempdir().unwrap();
         let (log, ids) = linked_fixture(
             dir.path(),
@@ -1066,11 +867,10 @@ mod tests {
             },
         );
         let index = TurnIndex::from_log(&log);
-        // Only one of the two fits Full: "that" is the release notes, the
-        // thread this turn continues, not the interjection before it.
+        // "that" points to the release notes in the continued thread; send
+        // its compact card and leave the full history to `recall`.
         let result = plan_for(&index, 200, "do that again, shorter");
-        assert!(is_full(&result, &ids[0]), "{result:?}");
-        assert!(!is_full(&result, &ids[1]), "{result:?}");
+        assert_eq!(result.per_turn, vec![(ids[0].clone(), Fidelity::Card)]);
     }
 
     #[test]
@@ -1089,10 +889,10 @@ mod tests {
     }
 
     #[test]
-    fn fills_newest_first_and_never_splits() {
+    fn a_fresh_request_leaves_spare_capacity_unused() {
         let dir = tempfile::tempdir().unwrap();
         // Costs chosen so exactly the newest 2 fit; the 3rd would overflow.
-        let (log, ids) = fixture(
+        let (log, _ids) = fixture(
             dir.path(),
             &[
                 ("turn one", 400, 40, &[]),
@@ -1111,21 +911,11 @@ mod tests {
             tail_tokens: 0,
             current_turn_tokens: 0,
         });
-        // budget = 1100 - 100 = 1000; retrieval_reserve = 150, so recency
-        // fills against main_budget = 850: turn3(400) fits(400<=850),
-        // turn2(400) fits(800<=850), turn1(400) would make 1200 > 850 ->
-        // stops, turn1 stays out of Full.
-        let full: Vec<&str> = result
-            .per_turn
-            .iter()
-            .filter(|(_, f)| matches!(f, Fidelity::Full))
-            .map(|(id, _)| id.as_str())
-            .collect();
-        assert!(full.contains(&ids[2].as_str()));
-        assert!(full.contains(&ids[1].as_str()));
+        // Spare capacity stays unused when the request does not refer to a
+        // prior turn.
         assert!(
-            !full.contains(&ids[0].as_str()),
-            "turn one must not be Full"
+            carries_only_the_preceding_card(&index, &result),
+            "{result:?}"
         );
         assert!(result.spent <= result.budget);
     }
@@ -1174,22 +964,22 @@ mod tests {
         })
         .unwrap();
         log.append_message(MessageRecord {
-            message: M::user_text("update spreadsheet"),
+            message: M::user_text("update that spreadsheet"),
             meta: None,
         })
         .unwrap();
         let result = plan_for_session(&log, &profile(1_000), 0, 0);
         assert!(
             result.per_turn.contains(&(id, Fidelity::Card)),
-            "oversized arguments must be recalled, not admitted at a false cost: {result:?}"
+            "a follow-up carries the compact turn card; oversized arguments require recall: {result:?}"
         );
         assert!(result.spent <= result.budget);
     }
 
     #[test]
-    fn fresh_topic_does_not_fill_spare_capacity_with_unrelated_evidence() {
+    fn fresh_topic_leaves_spare_capacity_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let (log, ids) = fixture(
+        let (log, _) = fixture(
             dir.path(),
             &[
                 (
@@ -1224,19 +1014,18 @@ mod tests {
             current_turn_tokens: 0,
         });
         assert!(
-            ids.iter()
-                .all(|id| result.per_turn.contains(&(id.clone(), Fidelity::Card)))
+            carries_only_the_preceding_card(&index, &result),
+            "{result:?}"
         );
-        assert_eq!(result.spent, 80);
         assert!(result.retrieved.is_empty());
     }
 
     #[test]
-    fn return_to_a_topic_one_hundred_turns_back_retrieves_only_that_topic() {
+    fn topic_overlap_does_not_preload_a_turn_one_hundred_back() {
         let dir = tempfile::tempdir().unwrap();
         let mut specs = vec![("Noida weather forecast", 100, 5, &[][..])];
         specs.extend((0..100).map(|_| ("Indian stock market dashboard", 100, 5, &[][..])));
-        let (log, ids) = fixture(dir.path(), &specs);
+        let (log, _ids) = fixture(dir.path(), &specs);
         let index = TurnIndex::from_log(&log);
         let profile = profile(100_000);
         let result = plan(PlanInput {
@@ -1248,16 +1037,11 @@ mod tests {
             tail_tokens: 0,
             current_turn_tokens: 0,
         });
-        assert!(result.per_turn.contains(&(ids[0].clone(), Fidelity::Full)));
         assert!(
-            result
-                .per_turn
-                .iter()
-                .filter(|(_, f)| *f == Fidelity::Full)
-                .count()
-                == 1
+            carries_only_the_preceding_card(&index, &result),
+            "topical return uses recall: {result:?}"
         );
-        assert!(result.retrieved.contains(&ids[0]));
+        assert!(result.retrieved.is_empty());
     }
 
     #[test]
@@ -1284,35 +1068,18 @@ mod tests {
             tail_tokens: 0,
             current_turn_tokens: 0,
         });
-        let full_cost = result
-            .per_turn
-            .iter()
-            .filter(|(_, fidelity)| *fidelity == Fidelity::Full)
-            .map(|(id, _)| {
-                index
-                    .turns
-                    .iter()
-                    .find(|turn| turn.id == *id)
-                    .and_then(|turn| turn.card.as_ref())
-                    .map(|card| card.tokens_full)
-                    .unwrap_or(0)
-            })
-            .sum::<u64>();
-        assert!(full_cost <= MAX_FULL_HISTORY_TOKENS, "{full_cost}");
         assert!(
-            result
-                .per_turn
-                .iter()
-                .any(|(_, fidelity)| *fidelity == Fidelity::Card),
-            "the rest of matching history should remain available in compact form"
+            carries_only_the_preceding_card(&index, &result),
+            "historical search is on demand: {result:?}"
         );
+        assert!(result.retrieved.is_empty());
         assert!(result.spent <= result.budget);
     }
 
     #[test]
-    fn retrieval_promotes_a_relevant_older_turn() {
+    fn a_relevant_older_turn_waits_for_on_demand_recall() {
         let dir = tempfile::tempdir().unwrap();
-        let (log, ids) = fixture(
+        let (log, _ids) = fixture(
             dir.path(),
             &[
                 ("what is the sensex today", 15, 5, &["finance"]),
@@ -1336,20 +1103,20 @@ mod tests {
             current_turn_tokens: 0,
         });
         assert!(
-            result.retrieved.contains(&ids[0]),
-            "the sensex turn should be promoted by BM25 relevance: {:?}",
-            result.retrieved
+            carries_only_the_preceding_card(&index, &result),
+            "topical recall is on demand: {result:?}"
         );
+        assert!(result.retrieved.is_empty());
         assert!(result.spent <= result.budget);
     }
 
     /// `ContextProfile::Minimal` (docs/design/47-commitment-kernel.md): a
-    /// greeting does not retrieve an older turn or admit unrelated recent
-    /// turns at Full, however much spare budget there is.
+    /// greeting does not retrieve or carry older turns, however much spare
+    /// budget there is.
     #[test]
     fn a_minimal_reading_neither_retrieves_nor_carries_old_turns_at_full() {
         let dir = tempfile::tempdir().unwrap();
-        let (log, ids) = fixture(
+        let (log, _ids) = fixture(
             dir.path(),
             &[
                 ("what is the sensex today", 15, 5, &["finance"]),
@@ -1384,8 +1151,10 @@ mod tests {
             .collect();
         assert!(result.retrieved.is_empty(), "{:?}", result.retrieved);
         assert!(full.is_empty(), "{full:?}");
-        assert!(!full.contains(&ids[1].as_str()), "{full:?}");
-        assert!(!full.contains(&ids[0].as_str()), "{full:?}");
+        assert!(
+            carries_only_the_preceding_card(&index, &result),
+            "{result:?}"
+        );
 
         // A recall reading retrieves the matching subject, not every turn.
         let recall = ReadingKey {
@@ -1401,16 +1170,14 @@ mod tests {
             tail_tokens: 0,
             current_turn_tokens: 0,
         });
-        let full = result
-            .per_turn
-            .iter()
-            .filter(|(_, fidelity)| *fidelity == Fidelity::Full)
-            .count();
-        assert_eq!(full, 1);
+        assert!(
+            carries_only_the_preceding_card(&index, &result),
+            "a recall reading adds no history by itself"
+        );
     }
 
     #[test]
-    fn anaphora_always_promotes_the_immediately_preceding_turn() {
+    fn a_request_carries_only_the_preceding_turn_card() {
         let dir = tempfile::tempdir().unwrap();
         let (log, ids) = fixture(
             dir.path(),
@@ -1420,10 +1187,8 @@ mod tests {
             ],
         );
         let index = TurnIndex::from_log(&log);
-        // budget = 200: only one of the two turns can be Full. The AAPL turn
-        // is the immediately preceding one, so it is worth 1.0 by recency
-        // and by anaphora alike and must be the one that rides Full; the
-        // filler turn falls to a card.
+        // The AAPL turn is the immediately preceding referent. Its compact
+        // card is enough to identify it; `recall` can reopen detail.
         let profile = profile(200);
         let result = plan(PlanInput {
             profile: &profile,
@@ -1438,11 +1203,17 @@ mod tests {
             result
                 .per_turn
                 .iter()
-                .any(|(id, fidelity)| id == &ids[1] && *fidelity == Fidelity::Full),
-            "anaphora must promote the immediately preceding turn: {:?}",
+                .any(|(id, fidelity)| id == &ids[1] && *fidelity == Fidelity::Card),
+            "only the immediately preceding card is carried: {:?}",
             result
         );
+        assert!(!result.per_turn.iter().any(|(id, _)| id == &ids[0]));
         assert!(result.spent <= result.budget);
+        let data = result.to_activity_data(Some("leaf"));
+        let recorded_cards: Vec<String> = serde_json::from_str(data.get("cards").unwrap()).unwrap();
+        assert_eq!(recorded_cards, vec![ids[1].clone()]);
+        let (replayed, _) = WorkingSetPlan::from_activity_data(&data).unwrap();
+        assert_eq!(replayed.per_turn, result.per_turn);
     }
 
     /// A turn behind a reset-with-handoff is invisible to the model and
@@ -1505,9 +1276,9 @@ mod tests {
     }
 
     #[test]
-    fn card_overflow_collapses_the_oldest_into_a_packet() {
+    fn topical_history_is_not_added_to_a_packet_automatically() {
         let dir = tempfile::tempdir().unwrap();
-        let (log, ids) = fixture(
+        let (log, _ids) = fixture(
             dir.path(),
             &[
                 ("ancient turn", 5_000, 5_000, &[]),
@@ -1516,8 +1287,8 @@ mod tests {
             ],
         );
         let index = TurnIndex::from_log(&log);
-        // Budget fits the two small turns as Full (recency) with nothing
-        // left for the ancient turn's oversized card -> it becomes a packet.
+        // A broad word shared by old turns does not cause the planner to
+        // packet the entire intervening history.
         let profile = profile(50);
         let result = plan(PlanInput {
             profile: &profile,
@@ -1528,68 +1299,50 @@ mod tests {
             tail_tokens: 0,
             current_turn_tokens: 0,
         });
-        assert!(result.packet_range.is_some(), "{:?}", result);
-        let (first, last) = result.packet_range.unwrap();
-        assert_eq!(first, ids[0]);
-        assert_eq!(last, ids[0]);
+        assert!(result.packet_range.is_none(), "{result:?}");
+        assert!(
+            carries_only_the_preceding_card(&index, &result),
+            "{result:?}"
+        );
         assert!(result.spent <= result.budget);
     }
 
-    /// Item 3 fix: once the card tier overflows, the packet's newest
-    /// (`last`) boundary must hold steady for `PACKET_BATCH_TURNS` turns
-    /// and then jump by that many at once — never move by one turn on
-    /// every turn, which reran the compaction summariser almost every turn
-    /// of a long session (docs/design/68-context-engine.md §4).
     #[test]
-    fn packet_boundary_moves_in_batches_not_on_every_turn() {
-        const COST: u64 = 50;
-        const NEVER_FULL: u64 = 100_000;
-        let profile = profile(1_000); // budget == 1000 (zero prefix/tail/reserve)
-
-        // Builds a fresh session of exactly `t` equal-cost turns and
-        // returns the index (within that run's own turn order) of the
-        // packet's newest boundary, or None when nothing is packeted.
-        let last_at = |t: usize| -> Option<usize> {
-            let dir = tempfile::tempdir().unwrap();
-            let specs: Vec<(&str, u64, u64, &[&str])> = (0..t)
-                .map(|_| ("filler turn", NEVER_FULL, COST, &[][..]))
-                .collect();
-            let (log, ids) = fixture(dir.path(), &specs);
-            let index = TurnIndex::from_log(&log);
-            let result = plan(PlanInput {
-                profile: &profile,
-                index: &index,
-                directive: "unrelated",
-                reading: None,
-                prefix_tokens: 0,
-                tail_tokens: 0,
-                current_turn_tokens: 0,
-            });
-            result
-                .packet_range
-                .map(|(_, last)| ids.iter().position(|id| id == &last).unwrap())
-        };
-
-        // floor(1000/50) == 20 turns fit as Card: no packet below that.
-        assert_eq!(last_at(20), None);
-        // First overflow (turns 21-28): evict_count 1..=8 all round up to
-        // exactly one batch of 8 — the boundary is pinned at turn index 7
-        // (the 8th turn) for all eight of these turn counts, not moving by
-        // one each time.
-        assert_eq!(last_at(21), Some(7));
-        assert_eq!(last_at(24), Some(7));
-        assert_eq!(last_at(28), Some(7));
-        // One batch later (turns 29-36): the boundary jumps by a whole
-        // PACKET_BATCH_TURNS at once, to index 15 (the 16th turn) — and
-        // then holds there for the next batch.
-        assert_eq!(last_at(29), Some(15));
-        assert_eq!(last_at(36), Some(15));
-        // A third batch confirms the pattern continues, not a one-off.
-        assert_eq!(last_at(37), Some(23));
+    fn existing_packets_are_ignored_when_the_request_does_not_need_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut log, _) = fixture(
+            dir.path(),
+            &[
+                ("Noida weather", 100, 10, &[]),
+                ("sales dashboard", 100, 10, &[]),
+            ],
+        );
+        let index = TurnIndex::from_log(&log);
+        log.append_packet(
+            &index.turns[0].id,
+            &index.turns[1].id,
+            "m",
+            "stale packet".into(),
+            1,
+        )
+        .unwrap();
+        let index = TurnIndex::from_log(&log);
+        let profile = profile(10_000);
+        let result = plan(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "what is 2 plus 2",
+            reading: None,
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        assert!(result.packet_range.is_none());
+        assert!(carries_only_the_preceding_card(&index, &result));
     }
 
     #[test]
-    fn anaphora_outranks_a_lexical_hit_on_an_older_turn() {
+    fn the_preceding_turn_outranks_a_lexical_hit_on_an_older_turn() {
         let dir = tempfile::tempdir().unwrap();
         let (log, ids) = fixture(
             dir.path(),
@@ -1610,50 +1363,9 @@ mod tests {
             current_turn_tokens: 0,
         });
         assert!(
-            result.per_turn.contains(&(ids[1].clone(), Fidelity::Full)),
+            result.per_turn.contains(&(ids[1].clone(), Fidelity::Card)),
             "the referent of \"that\" is the preceding turn: {result:?}"
         );
-    }
-
-    #[test]
-    fn a_stored_packet_comes_out_of_the_budget_the_cards_may_use() {
-        const NEVER_FULL: u64 = 100_000;
-        let dir = tempfile::tempdir().unwrap();
-        let specs: Vec<(&str, u64, u64, &[&str])> = (0..40)
-            .map(|_| ("filler turn", NEVER_FULL, 50, &[][..]))
-            .collect();
-        let (mut log, _) = fixture(dir.path(), &specs);
-        let profile = profile(1_000);
-        let run = |log: &SessionLog| {
-            let index = TurnIndex::from_log(log);
-            plan(PlanInput {
-                profile: &profile,
-                index: &index,
-                directive: "unrelated",
-                reading: None,
-                prefix_tokens: 0,
-                tail_tokens: 0,
-                current_turn_tokens: 0,
-            })
-        };
-        let bare = run(&log);
-        let (first, last) = bare.packet_range.clone().unwrap();
-        log.append_packet(&first, &last, "m", "s".repeat(2_000), 1)
-            .unwrap();
-        let with = run(&log);
-        let cards = |p: &vak_session::WorkingSetPlan| {
-            p.per_turn
-                .iter()
-                .filter(|(_, f)| *f == Fidelity::Card)
-                .count()
-        };
-        assert!(
-            cards(&with) < cards(&bare),
-            "{} vs {}",
-            cards(&with),
-            cards(&bare)
-        );
-        assert!(with.spent <= with.budget, "{with:?}");
     }
 
     #[test]

@@ -36,10 +36,11 @@ pub struct ToolSurface {
 ///
 /// * `required_domains` is the reading's prediction. `All` (progressive
 ///   disclosure off, or the kernel disabled) loads everything.
-/// * `predicted_cards` names the card tools the request itself reads as
-///   (`presentation_tools::predicted_card_tools`); other card tools defer.
-/// * `carried` names the tools earlier turns of this session loaded; they
-///   stay loaded (cache stability, docs/design/68 §6).
+/// * Every admitted presentation tool is loaded: choosing an output shape
+///   requires its schema and must not depend on request vocabulary.
+/// * `carried` names the non-presentation tools earlier turns of this session
+///   loaded; they stay loaded (cache stability, docs/design/68 §6). Card
+///   schemas carry no earlier card content or demand for structured output.
 ///
 /// Always-loaded and undeclared tools are loaded whatever the prediction:
 /// the first because the model cannot operate without them, the second
@@ -47,7 +48,6 @@ pub struct ToolSurface {
 pub fn build_tool_surface(
     tools: &[Arc<dyn vak_tools::Tool>],
     required_domains: &vak_intent::DomainSet,
-    predicted_cards: &BTreeSet<String>,
     carried: &BTreeSet<String>,
 ) -> ToolSurface {
     let required: Option<BTreeSet<Domain>> = (!required_domains.is_unconstrained())
@@ -61,9 +61,9 @@ pub fn build_tool_surface(
         // The set only grows, in the tools' fixed order.
         let loaded = match &required {
             None => true,
-            Some(_) if carried.contains(tool.name()) => true,
             Some(_) if tool.always_loaded() => true,
-            Some(_) if tool.presents_cards() => predicted_cards.contains(tool.name()),
+            Some(_) if tool.presents_cards() => true,
+            Some(_) if carried.contains(tool.name()) => true,
             Some(required) => Serves::from_labels(tool.serves()).serves_any(required),
         };
         if loaded {
@@ -78,30 +78,16 @@ pub fn build_tool_surface(
     surface
 }
 
-/// The prompt's catalogue of the admitted tools that are not always loaded:
-/// one line each, name and first sentence, no schema. `entries` are
-/// `(name, description, fields)`: `fields` are the argument names of a
-/// tool the model is told to call by name (a card tool), empty for others.
-/// The prompt says to present a card through the matching `emit_*_card`
-/// tool while a card the request does not predict is deferred, and a model
-/// shown only the name called it at once with argument names it guessed
-/// (live 2026-10-09: 13 of 24 runs, none calling `find_tools` first). It
-/// depends only on what is admitted — never on the turn's reading — so it
+/// The prompt's catalogue of admitted tools that may defer: one line each,
+/// name and first sentence, no schema. Presentation tools are already loaded
+/// and callers exclude them. The catalogue depends only on what is admitted
+/// — never on the turn's reading — so it
 /// stays byte-stable in the cached prefix while the loaded set moves. Empty
 /// when nothing can defer.
-pub fn tool_catalogue<'a>(
-    entries: impl IntoIterator<Item = (&'a str, &'a str, Vec<String>)>,
-) -> String {
+pub fn tool_catalogue<'a>(entries: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
     let mut lines: Vec<String> = entries
         .into_iter()
-        .map(|(name, description, fields)| {
-            let line = format!("- {name} — {}", first_sentence(description));
-            if fields.is_empty() {
-                return line;
-            }
-            let fields: Vec<String> = fields.iter().map(|field| format!("`{field}`")).collect();
-            format!("{line} Takes {}.", fields.join(", "))
-        })
+        .map(|(name, description)| format!("- {name} — {}", first_sentence(description)))
         .collect();
     if lines.is_empty() {
         return String::new();
@@ -194,12 +180,7 @@ mod tests {
 
     #[test]
     fn unconstrained_domains_load_everything() {
-        let surface = build_tool_surface(
-            &fixture(),
-            &vak_intent::DomainSet::All,
-            &BTreeSet::new(),
-            &BTreeSet::new(),
-        );
+        let surface = build_tool_surface(&fixture(), &vak_intent::DomainSet::All, &BTreeSet::new());
         assert_eq!(surface.core.len(), 5);
         assert!(surface.deferred.is_empty());
         assert!(surface.unpredicted.is_empty());
@@ -211,46 +192,59 @@ mod tests {
             &fixture(),
             &vak_intent::DomainSet::only(["web"]),
             &BTreeSet::new(),
-            &BTreeSet::new(),
         );
         assert_eq!(
             names(&surface.core),
-            vec!["read", "webfetch", "plugin_thing"]
+            vec!["read", "webfetch", "plugin_thing", "emit_chart_card"]
         );
-        assert_eq!(names(&surface.deferred), vec!["bash", "emit_chart_card"]);
+        assert_eq!(names(&surface.deferred), vec!["bash"]);
         assert_eq!(
             surface.unpredicted,
             BTreeSet::from(["bash".to_string()]),
-            "a deferred card is an output choice, not a misread"
+            "presentation schemas do not alter non-presentation predictions"
         );
     }
 
     #[test]
-    fn a_predicted_card_tool_is_loaded() {
-        let surface = build_tool_surface(
-            &fixture(),
-            &vak_intent::DomainSet::Empty,
-            &BTreeSet::from(["emit_chart_card".to_string()]),
-            &BTreeSet::new(),
-        );
+    fn presentation_schemas_are_loaded_with_no_domain_prediction() {
+        let surface =
+            build_tool_surface(&fixture(), &vak_intent::DomainSet::Empty, &BTreeSet::new());
         assert!(names(&surface.core).contains(&"emit_chart_card"));
     }
 
     #[test]
     fn a_tool_an_earlier_turn_loaded_stays_loaded() {
         let carried = BTreeSet::from(["bash".to_string()]);
-        let surface = build_tool_surface(
-            &fixture(),
-            &vak_intent::DomainSet::only(["web"]),
-            &BTreeSet::new(),
-            &carried,
-        );
+        let surface =
+            build_tool_surface(&fixture(), &vak_intent::DomainSet::only(["web"]), &carried);
         assert_eq!(
             names(&surface.core),
-            vec!["read", "bash", "webfetch", "plugin_thing"],
+            vec![
+                "read",
+                "bash",
+                "webfetch",
+                "plugin_thing",
+                "emit_chart_card"
+            ],
             "fixed order, one more loaded"
         );
         assert!(!surface.unpredicted.contains("bash"));
+    }
+
+    #[test]
+    fn unadmitted_presentation_tools_cannot_be_loaded_from_carried_names() {
+        let carried = BTreeSet::from([
+            "emit_chart_card".to_string(),
+            "emit_absent_card".to_string(),
+        ]);
+        let surface = build_tool_surface(&fixture(), &vak_intent::DomainSet::Empty, &carried);
+        assert!(names(&surface.core).contains(&"emit_chart_card"));
+        assert!(!names(&surface.core).contains(&"emit_absent_card"));
+        assert!(!names(&surface.deferred).contains(&"emit_absent_card"));
+        assert!(
+            !surface.unpredicted.contains("emit_chart_card"),
+            "presentation schemas are output choices, not domain predictions"
+        );
     }
 
     /// The catalogue is a function of the admitted tools only, so the cached
@@ -261,22 +255,14 @@ mod tests {
             (
                 "webfetch",
                 "Fetch a URL. Long detail nobody needs up front.",
-                Vec::new(),
             ),
-            ("bash", "Run a command.", Vec::new()),
-            (
-                "emit_metric_card",
-                "Emit a metric card. Prefer it.",
-                vec!["label".to_string(), "value".to_string()],
-            ),
+            ("bash", "Run a command."),
         ];
         let catalogue = tool_catalogue(entries.clone());
         let mut reversed = entries;
         reversed.reverse();
         assert_eq!(catalogue, tool_catalogue(reversed));
-        assert!(catalogue.contains(
-            "- bash — Run a command.\n- emit_metric_card — Emit a metric card. Takes `label`, `value`.\n- webfetch — Fetch a URL.\n"
-        ));
+        assert!(catalogue.contains("- bash — Run a command.\n- webfetch — Fetch a URL.\n"));
         assert!(!catalogue.contains("nobody needs"));
         assert!(tool_catalogue(Vec::new()).is_empty());
     }

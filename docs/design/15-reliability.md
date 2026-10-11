@@ -17,39 +17,62 @@ conditions require an external state change or human decision. Existing turn
 limits, doom-loop detection, provider dispatch ceilings, and append-only
 session recording remain the upper bounds for the repair loop.
 
-### Per-run repair budget (escalating, system-authored)
+A registered capability called under the wrong kind is a correctable routing
+error. Its typed error carries the proper invocation (for example, a skill
+name called as a tool carries the `skill` loader call); recovery surfaces that
+exact invocation before the staged repair below applies. It does not
+authorize a capability that was not admitted.
+
+When a local inference provider accepts a tool-bearing request but rejects
+the generated call envelope before it reaches the broker, whether in an HTTP
+error or an in-band streaming error, the provider adapter classifies it as a
+generated tool-call format failure. The agent records the failure receipt and
+adds one system-authored repair message to the same conversation, asking the
+model to regenerate valid arguments from the admitted schemas. This is a new
+model response, not a blind replay of the malformed output. No tool effect has
+run at that point. A second format failure settles normally as a failed run;
+it cannot spin indefinitely.
+
+### Staged repair (system-authored, no counter)
 
 A recovery hint alone is a nudge to the model; it is not a backstop. The loop
-tracks consecutive turns that end with an unresolved classifiable
-(`vak_tools::ToolErrorKind::is_correctable()`) tool failure and escalates:
+moves a tool whose calls keep failing with a classifiable
+(`vak_tools::ToolErrorKind::is_correctable()`) fault one stage on at each
+failing step (`reconcile_repair`). There is no repair count to tune and no
+turn is ended for it:
 
-1. **First** correctable failure this run — the per-call `[recovery]` hint is
-   appended to the result (as above; the model still produces the next call).
-2. **Second consecutive** turn failing on a correctable fault — the loop
-   injects an authoritative, schema-resurfacing directive, a tagged
-   `ControlKind::RepairDirective` message (`[repair-directive] …`) that no
-   client shows as the person's words: it re-surfaces the exact admitted `Tool::schema()`
-   for each rejected tool (or, for an unknown name, the full admitted inventory)
-   so the repair is no longer a guess. This is issued by the runtime, not the
-   model.
-3. **Third consecutive** turn still failing — the budget is exhausted: the loop
-   stops re-dispatching and returns a degraded, system-authored
-   `TurnOutcome::Completed` that states the failure instead of inventing an
-   answer. A `Diagnostic` activity is appended to the ledger
-   (`tool-repair-exhausted`).
+1. **The failed call** carries the per-call `[recovery]` hint in its result
+   (as above; the model still produces the next call).
+2. **A second failing step in a row** for the same tool: the loop appends a
+   tagged `ControlKind::RepairDirective` message (`[repair-directive] …`)
+   that no client shows as the person's words. It re-surfaces the exact
+   admitted `Tool::schema()` (or, for an unknown name, the admitted
+   inventory), so the repair is no longer a guess.
+3. **A failure after its schema was shown**: the tool is withdrawn for the
+   rest of the turn. It leaves the admitted set, a second
+   `[repair-directive]` tells the model to deliver that part another way
+   (another tool, or plain text) and to keep what it has produced, and a
+   `Tool withdrawn` diagnostic is recorded. A later call of it is answered
+   as an unknown capability. Nothing already produced is discarded, and the
+   turn ends with the model's own answer. Withdrawn tools return at the
+   next run. The only bound on a model that keeps calling a withdrawn tool
+   is the operator's own turn limit.
 
-The budget is per `Agent` run (`RepairState`, reset on every `run`) and is
-general across all tool-error classes — it does not special-case the `mcp`
-broker; `ToolErrorKind::classify` is the single classification authority.
+A tool that stops failing leaves its stage. The stages are per `Agent` run
+(`RepairState`) and general across all tool-error classes; they do not
+special-case the `mcp` broker. Found live on 2026-10-11: the earlier
+three-strike budget ended a turn with a canned refusal after three failed
+card calls and threw away a complete answer.
 
 ### Outcome linkage (no false `Produced`)
 
 The outcome gate (`vak_core` → `vak_intent::evaluate_response_with_failures`)
 inspects the latest turn: when it ends with classifiable correctable failures
 and zero successful receipts, the run is downgraded to `Unknown` rather than
-`Produced` — a non-empty fallback answer is not evidence. Combined with the
-budget above, a run that cannot repair its tool calls fails honest instead of
-signing off a fabricated result.
+`Produced` — a non-empty fallback answer is not evidence. A call the
+runtime refused before anything ran (`vak_tools::never_ran`: not a tool, or
+not the tool's arguments) is not such a failure, and neither is a card that
+was not shown: the stop guard asks the model to report neither.
 
 The standard failure matrix and where each case is handled.
 

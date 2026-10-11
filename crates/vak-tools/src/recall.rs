@@ -240,8 +240,9 @@ impl Tool for RecallTool {
     }
 
     fn description(&self) -> &str {
-        "Use only when the current request needs missing information from an earlier turn. Do not \
-         call for a fresh or unrelated request, and never call with an empty query. Search this \
+        "Use only when the current request needs missing information from an earlier turn, even \
+         when it was many turns ago. Do not call for a fresh or unrelated request, and never call \
+         with an empty query. Search this \
          conversation's past turns with a specific natural-language subject/referent query, then reopen a matching turn's full \
          record, a presentation's canonical payload, or an evidence result (optionally by line \
          range). Exactly one of query, turn_id, turn, presentation, or id. Old records describe what \

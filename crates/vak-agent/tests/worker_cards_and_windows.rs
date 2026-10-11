@@ -308,7 +308,7 @@ async fn a_workers_card_is_shown_and_recallable_in_the_delegating_conversation()
             serde_json::json!({"title": "Sales by month", "points": [{"series": "s", "x": "Jan", "y": 1}]}),
         ),
         text_msg("charted"),
-        text_msg("the worker charted it"),
+        text_msg("The worker charted the sales by month."),
     ]);
     let task = task_tool(&dir, provider.clone(), "parent-cards");
     let mut parent = agent(&dir, "parent-cards", provider.clone(), vec![task]);

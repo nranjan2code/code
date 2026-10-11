@@ -553,12 +553,16 @@ pub fn delta_summary(
     let mut excerpts: Vec<(String, String)> = Vec::new();
 
     let mut seen_now: std::collections::HashSet<String> = Default::default();
+    // Vakyartha's own project state (config, installed plugins, seeds) is
+    // not the work: found live, a pantry question was handed a list of
+    // plugin manifests as "workspace changes".
+    let own_state = Path::new(vak_config::scope::PROJECT_DIR);
     for entry in WalkDir::new(cwd)
         .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
             let rel = e.path().strip_prefix(cwd).unwrap_or(e.path()).to_path_buf();
-            !ignores.is_ignored(&rel, e.file_type().is_dir())
+            !rel.starts_with(own_state) && !ignores.is_ignored(&rel, e.file_type().is_dir())
         })
     {
         let Ok(entry) = entry else { continue };
@@ -614,7 +618,7 @@ pub fn delta_summary(
         if !baseline.contains_key(rel.as_str()) {
             continue; // observed-but-unstored: cannot diff contents
         }
-        if !seen_now.contains(rel) {
+        if !seen_now.contains(rel) && !Path::new(rel).starts_with(own_state) {
             deleted.push(format!("D {rel}"));
         }
     }

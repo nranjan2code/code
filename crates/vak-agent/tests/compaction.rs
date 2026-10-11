@@ -1,10 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Incremental compaction (docs/design/68-context-engine.md §4): compaction
-//! fires only when the `WorkingSetPlanner` collapses real, card-carrying
-//! turns into a packet — so these tests drive the agent through several
-//! REAL turns (each producing a genuine `TurnCard` at close) rather than
-//! seeding raw messages directly.
+//! The standard request path leaves unrelated turns in the ledger for on-demand
+//! recall. A small model window must not cause the agent to compact or send
+//! unrelated history merely because the transcript has grown.
 
 mod support;
 
@@ -31,6 +29,7 @@ struct TaggedScripted {
     capacity_key: String,
     steps: Mutex<VecDeque<AssistantMessage>>,
     seen_systems: Arc<Mutex<Vec<String>>>,
+    seen_requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
 
 impl TaggedScripted {
@@ -61,6 +60,7 @@ impl Provider for TaggedScripted {
             .lock()
             .unwrap()
             .push(request.system.clone().unwrap_or_default());
+        self.seen_requests.lock().unwrap().push(request.clone());
         let msg = if Self::is_compaction(&request) {
             Some(text(
                 "Summary: prior turns condensed; open items carried forward.",
@@ -124,18 +124,20 @@ fn header(session_id: &str, dir: &std::path::Path) -> SessionHeader {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_tiny_horizon_eventually_triggers_incremental_compaction() {
+async fn a_tiny_horizon_does_not_compact_unrelated_closed_turns() {
     let dir = tempdir().unwrap();
     let log =
         SessionLog::create(dir.path().join("s.jsonl"), header("compact", dir.path())).unwrap();
 
     let seen = Arc::new(Mutex::new(Vec::new()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = Arc::new(TaggedScripted {
         capacity_key: crate::support::capacity_key(),
         steps: Mutex::new(VecDeque::from(vec![text(
             "a padded no-tool-call answer with enough filler text to accumulate real tokens over several turns of conversation",
         )])),
         seen_systems: seen.clone(),
+        seen_requests: requests.clone(),
     });
 
     let mut cfg = AgentConfig::new("sys");
@@ -147,7 +149,6 @@ async fn a_tiny_horizon_eventually_triggers_incremental_compaction() {
     cfg.max_output = 20;
     let mut agent = Agent::new(provider, log, cfg);
 
-    let mut compaction_seen = false;
     for i in 0..20 {
         let outcome = agent
             .run(
@@ -163,66 +164,35 @@ async fn a_tiny_horizon_eventually_triggers_incremental_compaction() {
             matches!(outcome, TurnOutcome::Completed { .. }),
             "turn {i} did not complete: {outcome:?}"
         );
-        if seen
+    }
+    assert!(
+        !seen
             .lock()
             .unwrap()
             .iter()
-            .any(|s| s.contains("context compactor"))
-        {
-            compaction_seen = true;
-            break;
-        }
-    }
-    assert!(
-        compaction_seen,
-        "expected an incremental compaction call within 20 turns of a 600-token horizon"
+            .any(|s| s.contains("context compactor")),
+        "unrelated history is left for recall, not summarized into every new request"
     );
 
     let session = agent.session.lock().await;
-    let packet = session
-        .chain_to_root()
-        .iter()
-        .find_map(|e| match &e.payload {
-            EntryPayload::Compaction(c) if !c.reset_all => Some(c.clone()),
-            _ => None,
-        })
-        .expect("a packet entry must be on the ledger");
     assert!(
-        !packet.first_turn_id.is_empty() && !packet.last_turn_id.is_empty(),
-        "a packet is keyed by the turn range it covers: {packet:?}"
+        !session.chain_to_root().iter().any(|e| matches!(
+            &e.payload,
+            EntryPayload::Compaction(c) if !c.reset_all
+        )),
+        "fresh requests do not create a packet from unrelated history"
     );
-    assert!(
-        session
-            .packet_for(&packet.first_turn_id, &packet.last_turn_id)
-            .is_some()
-    );
-
-    // The packet is a cache for the plan that asked for it, not a boundary:
-    // the plan-free (all-Full) projection carries every turn and no
-    // summary, while a plan asking for exactly that range renders it.
-    let plan_free: String = session
-        .derive_messages()
+    let last_request = requests.lock().unwrap().last().cloned().unwrap();
+    let current_projection: String = last_request
+        .messages
         .iter()
         .map(|m| m.text_content())
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        !plan_free.contains("<context_summary>") && plan_free.contains("padded question number 0"),
-        "a packet must not hide turns from the plan-free projection: {plan_free}"
-    );
-    let plan = vak_session::WorkingSetPlan {
-        packet_range: Some((packet.first_turn_id.clone(), packet.last_turn_id.clone())),
-        ..vak_session::WorkingSetPlan::default()
-    };
-    let planned: String = session
-        .derive_with_plan(&plan)
-        .iter()
-        .map(|m| m.text_content())
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        planned.contains("<context_summary>"),
-        "the plan that asked for the packet must see it: {planned}"
+        current_projection.contains("padded question number 19")
+            && !current_projection.contains("padded question number 0"),
+        "the final request contains its directive without unrelated prior turns: {current_projection}"
     );
 }
 
@@ -235,6 +205,7 @@ async fn no_usable_horizon_fails_closed_when_handoff_is_disabled() {
         capacity_key: crate::support::capacity_key(),
         steps: Mutex::new(VecDeque::from(vec![text("never reached")])),
         seen_systems: Arc::new(Mutex::new(Vec::new())),
+        seen_requests: Arc::new(Mutex::new(Vec::new())),
     });
 
     let mut cfg = AgentConfig::new("sys");

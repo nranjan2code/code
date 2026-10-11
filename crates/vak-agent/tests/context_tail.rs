@@ -150,7 +150,6 @@ fn build_agent(provider: Arc<Recording>, dir: &std::path::Path) -> Agent {
     cfg.run_retry_base_backoff_ms = 1;
     cfg.tail = TailInput {
         temporal: "current UTC instant 2026-09-19T00:00:00Z".into(),
-        stance: "Provide a clear, direct answer.".into(),
     };
     Agent::new(provider, log, cfg)
 }
@@ -200,8 +199,7 @@ async fn tail_precedes_the_users_words_and_is_stable_within_a_turn() {
     let tail_step_1 = texts[0].to_string();
     assert!(tail_step_1.contains("<turn_context>"));
     assert!(tail_step_1.contains("current UTC instant 2026-09-19T00:00:00Z"));
-    assert!(tail_step_1.contains("<stance>"));
-    assert!(tail_step_1.contains("Provide a clear, direct answer."));
+    assert!(!tail_step_1.contains("<stance>"));
     assert!(!tail_step_1.contains("<directive>"));
     assert_eq!(texts[1], "run the check");
 
@@ -270,10 +268,10 @@ async fn later_requests_in_a_turn_are_byte_identical_prefixes_of_earlier_ones() 
     }
 }
 
-/// Cache breakpoints land after the stable prefix, after the last message of
-/// any previous turn, and on the last message of the request being built.
+/// An unrelated fresh request omits the closed prior turn, so cache
+/// breakpoints cover the stable prefix and current request only.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn cache_breakpoints_mark_prefix_previous_turn_and_current_step() {
+async fn cache_breakpoints_mark_prefix_preceding_card_and_current_step() {
     let dir = tempdir().unwrap();
     let provider = Arc::new(Recording::new(vec![text_msg("first answer")]));
     let mut agent = build_agent(provider.clone(), dir.path());
@@ -302,13 +300,13 @@ async fn cache_breakpoints_mark_prefix_previous_turn_and_current_step() {
         .lock()
         .unwrap()
         .push_back(text_msg("second answer"));
-    let outcome = run(&mut agent, "second question").await;
+    let outcome = run(&mut agent, "A fresh question on a different topic").await;
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
 
     let all_requests = provider.requests();
     let second_turn_request = all_requests.last().expect("second turn request");
-    // messages: [user1, assistant1, user2] — three positions now apply.
-    assert_eq!(second_turn_request.messages.len(), 3);
+    // The preceding turn's compact card, then the current user turn.
+    assert_eq!(second_turn_request.messages.len(), 2);
     let hints = second_turn_request
         .cache
         .as_ref()
@@ -320,8 +318,8 @@ async fn cache_breakpoints_mark_prefix_previous_turn_and_current_step() {
             .iter()
             .map(|b| b.after_message)
             .collect::<Vec<_>>(),
-        vec![None, Some(1), Some(2)],
-        "prefix, end of previous turn, and the current step's last message"
+        vec![None, Some(0), Some(1)],
+        "prefix, the preceding turn's card and the current step's last message"
     );
 }
 
@@ -420,7 +418,7 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
         relation: vak_intent::GoalRelation::New,
         request: "research on WEF".into(),
         supersedes_revision: None,
-        explicit: false,
+        explicit: true,
     })
     .unwrap();
     log.append_message(MessageRecord {
@@ -443,7 +441,7 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
         relation: vak_intent::GoalRelation::AddsTo,
         request: "use python sandbox".into(),
         supersedes_revision: None,
-        explicit: false,
+        explicit: true,
     })
     .unwrap();
     log.append_message(MessageRecord {

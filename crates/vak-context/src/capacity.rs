@@ -279,6 +279,34 @@ impl CapacityProfile {
         }
     }
 
+    /// A completed probe that received valid responses but never observed a
+    /// followed instruction did not measure an instruction horizon. Keep the
+    /// provider's published window as the planning bound and preserve the
+    /// failed samples as provenance; never turn the ladder's starting rung
+    /// into a measured limit. This also repairs older persisted profiles
+    /// written by the former no-pass fallback.
+    pub fn discard_unproven_instruction_horizon(&mut self) -> bool {
+        if self.provenance.rungs.is_empty()
+            || self
+                .provenance
+                .rungs
+                .iter()
+                .any(|rung| !rung.accepted || rung.followed_instruction == Some(true))
+        {
+            return false;
+        }
+        self.instruction_horizon = Horizon {
+            tokens: self.declared_window.unwrap_or(u64::MAX),
+            confidence: HOSTED_UNPROBED_CONFIDENCE,
+            last_confirmed: self.provenance.probed_at,
+        };
+        let note = "probe inconclusive: provider accepted the requests but no sample followed the tool instruction; using published window only";
+        if !self.provenance.signals.iter().any(|signal| signal == note) {
+            self.provenance.signals.push(note.into());
+        }
+        true
+    }
+
     /// The largest prompt a request may carry. The instruction horizon was
     /// measured as a prompt size, so output is not charged against it; but an
     /// unprobed horizon starts at the declared window, which covers prompt and
@@ -952,6 +980,48 @@ mod tests {
         profile.observe_instruction_failure(1_000); // well under 0.8 * horizon
         assert_eq!(profile.instruction_horizon.tokens, 10_000);
         assert!(!profile.needs_reprobe);
+    }
+
+    #[test]
+    fn a_probe_with_no_followed_instruction_does_not_claim_its_first_rung() {
+        let mut profile = flat_profile(262_144);
+        profile.instruction_horizon.tokens = 4_000;
+        profile.instruction_horizon.confidence = 0.3;
+        profile.provenance.rungs = [4_000, 2_000, 1_000]
+            .into_iter()
+            .map(|tokens| Rung {
+                tokens,
+                accepted: true,
+                followed_instruction: Some(false),
+                prefill_ms: None,
+            })
+            .collect();
+
+        assert!(profile.discard_unproven_instruction_horizon());
+        assert_eq!(profile.instruction_horizon.tokens, 262_144);
+        assert_eq!(profile.instruction_horizon.confidence, 0.3);
+        assert!(
+            profile
+                .provenance
+                .signals
+                .iter()
+                .any(|signal| signal.contains("probe inconclusive"))
+        );
+    }
+
+    #[test]
+    fn a_probe_with_a_successful_rung_keeps_its_measured_horizon() {
+        let mut profile = flat_profile(262_144);
+        profile.instruction_horizon.tokens = 8_000;
+        profile.provenance.rungs = vec![Rung {
+            tokens: 8_000,
+            accepted: true,
+            followed_instruction: Some(true),
+            prefill_ms: None,
+        }];
+
+        assert!(!profile.discard_unproven_instruction_horizon());
+        assert_eq!(profile.instruction_horizon.tokens, 8_000);
     }
 
     #[test]

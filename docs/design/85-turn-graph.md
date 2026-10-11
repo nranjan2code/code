@@ -550,7 +550,7 @@ Built (2026-10-03):
 - `WorkingSetPlan::links` records the nodes behind each linked `Full` turn,
   and the audit activity carries them; the plan policy version is 3.
 - Tests: `linked_turn_promoted_without_shared_words`,
-  `hub_artifact_does_not_link_everything`, `anaphora_follows_the_thread`,
+  `hub_artifact_does_not_link_everything`, `the_preceding_turn_follows_the_thread`,
   `link_weights_are_pinned`.
 
 Also built (2026-10-03), finishing G1:
@@ -629,7 +629,7 @@ Exit tests (the context-engine gate in `vak-eval` and planner unit tests):
   with the directive and no edge stays `Card`.
 - `hub_artifact_does_not_link_everything`: twenty turns touching
   `Cargo.toml` do not all rise.
-- `anaphora_follows_the_thread`: "do that again" after an unrelated
+- `the_preceding_turn_follows_the_thread`: "do that again" after an unrelated
   interjection promotes the thread's last turn.
 - `strand_continues_two_threads`: a merge request records both threads.
 - `link_walk_is_bounded`: a dense synthetic graph never exceeds the hop and

@@ -309,11 +309,13 @@ async fn strands_are_recorded_and_become_open_threads() {
         })
         .expect("an intent entry");
     assert_eq!(record.strands.len(), 2, "{:?}", record.strands);
+    // The parts are recorded for audit; the model is never told about parts
+    // it was not shown (docs/design/86-model-plans-runtime-checks.md §1).
     assert!(
         record
             .model_visible
             .as_deref()
-            .is_some_and(|note| note.contains("2 parts")),
+            .is_none_or(|note| !note.to_lowercase().contains("part")),
         "{:?}",
         record.model_visible
     );

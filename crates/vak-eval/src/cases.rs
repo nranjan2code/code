@@ -191,6 +191,7 @@ fn held_out_multilingual_note() -> EvalCase {
         origin: vak_intent::RequirementOrigin::Explicit,
         importance: vak_intent::RequirementImportance::Must,
         target: Some("brief.md".into()),
+        form: None,
     });
     outcome.requirements.push(vak_intent::OutcomeRequirement {
         id: "brief-evidence".into(),
@@ -199,6 +200,7 @@ fn held_out_multilingual_note() -> EvalCase {
         origin: vak_intent::RequirementOrigin::Explicit,
         importance: vak_intent::RequirementImportance::Must,
         target: Some("nota.txt".into()),
+        form: None,
     });
     c.outcome = Some(outcome);
     c.verify = "grep -q Tuesday brief.md && grep -q Ana brief.md".into();

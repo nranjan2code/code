@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! The agent loop's use of the context engine (docs/design/68-context-engine.md
-//! §4, §10): history gives way as the open turn grows, a failed summariser does
-//! not fail the turn, the plan behind each request is recorded and replayable,
-//! and a turn that ended early still gets its card.
+//! §4, §10): old history stays omitted unless selected, unrelated history does
+//! not trigger compaction, the plan behind each request is replayable, and an
+//! early-ended turn still receives its durable card.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -204,7 +204,7 @@ fn carrying(request: &ChatRequest, needle: &str) -> usize {
 }
 
 #[tokio::test]
-async fn history_gives_way_when_the_open_turn_outgrows_the_plan() {
+async fn open_turn_growth_does_not_pull_unselected_history_into_the_request() {
     let dir = tempdir().unwrap();
     let mut log = open(dir.path());
     for n in 1..=3 {
@@ -235,8 +235,11 @@ async fn history_gives_way_when_the_open_turn_outgrows_the_plan() {
         carrying(&r.requests[0], &marker),
         carrying(&r.requests[1], &marker),
     );
-    assert!(first >= 2, "relevant history rides at Full first: {first}");
-    assert!(second < first, "history gave way: {first} -> {second}");
+    assert_eq!(first, 0, "history stays omitted until explicitly recalled");
+    assert_eq!(
+        second, 0,
+        "open-turn growth does not change history selection"
+    );
     assert!(
         r.requests[1].messages.iter().any(|m| m.content.iter().any(
             |b| matches!(b, ContentBlock::ToolResult { content, .. } if content.len() >= 16_000)
@@ -246,7 +249,7 @@ async fn history_gives_way_when_the_open_turn_outgrows_the_plan() {
 }
 
 #[tokio::test]
-async fn a_failed_summariser_does_not_fail_the_turn() {
+async fn unrelated_history_does_not_trigger_compaction_just_to_fill_space() {
     let dir = tempdir().unwrap();
     let mut log = open(dir.path());
     for n in 0..40 {
@@ -256,10 +259,7 @@ async fn a_failed_summariser_does_not_fail_the_turn() {
         log,
         600,
         "something else entirely",
-        vec![
-            Err(LlmError::Network("summariser down".into())),
-            say("answer"),
-        ],
+        vec![say("answer")],
         false,
     )
     .await;
@@ -272,9 +272,29 @@ async fn a_failed_summariser_does_not_fail_the_turn() {
     assert!(
         log.activities()
             .iter()
-            .any(|(_, _, a)| a.label == "compaction-failed"),
-        "the failure is on the record"
+            .all(|(_, _, activity)| activity.label != "compaction-failed"),
+        "omitted unrelated history does not need compaction"
     );
+    let plans: Vec<_> = log
+        .chain_to_root()
+        .into_iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Activity(activity)
+                if activity.label == vak_session::CONTEXT_PLAN_LABEL =>
+            {
+                vak_session::WorkingSetPlan::from_activity_data(&activity.data)
+                    .map(|(plan, _)| plan)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(plans.iter().all(|plan| {
+        plan.per_turn.len() <= 1
+            && plan
+                .per_turn
+                .iter()
+                .all(|(_, fidelity)| *fidelity == vak_session::Fidelity::Card)
+    }));
 }
 
 #[tokio::test]

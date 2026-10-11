@@ -26,6 +26,11 @@ pub enum LlmError {
     Network(String),
     #[error("response parse error: {0}")]
     Parse(String),
+    /// The provider accepted the request but could not parse a generated
+    /// tool-call envelope. This can be repaired by asking the model to emit
+    /// the call again; it is neither a transport retry nor a user error.
+    #[error("generated tool call could not be parsed: {0}")]
+    ToolCallFormat(String),
     #[error("context budget exceeded: {0}")]
     Context(String),
     #[error("aborted before completion")]

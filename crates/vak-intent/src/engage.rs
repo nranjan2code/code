@@ -429,7 +429,11 @@ fn act_domains(act: Act) -> &'static [&'static str] {
         Act::Answer => &["live-data", "web"],
         Act::Locate => &["live-data", "web", "vcs"],
         Act::Analyze => &["live-data", "web", "code-exec", "vcs"],
-        Act::Author => &["documents", "web"],
+        // Authoring is not itself a request for a file or for research.
+        // Explicit file deliverables are added from OutcomeSpec, and cited
+        // evidence adds the live source domains below. Loading both here
+        // made ordinary plans and lists look like document-production work.
+        Act::Author => &[],
         Act::Modify => &["documents", "code-exec", "vcs"],
         // Operating reaches outside the workspace and legitimately needs the
         // broad set; the narrowing that matters for this act is the approval
@@ -688,7 +692,10 @@ fn derive_delivery(reading: &Reading) -> DeliveryPosture {
                 OutputShape::Prose
             }
         }
-        Act::Author => OutputShape::Artifact,
+        // The act alone says content should be produced, not saved to a file.
+        // OutcomeSpec promotes an explicitly requested file to Artifact once
+        // it can inspect the request text.
+        Act::Author => OutputShape::Prose,
         Act::Modify => OutputShape::Diff,
         Act::Operate | Act::Govern => OutputShape::Report,
         Act::Verify => OutputShape::Matrix,

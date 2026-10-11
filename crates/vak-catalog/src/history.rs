@@ -13,6 +13,7 @@
 
 use crate::{Catalog, CatalogError, ingest};
 use rusqlite::{OptionalExtension, Transaction, params};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use vak_session::tail::Position;
 use vak_session::{Entry, EntryPayload};
@@ -64,6 +65,27 @@ pub fn compact_turn_record(record: &vak_session::TurnCardRecord) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     format!("Asked: {asked}\nAnswered: {answer}\nOutputs: {titles}")
+}
+
+/// FTS5 ranks candidates even when a query only shares a few incidental
+/// words with them. A recall result is shown to a model that may otherwise
+/// borrow unrelated historical details, so lexical ranking alone is not a
+/// relevance decision. Require a meaningful share of the query's subject
+/// terms to occur in the compact turn record before exposing it.
+fn covers_recall_query(query_terms: &[String], record: &str) -> bool {
+    let record_terms: BTreeSet<String> = vak_session::turns::history_query_terms(record)
+        .into_iter()
+        .collect();
+    let matched = query_terms
+        .iter()
+        .filter(|term| record_terms.contains(term.as_str()))
+        .count();
+    let required = match query_terms.len() {
+        0 => return false,
+        1..=2 => query_terms.len(),
+        n => (n / 2 + n % 2).max(2),
+    };
+    matched >= required
 }
 
 /// Records where `entry` is, its place in the branch tree, and a settled
@@ -300,9 +322,9 @@ impl Catalog {
         limit: usize,
         stop: &(dyn Fn() -> bool + Sync),
     ) -> Result<TurnSearchResult, CatalogError> {
-        let terms: Vec<String> = vak_session::turns::history_query_terms(query)
-            .into_iter()
-            .take(32)
+        let query_terms = vak_session::turns::history_query_terms(query);
+        let terms: Vec<String> = query_terms
+            .iter()
             .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
             .collect();
         if terms.is_empty() {
@@ -338,7 +360,9 @@ impl Catalog {
             if over() {
                 return Err(CatalogError::Interrupted);
             }
-            if is_ancestor(&conn, &session, &hit.record_id, leaf)? {
+            if covers_recall_query(&query_terms, &hit.record)
+                && is_ancestor(&conn, &session, &hit.record_id, leaf)?
+            {
                 selected.push(hit);
                 if selected.len() >= limit.clamp(1, 20) {
                     break;
@@ -356,6 +380,92 @@ impl Catalog {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recall_candidates_must_cover_most_subject_terms() {
+        let query = vak_session::turns::history_query_terms(
+            "24-minute book club schedule welcome reading budget tea fruit",
+        );
+        assert!(covers_recall_query(
+            &query,
+            "Asked: book club schedule welcome reading budget tea fruit"
+        ));
+        assert!(!covers_recall_query(
+            &query,
+            "Asked: 35-minute art club schedule setup painting cleanup. Budget $28 for paint and supplies."
+        ));
+        let exact = vak_session::turns::history_query_terms("M7b mail calendar");
+        assert!(covers_recall_query(
+            &exact,
+            "Asked: M7b mail calendar implementation"
+        ));
+        assert!(!covers_recall_query(&exact, "Asked: M7b travel plan"));
+    }
+
+    #[test]
+    fn recall_search_omits_a_topically_adjacent_but_unrelated_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let catalog = Catalog::open(&dir.path().join("catalog.db"), dir.path()).unwrap();
+        let mut entry_ids = Vec::new();
+        catalog
+            .seed(|tx| {
+                let mut parent = None;
+                for (turn, record) in [
+                    (
+                        "old-art-club",
+                        "Asked: Plan a 35-minute art club for 8 kids, setup, painting and cleanup. Budget $28 for materials and paint with a supply checklist.",
+                    ),
+                    (
+                        "book-club",
+                        "Asked: 24-minute book club schedule welcome reading wrap-up budget tea fruit.",
+                    ),
+                ] {
+                    let entry = Entry::new(
+                        parent,
+                        EntryPayload::Message(vak_session::MessageRecord {
+                            message: vak_llm::Message::user_text("turn"),
+                            meta: None,
+                        }),
+                    );
+                    index_entry(
+                        tx,
+                        "ses_recall",
+                        Position {
+                            segment: 1,
+                            frames: entry_ids.len() as u64,
+                        },
+                        &entry,
+                    )?;
+                    tx.execute(
+                        "INSERT INTO turn_records (session, entry_id, turn_id, record, recorded_at)\n                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        params![
+                            "ses_recall",
+                            entry.id,
+                            turn,
+                            record,
+                            "2026-10-10T00:00:00Z"
+                        ],
+                    )?;
+                    parent = Some(entry.id.clone());
+                    entry_ids.push(entry.id);
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        let result = catalog
+            .search_turns(
+                "recall",
+                entry_ids.last().unwrap(),
+                "24-minute book club schedule welcome reading budget tea fruit",
+                8,
+                &|| false,
+            )
+            .unwrap();
+
+        assert_eq!(result.matches.len(), 1, "{:#?}", result.matches);
+        assert_eq!(result.matches[0].turn_id, "book-club");
+    }
 
     #[test]
     fn logarithmic_links_distinguish_distant_ancestors_and_sibling_branches() {

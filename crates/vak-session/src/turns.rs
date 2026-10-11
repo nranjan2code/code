@@ -182,9 +182,9 @@ pub enum Fidelity {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkingSetPlan {
     /// Chronological order (oldest first), one entry per closed turn that
-    /// is `Full` or `Card`. A turn absent from this list and not covered by
-    /// `packet_range` simply has no card yet — `derive_with_plan` treats
-    /// that as already covered by an existing `Compaction` entry.
+    /// is `Full` or `Card`. A turn absent from this list is intentionally
+    /// omitted from this request unless covered by the exact `packet_range`;
+    /// its durable record remains reachable through `recall`.
     pub per_turn: Vec<(String, Fidelity)>,
     /// Exact closing-record addresses when history is selectively retrieved.
     /// Some(empty) deliberately excludes all closed history. None is used by
@@ -194,8 +194,9 @@ pub struct WorkingSetPlan {
     /// The contiguous, oldest-to-newest range of turns represented only by
     /// a packet, inclusive — `(first_turn_id, last_turn_id)`.
     pub packet_range: Option<(String, String)>,
-    /// Turn ids promoted to `Full` by relevance (search, reading overlap,
-    /// or anaphora) rather than by the recency fill.
+    /// Turn ids selected by the planner as historical context. In the
+    /// recall-first request policy this is normally empty; explicitly scoped
+    /// projections may still record selected turns here.
     pub retrieved: Vec<String>,
     /// For each turn promoted by a link, the nodes it shares with the open
     /// turn (`thread:…`, `file:…`, `commitment:…`), so a transcript can say
@@ -211,14 +212,12 @@ pub const CONTEXT_PLAN_LABEL: &str = "context-plan";
 
 /// The planner's rules version recorded with each plan. Bump it with a change
 /// to how a plan is computed, so an old record is read for what it was.
-pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 3;
+pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 5;
 
 impl WorkingSetPlan {
-    /// The plan as the `data` of its audit activity: the `Full` turns, the
-    /// packet range, the budget accounting and the ledger leaf it was planned
-    /// at. Every other closed turn is a `Card` by construction, so this is all
-    /// a replay needs (invariant 1); it stays bounded by the `Full` turns, not
-    /// by the length of the conversation.
+    /// The plan as the `data` of its audit activity: selected Full and Card
+    /// turns, the packet range, budget accounting and ledger leaf. Omitted
+    /// history is explicit by absence and remains available through recall.
     pub fn to_activity_data(
         &self,
         leaf: Option<&str>,
@@ -229,6 +228,12 @@ impl WorkingSetPlan {
             .filter(|(_, f)| *f == Fidelity::Full)
             .map(|(id, _)| id.as_str())
             .collect();
+        let cards: Vec<&str> = self
+            .per_turn
+            .iter()
+            .filter(|(_, fidelity)| *fidelity == Fidelity::Card)
+            .map(|(id, _)| id.as_str())
+            .collect();
         let mut data = std::collections::BTreeMap::new();
         data.insert("section".into(), CONTEXT_PLAN_LABEL.into());
         data.insert("policy".into(), CONTEXT_PLAN_POLICY_VERSION.to_string());
@@ -236,6 +241,10 @@ impl WorkingSetPlan {
         data.insert(
             "full".into(),
             serde_json::to_string(&full).unwrap_or_default(),
+        );
+        data.insert(
+            "cards".into(),
+            serde_json::to_string(&cards).unwrap_or_default(),
         );
         data.insert(
             "retrieved".into(),
@@ -264,13 +273,21 @@ impl WorkingSetPlan {
             return None;
         }
         let full: Vec<String> = serde_json::from_str(data.get("full")?).ok()?;
+        let cards: Vec<String> = data
+            .get("cards")
+            .and_then(|value| serde_json::from_str(value).ok())
+            .unwrap_or_default();
         let retrieved: Vec<String> = serde_json::from_str(data.get("retrieved")?).ok()?;
         let packet_range = data
             .get("packet_first")
             .zip(data.get("packet_last"))
             .map(|(first, last)| (first.clone(), last.clone()));
         let plan = WorkingSetPlan {
-            per_turn: full.into_iter().map(|id| (id, Fidelity::Full)).collect(),
+            per_turn: full
+                .into_iter()
+                .map(|id| (id, Fidelity::Full))
+                .chain(cards.into_iter().map(|id| (id, Fidelity::Card)))
+                .collect(),
             selected_records: None,
             packet_range,
             retrieved,

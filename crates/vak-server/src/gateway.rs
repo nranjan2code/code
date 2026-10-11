@@ -3789,12 +3789,18 @@ async fn execute_turn_chain(
             match outcome {
                 Ok((o, log)) => {
                     let err = outcome_is_error(&o);
-                    let text = crate::projection::channel_narration(&log, outcome_text(&o));
+                    let cards = crate::projection::run_cards(&log);
+                    let mut text = crate::projection::channel_narration(&log, outcome_text(&o));
+                    // A card-only answer sends its cards and no text; the
+                    // placeholder is for a reply that carries nothing at all.
+                    if text.trim().is_empty() && cards.is_empty() {
+                        text = "(no text)".into();
+                    }
                     if let Some(tx) = reply_tx {
                         let _ = tx.send(ChatReply {
                             text: text.clone(),
                             drafts: turn_drafts(&log, core.cwd()),
-                            cards: crate::projection::run_cards(&log),
+                            cards,
                         });
                     }
                     // Background reflection seam (docs/design/29 P1): the
@@ -3884,14 +3890,7 @@ fn outcome_text(o: &vak_agent::TurnOutcome) -> String {
     use crate::client_events::{RunOutcome, run_outcome_message};
     use vak_agent::TurnOutcome;
     match o {
-        TurnOutcome::Completed { response } => {
-            let t = response.text_content();
-            if t.trim().is_empty() {
-                "(no text)".into()
-            } else {
-                t
-            }
-        }
+        TurnOutcome::Completed { response } => response.text_content(),
         TurnOutcome::Aborted { partial } => partial
             .as_ref()
             .map(|m| m.text_content())

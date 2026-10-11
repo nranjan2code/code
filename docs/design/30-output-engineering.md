@@ -472,12 +472,17 @@ Consequences, all enforced by tests:
   summary would otherwise say "the chart is shown above" with nothing above.
   `projection::text_with_run_cards` puts the latest turn's cards (their
   deterministic text form, from the same projection the desktop renders, so
-  retries are superseded) ahead of any explicit supplemental note. After a
-  successful card call, the card is the user-facing answer. Only final text
-  beginning `Note:` or `Additional note:` is shown beside it; unmarked text
-  remains in the append-only ledger but does not duplicate the card in the
-  everyday UI or channel delivery. The same parser in `vak-delivery` governs
-  both routes.
+  retries are superseded) ahead of the assistant's ordinary final text. The
+  native client associates text after a card with the same result. No text
+  prefix is a control marker, and projection preserves the assistant's text;
+  the prompt asks for no trailing text when cards answer fully and the user
+  has not requested text outside them, while retaining explicitly requested
+  text verbatim.
+- **A card answer does not imply a file.** When the requested result is
+  already represented in the conversation's cards or prose, the agent does
+  not create a second workspace artifact just to make that same answer
+  shareable. A file is produced when the request names a file, document, or
+  saved artifact as a deliverable.
 - **The TypeScript copy cannot drift.** The client keeps `INLINE_HINT_MARKERS`
   and `CONTEXT_BLOCK_TAGS`; `vak-server/tests/control_vocabulary_sync.rs`
   fails the build unless they equal the Rust lists exactly.

@@ -25,6 +25,20 @@ pub struct TailSections {
     pub workspace: Option<String>,
 }
 
+fn intent_continues_threads(
+    intent: &crate::types::IntentRecord,
+    threads: &std::collections::BTreeSet<String>,
+) -> bool {
+    intent.strands.iter().any(|strand| {
+        threads.contains(&strand.thread_id)
+            || strand
+                .lineage
+                .continued_threads()
+                .iter()
+                .any(|thread| threads.contains(*thread))
+    })
+}
+
 /// The ledger's descriptor. A writable handle holds the ledger's exclusive
 /// lock and releases it with an explicit unlock when dropped. Closing alone
 /// would not: a lock lasts while any duplicate of its descriptor is open,
@@ -803,6 +817,85 @@ impl SessionLog {
             self.goal_state().as_ref(),
             self.latest_goal_update().map(|update| update.revision),
         )
+    }
+
+    /// Relate a newly admitted request to an explicitly declared active goal
+    /// using the intent kernel's existing strand/thread decision. An
+    /// unrelated request remains its own thread in this conversation; it
+    /// neither absorbs nor replaces the declared objective.
+    pub fn next_goal_update_for_intent(
+        &self,
+        text: &str,
+        intent: &vak_intent::Intent,
+    ) -> vak_intent::GoalUpdate {
+        let goal = self.goal_state();
+        let continues_active_goal = goal.as_ref().and_then(|goal| {
+            if !goal.is_live() || !goal.explicit {
+                return None;
+            }
+            let goal_threads = self.explicit_goal_threads();
+            if goal_threads.is_empty() {
+                // Old ledgers may predate intent/strand recording. Keep their
+                // prior behavior until there is evidence to classify safely.
+                return None;
+            }
+            Some(intent.strands.iter().any(|strand| {
+                goal_threads.contains(&strand.thread_id)
+                    || strand
+                        .lineage
+                        .continued_threads()
+                        .iter()
+                        .any(|thread| goal_threads.contains(*thread))
+            }))
+        });
+        vak_intent::next_goal_update_with_relationship(
+            text,
+            goal.as_ref(),
+            self.latest_goal_update().map(|update| update.revision),
+            continues_active_goal,
+        )
+    }
+
+    /// Thread IDs from the intent record written for the latest explicit
+    /// objective (or correction). GoalUpdate and Intent entries share the
+    /// admitted turn ID, so this remains reconstructable from the ledger.
+    fn explicit_goal_threads(&self) -> std::collections::BTreeSet<String> {
+        let chain = self.chain_to_root();
+        let anchor_turn = chain.iter().rev().find_map(|entry| {
+            let EntryPayload::GoalUpdate(update) = &entry.payload else {
+                return None;
+            };
+            (update.explicit
+                && matches!(
+                    update.relation,
+                    vak_intent::GoalRelation::New
+                        | vak_intent::GoalRelation::Corrects
+                        | vak_intent::GoalRelation::Replaces
+                ))
+            .then(|| entry.at_turn.clone())
+            .flatten()
+        });
+        let Some(anchor_turn) = anchor_turn else {
+            return Default::default();
+        };
+        chain
+            .iter()
+            .find_map(|entry| {
+                if entry.at_turn.as_deref() != Some(anchor_turn.as_str()) {
+                    return None;
+                }
+                let EntryPayload::Intent(record) = &entry.payload else {
+                    return None;
+                };
+                Some(
+                    record
+                        .strands
+                        .iter()
+                        .map(|strand| strand.thread_id.clone())
+                        .collect(),
+                )
+            })
+            .unwrap_or_default()
     }
 
     pub fn goal_state(&self) -> Option<vak_intent::GoalState> {
@@ -2041,11 +2134,10 @@ impl SessionLog {
     /// - `Card` turns contribute one line each to a single `<turns>` block
     ///   (`TurnCard::line`), inserted once, right after any compaction
     ///   summary.
-    /// - `Packet` turns, and any closed turn the plan omits entirely,
-    ///   contribute nothing here: they are represented only by an existing
-    ///   `Compaction` entry, which the caller (`Agent`'s incremental
-    ///   compaction, §4) guarantees already covers them before this is
-    ///   called with that plan.
+    /// - `Packet` turns contribute through an exact matching stored packet.
+    ///   Other omitted turns contribute nothing to this request; the durable
+    ///   ledger remains available to the model through the brokered `recall`
+    ///   tool.
     /// - The still-open turn (if any) always projects verbatim, regardless
     ///   of `plan` — it is never planned.
     ///
@@ -2057,7 +2149,7 @@ impl SessionLog {
     /// it. Only a `reset_all` compaction entry (reset-with-handoff,
     /// docs/design/42) moves this; packets never do. `(0, ..., None)` when
     /// no reset has happened.
-    fn reset_boundary(&self) -> (usize, HashMap<String, usize>, Option<String>) {
+    fn reset_boundary(&self) -> (usize, HashMap<String, usize>, Option<(String, String)>) {
         let chain = self.chain_to_root();
         let position: HashMap<String, usize> = chain
             .iter()
@@ -2070,11 +2162,14 @@ impl SessionLog {
                 .enumerate()
                 .rev()
                 .find_map(|(pos, entry)| match &entry.payload {
-                    EntryPayload::Compaction(c) if c.reset_all => Some((pos, c.summary.clone())),
+                    EntryPayload::Compaction(c) if c.reset_all => {
+                        Some((pos, entry.at_turn.clone(), c.summary.clone()))
+                    }
                     _ => None,
                 });
         match last_reset {
-            Some((pos, summary)) => (pos, position, Some(summary)),
+            Some((pos, Some(turn_id), summary)) => (pos, position, Some((turn_id, summary))),
+            Some((pos, None, _)) => (pos, position, None),
             None => (0, position, None),
         }
     }
@@ -2160,12 +2255,11 @@ impl SessionLog {
     /// one, every closed turn rides at `Full` (the plan-free view used by
     /// goal audits and search, which have no `CapacityProfile`). Only the
     /// reset boundary (reset-with-handoff) hides anything; a stored packet
-    /// is rendered only when the plan's `packet_range` matches it exactly,
-    /// and a plan that packets a range no stored packet covers yet renders
-    /// those turns as cards — the cheap, safe form — rather than losing
-    /// them (no-cut invariant). The caller normally writes the packet
-    /// before projecting (`Agent`'s incremental compaction, §4), so that
-    /// fallback is a transient.
+    /// is rendered only when the plan's `packet_range` matches it exactly.
+    /// If a requested packet has not been written yet, its selected range
+    /// remains visible as cards while compaction is attempted. Other
+    /// unselected closed turns are omitted from this request and remain
+    /// available through `recall`.
     fn derive_with_plan_tagged(
         &self,
         plan: Option<&WorkingSetPlan>,
@@ -2196,12 +2290,22 @@ impl SessionLog {
             .collect();
 
         let mut index = TurnIndex::from_log(self);
+        // A handoff summary replaces context only for the turn that caused
+        // the reset. Carrying it into every later turn turns stale work into
+        // an unsolicited instruction on unrelated requests. Later requests
+        // can reopen older evidence through recall when they need it.
+        let active_handoff_summary = reset_summary.filter(|(turn_id, _)| {
+            index
+                .turns
+                .last()
+                .is_some_and(|turn| !turn.closed && turn.id == *turn_id)
+        });
         // Rendering needs a card line for every closed turn the plan put at
         // `Card`; the token counts on a provisional card are irrelevant
         // here (the plan was costed by the caller), so they are left at 0.
         index.ensure_cards(&|_| 0);
         let mut out: Vec<(String, Message, bool, bool)> = Vec::new();
-        if let Some(summary) = &reset_summary {
+        if let Some((_, summary)) = &active_handoff_summary {
             let summary_msg =
                 Message::user_text(format!("<context_summary>\n{summary}\n</context_summary>"));
             out.push((String::new(), summary_msg, true, false));
@@ -2258,43 +2362,34 @@ impl SessionLog {
                 continue;
             }
             let selected = match plan {
-                None => Fidelity::Full,
-                Some(_) => {
-                    if let Some(f) = fidelity_of.get(turn.id.as_str()).copied() {
-                        f
-                    } else if packet_pos_range
+                None => Some(Fidelity::Full),
+                Some(_) => fidelity_of.get(turn.id.as_str()).copied().or_else(|| {
+                    packet_pos_range
                         .is_some_and(|(lo, hi)| turn_pos >= lo && turn_pos <= hi)
-                    {
-                        if packet.is_some() {
+                        .then_some(if packet.is_some() {
                             Fidelity::Packet
                         } else {
-                            // The plan asked for a packet nobody has
-                            // written yet: cards, never nothing.
+                            // A requested packet not written yet still
+                            // has its selected range's cards available.
                             Fidelity::Card
-                        }
-                    } else {
-                        // The plan never classified it (a stale plan
-                        // against a longer chain) — render the cheap, safe
-                        // form rather than silently losing it (no-cut
-                        // invariant); every closed turn has a card here.
-                        Fidelity::Card
-                    }
-                }
+                        })
+                }),
             };
             match selected {
-                Fidelity::Full => {
+                Some(Fidelity::Full) => {
                     for message in turn.full_record() {
                         out.push((turn.id.clone(), message, false, false));
                     }
                 }
-                Fidelity::Card => {
+                Some(Fidelity::Card) => {
                     if let Some(card) = &turn.card {
                         card_lines.push(card.line(turn_number + 1));
                     }
                 }
-                Fidelity::Packet => {
+                Some(Fidelity::Packet) => {
                     // Represented by the packet summary pushed above.
                 }
+                None => {} // The plan omitted this turn; `recall` can reopen it.
             }
         }
         if !card_lines.is_empty() {
@@ -2757,6 +2852,16 @@ impl SessionLog {
         ) {
             return None;
         }
+        // Managed work survives unrelated requests in the same conversation,
+        // but its instructions belong only on turns in the source request's
+        // thread. The contract remains durable and returns when that thread
+        // is continued.
+        if let Some(current) = self.current_intent_record() {
+            let source_threads = self.intent_threads_for_entry(&work.contract.source_entry_id);
+            if !source_threads.is_empty() && !intent_continues_threads(&current, &source_threads) {
+                return None;
+            }
+        }
         let mut context = format!(
             "<work_contract id=\"{}\" revision=\"{}\">\nObjective: {}\nStatus: {:?}\nItems:\n",
             work.contract.contract_id, work.contract.revision, work.contract.objective, work.status,
@@ -2775,123 +2880,81 @@ impl SessionLog {
         Some(context)
     }
 
-    /// The directive texts the projection under `plan` already carries:
-    /// the open turn's, every `Full` or `Card` turn's, and — with no plan —
-    /// every turn's at or after the reset boundary.
-    fn covered_directives(
-        &self,
-        plan: Option<&WorkingSetPlan>,
-    ) -> std::collections::HashSet<String> {
-        let fidelity_of: HashMap<&str, Fidelity> = plan
-            .map(|p| p.per_turn.iter().map(|(id, f)| (id.as_str(), *f)).collect())
-            .unwrap_or_default();
-        TurnIndex::from_log(self)
-            .turns
-            .iter()
-            .filter(|turn| !turn.behind_reset)
-            .filter(|turn| {
-                !turn.closed
-                    || plan.is_none()
-                    || matches!(
-                        fidelity_of.get(turn.id.as_str()),
-                        Some(Fidelity::Full | Fidelity::Card)
-                    )
-            })
-            .map(|turn| turn.directive.text_content().trim().to_string())
-            .collect()
-    }
-
-    /// The multi-turn directive timeline, tagged, restricted to directives
-    /// the projection under `plan` does not already carry — one source per
-    /// fact (docs/design/68-context-engine.md §6): a directive the model
-    /// sees in a `Full` turn, on a card line, or in the open turn needs no
-    /// restating here; only packeted or reset-hidden ones do. `None` when
-    /// there is no active goal spanning multiple turns, a managed work
-    /// contract already covers progress, or nothing is left out.
-    fn tail_conversation_thread(&self, plan: Option<&WorkingSetPlan>) -> Option<String> {
+    /// The active user-declared objective, when one exists. Earlier request
+    /// text is not copied into every prompt; details needed from an old turn
+    /// are found through `recall`.
+    fn tail_conversation_thread(&self, _plan: Option<&WorkingSetPlan>) -> Option<String> {
         let goal = self.goal_state()?;
-        if !(goal.revision > 1 || !goal.additions.is_empty())
-            || goal.control != vak_intent::GoalControlState::Active
+        if goal.control != vak_intent::GoalControlState::Active
+            || !goal.explicit
             || goal.objective.trim().is_empty()
             || self.work_projection().ok().flatten().is_some()
         {
             return None;
         }
-
-        let mut user_directives: Vec<(usize, String)> = Vec::new();
-        let mut turn_counter = 1;
-        for entry in self.chain_to_root() {
-            if let EntryPayload::Message(record) = &entry.payload
-                && record.message.role == vak_llm::Role::User
-                && record.control_kind().is_none()
-            {
-                let text = record.message.text_content();
-                let trimmed = text.trim();
-                if !trimmed.is_empty() && !trimmed.starts_with('<') {
-                    user_directives.push((turn_counter, trimmed.to_string()));
-                    turn_counter += 1;
-                }
+        // A persistent objective belongs only on requests whose resolved
+        // strands continue its thread. The current request's IntentRecord is
+        // already durable by prompt assembly time; a new independent strand
+        // must not inherit an old objective just because it shares a session.
+        let current_intent = self.current_intent_record();
+        if let Some(intent) = current_intent {
+            let goal_threads = self.explicit_goal_threads();
+            if !goal_threads.is_empty() && !intent_continues_threads(&intent, &goal_threads) {
+                return None;
             }
         }
-        if user_directives.len() <= 1 {
-            return None;
-        }
-
-        let verbatim: std::collections::HashSet<String> = self.covered_directives(plan);
-        let start_idx = user_directives.len().saturating_sub(8);
-        let filtered: Vec<&(usize, String)> = user_directives[start_idx..]
-            .iter()
-            .filter(|(_, req)| !verbatim.contains(req.as_str()))
-            .collect();
-        if filtered.is_empty() {
-            return None;
-        }
-
-        // Directive drift (docs/design/68-context-engine.md §7): a listed
-        // directive whose reading shares no domain with the CURRENT
-        // directive's is marked paused rather than dropped — a
-        // re-weighting, not a cut. Turns without a card yet (never closed)
-        // have no reading to compare and are never marked.
-        let current_domains = self.latest_reading().map(|r| r.domains);
-        let index = TurnIndex::from_log(self);
-
-        // Only a goal a person stated is presented as the objective. The
-        // first message of a conversation is not one by default: rendering
-        // "hi" as the primary objective of every later turn misdirects the
-        // model more than it orients it.
-        let mut thread = format!("<conversation_thread revision=\"{}\">\n", goal.revision);
-        if goal.explicit {
-            thread.push_str(&format!("Primary objective: {}\n", goal.objective.trim()));
-        }
-        thread.push_str("User request timeline across turns:\n");
-        for (num, req) in filtered {
-            let words: Vec<&str> = req.split_whitespace().collect();
-            let preview = if words.len() > 40 {
-                format!("{}...", words[..40].join(" "))
-            } else {
-                req.clone()
-            };
-            let paused = current_domains.as_ref().is_some_and(|current| {
-                !current.is_empty()
-                    && index.turn_by_number(*num).is_some_and(|turn| {
-                        turn.card.as_ref().is_some_and(|card| {
-                            !card.reading.domains.is_empty()
-                                && card.reading.domains.iter().all(|d| !current.contains(d))
-                        })
-                    })
-            });
-            let suffix = if paused { " (earlier, now paused)" } else { "" };
-            thread.push_str(&format!("- Turn {num}: {preview}{suffix}\n"));
-        }
-        thread.push_str(
-            "Rules for multi-turn execution:\n\
-             - Follow the user's intent across conversational drifts without complaint or friction.\n\
-             - Conversational drift across turns is expected: follow along smoothly and adapt immediately.\n\
-             - Resolve references (\"the data\", \"do that\", \"it\", \"something\") against the request timeline above.\n\
-             - If genuinely confused, ask a brief clarification, but NEVER use asking clarification as an exception-handling escape hatch to avoid taking action or using available tools.\n\
+        Some(format!(
+            "<conversation_thread revision=\"{}\">\nActive user-stated objective: {}\n\
+             Earlier turn details are available through recall when this request depends on them.\n\
              </conversation_thread>",
-        );
-        Some(thread)
+            goal.revision,
+            goal.objective.trim()
+        ))
+    }
+
+    fn current_intent_record(&self) -> Option<crate::types::IntentRecord> {
+        let turn = self.current_turn()?;
+        self.chain_to_root().into_iter().rev().find_map(|entry| {
+            if entry.at_turn.as_deref() != Some(turn) {
+                return None;
+            }
+            match &entry.payload {
+                EntryPayload::Intent(record) => Some(record.as_ref().clone()),
+                _ => None,
+            }
+        })
+    }
+
+    fn intent_threads_for_entry(
+        &self,
+        source_entry_id: &str,
+    ) -> std::collections::BTreeSet<String> {
+        let chain = self.chain_to_root();
+        let Some(turn) = chain
+            .iter()
+            .find(|entry| entry.id == source_entry_id)
+            .and_then(|entry| entry.at_turn.as_deref())
+        else {
+            return Default::default();
+        };
+        chain
+            .iter()
+            .find_map(|entry| {
+                if entry.at_turn.as_deref() != Some(turn) {
+                    return None;
+                }
+                let EntryPayload::Intent(record) = &entry.payload else {
+                    return None;
+                };
+                Some(
+                    record
+                        .strands
+                        .iter()
+                        .map(|strand| strand.thread_id.clone())
+                        .collect(),
+                )
+            })
+            .unwrap_or_default()
     }
 
     /// Usage summed over the ACTIVE chain only: usage recorded on

@@ -1,7 +1,7 @@
 # 47 — The commitment kernel
 
 Status: **shipped**. The current deterministic reader is
-`vak_intent::RESOLVER_VERSION = 11` (its history is on the constant; 11 reads "show" as a delivery verb, an answer, not a search). The historical reviews below explain why
+`vak_intent::RESOLVER_VERSION = 22` (its history is on the constant; 11 reads "show" as a delivery verb, an answer, not a search; 14 distinguishes a schedule plan from the act of scheduling; 15 keeps same-message pronouns attached to their own request; 16 requires two shared content words for inferred continuation; 17 ignores local deixis in long self-contained requests and filters generic presentation words from topic overlap; 18 resolves dependent and sequential parts against their same-message parent before considering any older thread; 19 keeps a sentence that only shapes the preceding answer's presentation in that same part; 20 requires shared words to cover at least half of the older thread's topic words; 21 reads comma-separated timed schedule labels as data rather than commands; 22 recognizes comma-separated timed phases after a context phrase as schedule labels without requiring a colon). The historical reviews below explain why
 it changed; this document describes the current implementation. One known
 boundary remains: `full-access` bypasses the permission engine's approval
 gate, so the kernel's irreversible-work approval floor cannot force a prompt
@@ -198,7 +198,10 @@ is one part to read about, not 301 requests; it reaches the reading only as
 "there is pasted material". The instruction is then split at sentence
 boundaries, enumerated items, and a short list of sequencing (`then`, `after
 that`, `finally`) and addition (`also`, `additionally`) markers, matched as
-whole words. Plain "and" is not a boundary. Each clause gets a role —
+whole words. Plain "and" is not a boundary. A sentence that only shapes how
+the preceding answer is shown (for example, "Show it clearly") stays with
+that part; an explicit sequence or addition marker still starts another part.
+Each clause gets a role —
 imperative, question, request, social, or statement — and a part is a
 clause that asks for work with the context clauses around it: "the deploy
 failed, fix it" is one part, and "the deploy failed" alone asks for nothing
@@ -216,8 +219,18 @@ UUIDv7) once per turn; a preview that persists nothing gets positional ids.
 Threads, and the commitments keyed by them, are therefore unique across
 turns, sessions and workspaces — positional ids collided on the second turn.
 
-Cross-turn lineage: a strand continues an open thread when it shares the act
-and either points at something ("it", "that") or shares a content word. It
+Cross-turn lineage is resolved only for a part that stands on its own. A
+dependent or sequential part already names its same-message relation and may
+not independently attach itself to an older thread through a local pronoun;
+otherwise "How many remain? Show it clearly" can inherit an unrelated open
+thread from "it". An explicit `/goal fix` or `/goal replace` still applies to
+the request as a whole. A standalone strand continues an open thread when it shares the act
+and either is a short deictic follow-up or shares at least two topic words
+covering half of the older thread's topic words.
+Deictic words in a long, self-contained request are treated as local when that
+request supplies their antecedent, and generic presentation preferences such
+as "easy to scan and share" do not establish topic overlap. A single shared
+word is too weak to connect common tasks such as two separate schedules. It
 is `New` otherwise — a wrong `New` costs a duplicate thread, a wrong
 `Continues` merges unrelated work, so the tie goes to `New`. `Corrects` and
 `Replaces` are **never inferred**: only an explicit `/goal fix …` or
@@ -229,8 +242,11 @@ commitment works on it whatever its own horizon reads as ("now also check
 staging" is part of the weekly job it continues); a strand that replaces a
 thread with an open commitment opens the successor and supersedes it; any
 other strand opens one only when it is itself durable and confidently read.
-The model-visible note lists the parts in order so the model knows there are
-*k* things and which are still open.
+The model-visible note is added only when a dependency, continuation, or
+part-specific instruction contributes information the request does not state
+plainly. Independent new strands need no note: the user's words already
+express the requested items, and a count-only note can be misread as a
+reference to older conversation.
 
 The commitment decision is per strand, before anything is written. In
 `commitments::plan_episodes`, an existing open commitment on the strand's
@@ -363,6 +379,18 @@ Core can decline or fail the classifier dispatch and still use `partial`.
 signals; a classifier answer without confidence does not earn capability
 slicing. The lexicon digest test pins the signal tables and segmentation
 vocabulary to resolver version 6.
+
+Delivery also uses the original request's outcome contract. `Author` means
+produce content for the conversation; it does not by itself load document or
+web tools or label the answer as a saved artifact. If the outcome names a
+saved file or an explicit Office output format, Core adds the document
+capability and records `Artifact` delivery for that turn. A bare mention of
+“presentation” can refer to native in-conversation cards and is not evidence
+of a requested Office file; explicit formats such as PowerPoint, PDF, or a
+slide deck remain file-backed outputs. The `write` tool enforces the same
+distinction at execution, so an old tool schema carried for provider cache
+stability cannot turn “easy to share” or “presentation cards” into an
+unsolicited workspace file.
 
 ### Authority: the autonomy spectrum
 
@@ -621,18 +649,25 @@ explicit command (`parse_command`): a leading slash command — `/stop`,
 `/approve <gate>`, `/reject <gate>` — or a whole message that is exactly
 `stop`, `cancel`, `pause`, `resume` or `status`. "Stop using semicolons in
 the output" steers the running loop between steps; before this it cancelled
-the run. Goal relation follows the same rule (`goal_relation`): only an
-explicit command corrects or replaces the active goal, and a correction
-keeps what was added to the goal while a replacement discards it. A message
-after `/stop` starts a new goal rather than adding to cancelled work, and a
-message added to a paused goal resumes it, because the turn carrying it
-runs. Only a goal a person stated (`/goal …`) is shown to the model as the
-primary objective; otherwise the objective is merely the conversation's
-first message, and "hi" is not one. The message that starts a turn and one
-steered into a running turn take the same path (`next_goal_update`), so
-revisions count every update and are never reused. The earlier text
-classifiers (`classify_intervention`, `classify_goal_update`) are gone: they
-read "replace the deprecated API call" as a replacement of the goal.
+the run. Goal relation follows explicit control for corrections and lifecycle
+changes. Natural-language steering inside a running turn remains an addition.
+For a new admitted turn, the intent kernel's strand lineage distinguishes a
+continuation from a separate request: the latter is recorded as `Independent`,
+which advances the audit revision but leaves the active declared objective
+and its additions alone. Declared objectives and managed-work contracts enter
+the request tail only when the current intent continues their recorded
+threads; a shared session ID is not enough to make unrelated work part of
+that goal. A correction keeps what was
+added to the goal while a replacement discards it. A message after `/stop`
+starts a new goal rather than adding to cancelled work, and a message added
+to a paused goal resumes it, because the turn carrying it runs. Only a goal a
+person stated (`/goal …`) is shown to the model as the primary objective;
+otherwise the objective is merely the conversation's first message, and
+"hi" is not one. Steering revisions still use `next_goal_update`; admitted
+turn revisions use the resolved intent and the same append-only ledger. The
+earlier text classifiers (`classify_intervention`, `classify_goal_update`)
+are gone: they read "replace the deprecated API call" as a replacement of
+the goal.
 
 "Own children only" is a fact about the target, not the caller: an agent may
 control a session only when that session's own header names the agent as

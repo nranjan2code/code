@@ -180,7 +180,7 @@ envelope format is identical regardless of provider.
 row above is how `vak-core/src/presentation_tools.rs`'s twelve
 `emit_*_card` tools reach this pipeline — one tool per payload *shape*
 (not per `semantic_type`; siblings that share a shape, e.g. every
-timeline-flavored type, share one tool; the twelve carry all 97 types).
+timeline-flavored type, share one tool; the twelve carry all 109 types).
 `execute()` turns the call's arguments into the stored card (each shape's
 `build`), validates it against `SkillRegistry`, and replies with a short ack
 (or a repairable tool error naming the field); the card is written as a
@@ -192,6 +192,13 @@ over writing a ```vak fence directly (`system-prompt.md`,
 Ollama, a free-text fence parsed as valid JSON only ~20% of the time. The
 fence path remains the fallback for a turn where no matching tool is present,
 and a fence carries exactly the arguments the tool would take.
+
+Before schema validation, the shared tool-call boundary restores an array or
+object that a provider returned as a JSON string when the admitted schema
+requires that collection type. Tool canonicalizers then normalize their
+documented provider-compatible forms, and authorization validates the final
+arguments against the original admitted schema before dispatch. This recovers
+representation drift without widening the schema or bypassing validation.
 
 **The card argument contract.** A tool call is not constrained by its schema
 everywhere: Ollama samples a local model's call syntax freely and drops a call
@@ -236,7 +243,21 @@ arguments follow eight rules, checked by
    `="|` (p = 0.86 at that position, against 0.04 for the delimiter), which
    Ollama's parser drops. A table is a list of row strings, header first,
    cells separated by `|` (`Name | Country`), parsed into the stored columns
-   and rows.
+   and rows. The schema describes each row as one complete string with the
+   same number and order of cells as the header. For a budget, its Amount,
+   Allocation, Cost or Price column carries currency values, and its final
+   Total row reconciles with them. An example in the field description makes
+   that alignment explicit; runtime validation still checks the submitted
+   rows. The metric emitter is for observations and related measurements; an
+   itemized cost, expense or budget allocation belongs in a table with
+   `semantic_type: budget`, even when it also has a total. The metric tool's
+   first sentence states this boundary because it is also what a deferred
+   emitter catalogue shows the model. In the ordered timeline shape,
+   `schedule` requires a duration for
+   each phase. `timeline` requires a duration for each phase when an overall
+   duration is stated (also when it appears unambiguously in the card title),
+   and runtime checks their sum; without a total, each timeline item needs a
+   supplied time or duration. `milestones` and `checklist` remain untimed.
 
 The stored card, and every renderer, pack, digest and channel that reads it,
 is unchanged by the contract: `build` is the only place the two meet.
@@ -253,7 +274,7 @@ is unchanged by the contract: `build` is the only place the two meet.
 8. **A list item is a string where the card allows it.** Records inside a
    list are where the call syntax slips (a value closed with `"` instead
    of the delimiter, a `}` left out after a number). A table's rows are
-   `A | B`, a universal card's details `Label: value` (split at the first
+   complete, aligned strings such as `A | B`, a universal card's details `Label: value` (split at the first
    colon), a recipe's ingredients and steps plain text, which the stored
    recipe already accepts. Measured on captured requests on 2026-10-07: an
    overview card 8 of 12 as records, 12 of 12 as strings; a recipe 9 of 12
@@ -293,6 +314,136 @@ is unchanged by the contract: `build` is the only place the two meet.
    one it was refused by the stored card's rule with a message that named
    no field (live 2026-10-08, 3 of 5 calls; 6 of 6 shown once built as
    label, value and unit).
+
+Live follow-up, 2026-10-10: Ollama returned timeline `items` as
+`"Day 1: Check soil"` strings on three repair attempts, despite the tool
+advertising object items. `vak-agent` now canonicalizes those strings to
+`{label, detail}` at the provider-response boundary before the existing
+schema validator runs; object-form items pass through unchanged. This is a
+narrow compatibility repair for the observed wire-shape drift. The stored
+presentation contract and renderer still receive validated timeline records.
+
+For a plan with a requested overall duration, `emit_timeline_card` now accepts
+`total_duration_minutes` plus each item's `duration_minutes`. The tool refuses
+an incomplete or mismatched sum with the calculated total in its error so the
+model can correct the schedule through the normal tool-repair path. Validated
+durations are projected into each timeline item's existing `time` field. The
+tool schema also tells the model that the renderer shows labels and durations
+separately, so item details should not repeat them.
+
+Live Ollama checks on 2026-10-10 found two additional presentation-boundary
+issues. A natural question with supplied weather readings first selected the
+general-purpose overview emitter despite the registered `weather` metric type;
+clarifying both emitter descriptions and the selection rule led the same
+prompt to select the metric emitter on the next run. A model-supplied weather
+condition label (`Conditions`) and unit (`Condition`) rendered as “Cloudy
+Condition”; weather normalization now recognizes the same condition aliases as
+the renderer and removes a redundant category label. The same run also exposed
+structured final text after a successful card. The completion check now treats
+two or more ordered or unordered list items as structured content, in addition
+to headings and tables. Its focused tests pass; a live retry should verify that
+a numbered Markdown answer is removed or replaced after the control nudge.
+
+Live follow-up on 2026-10-11 with `qwen3.5:4b-mlx` exposed a tool-selection
+ambiguity: for a request with a schedule and itemized budget, the model used the
+deferred metric emitter for the costs, first guessing string readings and then
+repeating a disallowed `title` field after the schema error. The request's
+predicted card set included both the timeline and table emitters. This was a
+tool-description/discovery issue, before rendering: the metric catalogue
+sentence described related readings broadly enough to invite an allocation
+breakdown. Its first sentence now directs itemized costs and budgets to the
+table emitter, while the budget validator and schema make currency syntax
+explicit. Focused tests cover the prediction and both tool contracts; a live
+post-change retry is still needed to confirm local-model selection.
+
+Live cross-layer audit, 2026-10-10: the tool, skill and client registries
+contained three gaps: the supported social research types had no research
+tool route; `coding.search` belonged to the universal detail tool although
+its renderer only accepts table or research payloads; and media `url` /
+`thumbnail_url` plus title-cased weather readings did not reach the client
+fields their renderers read. The research types now use `emit_research_card`,
+`coding.search` uses `emit_table_card`, the media adapter accepts the tool's
+field names, and weather readings are normalized to the weather renderer's
+field names. A renderer coverage test now compares all 109 tool types against
+the UI registry and fixture routes.
+
+A live garden-schedule run on 2026-10-10 supplied `time_minutes` for each
+timeline item, which the canonical schema rejected; Ollama then fell back to
+`data.grid`, rendering the schedule as a three-column table. A second run
+supplied `duration`, then corrected itself to `duration_minutes` and emitted
+the timeline. The timeline tool now normalizes the observed spellings
+`duration`, `time_minutes` and `time_in_minutes` to `duration_minutes` before
+schema validation, while keeping the canonical schema and stored payload
+unchanged. A rerun on the rebuilt server should verify the alias path.
+
+### Diagnose the complete card path
+
+A card that looks wrong is not automatically a model failure. Follow one call
+through these boundaries, using the turn's recorded request and ledgers as the
+source of evidence:
+
+1. **Turn and context.** The user directive is the turn anchor. `vak-context`
+   keeps the ledger complete while assembling a request from the current turn
+   and the one compact TurnCard of the turn it follows. It does
+   not fill spare context with related or unrelated history. Older details are
+   searched and reopened with `recall` only when needed. The
+   prompt resolver adds only the admitted presentation tools and their schemas
+   for this turn. Check the assembled request before judging whether the model
+   lacked context or a card capability. A selected historical card is a
+   compact referent, not new output. A new unrelated request has no historical
+   card to re-emit.
+2. **Provider response.** The adapter decodes tool calls. Before the assistant
+   response is appended, `normalize_response_tool_uses` canonicalizes wrappers,
+   timeline string items, card ownership and shape defaults. `fill_defaults`
+   is part of this boundary. This is where provider-specific output drift is
+   made canonical; do not silently mutate the saved presentation later.
+3. **Admission.** `authorize` validates the normalized arguments against the
+   admitted tool schema and checks permissions. A call rejected here never
+   reaches `execute`, so builder-only recovery cannot repair it. Keep any safe
+   alias or shape normalization before this gate and test the complete
+   normalize → schema-validate path.
+4. **Execution and semantic validation.** The card tool's shape builder turns
+   flat arguments into the renderer payload; `SkillRegistry::validate` checks
+   the `semantic_type` and payload. A rejected call returns a field-level
+   repair error. A successful call writes a `PresentationRecord` tied to the
+   user turn and `tool_use_id`; its tool result is a short acknowledgement.
+5. **Ledger and projection.** The append-only ledger is authoritative. The
+   server reads that `PresentationRecord` and projects an `OutputKind::Card`
+   by `tool_use_id`; it does not recreate a card from tool-result text or
+   arguments. A successful acknowledgement with no projected card points to
+   this boundary, not to generation.
+6. **Client render and delivery.** The client routes `semantic_type` through
+   `STRUCTURED_RENDERERS` into a generic primitive renderer. Inspect the
+   projection payload, renderer coverage and actual layout before blaming the
+   model. Other surfaces use their deterministic capability projection and
+   fallback rules in §30.3.
+7. **Final answer and turn state.** The short tool acknowledgement tells the
+   model which requested distinct cards remain; final narration is checked for
+   duplicated card data. Cards retain tool-emission order. Duplicate suppression
+   is turn-local; exact repeated cards within one answer collapse, while
+   different same-type cards survive. A repair nudge arms replacement of an
+   earlier same-type attempt for that answer. A new direct user request resets
+   this state; typed control messages do not create turns. The prompt tells the
+   model to search indexed history for an explicit older reference no matter
+   how many turns back it is, and to preserve the user's requested card order.
+   Live Ollama testing found unrelated weather and dashboard cards copied into
+   a cleanup request; the historical context was valid recall material, but the
+   model needed a clear current-turn output boundary.
+
+This order gives concrete diagnosis: no admitted tool means inspect prompt
+capability and tool routing; a call absent from the ledger means inspect
+provider decoding, normalization and authorization; a successful ledger record
+missing from the snapshot means inspect projection; a valid snapshot rendered
+poorly means inspect the type registry, payload adapter and UI. Existing
+conversation history remains in the ledger; the context planner decides which
+whole-turn summaries and evidence the next request needs (doc 68 §§3–10).
+
+The same live pass found a chart-schema ambiguity: Ollama put `line` in both
+`chart_type` (the visual style) and `semantic_type` (the renderer category),
+which validation rejected although the request was a valid line chart. The
+schema now describes those fields separately, and the chart tool safely
+normalizes `semantic_type` values `line`, `bar` or `area` to the default
+`chart` category. The visual style remains in `chart_type`.
 
 **A card is identified by its `semantic_type`.** Every type belongs to one
 card tool, so the agent loop routes a card call to the admitted card tool
@@ -372,6 +523,14 @@ nudge follows a run whose every retrieval failed (a fetch answering 403 is
 an error value, never a page): the honest answer reports the failure, and a
 card would have no data. No
 per-type rules live in the loop.
+
+**Card completion check.** After a tool-emitted card, structured assistant
+text (headings with lists, tables, or several sections) signals that requested
+parts may still be in prose. The loop records one `[card-completion-check]` in
+the same logical turn and asks the model to emit matching cards for remaining
+parts and repair incomplete cards. Ordinary assistant text remains part of the
+answer projection while the check runs. A textual prefix has no control
+meaning; the projection preserves assistant text as written.
 
 ### 30.2 The Semantic Compiler
 

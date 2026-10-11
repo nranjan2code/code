@@ -2243,8 +2243,8 @@ fn audit_revisions() {
 fn audit_seeds() {
     let mut scenarios: Vec<Scenario> = vec![];
 
-    scenarios.push(tc("seed_pack_has_88", || {
-        assert_eq!(seeds::built_in_seed_pack().len(), 88);
+    scenarios.push(tc("seed_pack_has_87", || {
+        assert_eq!(seeds::built_in_seed_pack().len(), 87);
     }));
 
     scenarios.push(tc("seed_pack_all_disabled", || {

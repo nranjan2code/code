@@ -463,6 +463,46 @@ mod tests {
     }
 
     #[test]
+    fn indexed_recall_finds_a_turn_one_thousand_turns_back() {
+        let (_dir, core, session_id, turn_id) = fixture();
+        let _selected_leaf = close_selected_turn(&core, &session_id, &turn_id);
+        let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), &session_id);
+        let mut log = SessionLog::open(path.clone()).unwrap();
+        for ordinal in 0..1_000 {
+            log.append_message(MessageRecord {
+                message: vak_llm::Message::user_text(format!(
+                    "Unrelated later request number {ordinal}: discuss houseplants"
+                )),
+                meta: None,
+            })
+            .unwrap();
+        }
+        let leaf = log.tail_id().unwrap().clone();
+        drop(log);
+        core.catalog().unwrap().catch_up_session(&path).unwrap();
+
+        let hits = core
+            .search_session_turns(
+                &session_id,
+                &leaf,
+                "Noida historical observation",
+                1,
+                Default::default(),
+            )
+            .unwrap();
+        assert_eq!(hits.matches.len(), 1);
+        assert_eq!(hits.matches[0].turn_id, turn_id);
+        let reopened = core
+            .read_session_turn(&session_id, &leaf, &turn_id, Default::default())
+            .unwrap();
+        assert_eq!(reopened.directive.text_content(), "selected bounded record");
+        assert_eq!(
+            reopened.final_answer.unwrap().text_content(),
+            "Noida: historical observation"
+        );
+    }
+
+    #[test]
     fn indexed_recall_preserves_tool_blocks_and_regenerates_search_prose() {
         let (_dir, core, session_id, turn_id) = fixture();
         let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), &session_id);

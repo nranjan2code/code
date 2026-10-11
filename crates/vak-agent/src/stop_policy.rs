@@ -16,18 +16,13 @@
 /// What triggered the block — also the operator-visible reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlockReason {
-    /// Final text of effect work looks truncated: ends with ':', a bare plan
-    /// marker, or an unclosed fenced code block.
+    /// The final text ends inside an unclosed fenced code block.
     TruncatedPlan(String),
-    /// The reading demands proof, code changed, and nothing ran it.
-    VerificationMissing,
     /// A file-changing tool ran after the last verification command.
     VerificationStale,
     /// The user explicitly asked the agent to continue until a later user
     /// message authorizes completion.
     UserCompletionRequired,
-    /// The request requires execution or tool receipts, but none were produced.
-    ExecutionReceiptMissing { act: String, hint: String },
     /// A tool failed with an error and the model neither repaired it nor reported the blocker.
     UnresolvedToolFailure { tool: String, error: String },
 }
@@ -36,12 +31,8 @@ impl BlockReason {
     pub fn message(&self) -> String {
         match self {
             BlockReason::TruncatedPlan(tail) => format!(
-                "your last message appears cut off mid-plan (ends with {tail:?}). \
-                 Finish the work now; if you are actually done, say so plainly."
-            ),
-            BlockReason::VerificationMissing => String::from(
-                "the request asks for this to be proven, and code changed without being run. \
-                 Run the changed code or its checks now; if it cannot be run here, say plainly why.",
+                "your last message appears cut off ({tail}). Finish it now; if you are \
+                 actually done, say so plainly."
             ),
             BlockReason::VerificationStale => String::from(
                 "files changed after the last check ran. Run the check again before finishing, \
@@ -50,10 +41,6 @@ impl BlockReason {
             BlockReason::UserCompletionRequired => String::from(
                 "the user asked you to keep working until they say done. Continue making \
                  useful progress; do not declare completion yet.",
-            ),
-            BlockReason::ExecutionReceiptMissing { act, hint } => format!(
-                "the request asks you to {act} ({hint}), but nothing this turn has done it yet. \
-                 Do it now with the tools you have; if you cannot, say plainly what is missing.",
             ),
             BlockReason::UnresolvedToolFailure { tool, error } => format!(
                 "the `{tool}` call failed: {error}. Fix the cause and try again, or tell the \
@@ -232,90 +219,28 @@ impl StopPolicy {
         .any(|marker| normalized == *marker)
     }
 
-    /// Conservative trailing-intent patterns, only fired on line-final
-    /// markers so normal prose summaries never match. Applied only to work
-    /// whose reading needs a tool: in a letter or an agenda the last line is
-    /// the deliverable, not a plan.
-    fn truncated_plan(final_text: &str) -> Option<BlockReason> {
-        let trimmed = final_text.trim_end();
-        if trimmed.is_empty() {
-            return None;
-        }
-        if trimmed.matches("```").count() % 2 == 1 {
-            return Some(BlockReason::TruncatedPlan("unclosed code fence".into()));
-        }
-        let last_line = trimmed.lines().next_back()?.trim_end();
-        if last_line.ends_with(':') && !last_line.starts_with('#') && last_line.len() < 200 {
-            return Some(BlockReason::TruncatedPlan(format!(
-                "'{}'",
-                last_line
-                    .chars()
-                    .rev()
-                    .take(40)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<String>()
-            )));
-        }
-        // A plan marker opens the line ("Now I'll write the tests"); found
-        // anywhere, "going to" matched "They're going to the park". Closing
-        // quotes and brackets after the full stop still end the sentence.
-        const MARKERS: [&str; 10] = [
-            "now i'll",
-            "now let me",
-            "let me ",
-            "i will ",
-            "i'll ",
-            "i'm going to ",
-            "i am going to ",
-            "going to ",
-            "next,",
-            "then,",
-        ];
-        let lower = last_line.to_lowercase();
-        let opening = lower
-            .trim_start_matches(|c: char| c == '-' || c == '*' || c == '•' || c.is_whitespace());
-        let closing = lower.trim_end_matches(|c: char| {
-            matches!(
-                c,
-                '"' | '\'' | '”' | '’' | '»' | ')' | ']' | '*' | '_' | '`'
-            ) || c.is_whitespace()
-        });
-        if lower.len() < 300
-            && MARKERS.iter().any(|m| opening.starts_with(m))
-            && !closing.ends_with('.')
-            && !closing.ends_with('!')
-            && !closing.ends_with('?')
-        {
-            return Some(BlockReason::TruncatedPlan("a plan marker".into()));
-        }
-        None
-    }
-
-    /// Whether this turn may end, judged from the admitted reading and the
-    /// run's receipts. `prompt` is read only for the explicit user hold.
+    /// Whether this turn may end, judged only from what the run observed:
+    /// the explicit hold, an answer cut off inside a code fence, a tool
+    /// failure the answer neither repaired nor reports, and code changed
+    /// after the last check ran. What the request asked for is the model's
+    /// declared plan, checked against receipts by `plan_check`
+    /// (docs/design/86-model-plans-runtime-checks.md); a guessed reading of
+    /// the request never holds a turn open.
     pub fn evaluate_receipts(
         &self,
         prompt: &str,
         final_text: &str,
-        outcome: Option<&vak_intent::OutcomeSpec>,
         receipts: &ReceiptSummary,
         verification_stale: bool,
     ) -> Option<BlockReason> {
-        use vak_intent::StopProfile;
         if final_text.trim().is_empty() {
             return None;
         }
         if Self::requires_user_completion(prompt) {
             return Some(BlockReason::UserCompletionRequired);
         }
-        let effect_work = outcome.is_none_or(|spec| spec.requires_tool());
-        if self.marker_gate
-            && effect_work
-            && let Some(reason) = Self::truncated_plan(final_text)
-        {
-            return Some(reason);
+        if self.marker_gate && final_text.matches("```").count() % 2 == 1 {
+            return Some(BlockReason::TruncatedPlan("unclosed code fence".into()));
         }
         if let Some((tool, error)) = &receipts.unresolved_error
             && !reports_blocker(final_text, tool, error)
@@ -325,70 +250,8 @@ impl StopPolicy {
                 error: error.clone(),
             });
         }
-        let stale_code = self.verify_gate && verification_stale && receipts.code_files_modified > 0;
-        let Some(spec) = outcome else {
-            // No reading: only the structural check survives — a check ran,
-            // then code changed after it.
-            return stale_code.then_some(BlockReason::VerificationStale);
-        };
-        if spec.stop == StopProfile::Verification {
-            if !receipts.has_execution_receipt() {
-                return Some(BlockReason::ExecutionReceiptMissing {
-                    act: spec.deliverable_act().unwrap_or("verify").to_string(),
-                    hint: "produce the check that proves it".into(),
-                });
-            }
-            if self.verify_gate
-                && receipts.code_files_modified > 0
-                && receipts.substantive_bash_calls == 0
-            {
-                return Some(BlockReason::VerificationMissing);
-            }
-            return stale_code.then_some(BlockReason::VerificationStale);
-        }
-        let continued_artifact_was_inspected =
-            receipts.continued_saved_file && receipts.successful_inspections > 0;
-        if spec.expects_artifact()
-            && receipts.artifact_deliveries == 0
-            && !continued_artifact_was_inspected
-        {
-            return Some(BlockReason::ExecutionReceiptMissing {
-                act: spec
-                    .deliverable_act()
-                    .unwrap_or("create the requested artifact")
-                    .to_string(),
-                hint: "produce the artifact itself; a description or link to an older result is not delivery".into(),
-            });
-        }
-        if spec.stop == StopProfile::Effect || spec.requires_execution() {
-            if !receipts.has_execution_receipt() {
-                return Some(BlockReason::ExecutionReceiptMissing {
-                    act: spec
-                        .deliverable_act()
-                        .unwrap_or("make the change")
-                        .to_string(),
-                    hint: "make the change itself, not a description of it".into(),
-                });
-            }
-            return stale_code.then_some(BlockReason::VerificationStale);
-        }
-        // Material the request carried (an attachment, pasted text) leaves
-        // no receipt, so a substantive direct answer satisfies a reading that
-        // only needed something looked at.
-        let direct_answer = final_text.trim().chars().count() >= 80;
-        if spec.requires_inspection() && !receipts.has_inspection_receipt() && !direct_answer {
-            return Some(BlockReason::ExecutionReceiptMissing {
-                act: spec.deliverable_act().unwrap_or("look it up").to_string(),
-                hint: "look at what it refers to".into(),
-            });
-        }
-        if spec.requires_tool() && !receipts.has_any_receipt() && !direct_answer {
-            return Some(BlockReason::ExecutionReceiptMissing {
-                act: spec.deliverable_act().unwrap_or("use a tool").to_string(),
-                hint: "use the tool it needs".into(),
-            });
-        }
-        None
+        (self.verify_gate && verification_stale && receipts.code_files_modified > 0)
+            .then_some(BlockReason::VerificationStale)
     }
 
     /// Returns Some(reason) when completion should be blocked.
@@ -407,7 +270,7 @@ impl StopPolicy {
             },
             ..Default::default()
         };
-        self.evaluate_receipts(prompt, final_text, None, &receipts, false)
+        self.evaluate_receipts(prompt, final_text, &receipts, false)
     }
 
     pub fn evaluate_with_state(
@@ -428,7 +291,7 @@ impl StopPolicy {
             },
             ..Default::default()
         };
-        self.evaluate_receipts(prompt, final_text, None, &receipts, verification_stale)
+        self.evaluate_receipts(prompt, final_text, &receipts, verification_stale)
     }
 }
 
@@ -534,140 +397,30 @@ mod tests {
 
     use super::*;
 
-    fn spec(act: vak_intent::Act, request: &str) -> vak_intent::OutcomeSpec {
-        let mut reading = vak_intent::Reading::general();
-        reading.act = act;
-        vak_intent::OutcomeSpec::from_reading(request, &reading, 1)
-    }
-
-    fn verified(act: vak_intent::Act, request: &str) -> vak_intent::OutcomeSpec {
-        let mut reading = vak_intent::Reading::general();
-        reading.act = act;
-        reading.evidence = vak_intent::Evidence::Verified;
-        let mut spec = vak_intent::OutcomeSpec::from_reading(request, &reading, 1);
-        spec.stop = vak_intent::StopProfile::Verification;
-        spec
+    /// Found live (2026-10-11): a turn read as "verify" from a sentence that
+    /// described the person's habit was held open until it looked something
+    /// up, so the model called `recall {}` eighteen times. What was asked is
+    /// the model's plan now; nothing here reads the request's acts.
+    #[test]
+    fn an_answer_is_never_held_open_by_a_reading_of_the_request() {
+        let p = StopPolicy::default();
+        let receipts = ReceiptSummary::default();
+        for answer in ["Done.", "Here is the routine and the comparison."] {
+            assert_eq!(
+                p.evaluate_receipts("check it", answer, &receipts, false),
+                None
+            );
+        }
     }
 
     #[test]
-    fn truncated_shapes_block_effect_work_and_normal_prose_passes() {
+    fn an_answer_cut_off_inside_a_code_fence_is_held() {
         let p = StopPolicy::default();
-        assert!(matches!(
-            p.evaluate(
-                "",
-                "done with part one.\nNow I'll write the store module",
-                3
-            ),
-            Some(BlockReason::TruncatedPlan(_))
-        ));
-        assert!(matches!(
-            p.evaluate("", "Let me check the config:", 3),
-            Some(BlockReason::TruncatedPlan(_))
-        ));
         assert!(matches!(
             p.evaluate("", "here is the patch:\n```rust\nfn a() {}", 3),
             Some(BlockReason::TruncatedPlan(_))
         ));
-        assert_eq!(
-            p.evaluate("", "All done. Tests pass.\nSummary:\n- added x", 3),
-            None
-        );
-        assert_eq!(
-            p.evaluate("", "Fixed both issues. cargo test green.", 3),
-            None
-        );
-        assert_eq!(p.evaluate("", "Results\n# Summary:", 3), None);
-    }
-
-    /// The misfires the 2026-09-30 prompt audit demonstrated. Each is an
-    /// ordinary request whose reading needs no tool; none may be sent back.
-    #[test]
-    fn authored_and_answered_work_is_never_sent_back_for_its_wording() {
-        let p = StopPolicy::default();
-        let none = ReceiptSummary::default();
-        let letter = spec(
-            vak_intent::Act::Author,
-            "Write a short note to my neighbour",
-        );
-        assert_eq!(
-            p.evaluate_receipts(
-                "Write a short note to my neighbour thanking them for the flowers",
-                "Dear Asha,\n\nThank you for the flowers.\n\nI'll see you at the market on Sunday",
-                Some(&letter),
-                &none,
-                false,
-            ),
-            None
-        );
-        let agenda = spec(vak_intent::Act::Author, "Draft an agenda");
-        assert_eq!(
-            p.evaluate_receipts(
-                "Draft an agenda for tomorrow's family meeting",
-                "Agenda\n\n1. Holiday plans\n2. Chores rota\n\nThings to bring:",
-                Some(&agenda),
-                &none,
-                false,
-            ),
-            None
-        );
-        let grammar = spec(vak_intent::Act::Verify, "Run a quick grammar check");
-        assert_eq!(
-            p.evaluate_receipts(
-                "Can you run a quick grammar check on this paragraph: 'Their going to the park.'",
-                "Corrected: They're going to the park after lunch, and they will bring sandwiches for everyone.",
-                Some(&grammar),
-                &none,
-                false,
-            ),
-            None
-        );
-        let translation = spec(vak_intent::Act::Converse, "double-check this translation");
-        assert_eq!(
-            p.evaluate_receipts(
-                "Please double-check that this translation into French is accurate: 'Good morning'",
-                "Yes, « Bonjour » is accurate.",
-                Some(&translation),
-                &none,
-                false,
-            ),
-            None
-        );
-    }
-
-    /// Found live on 2026-09-30: a corrected sentence in quotes ("They're
-    /// going to the park ….”) was sent back as an unfinished plan.
-    #[test]
-    fn prose_that_mentions_a_plan_word_is_not_a_plan() {
-        let p = StopPolicy::default();
-        let grammar = spec(vak_intent::Act::Verify, "run a quick grammar check");
-        let verified = ReceiptSummary {
-            substantive_bash_calls: 1,
-            successful_tool_calls: 1,
-            ..ReceiptSummary::default()
-        };
-        for answer in [
-            "“They’re going to the park tomorrow, and they have brought sandwiches.”",
-            "You said you'll call her — that is fine as written.",
-            "(Then, add the eggs.)",
-        ] {
-            assert_eq!(
-                p.evaluate_receipts("check this", answer, Some(&grammar), &verified, false),
-                None,
-                "{answer}"
-            );
-        }
-        for plan in [
-            "Now I'll write the store module",
-            "- I'm going to run the tests",
-        ] {
-            assert!(
-                matches!(
-                    p.evaluate_receipts("check this", plan, Some(&grammar), &verified, false),
-                    Some(BlockReason::TruncatedPlan(_))
-                ),
-                "{plan}"
-            );
-        }
+        assert_eq!(p.evaluate("", "Options:", 0), None);
     }
 
     #[test]
@@ -695,47 +448,6 @@ mod tests {
 
     /// An edit the reading did not hold to a check owes none: authoring a
     /// function into a code file is done when the function is there.
-    #[test]
-    fn an_edit_owes_no_check_the_reading_did_not_ask_for() {
-        let p = StopPolicy::default();
-        let authoring = spec(
-            vak_intent::Act::Author,
-            "add a subtract function to calc.py",
-        );
-        let edited = ReceiptSummary {
-            total_tool_calls: 1,
-            successful_tool_calls: 1,
-            files_modified: 1,
-            code_files_modified: 1,
-            ..Default::default()
-        };
-        assert_eq!(
-            p.evaluate_receipts(
-                "explain what calc.py does, then add a subtract function to it",
-                "calc.py now defines add and subtract.",
-                Some(&authoring),
-                &edited,
-                true,
-            ),
-            None
-        );
-        let fixing = spec(vak_intent::Act::Modify, "fix the off-by-one in calc.py");
-        let fixed = ReceiptSummary {
-            substantive_bash_calls: 1,
-            ..edited
-        };
-        assert_eq!(
-            p.evaluate_receipts(
-                "fix the off-by-one in calc.py",
-                "Fixed.",
-                Some(&fixing),
-                &fixed,
-                true,
-            ),
-            Some(BlockReason::VerificationStale)
-        );
-    }
-
     #[test]
     fn stale_verification_blocks_after_a_file_change() {
         let p = StopPolicy::default();
@@ -775,97 +487,6 @@ mod tests {
     }
 
     #[test]
-    fn test_outcome_intent_requires_execution_receipt() {
-        let p = StopPolicy::default();
-        let spec = spec(vak_intent::Act::Modify, "create an svg animation");
-        assert!(spec.requires_execution());
-        let blocked = p.evaluate_receipts(
-            "create an svg animation",
-            "Here is your svg:\n```xml\n<svg/>\n```",
-            Some(&spec),
-            &ReceiptSummary::default(),
-            false,
-        );
-        assert!(matches!(
-            blocked,
-            Some(BlockReason::ExecutionReceiptMissing { .. })
-        ));
-        for receipts in [
-            ReceiptSummary {
-                substantive_bash_calls: 1,
-                successful_tool_calls: 1,
-                ..Default::default()
-            },
-            // Work done through an integration or a delegated worker is
-            // execution too: an email an MCP server sent needs no shell.
-            ReceiptSummary {
-                external_effects: 1,
-                successful_tool_calls: 1,
-                ..Default::default()
-            },
-            ReceiptSummary {
-                files_modified: 1,
-                successful_tool_calls: 1,
-                ..Default::default()
-            },
-        ] {
-            assert_eq!(
-                p.evaluate_receipts(
-                    "create an svg animation",
-                    "Created.",
-                    Some(&spec),
-                    &receipts,
-                    false
-                ),
-                None
-            );
-        }
-    }
-
-    #[test]
-    fn capped_continuation_counts_prior_saved_file_only_after_successful_inspection() {
-        let policy = StopPolicy::default();
-        let spec = spec(vak_intent::Act::Modify, "create report.csv");
-        let prompt = "Continue the most recent unfinished task";
-        let answer = "The saved report contains 60 minutes.";
-        let prior_only = ReceiptSummary {
-            continued_saved_file: true,
-            read_or_inspected: 1,
-            ..Default::default()
-        };
-        assert!(matches!(
-            policy.evaluate_receipts(prompt, answer, Some(&spec), &prior_only, false),
-            Some(BlockReason::ExecutionReceiptMissing { .. })
-        ));
-        let inspected = ReceiptSummary {
-            successful_inspections: 1,
-            ..prior_only
-        };
-        assert_eq!(
-            policy.evaluate_receipts(prompt, answer, Some(&spec), &inspected, false),
-            None
-        );
-    }
-
-    #[test]
-    fn test_outcome_conversational_allows_prose_completion() {
-        let p = StopPolicy::default();
-        let spec = spec(vak_intent::Act::Answer, "what is rust?");
-        assert!(!spec.requires_execution());
-        assert!(!spec.requires_tool());
-        assert_eq!(
-            p.evaluate_receipts(
-                "what is rust?",
-                "Rust is a systems programming language.",
-                Some(&spec),
-                &ReceiptSummary::default(),
-                false
-            ),
-            None
-        );
-    }
-
-    #[test]
     fn an_unresolved_failure_passes_only_when_the_answer_quotes_it() {
         let p = StopPolicy::default();
         let receipts = ReceiptSummary {
@@ -884,7 +505,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    p.evaluate_receipts("save my notes", claim, None, &receipts, false),
+                    p.evaluate_receipts("save my notes", claim, &receipts, false),
                     Some(BlockReason::UnresolvedToolFailure { .. })
                 ),
                 "{claim}"
@@ -895,7 +516,7 @@ mod tests {
             "नोट्स सेव नहीं हुए — disk full.",
         ] {
             assert_eq!(
-                p.evaluate_receipts("save my notes", report, None, &receipts, false),
+                p.evaluate_receipts("save my notes", report, &receipts, false),
                 None,
                 "{report}"
             );
@@ -915,67 +536,14 @@ mod tests {
             p.evaluate_receipts(
                 "run it",
                 "bash denied: moving on without it",
-                None,
                 &receipts,
                 false
             ),
             None
         );
         assert!(matches!(
-            p.evaluate_receipts(
-                "run it",
-                "Ran bash without any error.",
-                None,
-                &receipts,
-                false
-            ),
+            p.evaluate_receipts("run it", "Ran bash without any error.", &receipts, false),
             Some(BlockReason::UnresolvedToolFailure { .. })
-        ));
-    }
-
-    #[test]
-    fn any_tool_that_reads_counts_as_looking_it_up() {
-        for tool in [
-            "read",
-            "automations",
-            "workers",
-            "doc_read",
-            "recall",
-            "mcp",
-        ] {
-            assert!(looks_something_up(tool, false), "{tool}");
-        }
-        assert!(!looks_something_up("find_tools", false));
-        assert!(!looks_something_up("emit_table_card", true));
-    }
-
-    #[test]
-    fn test_direct_substantive_answer_not_blocked_for_inspection_spec() {
-        let p = StopPolicy::default();
-        let spec = spec(
-            vak_intent::Act::Locate,
-            "explain the architectural differences",
-        );
-        let answer = "Optimistic locking assumes multiple transactions can complete without affecting each other. It verifies no other transaction has modified the data before committing.";
-        assert_eq!(
-            p.evaluate_receipts(
-                "explain",
-                answer,
-                Some(&spec),
-                &ReceiptSummary::default(),
-                false
-            ),
-            None
-        );
-        assert!(matches!(
-            p.evaluate_receipts(
-                "explain",
-                "Okay",
-                Some(&spec),
-                &ReceiptSummary::default(),
-                false
-            ),
-            Some(BlockReason::ExecutionReceiptMissing { .. })
         ));
     }
 
@@ -988,79 +556,5 @@ mod tests {
         assert!(!is_code_path("README.md"));
         assert!(!is_code_path("recipes/sourdough.txt"));
         assert!(!is_code_path("data/analysis.csv"));
-    }
-
-    #[test]
-    fn a_demanded_proof_of_changed_code_needs_it_run() {
-        let p = StopPolicy::default();
-        let spec = verified(
-            vak_intent::Act::Modify,
-            "Fix the off-by-one bug in quicksort.py and verify that the sort works correctly.",
-        );
-        let edited = ReceiptSummary {
-            total_tool_calls: 1,
-            successful_tool_calls: 1,
-            files_modified: 1,
-            code_files_modified: 1,
-            ..Default::default()
-        };
-        assert_eq!(
-            p.evaluate_receipts(
-                "fix and verify",
-                "I fixed the index.",
-                Some(&spec),
-                &edited,
-                false
-            ),
-            Some(BlockReason::VerificationMissing)
-        );
-        let ran = ReceiptSummary {
-            substantive_bash_calls: 1,
-            successful_tool_calls: 2,
-            ..edited.clone()
-        };
-        assert_eq!(
-            p.evaluate_receipts(
-                "fix and verify",
-                "Fixed and ran it.",
-                Some(&spec),
-                &ran,
-                false
-            ),
-            None
-        );
-        assert_eq!(
-            p.evaluate_receipts(
-                "fix and verify",
-                "Fixed and ran it.",
-                Some(&spec),
-                &ran,
-                true
-            ),
-            Some(BlockReason::VerificationStale)
-        );
-        // A document proven by reading it back owes no shell.
-        let doc = ReceiptSummary {
-            total_tool_calls: 2,
-            successful_tool_calls: 2,
-            files_modified: 1,
-            doc_files_modified: 1,
-            read_or_inspected: 1,
-            ..Default::default()
-        };
-        let doc_spec = verified(
-            vak_intent::Act::Modify,
-            "update README.md and verify the links",
-        );
-        assert_eq!(
-            p.evaluate_receipts(
-                "update",
-                "Updated and checked.",
-                Some(&doc_spec),
-                &doc,
-                true
-            ),
-            None
-        );
     }
 }

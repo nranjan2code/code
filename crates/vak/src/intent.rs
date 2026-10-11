@@ -199,13 +199,15 @@ fn explain(
         vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
         vak_intent::Resolution::Settled(_) => None,
     };
-    let intent = resolution.intent();
+    let mut intent = resolution.intent();
+    let outcome = vak_core::intent::complete_output_contract(&mut intent, prompt);
 
     if json {
         let value = serde_json::json!({
             "reading": intent.reading,
             "strands": intent.strands,
             "engagement": intent.engagement,
+            "outcome": outcome,
             "provenance": intent.provenance,
             "narrows": intent.engagement.limits.diff_from(&Limits::unrestricted()),
             "escalation_recommended": escalation,

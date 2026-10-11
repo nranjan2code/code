@@ -7,6 +7,7 @@ import { inlineTitle } from "../../canvasSubject";
 import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
 import Icon from "../Icon";
+import { renderCallout, renderChecklist, renderComparisonOptions, renderLead, renderStats } from "./blocks";
 
 /**
  * The generic, declarative renderer for presentation packs. Every key in
@@ -64,6 +65,14 @@ function str(props: Record<string, unknown>, key: string): string | undefined {
   return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;
 }
 
+function timelineDetail(label: string, detail?: string): string | undefined {
+  const prefix = label.trim();
+  if (!detail || !prefix || detail.slice(0, prefix.length).toLocaleLowerCase() !== prefix.toLocaleLowerCase()) return detail;
+  const remainder = detail.slice(prefix.length);
+  if (!/^[\s:–—(-]/.test(remainder)) return detail;
+  return remainder.replace(/^[\s:–—-]+/, "").trim() || undefined;
+}
+
 function sourcePublisher(props: Record<string, unknown>, url: string): string {
   const name = str(props, "source_name");
   if (name) return name;
@@ -101,6 +110,16 @@ function renderNode(node: AdaptiveRenderNode | null | undefined, surface: Render
   const safeNode: AdaptiveRenderNode = { primitive: node.primitive, props, children };
 
   switch (safeNode.primitive.toLowerCase()) {
+    case "lead":
+      return renderLead(safeNode);
+    case "stats":
+      return renderStats(safeNode);
+    case "callout":
+      return renderCallout(safeNode);
+    case "checklist":
+      return renderChecklist(safeNode);
+    case "comparison_options":
+      return renderComparisonOptions(safeNode);
     case "timeline":
       return renderTimeline(safeNode, surface);
     case "metric":
@@ -152,7 +171,7 @@ function renderNode(node: AdaptiveRenderNode | null | undefined, surface: Render
 function stepOptions(props: Record<string, unknown>): TimelineOption[] {
   const raw = props.options;
   if (!Array.isArray(raw)) return [];
-  return raw.flatMap((option): TimelineOption[] => {
+  const options = raw.flatMap((option): TimelineOption[] => {
     if (!option || typeof option !== "object") return [];
     const record = option as Record<string, unknown>;
     if (typeof record.label !== "string" || !record.label.trim()) return [];
@@ -162,6 +181,13 @@ function stepOptions(props: Record<string, unknown>): TimelineOption[] {
       facts: Array.isArray(record.facts) ? record.facts.filter((fact): fact is string => typeof fact === "string") : [],
     }];
   });
+  // A single alternative that only repeats its parent step is model noise,
+  // not a choice the person can make. Keep the source payload intact, and
+  // preserve same-named entries whenever there are other real alternatives.
+  const stepLabel = typeof props.label === "string" ? props.label.trim() : "";
+  if (options.length === 1 && options[0].label.trim().toLowerCase() === stepLabel.toLowerCase()
+      && !options[0].detail?.trim() && options[0].facts.length === 0) return [];
+  return options;
 }
 
 /**
@@ -171,8 +197,8 @@ function stepOptions(props: Record<string, unknown>): TimelineOption[] {
  * in the plan. A narrow column stacks them.
  */
 function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
-  const title = str(node.props, "title") ?? "Overview";
-  const kicker = str(node.props, "kicker") ?? "Plan";
+  const rawTitle = str(node.props, "title")?.trim();
+  const title = rawTitle && !["overview", "plan", "timeline"].includes(rawTitle.toLowerCase()) ? rawTitle : "";
   const options = str(node.props, "variant") === "options";
   const interaction = useContext(PresentationInteractionContext);
   const items = Array.isArray(node.children) ? node.children : [];
@@ -192,7 +218,7 @@ function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
       const itemProps = itemPropsOf(item);
       const offered = options ? [] : stepOptions(itemProps);
       const label = str(itemProps, "label") ?? str(itemProps, "title") ?? "Item";
-      const detail = str(itemProps, "detail");
+      const detail = timelineDetail(label, str(itemProps, "detail"));
       const status = str(itemProps, "status");
       const time = str(itemProps, "time");
       const normalizedStatus = status?.trim().toLowerCase().replace(/[ _-]+/g, "");
@@ -214,11 +240,8 @@ function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
     }}
   </For>;
   const timeline = (
-    <section class="adaptive-timeline" classList={{ "adaptive-timeline-compact": compact, "adaptive-options": options }} aria-label={title}>
-      <header class="adaptive-timeline-head">
-        <Show when={!options}><span class="adaptive-timeline-kicker">{kicker}</span></Show>
-        <h3>{title}</h3>
-      </header>
+    <section class="adaptive-timeline" classList={{ "adaptive-timeline-compact": compact, "adaptive-options": options }} aria-label={title || "Plan"}>
+      <Show when={title}><header class="adaptive-timeline-head"><h3>{title}</h3></header></Show>
       <Show when={options} fallback={<ol>{list}</ol>}><ul>{list}</ul></Show>
     </section>
   );
@@ -366,6 +389,8 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
     Boolean(firstColumn && /^(option|choice)$/i.test(firstColumn.key.trim()))
   );
   const quiet = options || (specRows(node).length <= 5 && specColumns(node).length <= 6);
+  const rawTitle = str(node.props, "title")?.trim();
+  const title = rawTitle && !["dataset", "dataset records", "data grid", "table", "options"].includes(rawTitle.toLowerCase()) ? rawTitle : "";
   const interaction = useContext(PresentationInteractionContext);
 
   const columns = () => specColumns(node);
@@ -416,10 +441,9 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
 
   return (
     <div class="canvas-card data-grid-wrap" classList={{ "data-grid-wrap-compact": compact, "data-grid-options": options }}>
-      <div class="card-header">
+      <Show when={title || !quiet}><div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">{options ? "Options" : quiet ? "Table" : "Data Grid"}</span>
-          <span class="card-subtitle">{str(node.props, "title") ?? "Dataset Records"}</span>
+          <Show when={title}><span class="card-subtitle">{title}</span></Show>
           <Show when={!quiet}><span class="card-badge card-badge-quiet">
             {filteredAndSortedRows().length} of {rows().length} rows
           </span></Show>
@@ -437,7 +461,7 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
             {copied() ? "Downloaded" : "Download CSV"}
           </button>
         </div></Show>
-      </div>
+      </div></Show>
 
       <div class="grid-table-container">
         <table class="sleek-grid">
@@ -520,6 +544,10 @@ function renderRecipe(node: AdaptiveRenderNode, surface: RenderSurface) {
   const [activeTimers, setActiveTimers] = createSignal<Record<number, number>>({});
   const [timerIntervals, setTimerIntervals] = createSignal<Record<number, ReturnType<typeof setInterval>>>({});
   const scale = () => servings() / baseServings;
+  const recipeTitle = () => {
+    const value = str(node.props, "title")?.trim();
+    return value && value.toLowerCase() !== "recipe" ? value : "";
+  };
 
   const toggleTimer = (idx: number, totalSeconds: number) => {
     const intervals = timerIntervals();
@@ -565,11 +593,10 @@ function renderRecipe(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card culinary-card-wrap" classList={{ "culinary-card-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-amber">Culinary Recipe</span>
-          <span class="card-subtitle">
-            {str(node.props, "title") ?? "Recipe"}
+          <Show when={recipeTitle()}><span class="card-subtitle">
+            {recipeTitle()}
             <Show when={cookTime !== undefined}> · {cookTime} min</Show>
-          </span>
+          </span></Show>
         </div>
         <div class="card-actions">
           <Show when={hasServings}>
@@ -660,6 +687,10 @@ function renderResearch(node: AdaptiveRenderNode, surface: RenderSurface) {
     const source = sources()[index];
     return source && typeof source === "object" && source.props && typeof source.props === "object" ? source.props : undefined;
   };
+  const title = () => {
+    const value = str(node.props, "title")?.trim();
+    return value && value.toLowerCase() !== "research synthesis" ? value : "";
+  };
 
   const handleCopy = async () => {
     const text = takeaways()
@@ -678,7 +709,7 @@ function renderResearch(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card research-card-wrap" classList={{ "research-card-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">{str(node.props, "title") ?? "Research Synthesis"}</span>
+          <Show when={title()}><strong>{title()}</strong></Show>
           <span class="card-subtitle">
             {sources().length} {sources().length === 1 ? "source" : "sources"}
           </span>
@@ -821,8 +852,7 @@ function renderDiff(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card diff-inspector-wrap" classList={{ "diff-inspector-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">Diff Inspector</span>
-          <span class="card-subtitle">{str(activeFile() ?? {}, "filename")}</span>
+          <Show when={str(activeFile() ?? {}, "filename")}><span class="card-subtitle">{str(activeFile() ?? {}, "filename")}</span></Show>
         </div>
         <div class="card-actions">
           <button type="button" class="pill-action-btn" onClick={() => setSplitMode(!splitMode())}>
@@ -902,7 +932,6 @@ function renderTerminal(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card terminal-wrap" classList={{ "terminal-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class={`card-badge ${isSuccess() ? "badge-indigo" : "badge-rose"}`}>Terminal</span>
           <span class="card-subtitle">
             {exitCode() === undefined ? "Exit status unavailable" : `Exit ${exitCode()}`}
             <Show when={durationMs() !== undefined}>
@@ -964,10 +993,10 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card test-matrix-wrap" classList={{ "test-matrix-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class={`card-badge ${failedCount() > 0 ? "badge-rose" : hasReportedOutcome() ? "badge-emerald" : ""}`}>Test Suite</span>
-          <span class="card-subtitle">
-            {str(node.props, "suite_name") ?? "Test Execution"} ({num(node.props, "duration_ms") ?? 0}ms)
-          </span>
+          <Show when={str(node.props, "suite_name") || num(node.props, "duration_ms") !== undefined}><span class="card-subtitle">
+            <Show when={str(node.props, "suite_name") && str(node.props, "suite_name") !== "Test Execution"}>{str(node.props, "suite_name")}</Show>
+            <Show when={num(node.props, "duration_ms") !== undefined}>({num(node.props, "duration_ms")}ms)</Show>
+          </span></Show>
         </div>
         <div class="test-tab-filter">
           <button class="filter-chip" classList={{ active: filter() === "all" }} onClick={() => setFilter("all")}>
@@ -1096,7 +1125,10 @@ function renderChart(node: AdaptiveRenderNode, surface: RenderSurface) {
     points.map((point, i) => `${i ? "L" : "M"}${geometry().x(point.x)},${geometry().y(point.y!)}`).join(" ");
   const number = (value: number | null) =>
     value === null ? "Missing" : new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value);
-  const title = () => data().title ?? "Chart";
+  const title = () => {
+    const value = data().title?.trim();
+    return value && value.toLowerCase() !== "chart" ? value : "";
+  };
   const exportData = () =>
     downloadCsv("chart.csv", [
       [data().x_label ?? "X", ...data().series.map((series) => series.name)],
@@ -1105,13 +1137,13 @@ function renderChart(node: AdaptiveRenderNode, surface: RenderSurface) {
 
   return (
     <figure class="semantic-chart" classList={{ "semantic-chart-compact": compact }}>
-      <figcaption>
-        <strong>{title()}</strong>
-        <p>{data().accessible_summary}</p>
-      </figcaption>
+      <Show when={title() || data().accessible_summary}><figcaption>
+        <Show when={title()}><strong>{title()}</strong></Show>
+        <Show when={data().accessible_summary}><p>{data().accessible_summary}</p></Show>
+      </figcaption></Show>
       <Show when={geometry().keys.length} fallback={<p>No data points supplied.</p>}>
-        <svg viewBox="0 0 680 264" role="img" aria-label={data().accessible_summary}>
-          <title>{title()}</title>
+        <svg viewBox="0 0 680 264" role="img" aria-label={data().accessible_summary || title() || "Chart"}>
+          <title>{title() || data().accessible_summary || "Chart"}</title>
           <desc>{data().accessible_summary} Use the point selector or data table to inspect exact values.</desc>
           <For each={[0, 0.5, 1]}>
             {(fraction) => {
@@ -1310,14 +1342,16 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
     }
   };
 
-  const title = () => str(node.props, "title") || "Web page";
+  const title = () => {
+    const value = str(node.props, "title")?.trim();
+    return value && value.toLowerCase() !== "web page" ? value : "";
+  };
 
   return (
     <div class="canvas-card ui-preview-card" classList={{ "ui-preview-card-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">Preview</span>
-          <strong class="ui-preview-title">{title()}</strong>
+          <Show when={title()}><strong class="ui-preview-title">{title()}</strong></Show>
 
         </div>
         <div class="card-actions ui-preview-actions">
@@ -1518,6 +1552,11 @@ function renderUniversalCard(node: AdaptiveRenderNode, _surface: RenderSurface) 
           )}</For>
         </dl>
       </Show>
+      <Show when={node.children.length > 0}>
+        <div class="universal-card-children">
+          <For each={node.children}>{(child) => renderNode(child, _surface)}</For>
+        </div>
+      </Show>
     </section>
   );
 }
@@ -1601,11 +1640,18 @@ function normalizeTimelineItems(data: unknown): RawTimelineItem[] {
       const o = it as Record<string, unknown>;
       const label = String(o.label ?? o.title ?? o.name ?? o.question ?? o.task ?? o.text ?? o.choice ?? o.activity ?? "Item");
       const detail = o.detail ?? o.description ?? o.answer ?? o.notes ?? o.time ?? o.snippet ?? (o.reason ? String(o.reason) : undefined);
+      const cleanDetail = detail == null ? undefined : String(detail).trim();
+      const repeatedLabel = label.trim();
+      const displayDetail = cleanDetail && repeatedLabel
+        && cleanDetail.slice(0, repeatedLabel.length).toLocaleLowerCase() === repeatedLabel.toLocaleLowerCase()
+        && /^[\s:–—(-]/.test(cleanDetail.slice(repeatedLabel.length))
+        ? cleanDetail.slice(repeatedLabel.length).replace(/^[\s:–—-]+/, "").trim()
+        : cleanDetail;
       const status = o.status ?? (typeof o.done === "boolean" ? (o.done ? "complete" : "pending") : undefined);
       const time = o.time ?? o.when ?? o.window ?? o.duration;
       return {
         label,
-        detail: detail != null && detail !== time ? String(detail) : undefined,
+        detail: displayDetail && detail !== time ? displayDetail : undefined,
         status: status != null ? String(status) : undefined,
         time: time != null ? String(time) : undefined,
         options: o.options,
@@ -2023,11 +2069,13 @@ export function buildMediaSpec(data: unknown, kind: "link" | "image" | "video" |
   if (kind === "link") {
     if (d && typeof d.url === "string") props.url = d.url;
     if (d && typeof d.image_url === "string") props.image_url = d.image_url;
+    else if (d && typeof d.thumbnail_url === "string") props.image_url = d.thumbnail_url;
     for (const key of ["title", "description", "site_name"]) {
       if (d && (typeof d[key] === "string" || typeof d[key] === "number")) props[key] = d[key];
     }
   } else {
     if (d && typeof d.source === "string") props.source = d.source;
+    else if (d && typeof d.url === "string") props.source = d.url;
     if (d && (typeof d.alt === "string" || typeof d.alt === "number")) props.alt = d.alt;
   }
   return { primitive: "media", props, children: [] };

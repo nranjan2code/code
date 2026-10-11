@@ -1,9 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Directive drift (docs/design/68-context-engine.md §7): when the thread
-//! lists an earlier directive whose reading shares no domain with the
-//! current one, it is marked "(earlier, now paused)" — a re-weighting, not
-//! a cut. The directive itself still appears; nothing is removed.
+//! Historical directives stay in the ledger and searchable through recall;
+//! they are not copied into every new request's conversation thread.
 
 use std::path::PathBuf;
 
@@ -16,8 +14,7 @@ use vak_session::types::{
 use vak_session::{SessionLog, TurnIndex, WorkingSetPlan};
 
 /// A plan that packets exactly `turn_id` (and nothing else), with the
-/// packet already written — the state in which the thread has an earlier
-/// directive to list.
+/// packet already written.
 fn packet_only(log: &mut SessionLog, turn_id: &str, summary: &str) -> WorkingSetPlan {
     log.append_packet(turn_id, turn_id, "fixture-model", summary.into(), 999)
         .unwrap();
@@ -90,7 +87,7 @@ fn intent_record(reading: vak_intent::Reading) -> IntentRecord {
 }
 
 #[test]
-fn a_domain_disjoint_directive_is_marked_paused_not_removed() {
+fn an_unrelated_old_directive_is_not_repeated_in_the_current_thread() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
 
@@ -136,23 +133,15 @@ fn a_domain_disjoint_directive_is_marked_paused_not_removed() {
     log.append_intent(intent_record(reading_with_domains(&["cooking"])))
         .unwrap();
 
-    // Packet turn 1 away under the plan so the thread has something to
-    // list.
+    // The old turn is still in the ledger and represented by the selected
+    // packet, but its instruction does not belong in the current request.
     let plan = packet_only(&mut log, &t1, "summary of turn 1");
 
-    let thread = log
-        .tail_sections(Some(&plan))
-        .thread
-        .expect("thread must list the dropped finance directive");
-    assert!(thread.contains("look up the sensex"), "{thread}");
-    assert!(
-        thread.contains("look up the sensex (earlier, now paused)"),
-        "a domain-disjoint earlier directive must be marked paused: {thread}"
-    );
+    assert!(log.tail_sections(Some(&plan)).thread.is_none());
 }
 
 #[test]
-fn a_domain_overlapping_directive_is_never_marked_paused() {
+fn a_related_old_directive_is_not_repeated_in_the_current_thread() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
 
@@ -198,12 +187,5 @@ fn a_domain_overlapping_directive_is_never_marked_paused() {
 
     let plan = packet_only(&mut log, &t1, "summary of turn 1");
 
-    let thread = log
-        .tail_sections(Some(&plan))
-        .thread
-        .expect("thread present");
-    assert!(
-        !thread.contains("(earlier, now paused)"),
-        "same-domain directives must not be marked paused: {thread}"
-    );
+    assert!(log.tail_sections(Some(&plan)).thread.is_none());
 }

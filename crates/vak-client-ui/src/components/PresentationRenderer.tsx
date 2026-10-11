@@ -54,6 +54,7 @@ import MermaidViewer from "./presentation/MermaidViewer";
 // result, route, authority, or which safety states remain visible.
 const showOperatorChrome = () => technicalDetails();
 import GenericSpecRenderer, { PresentationInteractionContext, PresentationSessionContext, buildTimelineSpec, buildMetricSpec, buildTableSpec, buildOptionsTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
+import { buildCalloutSpec, buildChecklistSpec, buildComparisonSpec, buildLeadSpec, buildStatsSpec, isOptionsComparison } from "./presentation/blocks";
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
@@ -1115,7 +1116,7 @@ function optionInteractionFor(sessionId?: string, resultId?: string) {
   } };
 }
 
-export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string }) {
+export function StructuredView(props: { output: import("../types").StructuredOutput; fallback?: string; sessionId?: string; resultId?: string; presentationId?: string; showSaveAction?: boolean }) {
   const [showOriginal, setShowOriginal] = createSignal(false);
   const fallback = () => props.fallback && !parseVakFence(props.fallback)
     ? <MarkdownView text={props.fallback} />
@@ -1129,7 +1130,7 @@ export function StructuredView(props: { output: import("../types").StructuredOut
               <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
             </PresentationInteractionContext.Provider>
           </PresentationSessionContext.Provider>
-          <Show when={props.sessionId && props.presentationId}>
+          <Show when={props.showSaveAction !== false && props.sessionId && props.presentationId}>
             <SaveCardToLibrary sessionId={props.sessionId!} presentationId={props.presentationId!} />
           </Show>
           <Show when={showOperatorChrome() && props.sessionId}>
@@ -1246,7 +1247,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "data.grid": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Data Grid")} />,
   "table": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Table")} />,
   "dataframe": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Table")} />,
-  "comparison": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Comparison")} />,
+  "comparison": ({ data }) => <GenericSpecRenderer node={isOptionsComparison(data) ? buildComparisonSpec(data) : buildTableSpec(data, "Comparison")} />,
   "comparison_table": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Comparison Table")} />,
   "pros_cons": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Pros & Cons")} />,
   "inventory": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Inventory")} />,
@@ -1281,7 +1282,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   // per-key `kicker`). No registry key calls TimelineCard directly anymore.
   "timeline": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Timeline", "Timeline")} />,
   "itinerary": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Itinerary", "Itinerary")} />,
-  "checklist": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Checklist", "Checklist")} />,
+  "checklist": ({ data }) => <GenericSpecRenderer node={buildChecklistSpec(data)} />,
   "schedule": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Schedule", "Schedule")} />,
   "agenda": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Agenda", "Agenda")} />,
   "milestones": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Milestones", "Milestones")} />,
@@ -1344,6 +1345,11 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   // in GenericSpecRenderer's renderMetric so this migration didn't regress
   // that chrome fix.
   "metric": ({ data }) => <GenericSpecRenderer node={buildMetricSpec(data)} />,
+  // Composed-answer blocks (docs/design/87-composed-answers.md).
+  "lead": ({ data }) => <GenericSpecRenderer node={buildLeadSpec(data)} />,
+  "stats": ({ data }) => <GenericSpecRenderer node={buildStatsSpec(data)} />,
+  "callout": ({ data }) => <GenericSpecRenderer node={buildCalloutSpec(data)} />,
+  "details": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Details")} />,
 };
 
 export const structuredRendererTypes = Object.freeze(Object.keys(STRUCTURED_RENDERERS));
@@ -1468,7 +1474,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       if (!item.content.document) return null;
       return <AssistantMessage sessionId={props.sessionId} text={item.content.document.source_markdown}><PresentationDocumentView document={item.content.document} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></AssistantMessage>;
     }
-    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} />;
+    if (item.content.type === "structured") return <StructuredView output={item.content.output} fallback={item.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} showSaveAction={false} />;
     if (item.content.type === "adaptive") return <AdaptiveTreeView tree={item.content.tree} fallback={item.content.fallback_text} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId() ?? item.id} />;
     if (item.kind === "error") {
       if (item.content.type === "error" && item.content.message === "max_turns") {
@@ -1558,8 +1564,10 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       return !a || !b || a === b;
     };
     const entries = visible();
-    // The Agent may emit a card, revise its draft answer, and then write the
-    // final answer. Keep the latest card of each semantic type with it.
+    // Cards emitted before the final answer travel with it, every one in
+    // emit order. The server already supersedes a retried card and drops an
+    // identical repeat; keeping only the latest card of each type here hid
+    // the first of two distinct tables in one answer (found live 2026-10-11).
     let finalAnswerIndex = -1;
     for (let i = 0; i < entries.length; i += 1) {
       const item = entries[i].item;
@@ -1568,15 +1576,11 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
         (item.content.type === "outcome" && Boolean(item.content.document))
       )) finalAnswerIndex = i;
     }
-    const finalCards = new Map<string, { item: OutputItem; node: JSX.Element }>();
+    const carriedCards: { item: OutputItem; node: JSX.Element }[] = [];
     for (let i = 0; i < finalAnswerIndex; i += 1) {
-      const entry = entries[i];
-      const content = entry.item.content;
-      if (content.type !== "structured" && content.type !== "adaptive") continue;
-      const key = content.type === "structured" ? content.output.semantic_type : `adaptive:${content.tree.spec_id}`;
-      finalCards.set(key, entry);
+      const content = entries[i].item.content;
+      if (content.type === "structured" || content.type === "adaptive") carriedCards.push(entries[i]);
     }
-    const carriedCards = [...finalCards.values()];
     for (let index = 0; index < entries.length; index += 1) {
       const { item, node } = entries[index];
       if (index < finalAnswerIndex && (item.content.type === "structured" || item.content.type === "adaptive")) continue;
@@ -1616,7 +1620,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
         const displayText = hasCard
           ? [
               ...material.filter(isPrimaryCard).map(cardCopyText),
-              answer.metadata.card_note,
+              answer.metadata.card_followup,
             ].filter(Boolean).join("\n\n")
           : answer.source_markdown;
         const result = <AssistantMessage sessionId={props.sessionId} text={displayText}>
@@ -1633,7 +1637,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               </Show>
               <Show when={hasCard}
                 fallback={<div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>}>
-                <Show when={answer.metadata.card_note}>{(note) => <div class="primary-result-note"><MarkdownView text={note()} /></div>}</Show>
+                <Show when={answer.metadata.card_followup}>{(note) => <div class="primary-result-followup"><MarkdownView text={note()} /></div>}</Show>
               </Show>
               <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={item} sessionId={props.sessionId} />
               <ResultEvidence item={item} />

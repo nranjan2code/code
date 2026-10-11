@@ -49,7 +49,8 @@ pub enum Lineage {
     New,
     /// Carries on an open thread, and joins `merges` into it: other open
     /// threads the clause shares at least `MERGE_MIN_OVERLAP` content words
-    /// with ("combine the parser work with the test cleanup").
+    /// with ("combine the parser work with the test cleanup") and covers at
+    /// least half of the older thread's topic words.
     Continues {
         thread_id: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -143,6 +144,9 @@ pub enum LineageHint {
 pub(crate) enum Boundary {
     /// The first clause.
     Start,
+    /// A sentence boundary. A dependent output-shaping sentence can refine
+    /// the preceding part without becoming another piece of work.
+    Sentence,
     /// A sequencing marker: the clause happens after the previous one.
     Sequence,
     /// An addition marker or a sentence boundary.
@@ -220,7 +224,7 @@ pub(crate) fn segment(text: &str) -> Vec<Clause> {
                         && tail.next() == Some('.')
                 };
                 if ends && !list_marker && !abbreviation {
-                    flush(&mut pieces, &mut current, Boundary::Addition, c == '?');
+                    flush(&mut pieces, &mut current, Boundary::Sentence, c == '?');
                 } else {
                     current.push(c);
                 }
@@ -241,6 +245,11 @@ pub(crate) fn segment(text: &str) -> Vec<Clause> {
             let boundary = if position == 0 {
                 if index == 0 {
                     Boundary::Start
+                } else if sub_boundary != Boundary::Start {
+                    // A leading soft marker on this sentence carries the
+                    // stronger relation: "Then do X" is a sequence even
+                    // though its sentence also follows a hard boundary.
+                    sub_boundary
                 } else {
                     boundary
                 }

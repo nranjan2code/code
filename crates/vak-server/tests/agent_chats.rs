@@ -308,11 +308,9 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
                 .unwrap_or("")
                 .contains("identity-marker")
         );
-        assert!(
-            last.messages
-                .iter()
-                .any(|m| m.text_content().contains("private-newsy-marker"))
-        );
+        // A fresh request carries no earlier turn; the conversation is
+        // reached through `recall`, and the transcript below still holds it.
+        assert!(last.tools.iter().any(|tool| tool.name == "recall"));
         assert!(
             !last
                 .messages

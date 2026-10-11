@@ -325,6 +325,28 @@ impl RecipeCatalog {
             })
     }
 
+    /// All non-default semantic types supported by recipes matching a request.
+    /// A request can ask for several distinct deliverables, so tool discovery
+    /// and recovery must not collapse it to the single highest-ranked recipe.
+    pub fn intended_output_types(&self, signals: &[String], surface: &str) -> Vec<String> {
+        let mut types = std::collections::BTreeSet::new();
+        for recipe in self
+            .recipes
+            .iter()
+            .filter(|recipe| !recipe.default_recipe && !recipe.match_signals.is_empty())
+            .filter(|recipe| {
+                recipe
+                    .match_signals
+                    .iter()
+                    .all(|signal| signals.iter().any(|candidate| candidate == signal))
+            })
+            .filter(|recipe| recipe.surfaces.iter().any(|item| item == surface))
+        {
+            types.extend(recipe.primary.iter().cloned());
+        }
+        types.into_iter().collect()
+    }
+
     pub fn choose(&self, signals: &[String], surface: &str) -> Option<PresentationDecision> {
         self.choose_for_types(signals, surface, &[])
     }
@@ -447,6 +469,12 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["desktop", "terminal"],
         ),
         (
+            "universal.overview",
+            vec!["overview"],
+            vec!["overview"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
             "weather.forecast",
             vec!["temperature", "forecast"],
             vec!["metric"],
@@ -530,8 +558,26 @@ pub fn built_in_recipes() -> RecipeCatalog {
         ),
         (
             "plan.timeline",
-            vec!["plan", "timeline"],
+            vec!["timeline"],
             vec!["plan.timeline"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "planning.budget",
+            vec!["budget"],
+            vec!["budget"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "planning.checklist",
+            vec!["checklist"],
+            vec!["checklist"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
+            "planning.shopping_list",
+            vec!["shopping_list"],
+            vec!["shopping_list"],
             vec!["desktop", "terminal", "telegram"],
         ),
         (
@@ -696,6 +742,11 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "telemetry.chart",
             "telemetry.metric",
             "weather",
+            // Composed-answer blocks (docs/design/87-composed-answers.md).
+            "lead",
+            "stats",
+            "callout",
+            "details",
             "decision_matrix",
             "criteria_matrix",
             "tradeoff_analysis",
@@ -842,6 +893,10 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
             ][..],
         ),
         (
+            "overview",
+            &["overview", "guide", "tips", "get started"][..],
+        ),
+        (
             "synthesis",
             &["synthesis", "key takeaways", "findings", "verified sources"][..],
         ),
@@ -856,6 +911,20 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
         ),
         ("temperature", &["temperature", "°c", "°f"][..]),
         ("forecast", &["forecast", "humidity", "wind speed"][..]),
+        ("plan", &["plan", "organize", "organise", "run-of-show"][..]),
+        (
+            "timeline",
+            &["schedule", "timeline", "run-of-show", "agenda"][..],
+        ),
+        ("budget", &["budget", "cost breakdown", "budget split"][..]),
+        (
+            "checklist",
+            &["checklist", "what to bring", "what to set out"][..],
+        ),
+        (
+            "shopping_list",
+            &["shopping list", "what to buy", "list what to buy"][..],
+        ),
         (
             "travel",
             &["travel", "trip", "itinerary", "flight", "hotel", "vacation"][..],
@@ -955,8 +1024,35 @@ pub fn signals_from_text(text: &str) -> Vec<String> {
                 .then_some((*signal).into())
         })
         .collect();
+    if signals.iter().any(|signal| signal == "plan") && has_multiple_durations(text) {
+        // A plan with several timed parts is a timeline even when the request
+        // calls the parts "setup", "build", or "cleanup" instead of naming
+        // the presentation type. This is structural inference from repeated
+        // duration units, not a list of activity-specific keywords.
+        signals.push("timeline".into());
+    }
     signals.extend(structural_signals(text).into_iter().map(String::from));
     signals
+}
+
+fn has_multiple_durations(text: &str) -> bool {
+    let words: Vec<String> = text
+        .to_ascii_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_string)
+        .collect();
+    let units = [
+        "s", "sec", "secs", "second", "seconds", "m", "min", "mins", "minute", "minutes", "h",
+        "hr", "hrs", "hour", "hours",
+    ];
+    let count = words
+        .windows(2)
+        .filter(|pair| {
+            pair[0].bytes().all(|byte| byte.is_ascii_digit()) && units.contains(&pair[1].as_str())
+        })
+        .count();
+    count >= 2
 }
 
 /// Signals about the *structure* of a piece of Markdown, read from the parsed
@@ -2042,6 +2138,19 @@ fn validate_payload(
                     })
                 })
         }
+        "lead" => strings(payload, &["headline"]),
+        "callout" => strings(payload, &["tone", "text"]),
+        "stats" => array(payload, "readings").is_some_and(|readings| {
+            !readings.is_empty()
+                && readings
+                    .iter()
+                    .all(|reading| reading["label"].is_string() && scalar(&reading["value"]))
+        }),
+        "comparison" if object.contains_key("options") => {
+            array(payload, "options").is_some_and(|options| {
+                options.len() >= 2 && options.iter().all(|option| option["name"].is_string())
+            })
+        }
         _ => return Ok(()),
     };
     if valid {
@@ -2717,5 +2826,19 @@ mod structural_signal_tests {
             !has("the @@ sign and diff of opinions", "diff"),
             "prose mentioning them is not a diff"
         );
+    }
+
+    #[test]
+    fn a_plan_with_multiple_explicit_durations_is_a_timeline() {
+        assert!(has(
+            "Make a plan: welcome 5 minutes, exchange 20 minutes, tidy up 5 minutes.",
+            "timeline"
+        ));
+        assert!(has("Plan: intro 1 hour, work 45 mins.", "timeline"));
+        assert!(!has("Make a plan with several phases.", "timeline"));
+        assert!(!has(
+            "The report mentions 5 minutes and 20 minutes.",
+            "timeline"
+        ));
     }
 }

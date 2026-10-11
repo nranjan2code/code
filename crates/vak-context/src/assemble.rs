@@ -123,16 +123,13 @@ pub fn render_transcript(messages: &[Message]) -> String {
 }
 
 /// Host-supplied per-turn content for the request tail (docs/design/68-
-/// context-engine.md §6/§10): the clock instant and the epistemic stance,
-/// each rendered under its own tag alongside the session-derived tail
-/// sections. Captured once per turn by the caller, not recomputed per step,
+/// context-engine.md §6/§10): the clock instant, rendered under its own tag
+/// alongside the session-derived tail sections. Captured once per turn by the caller, not recomputed per step,
 /// so the tail stays byte-identical across every step of one turn.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TailInput {
     /// Raw temporal context sentence, with no wrapping tag.
     pub temporal: String,
-    /// Raw epistemic-stance text, with no wrapping tag.
-    pub stance: String,
 }
 
 /// Attaches the turn's tail to its DIRECTIVE message, at `directive_index`
@@ -194,12 +191,6 @@ pub fn compose_tail(tail: &TailInput, sections: &TailSections) -> String {
     }
     if let Some(intent) = &sections.intent {
         push_block(&mut out, intent);
-    }
-    if !tail.stance.trim().is_empty() {
-        push_block(
-            &mut out,
-            &format!("<stance>\n{}\n</stance>", tail.stance.trim()),
-        );
     }
     if let Some(work_contract) = &sections.work_contract {
         push_block(&mut out, work_contract);

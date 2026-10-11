@@ -90,8 +90,7 @@ export default function DiffInspector(props: {
     <div class="canvas-card diff-inspector-wrap">
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">Diff Inspector</span>
-          <span class="card-subtitle">{activeFile()?.filename}</span>
+          <Show when={activeFile()?.filename}><span class="card-subtitle">{activeFile()?.filename}</span></Show>
         </div>
         <div class="card-actions">
           <button type="button" class="pill-action-btn" onClick={() => setSplitMode(!splitMode())}>

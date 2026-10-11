@@ -8,6 +8,7 @@ mod fences;
 use fences::{find_duplicate_card_fence, find_malformed_vak_fence, vak_fence_bodies};
 pub mod circuit;
 pub mod goal;
+mod plan_check;
 pub mod questions;
 pub mod spend;
 pub mod steering;
@@ -88,7 +89,7 @@ pub fn auto_approve(
     tool == "bash" && sandboxed && !matches!(mode, Mode::FullAccess)
 }
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use futures::FutureExt;
@@ -385,7 +386,6 @@ pub struct AgentConfig {
     pub trace: Option<vak_session::trace::TraceKey>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<RevocationCheck>,
-    pub presentation_check: Option<PresentationCheck>,
     /// Where a successful call's declared deliverable is recorded (plan
     /// M8); `None` records nothing.
     pub artifacts: Option<Arc<dyn vak_tools::ArtifactSink>>,
@@ -501,22 +501,6 @@ pub type ToolActivityRecorder =
     Arc<dyn Fn(&str, &str, &serde_json::Value, bool, u64) + Send + Sync>;
 pub type RevocationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
-/// Given a final answer's text and the names of the tools admitted this turn,
-/// returns a nudge when the answer reads as something that should have been
-/// presented as a card. Supplied by `Core` (which owns the presentation
-/// vocabulary) so the agent loop stays free of any card knowledge.
-pub type PresentationCheck =
-    Arc<dyn Fn(&str, &[String]) -> Option<PresentationNudge> + Send + Sync>;
-
-/// A presentation-check redo: the card tool it asks for and the nudge text.
-/// The loop loads `tool` for the redo, since a card tool the turn's reading
-/// did not predict was deferred.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PresentationNudge {
-    pub tool: String,
-    pub text: String,
-}
-
 /// Whether a tool call reaches information from outside the machine and the
 /// conversation (the kind an answer should cite), given the tool's name and
 /// the call's input. Supplied by `Core`, which knows what each capability
@@ -593,7 +577,6 @@ impl AgentConfig {
             trace: None,
             hooks: None,
             revocation_check: None,
-            presentation_check: None,
             artifacts: None,
             protected_paths: Vec::new(),
             retrieval_check: None,
@@ -637,7 +620,7 @@ impl AgentConfig {
 /// empty tag pair.
 /// The no-op result for an `emit_*_card` call identical to one already shown
 /// this run (cards are Vak's own display channel; a repeat is not an error).
-const CARD_REPEAT_ACK: &str = "Card already displayed to the user. Do not call it again: finish now (any text is shown only if it begins with `Note:`).";
+const CARD_REPEAT_ACK: &str = "This card is already shown to the user.";
 
 /// The result for a call identical to one that already delivered a file this
 /// run (`Tool::delivered_file`): the first draft stands and no second one is
@@ -705,11 +688,6 @@ fn same_workspace_path(a: &str, b: &str) -> bool {
     let trim = |path: &str| path.trim().trim_start_matches("./").to_string();
     trim(a) == trim(b)
 }
-
-/// Consecutive all-repeat card batches after which the turn closes on the
-/// card as its answer. Three: one repeat is a slip the ack corrects, two is
-/// a model that did not read it, three is one that will not.
-const CARD_REPEAT_EXHAUSTION_THRESHOLD: u32 = 3;
 
 /// How many times a run that tries to finish with background workers still
 /// running is sent back to wait for them, before they are cancelled.
@@ -1378,6 +1356,9 @@ pub struct Agent {
     run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
     /// `name + input` of every card call that displayed successfully this run.
     presented_cards: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// The latest plan the model declared this run (docs/design/
+    /// 86-model-plans-runtime-checks.md), checked when the turn ends.
+    declared_plan: std::sync::Mutex<Option<Vec<vak_tools::Deliverable>>>,
     deliveries: std::sync::Mutex<RunDeliveries>,
     /// What each call in flight produced beyond its result text, drained
     /// when the batch's results are recorded (`CallYield`).
@@ -1391,10 +1372,10 @@ pub struct Agent {
     handoff_used: bool,
     /// Per-run bookkeeping for model-guided tool recovery (see RepairState).
     repair: RepairState,
-    /// Consecutive model-drift events this run (docs/design/68-context-
-    /// engine.md §7): reset to 0 on any non-drifting step; three in a row
-    /// end the turn with the degraded outcome.
-    drift_streak: u32,
+    /// Whether the preceding step drifted and got the steering nudge
+    /// (docs/design/68-context-engine.md §7): an answer that drifts again
+    /// straight after it stands as the model's own.
+    drift_nudged: bool,
     /// The span of the step in progress (plan M5b): each provider attempt
     /// and tool call is its child.
     step_span: tracing::Span,
@@ -1417,13 +1398,14 @@ impl Agent {
             config,
             run_call_counts: std::sync::Mutex::new(HashMap::new()),
             presented_cards: std::sync::Mutex::new(std::collections::HashSet::new()),
+            declared_plan: std::sync::Mutex::new(None),
             deliveries: std::sync::Mutex::new(RunDeliveries::default()),
             call_yields: CallYields::default(),
             active_goal: None,
             obligations: Vec::new(),
             handoff_used: false,
             repair: RepairState::default(),
-            drift_streak: 0,
+            drift_nudged: false,
             step_span: tracing::Span::none(),
         }
     }
@@ -1653,6 +1635,10 @@ impl Agent {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         *self
+            .declared_plan
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        *self
             .deliveries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = RunDeliveries::default();
@@ -1791,6 +1777,11 @@ impl Agent {
 
         let mut turn = 0usize;
         let mut outcome_turns = 0usize;
+        for (at, tool) in std::mem::take(&mut self.repair.withdrawn).into_iter().rev() {
+            self.config
+                .tools
+                .insert(at.min(self.config.tools.len()), tool);
+        }
         self.repair.reset();
         self.run_call_counts
             .lock()
@@ -1800,6 +1791,10 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        *self
+            .declared_plan
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         *self
             .deliveries
             .lock()
@@ -1839,17 +1834,14 @@ impl Agent {
         // observation (`AgentConfig::observation_check`): reading the file
         // or running the command is how a local "current" value is found.
         let mut observed_this_run = false;
-        // A retrieval was called this run, whatever it returned: with
-        // `observed_this_run` still false, every one failed, and the honest
-        // answer reports that rather than shows a card with no data.
-        let mut retrieval_attempted_this_run = false;
         let mut freshness_repair_attempted = false;
+        let mut tool_call_format_repair_attempted = false;
         // A card shown this run that only restated figures the request
         // itself gave: the answer is the person's own data, so nothing
         // needs retrieving to make it current.
         let mut restated_request_figures = false;
         let mut empty_step_repair_attempted = false;
-        let mut card_repeat_streak: u32 = 0;
+        let mut card_repeat_acked: Option<Vec<(String, serde_json::Value)>> = None;
         let mut topic_repair_attempted = false;
         let mut citation_repair_attempted = false;
         // The most recent non-card tool result's own text this run, for the
@@ -1886,7 +1878,12 @@ impl Agent {
         // A tool delivered a file the person reviews through its own card
         // (an Office draft): the answer need not present it again.
         let mut file_delivered_this_run = false;
-        let mut presentation_repair_attempted = false;
+        // Each card recorded this run, in emit order, with the plan
+        // deliverable its `answers` field named.
+        let mut card_answers: Vec<Option<String>> = Vec::new();
+        // The deliverables the last plan check named, so the same gap is
+        // named once.
+        let mut plan_check_named: Option<Vec<String>> = None;
         // Append-only requests within a turn (docs/design/68-context-
         // engine.md §7): the working-set plan and the tools array are each
         // resolved ONCE per turn and reused by every later step, so a
@@ -1911,7 +1908,7 @@ impl Agent {
         let mut compaction_failed = false;
         let mut logged_plan: Option<String> = None;
         let mut turn_tool_base: Option<Vec<vak_llm::ToolDefinition>> = None;
-        loop {
+        'turn: loop {
             self.step_span = tracing::info_span!("step", step = turn as u64);
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -2045,7 +2042,7 @@ impl Agent {
                 if !self.handoff_used && self.config.handoff_reset {
                     self.handoff_used = true;
                     if let Ok(handoff) = self
-                        .write_handoff(est_tokens, &prompt_owned, &cancel, &events)
+                        .write_handoff(est_tokens, &prompt_owned, &plan, &cancel, &events)
                         .await
                     {
                         let mut session = self.session.lock().await;
@@ -2258,10 +2255,10 @@ impl Agent {
             }
             let base_request = {
                 let session = self.session.lock().await;
-                // `messages` is already the fidelity-selected projection
-                // (docs/design/68-context-engine.md §4/§10): retrieved-by-
-                // relevance turns ride at Full inside it, so there is no
-                // separate proactive-retrieval prepend step any more.
+                // `messages` is the explicit projection from the plan
+                // (docs/design/68-context-engine.md §4/§10). Omitted history
+                // stays in the ledger and is searched through `recall` only
+                // when the model needs an earlier detail.
                 let (mut messages, directive_at) = session.derive_with_plan_and_directive(&plan);
                 // The tail is one final text block on the turn's directive
                 // (after any tool_result blocks the directive itself
@@ -2429,6 +2426,40 @@ impl Agent {
                             };
                             continue;
                         }
+                        Err(error @ LlmError::ToolCallFormat(_))
+                            if !tool_call_format_repair_attempted =>
+                        {
+                            tool_call_format_repair_attempted = true;
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
+                            if turn + 1 >= self.config.max_turns {
+                                return TurnOutcome::Failed { error };
+                            }
+                            let reason = match &error {
+                                LlmError::ToolCallFormat(reason) => reason.as_str(),
+                                _ => unreachable!("matched ToolCallFormat"),
+                            };
+                            if let Err(write_error) = self.session.lock().await.append_message(
+                                MessageRecord::control(
+                                    vak_intent::control::ControlKind::ToolCallRepair,
+                                    format!(
+                                        "[tool-call-repair]: The inference provider could not parse the structured tool call it generated ({reason}). This was an output-format failure before any tool ran. Continue the same request from the admitted tool schemas and regenerate valid structured arguments. Do not repeat the malformed envelope. If the request needs several outputs, complete them with the admitted tools; if no tool call is needed, answer directly."
+                                    ),
+                                ),
+                            ) {
+                                return nudge_write_failed(write_error);
+                            }
+                            let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
+                            turn += 1;
+                            // Rebuild the request from the same open turn so
+                            // the system-authored repair record is included.
+                            // Continuing the nested provider-retry loop would
+                            // resend the stale request that caused the error.
+                            continue 'turn;
+                        }
                         Err(e)
                             if run_attempt < self.config.run_retry_attempts
                                 && is_transient_step_error(&e) =>
@@ -2575,17 +2606,27 @@ impl Agent {
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
             // Model drift (docs/design/68-context-engine.md §7): the step
-            // served a different directive than the current one. Never a
-            // cut — the steering nudge is appended and the turn continues;
-            // only three CONSECUTIVE drift events end it.
-            if let Some(drift_reason) = self
+            // served a different directive than the current one. The
+            // steering nudge is appended once and the answer redone; an
+            // answer that drifts again straight after it stands as the
+            // model's own, with a diagnostic, and is never replaced.
+            let drift = self
                 .detect_model_drift(&response, &calls, &prompt_owned)
-                .await
-            {
-                self.drift_streak += 1;
-                if self.drift_streak >= MODEL_DRIFT_EXHAUSTION_THRESHOLD {
-                    return self.degraded_drift_outcome(&drift_reason).await;
-                }
+                .await;
+            let nudged_before = std::mem::replace(&mut self.drift_nudged, drift.is_some());
+            if let Some(drift_reason) = drift.clone().filter(|_| nudged_before) {
+                self.record_activity(
+                    vak_session::ActivityKind::Diagnostic,
+                    vak_session::ActivityStatus::Failed,
+                    "model-drift".into(),
+                    Some(format!(
+                        "the answer still served another directive after the steering \
+                         nudge and stands as given. {drift_reason}"
+                    )),
+                    std::collections::BTreeMap::new(),
+                )
+                .await;
+            } else if let Some(drift_reason) = drift.filter(|_| !nudged_before) {
                 // A request near the horizon that also drifted is evidence
                 // the horizon itself is optimistic (§1, §6).
                 self.record_capacity_instruction_failure(response.usage.prompt_tokens())
@@ -2610,11 +2651,6 @@ impl Agent {
                     turn += 1;
                     continue;
                 }
-                // A drifted tool call still needs its result dispatched
-                // (API validity requires the pair); the nudge above steers
-                // the NEXT step instead of interrupting this one.
-            } else {
-                self.drift_streak = 0;
             }
 
             if calls.is_empty() {
@@ -2797,66 +2833,66 @@ impl Agent {
                         continue;
                     }
                 }
-                // Presentation check: the answer reads as something the app
-                // presents as a card (the app's own signal/recipe detection,
-                // supplied by Core), yet no card was emitted and none is
-                // written inline — the model answered in prose. One bounded
-                // nudge; the model may decline by resending unchanged.
-                if !presentation_repair_attempted
-                    && !cards_emitted_this_run
-                    && !file_delivered_this_run
-                    && !(retrieval_attempted_this_run && !observed_this_run)
-                    && let Some(check) = &self.config.presentation_check
-                {
-                    let text = response.text_content();
-                    if !text.trim().is_empty() && !text.contains("```vak") {
-                        let offered: Vec<String> = self
-                            .config
-                            .tools
-                            .iter()
-                            .map(|t| t.name().to_string())
-                            .collect();
-                        if let Some(nudge) = check(&text, &offered) {
-                            presentation_repair_attempted = true;
-                            if let Some(tool) =
-                                self.config.tools.iter().find(|t| t.name() == nudge.tool)
+                // The model's own plan, checked against what this turn
+                // produced (docs/design/86-model-plans-runtime-checks.md
+                // §2.2). Nothing is discarded: the model is told only which
+                // declared deliverables have no receipt yet. The same gap
+                // after it was named ends the turn as it stands rather than
+                // asking again.
+                let still_missing: Vec<String> = {
+                    let plan = self
+                        .declared_plan
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    match plan.as_deref() {
+                        Some(plan) => {
+                            let final_text = response.text_content();
+                            let produced = plan_check::Produced {
+                                cards: &card_answers,
+                                final_text: &final_text,
+                                file_delivered: file_delivered_this_run
+                                    || receipts.artifact_deliveries > 0,
+                                changed: receipts.has_execution_receipt(),
+                                checked: receipts.substantive_bash_calls > 0 && !verification_stale,
+                            };
+                            let missing = plan_check::missing(plan, &produced);
+                            if missing.is_empty()
+                                || plan_check_named.as_deref()
+                                    == Some(
+                                        missing
+                                            .iter()
+                                            .map(|d| d.name.clone())
+                                            .collect::<Vec<_>>()
+                                            .as_slice(),
+                                    )
                             {
-                                self.config
-                                    .discovered_tools
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .push(vak_llm::ToolDefinition::new(
-                                        tool.name(),
-                                        tool.description(),
-                                        tool.schema(),
-                                    ));
+                                Vec::new()
+                            } else {
+                                let message = plan_check::missing_message(&missing);
+                                plan_check_named =
+                                    Some(missing.iter().map(|d| d.name.clone()).collect());
+                                vec![message]
                             }
-                            if turn + 1 >= self.config.max_turns {
-                                return TurnOutcome::MaxTurnsReached;
-                            }
-                            // Required card not emitted: evidence the request
-                            // may already be past this model's real
-                            // instruction-following horizon (§1, §6).
-                            self.record_capacity_instruction_failure(
-                                response.usage.prompt_tokens(),
-                            )
-                            .await;
-                            if let Err(error) =
-                                self.session
-                                    .lock()
-                                    .await
-                                    .append_message(MessageRecord::control(
-                                        vak_intent::control::ControlKind::PresentationCheck,
-                                        nudge.text,
-                                    ))
-                            {
-                                return nudge_write_failed(error);
-                            }
-                            let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-                            turn += 1;
-                            continue;
                         }
+                        None => Vec::new(),
                     }
+                };
+                if let Some(message) = still_missing.into_iter().next()
+                    && turn + 1 < self.config.max_turns
+                {
+                    if let Err(error) =
+                        self.session
+                            .lock()
+                            .await
+                            .append_message(MessageRecord::control(
+                                vak_intent::control::ControlKind::PlanCheck,
+                                message,
+                            ))
+                    {
+                        return nudge_write_failed(error);
+                    }
+                    turn += 1;
+                    continue;
                 }
                 if let Some(hooks) = &self.config.hooks {
                     let session_id = self
@@ -3013,10 +3049,11 @@ impl Agent {
                     if is_subst {
                         receipts.substantive_bash_calls += 1;
                     }
-                } else if matches!(
-                    call.name.as_str(),
-                    "write" | "edit" | "patch" | "remember" | "propose_skill"
-                ) || self.delivered_file(&call.name, &call.input).is_some()
+                } else if !self.refuses_unrequested_authored_text_file(&call.name)
+                    && (matches!(
+                        call.name.as_str(),
+                        "write" | "edit" | "patch" | "remember" | "propose_skill"
+                    ) || self.delivered_file(&call.name, &call.input).is_some())
                 {
                     receipts.files_modified += 1;
                     let path = call.input.get("path").and_then(|v| v.as_str());
@@ -3051,6 +3088,7 @@ impl Agent {
             let code_mutation_ids: Vec<String> = calls
                 .iter()
                 .filter(|call| matches!(call.name.as_str(), "edit" | "write" | "patch"))
+                .filter(|call| !self.refuses_unrequested_authored_text_file(&call.name))
                 .filter(|call| {
                     call.input
                         .get("path")
@@ -3247,7 +3285,11 @@ impl Agent {
                 })
                 .map(|call| call.id.clone())
                 .collect::<std::collections::HashSet<_>>();
-            let mut results = self.execute_batch(calls, &cancel, &events).await;
+            let made: Vec<(String, serde_json::Value)> = calls
+                .iter()
+                .map(|call| (call.name.clone(), call.input.clone()))
+                .collect();
+            let (mut results, history_misses) = self.execute_batch(calls, &cancel, &events).await;
             let available = freshness_retrieval_hint(&tool_defs);
             results.extend(search_page_fetches.into_iter().map(|id| {
                 (
@@ -3284,25 +3326,20 @@ impl Agent {
                 (call.id, ToolRunOutput::Err(message))
             }));
             self.record_worker_work(&task_assignments, &results).await;
-            // Identical-card repeat breaker: the no-op ack ("already
-            // displayed") is enough for a model that reads it; one that
-            // re-emits the same card anyway (measured live: up to nineteen
-            // times in one turn) would otherwise spend the whole turn budget
-            // on acks. The card it keeps re-emitting IS its answer, so after
-            // CARD_REPEAT_EXHAUSTION_THRESHOLD consecutive all-repeat batches
-            // the turn closes on that answer.
+            // Identical-card repeat: a step that only re-emits cards already
+            // shown is told so by the no-op ack. A step that makes the same
+            // calls again straight after that ack is the model giving the same answer
+            // with the ack in hand (measured live: up to nineteen times in
+            // one turn), so the turn closes on that card as its answer.
             let all_repeats = !results.is_empty()
                 && results.iter().all(
                     |(_, output)| matches!(output, ToolRunOutput::Ok(text) if is_no_op_ack(text)),
                 );
-            card_repeat_streak = if all_repeats {
-                card_repeat_streak + 1
-            } else {
-                0
-            };
-            if card_repeat_streak >= CARD_REPEAT_EXHAUSTION_THRESHOLD {
+            let repeated = all_repeats.then_some(made);
+            if repeated.is_some() && repeated == card_repeat_acked {
                 return self.card_repeat_outcome().await;
             }
+            card_repeat_acked = repeated;
             // Classify unresolved correctable tool failures this turn for the
             // repair budget (see `reconcile_repair_budget`). Computed before
             // `results` is consumed into tool-result blocks below, and keyed
@@ -3312,12 +3349,10 @@ impl Agent {
                 .iter()
                 .filter_map(|(id, out)| match out {
                     ToolRunOutput::Err(content) => {
-                        // History lookup is optional context. A failed lookup
-                        // is evidence that history was unavailable, not a
-                        // malformed call the model can repair by repeating it.
-                        // Keep the tool error in the ledger, but let the model
-                        // answer a fresh request or ask for the missing detail.
-                        if call_names.get(id).is_some_and(|name| name == "recall") {
+                        // A history lookup that found nothing is optional
+                        // context the model cannot repair by repeating it; a
+                        // malformed one is repaired like any other call.
+                        if history_misses.contains(id) {
                             return None;
                         }
                         let kind = ToolErrorKind::classify(content);
@@ -3352,15 +3387,6 @@ impl Agent {
                     ToolRunOutput::Err(_) => None,
                 })
                 .collect();
-            retrieval_attempted_this_run |= results.iter().any(|(id, _)| {
-                let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("tool");
-                call_inputs.get(id).is_some_and(|input| {
-                    self.config
-                        .retrieval_check
-                        .as_ref()
-                        .is_some_and(|check| check(name, input))
-                })
-            });
             if !observed_this_run {
                 observed_this_run = !retrieval_tool_names.is_empty()
                     || results.iter().any(|(id, out)| {
@@ -3401,7 +3427,7 @@ impl Agent {
             let emitted_card_types: Vec<String> = results
                 .iter()
                 .filter_map(|(id, out)| match out {
-                    ToolRunOutput::Ok(_) => {
+                    ToolRunOutput::Ok(output) if !output.starts_with(CARD_REPEAT_ACK) => {
                         let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("");
                         self.tool_presents_cards(name)
                             .then(|| call_inputs.get(id))
@@ -3410,6 +3436,7 @@ impl Agent {
                             .and_then(|s| s.as_str())
                             .map(str::to_string)
                     }
+                    ToolRunOutput::Ok(_) => None,
                     ToolRunOutput::Err(_) => None,
                 })
                 .collect();
@@ -3453,6 +3480,12 @@ impl Agent {
             self.record_call_effects(&call_issue_order, &mut yields)
                 .await;
             cards_emitted_this_run |= yields.values().any(|y| y.delegated.is_some());
+            card_answers.extend(
+                yields
+                    .values()
+                    .filter_map(|y| y.delegated.as_ref())
+                    .flat_map(|delegated| delegated.cards.iter().map(|_| None)),
+            );
             if let Some(rebuild) = self.config.presentation_rebuild.clone() {
                 let mut session = self.session.lock().await;
                 if let Some(turn_id) = session.latest_directive_entry_id() {
@@ -3519,7 +3552,17 @@ impl Agent {
                         // stays, with the id after it: replaced by a bare
                         // `ok`, the model never learned the card was shown
                         // and sent it again (measured live).
-                        if let Ok(entry) = session.append_presentation(record)
+                        let answers = input
+                            .get("answers")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty())
+                            .map(str::to_string);
+                        let appended = session.append_presentation(record);
+                        if appended.is_ok() {
+                            card_answers.push(answers);
+                        }
+                        if let Ok(entry) = appended
                             && let Some(slot) = results.iter_mut().find(|(rid, _)| rid == id)
                         {
                             // Plain text: wrapped in JSON, the same words
@@ -3542,6 +3585,7 @@ impl Agent {
                         if let Some(claim) = call_names
                             .get(id)
                             .zip(call_inputs.get(id))
+                            .filter(|(name, _)| !self.refuses_unrequested_authored_text_file(name))
                             .and_then(|(name, input)| self.tool_artifact(name, input))
                         {
                             receipts.artifact_deliveries += 1;
@@ -3621,19 +3665,23 @@ impl Agent {
             //
             // A card is a presentation of the answer, not part of the work:
             // one that failed validation is simply not shown, and the answer
-            // is judged on what it says. Whether the turn needed a card is
-            // the presentation check's question, with its own bounded nudge.
+            // is judged on what it says. Whether a planned card is missing is
+            // the plan check's question, from receipts.
             // Counting a failed card as unresolved sent complete, correct
             // prose answers back to repair a card a small model could not
             // build, until the turn failed with the answer discarded
-            // (measured live on gemma4:e2b-mlx). A batch of cards alone
+            // (measured live on gemma4:e2b-mlx). A call the runtime refused
+            // before anything ran is the same: found live, a refused `plan`
+            // made the stop guard have the model apologise to the person
+            // for it in place of its answer. A batch of such calls alone
             // neither sets nor clears the failure state.
             let counted: Vec<&(String, ToolRunOutput)> = results
                 .iter()
-                .filter(|(id, _)| {
+                .filter(|(id, out)| {
                     call_names
                         .get(id)
                         .is_none_or(|name| !self.tool_presents_cards(name))
+                        && !matches!(out, ToolRunOutput::Err(err) if vak_tools::never_ran(err))
                 })
                 .collect();
             let batch_error = counted.iter().find_map(|(id, out)| match out {
@@ -3693,7 +3741,7 @@ impl Agent {
             }
 
             if let Some(outcome) =
-                reconcile_repair_budget(self, &failed_correctable, &receipts.unresolved_error).await
+                reconcile_repair(self, &failed_correctable, &receipts.unresolved_error).await
             {
                 return outcome;
             }
@@ -4781,6 +4829,7 @@ impl Agent {
         &self,
         est_tokens: u64,
         original_prompt: &str,
+        plan: &vak_session::WorkingSetPlan,
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
     ) -> Result<String, LlmError> {
@@ -4788,7 +4837,11 @@ impl Agent {
         let model = self.config.model.clone();
         let digest = {
             let session = self.session.lock().await;
-            let msgs = session.derive_messages();
+            // Summarize the same explicit projection that the interrupted
+            // turn was about to send. Plan-free derivation would feed the
+            // entire N-turn transcript back into a summarizer and can make
+            // unrelated old work dominate the current request.
+            let msgs = session.derive_with_plan(plan);
             // The summariser request is small, so the transcript may fill
             // what the model can follow, less its own completion and framing.
             let profile = self.effective_capacity_profile();
@@ -4842,7 +4895,6 @@ impl Agent {
         let reason = policy.evaluate_receipts(
             prompt,
             &response.text_content(),
-            self.config.outcome.as_ref(),
             receipts,
             verification_stale,
         )?;
@@ -4907,21 +4959,18 @@ impl Agent {
         None
     }
 
-    /// Records this turn's host-supplied tail (`<turn_context>`, `<stance>`)
-    /// as an activity, so the ledger holds exactly what the model read.
-    /// Nothing to record when the host supplied neither.
+    /// Records this turn's host-supplied tail (`<turn_context>`) as an
+    /// activity, so the ledger holds exactly what the model read. Nothing to
+    /// record when the host supplied none.
     async fn record_turn_context(&self) -> Result<(), vak_session::SessionError> {
         let tail = &self.config.tail;
-        if tail.temporal.trim().is_empty() && tail.stance.trim().is_empty() {
+        if tail.temporal.trim().is_empty() {
             return Ok(());
         }
-        let mut data = std::collections::BTreeMap::from([(
+        let data = std::collections::BTreeMap::from([(
             "section".to_string(),
             vak_session::SessionLog::TURN_CONTEXT_SECTION.to_string(),
         )]);
-        if !tail.stance.trim().is_empty() {
-            data.insert("stance".to_string(), tail.stance.clone());
-        }
         self.session
             .lock()
             .await
@@ -4997,6 +5046,13 @@ impl Agent {
             .tools
             .iter()
             .any(|tool| tool.name() == name && tool.presents_cards())
+    }
+
+    /// A prose or card answer is not a text-file request. Enforce the
+    /// outcome contract here as well as in the model instructions, because a
+    /// carried `write` schema can remain callable later in a long session.
+    fn refuses_unrequested_authored_text_file(&self, name: &str) -> bool {
+        refuses_unrequested_authored_text_file(name, self.config.outcome.as_ref())
     }
 
     /// The protected path (`AgentConfig::protected_paths`) this call would
@@ -5330,37 +5386,6 @@ impl Agent {
                 .collect()
         }
         normalized(left) == normalized(right)
-    }
-
-    /// The degraded, honest completion returned when model drift exhausts
-    /// its steering budget (docs/design/68-context-engine.md §7) — same
-    /// shape as `degraded_outcome`'s tool-repair exhaustion
-    /// (docs/design/15-reliability.md), a different diagnostic label.
-    async fn degraded_drift_outcome(&self, last_reason: &str) -> TurnOutcome {
-        self.record_activity(
-            vak_session::ActivityKind::Diagnostic,
-            vak_session::ActivityStatus::Failed,
-            "model-drift-exhausted".into(),
-            Some(format!(
-                "three consecutive steps served a different directive than the current one; \
-                 run stopped rather than continuing to answer the wrong request. Last: {last_reason}"
-            )),
-            std::collections::BTreeMap::new(),
-        )
-        .await;
-        let response = AssistantMessage {
-            content: vec![ContentBlock::text(
-                "I kept drifting away from your current request across several steps and \
-                 could not stay on it within this turn's steering budget. Please restate what \
-                 you need now, or narrow the request, and I will address it directly."
-                    .to_string(),
-            )],
-            stop_reason: StopReason::EndTurn,
-            usage: Usage::default(),
-            model: self.config.model.clone(),
-            response_id: None,
-        };
-        TurnOutcome::Completed { response }
     }
 
     /// One provider completion with watchdog, retry/backoff (honoring
@@ -5912,7 +5937,7 @@ impl Agent {
         calls: Vec<PendingToolCall>,
         cancel: &CancellationToken,
         events: &mpsc::Sender<AgentEvent>,
-    ) -> Vec<(String, ToolRunOutput)> {
+    ) -> (Vec<(String, ToolRunOutput)>, HashSet<String>) {
         // `recall` is answered from the session here, before dispatch —
         // never sent to a worker (docs/design/68-context-engine.md §3/§7).
         // Intercepting by name mirrors how `emit_*_card` results are
@@ -5923,22 +5948,60 @@ impl Agent {
         let (recall_calls, calls): (Vec<_>, Vec<_>) = calls
             .into_iter()
             .partition(|call| vak_tools::canonical_tool_name(&call.name) == "recall");
-        let mut results = Vec::with_capacity(recall_calls.len());
+        // `plan` is the model's declaration of what this turn delivers; the
+        // loop keeps it to check against what the turn produced
+        // (docs/design/86-model-plans-runtime-checks.md §2).
+        let (plan_calls, calls): (Vec<_>, Vec<_>) = calls
+            .into_iter()
+            .partition(|call| vak_tools::canonical_tool_name(&call.name) == "plan");
+        let mut results = Vec::with_capacity(recall_calls.len() + plan_calls.len());
+        for call in plan_calls {
+            let output = match vak_tools::parse_plan_args(&call.input) {
+                Ok(plan) => {
+                    let listed = plan
+                        .iter()
+                        .map(|deliverable| {
+                            format!("{} ({})", deliverable.name, deliverable.form.as_str())
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    *self
+                        .declared_plan
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(plan);
+                    ToolRunOutput::Ok(format!("Plan recorded: {listed}."))
+                }
+                Err(message) => ToolRunOutput::Err(
+                    serde_json::json!({"type": "invalid_arguments", "message": message})
+                        .to_string(),
+                ),
+            };
+            results.push((call.id, output));
+        }
+        let mut history_misses = HashSet::new();
         for call in recall_calls {
             let output = match self.resolve_recall(&call.input, cancel).await {
-                ToolRunOutput::Ok(content) => {
+                Ok(content) => {
                     ToolRunOutput::Ok(windowed_result(&call.id, content, &self.call_yields))
                 }
-                ToolRunOutput::Err(error) => ToolRunOutput::Err(format!(
-                    "{error}\n[optional-history]: lookup failed. Do not repeat this recall call. \
-                     Continue with the current request using available tools; if the missing \
-                     historical detail is essential, ask the user for it."
-                )),
+                // A malformed call is an ordinary correctable error: the
+                // repair controller resurfaces the schema and stops a
+                // repeat (found live: eighteen `recall {}` calls in one turn
+                // when every failure was waved through as missing history).
+                Err(RecallFailure::Malformed(error)) => ToolRunOutput::Err(error),
+                Err(RecallFailure::NotFound(error)) => {
+                    history_misses.insert(call.id.clone());
+                    ToolRunOutput::Err(format!(
+                        "{error}\n[optional-history]: nothing was found. Do not repeat this \
+                         lookup. Continue with the current request using available tools; if \
+                         the missing historical detail is essential, ask the user for it."
+                    ))
+                }
             };
             results.push((call.id, output));
         }
         results.extend(self.execute_batch_inner(calls, cancel, events).await);
-        results
+        (results, history_misses)
     }
 
     /// Resolves one `recall` call's arguments against the current session:
@@ -5946,13 +6009,17 @@ impl Agent {
     /// the canonical payload; `id` → the evidence content, optionally
     /// sliced by line range. The result is a current-turn tool result and
     /// is verbatim for the rest of that turn like any other result.
-    async fn resolve_recall(&self, input: &Value, cancel: &CancellationToken) -> ToolRunOutput {
+    async fn resolve_recall(
+        &self,
+        input: &Value,
+        cancel: &CancellationToken,
+    ) -> Result<String, RecallFailure> {
         let request = match vak_tools::parse_recall_args(input) {
             Ok(request) => request,
             Err(message) => {
-                return ToolRunOutput::Err(format!(
+                return Err(RecallFailure::Malformed(format!(
                     r#"{{"type":"invalid_arguments","message":"{message}"}}"#
-                ));
+                )));
             }
         };
         // Another conversation is reachable only when an artifact attached
@@ -5972,11 +6039,11 @@ impl Agent {
                 .flat_map(|meta| meta.artifacts.iter())
                 .any(|artifact| artifact.conversations.contains(conversation));
             if !named {
-                return ToolRunOutput::Err(
+                return Err(RecallFailure::Malformed(
                     serde_json::json!({"type": "invalid_arguments",
                     "message": "that conversation is not one an artifact attached here came from"})
                     .to_string(),
-                );
+                ));
             }
         }
         if matches!(
@@ -5995,11 +6062,11 @@ impl Agent {
                 .unwrap_or_default();
             return tokio::select! {
                 result = recall(request, leaf, cancel.clone()) => match result {
-                    Ok(content) => ToolRunOutput::Ok(content),
-                    Err(message) => ToolRunOutput::Err(message),
+                    Ok(content) => Ok(content),
+                    Err(message) => Err(RecallFailure::NotFound(message)),
                 },
-                _ = cancel.cancelled() => ToolRunOutput::Err(serde_json::json!({"type":"cancelled",
-                    "message":"history lookup cancelled"}).to_string()),
+                _ = cancel.cancelled() => Err(RecallFailure::NotFound(serde_json::json!({"type":"cancelled",
+                    "message":"history lookup cancelled"}).to_string())),
             };
         }
         let session = self.session.lock().await;
@@ -6028,29 +6095,29 @@ impl Agent {
                     })
                     .take(limit)
                     .collect();
-                ToolRunOutput::Ok(serde_json::json!({"matches": candidates,
+                Ok(serde_json::json!({"matches": candidates,
                     "scope": "current_conversation", "historical": true,
                     "note": "Search matches are candidates, not proof. Reopen the matching turn to verify; current conditions require fresh evidence."}).to_string())
             }
             RecallRequest::TurnId(id) => {
                 let index = TurnIndex::from_log(&session);
                 match index.turn_by_id(&id) {
-                    Some(turn) => ToolRunOutput::Ok(render_full_record(&turn.full_record())),
-                    None => ToolRunOutput::Err(serde_json::json!({"type": "invalid_arguments", "message": "no matching turn in this conversation"}).to_string()),
+                    Some(turn) => Ok(render_full_record(&turn.full_record())),
+                    None => Err(RecallFailure::NotFound(serde_json::json!({"type": "not_found", "message": "no matching turn in this conversation"}).to_string())),
                 }
             }
-            RecallRequest::Elsewhere { .. } => ToolRunOutput::Err(
+            RecallRequest::Elsewhere { .. } => Err(RecallFailure::NotFound(
                 serde_json::json!({"type": "history_unavailable",
                     "message": "other conversations cannot be read in this run"})
                 .to_string(),
-            ),
+            )),
             RecallRequest::Turn(n) => {
                 let index = TurnIndex::from_log(&session);
                 match index.turn_by_number(n as usize) {
-                    Some(turn) => ToolRunOutput::Ok(render_full_record(&turn.full_record())),
-                    None => ToolRunOutput::Err(format!(
-                        r#"{{"type":"invalid_arguments","message":"no turn numbered {n}"}}"#
-                    )),
+                    Some(turn) => Ok(render_full_record(&turn.full_record())),
+                    None => Err(RecallFailure::NotFound(format!(
+                        r#"{{"type":"not_found","message":"no turn numbered {n}"}}"#
+                    ))),
                 }
             }
             RecallRequest::Presentation(id) => {
@@ -6059,20 +6126,20 @@ impl Agent {
                     .into_iter()
                     .find(|(pid, _)| *pid == id)
                 {
-                    Some((_, record)) => ToolRunOutput::Ok(record.payload.to_string()),
-                    None => ToolRunOutput::Err(format!(
-                        r#"{{"type":"invalid_arguments","message":"no presentation {id}"}}"#
-                    )),
+                    Some((_, record)) => Ok(record.payload.to_string()),
+                    None => Err(RecallFailure::NotFound(format!(
+                        r#"{{"type":"not_found","message":"no presentation {id}"}}"#
+                    ))),
                 }
             }
             RecallRequest::Id { id, range, chars } => match session.evidence(&id) {
-                Some(evidence) => ToolRunOutput::Ok(match chars {
+                Some(evidence) => Ok(match chars {
                     Some((start, end)) => vak_tools::apply_chars(&evidence.content, start, end),
                     None => vak_tools::apply_range(&evidence.content, range),
                 }),
-                None => ToolRunOutput::Err(format!(
-                    r#"{{"type":"invalid_arguments","message":"no evidence {id}"}}"#
-                )),
+                None => Err(RecallFailure::NotFound(format!(
+                    r#"{{"type":"not_found","message":"no evidence {id}"}}"#
+                ))),
             },
         }
     }
@@ -6101,6 +6168,15 @@ impl Agent {
         let mut live_deliveries: HashMap<String, (String, String)> = HashMap::new();
         let mut live = Vec::with_capacity(calls.len());
         for call in calls {
+            if self.refuses_unrequested_authored_text_file(&call.name) {
+                answered.push((
+                    call.id.clone(),
+                    ToolRunOutput::Ok(
+                        "No text file was created: this turn's outcome does not request one. Return the requested result in the conversation; do not retry this write under another path.".into(),
+                    ),
+                ));
+                continue;
+            }
             let mut deliveries = self
                 .deliveries
                 .lock()
@@ -6300,11 +6376,12 @@ impl Agent {
         self.record_activity(
             vak_session::ActivityKind::Diagnostic,
             vak_session::ActivityStatus::Succeeded,
-            "card-repeat-exhausted".into(),
-            Some(format!(
-                "{CARD_REPEAT_EXHAUSTION_THRESHOLD} consecutive steps re-emitted an already-shown card; \
-                 the turn closed on that card as its answer"
-            )),
+            "card-repeat".into(),
+            Some(
+                "a step re-emitted an already-shown card straight after being told it was \
+                 shown; the turn closed on that card as its answer"
+                    .into(),
+            ),
             std::collections::BTreeMap::new(),
         )
         .await;
@@ -7299,7 +7376,8 @@ fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) 
         return call;
     };
     let schema = tool.schema();
-    let input = with_scalar_strings(&schema, &call.input);
+    let input = normalize_encoded_collections(&schema, &call.input);
+    let input = with_scalar_strings(&schema, &input);
     call.input = if let Some(input) = unwrapped_schema_input(&schema, &call.name, &input) {
         with_scalar_strings(&schema, &input)
     } else if let Some(input) = merged_wrapper(&schema, &input) {
@@ -7308,6 +7386,59 @@ fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) 
         input
     };
     call
+}
+
+/// Some providers return a structured array/object argument as a JSON string
+/// even though the admitted schema asks for the structured value. Restore the
+/// expected container type only when the string parses to that same type;
+/// later tool normalization and the ordinary authorization validator still
+/// enforce the full admitted schema before dispatch.
+fn normalize_encoded_collections(schema: &Value, value: &Value) -> Value {
+    let accepts = |schema: &Value, kind: &str| {
+        schema.get("type").is_some_and(|types| match types {
+            Value::String(expected) => expected == kind,
+            Value::Array(expected) => expected.iter().any(|item| item.as_str() == Some(kind)),
+            _ => false,
+        })
+    };
+
+    if let Some(decoded) = value
+        .as_str()
+        .and_then(|encoded| serde_json::from_str::<Value>(encoded).ok())
+        && ((accepts(schema, "array") && decoded.is_array())
+            || (accepts(schema, "object") && decoded.is_object()))
+    {
+        return decoded;
+    }
+
+    if let (Some(items_schema), Some(items)) = (schema.get("items"), value.as_array()) {
+        return Value::Array(
+            items
+                .iter()
+                .map(|item| normalize_encoded_collections(items_schema, item))
+                .collect(),
+        );
+    }
+
+    if let (Some(properties), Some(object)) = (
+        schema.get("properties").and_then(Value::as_object),
+        value.as_object(),
+    ) {
+        return Value::Object(
+            object
+                .iter()
+                .map(|(key, item)| {
+                    let normalized = properties
+                        .get(key)
+                        .map(|child_schema| normalize_encoded_collections(child_schema, item))
+                        .unwrap_or_else(|| item.clone());
+                    (key.clone(), normalized)
+                })
+                .collect(),
+        );
+    }
+
+    value.clone()
 }
 
 /// `input` with a number or boolean given for a string property written as
@@ -7865,7 +7996,7 @@ async fn execute_one(
     if let ToolRunOutput::Err(content) = &mut output
         && let Some(hint) = tool_recovery_hint(content)
     {
-        content.push_str(hint);
+        content.push_str(&hint);
     }
 
     let result_content = match &output {
@@ -7896,55 +8027,156 @@ async fn execute_one(
 /// classification that decides this is owned by `vak_tools::ToolErrorKind` —
 /// this function is intentionally a thin shim so the hint and the repair
 /// budget in the turn loop can never drift onto a different keyword list.
-fn tool_recovery_hint(error: &str) -> Option<&'static str> {
-    if ToolErrorKind::classify(error).is_correctable() {
-        Some(
-            "\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.",
+fn tool_recovery_hint(error: &str) -> Option<String> {
+    // The dispatcher already knows the correct capability invocation when a
+    // model calls a registered skill/tool name using the wrong capability
+    // kind. Preserve that structured correction for the model instead of
+    // handing it an opaque mismatch that falls outside the repair classifier.
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(error)
+        && value.get("type").and_then(serde_json::Value::as_str) == Some("capability_kind_mismatch")
+        && let (Some(actual_kind), Some(invocation)) = (
+            value.get("actual_kind").and_then(serde_json::Value::as_str),
+            value.get("invocation"),
         )
+        && let (Some(tool), Some(arguments)) = (
+            invocation.get("tool").and_then(serde_json::Value::as_str),
+            invocation.get("arguments"),
+        )
+    {
+        let arguments = serde_json::to_string(arguments).ok()?;
+        let attempted = value
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("that name");
+        return Some(format!(
+            "\n[recovery] `{attempted}` is registered as a {actual_kind}, not a callable tool. \
+             The runtime supplied the correct invocation: call `{tool}` with arguments \
+             `{arguments}` if that capability is needed. Otherwise continue with the admitted \
+             tools. Do not retry `{attempted}` as a tool."
+        ));
+    }
+    if ToolErrorKind::classify(error).is_correctable() {
+        Some("\n[recovery] Treat this as a failed attempt. Inspect the error and the admitted tool/schema inventory, then make at most one corrected or alternative call. Do not repeat identical arguments. If the failure is environmental or the corrected call is unsafe, explain the blocker instead.".to_string())
     } else {
         None
     }
 }
 
-/// Reconcile the run repair budget against this turn's correctable tool
-/// failures. Returns `Some(TurnOutcome)` only when the budget is exhausted
-/// and the loop must stop repairing; otherwise `None` (continue to the next
-/// model dispatch). This is the "loop where these don't happen" for tool
-/// failures of any class: the recovery hint is the first nudge; a
-/// system-authored, schema-resurfacing directive is the second; a bounded
-/// degraded stop is the third.
-async fn reconcile_repair_budget(
+/// Model-guided repair of a tool whose calls keep failing, with no counter
+/// to tune (docs/design/15-reliability.md). Each failing step moves the tool
+/// one stage on: the failed call's own result names the fault; a second
+/// failing step in a row gets the tool's exact schema from the loop; a
+/// failure after that withdraws the tool for the rest of the turn, and the
+/// model is told to deliver that part another way. Nothing already produced
+/// is discarded and the turn goes on. Returns an outcome only when the
+/// ledger cannot be written.
+async fn reconcile_repair(
     agent: &mut Agent,
     failed_correctable: &[(String, ToolErrorKind)],
     unresolved_error: &Option<(String, String)>,
 ) -> Option<TurnOutcome> {
-    if failed_correctable.is_empty() {
-        agent.repair.consecutive_failed_turns = 0;
-        agent.repair.last_error = None;
-        return None;
-    }
-    if agent.repair.exhausted {
-        return None;
-    }
-    agent.repair.consecutive_failed_turns += 1;
-    agent.repair.last_error = unresolved_error.as_ref().map(|(_, error)| error.clone());
-
-    if agent.repair.consecutive_failed_turns == REPAIR_DIRECTIVE_TURN {
-        // The model has now failed to self-repair the same fault across two
-        // turns: a text hint is no longer enough. The loop takes over and
-        // resurfaces the exact admitted schema for the rejected tools so the
-        // repair is no longer a guess.
-        if let Err(error) = inject_repair_directive(agent, failed_correctable).await {
-            return Some(nudge_write_failed(error));
+    let mut failed: Vec<String> = Vec::new();
+    for (name, _) in failed_correctable {
+        let withdrawn = agent
+            .repair
+            .withdrawn
+            .iter()
+            .any(|(_, tool)| tool.name() == name.as_str());
+        if !withdrawn && !failed.contains(name) {
+            failed.push(name.clone());
         }
     }
+    agent.repair.failing.retain(|name| failed.contains(name));
+    agent
+        .repair
+        .schema_shown
+        .retain(|name| failed.contains(name));
+    agent.repair.last_error = unresolved_error
+        .as_ref()
+        .filter(|(name, _)| failed.contains(name))
+        .map(|(_, error)| error.clone());
 
-    if agent.repair.consecutive_failed_turns > MAX_REPAIR_TURNS {
-        agent.repair.exhausted = true;
-        let outcome = degraded_outcome(agent, failed_correctable).await;
-        return Some(outcome);
+    let mut resurface = Vec::new();
+    let mut withdraw = Vec::new();
+    for name in failed {
+        if agent.repair.schema_shown.contains(&name) {
+            withdraw.push(name);
+        } else if agent.repair.failing.contains(&name) {
+            agent.repair.schema_shown.insert(name.clone());
+            resurface.push(name);
+        } else {
+            agent.repair.failing.insert(name);
+        }
+    }
+    if !resurface.is_empty()
+        && let Err(error) = inject_repair_directive(agent, &resurface).await
+    {
+        return Some(nudge_write_failed(error));
+    }
+    if !withdraw.is_empty()
+        && let Err(error) = withdraw_tools(agent, &withdraw).await
+    {
+        return Some(nudge_write_failed(error));
     }
     None
+}
+
+/// Takes tools whose calls failed again after their schema was shown out of
+/// this turn's admitted set, and says so. A name that is not an admitted
+/// tool has nothing to withdraw: its own error already lists what is.
+async fn withdraw_tools(
+    agent: &mut Agent,
+    names: &[String],
+) -> Result<(), vak_session::SessionError> {
+    let mut gone = Vec::new();
+    for name in names {
+        if let Some(at) = agent
+            .config
+            .tools
+            .iter()
+            .position(|tool| tool.name() == name.as_str())
+        {
+            let tool = agent.config.tools.remove(at);
+            agent.repair.withdrawn.push((at, tool));
+            agent.repair.failing.remove(name);
+            agent.repair.schema_shown.remove(name);
+            gone.push(format!("`{name}`"));
+        }
+    }
+    if gone.is_empty() {
+        return Ok(());
+    }
+    let gone = gone.join(", ");
+    let _diagnostic = agent
+        .record_activity(
+            vak_session::ActivityKind::Diagnostic,
+            vak_session::ActivityStatus::Failed,
+            "Tool withdrawn".into(),
+            Some(match agent.repair.last_error.as_deref() {
+                Some(error) => format!(
+                    "{gone}: calls kept failing after the schema was shown. Last error: {}",
+                    bounded_error_summary(error)
+                ),
+                None => format!("{gone}: calls kept failing after the schema was shown."),
+            }),
+            std::collections::BTreeMap::new(),
+        )
+        .await;
+    agent
+        .session
+        .lock()
+        .await
+        .append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::RepairDirective,
+            format!(
+                "{} {gone} is withdrawn for the rest of this turn: its calls kept failing \
+                 after its schema was shown. Do not call it again. Deliver that part another \
+                 way, with another tool or as plain text in your reply, and keep everything \
+                 you have already produced.",
+                vak_intent::control::ControlKind::RepairDirective.marker()
+            ),
+        ))
+        .map(|_| ())
 }
 
 /// Append an authoritative repair directive that resurfaces the admitted
@@ -7953,22 +8185,15 @@ async fn reconcile_repair_budget(
 /// when the model has demonstrated it cannot repair the failure unprompted.
 async fn inject_repair_directive(
     agent: &Agent,
-    failed: &[(String, ToolErrorKind)],
+    failed: &[String],
 ) -> Result<(), vak_session::SessionError> {
-    let remaining = MAX_REPAIR_TURNS.saturating_sub(agent.repair.consecutive_failed_turns - 1);
     let mut parts: Vec<String> = vec![format!(
-        "{} The run is stuck on correctable tool failures that \
-         were not repaired across turns. Do not repeat the failing call shape; \
-         re-issue with the exact arguments this tool requires. The run will \
-         stop retrying after {} more failed repair turn(s).",
-        vak_intent::control::ControlKind::RepairDirective.marker(),
-        remaining.max(1)
+        "{} The same tool call failed twice. Do not repeat the failing call shape; \
+         send exactly the arguments the schema below asks for, or deliver this part \
+         another way.",
+        vak_intent::control::ControlKind::RepairDirective.marker()
     )];
-    let mut seen = std::collections::HashSet::new();
-    for (name, _kind) in failed {
-        if !seen.insert(name.clone()) {
-            continue;
-        }
+    for name in failed {
         let mut found = false;
         for tool in &agent.config.tools {
             if tool.name() != *name {
@@ -8014,62 +8239,6 @@ async fn inject_repair_directive(
             parts.join("\n\n"),
         ))
         .map(|_| ())
-}
-
-/// Build the degraded, honest completion returned when the repair budget is
-/// exhausted: record a diagnostic (append-only, model-visible) and return a
-/// system-authored answer that states the failure instead of inventing one.
-async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> TurnOutcome {
-    let summary = failed
-        .iter()
-        .map(|(name, _)| format!("`{name}`"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let error = agent
-        .repair
-        .last_error
-        .as_deref()
-        .map(bounded_error_summary)
-        .unwrap_or_else(|| "see run diagnostics".to_string());
-    let _diagnostic = agent
-        .record_activity(
-            vak_session::ActivityKind::Diagnostic,
-            vak_session::ActivityStatus::Failed,
-            "Tool repair exhausted".into(),
-            Some(format!(
-                "correctable tool failures were not repaired within the run repair \
-                 budget ({} repair turns); run stopped rather than signing a false \
-                 complete. Last error: {}",
-                MAX_REPAIR_TURNS, error
-            )),
-            std::collections::BTreeMap::from([
-                (
-                    "repair_turns".into(),
-                    agent.repair.consecutive_failed_turns.to_string(),
-                ),
-                (
-                    "failed_tools".into(),
-                    failed
-                        .iter()
-                        .map(|(n, _)| n.as_str())
-                        .collect::<Vec<_>>()
-                        .join(","),
-                ),
-            ]),
-        )
-        .await;
-    let response = AssistantMessage {
-        content: vec![ContentBlock::text(format!(
-            "I couldn't complete this request because repeated calls to {summary} \
-             failed. I stopped rather than give an answer I couldn't support. \
-             The latest tool error was: {error}"
-        ))],
-        stop_reason: StopReason::EndTurn,
-        usage: Usage::default(),
-        model: agent.config.model.clone(),
-        response_id: None,
-    };
-    TurnOutcome::Completed { response }
 }
 
 /// A request's `max_tokens`: its output budget, no larger than the room the
@@ -8258,39 +8427,19 @@ mod repeat_guard_tests {
     }
 }
 
-/// After this many **consecutive** turns that end with an unresolved
-/// correctable tool failure (`RepairState::consecutive_failed_turns` exceeds
-/// it), the run stops re-dispatching and degrades the outcome instead of
-/// spinning on failing tool calls. This bounds model-guided repair so a weak
-/// model that ignores the recovery hint cannot burn the whole turn budget
-/// on the same fault class.
-/// Three consecutive model-drift events (docs/design/68-context-engine.md
-/// §7) end the turn with the degraded outcome, mirroring `MAX_REPAIR_TURNS`
-/// for tool repair: enough room for one bad step to self-correct after a
-/// steering nudge, not enough to spend the whole turn serving the wrong
-/// directive.
-const MODEL_DRIFT_EXHAUSTION_THRESHOLD: u32 = 3;
-
-const MAX_REPAIR_TURNS: u32 = 2;
-/// On the Nth consecutive correctable-failure turn the system stops relying
-/// on a text hint alone: it injects an authoritative, schema-resurfacing
-/// directive so the model is no longer guessing what shape was rejected.
-const REPAIR_DIRECTIVE_TURN: u32 = 2;
-
-/// Per-run account of model-guided tool recovery. The loop is: hint on the
-/// first failure, a system-authored directive on the second, and a bounded
-/// degraded stop on the third — instead of unlimited spin or a silent
-/// false "complete". Reset at the start of every `run`.
-#[derive(Debug, Default)]
+/// Per-run account of model-guided tool repair (`reconcile_repair`). Reset
+/// at the start of every `run`, which puts withdrawn tools back.
+#[derive(Default)]
 struct RepairState {
-    /// Consecutive turns ending with one or more unresolved correctable tool
-    /// failures. Resets to 0 when a turn produces no correctable failures.
-    consecutive_failed_turns: u32,
-    /// Latest error retained for the final bounded user-facing diagnosis.
+    /// Tools that failed in the preceding step.
+    failing: std::collections::HashSet<String>,
+    /// Tools whose schema the loop has resurfaced and which have not
+    /// succeeded since.
+    schema_shown: std::collections::HashSet<String>,
+    /// Tools taken out of this turn, with the place each held.
+    withdrawn: Vec<(usize, Arc<dyn Tool>)>,
+    /// Latest error of a tool still under repair, for the diagnostic.
     last_error: Option<String>,
-    /// Set once the run repair budget is exhausted; the loop must not keep
-    /// dispatching for repair after this.
-    exhausted: bool,
 }
 
 impl RepairState {
@@ -8439,6 +8588,66 @@ async fn authorize(
 enum ToolRunOutput {
     Ok(String),
     Err(String),
+}
+
+/// Why a `recall` call returned nothing, decided where it is answered rather
+/// than read back from its error text.
+enum RecallFailure {
+    /// The call named no target, or one it may not name.
+    Malformed(String),
+    /// A well-formed lookup that found nothing.
+    NotFound(String),
+}
+
+fn refuses_unrequested_authored_text_file(
+    name: &str,
+    outcome: Option<&vak_intent::OutcomeSpec>,
+) -> bool {
+    vak_tools::canonical_tool_name(name) == "write"
+        && outcome.is_some_and(|outcome| !outcome.permits_authored_text_file())
+}
+
+#[cfg(test)]
+mod authored_text_file_policy_tests {
+    use super::refuses_unrequested_authored_text_file;
+    use vak_intent::{Act, OutcomeSpec, Reading};
+
+    #[test]
+    fn a_carried_text_writer_requires_a_file_outcome_for_authoring() {
+        let author = Reading {
+            act: Act::Author,
+            ..Reading::general()
+        };
+        let inline = OutcomeSpec::from_reading("Make a plan suitable to share", &author, 1);
+        assert!(refuses_unrequested_authored_text_file(
+            "write",
+            Some(&inline)
+        ));
+
+        let file = OutcomeSpec::from_reading("Write the plan to plan.md", &author, 1);
+        assert!(!refuses_unrequested_authored_text_file(
+            "write",
+            Some(&file)
+        ));
+
+        let modification = OutcomeSpec::from_reading(
+            "Update the existing workspace file",
+            &Reading {
+                act: Act::Modify,
+                ..Reading::general()
+            },
+            1,
+        );
+        assert!(!refuses_unrequested_authored_text_file(
+            "write",
+            Some(&modification)
+        ));
+        assert!(!refuses_unrequested_authored_text_file("write", None));
+        assert!(!refuses_unrequested_authored_text_file(
+            "edit",
+            Some(&inline)
+        ));
+    }
 }
 
 fn estimate_messages(messages: &[Message], estimate: &dyn Fn(&str) -> u64) -> u64 {
@@ -8771,8 +8980,9 @@ fn queue_stream_event(pending: &mut VecDeque<StreamEvent>, event: StreamEvent) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tool_recovery_tests {
-    use super::{freshness_retrieval_hint, tool_recovery_hint};
+    use super::{freshness_retrieval_hint, normalize_encoded_collections, tool_recovery_hint};
 
     #[test]
     fn freshness_repair_names_only_admitted_generic_retrieval_routes() {
@@ -8817,10 +9027,61 @@ mod tool_recovery_tests {
     }
 
     #[test]
+    fn capability_kind_mismatch_gets_the_exact_registered_invocation() {
+        let hint = tool_recovery_hint(
+            r#"{"type":"capability_kind_mismatch","name":"planning-and-organizing","actual_kind":"skill","invocation":{"tool":"skill","arguments":{"name":"planning-and-organizing"}}}"#,
+        )
+        .expect("typed capability mismatch should be recoverable");
+        assert!(hint.contains("registered as a skill"), "{hint}");
+        assert!(hint.contains("call `skill`"), "{hint}");
+        assert!(
+            hint.contains("`{\"name\":\"planning-and-organizing\"}`"),
+            "{hint}"
+        );
+        assert!(
+            hint.contains("Do not retry `planning-and-organizing` as a tool"),
+            "{hint}"
+        );
+    }
+
+    #[test]
     fn authorization_and_user_control_failures_never_get_retry_advice() {
         assert!(tool_recovery_hint("capability denied by channel policy").is_none());
         assert!(tool_recovery_hint("cancelled").is_none());
         assert!(tool_recovery_hint("429 rate limit").is_none());
+    }
+
+    #[test]
+    fn encoded_structured_arguments_are_restored_before_final_schema_validation() {
+        let schema = serde_json::json!({
+            "type":"object",
+            "properties":{
+                "rows":{
+                    "type":"array",
+                    "items":{"type":"string"}
+                }
+            },
+            "required":["rows"]
+        });
+        let encoded = serde_json::json!({"rows":"[\"Item | Amount\",\"Soil | $12\"]"});
+        let normalized = normalize_encoded_collections(&schema, &encoded);
+        assert_eq!(normalized["rows"][1], "Soil | $12");
+        vak_tools::validate_input(&schema, &normalized).unwrap();
+
+        // A provider can stringify a matrix which the card normalizer accepts
+        // before authorization. Container recovery does not authorize it; the
+        // final tool schema check still runs after that normalization.
+        let matrix = serde_json::json!({"rows":"[[\"Item\",\"Amount\"],[\"Soil\",12]]"});
+        assert!(normalize_encoded_collections(&schema, &matrix)["rows"].is_array());
+
+        let invalid = serde_json::json!({"rows":"not a JSON array"});
+        assert_eq!(normalize_encoded_collections(&schema, &invalid), invalid);
+
+        let wrong_shape = serde_json::json!({"rows":"{\"unexpected\":true}"});
+        assert_eq!(
+            normalize_encoded_collections(&schema, &wrong_shape),
+            wrong_shape
+        );
     }
 
     #[test]

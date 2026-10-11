@@ -169,7 +169,7 @@ event). `prompts::seed(version)` substitutes `{{version}}` and splits it:
 |---|---|---|---|
 | `identity` | user-editable (seed is the broadest layer) | always, unless a narrower layer replaces it | who the agent is; reply in the person's language; write for the named surface |
 | `capability_contract` | code | always | call only tools in this turn's schemas; `find_tools` for "More tools"; skills are documents; MCP only through `mcp`; ground and cite; search discovery rules; history and `recall` rules; runtime `<…>` blocks are guidance, not requests |
-| `presentation_contract` | code | an `emit_*_card` tool is admitted | present card-shaped results through the matching card tool; text after a card is hidden unless it starts with `Note:`; never invent card data |
+| `presentation_contract` | code | an `emit_*_card` tool is admitted | present card-shaped results through the matching card tool; leave final text empty when the cards answer fully unless the user asked for text outside them or a material caveat is needed; ordinary final text is projected as authored, and `Note:` has no special meaning; never invent card data |
 | `document_contract` | code | `office_apply` is admitted | Word, Excel, PowerPoint and PDF are read with `doc_read` and changed only with `office_apply`, producing a review draft |
 | `sandbox_contract` | code | `bash` is admitted | run things rather than guess; scratch space; deliver files by writing them |
 | `operating_rules` | user-editable | always, unless replaced | answer questions, finish tasks, look before acting, verify, ask only when confused, report honestly |

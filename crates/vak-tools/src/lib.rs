@@ -21,6 +21,7 @@ pub mod landlock;
 pub mod mail_calendar;
 pub mod office_apply;
 mod office_pdf;
+pub mod plan;
 pub mod read;
 pub mod recall;
 pub mod retired;
@@ -37,6 +38,7 @@ use serde_json::Value;
 pub use context::ToolContext;
 pub use contract::validate_input;
 pub use find_tools::FindToolsTool;
+pub use plan::{Deliverable, PlanTool, parse_plan_args};
 pub use recall::{RecallRequest, RecallTool, apply_chars, apply_range, parse_recall_args};
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
 pub use webbrowse::WebBrowseTool;
@@ -46,7 +48,7 @@ pub use window::{LINE_WINDOW_CHARS, RESULT_WINDOW_CHARS, bounded, window};
 /// Machine classification of a tool failure, so the agent loop and the output
 /// gate can reason about it instead of re-running keyword matches against
 /// free-text errors. `ToolErrorKind::classify` is the single authority that
-/// drives both the recovery hint and the repair budget — there is no parallel
+/// drives both the recovery hint and the staged repair — there is no parallel
 /// classification in the agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolErrorKind {
@@ -113,7 +115,8 @@ impl ToolErrorKind {
         // payload/size and generic argument faults that used to be missed.
         // `unknown_capability` is correctable — the model can switch to an
         // admitted broker name instead.
-        if lower.contains("unknown_capability")
+        if lower.contains("capability_kind_mismatch")
+            || lower.contains("unknown_capability")
             || lower.contains("invalid")
             || lower.contains("missing")
             || lower.contains("parameter")
@@ -473,6 +476,26 @@ pub fn definitions(tools: &[std::sync::Arc<dyn Tool>]) -> Vec<vak_llm::ToolDefin
         .collect()
 }
 
+/// Whether a tool result says the runtime refused the call before anything
+/// ran: it named something that is not a callable tool
+/// (`unknown_capability`, `capability_kind_mismatch`) or its arguments were
+/// not the tool's (`invalid_arguments`). Read from the typed error the
+/// runtime wrote, never from an error's wording. Such a call has no effect
+/// to repair and nothing for the person to be told about.
+pub fn never_ran(result: &str) -> bool {
+    serde_json::Deserializer::from_str(result)
+        .into_iter::<serde_json::Value>()
+        .next()
+        .and_then(Result::ok)
+        .and_then(|value| value.get("type")?.as_str().map(str::to_owned))
+        .is_some_and(|kind| {
+            matches!(
+                kind.as_str(),
+                "unknown_capability" | "capability_kind_mismatch" | "invalid_arguments"
+            )
+        })
+}
+
 /// Canonical tool name resolution for aliases and common model hallucinations.
 /// Also remaps retired tool names (e.g. `python_eval`) to their replacement
 /// (`bash`), so a model that still reaches for a retired name is guided to
@@ -522,6 +545,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_call_that_never_ran_is_read_from_the_typed_error() {
+        assert!(never_ran(
+            r#"{"type":"unknown_capability","name":"emit_plan"} [recovery] Treat this as a failed attempt."#
+        ));
+        assert!(never_ran(
+            r#"{"type":"capability_kind_mismatch","name":"x"}"#
+        ));
+        assert!(never_ran(
+            r#"{"type":"invalid_arguments","message":"deliverables[0].name is missing"}"#
+        ));
+        assert!(!never_ran("unknown_capability"));
+        assert!(!never_ran(r#"{"type":"timeout","after_ms":300}"#));
+    }
+
+    #[test]
     fn classify_correctable_covers_arg_shape_and_payload_faults() {
         // The previously-uncovered webfetch byte-cap case must now classify
         // as correctable instead of falling through to Unknown (which meant
@@ -540,6 +578,10 @@ mod tests {
         );
         assert_eq!(
             ToolErrorKind::classify(r#"{"type":"unknown_capability","name":"tavily_search"}"#),
+            ToolErrorKind::Correctable,
+        );
+        assert_eq!(
+            ToolErrorKind::classify(r#"{"type":"capability_kind_mismatch","actual_kind":"skill"}"#),
             ToolErrorKind::Correctable,
         );
         assert_eq!(

@@ -121,6 +121,7 @@ const timelineFixtures: Fixture[] = [
   { label: "alt array field: steps[] of plain strings", payload: { steps: ["Draft proposal", "Get sign-off", "Ship"] } },
   { label: "alt array field: milestones[] with question/task/activity keys", payload: { milestones: [{ task: "Design review" }, { activity: "Launch" }] } },
   { label: "noncoding options[] stay readable as choices", payload: { title: "Ways to spend the afternoon", options: [{ name: "Walk in the park", description: "Low cost and flexible" }, { name: "Visit a museum", description: "Indoor option" }] } },
+  { label: "single echoed step is quiet; real alternatives remain", payload: { title: "Service rollout", items: [{ label: "Prepare", detail: "Finalize prerequisites", options: [{ label: "Prepare" }] }, { label: "Pilot", detail: "Test with a small group", options: [{ label: "Pilot" }, { label: "Full release", detail: "Skip the gradual rollout" }] }] } },
   { label: "no matching array field — falls back to flat key/value as items", payload: { owner: "Platform team", due: "2026-12-31", status: "on track" } },
   { label: "empty {}", payload: {} },
 ];
@@ -151,7 +152,8 @@ const chartFixtures: Fixture[] = [
 ];
 
 const mediaFixtures: Fixture[] = [
-  { label: "link: full url/image_url/title/description/site_name", payload: { url: "https://example.com", image_url: "https://example.com/preview.png", title: "Example Site", description: "A simulated link preview.", site_name: "example.com" } },
+  { label: "link: server tool url/thumbnail_url/title/description/site_name", payload: { url: "https://example.com", thumbnail_url: "https://example.com/preview.png", title: "Example Site", description: "A simulated link preview.", site_name: "example.com" } },
+  { label: "server tool media url/alt", payload: { url: "https://example.com/photo.jpg", alt: "Simulated photo" } },
   { label: "image/video/audio: source + alt", payload: { source: "https://example.com/photo.jpg", alt: "Simulated photo" } },
   { label: "url is non-string (no src should render)", payload: { url: 12345, title: "Bad URL type" } },
   { label: "empty {}", payload: {} },
@@ -196,6 +198,13 @@ export const TYPE_CATEGORY: Record<string, Category[]> = {
   progress_dashboard: ["universal_card"], simulation: ["universal_card"],
   // research
   "research.synthesis": ["research"], research_brief: ["research"], news: ["research"],
+  // Social package semantic types are registered to the same grounded
+  // research renderer, but remain explicit so pack additions cannot escape
+  // the presentation catalog's fixture coverage.
+  "social.reddit.research_brief": ["research"], "social.reddit.source_review": ["research"], "social.reddit.takeaway_board": ["research"],
+  "social.youtube.research_brief": ["research"], "social.youtube.source_review": ["research"], "social.youtube.takeaway_board": ["research"],
+  "social.x.research_brief": ["research"], "social.x.source_review": ["research"], "social.x.takeaway_board": ["research"],
+  "social.linkedin.research_brief": ["research"], "social.linkedin.source_review": ["research"], "social.linkedin.takeaway_board": ["research"],
   // diff
   "coding.diff": ["diff"],
   // test matrix

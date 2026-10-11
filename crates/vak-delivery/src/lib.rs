@@ -48,16 +48,18 @@ pub use vak_presentation as adaptive_presentation;
 
 pub const DELIVERY_SCHEMA_VERSION: u16 = 2;
 
-/// A card is the user-facing answer. Text after a card is only user-facing
-/// when the Agent explicitly marks it as additional information. The complete
-/// model text remains in the append-only session for inspection and replay.
-pub fn supplemental_card_note(narration: &str) -> Option<&str> {
+/// Text after a card remains ordinary assistant text. The complete model text
+/// is projected as written; presentation policy belongs in the prompt and
+/// structured output contract, not phrase matching here.
+pub fn card_followup_text(narration: &str) -> Option<&str> {
     let text = narration.trim();
-    let note = text
-        .strip_prefix("Note:")
-        .or_else(|| text.strip_prefix("Additional note:"))?
-        .trim();
-    (!note.is_empty()).then_some(note)
+    (!text.is_empty()).then_some(text)
+}
+
+/// Return non-empty assistant text that follows card output. Text prefixes,
+/// including "Note:", have no control meaning.
+pub fn visible_card_followup(narration: &str) -> Option<String> {
+    card_followup_text(narration).map(str::to_owned)
 }
 
 /// The complete answer and its conservative structural projection.
@@ -1545,17 +1547,35 @@ mod tests {
     }
 
     #[test]
-    fn card_note_requires_explicit_additional_text() {
-        assert_eq!(supplemental_card_note("The plan is shown above."), None);
+    fn card_followup_is_ordinary_assistant_text() {
         assert_eq!(
-            supplemental_card_note("Note: Bring an umbrella."),
-            Some("Bring an umbrella.")
+            card_followup_text("The plan is shown above."),
+            Some("The plan is shown above.")
         );
         assert_eq!(
-            supplemental_card_note("Additional note: Allow extra travel time."),
-            Some("Allow extra travel time.")
+            card_followup_text("Note: Bring an umbrella."),
+            Some("Note: Bring an umbrella.")
         );
-        assert_eq!(supplemental_card_note("Note:   "), None);
+        assert_eq!(
+            card_followup_text("Additional note: Allow extra travel time."),
+            Some("Additional note: Allow extra travel time.")
+        );
+        assert_eq!(card_followup_text("  \n  "), None);
+    }
+
+    #[test]
+    fn visible_card_followup_preserves_exact_assistant_text() {
+        for text in [
+            "The requested plan is complete. No further information is required.",
+            "Note: Bring an umbrella.",
+            "Additional note: Allow extra travel time.",
+            "
+- Check the schedule
+- Bring water",
+        ] {
+            assert_eq!(visible_card_followup(text).as_deref(), Some(text.trim()));
+        }
+        assert_eq!(visible_card_followup("  \n  "), None);
     }
 
     fn job(markup: Markup, max_chars: Option<usize>) -> DeliveryJob {

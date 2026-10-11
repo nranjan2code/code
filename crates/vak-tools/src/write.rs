@@ -41,7 +41,7 @@ impl Tool for WriteTool {
     }
 
     fn description(&self) -> &str {
-        "Write text content to a file, creating parent directories as needed. Overwrites the file if it exists. Not for Word, Excel, PowerPoint or PDF files: those are made with office_apply."
+        "Write a text file the user requested in the workspace, creating parent directories as needed. Do not create a file just to duplicate an answer already delivered in cards or prose. Overwrites the file if it exists. Not for Word, Excel, PowerPoint or PDF files: those are made with office_apply."
     }
 
     fn schema(&self) -> Value {

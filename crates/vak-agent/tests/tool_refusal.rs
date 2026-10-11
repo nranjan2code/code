@@ -199,7 +199,7 @@ async fn a_text_edit_of_a_word_file_is_refused_without_asking_anyone() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_repair_directive_is_recorded_as_control_not_as_the_persons_words() {
+async fn a_tool_that_keeps_failing_is_shown_its_schema_then_withdrawn_and_the_turn_goes_on() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -268,7 +268,7 @@ async fn the_repair_directive_is_recorded_as_control_not_as_the_persons_words() 
     );
     let (tx, mut rx) = mpsc::channel(512);
     tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    agent
+    let outcome = agent
         .run(
             "fix the notes",
             &Default::default(),
@@ -276,7 +276,36 @@ async fn the_repair_directive_is_recorded_as_control_not_as_the_persons_words() 
             tx,
         )
         .await;
+    // The turn ends with the model's own words, never a canned refusal.
+    assert!(
+        matches!(
+            &outcome,
+            TurnOutcome::Completed { response } if response.text_content() == "Stopped."
+        ),
+        "{outcome:?}"
+    );
     let ledger = vak_session::SessionLog::text(&ledger);
+    let schema_at = ledger
+        .find("The same tool call failed twice")
+        .expect("schema shown");
+    let withdrawn_at = ledger
+        .find("`edit` is withdrawn for the rest of this turn")
+        .expect("tool withdrawn");
+    assert!(
+        schema_at < withdrawn_at,
+        "the schema comes before the withdrawal"
+    );
+    assert_eq!(
+        ledger
+            .matches("is withdrawn for the rest of this turn")
+            .count(),
+        1,
+        "a withdrawn tool is not withdrawn again"
+    );
+    assert!(
+        ledger[withdrawn_at..].contains("unknown_capability"),
+        "a later call of the withdrawn tool is told it is not a tool"
+    );
     let directives: Vec<&str> = ledger
         .lines()
         .filter(|line| line.contains("[repair-directive]"))
@@ -424,12 +453,6 @@ async fn requests_after_a_draft(delivers: bool, final_text: &str) -> usize {
         delivers,
         ..Default::default()
     })];
-    cfg.presentation_check = Some(Arc::new(|_text: &str, _offered: &[String]| {
-        Some(vak_agent::PresentationNudge {
-            tool: "make_draft".into(),
-            text: "[presentation-check] show it as a card".into(),
-        })
-    }));
     let mut script = VecDeque::from([msg(
         vec![ContentBlock::ToolUse {
             id: "c1".into(),
@@ -480,8 +503,8 @@ async fn an_answer_after_a_delivered_draft_is_not_sent_back_to_become_a_card() {
     );
     assert_eq!(
         requests_after_a_draft(false, "Added the slide; the draft is ready for review.").await,
-        3,
-        "without a delivered file, the check still asks once for a card"
+        2,
+        "no reading of the answer sends it back to become a card"
     );
 }
 

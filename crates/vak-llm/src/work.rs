@@ -213,7 +213,9 @@ pub fn classify_error(e: &LlmError) -> (FailureDomain, Settlement) {
         LlmError::InvalidRequest(_) => (FailureDomain::Request, Settlement::Failed),
         LlmError::Api { .. } => (FailureDomain::Request, Settlement::Unknown),
         LlmError::Network(_) => (FailureDomain::Network, Settlement::Unknown),
-        LlmError::Parse(_) => (FailureDomain::Model, Settlement::Unknown),
+        LlmError::Parse(_) | LlmError::ToolCallFormat(_) => {
+            (FailureDomain::Model, Settlement::Unknown)
+        }
         LlmError::Context(_) => (FailureDomain::Context, Settlement::Failed),
         LlmError::Aborted { .. } => (FailureDomain::Unknown, Settlement::Cancelled),
     }

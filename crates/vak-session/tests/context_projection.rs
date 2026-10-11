@@ -85,11 +85,12 @@ fn turn(log: &mut SessionLog, q: &str, a: &str) -> String {
     id
 }
 
-fn plan(full: &[&String]) -> WorkingSetPlan {
+fn plan(full: &[&String], cards: &[&String]) -> WorkingSetPlan {
     WorkingSetPlan {
         per_turn: full
             .iter()
             .map(|id| ((*id).clone(), Fidelity::Full))
+            .chain(cards.iter().map(|id| ((*id).clone(), Fidelity::Card)))
             .collect(),
         ..Default::default()
     }
@@ -103,14 +104,14 @@ fn full_turns_stay_byte_identical_as_card_lines_accumulate() {
     turn(&mut log, "bravo one", "b1");
     log.append_message(rec(Message::user_text("charlie two")))
         .unwrap();
-    let before = log.derive_with_plan(&plan(&[&full]));
+    let before = log.derive_with_plan(&plan(&[&full], &[]));
     log.append_message(rec(Message::assistant(vec![ContentBlock::text("c2")])))
         .unwrap();
     let id = TurnIndex::from_log(&log).turns.last().unwrap().id.clone();
     close(&mut log, &id);
     log.append_message(rec(Message::user_text("delta three")))
         .unwrap();
-    let after = log.derive_with_plan(&plan(&[&full]));
+    let after = log.derive_with_plan(&plan(&[&full], &[&id]));
     assert_eq!(
         text(&before[0]),
         text(&after[0]),

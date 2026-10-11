@@ -5,7 +5,7 @@
 //! only by name-and-description search here (or, on Anthropic, by the
 //! provider's own tool search). No new dependency — matching is plain
 //! case-insensitive substring and token overlap over each candidate's name,
-//! description, and JSON-schema argument names/descriptions.
+//! description, and JSON-schema argument names, descriptions, and enum values.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -63,7 +63,7 @@ impl Tool for FindToolsTool {
     }
 
     fn description(&self) -> &str {
-        "Search all admitted tools, including already-loaded broker tools, by name, capability domain, description, or argument names/descriptions. Returns full schemas for the best matches; deferred matches become usable for the rest of this turn."
+        "Search all admitted tools, including already-loaded broker tools, by name, capability domain, description, argument names/descriptions, or supported choice values. Returns full schemas for the best matches; deferred matches become usable for the rest of this turn."
     }
 
     fn schema(&self) -> Value {
@@ -72,7 +72,7 @@ impl Tool for FindToolsTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Words to match against tool names, descriptions, and argument names/descriptions."
+                    "description": "Words to match against tool names, descriptions, argument names/descriptions, and supported choice values."
                 },
                 "limit": {
                     "type": "integer",
@@ -179,6 +179,12 @@ fn score_tool(
     if name_lower == query_lower {
         score += 100;
     }
+    // A supported choice whose full value equals the query is a stronger
+    // signal than a longer enum value that merely contains it (for example,
+    // `board` should select the board card ahead of `social.x.takeaway_board`).
+    if contains_exact_enum(&def.parameters, query_lower) {
+        score += 60;
+    }
     if name_lower.contains(query_lower) {
         score += 20;
     }
@@ -189,21 +195,89 @@ fn score_tool(
         if !token.is_empty() && haystack.contains(token) {
             score += 5;
         }
+        // A query word that is a whole part of the tool's own name says more
+        // than the same letters inside another tool's prose ("diff" in
+        // "differ" ranked the comparison block above the diff block).
+        if !token.is_empty() && name_lower.split('_').any(|part| part == *token) {
+            score += 15;
+        }
     }
     score
 }
 
+fn contains_exact_enum(value: &Value, query_lower: &str) -> bool {
+    match value {
+        Value::Object(object) => {
+            object
+                .get("enum")
+                .and_then(Value::as_array)
+                .is_some_and(|values| {
+                    values.iter().any(|value| {
+                        value
+                            .as_str()
+                            .is_some_and(|value| value.eq_ignore_ascii_case(query_lower))
+                    })
+                })
+                || object
+                    .values()
+                    .any(|child| contains_exact_enum(child, query_lower))
+        }
+        Value::Array(values) => values
+            .iter()
+            .any(|child| contains_exact_enum(child, query_lower)),
+        _ => false,
+    }
+}
+
 fn collect_schema_text(schema: &Value, out: &mut String) {
-    let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+    let Some(object) = schema.as_object() else {
         return;
     };
-    for (name, property) in properties {
-        out.push(' ');
-        out.push_str(&name.to_ascii_lowercase());
-        if let Some(description) = property.get("description").and_then(Value::as_str) {
+
+    if let Some(properties) = object.get("properties").and_then(Value::as_object) {
+        for (name, property) in properties {
             out.push(' ');
-            out.push_str(&description.to_ascii_lowercase());
+            out.push_str(&name.to_ascii_lowercase());
+            if let Some(description) = property.get("description").and_then(Value::as_str) {
+                out.push(' ');
+                out.push_str(&description.to_ascii_lowercase());
+            }
+            collect_schema_text(property, out);
         }
+    }
+
+    // Array-item properties are part of the arguments the model must fill,
+    // and can contain the only useful discovery vocabulary for a card (for
+    // example chart-point axes or timeline-step details). Walk nested object
+    // schemas as well as top-level properties; enum values remain searchable
+    // at every depth.
+    if let Some(items) = object.get("items") {
+        collect_schema_text(items, out);
+    }
+    collect_enum_text(schema, out);
+}
+
+fn collect_enum_text(value: &Value, out: &mut String) {
+    match value {
+        Value::Object(object) => {
+            if let Some(values) = object.get("enum").and_then(Value::as_array) {
+                for value in values {
+                    if let Some(value) = value.as_str() {
+                        out.push(' ');
+                        out.push_str(&value.to_ascii_lowercase());
+                    }
+                }
+            }
+            for child in object.values() {
+                collect_enum_text(child, out);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_enum_text(child, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -250,6 +324,73 @@ mod tests {
         let out = tool.execute(&json!({"query": "forecast"}), &ctx()).await;
         let parsed: Value = serde_json::from_str(&out.content).unwrap();
         assert_eq!(parsed["matches"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn matches_nested_array_item_argument_descriptions() {
+        let tool = FindToolsTool::new(vec![def(
+            "emit_chart_card",
+            "Emit a data card.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "points": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "x": {"type": "string", "description": "Month shown on the horizontal axis"},
+                                "y": {"type": "number", "description": "Revenue shown on the vertical axis"}
+                            }
+                        }
+                    }
+                }
+            }),
+        )]);
+
+        for query in ["horizontal axis", "revenue vertical"] {
+            let out = tool.execute(&json!({"query": query}), &ctx()).await;
+            let parsed: Value = serde_json::from_str(&out.content).unwrap();
+            assert_eq!(
+                parsed["matches"][0]["name"], "emit_chart_card",
+                "query: {query}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn matches_supported_presentation_types_from_schema_enums() {
+        let tool = FindToolsTool::new(vec![
+            def(
+                "emit_metric_card",
+                "Emit a measurement card.",
+                json!({
+                    "type":"object",
+                    "properties":{"semantic_type":{"type":"string","enum":["metric","telemetry.metric","weather"]}}
+                }),
+            ),
+            def(
+                "emit_timeline_card",
+                "Emit an ordered plan card.",
+                json!({
+                    "type":"object",
+                    "properties":{"semantic_type":{"type":"string","enum":["timeline","care_plan"]}}
+                }),
+            ),
+        ]);
+
+        for (query, expected) in [
+            ("weather", "emit_metric_card"),
+            ("houseplant care plan", "emit_timeline_card"),
+        ] {
+            let out = tool.execute(&json!({"query":query}), &ctx()).await;
+            let parsed: Value = serde_json::from_str(&out.content).unwrap();
+            assert_eq!(parsed["matches"][0]["name"], expected, "query: {query}");
+            assert!(
+                parsed["matches"][0]["input_schema"]["properties"]["semantic_type"]["enum"]
+                    .is_array()
+            );
+        }
     }
 
     #[tokio::test]

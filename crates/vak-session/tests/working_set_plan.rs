@@ -144,6 +144,22 @@ fn card_fidelity_collapses_into_one_turns_block() {
 }
 
 #[test]
+fn omitted_turns_stay_out_of_the_projection_for_recall() {
+    let dir = tempdir().unwrap();
+    let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
+    three_closed_turns(&mut log);
+    log.append_message(user_msg("a fresh, self-contained request"))
+        .unwrap();
+
+    let messages = log.derive_with_plan(&WorkingSetPlan::default());
+    assert_eq!(messages.len(), 1);
+    assert_eq!(
+        messages[0].text_content(),
+        "a fresh, self-contained request"
+    );
+}
+
+#[test]
 fn a_packet_range_with_no_stored_packet_renders_as_cards_never_as_nothing() {
     let dir = tempdir().unwrap();
     let mut log = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();

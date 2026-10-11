@@ -509,6 +509,10 @@ export async function activate(id: string) {
     return;
   }
   setActiveId(id);
+  // Until its durable record is read, a conversation is loading, not empty:
+  // attaching runs first, and showing the greeting meanwhile flashed "Hi,
+  // I'm Vakyartha" over a conversation with hundreds of turns.
+  if (itemsOf(id).length === 0) setHydratingId(id);
   const matchedAgent = sessions().find((session) => session.session_id === id)?.agent;
   if (matchedAgent) {
     setActiveAgent(matchedAgent);
@@ -526,6 +530,7 @@ export async function activate(id: string) {
   try {
     await api.attachSession(id);
   } catch (e) {
+    setHydratingId((current) => (current === id ? null : current));
     appendSystem(id, `could not resume this task: ${e instanceof Error ? e.message : String(e)}`);
     return false;
   }
@@ -923,6 +928,12 @@ function ensureSideStream(id: string) {
  * so a missed event can never strand the UI.
  */
 let backendRefreshEpoch = 0;
+// Unknown startup state is not an empty install. Keep the workspace gate
+// out of view until the latest backend probe has an authoritative result.
+const [backendResolved, setBackendResolved] = createSignal(false);
+// A probe that failed is not an answer: the gate keeps waiting and says the
+// server has not answered yet, and the probe runs again.
+const [backendUnreachable, setBackendUnreachable] = createSignal(false);
 
 function resetWorkspaceView() {
   lastSessionByAgent.clear();
@@ -949,9 +960,11 @@ export async function refreshBackend(knownInfo?: import("./types").BackendInfo):
   try {
     const info = knownInfo ?? await api.initBackend();
     if (epoch !== backendRefreshEpoch) return false;
+    setBackendUnreachable(false);
     if (!info.ready) {
       api.adoptBackend(info);
       setBackend(info);
+      setBackendResolved(true);
       return false;
     }
     const changedWorkspace = !!backend().cwd && backend().cwd !== info.cwd;
@@ -969,11 +982,18 @@ export async function refreshBackend(knownInfo?: import("./types").BackendInfo):
       setProviders(null);
     }
     setBackend(info);
+    setBackendResolved(true);
     await loadHealth();
     await refreshSessions();
     if (!activeId() && !window.location.hash.startsWith("#/s/")) await openAgentChat("vak");
     return true;
   } catch {
+    if (epoch === backendRefreshEpoch && !backendResolved()) {
+      setBackendUnreachable(true);
+      window.setTimeout(() => {
+        if (epoch === backendRefreshEpoch) void refreshBackend();
+      }, 1000);
+    }
     return false;
   }
 }
@@ -1239,6 +1259,22 @@ export default function App() {
     window.addEventListener("hashchange", onHashChange);
     const sessionRefresh = window.setInterval(() => void refreshSessions(), 10_000);
     const healthRefresh = window.setInterval(() => void loadHealth(), 10_000);
+    // Background tabs can have their timers throttled long enough to miss the
+    // session heartbeat after a run completes. Reconcile immediately when the
+    // person returns so a missed RunFinished cannot leave this conversation
+    // showing Working until a manual reload. Coalesce focus + visibility events
+    // into one request when both fire for the same foreground transition.
+    let foregroundRefreshQueued = false;
+    const onForeground = () => {
+      if (document.visibilityState !== "visible" || foregroundRefreshQueued) return;
+      foregroundRefreshQueued = true;
+      queueMicrotask(() => {
+        foregroundRefreshQueued = false;
+        if (document.visibilityState === "visible") void refreshSessions();
+      });
+    };
+    document.addEventListener("visibilitychange", onForeground);
+    window.addEventListener("focus", onForeground);
 
     // The browser knows about the radio before any request times out, so
     // losing the network shows immediately rather than after a stalled
@@ -1343,6 +1379,8 @@ export default function App() {
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("offline", goOffline);
       window.removeEventListener("online", goOnline);
+      document.removeEventListener("visibilitychange", onForeground);
+      window.removeEventListener("focus", onForeground);
       stopHostWatch();
       stopStatusWatch();
       window.clearInterval(sessionRefresh);
@@ -1440,7 +1478,13 @@ export default function App() {
     <>
     <Show
       when={backend().ready ? backend() : null}
-      fallback={<WorkspaceGate />}
+      fallback={
+        <Show when={backendResolved()} fallback={
+          <div class="gate"><div class="gate-card" role="status"><p class="gate-lead">{backendUnreachable() ? "Vakyartha has not answered yet. Trying again…" : "Opening Vakyartha…"}</p></div></div>
+        }>
+          <WorkspaceGate />
+        </Show>
+      }
     >
       {(info) => (
         <div

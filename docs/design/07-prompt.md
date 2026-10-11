@@ -61,6 +61,26 @@ research, data, and lifestyle results. The built-in seed pack currently ships
 reconciled additively at server startup; user presentations and activations are
 retained.
 
+Presentation instructions explain when a card helps; the admitted tool schema
+is the model's executable shape contract. Do not duplicate every card's field
+schema or semantic-type catalogue in the seed: the capability resolver loads
+the `presentation_contract` only when presentation tools are admitted, and
+the selected tools provide their own descriptions and schemas. A prompt can
+ask for one or several appropriate cards and concise narration, but it cannot
+make a malformed call pass the agent's pre-execution schema gate. Call
+normalization and any measured provider-shape repair run before that gate;
+execution then validates the built payload against the semantic registry.
+For the full call-to-card sequence and fault-isolation guide, see
+`docs/design/30-render-architecture.md` §30.1.
+
+Historical results are not added to each request to fill available space. The
+working-set planner carries at most the compact card for an immediate
+anaphoric referent. Older or larger details come from `recall` only when the
+current request needs them, including an explicit reference many turns back.
+The ledger remains complete; the model sees the current turn and the selected
+historical evidence. Keep this instruction next to the multi-card rule so a
+presentation update does not restore stale-context behavior.
+
 ## Diff notes
 
 - 7.0.0-dev (data-architecture M3b slice 4): the sandbox line names
@@ -309,6 +329,38 @@ retained.
   rewritten to the same contract: what exists, setup, limits, troubleshooting,
   a credential pasted in chat, pasted content as data, and no posting
   (docs/plans/social-platform-connectors.md).
+
+- Unreleased (task facts): the history rule now says to carry prior facts only
+  when the new request clearly continues that task, and to use the current
+  request's names, numbers, dates and quantities for a separate scenario. This
+  addresses a live Ollama run that reused attendee and budget figures from the
+  preceding event-planning example.
+
+- Unreleased (plans and checks, docs/design/86-model-plans-runtime-checks.md):
+  the operating rules gain one rule: for a request with more than one
+  deliverable, or a change or a check, call `plan` first, and Vakyartha
+  checks what is produced against it. "A task wants the task finished, not a
+  plan" now says "not a description of how you would do it", so the word no
+  longer argues with the tool. The history bullet is rewritten to say each
+  rule once (it said three ways not to call `recall` empty), keeping every
+  rule: read by meaning, `recall`/`session_search` for a needed earlier
+  detail however long ago, verify the best match, ask when several fit, none
+  for a fresh request, history versus current evidence, dates, no old
+  authority, this request's own facts. The presentation block is rewritten
+  to principles: a card per distinct part with its plan deliverable in
+  `answers`, only supported data, requested text verbatim, optional final
+  text otherwise, headings, newest request, no duplicate files. Removed:
+  "never put another requested section in plain text after the cards"
+  (it contradicted "otherwise answer in prose"), the timeline-duration and
+  metric/weather lines (the tools' own schemas carry them), and the
+  flattening line (a card per distinct part says it). The seed is 1,553
+  words, from 1,873.
+- 2026-10-11, file delivery. The sandbox block's "Deliver a text or code
+  file by writing it" read as "deliver text by writing a file": in the live
+  pantry run (run_01a128f6-025f-7e41-865a-c654d640dbe0) the routine was
+  written to a workspace file nobody asked for and then restated as
+  Markdown. It now says a file is written when the work is itself a file,
+  and that an answer meant to be read is not one.
 
 ## Successor
 

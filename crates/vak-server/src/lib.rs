@@ -6468,6 +6468,7 @@ fn apply_plan_change(
                 origin: vak_intent::RequirementOrigin::Explicit,
                 importance: vak_intent::RequirementImportance::Must,
                 target: None,
+                form: None,
             })
         }
         vak_intent::InterventionKind::RemoveRequirement => {
@@ -8273,7 +8274,7 @@ fn rejected_draft_entry_ids(
                 .any(|block| matches!(block, vak_llm::ContentBlock::ToolUse { .. }));
         let next_asks_for_redo = next
             .control
-            .is_some_and(vak_intent::control::ControlKind::retries_answer);
+            .is_some_and(vak_intent::control::ControlKind::discards_assistant_draft);
         if is_text_only_assistant && next_asks_for_redo {
             ids.insert(prev.entry_id.clone());
         }
@@ -9750,11 +9751,13 @@ async fn intent_explain(
         vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
         vak_intent::Resolution::Settled(_) => None,
     };
-    let intent = resolution.intent();
+    let mut intent = resolution.intent();
+    let outcome = vak_core::intent::complete_output_contract(&mut intent, &q.prompt);
     Json(serde_json::json!({
         "reading": intent.reading,
         "strands": intent.strands,
         "engagement": intent.engagement,
+        "outcome": outcome,
         "provenance": intent.provenance,
         "narrows": intent
             .engagement
@@ -26592,8 +26595,8 @@ mod sandbox_promotion_tests {
         let effective = super::effective_presentation_library(&empty, "/tmp/vak-dev-workspace");
         assert_eq!(empty.definitions().count(), 0);
         assert!(empty.activations().is_empty());
-        assert_eq!(effective.definitions().count(), 88);
-        assert_eq!(effective.activations().len(), 88);
+        assert_eq!(effective.definitions().count(), 87);
+        assert_eq!(effective.activations().len(), 87);
         assert!(
             effective
                 .select_preferred("metric", "user", "/tmp/vak-dev-workspace")
@@ -26638,8 +26641,8 @@ mod sandbox_promotion_tests {
                 activated += 1;
             }
         }
-        assert_eq!(activated, 88);
-        assert_eq!(library.activations().len(), 88);
+        assert_eq!(activated, 87);
+        assert_eq!(library.activations().len(), 87);
 
         // Verify deactivate all
         let spec_ids: Vec<String> = library
