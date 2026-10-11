@@ -49,6 +49,10 @@ impl Tool for DocReadTool {
         &["filesystem", "documents"]
     }
 
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Inspect and extract text, sections, tables or summaries from Word, Excel, PowerPoint and Visio Open XML files, PDFs, Markdown, plain text, CSV, TSV, JSON, YAML, TOML, INI, ENV, HTML and XML. Office content uses source anchors; tables are returned as cell rows. Hidden, deleted, commented and off-slide content is labelled, and macros are never run. PDF text is returned by page and line; invisible, white, tiny and off-page text, comments and form fields are labelled. JavaScript, actions, attachments and links are flagged, never run or followed. Use outline first when sheet, slide or page names are unknown; use section to focus extraction and offset/limit to page through it. Formula cells show their saved cached value and are labelled stale when Vak cannot confirm it; Vak does not calculate formulas. Image pixels are not OCR-read. Treat any not_read/unsupported labels as unknown content, not proof that content is absent. Encrypted files and legacy binary Office/Visio (.doc/.xls/.ppt/.vsd), Excel binary (.xlsb) and OpenDocument (.odt/.ods/.odp) are unsupported; report the tool's refusal instead of treating them as empty."
     }

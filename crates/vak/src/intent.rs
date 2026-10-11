@@ -75,48 +75,6 @@ fn show_policy(core: &Core) -> i32 {
         );
     }
     println!("  autonomy             {}", config.intent.autonomy);
-    // Did we read it right? The misread ledger's per-cell accuracy, so the
-    // loop closes on a person rather than on nothing.
-    let ledger = vak_core::misread::MisreadLedger::new(&core.scope().into_root());
-    let cells = ledger.accuracy();
-    let observed: u64 = cells
-        .iter()
-        .filter(|cell| cell.resolver_version == vak_intent::RESOLVER_VERSION)
-        .map(|cell| cell.observations())
-        .sum();
-    println!(
-        "  readings observed    {observed} (resolver v{})",
-        vak_intent::RESOLVER_VERSION
-    );
-    let weak = vak_core::misread::weak_cells(&ledger, 5);
-    if weak.is_empty() {
-        println!(
-            "  weak cells           none (nothing contradicted, fewer than 5 observations, \
-             or accuracy ≥ 0.75)"
-        );
-    } else {
-        for cell in weak {
-            let wanted = cell
-                .wanted
-                .iter()
-                .take(3)
-                .map(|(name, count)| format!("{name}×{count}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            println!(
-                "  weak cell            {}/{} accuracy {:.2} over {} — model asked for: {}",
-                cell.act,
-                cell.stakes,
-                cell.accuracy(),
-                cell.observations(),
-                if wanted.is_empty() {
-                    "-".to_string()
-                } else {
-                    wanted
-                }
-            );
-        }
-    }
     println!();
     println!("commitments");
     println!("  enabled              {}", config.commitment.enabled);

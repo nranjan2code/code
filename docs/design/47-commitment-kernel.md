@@ -17,7 +17,7 @@ there.
 | I5 | envelopes: `vak grant` / `vak revoke`; a live grant narrows the strands that serve its commitment and pre-authorizes, one gate at a time, the actions it covers; revocation honoured on read | `vak_intent::apply_envelopes` → `intent::permission_mode` → `cfg.mode` and `spend_ceiling_usd` → the run cap; `intent::envelope_check` → `AgentConfig::envelope_check` |
 | I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
 | I7 | server endpoints, admin portfolio, composer strip, the `commitments` capability, per-channel autonomy ceiling | delivery cadence/urgency were read here until 2026-10-09, when both were removed |
-| I8 | misread evidence: escalation-as-measurement, restatement, per-cell accuracy | scoped to the turn's own tool calls; `vak intent show` reports weak cells |
+| I8 | misread evidence | removed 2026-10-11: no reading decides which tools are loaded, so there is nothing for it to measure (docs/design/88-control-plane.md §12.1) |
 | **I9** | **tiers 2/3**: a `Classify` dispatch on a weak reading — spend-gated, watchdogged, fail-open | `[intent] escalate = local \| cloud`, `classify_model` |
 | **I10** | **control plane**: authority from the channel, explicit commands, no text heuristics | `ControlSource`, `parse_command`, `evaluate_intervention` |
 
@@ -674,6 +674,10 @@ the one that dispatched it (`InterventionRequest::target_parent_session_id`).
 When the parentage is unknown, the answer is no.
 
 ### Did we read it right?
+
+Superseded 2026-10-11: the misread ledger is removed, because no reading
+decides which tools are loaded any more (docs/design/88-control-plane.md
+§12.1). The section is kept for history.
 
 Misclassification becomes **measurable**. Typed misread signals: the user
 rephrases immediately, corrects, aborts, overrides the intent chip — and

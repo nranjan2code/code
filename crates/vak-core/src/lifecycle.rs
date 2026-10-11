@@ -624,7 +624,6 @@ impl Core {
             for (kind, dir) in [
                 ("cost", scope.cost_log()),
                 ("routing", scope.routing_evidence()),
-                ("intent", scope.intent_evidence()),
             ] {
                 chains.push(chain(
                     format!("{kind}:{agent}"),

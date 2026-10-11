@@ -6,8 +6,7 @@
 
 use vak_core::intent;
 use vak_intent::{
-    ApprovalCeiling, Authority, Autonomy, DomainSet, Envelope, Escalation, PermissionCeiling,
-    Stakes,
+    ApprovalCeiling, Authority, Autonomy, Envelope, Escalation, PermissionCeiling, Stakes,
 };
 
 fn envelope(ceiling: PermissionCeiling) -> Envelope {
@@ -146,32 +145,24 @@ fn approval_composition_never_loosens_configuration() {
     }
 }
 
-/// A reading decides only what is *loaded*: the surface partitions exactly the
-/// admitted tools into loaded and deferred, and can neither add a tool nor
-/// lose one.
+/// The surface partitions exactly the admitted tools into loaded and
+/// deferred, and can neither add a tool nor lose one.
 #[test]
-fn a_reading_partitions_the_admitted_tools_and_never_adds_or_drops_one() {
+fn the_surface_partitions_the_admitted_tools_and_never_adds_or_drops_one() {
     let admitted = vak_tools::default_tools();
     let names = |defs: &[vak_llm::ToolDefinition]| -> Vec<String> {
         defs.iter().map(|d| d.name.clone()).collect()
     };
-    for required in [
-        DomainSet::only(["code-exec"]),
-        DomainSet::Empty,
-        DomainSet::All,
-    ] {
+    for progressive in [true, false] {
         let surface =
-            vak_core::capability::build_tool_surface(&admitted, &required, &Default::default());
+            vak_core::capability::build_tool_surface(&admitted, progressive, &Default::default());
         let mut seen = names(&surface.core);
         seen.extend(names(&surface.deferred));
         seen.sort();
         let mut expected: Vec<String> = admitted.iter().map(|t| t.name().to_string()).collect();
         expected.sort();
-        assert_eq!(seen, expected, "{required:?}");
-        assert!(
-            names(&surface.core).contains(&"read".to_string()),
-            "an always-loaded tool is loaded whatever the reading"
-        );
+        assert_eq!(seen, expected, "{progressive}");
+        assert!(names(&surface.core).contains(&"read".to_string()));
     }
 }
 

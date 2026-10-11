@@ -21,6 +21,10 @@ impl Tool for WriteTool {
         &["documents"]
     }
 
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     /// Every file written is claimed; one written with a `title` is
     /// declared a deliverable.
     fn artifact(&self, args: &Value) -> Option<crate::ArtifactClaim> {

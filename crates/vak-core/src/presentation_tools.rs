@@ -3398,11 +3398,7 @@ mod tests {
             .into_iter()
             .map(|tool| std::sync::Arc::new(tool) as std::sync::Arc<dyn Tool>)
             .collect();
-        let surface = crate::capability::build_tool_surface(
-            &tools,
-            &vak_intent::DomainSet::Empty,
-            &Default::default(),
-        );
+        let surface = crate::capability::build_tool_surface(&tools, true, &Default::default());
         assert!(surface.deferred.is_empty());
         // Every block type is registered and has exactly one block. A type
         // only history carries still renders, but no block emits it.

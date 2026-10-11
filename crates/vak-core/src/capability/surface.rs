@@ -3,20 +3,18 @@
 //! schema one `find_tools` call away). See docs/design/68-context-engine.md §5.
 //!
 //! This is presentation, never policy. Every tool here was already admitted
-//! by [`super::turn`]; the split only decides what the model reads up front.
-//! A wrong prediction therefore costs one `find_tools` round trip and is the
-//! measured misread (`crate::misread`), never a missing capability.
+//! by [`super::turn`]; the split only decides what the model reads up front,
+//! so a deferred tool costs one `find_tools` round trip, never a capability.
 //!
 //! The split reads each tool's own declaration (`Tool::always_loaded`,
-//! `Tool::serves`, `Tool::presents_cards`) — the harness keeps no table of
+//! `Tool::serves`, `Tool::presents_cards`), never a reading of the request
+//! (docs/design/88-control-plane.md §12.1); the harness keeps no table of
 //! tool names.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use vak_llm::ToolDefinition;
-
-use super::domain::{Domain, Serves};
 
 /// One turn's tools, split for the request.
 #[derive(Debug, Clone, Default)]
@@ -26,52 +24,34 @@ pub struct ToolSurface {
     /// Schema withheld; reachable through `find_tools`, or Anthropic
     /// `defer_loading` on legs that support it.
     pub deferred: Vec<ToolDefinition>,
-    /// Deferred because the turn's reading did not predict them — the set a
-    /// later call measures a misread against. Card tools are excluded: a
-    /// card is an output choice, not a reading of what the request needs.
-    pub unpredicted: BTreeSet<String>,
 }
 
 /// Split the admitted `tools` for one turn.
 ///
-/// * `required_domains` is the reading's prediction. `All` (progressive
-///   disclosure off, or the kernel disabled) loads everything.
-/// * Every admitted presentation tool is loaded: choosing an output shape
-///   requires its schema and must not depend on request vocabulary.
-/// * `carried` names the non-presentation tools earlier turns of this session
-///   loaded; they stay loaded (cache stability, docs/design/68 §6). Card
-///   schemas carry no earlier card content or demand for structured output.
-///
-/// Always-loaded and undeclared tools are loaded whatever the prediction:
-/// the first because the model cannot operate without them, the second
-/// because deferring is a context saving and an unknown tool fails open.
+/// * `progressive` off loads everything.
+/// * A tool that declares itself always loaded, a presentation tool (an
+///   output shape needs its schema), and a tool that declares no domain (an
+///   unknown tool fails open) are loaded.
+/// * `carried` names the tools earlier turns of this session loaded; they
+///   stay loaded (cache stability, docs/design/68 §6), so the set only
+///   grows, in the tools' fixed order.
+/// * Every other tool is deferred.
 pub fn build_tool_surface(
     tools: &[Arc<dyn vak_tools::Tool>],
-    required_domains: &vak_intent::DomainSet,
+    progressive: bool,
     carried: &BTreeSet<String>,
 ) -> ToolSurface {
-    let required: Option<BTreeSet<Domain>> = (!required_domains.is_unconstrained())
-        .then(|| required_domains.iter().map(|d| Domain::parse(d)).collect());
     let mut surface = ToolSurface::default();
     for tool in tools {
         let definition = ToolDefinition::new(tool.name(), tool.description(), tool.schema());
-        // A tool this session already had loaded stays loaded: providers cache
-        // the tools array ahead of everything else, so a set that follows each
-        // turn's reading rewrites the cache from the first byte every turn.
-        // The set only grows, in the tools' fixed order.
-        let loaded = match &required {
-            None => true,
-            Some(_) if tool.always_loaded() => true,
-            Some(_) if tool.presents_cards() => true,
-            Some(_) if carried.contains(tool.name()) => true,
-            Some(required) => Serves::from_labels(tool.serves()).serves_any(required),
-        };
+        let loaded = !progressive
+            || tool.always_loaded()
+            || tool.presents_cards()
+            || tool.serves().is_empty()
+            || carried.contains(tool.name());
         if loaded {
             surface.core.push(definition);
         } else {
-            if !tool.presents_cards() {
-                surface.unpredicted.insert(tool.name().to_string());
-            }
             surface.deferred.push(definition);
         }
     }
@@ -179,76 +159,35 @@ mod tests {
     }
 
     #[test]
-    fn unconstrained_domains_load_everything() {
-        let surface = build_tool_surface(&fixture(), &vak_intent::DomainSet::All, &BTreeSet::new());
+    fn without_progressive_disclosure_everything_is_loaded() {
+        let surface = build_tool_surface(&fixture(), false, &BTreeSet::new());
         assert_eq!(surface.core.len(), 5);
         assert!(surface.deferred.is_empty());
-        assert!(surface.unpredicted.is_empty());
     }
 
     #[test]
-    fn a_reading_loads_what_it_predicts_and_defers_the_rest() {
-        let surface = build_tool_surface(
-            &fixture(),
-            &vak_intent::DomainSet::only(["web"]),
-            &BTreeSet::new(),
-        );
+    fn a_tool_s_own_declaration_decides_what_is_loaded() {
+        let surface = build_tool_surface(&fixture(), true, &BTreeSet::new());
         assert_eq!(
             names(&surface.core),
-            vec!["read", "webfetch", "plugin_thing", "emit_chart_card"]
+            vec!["read", "plugin_thing", "emit_chart_card"]
         );
-        assert_eq!(names(&surface.deferred), vec!["bash"]);
-        assert_eq!(
-            surface.unpredicted,
-            BTreeSet::from(["bash".to_string()]),
-            "presentation schemas do not alter non-presentation predictions"
-        );
-    }
-
-    #[test]
-    fn presentation_schemas_are_loaded_with_no_domain_prediction() {
-        let surface =
-            build_tool_surface(&fixture(), &vak_intent::DomainSet::Empty, &BTreeSet::new());
-        assert!(names(&surface.core).contains(&"emit_chart_card"));
+        assert_eq!(names(&surface.deferred), vec!["bash", "webfetch"]);
     }
 
     #[test]
     fn a_tool_an_earlier_turn_loaded_stays_loaded() {
-        let carried = BTreeSet::from(["bash".to_string()]);
-        let surface =
-            build_tool_surface(&fixture(), &vak_intent::DomainSet::only(["web"]), &carried);
+        let carried = BTreeSet::from(["bash".to_string(), "emit_absent_card".to_string()]);
+        let surface = build_tool_surface(&fixture(), true, &carried);
         assert_eq!(
             names(&surface.core),
-            vec![
-                "read",
-                "bash",
-                "webfetch",
-                "plugin_thing",
-                "emit_chart_card"
-            ],
-            "fixed order, one more loaded"
-        );
-        assert!(!surface.unpredicted.contains("bash"));
-    }
-
-    #[test]
-    fn unadmitted_presentation_tools_cannot_be_loaded_from_carried_names() {
-        let carried = BTreeSet::from([
-            "emit_chart_card".to_string(),
-            "emit_absent_card".to_string(),
-        ]);
-        let surface = build_tool_surface(&fixture(), &vak_intent::DomainSet::Empty, &carried);
-        assert!(names(&surface.core).contains(&"emit_chart_card"));
-        assert!(!names(&surface.core).contains(&"emit_absent_card"));
-        assert!(!names(&surface.deferred).contains(&"emit_absent_card"));
-        assert!(
-            !surface.unpredicted.contains("emit_chart_card"),
-            "presentation schemas are output choices, not domain predictions"
+            vec!["read", "bash", "plugin_thing", "emit_chart_card"],
+            "fixed order, one more loaded, nothing unadmitted"
         );
     }
 
     /// The catalogue is a function of the admitted tools only, so the cached
-    /// prefix does not move when the reading does.
+    /// prefix does not move from turn to turn.
     #[test]
     fn the_catalogue_is_stable_sorted_and_schema_free() {
         let entries = vec![

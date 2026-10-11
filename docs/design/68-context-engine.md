@@ -368,9 +368,9 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   a single optional reconsideration, not a model-capacity failure. If a successful card is followed by structured answer text,
   `[card-completion-check]` asks for any missing or incomplete parts to be
   emitted as cards within the same logical turn. The answer projection still
-  preserves the assistant's text and gives it no special prefix semantics. A
-  deferred tool the reading did not predict and the model then used
-  is the measured misread. On a wire whose adapter defers tools
+  preserves the assistant's text and gives it no special prefix semantics.
+  Which tools are loaded follows each tool's declaration, never the reading
+  (docs/design/88-control-plane.md §12.1). On a wire whose adapter defers tools
   (`Provider::defers_tools`, today Anthropic's) the deferred schemas additionally
   ride `defer_loading: true` with the server-side tool search tool (§11); every
   other leg is sent the loaded set only.

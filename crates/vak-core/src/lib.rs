@@ -35,7 +35,6 @@ pub mod keys;
 pub mod learning;
 pub mod lifecycle;
 pub mod memory;
-pub mod misread;
 pub mod onboarding;
 pub mod presentation_tools;
 /// The three permission rule lists, in `vak_config::Config`'s own order:
@@ -6213,18 +6212,6 @@ impl Core {
         intent
     }
 
-    /// Whether `reading` decided which admitted tools a turn loaded — the
-    /// kernel slices, and the reading's act was confident enough to — as
-    /// opposed to the orientation floor standing in for a reading too weak
-    /// to decide. Only the former can be contradicted by a deferred tool the
-    /// model then used (`misread::MisreadRow::sliced`).
-    fn reading_sliced(&self, reading: &vak_intent::Reading) -> bool {
-        let intent = &self.inner.config.intent;
-        intent.enabled
-            && intent.slice_capabilities
-            && reading.may_slice_capabilities(intent.accept_confidence)
-    }
-
     /// The free tiers, under the turn's base authority. A grant on a
     /// commitment is applied afterwards, once the turn knows which
     /// commitments its strands work on (`vak_intent::apply_envelopes`).
@@ -7017,16 +7004,12 @@ impl Core {
         // per-turn and carried separately as `tail` so the request
         // assembler can render it into the moving tail instead
         // of the cached prefix (docs/design/68-context-engine.md §4/§6).
-        // Progressive disclosure: with it on, the reading decides which admitted
-        // tools are loaded and the rest are listed in the stable catalogue;
-        // with it off, everything is loaded and there is nothing to list.
+        // Progressive disclosure: with it on, each tool's own declaration
+        // decides whether it is loaded and the rest are listed in the stable
+        // catalogue; with it off, everything is loaded and there is nothing
+        // to list. No reading of the request decides it (docs/design/88 §12.1).
         let progressive =
             self.inner.config.intent.enabled && self.inner.config.intent.slice_capabilities;
-        let loaded_domains = if progressive {
-            engagement.limits.required_domains.clone()
-        } else {
-            vak_intent::DomainSet::All
-        };
         let tool_catalogue = if progressive {
             self.tool_catalogue_for(&turn_capabilities.tool_names)
         } else {
@@ -7524,7 +7507,7 @@ impl Core {
             .ok()
             .and_then(|loaded| loaded.get(&sid).cloned())
             .unwrap_or_default();
-        let surface = capability::build_tool_surface(&tools, &loaded_domains, &carried);
+        let surface = capability::build_tool_surface(&tools, progressive, &carried);
         let card_tools: std::collections::HashSet<String> = tools
             .iter()
             .filter(|tool| tool.presents_cards())
@@ -7581,7 +7564,6 @@ impl Core {
             .iter()
             .map(|def| def.name.clone())
             .collect();
-        let unpredicted_tools = surface.unpredicted.clone();
         let mut defs: Vec<vak_llm::ToolDefinition> =
             Vec::with_capacity(surface.core.len() + surface.deferred.len() + 1);
         defs.push(find_tools_def);
@@ -7821,51 +7803,6 @@ impl Core {
             tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a request relationship was not recorded");
         }
 
-        // A request restated verbatim right after the previous turn is the
-        // user saying the previous reading did the wrong thing. That counts
-        // against the *previous* reading (misread ledger, I8), not this one.
-        if self.inner.config.intent.enabled {
-            let chain = session.chain_to_root();
-            // A person's message, whatever metadata it carries (an attachment
-            // is metadata); only a runtime nudge is skipped, by its tag.
-            let previous_user_text = chain.iter().rev().find_map(|entry| match &entry.payload {
-                vak_session::EntryPayload::Message(record)
-                    if record.message.role == vak_llm::Role::User
-                        && record.control_kind().is_none() =>
-                {
-                    Some(record.message.text_content())
-                }
-                _ => None,
-            });
-            let previous_intent = chain.iter().rev().find_map(|entry| match &entry.payload {
-                vak_session::EntryPayload::Intent(record) => Some(record.as_ref().clone()),
-                _ => None,
-            });
-            let same = |a: &str, b: &str| {
-                let norm = |t: &str| {
-                    t.split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                        .to_ascii_lowercase()
-                };
-                !a.trim().is_empty() && norm(a) == norm(b)
-            };
-            if let (Some(previous_text), Some(previous)) = (previous_user_text, previous_intent)
-                && same(&previous_text, &prompt_text)
-                && previous.provenance.tier != vak_intent::Tier::General
-            {
-                misread::MisreadLedger::new(self.scope().root()).record(
-                    &previous.reading,
-                    previous.provenance.tier,
-                    previous.provenance.resolver_version,
-                    misread::Outcome::Restated,
-                    None,
-                    self.reading_sliced(&previous.reading),
-                    Some(&run_trace),
-                );
-            }
-        }
-
         // Durable work earns a commitment of its own before the turn runs, so
         // the episode brackets the work rather than being reconstructed from
         // it afterwards. A ledger failure is logged and dropped: losing the
@@ -8012,10 +7949,7 @@ impl Core {
         if let Some((objective, criteria)) = goal {
             agent.set_goal(objective, criteria);
         }
-        let (receipts_before, entries_before) = {
-            let s = agent.session.lock().await;
-            (s.receipts().len(), s.chain_to_root().len())
-        };
+        let receipts_before = agent.session.lock().await.receipts().len();
         let run_cancel = cancel.child_token();
         let outcome = {
             let run = agent.run_message(
@@ -8262,51 +8196,6 @@ impl Core {
                     ),
                 ]),
             });
-        }
-
-        // Was the reading right? The strongest answer is measured, not
-        // guessed: if the engagement withheld a tool and the model then asked
-        // for that exact tool, the reading was wrong and we know which lexicon
-        // entry to change. Slicing is what makes this observable at all.
-        if self.inner.config.intent.enabled
-            && resolved_intent.provenance.tier != vak_intent::Tier::General
-        {
-            // Only this turn's own tool calls count. Scanning the whole
-            // chain recorded a tool used three turns ago as an escalation
-            // against today's reading, and biased every cell downward with
-            // session length.
-            let attempted: Vec<String> = session
-                .chain_to_root()
-                .iter()
-                .skip(entries_before)
-                .flat_map(|entry| match &entry.payload {
-                    vak_session::EntryPayload::Message(record) => record
-                        .message
-                        .content
-                        .iter()
-                        .filter_map(|block| match block {
-                            vak_llm::ContentBlock::ToolUse { name, .. } => Some(name.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>(),
-                    _ => Vec::new(),
-                })
-                .collect();
-            let wanted = misread::escalated_capability(&unpredicted_tools, &attempted);
-            let outcome = match (&wanted, &outcome) {
-                (Some(_), _) => misread::Outcome::Escalated,
-                (None, TurnOutcome::Aborted { .. }) => misread::Outcome::Abandoned,
-                _ => misread::Outcome::Held,
-            };
-            misread::MisreadLedger::new(self.scope().root()).record(
-                &resolved_intent.reading,
-                resolved_intent.provenance.tier,
-                resolved_intent.provenance.resolver_version,
-                outcome,
-                wanted,
-                self.reading_sliced(&resolved_intent.reading),
-                Some(&run_trace),
-            );
         }
 
         // Close the episode with what it actually achieved. `Learned` and

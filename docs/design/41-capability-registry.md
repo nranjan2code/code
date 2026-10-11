@@ -323,10 +323,10 @@ deferred tools additionally ride `defer_loading`. With
 `[intent] slice_capabilities = false` (or the kernel off) everything is
 loaded and there is no catalogue.
 
-A deferred tool the reading did not predict and the model then used is the
-measured misread (`misread::escalated_capability` over
-`ToolSurface::unpredicted`); card tools are excluded, since a card is an
-output choice rather than a reading of what the request needs.
+Which tools are loaded follows each tool's own declaration
+(`Tool::always_loaded`, `Tool::presents_cards`, an empty `Tool::serves`)
+and what earlier turns of the session loaded, never a reading of the
+request (docs/design/88-control-plane.md §12.1).
 
 Skills are listed once, in the prompt (name and description); the `skill`
 tool carries only the admitted names as its schema enum and loads a body

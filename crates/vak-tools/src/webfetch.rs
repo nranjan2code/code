@@ -228,6 +228,10 @@ impl Tool for WebFetchTool {
         &["web", "live-data"]
     }
 
+    fn always_loaded(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
         "Fetch a known URL over HTTP(S) with GET; this does not search the web or turn a search-results page into reliable facts. To locate current sources, discover an available search tool first. Blocks loopback/private/link-local targets, follows at most 3 redirects, downloads at most 8 MiB, accepts only text/json/xml content types, and never sends credentials. Returns a status line, then the body: an HTML page as its readable text (headings, paragraphs, lists, table rows; scripts, navigation and forms left out and counted), or with format \"links\" its links, or with \"source\" its HTML. Other content types come back as they are."
     }

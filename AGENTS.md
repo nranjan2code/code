@@ -2036,10 +2036,7 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      evaluates workspace criteria, and runs the zero-token
                      upkeep pass: schedule wakes, predicate wakes, escalation
                      policies, explicit expiry), tools_commitments.rs (the
-                     read-only `commitments` capability), misread.rs (intent
-                     evidence: a tool the reading left deferred that the model
-                     then used is a MEASURED misread, not a suspected one --
-                     deferring is what makes the loop closeable),
+                     read-only `commitments` capability),
                      session_search injection w/ profile tier, memory/
                      skill-proposal tools + duplicate screening
                      (docs/design/26-learning.md, 29 P5), sandbox

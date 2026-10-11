@@ -358,7 +358,6 @@ pub const REGISTRY: &[StateEntry] = &[
     agent_entry("agents/{agent}/skills", "vak-core", Class::Desired),
     agent_entry("agents/{agent}/commitments", "vak-commit", Class::Record),
     agent_entry("agents/{agent}/routing-evidence", "vak-core", Class::Record),
-    agent_entry("agents/{agent}/intent-evidence", "vak-core", Class::Record),
     agent_entry("agents/{agent}/security-events", "vak-core", Class::Record),
     agent_entry("agents/{agent}/cost-log", "vak-core", Class::Record),
     agent_entry("agents/{agent}/activity-log", "vak-core", Class::Record),

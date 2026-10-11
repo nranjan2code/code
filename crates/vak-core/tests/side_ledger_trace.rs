@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use vak_commit::{CommitmentLedger, Economics, Event, EventKind, spec_from_reading};
-use vak_core::{inbox, misread, routing};
+use vak_core::{inbox, routing};
 use vak_session::ids::{AgentId, PrincipalId, SpaceId, TenantId};
 use vak_session::trace::{Cause, TraceKey};
 
@@ -65,24 +65,9 @@ fn inbox_entries_carry_the_run_key_when_one_is_in_scope() {
 }
 
 #[test]
-fn misread_and_routing_rows_carry_the_run_key() {
+fn routing_rows_carry_the_run_key() {
     let dir = tempfile::tempdir().unwrap();
     let (key, actor) = key();
-    let ledger = misread::MisreadLedger::new(dir.path());
-    ledger.record(
-        &reading(),
-        vak_intent::Tier::Signals,
-        vak_intent::RESOLVER_VERSION,
-        misread::Outcome::Held,
-        None,
-        false,
-        Some(&key),
-    );
-    let rows = ledger.rows();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].trace.as_ref().map(|t| t.run), Some(key.run));
-    assert_eq!(rows[0].actor, Some(actor));
-
     let evidence = routing::EvidenceLedger::new(dir.path());
     let mut receipt = vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Execute, "p", "m");
     receipt.record(

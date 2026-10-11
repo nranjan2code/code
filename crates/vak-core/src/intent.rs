@@ -636,11 +636,7 @@ mod tests {
                 .into_iter()
                 .map(|tool| std::sync::Arc::new(tool) as std::sync::Arc<dyn vak_tools::Tool>)
                 .collect();
-        let surface = crate::capability::build_tool_surface(
-            &tools,
-            &vak_intent::DomainSet::Empty,
-            &Default::default(),
-        );
+        let surface = crate::capability::build_tool_surface(&tools, true, &Default::default());
         assert_eq!(surface.core.len(), tools.len());
         let mut intent = Intent::general(vak_intent::RESOLVER_VERSION);
         let outcome = complete_output_contract(&mut intent, "Hello, how are you?");

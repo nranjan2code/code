@@ -306,10 +306,11 @@ pub trait Tool: Send + Sync {
         &[]
     }
 
-    /// Loaded into every turn's schemas regardless of the turn's reading —
-    /// the orientation and discovery primitives a model needs to operate at
-    /// all. Everything else is loaded when the reading predicts it and is
-    /// otherwise one `find_tools` call away.
+    /// Loaded into every turn's schemas: the tools a model works with on
+    /// most turns (reading, searching and changing files, running commands,
+    /// fetching a page, planning, discovery). Every other tool that declares
+    /// a domain is one `find_tools` call away until a turn loads it, and then
+    /// stays loaded for the session (docs/design/88-control-plane.md §12.1).
     fn always_loaded(&self) -> bool {
         false
     }

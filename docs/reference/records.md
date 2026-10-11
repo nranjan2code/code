@@ -244,23 +244,6 @@ Type `IntakeEvent` in `crates/vak-core/src/intake.rs`. Class: ledger. Stored in:
 | `actor` | `Option<PrincipalId>` | no | Who caused this step: the poll's actor, or the person who released |
 | `step` | `IntakeStep` | yes | (flattened into the row) |
 
-## misread_row
-
-Type `MisreadRow` in `crates/vak-core/src/misread.rs`. Class: ledger. Stored in: `intent-evidence`. Version: 1.
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `ts` | `chrono::DateTime<chrono::Utc>` | yes |  |
-| `act` | `String` | yes | The act that was read, so accuracy can be reported per cell. |
-| `stakes` | `String` | yes |  |
-| `tier` | `String` | yes | Which tier produced the reading; a lexicon miss and a classifier miss |
-| `resolver_version` | `u32` | yes |  |
-| `outcome` | `String` | yes |  |
-| `wanted` | `Option<String>` | no | The tool the model used after the reading left it deferred. Present |
-| `sliced` | `bool` | no | Whether the reading was confident enough to decide what was loaded. |
-| `trace` | `Option<vak_session::trace::TraceKey>` | no |  |
-| `actor` | `Option<vak_session::ids::PrincipalId>` | no |  |
-
 ## preview_preparation_record
 
 Type `PreviewPreparationRecord` in `crates/vak-sandbox/src/lib.rs`. Class: ledger. Stored in: `sandbox/records`. Version: 1.

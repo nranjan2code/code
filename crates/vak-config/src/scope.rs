@@ -184,10 +184,6 @@ impl AgentScope {
         self.root.join("routing-evidence")
     }
 
-    pub fn intent_evidence(&self) -> PathBuf {
-        self.root.join("intent-evidence")
-    }
-
     pub fn commitments(&self) -> PathBuf {
         self.root.join("commitments")
     }
@@ -563,7 +559,6 @@ mod tests {
         assert_eq!(s.cost_log(), home.join("cost-log"));
         assert_eq!(s.activity_log(), home.join("activity-log"));
         assert_eq!(s.routing_evidence(), home.join("routing-evidence"));
-        assert_eq!(s.intent_evidence(), home.join("intent-evidence"));
         assert_eq!(s.commitments(), home.join("commitments"));
         assert_eq!(s.inbox(), home.join("inbox"));
         assert_eq!(s.inbox_dedupe_lock(), home.join("inbox.dedupe.lock"));
