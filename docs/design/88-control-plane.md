@@ -70,7 +70,23 @@ as `PresentationSource::Answer`, and ends the turn with no further model
 step. The plan check runs on that path and its reframe rung requires
 `answer` of one step (`Finding::AnswerRequired`), once, after which what
 is left stands; a `text` block answering a deliverable the plan lists as a
-card is refused. The items carried below are not built.
+card is refused. Seen live 2026-10-11 through the web app on the local
+route (`qwen3.5:4b-mlx`): a three-part request shown as four cards from one
+`answer` call in three steps (`run_01a12ae9-3cb3-7cf2-8db2-8644b6c96212`),
+a plain question answered as prose (`run_01a12aea-9061-7b01-b24a-b56ec1a0ef32`),
+and a document request whose draft was delivered for Review
+(`run_01a12aeb-8eb3-7fb1-821f-3352e65e8945`); and once on the hosted
+Responses route (`gpt-6-luna`): a plan of three cards, each placed in its
+section (`run_01a12aed-56a0-7f00-bfc5-ddea72daa7c5`), and a one-sentence
+answer as prose (`run_01a12aed-c2ce-76a2-abfc-ceac50b4bed8`). The faults
+those runs found in Vak's contract are fixed: the `answer` block schema
+had untyped union fields, a `blocks` sent as text skipped the one argument
+reader and its refusal did not say why, a field of another kind was not
+named, the repair directive and the unknown-tool message listed the card
+tools as callable, a plan form naming a card's kind was refused, and the
+plan check's correction after an answer added a second copy of its cards
+(a later `answer` now replaces the turn's earlier one). The items carried
+below are not built.
 
 ### Open in C6 (found while building its first slice)
 
@@ -94,6 +110,13 @@ card is refused. The items carried below are not built.
   holding a list of blocks. Sixteen trials on one model and one wire decide
   nothing for every provider; the script is to be run on each configured
   route with the real block schemas.
+
+- Seen in the C6 live runs, not yet fixed: a model given a request for a
+  new Word file once answered at its first step that it could not make one,
+  with `office_apply` offered (`run_01a12aeb-04df-7200-b6f3-d57e0389aed9`);
+  the second try made the draft. A `details` card's label and value columns
+  are cramped at 390 px. `office_apply` refused anchors the model built for
+  paragraphs its own earlier ops added (`p@1A000000`).
 
 ### Carried into later stages (found while building C0–C5)
 

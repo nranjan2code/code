@@ -705,7 +705,20 @@ fn snapshot_inner(
         String,
         Vec<(String, &vak_session::types::PresentationRecord)>,
     > = HashMap::new();
+    // An `answer` is the turn's whole document: the latest one a turn gave
+    // replaces any earlier one.
+    let mut latest_answer: HashMap<String, String> = HashMap::new();
+    for (_, record) in session.presentations() {
+        if let vak_session::types::PresentationSource::Answer { tool_use_id, .. } = &record.source {
+            latest_answer.insert(record.turn_id.clone(), tool_use_id.clone());
+        }
+    }
     for (entry_id, record) in session.presentations() {
+        if let vak_session::types::PresentationSource::Answer { tool_use_id, .. } = &record.source
+            && latest_answer.get(&record.turn_id) != Some(tool_use_id)
+        {
+            continue;
+        }
         // An `answer` call carries its blocks the same way, in block order.
         if let vak_session::types::PresentationSource::Delegated { tool_use_id, .. }
         | vak_session::types::PresentationSource::Answer { tool_use_id, .. } = &record.source
@@ -5048,6 +5061,63 @@ mod tests {
     /// plan's deliverables are the sections, a card is in the section its
     /// `answers` names, a card that names none is in no section, and the
     /// reply's text is in the one text section.
+    /// A later `answer` in the same turn replaces the earlier one.
+    #[test]
+    fn a_later_answer_in_a_turn_replaces_the_earlier_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "answer-again");
+        log.append_message(MessageRecord {
+            message: Message::user_text("list what to pack"),
+            meta: None,
+        })
+        .expect("directive");
+        for (id, items) in [("a1", vec!["Charger"]), ("a2", vec!["Charger", "Hat"])] {
+            let blocks = serde_json::json!({"blocks": [{"type": "checklist", "items": items}]});
+            log.append_message(MessageRecord {
+                message: Message::assistant(vec![ContentBlock::ToolUse {
+                    id: id.into(),
+                    name: "answer".into(),
+                    input: blocks.clone(),
+                }]),
+                meta: None,
+            })
+            .expect("call");
+            log.append_message(MessageRecord {
+                message: Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id: id.into(),
+                        content: "ok".into(),
+                        is_error: false,
+                    }],
+                },
+                meta: None,
+            })
+            .expect("result");
+            append_presentation(
+                &mut log,
+                "emit_checklist_card",
+                vak_session::types::PresentationSource::Answer {
+                    tool_use_id: id.into(),
+                    block: 0,
+                },
+                &serde_json::json!({"items": items}),
+            );
+        }
+        let timeline = snapshot("answer-again", &log);
+        let calls: Vec<Option<&str>> = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Card)
+            .map(|item| {
+                item.provenance
+                    .as_ref()
+                    .and_then(|provenance| provenance.tool_call_id.as_deref())
+            })
+            .collect();
+        assert_eq!(calls, [Some("a2")]);
+    }
+
     /// An `answer` call's cards are placed by what each block names, not
     /// by the call's own arguments or the blocks' order.
     #[test]

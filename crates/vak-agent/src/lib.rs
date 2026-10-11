@@ -2573,6 +2573,7 @@ impl Agent {
                                         )
                                     })
                                     .collect(),
+                                answer: self.answer_offered(),
                             });
                             (finding, requirable)
                         }
@@ -3226,6 +3227,7 @@ impl Agent {
                                     )
                                 })
                                 .collect(),
+                            answer: self.answer_offered(),
                         })
                     })
                 };
@@ -4583,6 +4585,16 @@ impl Agent {
 
     /// Whether `name` is one of this agent's tools and it declares that a
     /// successful call presents a card (`Tool::presents_cards`).
+    /// The `answer` tool's name when this turn offers it: the card tools
+    /// it is built from are admitted.
+    fn answer_offered(&self) -> Option<String> {
+        self.config
+            .tools
+            .iter()
+            .any(|tool| tool.presents_cards())
+            .then(|| answer::ANSWER.to_string())
+    }
+
     fn tool_presents_cards(&self, name: &str) -> bool {
         self.config
             .tools
@@ -5893,13 +5905,17 @@ impl Agent {
         };
         let derived_from =
             session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+        // An answer is the turn's whole document: a later one replaces an
+        // earlier one in the projection, so each records all its blocks,
+        // repeating none within itself.
         let mut answers = Vec::new();
+        let mut recorded = std::collections::HashSet::new();
         for (at, name, input) in &answered.cards {
             let Some(info) = rebuild(name.as_str(), input) else {
                 continue;
             };
             let digest = vak_session::types::payload_digest(&info.payload);
-            if session.has_presentation(&turn_id, &digest) {
+            if !recorded.insert(digest.clone()) {
                 continue;
             }
             let record = vak_session::types::PresentationRecord {
@@ -6003,6 +6019,7 @@ impl Agent {
             .map(normalize_tool_call)
             .map(|call| normalize_mcp_call(call, &index))
             .map(|call| normalize_schema_wrapper(call, &self.config.tools))
+            .map(|call| answer::plan_forms(call, &self.config.tools))
             .collect::<Vec<_>>();
         self.load_called_deferred(&calls);
         let n = calls.len();
@@ -7377,9 +7394,17 @@ fn unknown_tool_message(name: &str, tools: &[Arc<dyn Tool>], skill_names: &[Stri
             quoted(name)
         );
     }
-    let available =
-        serde_json::to_string(&tools.iter().map(|tool| tool.name()).collect::<Vec<_>>())
-            .unwrap_or_else(|_| "[]".into());
+    // What the model may call by name: a card tool is reached only as a
+    // block of `answer`.
+    let mut offered: Vec<&str> = tools
+        .iter()
+        .filter(|tool| !tool.presents_cards())
+        .map(|tool| tool.name())
+        .collect();
+    if tools.iter().any(|tool| tool.presents_cards()) {
+        offered.push(answer::ANSWER);
+    }
+    let available = serde_json::to_string(&offered).unwrap_or_else(|_| "[]".into());
     let advice = if tools.iter().any(|tool| tool.name() == "mcp") {
         format!(
             r#","recovery_advice":"Tool '{name}' is an external MCP capability. Invoke it via the 'mcp' tool: mcp(action: \"call\", server: \"<server_name>\", tool: \"{name}\", arguments: {{ ... }})""#
@@ -7532,23 +7557,28 @@ async fn inject_repair_directive(
     agent: &Agent,
     failed: &[String],
 ) -> Result<(), vak_session::SessionError> {
+    // What the model may call by name: the tools this turn offers, with
+    // `answer` in place of the card tools.
+    let definitions = agent.base_tool_definitions();
     let mut tools = Vec::new();
     let mut unknown = Vec::new();
     for name in failed {
-        match agent.config.tools.iter().find(|tool| tool.name() == *name) {
-            Some(tool) => tools.push(vak_control::ShownTool {
-                name: tool.name().to_string(),
-                description: tool.description().to_string(),
-                schema: serde_json::to_string(&tool.schema()).unwrap_or_else(|_| "{}".to_string()),
+        match definitions
+            .iter()
+            .find(|definition| definition.name == *name)
+        {
+            Some(definition) => tools.push(vak_control::ShownTool {
+                name: definition.name.clone(),
+                description: definition.description.clone(),
+                schema: serde_json::to_string(&definition.parameters)
+                    .unwrap_or_else(|_| "{}".to_string()),
             }),
             None => unknown.push(name.clone()),
         }
     }
-    let offered = agent
-        .config
-        .tools
+    let offered = definitions
         .iter()
-        .map(|tool| tool.name().to_string())
+        .map(|definition| definition.name.clone())
         .collect();
     agent
         .correct(
@@ -8158,14 +8188,17 @@ fn normalize_response_tool_uses(
         let ContentBlock::ToolUse { id, name, input } = block else {
             continue;
         };
-        let call = normalize_schema_wrapper(
-            normalize_mcp_call(
-                normalize_tool_call(PendingToolCall {
-                    id: id.clone(),
-                    name: name.clone(),
-                    input: input.clone(),
-                }),
-                mcp_index,
+        let call = answer::plan_forms(
+            normalize_schema_wrapper(
+                normalize_mcp_call(
+                    normalize_tool_call(PendingToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                    }),
+                    mcp_index,
+                ),
+                tools,
             ),
             tools,
         );

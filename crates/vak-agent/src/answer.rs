@@ -92,12 +92,29 @@ fn definition(tools: &[Arc<dyn Tool>]) -> vak_llm::ToolDefinition {
                 }
                 Some(known) if known == property => {}
                 Some(known) => {
-                    let both = format!(
-                        "{} Or, in another kind of block: {}",
+                    // Described for both, and typed as far as both agree:
+                    // a field the kinds type alike keeps that type.
+                    let mut merged = Map::new();
+                    for key in ["type", "items", "enum"] {
+                        if let (Some(a), Some(b)) = (known.get(key), property.get(key))
+                            && a == b
+                        {
+                            merged.insert(key.into(), a.clone());
+                        }
+                    }
+                    let (a, b) = (
                         known["description"].as_str().unwrap_or_default(),
-                        property["description"].as_str().unwrap_or_default()
+                        property["description"].as_str().unwrap_or_default(),
                     );
-                    *known = json!({ "description": both });
+                    if !a.contains(b) {
+                        merged.insert(
+                            "description".into(),
+                            Value::String(format!("{a} Or, in another kind of block: {b}")),
+                        );
+                    } else {
+                        merged.insert("description".into(), Value::String(a.into()));
+                    }
+                    *known = Value::Object(merged);
                 }
             }
         }
@@ -144,6 +161,35 @@ fn definition(tools: &[Arc<dyn Tool>]) -> vak_llm::ToolDefinition {
     )
 }
 
+/// A `plan` deliverable whose form names a kind of card block is a card:
+/// the kind is how it will be shown, and `answer` decides it. Read from the
+/// admitted tools' own kinds, at the call boundary, before the plan is
+/// parsed and ledgered.
+pub(crate) fn plan_forms(
+    mut call: crate::PendingToolCall,
+    tools: &[Arc<dyn Tool>],
+) -> crate::PendingToolCall {
+    if vak_tools::canonical_tool_name(&call.name) != "plan" {
+        return call;
+    }
+    let is_kind =
+        |form: &str| cards(tools).any(|tool| tool.card_kinds().iter().any(|kind| kind == form));
+    if let Some(deliverables) = call
+        .input
+        .get_mut("deliverables")
+        .and_then(Value::as_array_mut)
+    {
+        for deliverable in deliverables {
+            if let Some(form) = deliverable.get_mut("form")
+                && form.as_str().map(str::trim).is_some_and(is_kind)
+            {
+                *form = Value::String("card".into());
+            }
+        }
+    }
+    call
+}
+
 /// One block of an answer, read and ready to be checked by its tool.
 pub(crate) enum Block {
     Text {
@@ -158,10 +204,64 @@ pub(crate) enum Block {
     },
 }
 
+/// The block kinds that take the fields a block gave but its own kind does
+/// not, read from the card tools' own schemas: what a block of another kind
+/// was written as.
+fn elsewhere(fields: &Map<String, Value>, own: &[&str], tools: &[Arc<dyn Tool>]) -> String {
+    let foreign: Vec<&str> = fields
+        .keys()
+        .map(String::as_str)
+        .filter(|name| !matches!(*name, "type" | "answers") && !own.contains(name))
+        .collect();
+    if foreign.is_empty() {
+        return String::new();
+    }
+    let mut kinds: Vec<String> = Vec::new();
+    for tool in cards(tools) {
+        let schema = tool.schema();
+        let takes = |name: &str| schema["properties"].get(name).is_some();
+        if foreign.iter().all(|name| takes(name)) {
+            kinds.extend(tool.card_kinds());
+        }
+    }
+    let fields = foreign
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if kinds.is_empty() {
+        format!("; {fields} is not a field of this kind of block")
+    } else {
+        format!(
+            "; {fields} belongs to a block of type {}",
+            kinds
+                .iter()
+                .map(|kind| format!("`{kind}`"))
+                .collect::<Vec<_>>()
+                .join(" or ")
+        )
+    }
+}
+
 /// Reads an `answer` call's blocks. Each error names its block.
 pub(crate) fn read(input: &Value, tools: &[Arc<dyn Tool>]) -> Result<Vec<Block>, Vec<String>> {
+    // The one argument reader every call goes through (a list sent as the
+    // text of one is read as the list its schema asks for).
+    let mut input = input.clone();
+    vak_tools::read_arguments(&definition(tools).parameters, &mut input);
     let Some(blocks) = input.get("blocks").and_then(Value::as_array) else {
-        return Err(vec!["blocks must be a list of blocks".into()]);
+        // Sent as text, it is a list only if it reads as JSON; say where
+        // it does not.
+        return Err(vec![match input.get("blocks") {
+            Some(Value::String(text)) => match serde_json::from_str::<Value>(text) {
+                Err(error) => format!(
+                    "blocks was sent as text, not a list, and that text is not JSON ({error}); \
+                     send blocks as a list of objects"
+                ),
+                Ok(_) => "blocks must be a list of block objects".into(),
+            },
+            _ => "blocks must be a list of block objects".into(),
+        }]);
     };
     if blocks.is_empty() {
         return Err(vec!["blocks needs at least one block".into()]);
@@ -188,7 +288,10 @@ pub(crate) fn read(input: &Value, tools: &[Arc<dyn Tool>]) -> Result<Vec<Block>,
                         .filter(|name| !name.is_empty())
                         .map(str::to_string),
                 }),
-                _ => errors.push(format!("blocks[{at}].text is missing")),
+                _ => errors.push(format!(
+                    "blocks[{at}].text is missing{}",
+                    elsewhere(fields, &[TEXT], tools)
+                )),
             }
             continue;
         }
@@ -230,7 +333,17 @@ pub(crate) fn read(input: &Value, tools: &[Arc<dyn Tool>]) -> Result<Vec<Block>,
                 tool: tool.clone(),
                 input,
             }),
-            Err(message) => errors.push(format!("blocks[{at}] ({kind}): {message}")),
+            Err(message) => errors.push(format!(
+                "blocks[{at}] ({kind}): {message}{}",
+                elsewhere(
+                    fields,
+                    &schema["properties"]
+                        .as_object()
+                        .map(|own| own.keys().map(String::as_str).collect::<Vec<_>>())
+                        .unwrap_or_default(),
+                    tools
+                )
+            )),
         }
     }
     if errors.is_empty() {
@@ -250,7 +363,7 @@ pub(crate) fn refused(errors: &[String]) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
@@ -299,6 +412,29 @@ mod tests {
                 }, "required": ["semantic_type", "text"]}),
             }),
         ]
+    }
+
+    #[test]
+    fn a_plan_form_that_names_a_kind_of_card_is_a_card() {
+        let call = plan_forms(
+            crate::PendingToolCall {
+                id: "p".into(),
+                name: "plan".into(),
+                input: json!({"deliverables": [
+                    {"name": "Routine", "form": "steps"},
+                    {"name": "Why", "form": "text"},
+                    {"name": "Odd", "form": "poem"}
+                ]}),
+            },
+            &tools(),
+        );
+        let forms: Vec<&str> = call.input["deliverables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|deliverable| deliverable["form"].as_str())
+            .collect();
+        assert_eq!(forms, ["card", "text", "poem"]);
     }
 
     #[test]
@@ -377,5 +513,28 @@ mod tests {
         assert!(errors[2].contains("blocks[2].text"), "{errors:?}");
         assert!(refused(&errors).contains("call `answer` again"));
         assert!(read(&json!({"blocks": "x"}), &tools()).is_err());
+        // A list of blocks sent as the text of one is read as the list.
+        let as_text = json!({"blocks": "[{\"type\": \"text\", \"text\": \"Hi.\"}]"});
+        assert!(matches!(
+            read(&as_text, &tools()).as_deref(),
+            Ok([Block::Text { .. }])
+        ));
+        // Text that is not JSON says where it fails.
+        let Err(errors) = read(&json!({"blocks": "[{\"type\": "}), &tools()) else {
+            panic!("broken JSON read as blocks");
+        };
+        assert!(errors[0].contains("not JSON"), "{errors:?}");
+        // A block written with another kind's fields is told that kind.
+        let Err(errors) = read(
+            &json!({"blocks": [{"type": "text", "steps": ["a"]}]}),
+            &tools(),
+        ) else {
+            panic!("a text block with steps stood");
+        };
+        assert!(
+            errors[0].contains("`steps`") && errors[0].contains("`steps`"),
+            "{errors:?}"
+        );
+        assert!(errors[0].contains("type `steps`"), "{errors:?}");
     }
 }

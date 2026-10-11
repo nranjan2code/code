@@ -35,6 +35,9 @@ pub enum Finding {
         cards_short: usize,
         /// Every other deliverable with no receipt, with its form.
         others: Vec<(String, String)>,
+        /// The tool the whole answer is given with, when the turn offers
+        /// one: giving it again replaces the answer already shown.
+        answer: Option<String>,
     },
     /// Planned cards are still not shown, and the next step is framed to
     /// give the answer as its one document.
@@ -149,6 +152,7 @@ pub fn render(finding: &Finding, marker: &str) -> String {
             cards_unattributed,
             cards_short,
             others,
+            answer,
         } => {
             let mut parts = vec![format!(
                 "{marker}: Vakyartha's runtime compared your plan with what this turn \
@@ -173,12 +177,17 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                     .join(", ");
                 parts.push(format!("Nothing produced yet for: {listed}."));
             }
-            parts.push(
-                "Produce what is missing, setting `answers` on a card to its planned name, or \
-                 finish and say plainly why it is not needed. Keep everything already produced \
-                 and do not plan again."
+            parts.push(match answer {
+                Some(tool) => format!(
+                    "Give the whole answer again with `{tool}`: every block it had and what is \
+                     missing, each block's `answers` set to its planned name. It replaces the \
+                     answer already shown. Or finish and say plainly why it is not needed. Do \
+                     not plan again."
+                ),
+                None => "Produce what is missing, or finish and say plainly why it is not \
+                         needed. Keep everything already produced and do not plan again."
                     .to_string(),
-            );
+            });
             parts.join(" ")
         }
         Finding::AnswerRequired { tool, missing } => format!(
@@ -284,6 +293,7 @@ mod tests {
                 cards_unattributed: 1,
                 cards_short: 1,
                 others: vec![("fix".into(), "change".into())],
+                answer: Some("answer".into()),
             },
             "[plan-check]",
         );

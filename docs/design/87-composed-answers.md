@@ -1,8 +1,9 @@
 # 87 — Composed answers
 
 Status: direction approved by the maintainer on 2026-10-11; stage 1 done,
-stage 2's outline and layout built and awaiting a decision on how the
-model writes an answer (docs/plans/handover-2026-10-11.md, item 4). Builds on docs/design/86-model-plans-runtime-checks.md (the plan
+stage 2 built: the outline, its layout and the answer as one `answer` call
+of blocks (§2), seen live on the local route and on one hosted route
+(docs/design/88-control-plane.md, C6). Stage 3 is not started. Builds on docs/design/86-model-plans-runtime-checks.md (the plan
 and its receipt check). Replaces the model-facing card vocabulary of
 doc 30-render-architecture §30.1 (twelve `emit_*_card` tools over 109
 domain-labelled `semantic_type`s); the rendering contract of
@@ -51,8 +52,14 @@ A turn's answer is composed by the runtime, not left to emit order:
   `Presentation` with the source `Answer { tool_use_id, block }`, `block`
   being its position in `blocks`. All blocks standing, the prose becomes
   the closing message and the turn ends with no further model step; any
-  block failing, nothing is shown and each fault names its block. A block
-  that previews a file the run delivered for review is not shown. A block
+  block failing, nothing is shown and each fault names its block, and a
+  field that belongs to another kind is named with the kinds that take it.
+  A later `answer` in the same turn replaces the earlier one: the
+  projection shows only the turn's latest answer. A block's fields are the
+  union of the card tools' arguments, typed wherever the kinds agree on a
+  type. A `plan` deliverable whose form names a kind of block is read as a
+  card. A block that previews a file the run delivered for review is not
+  shown. A block
   names its section with `answers`; one that names none is in no section
   and is shown after the sections in block order, because the runtime did
   not see where it belongs (the plan check counts such cards the same
