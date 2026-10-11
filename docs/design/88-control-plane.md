@@ -59,12 +59,18 @@ each provider's own tool choice (Anthropic `tool_choice`, OpenAI chat and
 Responses `tool_choice`, Google `toolConfig`), a wire with no such switch
 is offered only that tool (native Ollama; §12.3), and the receipt says
 which (`Applied::forced`); `ModelCapabilities::tool_choice` is each wire's
-reach. The plan check uses it as the ladder's reframe rung: a `plan`
-deliverable may name the tool that will show it (`with`), and a planned
-card still missing after the model was told is required of one step
-(`Purpose::Answer`, `Finding::CardRequired`), once for each, after which
-what is left stands. The rest of C6 is not built: the answer document as
-one form, the block tools retired, and the items carried below.
+reach. The answer document is built (docs/design/87-composed-answers.md
+§2): the model answers with one loop-owned `answer` tool of blocks, made
+at run time from the admitted card tools (`Tool::card_kinds`); a card tool
+is no longer offered or callable by its own name (`Refusal::Unknown`), and
+the per-card loop paths it made unreachable are removed (routing a card
+call to its owner, the repeated-card acknowledgement, the duplicate-card
+fence check). A valid `answer` call is recorded as `AcceptCall`, its cards
+as `PresentationSource::Answer`, and ends the turn with no further model
+step. The plan check runs on that path and its reframe rung requires
+`answer` of one step (`Finding::AnswerRequired`), once, after which what
+is left stands; a `text` block answering a deliverable the plan lists as a
+card is refused. The items carried below are not built.
 
 ### Open in C6 (found while building its first slice)
 
@@ -76,24 +82,18 @@ one form, the block tools retired, and the items carried below.
 - A wire that refuses a named tool choice is not learned yet: the
   capability is each adapter's fixed reach (`Unknown` for OpenAI-compatible
   endpoints, which sends it).
-- One answer document versus per-block tools. Doc 30 §30.1 measured flat
-  per-shape tools as the reliable path and forbids a list of records inside
-  a record in a list, which a document of blocks is. This slice therefore
-  requires the block tool the plan named, one block per step, rather than
-  one nested document. A first measurement on the dev route
+- One answer document versus per-block tools, decided for the document.
+  Doc 30 §30.1 measured flat per-shape tools as the reliable path and
+  forbids a list of records inside a record in a list, which a document of
+  blocks is. A first measurement on the dev route
   (`scripts/measure_answer_form.py`, `qwen3.5:4b-mlx` on local Ollama,
   2026-10-11, two requests, three blocks each, the same block fields both
-  ways, reasoning off) does not show the nested document to be the less
+  ways, reasoning off) did not show the nested document to be the less
   reliable form: all three blocks valid in 8 of 16 and 8 of 16 trials with
   three flat tools, and in 10 of 16 and 11 of 16 with one `answer` tool
-  holding a list of blocks. The flat failures were one fault each time: a
-  list of strings (`steps`) sent as a single text that is not JSON, which
-  the argument reader rightly does not split. The nested failures were
-  mixed: a block missing a required field, a list of one where several
-  were asked, once the whole list as text. Sixteen trials on one model and
-  one wire decide nothing for every provider; before the block tools are
-  retired the same script needs running on each configured route, with the
-  real block schemas.
+  holding a list of blocks. Sixteen trials on one model and one wire decide
+  nothing for every provider; the script is to be run on each configured
+  route with the real block schemas.
 
 ### Carried into later stages (found while building C0–C5)
 

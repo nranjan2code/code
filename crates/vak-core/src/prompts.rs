@@ -867,15 +867,12 @@ mod tests {
     #[test]
     fn the_seed_carries_no_card_payload_examples() {
         let seed = seed("test");
-        assert!(seed.presentation_contract.contains("emit_*_card"));
+        assert!(seed.presentation_contract.contains("`answer` tool"));
         assert!(
             seed.presentation_contract
                 .contains("cards are context, not new work")
         );
-        assert!(
-            seed.presentation_contract
-                .contains("order the user requested")
-        );
+        assert!(seed.presentation_contract.contains("in reading order"));
         assert!(seed.presentation_contract.contains("`answers`"));
         assert!(
             seed.presentation_contract

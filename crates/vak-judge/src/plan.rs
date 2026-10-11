@@ -108,7 +108,6 @@ mod tests {
         entries
             .iter()
             .map(|(name, form)| Deliverable {
-                with: None,
                 name: (*name).into(),
                 form: *form,
             })

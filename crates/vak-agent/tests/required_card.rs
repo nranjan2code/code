@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! The plan check's reframe rung (docs/design/88-control-plane.md §5): a
-//! planned card still missing after the model was told is required of one
-//! step, by the tool the plan named for it, and never asked for again.
+//! planned card still missing after the model was told requires the
+//! `answer` document of one step, once.
 
 mod support;
 
@@ -176,11 +176,8 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
         .await
 }
 
-fn plan(with: Option<&str>) -> AssistantMessage {
-    let mut deliverable = serde_json::json!({"name": "watering", "form": "card"});
-    if let Some(tool) = with {
-        deliverable["with"] = tool.into();
-    }
+fn plan(form: &str) -> AssistantMessage {
+    let deliverable = serde_json::json!({"name": "watering", "form": form});
     call(
         "p1",
         "plan",
@@ -189,13 +186,13 @@ fn plan(with: Option<&str>) -> AssistantMessage {
 }
 
 #[tokio::test]
-async fn a_planned_card_still_missing_is_required_of_one_step_by_its_named_tool() {
+async fn planned_cards_still_missing_require_the_answer_of_one_step() {
     let dir = tempfile::tempdir().unwrap();
     let (mut agent, required) = agent(
         &dir,
         "required-card",
         vec![
-            plan(Some("emit_steps_card")),
+            plan("card"),
             text("Water on Monday and Thursday."),
             text("As I said: Monday and Thursday."),
             text("Still only words."),
@@ -208,7 +205,7 @@ async fn a_planned_card_still_missing_is_required_of_one_step_by_its_named_tool(
     );
     assert_eq!(
         *required.lock().unwrap(),
-        vec![None, None, None, Some("emit_steps_card".to_string())],
+        vec![None, None, None, Some("answer".to_string())],
         "told once, then one step is required to call the tool, then the answer stands"
     );
     let session = agent.session.lock().await;
@@ -234,13 +231,13 @@ async fn a_planned_card_still_missing_is_required_of_one_step_by_its_named_tool(
 }
 
 #[tokio::test]
-async fn a_plan_that_names_no_tool_is_told_once_and_then_stands() {
+async fn a_plan_with_no_card_never_requires_the_answer() {
     let dir = tempfile::tempdir().unwrap();
     let (mut agent, required) = agent(
         &dir,
         "no-named-tool",
         vec![
-            plan(None),
+            plan("text"),
             text("Water on Monday and Thursday."),
             text("As I said: Monday and Thursday."),
         ],

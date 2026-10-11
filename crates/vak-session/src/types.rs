@@ -829,6 +829,10 @@ pub enum PresentationSource {
         tool_use_id: String,
         worker_session_id: String,
     },
+    /// One block of an `answer` call, the turn's whole answer as one
+    /// document (docs/design/87-composed-answers.md §2). One call carries
+    /// several; `block` is the block's position in the call's `blocks`.
+    Answer { tool_use_id: String, block: u32 },
 }
 
 /// A validated `emit_*_card` (or fence) presentation, written once at the

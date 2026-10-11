@@ -48,21 +48,6 @@ pub(crate) fn find_malformed_vak_fence(text: &str) -> Option<String> {
     })
 }
 
-/// The `semantic_type` of the first `vak` fence that repeats a card already
-/// emitted through a tool call this run, if any. Compares the parsed
-/// `semantic_type` field; a card whose payload merely mentions another type
-/// in a string does not count.
-pub(crate) fn find_duplicate_card_fence(text: &str, emitted_types: &[String]) -> Option<String> {
-    vak_fence_bodies(text).into_iter().find_map(|body| {
-        let value: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
-        let declared = value.get("semantic_type")?.as_str()?;
-        emitted_types
-            .iter()
-            .find(|emitted| emitted.as_str() == declared)
-            .cloned()
-    })
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -115,18 +100,5 @@ mod tests {
     fn other_languages_are_not_vak_fences() {
         let text = "```json\n{not json\n```\n";
         assert!(vak_fence_bodies(text).is_empty());
-    }
-
-    #[test]
-    fn a_duplicate_is_decided_by_the_parsed_type_not_by_a_substring() {
-        let emitted = vec!["chart".to_string()];
-        assert_eq!(
-            find_duplicate_card_fence(&fenced(CHART), &emitted),
-            Some("chart".into())
-        );
-        // A different card whose *text* mentions the chart envelope is not one.
-        let metric = r#"{"semantic_type":"metric","label":"say \"semantic_type\":\"chart\" here","value":"1"}"#;
-        assert_eq!(find_duplicate_card_fence(&fenced(metric), &emitted), None);
-        assert_eq!(find_duplicate_card_fence("no fence at all", &emitted), None);
     }
 }

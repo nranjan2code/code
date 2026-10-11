@@ -362,6 +362,15 @@ presentation update does not restore stale-context behavior.
   Markdown. It now says a file is written when the work is itself a file,
   and that an answer meant to be read is not one.
 
+- 2026-10-11, the answer document (docs/design/87-composed-answers.md §2).
+  The presentation bullet no longer names the `emit_*_card` tools, which are
+  no longer offered: an answer with a card shape is given with the `answer`
+  tool, once, when the work is done, its blocks the whole answer in reading
+  order (a card for each part with a card shape, `text` for the rest, each
+  card naming its plan deliverable in `answers`); calling it ends the turn.
+  Prose is still the answer when no card makes it clearer, and a several-part
+  answer still leads with a summary block. The seed is 1,594 words.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

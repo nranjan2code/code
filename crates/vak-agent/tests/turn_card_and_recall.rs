@@ -103,7 +103,11 @@ impl Tool for FakeEmitChartCard {
         "test stand-in"
     }
     fn schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
+        serde_json::json!({"type": "object", "properties": {
+            "semantic_type": {"type": "string", "enum": ["chart"]},
+            "title": {"type": "string"},
+            "points": {"type": "array"}
+        }})
     }
     fn presents_cards(&self) -> bool {
         true
@@ -252,24 +256,20 @@ async fn fence_presentation_is_written_once() {
 #[tokio::test]
 async fn fence_presentation_deduped_against_tool_emitted_card() {
     let dir = tempdir().unwrap();
-    // The final accepted answer still repeats the just-emitted card as a
-    // `vak` fence with the IDENTICAL payload (the observed real bug this
-    // rule exists for) — the duplicate-card-check repair nudge fires once,
-    // and the model ignores it (attempt two repeats it too), so the run
-    // completes with the duplicate fence still present in the final text.
+    // The answer's prose repeats its own card as a `vak` fence with the
+    // IDENTICAL payload: the card is recorded once.
     let duplicate_fence = "Here's the chart you asked for.\n\n```vak\n{\"semantic_type\":\"chart\",\"title\":\"Sales\",\"points\":[{\"series\":\"s\",\"x\":\"1\",\"y\":1}]}\n```";
     let mut agent = build_agent(
         &dir,
         "fence-dedup",
-        vec![
-            tool_call_msg(
-                "call_1",
-                "emit_chart_card",
-                serde_json::json!({"semantic_type": "chart", "title": "Sales", "points": [{"series": "s", "x": "1", "y": 1}]}),
-            ),
-            text_msg(duplicate_fence),
-            text_msg(duplicate_fence),
-        ],
+        vec![tool_call_msg(
+            "call_1",
+            "answer",
+            serde_json::json!({"blocks": [
+                {"type": "chart", "title": "Sales", "points": [{"series": "s", "x": "1", "y": 1}]},
+                {"type": "text", "text": duplicate_fence}
+            ]}),
+        )],
         vec![Arc::new(FakeEmitChartCard)],
         true,
     );
@@ -292,7 +292,7 @@ async fn fence_presentation_deduped_against_tool_emitted_card() {
     );
     assert!(matches!(
         presentations[0].1.source,
-        PresentationSource::ToolCall { .. }
+        PresentationSource::Answer { block: 0, .. }
     ));
 }
 

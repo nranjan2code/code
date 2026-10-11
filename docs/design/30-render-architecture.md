@@ -176,22 +176,23 @@ The envelope is recognized in three input forms:
 one level to get text, then look for our envelope within that text. The
 envelope format is identical regardless of provider.
 
-**Preferred emission path: `emit_*_card` tool calls.** The "Tool declared"
-row above is how `vak-core/src/presentation_tools.rs`'s twelve
-`emit_*_card` tools reach this pipeline — one tool per payload *shape*
-(not per `semantic_type`; siblings that share a shape, e.g. every
-timeline-flavored type, share one tool; the twelve carry all 109 types).
-`execute()` turns the call's arguments into the stored card (each shape's
-`build`), validates it against `SkillRegistry`, and replies with a short ack
-(or a repairable tool error naming the field); the card is written as a
-`Presentation` ledger entry at that moment and never carried in result text,
-of which an over-long result's request carries only a window
-(docs/design/68-context-engine.md §3). A tool call is the *preferred* path
-over writing a ```vak fence directly (`system-prompt.md`,
-`docs/design/07-prompt.md` v3.4.5): measured against gemma4:e2b-mlx via
-Ollama, a free-text fence parsed as valid JSON only ~20% of the time. The
-fence path remains the fallback for a turn where no matching tool is present,
-and a fence carries exactly the arguments the tool would take.
+**Preferred emission path: blocks of the `answer` tool.** The model answers
+with one loop-owned `answer` call (docs/design/87-composed-answers.md §2):
+a list of blocks, each prose or a card block whose kind is declared by one
+of `vak-core/src/presentation_tools.rs`'s card tools, one per payload
+*shape*. Those tools are not offered by their own names; `answer` is built
+from them at run time, and each card block is checked by the tool that owns
+its kind: its `build` turns the block's arguments into the stored card,
+validates it against `SkillRegistry`, and a failure is a repairable error
+naming the block and field. The card is written as a `Presentation` ledger
+entry (`PresentationSource::Answer`) and never carried in result text, of
+which an over-long result's request carries only a window
+(docs/design/68-context-engine.md §3). A call is the *preferred* path over
+writing a ```vak fence directly (`docs/design/07-prompt.md` v3.4.5):
+measured against gemma4:e2b-mlx via Ollama, a free-text fence parsed as
+valid JSON only ~20% of the time. The fence path remains the fallback for a
+turn where no card tool is admitted, and a fence carries exactly the
+arguments the block would take.
 
 Before schema validation, the shared tool-call boundary restores an array or
 object that a provider returned as a JSON string when the admitted schema
@@ -206,8 +207,8 @@ it cannot parse without telling the client, so the argument shape itself has
 to be one every model writes reliably. Measured 2026-10-07 against
 gemma4:e2b-mlx (20 runs per tool and per shape; the model wrote the same
 nested data as plain JSON in a reply 14 times in 15, so the weak point is the
-tool-call encoding, not JSON or the size of the data), every card tool's
-arguments follow eight rules, checked by
+tool-call encoding, not JSON or the size of the data), every card block's
+arguments (its card tool's schema) follow eight rules, checked by
 `every_card_schema_is_flat_and_portable`:
 
 1. **No envelope.** The card's fields sit at the top level beside
@@ -511,7 +512,7 @@ required, 15 of 20; rows as a list of strings, 18 of 20; both, 20 of 20;
 the shipped schema and description, 30 of 32 (2 refused by a check stricter
 than `build`).
 
-**Presentation check.** Prompt guidance is advisory, and a strong model can
+**Presentation check (removed in docs/design/88-control-plane.md C5; kept as history).** Prompt guidance is advisory, and a strong model can
 still answer in prose what the app would have shown as a card. After the
 turn-loop's other repair checks, `Agent::run` asks an optional
 `AgentConfig::presentation_check` (set by `Core`) whether the final text reads

@@ -195,6 +195,20 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// The kinds of card this tool shows (`semantic_type`s), for a tool that
+    /// presents cards: the answer document offers each as a kind of block
+    /// (docs/design/87-composed-answers.md §2). By default the ones its
+    /// schema lists; a tool whose one kind its schema leaves out names it.
+    fn card_kinds(&self) -> Vec<String> {
+        self.schema()["properties"]["semantic_type"]["enum"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    }
+
     /// The capability domains this tool serves (`filesystem`, `web`, …; the
     /// vocabulary is `vak_core::capability::Domain`). The tool classifies
     /// itself so the harness never keeps a name table. Empty means

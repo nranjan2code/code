@@ -41,13 +41,26 @@ A turn's answer is composed by the runtime, not left to emit order:
 - **Outline.** The model's `plan` (doc 86) is the outline: its
   deliverables, in order, are the answer's sections. A turn with no plan
   is one section.
-- **Blocks.** Every card and the final text are blocks. A card names its
-  section with `answers`; one that names none is in no section and is
-  shown after the sections in the order it was produced, because the
-  runtime did not see where it belongs (the plan check counts such cards
-  the same way). The reply's text is in the one text section when the plan
+- **Blocks.** The model writes its answer as one call of the loop-owned
+  `answer` tool: an ordered list of blocks, each a `text` block (prose) or
+  a card block of a kind some admitted card tool declares
+  (`Tool::card_kinds`). The tool is built at run time from whatever card
+  tools the turn admits, so it names no block, tool, provider or model; a
+  card tool is never offered, nor callable, by its own name. Each card
+  block is checked by the tool that owns its kind and recorded as a
+  `Presentation` with the source `Answer { tool_use_id, block }`, `block`
+  being its position in `blocks`. All blocks standing, the prose becomes
+  the closing message and the turn ends with no further model step; any
+  block failing, nothing is shown and each fault names its block. A block
+  that previews a file the run delivered for review is not shown. A block
+  names its section with `answers`; one that names none is in no section
+  and is shown after the sections in block order, because the runtime did
+  not see where it belongs (the plan check counts such cards the same
+  way). A `text` block that answers a deliverable the plan lists as a card
+  is refused. The reply's text is in the one text section when the plan
   has exactly one. The projection publishes this as the answer's outline
-  (`OutputTimeline.answers`), and the client lays the answer out from it.
+  (`OutputTimeline.answers`), reading each block's own `answers`, and the
+  client lays the answer out from it.
 - **Layout.** The client lays out the answer from the blocks' shapes,
   deterministically: a summary block leads as the headline; a comparison
   renders its options as columns; steps as a numbered flow; stats as one
@@ -58,8 +71,9 @@ A turn's answer is composed by the runtime, not left to emit order:
 
 ## 3. Blocks
 
-Each block is its own flat card tool (doc 30 §30.1 measured per-shape tools
-as the reliable path; schemas keep its portability rules). No tool carries
+Each block kind is the arguments of the card tool that owns it, offered
+as one kind of block of `answer` (§2); the flat-schema portability rules of
+doc 30 §30.1 hold for every block. No block carries
 a topic enum: `semantic_type` is the block's own name, and an optional
 `label` holds the model's own words for what it is ("Weekly routine"),
 shown as the block's eyebrow.

@@ -25,8 +25,6 @@ pub enum Finding {
     EmptyStep,
     /// A card fence in the answer does not parse.
     Fence { error: String },
-    /// The answer's fence repeats a card a call already showed.
-    DuplicateCard { semantic_type: String },
     /// The declared plan has deliverables with no receipt.
     Plan {
         /// Planned cards no card's `answers` names.
@@ -38,9 +36,9 @@ pub enum Finding {
         /// Every other deliverable with no receipt, with its form.
         others: Vec<(String, String)>,
     },
-    /// A planned card is still not shown, and the next step is framed to
-    /// call the tool the plan named for it.
-    CardRequired { name: String, tool: String },
+    /// Planned cards are still not shown, and the next step is framed to
+    /// give the answer as its one document.
+    AnswerRequired { tool: String, missing: Vec<String> },
     /// A stop hook the operator configured asked for more work.
     StopHook { reason: String },
     /// A completion gate with its own reason (goal mode, managed work).
@@ -74,8 +72,7 @@ impl Finding {
             Self::ToolCallFormat { .. } => Cause::ToolCallRepair,
             Self::EmptyStep => Cause::EmptyStep,
             Self::Fence { .. } => Cause::Fence,
-            Self::DuplicateCard { .. } => Cause::DuplicateCard,
-            Self::Plan { .. } | Self::CardRequired { .. } => Cause::Plan,
+            Self::Plan { .. } | Self::AnswerRequired { .. } => Cause::Plan,
             Self::StopHook { .. } => Cause::StopHook,
             Self::StopGuard { .. } => Cause::StopGuard,
             Self::Truncated { .. } => Cause::Truncated,
@@ -147,12 +144,6 @@ pub fn render(finding: &Finding, marker: &str) -> String {
              double-check every object/array is closed and every key is quoted. If you can't produce \
              valid JSON for it, drop the fence and answer in plain prose instead."
         ),
-        Finding::DuplicateCard { semantic_type } => format!(
-            "{marker}: You already emitted a `{semantic_type}` card via the matching \
-             emit_*_card tool call above, and the user already sees it. Resend your answer \
-             WITHOUT the ```vak fence that repeats it — just the short narration around the \
-             card is needed, no restated JSON."
-        ),
         Finding::Plan {
             cards_unnamed,
             cards_unattributed,
@@ -190,10 +181,15 @@ pub fn render(finding: &Finding, marker: &str) -> String {
             );
             parts.join(" ")
         }
-        Finding::CardRequired { name, tool } => format!(
-            "{marker}: Your plan lists \"{name}\" as a card and no card shows it. This step \
-             can only call `{tool}`: call it now, with `answers` set to \"{name}\". This is \
-             not a message from the person."
+        Finding::AnswerRequired { tool, missing } => format!(
+            "{marker}: Your plan lists {} as cards and none shows them. This step can only \
+             call `{tool}`: give your whole answer with it now, one block for each, with \
+             `answers` set to its planned name. This is not a message from the person.",
+            missing
+                .iter()
+                .map(|name| format!("\"{name}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         Finding::StopHook { reason } => format!(
             "{marker}: a stop hook asked for more work: {}. Do it now, or say plainly why you cannot.",
@@ -310,12 +306,9 @@ mod tests {
             Finding::ToolCallFormat { reason: "x".into() },
             Finding::EmptyStep,
             Finding::Fence { error: "x".into() },
-            Finding::DuplicateCard {
-                semantic_type: "x".into(),
-            },
-            Finding::CardRequired {
-                name: "x".into(),
+            Finding::AnswerRequired {
                 tool: "x".into(),
+                missing: vec!["x".into()],
             },
             Finding::StopHook {
                 reason: "x.".into(),

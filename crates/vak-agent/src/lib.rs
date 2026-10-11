@@ -5,7 +5,8 @@
 //! (model-visible means logged).
 
 mod fences;
-use fences::{find_duplicate_card_fence, find_malformed_vak_fence, vak_fence_bodies};
+use fences::{find_malformed_vak_fence, vak_fence_bodies};
+mod answer;
 pub mod circuit;
 pub mod goal;
 pub mod questions;
@@ -601,19 +602,10 @@ impl AgentConfig {
 /// session-derived sections `SessionLog::tail_sections()` returned.
 /// Sections absent from `sections` are omitted entirely, never emitted as an
 /// empty tag pair.
-/// The no-op result for an `emit_*_card` call identical to one already shown
-/// this run (cards are Vak's own display channel; a repeat is not an error).
-const CARD_REPEAT_ACK: &str = "This card is already shown to the user.";
-
 /// The result for a call identical to one that already delivered a file this
 /// run (`Tool::delivered_file`): the first draft stands and no second one is
 /// written. The first call's result follows it.
 const DRAFT_REPEAT_ACK: &str = "Already drafted: this exact call ran earlier in this turn and its draft stands, so no second draft was written. Do not call it again; answer with one sentence saying what you changed. The earlier result:";
-
-/// The start of the result for a card that previews a file this run already
-/// delivered: the card is not shown, because the draft is in front of the
-/// person with its change list and an imitation of it is not.
-const WITHHELD_CARD_ACK: &str = "Not shown:";
 
 /// The start of the result for a shell command that would copy a file this
 /// run delivered for review out of `.vak/scratch/`: it is not run, because
@@ -621,10 +613,7 @@ const WITHHELD_CARD_ACK: &str = "Not shown:";
 const DRAFT_COPY_REFUSED: &str = "Not run:";
 
 fn is_no_op_ack(text: &str) -> bool {
-    text.starts_with(CARD_REPEAT_ACK)
-        || text.starts_with(DRAFT_REPEAT_ACK)
-        || text.starts_with(WITHHELD_CARD_ACK)
-        || text.starts_with(DRAFT_COPY_REFUSED)
+    text.starts_with(DRAFT_REPEAT_ACK) || text.starts_with(DRAFT_COPY_REFUSED)
 }
 
 /// The delivered path a shell command reaches into `.vak/scratch/` for, by
@@ -651,9 +640,6 @@ struct RunDeliveries {
     results: HashMap<String, String>,
     /// Workspace paths delivered, as the calls named them.
     paths: std::collections::HashSet<String>,
-    /// Card calls withheld because they preview a delivered path; their
-    /// presentation is never recorded.
-    withheld_cards: std::collections::HashSet<String>,
 }
 
 /// A path as an artifact names it: a draft's `.vak/scratch/<agent>/<run>/`
@@ -1124,16 +1110,17 @@ pub struct Agent {
     seen_calls: std::sync::Mutex<HashMap<String, SeenCall>>,
     /// This run's correction ladder (docs/design/88-control-plane.md §5).
     ladder: vak_control::Ladder,
+    /// An `answer` call whose every block stood, until the loop records
+    /// its cards and ends the turn on it.
+    answered: std::sync::Mutex<Option<Answered>>,
     /// The tool the next step must call: the frame change a correction
     /// asked for (`OutputForm::Tool`). Taken when that step is framed.
     must_call: Option<String>,
-    /// Planned deliverables a step was already framed for, by name: each
-    /// is required of one step, never asked for again.
-    required_once: HashSet<String>,
+    /// Whether a step of this run was already framed to give the answer:
+    /// it is required once, never asked for again.
+    answer_required: bool,
     /// Whether this run has already announced its first workspace change.
     effect_announced: std::sync::atomic::AtomicBool,
-    /// `name + input` of every card call that displayed successfully this run.
-    presented_cards: std::sync::Mutex<std::collections::HashSet<String>>,
     /// The latest plan the model declared this run (docs/design/
     /// 86-model-plans-runtime-checks.md), checked when the turn ends.
     declared_plan: std::sync::Mutex<Option<Vec<vak_intent::Deliverable>>>,
@@ -1176,10 +1163,10 @@ impl Agent {
             config,
             seen_calls: std::sync::Mutex::new(HashMap::new()),
             ladder: vak_control::Ladder::default(),
+            answered: std::sync::Mutex::new(None),
             must_call: None,
-            required_once: HashSet::new(),
+            answer_required: false,
             effect_announced: std::sync::atomic::AtomicBool::new(false),
-            presented_cards: std::sync::Mutex::new(std::collections::HashSet::new()),
             declared_plan: std::sync::Mutex::new(None),
             deliveries: std::sync::Mutex::new(RunDeliveries::default()),
             call_yields: CallYields::default(),
@@ -1303,6 +1290,9 @@ impl Agent {
                 }),
             ));
         }
+        // The card tools reach the model as the one `answer` tool
+        // (docs/design/87-composed-answers.md §2).
+        answer::offer(&mut definitions, &self.config.tools);
         definitions
     }
 
@@ -1501,11 +1491,7 @@ impl Agent {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.ladder = vak_control::Ladder::default();
         self.must_call = None;
-        self.required_once.clear();
-        self.presented_cards
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+        self.answer_required = false;
         *self
             .declared_plan
             .lock()
@@ -1659,10 +1645,6 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
-        self.presented_cards
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
         *self
             .declared_plan
             .lock()
@@ -1682,21 +1664,8 @@ impl Agent {
             // Results kept for the previous turn are not this turn's.
             registry.forget_finished_for(&parent);
         }
-        let mut card_repeat_acked: Option<Vec<(String, serde_json::Value)>> = None;
-        // `semantic_type`s successfully emitted via an `emit_*_card` tool
-        // call in the immediately preceding batch. A tool-emitted card is
-        // already shown to the user (vak-server's projection pushes it from
-        // the tool result independently of the assistant's own text), so if
-        // the model's very next answer *also* writes a `vak` fence
-        // repeating the same semantic_type, that's a second, duplicate card
-        // — observed live against the real local model (gemma4:e2b-mlx):
-        // it called `emit_chart_card` successfully, then still wrote out
-        // the identical chart as a trailing fence. Same bounded-repair
-        // pattern as `pending_grounding_check`/`malformed_fence_repair_attempted`.
-        let mut pending_duplicate_card_check: Option<Vec<String>> = None;
-        // Whether any `emit_*_card` call succeeded so far in this run (unlike
-        // `pending_duplicate_card_check`, which only covers the last batch),
-        // and the one-shot flag for the presentation check below.
+        let mut repeat_acked: Option<Vec<(String, serde_json::Value)>> = None;
+        // Whether this run showed a card (an answer's, a worker's).
         let mut cards_emitted_this_run = false;
         // A tool delivered a file the person reviews through its own card
         // (an Office draft): the answer need not present it again.
@@ -2548,49 +2517,14 @@ impl Agent {
                         continue;
                     }
                 }
-                // Duplicate-card enforcement: the model already emitted a
-                // card via `emit_*_card` this turn, then its own trailing
-                // text repeats the same semantic_type as a `vak` fence —
-                // that fence renders as a SECOND card (vak-server's
-                // projection and the client's own fence-parsing are
-                // independent paths; nothing dedupes across them). One
-                // bounded repair turn asking the model to drop the
-                // redundant fence, mirroring the two checks above.
-                if !self.ladder.told(Cause::DuplicateCard)
-                    && let Some(emitted_types) = pending_duplicate_card_check.take()
-                    && !emitted_types.is_empty()
-                {
-                    let text = response.text_content();
-                    if let Some(dup_type) = find_duplicate_card_fence(&text, &emitted_types) {
-                        self.ladder.step(Cause::DuplicateCard, false);
-                        if turn + 1 >= self.config.max_turns {
-                            return TurnOutcome::MaxTurnsReached;
-                        }
-                        if let Err(error) = self
-                            .correct(
-                                Finding::DuplicateCard {
-                                    semantic_type: dup_type.to_string(),
-                                },
-                                Rung::Tell,
-                            )
-                            .await
-                        {
-                            return nudge_write_failed(error);
-                        }
-                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-                        turn += 1;
-                        continue;
-                    }
-                }
                 // The model's own plan, checked against what this turn
                 // produced (docs/design/86-model-plans-runtime-checks.md
                 // §2.2). Nothing is discarded: the model is told once what the
                 // plan lists and what the turn produced. Whatever is still
                 // missing after that, the turn ends as it stands.
                 // The plan's receipts (docs/design/86 §2.2): what is still
-                // missing, and, for a planned card whose tool the plan
-                // named and this turn offers, the call a step can be
-                // framed to make.
+                // missing, and whether a step can be framed to give the
+                // answer as its one document.
                 let (plan_gap, requirable) = {
                     let plan = self
                         .declared_plan
@@ -2609,11 +2543,17 @@ impl Agent {
                                 checked: receipts.substantive_bash_calls > 0 && !verification_stale,
                             };
                             let gap = vak_judge::plan::gap(plan, &produced);
-                            let requirable = gap.cards_unnamed.iter().find_map(|deliverable| {
-                                let tool = deliverable.with.as_deref()?;
-                                (!self.required_once.contains(&deliverable.name)
-                                    && self.tool_presents_cards(tool))
-                                .then(|| (deliverable.name.clone(), tool.to_string()))
+                            // The answer can be required of a step when
+                            // planned cards are missing and this turn has
+                            // card tools to show them with.
+                            let requirable = (!self.answer_required
+                                && !gap.cards_unnamed.is_empty()
+                                && self.config.tools.iter().any(|tool| tool.presents_cards()))
+                            .then(|| {
+                                gap.cards_unnamed
+                                    .iter()
+                                    .map(|deliverable| deliverable.name.clone())
+                                    .collect::<Vec<_>>()
                             });
                             let finding = (!gap.is_empty()).then(|| Finding::Plan {
                                 cards_unnamed: gap
@@ -2640,18 +2580,20 @@ impl Agent {
                 };
                 // Told once, keeping everything produced. Still short after
                 // that, the frame changes where it can: one step is required
-                // to call the tool the plan named for a missing card, once
-                // for each. What is left then stands as the model's answer,
-                // and the decision trail says so.
+                // to call `answer`, once. What is left then stands as the
+                // model's answer, and the decision trail says so.
                 if let Some(finding) = plan_gap
                     && turn + 1 < self.config.max_turns
                 {
                     let rung = self.ladder.step(Cause::Plan, requirable.is_some());
                     let finding = match (rung, requirable) {
-                        (Rung::Reframe, Some((name, tool))) => {
-                            self.required_once.insert(name.clone());
-                            self.must_call = Some(tool.clone());
-                            Finding::CardRequired { name, tool }
+                        (Rung::Reframe, Some(missing)) => {
+                            self.answer_required = true;
+                            self.must_call = Some(answer::ANSWER.to_string());
+                            Finding::AnswerRequired {
+                                tool: answer::ANSWER.to_string(),
+                                missing,
+                            }
                         }
                         _ => finding,
                     };
@@ -2983,20 +2925,20 @@ impl Agent {
                     note_result(&self.seen_calls, name, input, failed, content);
                 }
             }
-            // Identical-card repeat: a step that only re-emits cards already
-            // shown is told so by the no-op ack. A step that makes the same
-            // calls again straight after that ack is the model giving the same answer
-            // with the ack in hand (measured live: up to nineteen times in
-            // one turn), so the turn closes on that card as its answer.
+            // A step whose calls were all answered by a no-op ack (a draft
+            // already written, a copy of one refused) is told so. A step
+            // that makes the same calls again straight after that ack is
+            // the model giving the same answer with the ack in hand, so the
+            // turn closes on what was delivered.
             let all_repeats = !results.is_empty()
                 && results.iter().all(
                     |(_, output)| matches!(output, ToolRunOutput::Ok(text) if is_no_op_ack(text)),
                 );
             let repeated = all_repeats.then_some(made);
-            if repeated.is_some() && repeated == card_repeat_acked {
-                return self.card_repeat_outcome().await;
+            if repeated.is_some() && repeated == repeat_acked {
+                return self.repeat_outcome().await;
             }
-            card_repeat_acked = repeated;
+            repeat_acked = repeated;
             // Classify unresolved correctable tool failures this turn for the
             // repair budget (see `reconcile_repair_budget`). Computed before
             // `results` is consumed into tool-result blocks below, and keyed
@@ -3016,23 +2958,6 @@ impl Agent {
                     _ => None,
                 })
                 .collect();
-            let emitted_card_types: Vec<String> = results
-                .iter()
-                .filter_map(|(id, out)| match out {
-                    ToolRunOutput::Ok(output) if !output.starts_with(CARD_REPEAT_ACK) => {
-                        let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("");
-                        self.tool_presents_cards(name)
-                            .then(|| call_inputs.get(id))
-                            .flatten()
-                            .and_then(|input| input.get("semantic_type"))
-                            .and_then(|s| s.as_str())
-                            .map(str::to_string)
-                    }
-                    ToolRunOutput::Ok(_) => None,
-                    ToolRunOutput::Err(..) => None,
-                })
-                .collect();
-            cards_emitted_this_run |= !emitted_card_types.is_empty();
             file_delivered_this_run |= results.iter().any(|(id, out)| {
                 matches!(out, ToolRunOutput::Ok(_))
                     && call_names
@@ -3040,18 +2965,6 @@ impl Agent {
                         .zip(call_inputs.get(id))
                         .is_some_and(|(name, input)| self.delivered_file(name, input).is_some())
             });
-            pending_duplicate_card_check = if emitted_card_types.is_empty() {
-                None
-            } else {
-                Some(emitted_card_types)
-            };
-            // Presentations are ledger entries
-            // (docs/design/68-context-engine.md §10): a validated
-            // `emit_*_card` call gets its own hash-linked entry, written
-            // HERE rather than inside the tool itself — the tool executes
-            // across the worker/broker boundary (AGENTS.md invariant 14)
-            // and has no session-log access. `execute()`'s generic ack is
-            // replaced with a short one carrying the new entry's id.
             let mut yields: HashMap<String, CallYield> = {
                 let mut pending = self
                     .call_yields
@@ -3073,97 +2986,15 @@ impl Agent {
                     .filter_map(|y| y.delegated.as_ref())
                     .flat_map(|delegated| delegated.cards.iter().map(|_| None)),
             );
-            if let Some(rebuild) = self.config.presentation_rebuild.clone() {
-                let mut session = self.session.lock().await;
-                if let Some(turn_id) = session.latest_directive_entry_id() {
-                    let prior_evidence = session
-                        .non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
-                    let mut in_batch_evidence: Vec<String> = Vec::new();
-                    for id in &call_issue_order {
-                        let Some(name) = call_names.get(id) else {
-                            continue;
-                        };
-                        let succeeded_here = results
-                            .iter()
-                            .any(|(rid, out)| rid == id && matches!(out, ToolRunOutput::Ok(_)));
-                        if !succeeded_here {
-                            continue;
-                        }
-                        if !self.tool_presents_cards(name) {
-                            in_batch_evidence.push(id.clone());
-                            continue;
-                        }
-                        if self
-                            .deliveries
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .withheld_cards
-                            .contains(id)
-                        {
-                            continue;
-                        }
-                        let Some(input) = call_inputs.get(id) else {
-                            continue;
-                        };
-                        let Some(info) = rebuild(name.as_str(), input) else {
-                            continue;
-                        };
-                        let digest = vak_session::types::payload_digest(&info.payload);
-                        if session.has_presentation(&turn_id, &digest) {
-                            // Already recorded — a repeated identical call
-                            // (`execute_batch`'s own short-circuit reuses the
-                            // exact same arguments) or a fence that beat this
-                            // write to it. Nothing new to append; the tool's
-                            // own result text (ack or "already displayed")
-                            // stands.
-                            continue;
-                        }
-                        let mut derived_from = prior_evidence.clone();
-                        derived_from.extend(in_batch_evidence.iter().cloned());
-                        let record = vak_session::types::PresentationRecord {
-                            turn_id: turn_id.clone(),
-                            source: vak_session::types::PresentationSource::ToolCall {
-                                tool_use_id: id.clone(),
-                            },
-                            semantic_type: info.semantic_type,
-                            skill_id: info.skill_id,
-                            skill_version: info.skill_version,
-                            schema_version: info.schema_version,
-                            payload: info.payload,
-                            payload_digest: digest,
-                            derived_from,
-                            title: info.title,
-                            identity_digest: info.identity_digest,
-                        };
-                        // The tool's own text (the card is on screen; finish)
-                        // stays, with the id after it: replaced by a bare
-                        // `ok`, the model never learned the card was shown
-                        // and sent it again (measured live).
-                        let answers = input
-                            .get("answers")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_string);
-                        let appended = session.append_presentation(record);
-                        if appended.is_ok() {
-                            card_answers.push(answers);
-                        }
-                        if let Ok(entry) = appended
-                            && let Some(slot) = results.iter_mut().find(|(rid, _)| rid == id)
-                        {
-                            // Plain text: wrapped in JSON, the same words
-                            // read to the model as a placeholder it should
-                            // not trust (measured live).
-                            let shown = match &slot.1 {
-                                ToolRunOutput::Ok(text) => text.clone(),
-                                ToolRunOutput::Err(..) => String::new(),
-                            };
-                            slot.1 =
-                                ToolRunOutput::Ok(format!("{shown}\n(presentation {})", entry.id));
-                        }
-                    }
-                }
+            let answered = self
+                .answered
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            if let Some(answered) = &answered {
+                let answers = self.record_answer(answered).await;
+                cards_emitted_this_run |= !answers.is_empty();
+                card_answers.extend(answers);
             }
             for (id, out) in &results {
                 match out {
@@ -3353,6 +3184,79 @@ impl Agent {
                 reconcile_repair(self, &failed_correctable, &receipts.unresolved_error).await
             {
                 return outcome;
+            }
+            // An answer whose blocks all stood is the turn's answer: its
+            // prose is the model's closing message, and no further step is
+            // asked of it.
+            if let Some(answered) = answered {
+                // The plan's receipts are checked for an answer given this
+                // way too: told once, and what is then left stands.
+                let short = {
+                    let plan = self
+                        .declared_plan
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    plan.as_deref().and_then(|plan| {
+                        let gap = vak_judge::plan::gap(
+                            plan,
+                            &vak_judge::plan::Produced {
+                                cards: &card_answers,
+                                final_text: &answered.text,
+                                file_delivered: file_delivered_this_run
+                                    || receipts.artifact_deliveries > 0,
+                                changed: receipts.has_execution_receipt(),
+                                checked: receipts.substantive_bash_calls > 0 && !verification_stale,
+                            },
+                        );
+                        (!gap.is_empty()).then(|| Finding::Plan {
+                            cards_unnamed: gap
+                                .cards_unnamed
+                                .iter()
+                                .map(|deliverable| deliverable.name.clone())
+                                .collect(),
+                            cards_unattributed: gap.cards_unattributed,
+                            cards_short: gap.cards_short(),
+                            others: gap
+                                .others
+                                .iter()
+                                .map(|deliverable| {
+                                    (
+                                        deliverable.name.clone(),
+                                        deliverable.form.as_str().to_string(),
+                                    )
+                                })
+                                .collect(),
+                        })
+                    })
+                };
+                if let Some(finding) = short
+                    && turn + 1 < self.config.max_turns
+                {
+                    let rung = self.ladder.step(Cause::Plan, false);
+                    if let Err(error) = self.correct(finding, rung).await {
+                        return nudge_write_failed(error);
+                    }
+                    if rung == Rung::Tell {
+                        turn += 1;
+                        continue;
+                    }
+                }
+                let response = AssistantMessage {
+                    content: if answered.text.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![ContentBlock::text(answered.text)]
+                    },
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    model: self.config.model.clone(),
+                    response_id: None,
+                    applied: None,
+                };
+                if !response.content.is_empty() {
+                    self.append_assistant(&response).await;
+                }
+                return TurnOutcome::Completed { response };
             }
 
             turn += 1;
@@ -5579,7 +5483,31 @@ impl Agent {
         let (plan_calls, calls): (Vec<_>, Vec<_>) = calls
             .into_iter()
             .partition(|call| vak_tools::canonical_tool_name(&call.name) == "plan");
-        let mut results = Vec::with_capacity(recall_calls.len() + plan_calls.len());
+        // `answer` is the turn's whole answer as one document of blocks
+        // (docs/design/87-composed-answers.md §2); the loop reads it and
+        // has each block checked by the card tool that owns its kind.
+        let (answer_calls, calls): (Vec<_>, Vec<_>) = calls
+            .into_iter()
+            .partition(|call| call.name == answer::ANSWER);
+        let mut results =
+            Vec::with_capacity(recall_calls.len() + plan_calls.len() + answer_calls.len());
+        for call in answer_calls {
+            let output = self.read_answer(&call).await;
+            // Its blocks are checked by their own tools, so its verdict is
+            // theirs: accepted when every block stood.
+            let verdict = match &output {
+                ToolRunOutput::Err(..) => {
+                    vak_control::CallVerdict::Refused(vak_control::Refusal::Tool)
+                }
+                _ => vak_control::CallVerdict::Accepted,
+            };
+            self.record_decisions(vec![
+                vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
+                    .with(vak_control::Evidence::Call(call.id.clone())),
+            ])
+            .await;
+            results.push((call.id, output));
+        }
         for call in plan_calls {
             let output = match vak_tools::parse_plan_args(&call.input) {
                 Ok(plan) => {
@@ -5786,14 +5714,7 @@ impl Agent {
                 serde_json::to_string(&call.input).unwrap_or_default()
             )
         };
-        let mut shown = self
-            .presented_cards
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let mut repeats: Vec<String> = Vec::new();
         let mut answered: Vec<(String, ToolRunOutput)> = Vec::new();
-        let mut live_cards: HashMap<String, String> = HashMap::new();
         let mut live_deliveries: HashMap<String, (String, String)> = HashMap::new();
         let mut live = Vec::with_capacity(calls.len());
         for call in calls {
@@ -5806,7 +5727,7 @@ impl Agent {
                 ));
                 continue;
             }
-            let mut deliveries = self
+            let deliveries = self
                 .deliveries
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -5842,46 +5763,10 @@ impl Agent {
                 ));
                 continue;
             }
-            if self.tool_presents_cards(&call.name)
-                && let Some(path) = call.input.get("artifact_path").and_then(Value::as_str)
-                && let Some(delivered) = deliveries
-                    .paths
-                    .iter()
-                    .find(|delivered| same_workspace_path(delivered, path))
-                    .cloned()
-            {
-                deliveries.withheld_cards.insert(call.id.clone());
-                answered.push((
-                    call.id.clone(),
-                    ToolRunOutput::Ok(format!(
-                        "{WITHHELD_CARD_ACK} {delivered} is already in front of the person as a draft they review with its change list, and a card cannot show it better. Do not present it again; answer with one sentence saying what you changed."
-                    )),
-                ));
-                continue;
-            }
             drop(deliveries);
-            if self.tool_presents_cards(&call.name) {
-                let card_key = key(&call);
-                if !shown.insert(card_key.clone()) {
-                    repeats.push(call.id.clone());
-                    continue;
-                }
-                live_cards.insert(call.id.clone(), card_key);
-            }
             live.push(call);
         }
         let mut results = self.execute_batch_calls(live, cancel, events).await;
-        {
-            let mut presented = self
-                .presented_cards
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for (id, output) in &results {
-                if let (Some(card_key), ToolRunOutput::Ok(_)) = (live_cards.get(id), output) {
-                    presented.insert(card_key.clone());
-                }
-            }
-        }
         {
             let mut deliveries = self
                 .deliveries
@@ -5899,24 +5784,164 @@ impl Agent {
             }
         }
         results.extend(answered);
-        results.extend(
-            repeats
-                .into_iter()
-                .map(|id| (id, ToolRunOutput::Ok(CARD_REPEAT_ACK.into()))),
-        );
         results
     }
 
-    /// The turn's answer when the model kept re-emitting a card it had
-    /// already shown: the card stands, the loop stops paying for acks.
-    async fn card_repeat_outcome(&self) -> TurnOutcome {
+    /// Reads an `answer` call and has every card block checked by its own
+    /// tool. All of them standing, the answer is kept for the loop to record
+    /// and end the turn on; otherwise nothing is shown and each fault names
+    /// its block.
+    async fn read_answer(&self, call: &PendingToolCall) -> ToolRunOutput {
+        let blocks = match answer::read(&call.input, &self.config.tools) {
+            Ok(blocks) => blocks,
+            Err(errors) => return ToolRunOutput::Err(Fault::Shape, answer::refused(&errors)),
+        };
+        let cwd = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|header| header.contract_cwd())
+            .unwrap_or_default();
+        let ctx = ToolContext::new(cwd);
+        let mut errors = Vec::new();
+        let mut cards = Vec::new();
+        let mut text = Vec::new();
+        for (at, block) in blocks.into_iter().enumerate() {
+            match block {
+                answer::Block::Text {
+                    text: prose,
+                    answers,
+                } => {
+                    // A part the plan lists as a card is a card block: the
+                    // plan's own form decides it, not the prose.
+                    let planned_card = answers.as_deref().is_some_and(|name| {
+                        self.declared_plan
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .as_deref()
+                            .is_some_and(|plan| {
+                                plan.iter().any(|deliverable| {
+                                    deliverable.form == vak_intent::DeliverableForm::Card
+                                        && deliverable.name.trim().eq_ignore_ascii_case(name)
+                                })
+                            })
+                    });
+                    if planned_card {
+                        errors.push(format!(
+                            "blocks[{at}] answers \"{}\", which your plan lists as a card, but is a \
+                             `text` block. Give it the kind of block that shows it.",
+                            answers.unwrap_or_default()
+                        ));
+                    } else {
+                        text.push(prose);
+                    }
+                }
+                answer::Block::Card { tool, input } => {
+                    // A card that previews a file this run delivered for
+                    // review is not shown: the draft is in front of the
+                    // person with its change list, and an imitation is not.
+                    let previews_delivered = input
+                        .get("artifact_path")
+                        .and_then(Value::as_str)
+                        .is_some_and(|path| {
+                            self.deliveries
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .paths
+                                .iter()
+                                .any(|delivered| same_workspace_path(delivered, path))
+                        });
+                    if previews_delivered {
+                        continue;
+                    }
+                    let checked = tool.execute(&input, &ctx).await;
+                    if checked.is_error() {
+                        errors.push(format!("blocks[{at}]: {}", checked.content));
+                    } else {
+                        cards.push((at, tool.name().to_string(), input));
+                    }
+                }
+            }
+        }
+        if !errors.is_empty() {
+            return ToolRunOutput::Err(Fault::Shape, answer::refused(&errors));
+        }
+        let shown = cards.len();
+        *self
+            .answered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Answered {
+            call: call.id.clone(),
+            cards,
+            text: text.join("\n\n"),
+        });
+        ToolRunOutput::Ok(format!(
+            "The answer was given to the person ({shown} card(s) shown). The turn ends here."
+        ))
+    }
+
+    /// Records an answer's cards as presentations of its call, in block
+    /// order, and returns what each said it answers in the plan.
+    async fn record_answer(&self, answered: &Answered) -> Vec<Option<String>> {
+        let Some(rebuild) = self.config.presentation_rebuild.clone() else {
+            return answered.cards.iter().map(|_| None).collect();
+        };
+        let mut session = self.session.lock().await;
+        let Some(turn_id) = session.latest_directive_entry_id() else {
+            return Vec::new();
+        };
+        let derived_from =
+            session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
+        let mut answers = Vec::new();
+        for (at, name, input) in &answered.cards {
+            let Some(info) = rebuild(name.as_str(), input) else {
+                continue;
+            };
+            let digest = vak_session::types::payload_digest(&info.payload);
+            if session.has_presentation(&turn_id, &digest) {
+                continue;
+            }
+            let record = vak_session::types::PresentationRecord {
+                turn_id: turn_id.clone(),
+                source: vak_session::types::PresentationSource::Answer {
+                    tool_use_id: answered.call.clone(),
+                    block: u32::try_from(*at).unwrap_or(u32::MAX),
+                },
+                semantic_type: info.semantic_type,
+                skill_id: info.skill_id,
+                skill_version: info.skill_version,
+                schema_version: info.schema_version,
+                payload: info.payload,
+                payload_digest: digest,
+                derived_from: derived_from.clone(),
+                title: info.title,
+                identity_digest: info.identity_digest,
+            };
+            if session.append_presentation(record).is_ok() {
+                answers.push(
+                    input
+                        .get("answers")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_string),
+                );
+            }
+        }
+        answers
+    }
+
+    /// The turn's answer when the model repeated calls it had been told
+    /// were already answered: what they delivered stands.
+    async fn repeat_outcome(&self) -> TurnOutcome {
         self.record_activity(
             vak_session::ActivityKind::Diagnostic,
             vak_session::ActivityStatus::Succeeded,
-            "card-repeat".into(),
+            "repeat".into(),
             Some(
-                "a step re-emitted an already-shown card straight after being told it was \
-                 shown; the turn closed on that card as its answer"
+                "a step repeated calls straight after being told they were already \
+                 answered; the turn closed on what they delivered"
                     .into(),
             ),
             std::collections::BTreeMap::new(),
@@ -5978,7 +6003,6 @@ impl Agent {
             .map(normalize_tool_call)
             .map(|call| normalize_mcp_call(call, &index))
             .map(|call| normalize_schema_wrapper(call, &self.config.tools))
-            .map(|call| normalize_card_type(call, &self.config.tools))
             .collect::<Vec<_>>();
         self.load_called_deferred(&calls);
         let n = calls.len();
@@ -6902,73 +6926,6 @@ fn merged_wrapper(schema: &Value, input: &Value) -> Option<Value> {
         .then_some(merged)
 }
 
-/// A card call is identified by its `semantic_type`, which every card tool
-/// requires (docs/design/30-render-architecture.md §30.1, rule 5) and which
-/// belongs to exactly one card tool. A call is routed to the admitted card
-/// tool that owns its type when it names another card tool (live: a form
-/// card written in full under `emit_ui_preview_card`) or a card tool that
-/// does not exist; with no `semantic_type`, a name `emit_<type>_card` names
-/// the type (live: `emit_transaction_card`) and the type is filled in. The
-/// owner's schema then validates the call, so an error names the owner's
-/// fields and the next step loads its schema. A card tool whose name settles
-/// its type fills a missing `semantic_type` (`Tool::fill_defaults`). Schema-driven from each card
-/// tool's own `semantic_type` enum, never a list of names.
-fn normalize_card_type(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) -> PendingToolCall {
-    let called = tools.iter().find(|tool| tool.name() == call.name);
-    if called.is_some_and(|tool| !tool.presents_cards()) {
-        return call;
-    }
-    let cards: Vec<(String, Value)> = tools
-        .iter()
-        .filter(|tool| tool.presents_cards())
-        .map(|tool| (tool.name().to_string(), tool.schema()))
-        .collect();
-    if let Some((name, input)) = card_owner(&call.name, &call.input, &cards) {
-        call.name = name;
-        call.input = input;
-    }
-    if let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) {
-        tool.fill_defaults(&mut call.input);
-    }
-    call
-}
-
-fn card_types(schema: &Value) -> impl Iterator<Item = &str> {
-    schema["properties"]["semantic_type"]["enum"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-}
-
-fn card_owner(name: &str, input: &Value, cards: &[(String, Value)]) -> Option<(String, Value)> {
-    let owner_of = |semantic_type: &str| {
-        let mut owners = cards
-            .iter()
-            .filter(|(_, schema)| card_types(schema).any(|t| t == semantic_type));
-        let owner = owners.next()?;
-        owners.next().is_none().then(|| owner.0.clone())
-    };
-    let known = cards.iter().any(|(card, _)| card == name);
-    match input.get("semantic_type").and_then(Value::as_str) {
-        Some(semantic_type) => {
-            let owner = owner_of(semantic_type)?;
-            (owner != name).then(|| (owner, input.clone()))
-        }
-        None if !known => {
-            let named = name.strip_prefix("emit_")?.strip_suffix("_card")?;
-            let semantic_type = [named.to_string(), named.replace('_', ".")]
-                .into_iter()
-                .find(|candidate| owner_of(candidate).is_some())?;
-            let owner = owner_of(&semantic_type)?;
-            let mut input = input.as_object()?.clone();
-            input.insert("semantic_type".into(), Value::String(semantic_type));
-            Some((owner, Value::Object(input)))
-        }
-        None => None,
-    }
-}
-
 /// The call's arguments without a redundant wrapper object. A wrapper whose
 /// key names the called tool itself (`metric_card` or `emit_metric_card`
 /// around a metric card's fields, nested twice live) can only be a
@@ -7877,7 +7834,12 @@ async fn authorize(
             .as_ref()
             .is_some_and(|check| check(&call.name, &call.input))
     };
-    let tool = tools.iter().find(|tool| tool.name() == call.name);
+    // A card tool is reached only through a block of `answer`
+    // (docs/design/87-composed-answers.md §2): it is no tool the model is
+    // offered by its own name.
+    let tool = tools
+        .iter()
+        .find(|tool| tool.name() == call.name && !tool.presents_cards());
     // `work` is the loop's own, offered whenever flows are admitted.
     let mut facts = CallFacts {
         known: tool.is_some() || (call.name == "work" && config.flow_dispatcher.is_some()),
@@ -8018,6 +7980,17 @@ async fn authorize(
             },
         )),
     }
+}
+
+/// An `answer` call whose blocks all stood.
+struct Answered {
+    /// The call's id.
+    call: String,
+    /// Each card block: its position in `blocks`, the tool that owns its
+    /// kind and its arguments.
+    cards: Vec<(usize, String, Value)>,
+    /// The prose blocks, in order.
+    text: String,
 }
 
 /// What followed an answer a completion gate held.
@@ -8185,17 +8158,14 @@ fn normalize_response_tool_uses(
         let ContentBlock::ToolUse { id, name, input } = block else {
             continue;
         };
-        let call = normalize_card_type(
-            normalize_schema_wrapper(
-                normalize_mcp_call(
-                    normalize_tool_call(PendingToolCall {
-                        id: id.clone(),
-                        name: name.clone(),
-                        input: input.clone(),
-                    }),
-                    mcp_index,
-                ),
-                tools,
+        let call = normalize_schema_wrapper(
+            normalize_mcp_call(
+                normalize_tool_call(PendingToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                }),
+                mcp_index,
             ),
             tools,
         );
@@ -8585,56 +8555,6 @@ mod tool_recovery_tests {
             ),
             vec!["https://x.example/i.png"]
         );
-    }
-
-    #[test]
-    fn a_card_call_goes_to_the_card_tool_that_owns_its_type() {
-        use super::card_owner;
-        let card = |types: &[&str], field: &str| {
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "semantic_type": {"type": "string", "enum": types},
-                    field: {"type": "string"}
-                },
-                "required": ["semantic_type"]
-            })
-        };
-        let cards = vec![
-            (
-                "emit_ui_preview_card".to_string(),
-                card(&["ui.preview"], "artifact_path"),
-            ),
-            (
-                "emit_universal_card".to_string(),
-                card(&["calendar", "transaction"], "summary"),
-            ),
-        ];
-        let calendar = serde_json::json!({"semantic_type": "calendar", "summary": "Week"});
-        let routed = |name: &str, input: &serde_json::Value| card_owner(name, input, &cards);
-        assert_eq!(
-            routed("emit_ui_preview_card", &calendar),
-            Some(("emit_universal_card".into(), calendar.clone()))
-        );
-        assert_eq!(
-            routed("emit_calendar_card", &calendar)
-                .map(|(owner, _)| owner)
-                .as_deref(),
-            Some("emit_universal_card")
-        );
-        assert_eq!(routed("emit_universal_card", &calendar), None);
-        let named = serde_json::json!({"summary": "45 EUR"});
-        assert_eq!(
-            routed("emit_transaction_card", &named),
-            Some((
-                "emit_universal_card".into(),
-                serde_json::json!({"semantic_type": "transaction", "summary": "45 EUR"})
-            ))
-        );
-        assert_eq!(routed("emit_ui_preview_card", &named), None);
-        let unknown = serde_json::json!({"semantic_type": "recipe"});
-        assert_eq!(routed("emit_ui_preview_card", &unknown), None);
-        assert_eq!(routed("emit_recipe_card", &serde_json::json!({})), None);
     }
 
     /// The metric card's schema as a card tool declares it: only

@@ -1461,26 +1461,28 @@ in progress, and the rest of V4 follows it.
   conversations, and sandboxed previews are first-class primitives backed by
   real validated payloads. Universal semantic shapes compose across domains;
   they are not a coding-only card taxonomy. The step-by-step contributor
-  guide is `docs/design/67-presentation-renderer-guide.md`. A model emits a
-  card preferentially by calling one of the `emit_*_card` block tools
-  (`vak-core/src/presentation_tools.rs`, one per block shape:
-  summary, steps, checklist, comparison, table, stats, chart, callout,
-  details, research, recipe, media, UI preview, diff, test report and
-  terminal; docs/design/87-composed-answers.md) rather than writing an
-  inline ` ```vak ` fence — measured
-  far more reliable against the local models this app ships (see
-  `docs/design/07-prompt.md` v3.4.5, `docs/design/30-render-architecture.md`
-  §30.1). The fence path is the fallback when no matching tool is present,
-  and a fence carries the same arguments the tool takes. A card tool's
+  guide is `docs/design/67-presentation-renderer-guide.md`. A model shows
+  cards by answering with the loop-owned `answer` tool
+  (`vak-agent/src/answer.rs`, docs/design/87-composed-answers.md §2): an
+  ordered list of blocks, each prose (`text`) or a card block of a kind an
+  admitted card tool declares (`Tool::card_kinds`). It is built at run time
+  from the card tools the turn admits (`vak-core/src/presentation_tools.rs`,
+  one per block shape: summary, steps, checklist, comparison, table, stats,
+  chart, callout, details, research, recipe, media, UI preview, diff, test
+  report and terminal), which are never offered or callable by their own
+  names; each card block is checked by the tool that owns its kind. A
+  valid call records its cards as `PresentationSource::Answer` presentations
+  and ends the turn with no further model step; any block failing, nothing
+  is shown and each fault names its block. The fence path, an inline
+  ` ```vak ` fence, is the fallback when no card tool is admitted, and a
+  fence carries the same arguments the block takes. A card block's
   arguments are flat beside `semantic_type`, use only the schema keywords
   every provider carries, put no data in keys, hold no list of records
   inside a record in a list, require `semantic_type` first and ask for no
   value that starts with `|` (a table is its rows, `A | B` strings) and end
   no record in a number (a research source carries its one `finding`) and
   ask for no fact twice (a media card's kind is its `semantic_type`, its
-  address its one `url`); a
-  card call goes to the card tool that owns its `semantic_type`
-  (`normalize_card_type` in vak-agent) (measured, §30.1;
+  address its one `url`) (measured, §30.1;
   `every_card_schema_is_flat_and_portable`); each shape's `build` turns them
   into the stored card. **A card tool leaves nothing to guess:** every
   argument, and every field of a record argument, is typed and described,
@@ -1491,8 +1493,8 @@ in progress, and the rest of V4 follows it.
   `no_argument_shape_crashes_a_card_tool`). Both checks run over whatever
   tools exist, because tools are added and removed at runtime; a tool is
   never made to work by naming it in the prompt. The card travels in the call's *arguments*
-  (recorded untruncated in the ledger); the tool result is only a short ack
-  or a repairable validation error naming the field, and the card is written
+  (recorded untruncated in the ledger); the result is only a short ack
+  or a repairable validation error naming the block and field, and the card is written
   as a `Presentation` ledger entry when it validates, which `vak-server`'s
   projection reads — never result text, of which an over-long result's
   request carries only a window. A
@@ -1504,8 +1506,8 @@ in progress, and the rest of V4 follows it.
   projected card carries `OutputKind::Card`, never `Information`/`Progress`/
   `Retry`, which chat views fold away (doc 30-output-engineering). When a
   **The card path has two validation gates.** After provider decoding,
-  `normalize_response_tool_uses` / `normalize_card_type` canonicalize the
-  provider call: the one argument reader for every tool
+  `normalize_response_tool_uses` canonicalizes the provider call (for an
+  `answer` block, `answer::read` does the same per block): the one argument reader for every tool
   (`vak_tools::read_arguments`, docs/design/04-tools.md "Reading
   arguments"), then the tool's own `Tool::fill_defaults`; this happens before the
   assistant message is ledgered. `authorize` then validates against the
@@ -1519,7 +1521,7 @@ in progress, and the rest of V4 follows it.
   builder path.
   After validation, the call and its result are ledgered and a
   `PresentationRecord` is appended; `vak-server` projects that record by
-  `tool_use_id`, and the client resolves `semantic_type` through the single
+  `tool_use_id` (and an answer's by its block), and the client resolves `semantic_type` through the single
   renderer registry. Diagnose a missing or wrong card at each boundary in
   that order; a successful tool acknowledgement proves ledger admission, not
   UI projection. Keep this path and turn state consistent with
@@ -1559,8 +1561,8 @@ in progress, and the rest of V4 follows it.
   with receipts (cards recorded, final text, files delivered, commands and
   changes) and a `[plan-check]` control names only what is missing, once,
   without discarding anything already produced; a planned card still
-  missing after that is required of one step by the tool the plan named for
-  it (`with`, `ChatRequest::must_call`), once, and what is left then stands. No reading of the request
+  missing after that is required of one step as an `answer` call
+  (`ChatRequest::must_call`), once, and what is left then stands. No reading of the request
   or the answer sends a turn back: the request-vocabulary presentation check
   and the card-completeness self-audit are removed, and the stop gate holds
   a turn only on observed facts (an unclosed fence, an unreported tool
@@ -1948,10 +1950,14 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      assemble, dispatch, write the receipt and capacity
                      feedback back -- and owns the summariser call behind an
                      incremental compaction. Turn-close hook builds and
-                     appends each turn's `TurnCard`; the freshness, empty-
-                     step, steering-drift and card-repeat gates all live in
-                     the loop itself (docs/design/03-agent-loop.md,
-                     docs/design/68-context-engine.md)
+                     appends each turn's `TurnCard`; the empty-step and
+                     steering-drift gates live in the loop itself. The
+                     loop-owned `answer` tool (`answer.rs`), built at run
+                     time from the admitted card tools, is the turn's whole
+                     answer as one document of blocks
+                     (docs/design/03-agent-loop.md,
+                     docs/design/68-context-engine.md,
+                     docs/design/87-composed-answers.md)
 crates/vak-context   the context engine, pure functions over the ledger
                      with no I/O (docs/design/68-context-engine.md).
                      `capacity.rs`: the `CapacityProfile` type, the

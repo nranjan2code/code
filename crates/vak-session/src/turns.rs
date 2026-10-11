@@ -834,7 +834,8 @@ impl Turn {
         self.presentation_records
             .iter()
             .filter_map(|record| match &record.source {
-                PresentationSource::ToolCall { tool_use_id } => Some(tool_use_id.as_str()),
+                PresentationSource::ToolCall { tool_use_id }
+                | PresentationSource::Answer { tool_use_id, .. } => Some(tool_use_id.as_str()),
                 PresentationSource::Fence { .. } | PresentationSource::Delegated { .. } => None,
             })
             .collect()
@@ -877,7 +878,8 @@ impl Turn {
             .iter()
             .zip(self.presentation_records.iter())
             .filter_map(|(id, record)| match &record.source {
-                PresentationSource::ToolCall { tool_use_id } => {
+                PresentationSource::ToolCall { tool_use_id }
+                | PresentationSource::Answer { tool_use_id, .. } => {
                     Some((tool_use_id.as_str(), id.as_str()))
                 }
                 PresentationSource::Fence { .. } | PresentationSource::Delegated { .. } => None,

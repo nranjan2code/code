@@ -1634,6 +1634,14 @@ impl Tool for EmitCardTool {
         true
     }
 
+    fn card_kinds(&self) -> Vec<String> {
+        self.shape
+            .semantic_types
+            .iter()
+            .map(|kind| (*kind).to_string())
+            .collect()
+    }
+
     fn fill_defaults(&self, args: &mut Value) {
         if let Some(fields) = args.as_object_mut() {
             // A block with one type takes no `semantic_type`; a model that

@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Cards are Vak's own display channel: a tool that `presents_cards()` runs in
-//! every permission mode without an approval, and without a denial in
-//! read-only. Real trigger: "Vak wants to use emit_metric_card — this needs
+//! Cards are Vak's own display channel: a card block of the `answer` tool is
+//! checked by the tool that `presents_cards()` in every permission mode,
+//! without an approval and without a denial in read-only. Real trigger: "Vak wants to use emit_metric_card — this needs
 //! your approval" shown under a card that had already rendered.
 
 mod support;
@@ -56,15 +56,13 @@ impl Provider for Scripted {
 }
 
 struct CardTool {
-    name: &'static str,
-    presents: bool,
     runs: Arc<AtomicUsize>,
 }
 
 #[async_trait]
 impl Tool for CardTool {
     fn name(&self) -> &str {
-        self.name
+        "emit_metric_card"
     }
     fn description(&self) -> &str {
         "test stand-in"
@@ -73,7 +71,10 @@ impl Tool for CardTool {
         serde_json::json!({"type": "object"})
     }
     fn presents_cards(&self) -> bool {
-        self.presents
+        true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["metric".into()]
     }
     async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
         self.runs.fetch_add(1, Ordering::SeqCst);
@@ -96,16 +97,9 @@ fn msg(content: Vec<ContentBlock>, stop_reason: StopReason) -> AssistantMessage 
     }
 }
 
-/// Runs one turn that calls `tool` once; returns (executions, approvals asked).
-async fn call_once(mode: Mode, tool: &'static str, presents: bool) -> (usize, usize) {
-    run_calls(mode, tool, presents, 1).await
-}
-
-async fn call_twice(_dir: &tempfile::TempDir) -> (usize, usize) {
-    run_calls(Mode::WorkspaceWrite, "emit_metric_card", true, 2).await
-}
-
-async fn run_calls(mode: Mode, tool: &'static str, presents: bool, calls: usize) -> (usize, usize) {
+/// Runs one turn whose answer is one metric card; returns (executions,
+/// approvals asked).
+async fn answer_with_a_card(mode: Mode) -> (usize, usize) {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -146,29 +140,17 @@ async fn run_calls(mode: Mode, tool: &'static str, presents: bool, calls: usize)
     cfg.permission = Some(Arc::new(
         PermissionEngine::default().with_presenting_tools(["emit_metric_card".to_string()]),
     ));
-    cfg.tools = vec![Arc::new(CardTool {
-        name: tool,
-        presents,
-        runs: runs.clone(),
-    })];
+    cfg.tools = vec![Arc::new(CardTool { runs: runs.clone() })];
     let mut agent = Agent::new(
         Arc::new(Scripted(
-            Mutex::new({
-                let mut script: VecDeque<AssistantMessage> = (0..calls)
-                    .map(|n| {
-                        msg(
-                            vec![ContentBlock::ToolUse {
-                                id: format!("c{n}"),
-                                name: tool.into(),
-                                input: serde_json::json!({}),
-                            }],
-                            StopReason::ToolUse,
-                        )
-                    })
-                    .collect();
-                script.push_back(msg(vec![ContentBlock::text("done")], StopReason::EndTurn));
-                script
-            }),
+            Mutex::new(VecDeque::from([msg(
+                vec![ContentBlock::ToolUse {
+                    id: "a0".into(),
+                    name: "answer".into(),
+                    input: serde_json::json!({"blocks": [{"type": "metric"}]}),
+                }],
+                StopReason::ToolUse,
+            )])),
             crate::support::capacity_key(),
         )),
         log,
@@ -194,11 +176,7 @@ async fn run_calls(mode: Mode, tool: &'static str, presents: bool, calls: usize)
 #[tokio::test]
 async fn card_tools_run_without_approval_in_every_mode() {
     for mode in [Mode::WorkspaceWrite, Mode::ReadOnly, Mode::FullAccess] {
-        assert_eq!(
-            call_once(mode, "emit_metric_card", true).await,
-            (1, 0),
-            "{mode:?}"
-        );
+        assert_eq!(answer_with_a_card(mode).await, (1, 0), "{mode:?}");
     }
 }
 
@@ -333,13 +311,4 @@ async fn a_failed_card_does_not_hold_back_a_complete_answer() {
         .flat_map(|(_, message)| message.content.iter())
         .any(|block| matches!(block, ContentBlock::Text { text } if text.contains("[stop-guard]")));
     assert!(!nudged, "the answer was sent back to repair a card");
-}
-
-#[tokio::test]
-async fn an_identical_card_call_is_a_quiet_no_op_not_a_prompt_or_a_failure() {
-    // First call runs; the repeat is acked without running, is not an error (which would
-    // force another model turn) and never becomes an approval.
-    let dir = tempfile::tempdir().unwrap();
-    let (runs, approvals) = call_twice(&dir).await;
-    assert_eq!((runs, approvals), (1, 0));
 }

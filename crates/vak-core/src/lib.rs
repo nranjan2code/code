@@ -8785,7 +8785,7 @@ mod channel_mcp_network_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let prompt = |surface: Surface| core.clone().with_surface(surface).system_prompt();
-        let cards = "`emit_*_card` tool";
+        let cards = "`answer` tool";
         let preview = "appear in the user's preview automatically";
 
         let desktop = prompt(Surface::Desktop);

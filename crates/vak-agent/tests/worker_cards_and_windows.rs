@@ -114,6 +114,9 @@ impl Tool for FakeEmitChartCard {
     fn presents_cards(&self) -> bool {
         true
     }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["chart".into()]
+    }
     async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
         ToolOutput::ok("shown")
     }
@@ -306,10 +309,12 @@ async fn a_workers_card_is_shown_and_recallable_in_the_delegating_conversation()
         ),
         call(
             "c1",
-            "emit_chart_card",
-            serde_json::json!({"title": "Sales by month", "points": [{"series": "s", "x": "Jan", "y": 1}]}),
+            "answer",
+            serde_json::json!({"blocks": [
+                {"type": "chart", "title": "Sales by month", "points": [{"series": "s", "x": "Jan", "y": 1}]},
+                {"type": "text", "text": "charted"}
+            ]}),
         ),
-        text_msg("charted"),
         text_msg("The worker charted the sales by month."),
     ]);
     let task = task_tool(&dir, provider.clone(), "parent-cards");

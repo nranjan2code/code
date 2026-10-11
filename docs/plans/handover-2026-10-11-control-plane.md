@@ -2,22 +2,86 @@
 
 ## Prompt for a fresh session
 
-"Continue building the control plane in /Users/nisheethranjan/Projects/Vak/code
-on main, from stage C6. Read AGENTS.md (especially 'No word lists, no
-tuned limits' and 'Investigating a failure'), docs/design/88-control-plane.md
-(its Status line, §12 decisions and 'Carried into later stages'), then this
-file's Progress and Rules. The four open questions are decided (doc 88
-§12); do not ask them again. Work autonomously: code, run, debug, evaluate,
-correct, document; ask nothing; report only short progress lines. Work only
-on main: no branches, PRs or worktrees. Everything is typed, in its own
-crate, with no free text carrying a decision. Each stage also updates the
-Settings screen, the admin console and the doctor where it touches them,
-and removes what it replaces, including bad or dead code found on the way.
-Verify every stage with real turns through the web app in the built-in
-browser against the installed home (~/vak-home) on local Ollama, read back
-from the ledger (`GET /runs/{id}/decisions`, `/sessions/{id}/receipts`).
-Ollama is only the dev route: fix causes for every provider. Never blame
-the model. Keep the disk clean: `cargo clean` after each commit."
+"Continue the control plane in /Users/nisheethranjan/Projects/Vak/code on
+main, inside stage C6. Read AGENTS.md (especially 'No word lists, no tuned
+limits' and 'Investigating a failure'), docs/design/88-control-plane.md
+(Status, §5a, 'Open in C6', 'Carried into later stages'), doc 87, then this
+file's 'Where the answer document stands' and Rules. The working tree holds
+the answer document as one local commit that is NOT pushed and has NOT had
+the full gate: first run `cargo fmt --all --check`, clippy `-D warnings`
+and `cargo test --workspace`, fix what it shows, then finish the steps
+listed under 'Where the answer document stands', verify with real turns
+through the web app on local Ollama read back from
+`/runs/{id}/decisions`, update the docs, push, and `cargo clean`. Work
+autonomously, ask nothing, report short progress lines. Main only: no
+branches, PRs or worktrees. No provider, model or tool is first-class.
+Never blame the model. Ollama is the dev route; a hosted route is used only
+when the maintainer asks for a one-off check."
+
+## Where the answer document stands (end of the 2026-10-11 session)
+
+Pushed: C4, C5, C6 (1) and C6 (2). Local and unpushed: the answer document.
+
+What is built (unpushed):
+- `crates/vak-agent/src/answer.rs`: the loop-owned `answer` tool, made at
+  run time from the admitted card tools. The card tools are no longer
+  offered to the model; `answer` takes their place in the tools array
+  (`answer::offer` in `base_tool_definitions`). Each block's kind is a card
+  kind some tool declares (`Tool::card_kinds`, new), its fields are that
+  tool's arguments, and that tool validates it (`answer::read`, then the
+  tool's own `execute`). A `text` block is prose.
+- The loop (`Agent::read_answer`, `record_answer`): every block standing,
+  each card is recorded as a `Presentation` with the new source
+  `PresentationSource::Answer { tool_use_id, block }`, the prose becomes the
+  closing assistant message, and the turn ends with no further model step.
+  Any block failing, nothing is shown and each fault names its block
+  (`Fault::Shape`). The projection shows an answer's cards the way it shows
+  a worker's (the multi-card map in `projection.rs`).
+- The plan check runs on that path too, and its reframe rung now requires
+  `answer` of one step (`Finding::AnswerRequired`); the per-card `with`
+  field added in C6 (1) is removed again.
+- A `text` block that says it answers a deliverable the plan lists as a
+  card is refused.
+- The prompt seed's presentation contract names the `answer` tool.
+
+Seen live on the one-off hosted check the maintainer asked for
+(OpenAI Responses, `gpt-6-luna`, then switched back to Ollama):
+- `run_01a12a9c-7a38-7d20-8c31-c5ee29ba5cc9`: plan (three cards) then one
+  `answer` call, turn ended in two steps. All three blocks were `text`, so
+  no card was shown, and the plan check was skipped. Both were faults in
+  Vak's contract and are fixed in the tree (plan check on the answer path;
+  planned card written as text refused).
+- `run_01a12a9f-19dc-7843-b284-bf89c1143fd3`: again text blocks only. The
+  cause was found: a card tool with one kind leaves `semantic_type` out of
+  its schema, so `answer` was being built from the multi-kind tools only
+  and the model was never offered `steps`, `stats`, `callout` and the
+  rest. `Tool::card_kinds` fixes this (card tools name their kinds). THIS
+  FIX HAS NOT BEEN SEEN IN A LIVE TURN: the session ended while it was
+  building.
+- The hosted wire filled every field of every block with empty values;
+  `answer::read` now treats an empty string or empty list as absent.
+
+Still to do, in order:
+1. Run the full gate on the tree; expect test fallout wherever a test reads
+   the tools a request offers or a card call's presentation source.
+2. Live on local Ollama: a multi-part request must show cards from one
+   `answer` call (check `/sessions/{id}/presentation` and the screen at
+   1440 × 900 and 390 × 844, light and dark), a plain question must stay
+   prose, and a document request (`office_apply`) must still deliver its
+   draft for Review. The document test was not run this session.
+3. The answer's `answers` per block does not reach the projection's outline
+   (`OutputTimeline.answers` reads a call's own input), so blocks are laid
+   out in block order, unplaced. Make the outline read each block.
+4. `AcceptCall` is not recorded for `answer` (it is answered before
+   `authorize`, like `plan`).
+5. Decide what remains of the per-card paths the model can no longer reach
+   (the `emit_*_card` names in `normalize_card_type`, the duplicate-card
+   fence check, the card-repeat acknowledgement) and remove what is dead.
+6. Docs: doc 87 Status and §2 to §3, doc 88 Status and 'Open in C6', doc 30
+   §30.1 (the flat-schema rules now apply to a block, not a tool), doc 07
+   (the seed changed: add its diff note), AGENTS.md (the card paragraph in
+   Code rules, the layout entry for vak-agent).
+7. Then the rest of doc 88's 'Carried into later stages'.
 
 ## Rules the maintainer set (all still in force)
 

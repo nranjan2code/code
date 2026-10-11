@@ -259,10 +259,6 @@ async fn build_agent(
     (agent, requests)
 }
 
-const NARRATION: &str = "The chart is shown above.";
-const CHART_INPUT: fn() -> serde_json::Value =
-    || serde_json::json!({"semantic_type": "chart", "chart_type": "line", "points": []});
-
 async fn run(agent: &mut Agent) -> TurnOutcome {
     agent
         .run(
@@ -301,31 +297,4 @@ async fn a_card_citing_an_unretrieved_page_is_never_shown() {
     );
     let session = agent.session.lock().await;
     assert!(session.presentations().is_empty(), "no card is recorded");
-}
-
-/// Found live: a model shown a card tool only by name called it with
-/// arguments it had guessed, three times. Calling a deferred tool loads it,
-/// so the request after the call declares its schema.
-#[tokio::test]
-async fn calling_a_deferred_tool_loads_its_schema_for_the_next_step() {
-    let dir = tempdir().unwrap();
-    let (mut agent, requests) = build_agent(
-        &dir,
-        "pc-direct",
-        vec![
-            tool_call_msg("c1", "emit_chart_card", CHART_INPUT()),
-            text_msg(NARRATION),
-        ],
-    )
-    .await;
-    assert!(matches!(
-        run(&mut agent).await,
-        TurnOutcome::Completed { .. }
-    ));
-    let requests = requests.lock().unwrap();
-    assert!(!requests[0].contains(&"emit_chart_card".to_string()));
-    assert!(
-        requests[1].contains(&"emit_chart_card".to_string()),
-        "{requests:?}"
-    );
 }

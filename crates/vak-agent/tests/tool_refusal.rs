@@ -394,10 +394,16 @@ impl vak_tools::Tool for PreviewCard {
         "test stand-in"
     }
     fn schema(&self) -> serde_json::Value {
-        serde_json::json!({"type": "object"})
+        serde_json::json!({"type": "object", "properties": {
+            "artifact_path": {"type": "string"},
+            "html": {"type": "string"}
+        }})
     }
     fn presents_cards(&self) -> bool {
         true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["ui_preview".into()]
     }
     async fn execute(
         &self,
@@ -576,11 +582,6 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
     let script = VecDeque::from([
         tool_call("c1", "make_draft", slide.clone()),
         tool_call(
-            "c2",
-            "emit_ui_preview_card",
-            serde_json::json!({"artifact_path": "./deck.pptx", "html": "<h1>Next steps</h1>"}),
-        ),
-        tool_call(
             "c4",
             "bash",
             serde_json::json!({"command": "cp .vak/scratch/vak/c1/deck.pptx ./deck.pptx"}),
@@ -591,9 +592,13 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
             serde_json::json!({"command": "ls .vak/scratch"}),
         ),
         tool_call("c3", "make_draft", slide),
-        msg(
-            vec![ContentBlock::text("Added the Next steps slide.")],
-            StopReason::EndTurn,
+        tool_call(
+            "c2",
+            "answer",
+            serde_json::json!({"blocks": [
+                {"type": "ui_preview", "artifact_path": "./deck.pptx", "html": "<h1>Next steps</h1>"},
+                {"type": "text", "text": "Added the Next steps slide."}
+            ]}),
         ),
     ]);
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -617,8 +622,13 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
         )
         .await;
     assert!(
-        matches!(outcome, TurnOutcome::Completed { .. }),
+        matches!(&outcome, TurnOutcome::Completed { response }
+            if response.text_content() == "Added the Next steps slide."),
         "{outcome:?}"
+    );
+    assert!(
+        agent.session.lock().await.presentations().is_empty(),
+        "the preview of the draft is not shown"
     );
     assert_eq!(drafts.runs.load(Ordering::SeqCst), 1, "one draft written");
     assert_eq!(
@@ -649,7 +659,6 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
             .map(|(_, text)| text.clone())
             .unwrap_or_default()
     };
-    assert!(result("c2").contains("Not shown: deck.pptx"), "{results:?}");
     assert!(
         result("c3").contains("Already drafted") && result("c3").contains("Draft for deck.pptx"),
         "{results:?}"

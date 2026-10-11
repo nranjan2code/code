@@ -695,7 +695,8 @@ fn snapshot_inner(
                 Some((tool_use_id.clone(), (entry_id, record)))
             }
             vak_session::types::PresentationSource::Fence { .. }
-            | vak_session::types::PresentationSource::Delegated { .. } => None,
+            | vak_session::types::PresentationSource::Delegated { .. }
+            | vak_session::types::PresentationSource::Answer { .. } => None,
         })
         .collect();
     // A delegated call (`task`) may carry several cards: the ones its worker
@@ -705,8 +706,9 @@ fn snapshot_inner(
         Vec<(String, &vak_session::types::PresentationRecord)>,
     > = HashMap::new();
     for (entry_id, record) in session.presentations() {
-        if let vak_session::types::PresentationSource::Delegated { tool_use_id, .. } =
-            &record.source
+        // An `answer` call carries its blocks the same way, in block order.
+        if let vak_session::types::PresentationSource::Delegated { tool_use_id, .. }
+        | vak_session::types::PresentationSource::Answer { tool_use_id, .. } = &record.source
         {
             delegated_by_tool_use_id
                 .entry(tool_use_id.clone())
@@ -1679,6 +1681,15 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
     let mut plans: HashMap<String, Vec<vak_intent::Deliverable>> = HashMap::new();
     let mut proposed: HashMap<String, (String, Vec<vak_intent::Deliverable>)> = HashMap::new();
     let mut calls: HashMap<String, (String, Option<String>)> = HashMap::new();
+    let mut blocks_named: HashMap<(String, usize), Option<String>> = HashMap::new();
+    let named = |input: &serde_json::Value| {
+        input
+            .get("answers")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+    };
     for entry in session.chain_to_root() {
         let (Some(turn), vak_session::EntryPayload::Message(record)) =
             (entry.at_turn.as_ref(), &entry.payload)
@@ -1693,13 +1704,14 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
                     {
                         proposed.insert(id.clone(), (turn.clone(), plan));
                     }
-                    let answers = input
-                        .get("answers")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::trim)
-                        .filter(|name| !name.is_empty())
-                        .map(str::to_string);
-                    calls.insert(id.clone(), (turn.clone(), answers));
+                    calls.insert(id.clone(), (turn.clone(), named(input)));
+                    // An `answer` call's blocks each name their own.
+                    if let Some(blocks) = input.get("blocks").and_then(serde_json::Value::as_array)
+                    {
+                        for (index, block) in blocks.iter().enumerate() {
+                            blocks_named.insert((id.clone(), index), named(block));
+                        }
+                    }
                 }
                 ContentBlock::ToolResult {
                     tool_use_id,
@@ -1717,11 +1729,32 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
     if plans.is_empty() {
         return Vec::new();
     }
+    // A card an `answer` block showed: the block it came from, by the
+    // Presentation entry it was recorded as.
+    let answer_blocks: HashMap<String, Option<String>> = session
+        .presentations()
+        .into_iter()
+        .filter_map(|(entry_id, record)| match &record.source {
+            vak_session::types::PresentationSource::Answer { tool_use_id, block } => blocks_named
+                .get(&(tool_use_id.clone(), *block as usize))
+                .map(|named| (entry_id, named.clone())),
+            _ => None,
+        })
+        .collect();
     let call_of = |item: &OutputItem| {
         item.provenance
             .as_ref()
             .and_then(|provenance| provenance.tool_call_id.as_ref())
             .and_then(|call| calls.get(call))
+    };
+    let named_of = |item: &OutputItem| {
+        item.provenance
+            .as_ref()
+            .and_then(|provenance| provenance.presentation_id.as_ref())
+            .and_then(|id| answer_blocks.get(id))
+            .cloned()
+            .flatten()
+            .or_else(|| call_of(item).and_then(|(_, answers)| answers.clone()))
     };
     let mut turns: Vec<&str> = Vec::new();
     for item in items {
@@ -1746,11 +1779,11 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
             })
             .collect();
         for item in of_turn().filter(|item| item.kind == OutputKind::Card) {
-            let Some(named) = call_of(item).and_then(|(_, answers)| answers.as_deref()) else {
+            let Some(named) = named_of(item) else {
                 continue;
             };
             if let Some(section) = sections.iter_mut().find(|section| {
-                section.form == "card" && section.name.trim().eq_ignore_ascii_case(named)
+                section.form == "card" && section.name.trim().eq_ignore_ascii_case(&named)
             }) {
                 section.items.push(item.id.clone());
             }
@@ -2685,6 +2718,22 @@ mod tests {
         tool_use_id: &str,
         args: &serde_json::Value,
     ) {
+        append_presentation(
+            log,
+            tool,
+            vak_session::types::PresentationSource::ToolCall {
+                tool_use_id: tool_use_id.into(),
+            },
+            args,
+        );
+    }
+
+    fn append_presentation(
+        log: &mut SessionLog,
+        tool: &str,
+        source: vak_session::types::PresentationSource,
+        args: &serde_json::Value,
+    ) {
         let skills = vak_delivery::built_in_skill_registry();
         let info = vak_core::presentation_tools::presentation_info(tool, args, &skills)
             .unwrap_or_else(|| panic!("fixture call must validate: {tool} {args:.600}"));
@@ -2692,9 +2741,7 @@ mod tests {
         let payload_digest = vak_session::types::payload_digest(&info.payload);
         log.append_presentation(vak_session::types::PresentationRecord {
             turn_id,
-            source: vak_session::types::PresentationSource::ToolCall {
-                tool_use_id: tool_use_id.into(),
-            },
+            source,
             semantic_type: info.semantic_type,
             skill_id: info.skill_id,
             skill_version: info.skill_version,
@@ -5001,6 +5048,76 @@ mod tests {
     /// plan's deliverables are the sections, a card is in the section its
     /// `answers` names, a card that names none is in no section, and the
     /// reply's text is in the one text section.
+    /// An `answer` call's cards are placed by what each block names, not
+    /// by the call's own arguments or the blocks' order.
+    #[test]
+    fn an_answer_call_places_each_block_by_what_it_names() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "answer-outline");
+        log.append_message(MessageRecord {
+            message: Message::user_text("compare the two and list what to pack"),
+            meta: None,
+        })
+        .expect("directive");
+        let plan = serde_json::json!({"deliverables": [
+            {"name": "comparison", "form": "card"},
+            {"name": "packing list", "form": "card"}
+        ]});
+        let blocks = serde_json::json!({"blocks": [
+            {"type": "text", "text": "Here it is."},
+            {"type": "checklist", "items": ["Charger"], "answers": "packing list"},
+            {"type": "checklist", "items": ["Train", "Car"], "answers": "Comparison"}
+        ]});
+        for (id, name, input) in [("p1", "plan", &plan), ("a1", "answer", &blocks)] {
+            log.append_message(MessageRecord {
+                message: Message::assistant(vec![ContentBlock::ToolUse {
+                    id: id.into(),
+                    name: name.into(),
+                    input: input.clone(),
+                }]),
+                meta: None,
+            })
+            .expect("call");
+            log.append_message(MessageRecord {
+                message: Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::ToolResult {
+                        tool_use_id: id.into(),
+                        content: "ok".into(),
+                        is_error: false,
+                    }],
+                },
+                meta: None,
+            })
+            .expect("result");
+        }
+        for block in [1_u32, 2] {
+            append_presentation(
+                &mut log,
+                "emit_checklist_card",
+                vak_session::types::PresentationSource::Answer {
+                    tool_use_id: "a1".into(),
+                    block,
+                },
+                &serde_json::json!({"items": blocks["blocks"][block as usize]["items"].clone()}),
+            );
+        }
+
+        let timeline = snapshot("answer-outline", &log);
+        let [outline] = timeline.answers.as_slice() else {
+            panic!("one outline: {:?}", timeline.answers);
+        };
+        let cards: Vec<String> = timeline
+            .items
+            .iter()
+            .filter(|item| item.kind == OutputKind::Card)
+            .map(|item| item.id.clone())
+            .collect();
+        assert_eq!(cards.len(), 2, "{cards:?}");
+        assert_eq!(outline.sections[0].items, [cards[1].clone()]);
+        assert_eq!(outline.sections[1].items, [cards[0].clone()]);
+    }
+
     #[test]
     fn an_answer_with_a_plan_has_an_outline_and_nothing_is_placed_by_position() {
         let dir = tempfile::tempdir().expect("tempdir");
