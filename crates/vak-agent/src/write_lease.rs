@@ -172,6 +172,18 @@ impl Tool for ScopedWriteTool {
         self.inner.time_limit_argument()
     }
 
+    fn command(&self, args: &Value) -> Option<String> {
+        self.inner.command(args)
+    }
+
+    fn looks_up(&self) -> bool {
+        self.inner.looks_up()
+    }
+
+    fn planned(&self, args: &Value) -> Option<Vec<vak_intent::Deliverable>> {
+        self.inner.planned(args)
+    }
+
     fn delivered_file(&self, args: &Value) -> Option<String> {
         self.inner.delivered_file(args)
     }

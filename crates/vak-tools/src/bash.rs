@@ -31,6 +31,12 @@ impl Tool for BashTool {
         Some("timeout_ms")
     }
 
+    fn command(&self, args: &Value) -> Option<String> {
+        args.get("command")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }
+
     fn description(&self) -> &str {
         "Execute any command, program, or script in the execution sandbox: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Commands run in the workspace, the same place `read` and `write` work; temporary files and tool caches go to `.vak/scratch/`. A command that never exits is killed at its timeout. Never create or change a Word, Excel, PowerPoint, PDF or Visio file with a command or script (no PDF or Office libraries, converters or exporters): those files reach the person only as a draft they review, made with office_apply; when office_apply is not available, or for a Visio drawing, say that instead of building one."
     }
@@ -771,6 +777,19 @@ fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    #[test]
+    fn bash_declares_the_command_it_runs_and_its_time_limit() {
+        use crate::Tool;
+        let tool = super::BashTool;
+        assert_eq!(
+            tool.command(&serde_json::json!({ "command": "cargo test" })),
+            Some("cargo test".to_string())
+        );
+        assert_eq!(tool.command(&serde_json::json!({})), None);
+        assert_eq!(tool.time_limit_argument(), Some("timeout_ms"));
+        assert!(tool.looks_up());
+    }
+
     use super::{executable_available, is_allowed_env_var, scrub_environment};
     use std::sync::Mutex;
 

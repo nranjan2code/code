@@ -63,6 +63,10 @@ impl Tool for FindToolsTool {
         true
     }
 
+    fn looks_up(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> &str {
         "Search all admitted tools, including already-loaded broker tools, by name, capability domain, description, argument names/descriptions, or supported choice values. Returns full schemas for the best matches; deferred matches become usable for the rest of this turn."
     }

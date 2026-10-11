@@ -34,29 +34,45 @@ only when asked explicitly (`/until-done`, `/goal replace`; maintainer's
 choice), `Posture::managed`/`open_commitment` removed. Run ids are in
 doc 88's Status and 'Open in C6'.
 
+Done since, in the next session (2026-10-11):
+- §5a time constants are `[control.limits]` (`vak_control::TimeLimits`,
+  `Core::time_limits`), edited through `/config/control`, the client's
+  Settings › Time limits and the admin console's Time limits panel. A tool
+  names its time-limit argument (`Tool::time_limit_argument`) and the loop
+  fills it (`3bf6d93af`). Seen live:
+  `run_01a12b7f-2142-7062-85f7-b5c2879cf4f2`, a command call recorded with
+  `timeout_ms` 45000 after setting 45 s in the client's Settings; the
+  admin panel showed 45 s in force. In the client the group is on an
+  Agent's Overview after "Change the shared defaults for every agent
+  instead".
+- The loop's receipt name tables are declarations (`Tool::command`,
+  `Tool::looks_up`, `Tool::planned`); `is_substantive_command`, a word
+  list, is removed. Doc 88 'Carried' lists the tool names the loop still
+  reads. The same live run ended answered with no correction. The full
+  gate was green on this tree (289 suites).
+
 Next, in order:
-1. §5a time constants into configuration, shown in Settings with their
-   shipped defaults: `PROBE_REQUEST_TIMEOUT` (vak-core), gateway
-   `WAIT_TIMEOUT`, bash `DEFAULT_TIMEOUT_MS` (in the worker: have a tool
-   declare its time-limit argument and the loop fill it from config when
-   the call names none, rather than a tool-name check), `SCRIPT_TIMEOUT_MS`,
-   hooks `DEFAULT_TIMEOUT_MS`, `QUESTION_TIMEOUT` and
-   `HTTP_APPROVAL_TIMEOUT`. Follow the `[control]` pattern
-   (`/config/control`, client Settings and admin editors).
-2. The name tables left in the loop's receipts (doc 88 'Carried'): the
-   `write | edit | patch | remember | propose_skill` count, the
-   `edit | write | patch` code-change list, `call.name == "bash"` with
-   `is_substantive_command`, `find_tools` in `looks_something_up`; and in
-   Core the `canonical == "plan"` read. Replace with tool declarations.
-3. The horizon reading still sets the context profile (`derive_context`)
+1. Seen in the live check and not looked into: the admin transcript route
+   (`/admin/api/sessions/{id}/transcript`) did not contain the newest
+   turn of a long conversation, while `/sessions/{id}/transcript` did.
+2. §5a's three open points: bash's 600 s `MAX_TIMEOUT_MS` (also in its
+   schema), the fixed 600 s `request_timeout` in the `vak flow` and
+   `vak plan` executors, and an operator-limit ending recorded in the
+   turn's `Ending`. The CLI question prompt uses the shipped question
+   limit, not the configured one.
+3. The tool names the loop still reads (doc 88 'Carried'): `auto_approve`,
+   the argument aliases in `normalize_tool_call`,
+   `batch_has_file_dependency`, the audit command's and scheduled
+   script's lookup of `bash`.
+4. The horizon reading still sets the context profile (`derive_context`)
    and an unattended gate's fallback (`Authority::gate_fallback`).
-4. A wire that refuses a named tool choice is not learned; the hosted
+5. A wire that refuses a named tool choice is not learned; the hosted
    named tool choice has not been sent live (needs a hosted check).
-5. `scripts/measure_answer_form.py` with the real block schema on each
+6. `scripts/measure_answer_form.py` with the real block schema on each
    configured route.
-6. Open with no contract fault found: one "cannot create Word files"
+7. Open with no contract fault found: one "cannot create Word files"
    answer with `office_apply` offered but deferred (doc 88).
-7. Then C7 (doc 88 §11).
+8. Then C7 (doc 88 §11).
 
 ## Rules the maintainer set (all still in force)
 

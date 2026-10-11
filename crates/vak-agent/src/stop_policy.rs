@@ -57,8 +57,8 @@ pub struct ReceiptSummary {
     pub artifact_deliveries: u32,
     /// Number of tool calls that completed with ToolRunOutput::Err.
     pub failed_tool_calls: u32,
-    /// Number of substantive bash invocations.
-    pub substantive_bash_calls: u32,
+    /// Number of calls that ran a command (`Tool::command`).
+    pub commands_run: u32,
     /// Number of files modified/written (via edit, write, etc.).
     pub files_modified: u32,
     /// Number of code files modified/written.
@@ -78,21 +78,9 @@ pub struct ReceiptSummary {
     pub unresolved_error: Option<(String, String)>,
 }
 
-/// Whether a call that neither ran a command nor changed a file looked
-/// something up for the request. Every tool does, except the one that only
-/// finds other tools and one that shows a card: which tool is the right
-/// place to look is the tool's business, never a list of names here. A list
-/// counted `read` and `grep` and left out `automations`, `workers` and
-/// `doc_read`, so "list my automations", answered correctly from
-/// `automations`, was sent back as not yet looked at (measured 2026-10-08:
-/// 5 of 5 turns, three to five extra requests each).
-pub(crate) fn looks_something_up(tool: &str, presents_cards: bool) -> bool {
-    tool != "find_tools" && !presents_cards
-}
-
 impl ReceiptSummary {
     pub fn has_execution_receipt(&self) -> bool {
-        self.substantive_bash_calls > 0
+        self.commands_run > 0
             || self.files_modified > 0
             || self.external_effects > 0
             || (self.continued_saved_file && self.successful_inspections > 0)
@@ -191,7 +179,7 @@ impl StopPolicy {
         bash_calls_this_run: u32,
     ) -> Option<BlockReason> {
         let receipts = ReceiptSummary {
-            substantive_bash_calls: bash_calls_this_run,
+            commands_run: bash_calls_this_run,
             successful_tool_calls: if bash_calls_this_run > 0 {
                 bash_calls_this_run
             } else {
@@ -210,7 +198,7 @@ impl StopPolicy {
         verification_stale: bool,
     ) -> Option<BlockReason> {
         let receipts = ReceiptSummary {
-            substantive_bash_calls: bash_calls_this_run,
+            commands_run: bash_calls_this_run,
             code_files_modified: if verification_stale { 1 } else { 0 },
             files_modified: if verification_stale { 1 } else { 0 },
             successful_tool_calls: if bash_calls_this_run > 0 {
@@ -275,35 +263,6 @@ pub fn is_code_path(path: &str) -> bool {
         ),
         None => false,
     }
-}
-
-/// Checks if a shell command is substantive rather than a dummy echo/no-op evasion.
-pub fn is_substantive_command(command: &str) -> bool {
-    let trimmed = command.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    // If it writes to a file or pipes to another command, it has side effects or processing
-    if trimmed.contains('>') || trimmed.contains('|') {
-        return true;
-    }
-    // Check if the command line is an explicit evasion claiming verification without doing work
-    let lower = trimmed.to_ascii_lowercase();
-    if (lower.starts_with("echo ") || lower.starts_with("printf "))
-        && (lower.contains("verification")
-            || lower.contains("shell execution path is functional")
-            || lower.contains("verified")
-            || lower.contains("dummy"))
-    {
-        return false;
-    }
-    let first_word = trimmed
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .trim_start_matches("./");
-    let is_noop = matches!(first_word, ":" | "true" | "false" | "exit");
-    !is_noop
 }
 
 #[cfg(test)]
@@ -399,25 +358,6 @@ mod tests {
     fn empty_final_text_is_left_alone() {
         let p = StopPolicy::default();
         assert_eq!(p.evaluate("run the tests", "", 0), None);
-    }
-
-    #[test]
-    fn test_substantive_command_detection() {
-        assert!(!is_substantive_command(
-            "echo \"Verification successful: Shell execution path is functional.\""
-        ));
-        assert!(!is_substantive_command("echo 'verification passed'"));
-        assert!(!is_substantive_command("printf 'verified\\n'"));
-        assert!(!is_substantive_command("true"));
-        assert!(!is_substantive_command(":"));
-        assert!(!is_substantive_command("exit 0"));
-        assert!(!is_substantive_command(""));
-
-        assert!(is_substantive_command("echo ran"));
-        assert!(is_substantive_command("echo 'hello' > index.html"));
-        assert!(is_substantive_command("echo 'hi' | wc -l"));
-        assert!(is_substantive_command("python3 -m unittest"));
-        assert!(is_substantive_command("cargo test"));
     }
 
     #[test]

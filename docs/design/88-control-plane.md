@@ -150,9 +150,27 @@ below are not built.
   the gate that refused an unrequested text file, and the artifact delivery
   shape they set. A file the model's plan lists is observed when a call
   whose tool declares a delivered file, an artifact or a workspace change
-  succeeded. Name tables still in the loop: the `write | edit | patch |
-  remember | propose_skill` receipt count, the `edit | write | patch` code
-  change list, and `find_tools` in `looks_something_up`.
+  succeeded.
+- C6 (done): the loop's receipts are read from declarations, not tool
+  names. A call ran a command when its tool declares one
+  (`Tool::command`); it changed something when its tool declares a file
+  it writes, a delivered file or a workspace change; a code change is a
+  declared write to a code path; and a call looked something up unless
+  its tool says it does not (`Tool::looks_up`: a card tool, `find_tools`
+  and `plan` do not). Core reads a plan from `Tool::planned`. The
+  `write | edit | patch | remember | propose_skill` and `edit | write |
+  patch` lists, the `bash` name checks in the receipts and in the
+  draft-copy screen, `looks_something_up` and `is_substantive_command`
+  (a word list that discounted commands whose text said "verified" or
+  "dummy") are removed: a command that ran is a command that ran. A
+  delegated task and a remembered fact now count as a change when the
+  call is made, by their workspace claim, as a write always did.
+  Tool names still read in the loop: the auto-approve table for
+  `read | glob | grep | ls | search`, `write | edit` and `bash`
+  (`auto_approve`), the argument aliases in `normalize_tool_call`
+  (`file_path` for `path`, `cmd` for `command`), `batch_has_file_dependency`,
+  the audit command's and the scheduled script's lookup of `bash`, and the
+  loop-owned `plan`, `recall`, `task` and `answer` interceptions.
 
 Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
@@ -308,7 +326,10 @@ A tool says which of its arguments bounds one call
 (`Tool::time_limit_argument`; `bash` names `timeout_ms`), and the loop fills
 that argument from `command_secs` when the call leaves it out, before the
 call is ledgered, so the record shows the limit it ran with. The loop
-names no tool to do this.
+names no tool to do this. Seen live on the local route
+(`run_01a12b7f-2142-7062-85f7-b5c2879cf4f2`): with `command_secs` set to
+45 in Settings, the turn's command call is recorded as
+`{"command":"uname -sm","timeout_ms":45000}` and the turn ends answered.
 
 Audit of time constants in code, first taken at C4 (`b213cc1f6`), by what
 they bound:

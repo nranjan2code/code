@@ -370,6 +370,9 @@ impl vak_tools::Tool for Shell {
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({"type": "object"})
     }
+    fn command(&self, args: &serde_json::Value) -> Option<String> {
+        args.get("command")?.as_str().map(str::to_string)
+    }
     async fn execute(
         &self,
         _args: &serde_json::Value,

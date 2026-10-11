@@ -68,6 +68,14 @@ impl Tool for PlanTool {
         true
     }
 
+    fn looks_up(&self) -> bool {
+        false
+    }
+
+    fn planned(&self, args: &Value) -> Option<Vec<Deliverable>> {
+        parse_plan_args(args).ok()
+    }
+
     fn description(&self) -> &str {
         "Say what your answer will deliver before you produce it: one entry for each \
          distinct thing the person asked for, in their order, named in a few words, with \
@@ -120,6 +128,21 @@ impl Tool for PlanTool {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    #[test]
+    fn the_plan_tool_declares_its_plan_and_that_it_looks_nothing_up() {
+        use crate::Tool;
+        let tool = super::PlanTool;
+        assert!(!tool.looks_up());
+        let plan = tool
+            .planned(&serde_json::json!({
+                "deliverables": [{ "name": "the totals", "form": "file" }]
+            }))
+            .unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].form, vak_intent::DeliverableForm::File);
+        assert!(tool.planned(&serde_json::json!({})).is_none());
+    }
+
     use super::*;
 
     #[test]

@@ -2552,7 +2552,7 @@ impl Agent {
                                 file_delivered: file_delivered_this_run
                                     || receipts.artifact_deliveries > 0,
                                 changed: receipts.has_execution_receipt(),
-                                checked: receipts.substantive_bash_calls > 0 && !verification_stale,
+                                checked: receipts.commands_run > 0 && !verification_stale,
                             };
                             let gap = vak_judge::plan::gap(plan, &produced);
                             // The answer can be required of a step when
@@ -2767,38 +2767,32 @@ impl Agent {
             // planned action.
             self.ladder.passed(Cause::EmptyStep);
 
+            // Receipts are read from what each call's tool declares: the
+            // command it runs, the file it writes, whether it changes the
+            // workspace or looks something up. No tool is named here.
             for call in &calls {
                 receipts.total_tool_calls += 1;
-                if call.name == "bash" {
-                    let is_subst = call
-                        .input
-                        .get("command")
-                        .and_then(|v| v.as_str())
-                        .map(stop_policy::is_substantive_command)
-                        .unwrap_or(true);
-                    if is_subst {
-                        receipts.substantive_bash_calls += 1;
-                    }
-                } else if matches!(
-                    call.name.as_str(),
-                    "write" | "edit" | "patch" | "remember" | "propose_skill"
-                ) || self.delivered_file(&call.name, &call.input).is_some()
+                let tool = self.tool_named(&call.name);
+                let written = tool
+                    .and_then(|tool| tool.file_access(&call.input))
+                    .and_then(|(access, path)| {
+                        (access == vak_tools::FileAccess::Write).then_some(path)
+                    });
+                if tool.is_some_and(|tool| tool.command(&call.input).is_some()) {
+                    receipts.commands_run += 1;
+                } else if written.is_some()
+                    || tool.is_some_and(|tool| {
+                        tool.delivered_file(&call.input).is_some()
+                            || tool.changes_workspace(&call.input)
+                    })
                 {
                     receipts.files_modified += 1;
-                    let path = call.input.get("path").and_then(|v| v.as_str());
-                    if let Some(p) = path {
-                        if stop_policy::is_code_path(p) {
-                            receipts.code_files_modified += 1;
-                        } else {
-                            receipts.doc_files_modified += 1;
-                        }
+                    if written.as_deref().is_some_and(stop_policy::is_code_path) {
+                        receipts.code_files_modified += 1;
                     } else {
                         receipts.doc_files_modified += 1;
                     }
-                } else if stop_policy::looks_something_up(
-                    &call.name,
-                    self.tool_presents_cards(&call.name),
-                ) {
+                } else if self.tool_looks_up(&call.name) {
                     receipts.read_or_inspected += 1;
                 }
             }
@@ -2806,23 +2800,20 @@ impl Agent {
             // run must stay green before any completion claim.
             let bash_pairs: Vec<(String, String)> = calls
                 .iter()
-                .filter(|c| c.name == "bash")
-                .filter_map(|c| {
-                    c.input
-                        .get("command")
-                        .and_then(|v| v.as_str())
-                        .map(|cmd| (c.id.clone(), cmd.to_string()))
+                .filter_map(|call| {
+                    let command = self.tool_named(&call.name)?.command(&call.input)?;
+                    Some((call.id.clone(), command))
                 })
                 .collect();
             let code_mutation_ids: Vec<String> = calls
                 .iter()
-                .filter(|call| matches!(call.name.as_str(), "edit" | "write" | "patch"))
                 .filter(|call| {
-                    call.input
-                        .get("path")
-                        .and_then(|v| v.as_str())
-                        .map(stop_policy::is_code_path)
-                        .unwrap_or(false)
+                    self.tool_named(&call.name)
+                        .and_then(|tool| tool.file_access(&call.input))
+                        .is_some_and(|(access, path)| {
+                            access == vak_tools::FileAccess::Write
+                                && stop_policy::is_code_path(&path)
+                        })
                 })
                 .map(|call| call.id.clone())
                 .collect();
@@ -2967,7 +2958,7 @@ impl Agent {
                         // A look at something, by what the tool declares:
                         // it shows no card and changes no workspace.
                         if let (Some(name), Some(input)) = (call_names.get(id), call_inputs.get(id))
-                            && stop_policy::looks_something_up(name, self.tool_presents_cards(name))
+                            && self.tool_looks_up(name)
                             && !self
                                 .config
                                 .tools
@@ -3156,7 +3147,7 @@ impl Agent {
                                 file_delivered: file_delivered_this_run
                                     || receipts.artifact_deliveries > 0,
                                 changed: receipts.has_execution_receipt(),
-                                checked: receipts.substantive_bash_calls > 0 && !verification_stale,
+                                checked: receipts.commands_run > 0 && !verification_stale,
                             },
                         );
                         (!gap.is_empty()).then(|| Finding::Plan {
@@ -4545,6 +4536,22 @@ impl Agent {
             .then(|| answer::ANSWER.to_string())
     }
 
+    /// This agent's tool of that name.
+    fn tool_named(&self, name: &str) -> Option<&Arc<dyn Tool>> {
+        self.config.tools.iter().find(|tool| tool.name() == name)
+    }
+
+    /// Whether a call by this name looks something up for the request, by
+    /// what its tool declares (`Tool::looks_up`). The loop's own `answer`
+    /// is the answer, never a look; a name no tool here has (an
+    /// integration's tool reached by its bare name) is counted as one.
+    fn tool_looks_up(&self, name: &str) -> bool {
+        match self.tool_named(name) {
+            Some(tool) => tool.looks_up(),
+            None => name != answer::ANSWER,
+        }
+    }
+
     /// Whether a call by this name shows cards: a card tool, or the
     /// `answer` built from them.
     fn tool_presents_cards(&self, name: &str) -> bool {
@@ -5648,9 +5655,11 @@ impl Agent {
                 ));
                 continue;
             }
-            if vak_tools::canonical_tool_name(&call.name) == "bash"
-                && let Some(command) = call.input.get("command").and_then(Value::as_str)
-                && let Some(delivered) = copies_delivered_draft(command, &deliveries.paths).cloned()
+            if let Some(command) = self
+                .tool_named(vak_tools::canonical_tool_name(&call.name))
+                .and_then(|tool| tool.command(&call.input))
+                && let Some(delivered) =
+                    copies_delivered_draft(&command, &deliveries.paths).cloned()
             {
                 answered.push((
                     call.id.clone(),

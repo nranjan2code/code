@@ -7788,8 +7788,9 @@ impl Core {
                                         || tool.artifact(input).is_some()
                                         || tool.changes_workspace(input)
                                 });
-                                if canonical == "plan"
-                                    && let Ok(plan) = vak_tools::parse_plan_args(input)
+                                if let Some(plan) = delivering
+                                    .get(canonical)
+                                    .and_then(|tool| tool.planned(input))
                                 {
                                     planned_file |= plan.iter().any(|deliverable| {
                                         deliverable.form == vak_intent::DeliverableForm::File

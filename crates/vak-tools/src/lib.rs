@@ -259,6 +259,29 @@ pub trait Tool: Send + Sync {
         })
     }
 
+    /// The shell command a call with these arguments runs, for a tool that
+    /// runs one. The calling loop counts it as execution, keeps it for the
+    /// regression checks and screens it for a draft copied past review; it
+    /// reads this declaration and never a tool's name.
+    fn command(&self, _args: &Value) -> Option<String> {
+        None
+    }
+
+    /// Whether a successful call looks something up for the request. Every
+    /// tool does unless it says otherwise: one that shows a card is the
+    /// answer, and one that only finds other tools or records a plan has
+    /// looked at nothing yet.
+    fn looks_up(&self) -> bool {
+        !self.presents_cards()
+    }
+
+    /// The deliverables a call with these arguments declares, for the tool
+    /// a model plans its answer with
+    /// (docs/design/86-model-plans-runtime-checks.md §2.1).
+    fn planned(&self, _args: &Value) -> Option<Vec<vak_intent::Deliverable>> {
+        None
+    }
+
     /// The argument, in milliseconds, that bounds how long one call may
     /// run. A call that leaves it out runs under the operator's limit
     /// (`[control.limits] command_secs`), which the calling loop fills in
