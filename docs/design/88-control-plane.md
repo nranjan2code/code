@@ -139,8 +139,15 @@ below are not built.
   the reading; they go with the guessed outcome requirements.
 - The remaining time constants in §5a (probe, gateway wait, command and
   person waits) are not yet configuration.
-- C6: delivery shape and `OutcomeSpec` requirements guessed from words
-  (`apply_output_requirements`) are replaced by the answer form.
+- C6 (done): the outcome requirements guessed from the request's words are
+  removed: the write-verb, file-extension and Office-term lists behind
+  `saved_file_target`, `expects_artifact` and `permits_authored_text_file`,
+  the gate that refused an unrequested text file, and the artifact delivery
+  shape they set. A file the model's plan lists is observed when a call
+  whose tool declares a delivered file, an artifact or a workspace change
+  succeeded. Name tables still in the loop: the `write | edit | patch |
+  remember | propose_skill` receipt count, the `edit | write | patch` code
+  change list, and `find_tools` in `looks_something_up`.
 
 Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates

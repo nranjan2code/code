@@ -7,6 +7,7 @@
 mod fences;
 use fences::{find_malformed_vak_fence, vak_fence_bodies};
 mod answer;
+pub use answer::ANSWER;
 pub mod circuit;
 pub mod goal;
 pub mod questions;
@@ -2767,11 +2768,10 @@ impl Agent {
                     if is_subst {
                         receipts.substantive_bash_calls += 1;
                     }
-                } else if !self.refuses_unrequested_authored_text_file(&call.name)
-                    && (matches!(
-                        call.name.as_str(),
-                        "write" | "edit" | "patch" | "remember" | "propose_skill"
-                    ) || self.delivered_file(&call.name, &call.input).is_some())
+                } else if matches!(
+                    call.name.as_str(),
+                    "write" | "edit" | "patch" | "remember" | "propose_skill"
+                ) || self.delivered_file(&call.name, &call.input).is_some()
                 {
                     receipts.files_modified += 1;
                     let path = call.input.get("path").and_then(|v| v.as_str());
@@ -2806,7 +2806,6 @@ impl Agent {
             let code_mutation_ids: Vec<String> = calls
                 .iter()
                 .filter(|call| matches!(call.name.as_str(), "edit" | "write" | "patch"))
-                .filter(|call| !self.refuses_unrequested_authored_text_file(&call.name))
                 .filter(|call| {
                     call.input
                         .get("path")
@@ -2936,7 +2935,6 @@ impl Agent {
                         if let Some(claim) = call_names
                             .get(id)
                             .zip(call_inputs.get(id))
-                            .filter(|(name, _)| !self.refuses_unrequested_authored_text_file(name))
                             .and_then(|(name, input)| self.tool_artifact(name, input))
                         {
                             receipts.artifact_deliveries += 1;
@@ -4548,10 +4546,6 @@ impl Agent {
     /// A prose or card answer is not a text-file request. Enforce the
     /// outcome contract here as well as in the model instructions, because a
     /// carried `write` schema can remain callable later in a long session.
-    fn refuses_unrequested_authored_text_file(&self, name: &str) -> bool {
-        refuses_unrequested_authored_text_file(name, self.config.outcome.as_ref())
-    }
-
     /// The protected path (`AgentConfig::protected_paths`) this call would
     /// change, if any: what its tool claims it writes, or what it reports
     /// writing.
@@ -5619,15 +5613,6 @@ impl Agent {
         let mut live_deliveries: HashMap<String, (String, String)> = HashMap::new();
         let mut live = Vec::with_capacity(calls.len());
         for call in calls {
-            if self.refuses_unrequested_authored_text_file(&call.name) {
-                answered.push((
-                    call.id.clone(),
-                    ToolRunOutput::Ok(
-                        "No text file was created: this turn's outcome does not request one. Return the requested result in the conversation; do not retry this write under another path.".into(),
-                    ),
-                ));
-                continue;
-            }
             let deliveries = self
                 .deliveries
                 .lock()
@@ -7937,57 +7922,6 @@ enum RecallFailure {
     Malformed(String),
     /// A well-formed lookup that found nothing.
     NotFound(String),
-}
-
-fn refuses_unrequested_authored_text_file(
-    name: &str,
-    outcome: Option<&vak_intent::OutcomeSpec>,
-) -> bool {
-    vak_tools::canonical_tool_name(name) == "write"
-        && outcome.is_some_and(|outcome| !outcome.permits_authored_text_file())
-}
-
-#[cfg(test)]
-mod authored_text_file_policy_tests {
-    use super::refuses_unrequested_authored_text_file;
-    use vak_intent::{Act, OutcomeSpec, Reading};
-
-    #[test]
-    fn a_carried_text_writer_requires_a_file_outcome_for_authoring() {
-        let author = Reading {
-            act: Act::Author,
-            ..Reading::general()
-        };
-        let inline = OutcomeSpec::from_reading("Make a plan suitable to share", &author, 1);
-        assert!(refuses_unrequested_authored_text_file(
-            "write",
-            Some(&inline)
-        ));
-
-        let file = OutcomeSpec::from_reading("Write the plan to plan.md", &author, 1);
-        assert!(!refuses_unrequested_authored_text_file(
-            "write",
-            Some(&file)
-        ));
-
-        let modification = OutcomeSpec::from_reading(
-            "Update the existing workspace file",
-            &Reading {
-                act: Act::Modify,
-                ..Reading::general()
-            },
-            1,
-        );
-        assert!(!refuses_unrequested_authored_text_file(
-            "write",
-            Some(&modification)
-        ));
-        assert!(!refuses_unrequested_authored_text_file("write", None));
-        assert!(!refuses_unrequested_authored_text_file(
-            "edit",
-            Some(&inline)
-        ));
-    }
 }
 
 fn estimate_messages(messages: &[Message], estimate: &dyn Fn(&str) -> u64) -> u64 {

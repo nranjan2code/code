@@ -590,91 +590,6 @@ pub struct RequirementEvaluation {
 }
 
 impl OutcomeSpec {
-    /// A named file deliverable cannot be established by prose alone. This
-    /// conservative signal only affects outcome assessment; it grants no tool.
-    ///
-    /// Only a request with a part that produces something — authoring,
-    /// modifying, operating — can owe a file: "explain how to write a
-    /// README.md" names a file and asks for an explanation, and demanding a
-    /// write for it made the stop gate send a correct answer back for a
-    /// file nobody asked for.
-    pub fn saved_file_target(&self) -> Option<String> {
-        if !self
-            .acts
-            .iter()
-            .any(|act| matches!(act, Act::Author | Act::Modify | Act::Operate))
-        {
-            return None;
-        }
-        let request = self.objective.to_ascii_lowercase();
-        let asks_to_write = [
-            "create ",
-            "write ",
-            "save ",
-            "generate ",
-            "make ",
-            "build ",
-            "export ",
-        ]
-        .iter()
-        .any(|verb| request.contains(verb));
-        if !asks_to_write {
-            return None;
-        }
-        request.split_whitespace().find_map(|word| {
-            let token = word.trim_matches(|c: char| {
-                !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-' && c != '/'
-            });
-            let is_file = [
-                ".html", ".htm", ".md", ".txt", ".json", ".csv", ".pdf", ".docx", ".pptx", ".xlsx",
-                ".svg", ".png", ".js", ".ts", ".tsx", ".rs", ".py", ".css", ".sql",
-            ]
-            .iter()
-            .any(|extension| token.ends_with(extension) && token.len() > extension.len());
-            is_file.then(|| token.to_string())
-        })
-    }
-
-    pub fn expects_saved_file(&self) -> bool {
-        self.saved_file_target().is_some()
-    }
-
-    /// Whether a text file is an explicitly requested output of an authoring
-    /// turn. A plan, list, or other authored answer is delivered in the
-    /// conversation unless the request names a file or directly asks to save
-    /// one. Effectful acts such as modifying an existing workspace file keep
-    /// their normal write path.
-    pub fn permits_authored_text_file(&self) -> bool {
-        if self.expects_saved_file() || self.acts.iter().any(|act| act.requires_execution()) {
-            return true;
-        }
-        if !self.acts.contains(&Act::Author) {
-            return true;
-        }
-
-        let words: Vec<String> = self
-            .objective
-            .to_ascii_lowercase()
-            .split(|ch: char| !ch.is_ascii_alphanumeric())
-            .filter(|word| !word.is_empty())
-            .map(str::to_string)
-            .collect();
-        let output_verbs = ["write", "create", "make", "generate", "save", "export"];
-        let file_targets = ["file", "filename", "disk", "workspace"];
-        let negation = ["not", "never", "avoid", "dont", "don", "no"];
-        words.iter().enumerate().any(|(at, word)| {
-            output_verbs.contains(&word.as_str())
-                && !words[at.saturating_sub(2)..at]
-                    .iter()
-                    .any(|previous| negation.contains(&previous.as_str()))
-                && words
-                    .iter()
-                    .skip(at + 1)
-                    .take(6)
-                    .any(|next| file_targets.contains(&next.as_str()))
-        })
-    }
-
     /// Build the conservative baseline contract for an ordinary turn.
     ///
     /// The request text is preserved as the objective; inferred requirements
@@ -737,50 +652,11 @@ impl OutcomeSpec {
         spec
     }
 
-    /// Whether this outcome requires execution or file modifications.
-    ///
-    /// True when an act genuinely needs one (`Act::requires_execution`:
-    /// `Modify`/`Operate`/`Govern`/`Verify`), or when the request names a
-    /// file deliverable outright (`expects_saved_file`) — the only case
-    /// where authoring content also demands a receipt, since `Act` alone has
-    /// no view of the request text.
+    /// Whether this outcome requires execution or file modifications: an act
+    /// that needs one (`Act::requires_execution`). A file the model plans to
+    /// deliver is the plan's to say (docs/design/86-model-plans-runtime-checks.md).
     pub fn requires_execution(&self) -> bool {
-        self.expects_saved_file() || self.acts.iter().any(|act| act.requires_execution())
-    }
-
-    /// Whether the requested primary output is a file-backed Office artifact.
-    /// A bare Author act also covers prose answers such as letters and plans;
-    /// require a file receipt only when the request names a file or an Office
-    /// format. This lets "make an Excel document" require a workbook without
-    /// making every authored sentence produce a file.
-    pub fn expects_artifact(&self) -> bool {
-        if self.expects_saved_file() {
-            return true;
-        }
-        let objective = self.objective.to_ascii_lowercase();
-        let requests_office_file = [
-            "spreadsheet",
-            "workbook",
-            "excel",
-            "xlsx",
-            "word document",
-            "word file",
-            "docx",
-            "document",
-            "powerpoint",
-            "power point",
-            "slide deck",
-            "slides",
-            "pptx",
-            "pdf",
-        ]
-        .iter()
-        .any(|term| objective.contains(term));
-        requests_office_file
-            && self
-                .acts
-                .iter()
-                .any(|act| matches!(act, Act::Author | Act::Modify | Act::Operate))
+        self.acts.iter().any(|act| act.requires_execution())
     }
 
     /// Whether this outcome requires inspection, search, or enumeration.
@@ -790,8 +666,7 @@ impl OutcomeSpec {
 
     /// Whether this outcome requires real tool execution or evidence receipts.
     pub fn requires_tool(&self) -> bool {
-        self.expects_saved_file()
-            || self.acts.iter().any(|act| act.requires_tool())
+        self.acts.iter().any(|act| act.requires_tool())
             || self
                 .requirements
                 .iter()
@@ -868,87 +743,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
     use crate::{Act, Reading};
-
-    #[test]
-    fn named_saved_file_requires_evidence_but_an_inline_plan_does_not() {
-        let authoring = Reading {
-            act: Act::Author,
-            ..Reading::general()
-        };
-        let file = OutcomeSpec::from_reading(
-            "Create an invitation in this workspace as invitation.html",
-            &authoring,
-            1,
-        );
-        assert!(file.expects_saved_file());
-        let plan = OutcomeSpec::from_reading("Create a two-day lunch plan", &authoring, 1);
-        assert!(!plan.expects_saved_file());
-        assert!(!plan.expects_artifact());
-        let note = OutcomeSpec::from_reading("Write a short note to my neighbour", &authoring, 1);
-        assert!(!note.expects_artifact());
-        let native_cards = OutcomeSpec::from_reading(
-            "Make a practical plan and use suitable native presentation cards",
-            &authoring,
-            1,
-        );
-        assert!(!native_cards.expects_artifact());
-        for request in [
-            "Make an Excel document",
-            "Create a spreadsheet dashboard",
-            "Write a Word document",
-            "Build a PowerPoint presentation",
-            "Create a slide deck for the team",
-            "Generate a PDF report",
-        ] {
-            let output = OutcomeSpec::from_reading(request, &authoring, 1);
-            assert!(output.expects_artifact(), "{request}");
-        }
-        let inspection = OutcomeSpec::from_reading("Explain README.md", &Reading::general(), 1);
-        assert!(!inspection.expects_saved_file());
-        assert!(!inspection.expects_artifact());
-        // Naming a file inside a question is not asking for one.
-        let explanation =
-            OutcomeSpec::from_reading("explain how to write a README.md", &Reading::general(), 1);
-        assert!(!explanation.expects_saved_file());
-        assert!(!explanation.requires_execution());
-    }
-
-    #[test]
-    fn authored_text_file_permission_tracks_the_requested_outcome() {
-        let authoring = Reading {
-            act: Act::Author,
-            ..Reading::general()
-        };
-        let plan =
-            OutcomeSpec::from_reading("Make an easy-to-share plan and supply list", &authoring, 1);
-        assert!(!plan.permits_authored_text_file());
-        let declined_file =
-            OutcomeSpec::from_reading("Do not create a file for this", &authoring, 1);
-        assert!(!declined_file.permits_authored_text_file());
-
-        for request in [
-            "Write a file with the plan",
-            "Save this to a file",
-            "Create a file for the supply list",
-            "Save the notes in the workspace",
-            "Write the plan to workshop.md",
-        ] {
-            assert!(
-                OutcomeSpec::from_reading(request, &authoring, 1).permits_authored_text_file(),
-                "{request}"
-            );
-        }
-
-        let modification = OutcomeSpec::from_reading(
-            "Update the existing notes",
-            &Reading {
-                act: Act::Modify,
-                ..Reading::general()
-            },
-            1,
-        );
-        assert!(modification.permits_authored_text_file());
-    }
 
     #[test]
     fn baseline_contract_preserves_objective_and_adds_only_inferred_requirements() {

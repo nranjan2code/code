@@ -7198,10 +7198,20 @@ impl Core {
             .and_then(|loaded| loaded.get(&sid).cloned())
             .unwrap_or_default();
         let surface = capability::build_tool_surface(&tools, progressive, &carried);
-        let card_tools: std::collections::HashSet<String> = tools
+        let mut card_tools: std::collections::HashSet<String> = tools
             .iter()
             .filter(|tool| tool.presents_cards())
             .map(|tool| tool.name().to_string())
+            .collect();
+        // The card tools reach the model as one `answer` tool.
+        if !card_tools.is_empty() {
+            card_tools.insert(vak_agent::ANSWER.to_string());
+        }
+        // What each tool declares it delivers: a file for review, an
+        // artifact, or a change to the workspace.
+        let delivering: std::collections::HashMap<String, Arc<dyn vak_tools::Tool>> = tools
+            .iter()
+            .map(|tool| (tool.name().to_string(), tool.clone()))
             .collect();
         if let Ok(mut loaded) = self.inner.loaded_tools.lock() {
             if loaded.len() >= 512 && !loaded.contains_key(&sid) {
@@ -7710,11 +7720,12 @@ impl Core {
             });
             outcome_spec.evidence_max_age_secs =
                 Some(self.inner.config.intent.evidence_max_age_secs);
-            let mut tool_calls =
-                std::collections::HashMap::<String, (Option<String>, Option<String>)>::new();
+            // Per call of the current request: whether it delivers a file or
+            // a workspace change, by its tool's declarations.
+            let mut tool_calls = std::collections::HashMap::<String, bool>::new();
             let mut successful_receipts = std::collections::HashSet::new();
-            let mut written_paths = std::collections::HashSet::<String>::new();
-            let mut successful_effect_inputs = Vec::<String>::new();
+            let mut delivered = false;
+            let mut planned_file = false;
             let mut failures = vak_judge::call::Failures::default();
             let chain = session.chain_to_root();
             // Where each failed call's fault lay, as the loop recorded it.
@@ -7742,24 +7753,27 @@ impl Core {
                     {
                         tool_calls.clear();
                         successful_receipts.clear();
-                        written_paths.clear();
-                        successful_effect_inputs.clear();
+                        delivered = false;
+                        planned_file = false;
                         failures.clear();
                     }
                     for block in &record.message.content {
                         match block {
                             vak_llm::ContentBlock::ToolUse { id, name, input } => {
                                 let canonical = vak_tools::canonical_tool_name(name);
-                                let path = matches!(canonical, "write" | "edit")
-                                    .then(|| input.get("path").and_then(serde_json::Value::as_str))
-                                    .flatten()
-                                    .map(str::to_ascii_lowercase);
-                                let effect_input = matches!(
-                                    canonical,
-                                    "write" | "edit" | "apply_patch" | "bash" | "imagegen"
-                                )
-                                .then(|| input.to_string().to_ascii_lowercase());
-                                tool_calls.insert(id.clone(), (path, effect_input));
+                                let delivers = delivering.get(canonical).is_some_and(|tool| {
+                                    tool.delivered_file(input).is_some()
+                                        || tool.artifact(input).is_some()
+                                        || tool.changes_workspace(input)
+                                });
+                                if canonical == "plan"
+                                    && let Ok(plan) = vak_tools::parse_plan_args(input)
+                                {
+                                    planned_file |= plan.iter().any(|deliverable| {
+                                        deliverable.form == vak_intent::DeliverableForm::File
+                                    });
+                                }
+                                tool_calls.insert(id.clone(), delivers);
                                 // A card that was not shown changed nothing
                                 // and may be delivered another way; whether
                                 // a planned card is missing is the plan
@@ -7775,12 +7789,7 @@ impl Core {
                             } if tool_calls.contains_key(tool_use_id) => {
                                 successful_receipts.insert(tool_use_id.clone());
                                 failures.succeeded(tool_use_id);
-                                if let Some((Some(path), _)) = tool_calls.get(tool_use_id) {
-                                    written_paths.insert(path.clone());
-                                }
-                                if let Some((_, Some(input))) = tool_calls.get(tool_use_id) {
-                                    successful_effect_inputs.push(input.clone());
-                                }
+                                delivered |= tool_calls.get(tool_use_id).copied().unwrap_or(false);
                             }
                             vak_llm::ContentBlock::ToolResult {
                                 tool_use_id,
@@ -7822,16 +7831,9 @@ impl Core {
                 matches!(outcome, TurnOutcome::Aborted { .. }),
                 unresolved_failure,
             );
-            // A named saved-file request needs an observed tool result. A
-            // model's sentence saying it wrote the file is not a deliverable.
-            let deliverable_observed = outcome_spec.saved_file_target().is_none_or(|target| {
-                written_paths.iter().any(|path| {
-                    std::path::Path::new(path).file_name()
-                        == std::path::Path::new(&target).file_name()
-                }) || successful_effect_inputs
-                    .iter()
-                    .any(|input| input.contains(&target))
-            });
+            // A file the model's own plan lists needs a call that delivered
+            // one. A sentence saying it wrote the file is not a deliverable.
+            let deliverable_observed = !planned_file || delivered;
             if status == vak_intent::OutcomeStatus::Produced && !deliverable_observed {
                 status = vak_intent::OutcomeStatus::Unknown;
             }

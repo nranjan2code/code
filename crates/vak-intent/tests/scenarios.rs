@@ -2592,9 +2592,8 @@ fn authoring_prose_does_not_require_an_execution_receipt() {
         let spec = OutcomeSpec::from_intent(prompt, &intent);
         assert!(
             !spec.requires_execution(),
-            "{prompt:?}: acts={:?} expects_saved_file={} should not require execution",
-            spec.acts,
-            spec.expects_saved_file()
+            "{prompt:?}: acts={:?} should not require execution",
+            spec.acts
         );
         assert_ne!(
             spec.stop,
@@ -2607,18 +2606,6 @@ fn authoring_prose_does_not_require_an_execution_receipt() {
             "{prompt:?}: stop profile should not be Verification"
         );
     }
-}
-
-/// The one case authoring genuinely needs a receipt: the request names a
-/// file deliverable outright. `Act` alone cannot see this — only
-/// `OutcomeSpec`, which has the request text via `expects_saved_file`.
-#[test]
-fn authoring_with_a_named_file_target_requires_an_execution_receipt() {
-    let prompt = "write a Python script that parses logs and save it as parse.py";
-    let intent = resolve_text(prompt);
-    let spec = OutcomeSpec::from_intent(prompt, &intent);
-    assert!(spec.expects_saved_file(), "acts={:?}", spec.acts);
-    assert!(spec.requires_execution());
 }
 
 /// Genuinely effectful work and verification are unaffected by the

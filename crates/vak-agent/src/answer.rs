@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use vak_tools::Tool;
 
 /// The tool's name.
-pub(crate) const ANSWER: &str = "answer";
+pub const ANSWER: &str = "answer";
 /// The block kind that is prose rather than a card.
 const TEXT: &str = "text";
 

@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use vak_intent::{
     ApprovalCeiling, Authority, Autonomy, Declared, Engagement, HistoryFacts, Intent, Limits,
-    OutcomeSpec, OutputShape, PermissionCeiling, Request, ResolverConfig, Surface as IntentSurface,
+    OutcomeSpec, PermissionCeiling, Request, ResolverConfig, Surface as IntentSurface,
     WorkspaceFacts,
 };
 
@@ -315,24 +315,13 @@ pub fn demand_input(
     }
 }
 
-/// Complete the reading's delivery posture with the request-level outcome.
-/// Authoring is conversational by default; only an explicitly requested
-/// saved file gets file-shaped delivery.
-pub fn apply_output_requirements(intent: &mut Intent, outcome: &OutcomeSpec) {
-    if outcome.expects_saved_file() || outcome.expects_artifact() {
-        intent.engagement.posture.delivery.shape = OutputShape::Artifact;
-    }
-}
-
 /// Apply the request's outcome to its intent. Shared by admission and
 /// preview so the displayed decision matches what the runtime routes. No
 /// card is predicted from the request's words: every admitted block is
 /// loaded, and the model's plan says what it delivers
 /// (docs/design/86-model-plans-runtime-checks.md).
 pub fn complete_output_contract(intent: &mut Intent, prompt: &str) -> OutcomeSpec {
-    let outcome = OutcomeSpec::from_intent(prompt, intent);
-    apply_output_requirements(intent, &outcome);
-    outcome
+    OutcomeSpec::from_intent(prompt, intent)
 }
 
 /// Whether a route leg can serve this turn's modalities.
@@ -578,8 +567,7 @@ mod tests {
         let surface = crate::capability::build_tool_surface(&tools, true, &Default::default());
         assert_eq!(surface.core.len(), tools.len());
         let mut intent = Intent::general(vak_intent::RESOLVER_VERSION);
-        let outcome = complete_output_contract(&mut intent, "Hello, how are you?");
-        assert!(!outcome.expects_artifact());
+        complete_output_contract(&mut intent, "Hello, how are you?");
         assert!(!intent.engagement.posture.demand.structured_output);
     }
 
