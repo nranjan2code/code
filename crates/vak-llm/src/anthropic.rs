@@ -144,6 +144,7 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     temperature: vak_control::Support::Yes,
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::Yes,
+    tool_choice: vak_control::Support::Yes,
 };
 
 /// `settings` (what the model can honour of the step's) and `fast_mode` are
@@ -233,6 +234,11 @@ pub fn build_body(
         }
         body["tools"] = Value::Array(tools);
     }
+    crate::models::require_tool(
+        &mut body,
+        request.must_call.as_deref(),
+        crate::models::ToolChoiceWire::Anthropic,
+    );
     // Reasoning depth, never thinking on/off (docs/design/68 §11): current
     // models either reject an explicit `{"type":"disabled"}`/`budget_tokens`
     // outright or silently degrade tool-call reliability under it, so this
@@ -684,7 +690,8 @@ impl Provider for AnthropicProvider {
             REACH,
             &request.model,
             request.settings,
-        );
+        )
+        .requiring(request.must_call.is_some());
         // Thinking cannot be switched off on this wire; the lowest effort is
         // the nearest it can honour, and the receipt says so.
         if dispatch.settings.reasoning == vak_control::Reasoning::Off {

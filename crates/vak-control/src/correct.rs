@@ -38,6 +38,9 @@ pub enum Finding {
         /// Every other deliverable with no receipt, with its form.
         others: Vec<(String, String)>,
     },
+    /// A planned card is still not shown, and the next step is framed to
+    /// call the tool the plan named for it.
+    CardRequired { name: String, tool: String },
     /// A stop hook the operator configured asked for more work.
     StopHook { reason: String },
     /// A completion gate with its own reason (goal mode, managed work).
@@ -72,7 +75,7 @@ impl Finding {
             Self::EmptyStep => Cause::EmptyStep,
             Self::Fence { .. } => Cause::Fence,
             Self::DuplicateCard { .. } => Cause::DuplicateCard,
-            Self::Plan { .. } => Cause::Plan,
+            Self::Plan { .. } | Self::CardRequired { .. } => Cause::Plan,
             Self::StopHook { .. } => Cause::StopHook,
             Self::StopGuard { .. } => Cause::StopGuard,
             Self::Truncated { .. } => Cause::Truncated,
@@ -187,6 +190,11 @@ pub fn render(finding: &Finding, marker: &str) -> String {
             );
             parts.join(" ")
         }
+        Finding::CardRequired { name, tool } => format!(
+            "{marker}: Your plan lists \"{name}\" as a card and no card shows it. This step \
+             can only call `{tool}`: call it now, with `answers` set to \"{name}\". This is \
+             not a message from the person."
+        ),
         Finding::StopHook { reason } => format!(
             "{marker}: a stop hook asked for more work: {}. Do it now, or say plainly why you cannot.",
             reason.trim().trim_end_matches('.')
@@ -304,6 +312,10 @@ mod tests {
             Finding::Fence { error: "x".into() },
             Finding::DuplicateCard {
                 semantic_type: "x".into(),
+            },
+            Finding::CardRequired {
+                name: "x".into(),
+                tool: "x".into(),
             },
             Finding::StopHook {
                 reason: "x.".into(),

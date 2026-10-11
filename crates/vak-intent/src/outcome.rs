@@ -512,6 +512,10 @@ pub struct OutcomeSpec {
 pub struct Deliverable {
     pub name: String,
     pub form: DeliverableForm,
+    /// The tool the model said it will call to produce it, when it named
+    /// one. The runtime can require that call of a step
+    /// (docs/design/88-control-plane.md §4).
+    pub with: Option<String>,
 }
 
 /// Runtime status of the primary deliverable. Produced output is not itself

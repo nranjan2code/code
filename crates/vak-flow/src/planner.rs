@@ -247,6 +247,7 @@ async fn complete_text(
     cancel: &CancellationToken,
 ) -> Result<String, String> {
     let request = ChatRequest {
+        must_call: None,
         model: deps.model.clone(),
         system: Some(system.to_string()),
         messages: vec![Message::user_text(prompt)],

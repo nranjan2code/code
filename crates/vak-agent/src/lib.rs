@@ -1124,6 +1124,12 @@ pub struct Agent {
     seen_calls: std::sync::Mutex<HashMap<String, SeenCall>>,
     /// This run's correction ladder (docs/design/88-control-plane.md §5).
     ladder: vak_control::Ladder,
+    /// The tool the next step must call: the frame change a correction
+    /// asked for (`OutputForm::Tool`). Taken when that step is framed.
+    must_call: Option<String>,
+    /// Planned deliverables a step was already framed for, by name: each
+    /// is required of one step, never asked for again.
+    required_once: HashSet<String>,
     /// Whether this run has already announced its first workspace change.
     effect_announced: std::sync::atomic::AtomicBool,
     /// `name + input` of every card call that displayed successfully this run.
@@ -1170,6 +1176,8 @@ impl Agent {
             config,
             seen_calls: std::sync::Mutex::new(HashMap::new()),
             ladder: vak_control::Ladder::default(),
+            must_call: None,
+            required_once: HashSet::new(),
             effect_announced: std::sync::atomic::AtomicBool::new(false),
             presented_cards: std::sync::Mutex::new(std::collections::HashSet::new()),
             declared_plan: std::sync::Mutex::new(None),
@@ -1353,11 +1361,14 @@ impl Agent {
         purpose: vak_control::Purpose,
         request: &ChatRequest,
     ) {
-        let asked = vak_control::frame(
+        let mut asked = vak_control::frame(
             purpose,
             &self.config.steps,
             request.tools.iter().map(|tool| tool.name.clone()).collect(),
         );
+        if let Some(name) = &request.must_call {
+            asked.output = vak_control::OutputForm::Tool { name: name.clone() };
+        }
         self.record_decision(vak_control::Decision::by_runtime(
             vak_control::Choice::FrameStep(vak_control::Framing {
                 step: u32::try_from(step).unwrap_or(u32::MAX),
@@ -1489,6 +1500,8 @@ impl Agent {
         self.effect_announced
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.ladder = vak_control::Ladder::default();
+        self.must_call = None;
+        self.required_once.clear();
         self.presented_cards
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -2066,7 +2079,11 @@ impl Agent {
                     });
                 }
             }
-            let purpose = self.step_purpose().await;
+            let must_call = self.must_call.take();
+            let purpose = match must_call {
+                Some(_) => vak_control::Purpose::Answer,
+                None => self.step_purpose().await,
+            };
             let base_request = {
                 let session = self.session.lock().await;
                 // `messages` is the explicit projection from the plan
@@ -2094,6 +2111,7 @@ impl Agent {
                     breakpoints: cache_breakpoints(&messages),
                 });
                 ChatRequest {
+                    must_call,
                     model,
                     system: Some(self.config.system_prefix.clone()),
                     messages,
@@ -2225,6 +2243,7 @@ impl Agent {
                                         breakpoints: cache_breakpoints(&messages),
                                     });
                                 ChatRequest {
+                                    must_call: None,
                                     model: self.config.model.clone(),
                                     system: Some(self.config.system_prefix.clone()),
                                     messages,
@@ -2568,54 +2587,78 @@ impl Agent {
                 // §2.2). Nothing is discarded: the model is told once what the
                 // plan lists and what the turn produced. Whatever is still
                 // missing after that, the turn ends as it stands.
-                let plan_gap: Option<Finding> = {
+                // The plan's receipts (docs/design/86 §2.2): what is still
+                // missing, and, for a planned card whose tool the plan
+                // named and this turn offers, the call a step can be
+                // framed to make.
+                let (plan_gap, requirable) = {
                     let plan = self
                         .declared_plan
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    plan.as_deref().and_then(|plan| {
-                        let final_text = response.text_content();
-                        let produced = vak_judge::plan::Produced {
-                            cards: &card_answers,
-                            final_text: &final_text,
-                            file_delivered: file_delivered_this_run
-                                || receipts.artifact_deliveries > 0,
-                            changed: receipts.has_execution_receipt(),
-                            checked: receipts.substantive_bash_calls > 0 && !verification_stale,
-                        };
-                        let gap = vak_judge::plan::gap(plan, &produced);
-                        (!gap.is_empty()).then(|| Finding::Plan {
-                            cards_unnamed: gap
-                                .cards_unnamed
-                                .iter()
-                                .map(|deliverable| deliverable.name.clone())
-                                .collect(),
-                            cards_unattributed: gap.cards_unattributed,
-                            cards_short: gap.cards_short(),
-                            others: gap
-                                .others
-                                .iter()
-                                .map(|deliverable| {
-                                    (
-                                        deliverable.name.clone(),
-                                        deliverable.form.as_str().to_string(),
-                                    )
-                                })
-                                .collect(),
-                        })
-                    })
+                    match plan.as_deref() {
+                        None => (None, None),
+                        Some(plan) => {
+                            let final_text = response.text_content();
+                            let produced = vak_judge::plan::Produced {
+                                cards: &card_answers,
+                                final_text: &final_text,
+                                file_delivered: file_delivered_this_run
+                                    || receipts.artifact_deliveries > 0,
+                                changed: receipts.has_execution_receipt(),
+                                checked: receipts.substantive_bash_calls > 0 && !verification_stale,
+                            };
+                            let gap = vak_judge::plan::gap(plan, &produced);
+                            let requirable = gap.cards_unnamed.iter().find_map(|deliverable| {
+                                let tool = deliverable.with.as_deref()?;
+                                (!self.required_once.contains(&deliverable.name)
+                                    && self.tool_presents_cards(tool))
+                                .then(|| (deliverable.name.clone(), tool.to_string()))
+                            });
+                            let finding = (!gap.is_empty()).then(|| Finding::Plan {
+                                cards_unnamed: gap
+                                    .cards_unnamed
+                                    .iter()
+                                    .map(|deliverable| deliverable.name.clone())
+                                    .collect(),
+                                cards_unattributed: gap.cards_unattributed,
+                                cards_short: gap.cards_short(),
+                                others: gap
+                                    .others
+                                    .iter()
+                                    .map(|deliverable| {
+                                        (
+                                            deliverable.name.clone(),
+                                            deliverable.form.as_str().to_string(),
+                                        )
+                                    })
+                                    .collect(),
+                            });
+                            (finding, requirable)
+                        }
+                    }
                 };
-                // Told once, keeping everything produced; a plan still
-                // short after that stands as the model's answer, and the
-                // decision trail says so.
+                // Told once, keeping everything produced. Still short after
+                // that, the frame changes where it can: one step is required
+                // to call the tool the plan named for a missing card, once
+                // for each. What is left then stands as the model's answer,
+                // and the decision trail says so.
                 if let Some(finding) = plan_gap
                     && turn + 1 < self.config.max_turns
                 {
-                    let rung = self.ladder.step(Cause::Plan, false);
+                    let rung = self.ladder.step(Cause::Plan, requirable.is_some());
+                    let finding = match (rung, requirable) {
+                        (Rung::Reframe, Some((name, tool))) => {
+                            self.required_once.insert(name.clone());
+                            self.must_call = Some(tool.clone());
+                            Finding::CardRequired { name, tool }
+                        }
+                        _ => finding,
+                    };
                     if let Err(error) = self.correct(finding, rung).await {
                         return nudge_write_failed(error);
                     }
-                    if rung == Rung::Tell {
+                    if rung != Rung::End {
                         turn += 1;
                         continue;
                     }
@@ -3632,6 +3675,7 @@ impl Agent {
         // config.model reflects the per-turn effective route set by run_turn_inner.
         let model = self.config.model.clone();
         let authoring_request = ChatRequest {
+            must_call: None,
             model: model.clone(),
             system: Some(CONTRACT_AUTHOR_SYSTEM.into()),
             messages: vec![Message::user_text(prompt)],

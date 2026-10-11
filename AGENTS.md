@@ -181,7 +181,7 @@ Read before changing behaviour in these areas:
   decision points and records each decision; a step contract sets
   reasoning, sampling, tools and output form from discovered model
   capabilities; one correction ladder; `vak-control` and `vak-judge` as
-  their own crates. Being built in stages C0–C7: C0 to C5 are done
+  their own crates. Being built in stages C0–C7: C0 to C5 are done and C6 is in progress
   (`crates/vak-control`, the `Decision` ledger entry, step settings with
   model capabilities and what was applied on the receipt, the step
   contract per purpose from `[control]`, tools loaded by declaration, the
@@ -1558,7 +1558,9 @@ in progress, and the rest of V4 follows it.
   its `answers` field; when the turn ends, `vak_judge::plan` compares the plan
   with receipts (cards recorded, final text, files delivered, commands and
   changes) and a `[plan-check]` control names only what is missing, once,
-  without discarding anything already produced. No reading of the request
+  without discarding anything already produced; a planned card still
+  missing after that is required of one step by the tool the plan named for
+  it (`with`, `ChatRequest::must_call`), once, and what is left then stands. No reading of the request
   or the answer sends a turn back: the request-vocabulary presentation check
   and the card-completeness self-audit are removed, and the stop gate holds
   a turn only on observed facts (an unclosed fence, an unreported tool

@@ -162,6 +162,11 @@ pub fn build_body(
             .collect();
         body["tools"] = Value::Array(tools);
     }
+    crate::models::require_tool(
+        &mut body,
+        request.must_call.as_deref(),
+        crate::models::ToolChoiceWire::OnlyOffered,
+    );
     Ok(body)
 }
 
@@ -173,6 +178,7 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     temperature: vak_control::Support::Yes,
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::Yes,
+    tool_choice: vak_control::Support::No,
 };
 
 fn append_message(
@@ -541,7 +547,8 @@ impl Provider for OllamaProvider {
             REACH,
             &request.model,
             request.settings,
-        );
+        )
+        .requiring(request.must_call.is_some());
         let response = loop {
             let body = build_body(&self.config, &request, num_ctx, dispatch.settings)?;
             let mut req = self.http.post(&url).json(&body);

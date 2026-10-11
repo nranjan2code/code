@@ -202,7 +202,8 @@ function decisionWords(step: TurnStep): string {
       return `Started on ${choice.model}, allowed up to ${choice.max_steps} steps`;
     case "frame_step": {
       const reasoning = choice.asked.reasoning.mode === "depth" ? `${choice.asked.reasoning.depth} reasoning` : `reasoning ${words(choice.asked.reasoning.mode)}`;
-      return `Step ${choice.step + 1} (${words(choice.asked.purpose)}): ${reasoning}, ${choice.asked.tools.length} tools offered`;
+      const required = choice.asked.output.form === "tool" ? `, required to call ${choice.asked.output.name}` : "";
+      return `Step ${choice.step + 1} (${words(choice.asked.purpose)}): ${reasoning}, ${choice.asked.tools.length} tools offered${required}`;
     }
     case "accept_call":
       return choice.verdict === "accepted" ? "A tool call was allowed" : `A tool call was refused: ${REFUSED_BY[choice.by ?? ""] ?? words(choice.by ?? "")}`;

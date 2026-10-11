@@ -126,8 +126,24 @@ seven live run ids, and what is still open.
   ends the work: that is the answer form's job. A bash call between two
   identical calls also clears the repeat memory, because bash declares it
   may change the workspace.
-- Next: C6 (the answer form as the `Answer` step's contract), with the
-  items doc 88 lists under "Carried into later stages".
+- C6 first slice done 2026-10-11: a required tool reaches every wire
+  (`ChatRequest::must_call`, `Applied::forced`), and the plan check's
+  reframe rung requires the tool a plan named for a missing card (`with`),
+  once for each. Unit-tested; the hosted wires' request shape has not been
+  sent to a hosted provider.
+- Live for the C6 slice: `run_01a12a7f-b4c1-7e11-a137-d1eb6f4f7102` (a
+  plan of two cards, both shown, answered in seven steps; the reframe rung
+  was not needed, so a required step has only been seen in tests). In it
+  `emit_comparison_card` and `emit_recipe_card` were each refused once
+  ("options must be array", "steps must be array"): the model sent the
+  list as text that was not valid JSON, and its next call was right. The
+  admin transcript does not show a call's arguments, so the exact text was
+  not read back. This is the nested-list weakness doc 88's "Open in C6"
+  weighs against one nested answer document.
+- Next: the rest of C6, starting from doc 88's "Open in C6": decide by
+  measurement whether one nested answer document is written as reliably as
+  flat per-block tools before retiring the block tools; then the items
+  under "Carried into later stages".
 - Slowness investigated 2026-10-11: in steady state the provider's prompt
   cache is reused across turn boundaries (first-step prefill 0.6-0.7 s);
   the 17-49 s first steps seen earlier came after a new build changed the

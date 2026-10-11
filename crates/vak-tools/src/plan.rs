@@ -51,6 +51,12 @@ pub fn parse_plan_args(args: &Value) -> Result<Vec<Deliverable>, String> {
         plan.push(Deliverable {
             name: name.to_string(),
             form,
+            with: entry
+                .get("with")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|tool| !tool.is_empty())
+                .map(str::to_string),
         });
     }
     Ok(plan)
@@ -93,6 +99,10 @@ impl Tool for PlanTool {
                                 "type": "string",
                                 "enum": DeliverableForm::ALL.map(DeliverableForm::as_str),
                                 "description": "card: shown with a card tool; text: written in your reply; file: a file saved for review; change: a change you make; check: something you run to prove a result."
+                            },
+                            "with": {
+                                "type": "string",
+                                "description": "For a card: the name of the card tool you will call to show it."
                             }
                         },
                         "required": ["name", "form"]

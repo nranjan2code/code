@@ -77,6 +77,7 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     temperature: vak_control::Support::Yes,
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::Yes,
+    tool_choice: vak_control::Support::Yes,
 };
 
 pub fn build_body(
@@ -229,6 +230,11 @@ pub fn build_body(
             .collect();
         body["tools"] = serde_json::json!([{ "functionDeclarations": decls }]);
     }
+    crate::models::require_tool(
+        &mut body,
+        request.must_call.as_deref(),
+        crate::models::ToolChoiceWire::Google,
+    );
     let mut generation = serde_json::Map::new();
     if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
         generation.insert(
@@ -570,7 +576,8 @@ impl Provider for GoogleProvider {
             REACH,
             &request.model,
             request.settings,
-        );
+        )
+        .requiring(request.must_call.is_some());
         // Reasoning cannot be switched off on this wire: the lowest depth is
         // the nearest it can honour, and the receipt says so.
         if dispatch.settings.reasoning == vak_control::Reasoning::Off {

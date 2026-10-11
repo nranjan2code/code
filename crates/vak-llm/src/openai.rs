@@ -234,6 +234,7 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     temperature: vak_control::Support::Yes,
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::No,
+    tool_choice: vak_control::Support::Unknown,
 };
 
 pub fn build_body(
@@ -284,6 +285,11 @@ pub fn build_body(
             .collect();
         body["tools"] = Value::Array(tools);
     }
+    crate::models::require_tool(
+        &mut body,
+        request.must_call.as_deref(),
+        crate::models::ToolChoiceWire::OpenAiChat,
+    );
     if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
         let level = crate::types::three_level(depth);
         if config.openrouter {
@@ -650,7 +656,8 @@ impl Provider for OpenAiCompletionsProvider {
             REACH,
             &request.model,
             request.settings,
-        );
+        )
+        .requiring(request.must_call.is_some());
         // Reasoning cannot be switched off on this wire: the lowest depth is
         // the nearest it can honour, and the receipt says so.
         if dispatch.settings.reasoning == vak_control::Reasoning::Off {

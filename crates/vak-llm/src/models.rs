@@ -590,6 +590,7 @@ pub struct DispatchSettings {
     capabilities: vak_control::ModelCapabilities,
     pub settings: vak_control::StepSettings,
     refused: Option<vak_control::StepSettings>,
+    forced: vak_control::Forced,
 }
 
 impl DispatchSettings {
@@ -606,7 +607,19 @@ impl DispatchSettings {
             capabilities,
             settings: capabilities.honour(asked),
             refused: None,
+            forced: vak_control::Forced::NotAsked,
         }
+    }
+
+    /// Notes that the request names a tool the step must call, so the
+    /// receipt says how it was put to the provider.
+    pub fn requiring(mut self, must_call: bool) -> Self {
+        self.forced = match (must_call, self.capabilities.tool_choice.sends()) {
+            (false, _) => vak_control::Forced::NotAsked,
+            (true, true) => vak_control::Forced::Choice,
+            (true, false) => vak_control::Forced::OnlyOffered,
+        };
+        self
     }
 
     /// After a request the provider refused as invalid: whether to send it
@@ -631,6 +644,48 @@ impl DispatchSettings {
         vak_control::Applied {
             settings: self.settings,
             capabilities: self.capabilities,
+            forced: self.forced,
+        }
+    }
+}
+
+/// How a wire is told to call one named tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolChoiceWire {
+    Anthropic,
+    OpenAiChat,
+    OpenAiResponses,
+    Google,
+    /// No such switch: the request offers only that tool.
+    OnlyOffered,
+}
+
+/// Puts a step's required tool into a request body already carrying its
+/// tools. Nothing is done for a step that requires none.
+pub fn require_tool(body: &mut serde_json::Value, must_call: Option<&str>, wire: ToolChoiceWire) {
+    let Some(name) = must_call else {
+        return;
+    };
+    match wire {
+        ToolChoiceWire::Anthropic => {
+            body["tool_choice"] = serde_json::json!({"type": "tool", "name": name});
+        }
+        ToolChoiceWire::OpenAiChat => {
+            body["tool_choice"] =
+                serde_json::json!({"type": "function", "function": {"name": name}});
+        }
+        ToolChoiceWire::OpenAiResponses => {
+            body["tool_choice"] = serde_json::json!({"type": "function", "name": name});
+        }
+        ToolChoiceWire::Google => {
+            body["toolConfig"] = serde_json::json!({
+                "functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [name]}
+            });
+        }
+        ToolChoiceWire::OnlyOffered => {
+            if let Some(tools) = body["tools"].as_array_mut() {
+                tools.retain(|tool| tool["function"]["name"] == name);
+            }
         }
     }
 }
@@ -935,5 +990,45 @@ mod tests {
         assert!(!anthropic_fast_mode_allowed(
             "test-model-fast-unsupported-5"
         ));
+    }
+
+    #[test]
+    fn a_required_tool_is_named_in_each_wires_own_way() {
+        let tools = || {
+            serde_json::json!({"tools": [
+                {"type": "function", "function": {"name": "read"}},
+                {"type": "function", "function": {"name": "emit_steps_card"}},
+            ]})
+        };
+        let mut untouched = tools();
+        require_tool(&mut untouched, None, ToolChoiceWire::Anthropic);
+        assert_eq!(untouched, tools());
+
+        let named = |wire| {
+            let mut body = tools();
+            require_tool(&mut body, Some("emit_steps_card"), wire);
+            body
+        };
+        assert_eq!(
+            named(ToolChoiceWire::Anthropic)["tool_choice"],
+            serde_json::json!({"type": "tool", "name": "emit_steps_card"})
+        );
+        assert_eq!(
+            named(ToolChoiceWire::OpenAiChat)["tool_choice"]["function"]["name"],
+            "emit_steps_card"
+        );
+        assert_eq!(
+            named(ToolChoiceWire::OpenAiResponses)["tool_choice"]["name"],
+            "emit_steps_card"
+        );
+        assert_eq!(
+            named(ToolChoiceWire::Google)["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"]
+                [0],
+            "emit_steps_card"
+        );
+        let only = named(ToolChoiceWire::OnlyOffered);
+        assert!(only.get("tool_choice").is_none());
+        assert_eq!(only["tools"].as_array().map(Vec::len), Some(1));
+        assert_eq!(only["tools"][0]["function"]["name"], "emit_steps_card");
     }
 }

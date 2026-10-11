@@ -52,7 +52,36 @@ worker gate's count; `DOOM_LOOP_THRESHOLD` and `READ_REPEAT_LIMIT`, replaced
 by an observed state (a call that returned the same result again is
 refused, `Refusal::Repeated`); `AgentConfig::retrieval_check` and
 `observation_check`. A model step's `request_timeout` bounds silence between
-stream events, never the whole step (§5a). Later stages are not built.
+stream events, never the whole step (§5a). C6 is in progress
+(2026-10-11). Its first slice is built: a step's required tool
+(`OutputForm::Tool`) reaches the wire. `ChatRequest::must_call` is named in
+each provider's own tool choice (Anthropic `tool_choice`, OpenAI chat and
+Responses `tool_choice`, Google `toolConfig`), a wire with no such switch
+is offered only that tool (native Ollama; §12.3), and the receipt says
+which (`Applied::forced`); `ModelCapabilities::tool_choice` is each wire's
+reach. The plan check uses it as the ladder's reframe rung: a `plan`
+deliverable may name the tool that will show it (`with`), and a planned
+card still missing after the model was told is required of one step
+(`Purpose::Answer`, `Finding::CardRequired`), once for each, after which
+what is left stands. The rest of C6 is not built: the answer document as
+one form, the block tools retired, and the items carried below.
+
+### Open in C6 (found while building its first slice)
+
+- The hosted wires' named tool choice is written from each provider's
+  published API and covered by a unit test of the request body; it has not
+  been sent to a hosted provider from this tree. Anthropic refuses a named
+  tool choice while extended thinking is on, and this adapter leaves
+  thinking to the model's default, so that pairing needs a live check.
+- A wire that refuses a named tool choice is not learned yet: the
+  capability is each adapter's fixed reach (`Unknown` for OpenAI-compatible
+  endpoints, which sends it).
+- One answer document versus per-block tools. Doc 30 §30.1 measured flat
+  per-shape tools as the reliable path and forbids a list of records inside
+  a record in a list, which a document of blocks is. This slice therefore
+  requires the block tool the plan named, one block per step, rather than
+  one nested document; retiring the block tools waits on a measurement
+  that a nested document is written as reliably.
 
 ### Carried into later stages (found while building C0–C5)
 

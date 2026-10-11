@@ -179,7 +179,7 @@ pub enum Support {
 }
 
 impl Support {
-    fn sends(self) -> bool {
+    pub fn sends(self) -> bool {
         self != Self::No
     }
 
@@ -216,6 +216,9 @@ pub struct ModelCapabilities {
     pub temperature: Support,
     pub top_p: Support,
     pub top_k: Support,
+    /// Whether the wire can be told to call one named tool.
+    #[serde(default)]
+    pub tool_choice: Support,
 }
 
 impl ModelCapabilities {
@@ -275,6 +278,7 @@ impl ModelCapabilities {
             temperature: self.temperature.meet(other.temperature),
             top_p: self.top_p.meet(other.top_p),
             top_k: self.top_k.meet(other.top_k),
+            tool_choice: self.tool_choice.meet(other.tool_choice),
         }
     }
 }
@@ -285,6 +289,23 @@ impl ModelCapabilities {
 pub struct Applied {
     pub settings: StepSettings,
     pub capabilities: ModelCapabilities,
+    /// How the step's required tool was put to the provider.
+    #[serde(default)]
+    pub forced: Forced,
+}
+
+/// How a step's required tool (`OutputForm::Tool`) reached the provider.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Forced {
+    /// The step required none.
+    #[default]
+    NotAsked,
+    /// The provider was told to call it.
+    Choice,
+    /// The wire has no such switch, so only that tool was offered
+    /// (docs/design/88-control-plane.md §12.3).
+    OnlyOffered,
 }
 
 /// Every purpose, in a fixed order.

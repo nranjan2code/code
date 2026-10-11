@@ -1673,7 +1673,7 @@ export type Decision = {
   evidence?: { kind: string; id: string }[];
   choice:
     | { point: "admit_turn"; agent?: string; model: string; max_steps: number }
-    | { point: "frame_step"; step: number; asked: { purpose: string; reasoning: { mode: string; depth?: string }; tools: string[]; output: { form: string } } }
+    | { point: "frame_step"; step: number; asked: { purpose: string; reasoning: { mode: string; depth?: string }; tools: string[]; output: { form: string; name?: string } } }
     | { point: "accept_call"; verdict: "accepted" | "refused"; by?: string }
     | { point: "accept_answer"; verdict: "accepted" | "held"; by?: string }
     | { point: "correct"; cause: string; rung: string }

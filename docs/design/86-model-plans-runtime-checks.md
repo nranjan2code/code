@@ -58,7 +58,10 @@ dispatch on every turn.
 
 The model declares its plan with the broker-owned `plan` tool, intercepted
 in the agent loop like `recall` (it needs the session, never a worker). Its
-one argument is `deliverables`, a list of records `{name, form}`:
+one argument is `deliverables`, a list of records `{name, form}`, each
+optionally naming `with`, the tool that will show a card. When a planned
+card is still missing after the model was told, one step is required to
+call that tool (docs/design/88-control-plane.md §5, the reframe rung):
 
 - `name` — the deliverable in the model's own words ("weekly routine",
   "shelf vs meal comparison").

@@ -349,11 +349,18 @@ pub struct ChatRequest {
     /// (`ModelCapabilities::honour`) and reports what it sent in
     /// `AssistantMessage::applied`.
     pub settings: vak_control::StepSettings,
+    /// The one tool this step must call, when its contract's output form
+    /// is a required tool (docs/design/88-control-plane.md §4). An adapter
+    /// names it in the wire's own tool choice, or offers only that tool
+    /// where the wire has none, and reports which in
+    /// `AssistantMessage::applied`.
+    pub must_call: Option<String>,
 }
 
 impl ChatRequest {
     pub fn new(model: impl Into<String>) -> Self {
         ChatRequest {
+            must_call: None,
             model: model.into(),
             system: None,
             messages: Vec::new(),
