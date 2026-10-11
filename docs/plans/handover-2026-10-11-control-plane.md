@@ -63,6 +63,13 @@ answer, and the Save to Library button on an answer.
 docs/plans/handover-2026-10-11.md has the detail of what was fixed, the
 seven live run ids, and what is still open.
 
+## Progress
+
+- C0 done 2026-10-11: blast radius re-scanned, §12 decided (doc 88 §12).
+- C1 done 2026-10-11: `crates/vak-control`, `EntryPayload::Decision`,
+  `GET /sessions/{id}/decisions`; seen live on the local route (admission,
+  frames, call verdict, accepted answer, ending read back from the ledger).
+
 ## Order of work
 
 1. **Doc 88, stages C0 to C7**, in order. Each stage: code, tests, docs,
@@ -84,10 +91,10 @@ seven live run ids, and what is still open.
 
 ## How to run live
 
-`cargo build -p vak -p vak-server --bins`. The `vak-home-8901` entry in
-`.claude/launch.json` serves `~/vak-home` on 8901 with a throwaway token
+`cargo build -p vak -p vak-server --bins`. The `vak-home-live` entry in
+`.claude/launch.json` (`vak-home-live`) serves `~/vak-home` on 8902 with a throwaway token
 read from a scratch file (write a new token file first and point the entry
-at it). Get the sign-in link with `vak open app --print --port 8901`. The
+at it). Get the sign-in link with `vak open app --print --port 8902`. The
 original Agent conversation is
 `ses_01a12500-dbf0-7ec3-a5d8-078bd439258a`. Read a turn back with
 `GET /admin/api/sessions/<id>/transcript`, `GET /runs` and

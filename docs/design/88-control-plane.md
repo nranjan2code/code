@@ -1,7 +1,12 @@
 # 88 — The control plane
 
-Status: proposal, requested by the maintainer on 2026-10-11. C0 done
-(2026-10-11: blast radius re-scanned, §12 decided); nothing else is built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
+Status: proposal, requested by the maintainer on 2026-10-11, being built.
+C0 done (2026-10-11: blast radius re-scanned, §12 decided). C1 done
+(2026-10-11): `crates/vak-control` holds the decision types and the loop
+records, as `EntryPayload::Decision`, the decisions it already makes:
+admission, each step's frame as asked, every call's verdict (a refusal
+names what refused it), each correction, the accepted answer and the
+ending. Later stages are not built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
 satisfaction; the model never does) from satisfaction to every decision.
 The start prompt and working order for the session that builds it are in
@@ -63,7 +68,7 @@ A closed enum. Adding a point is a code change, on purpose.
 | `AcceptAnswer` | whether a proposed answer ends the turn | the plan, receipts, the answer's form | `AnswerVerdict` |
 | `Correct` | what the model is told, and what changes in the frame | the verdict that failed, what was already tried | `Correction` |
 | `EndTurn` | how the turn ends and what is reported | verdicts, the operator's turn limit, control state | `Ending` |
-| `Promote` | whether a proposed change to Vak itself is offered for review | measurements | `Proposal` |
+| `Promote` | whether a proposed change to Vak itself is offered for review | measurements | `Proposal` (added at C7) |
 
 A step's **purpose** is a fact the runtime already has, never a reading of
 the request: `Plan`, `Act`, `Answer`, `Repair`, and the side purposes that

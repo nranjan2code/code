@@ -328,9 +328,29 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::TurnCard(_) => "turn-card",
             EntryPayload::EvidenceBody(_) => "evidence-body",
             EntryPayload::CallEffect(_) => "call-effect",
+            EntryPayload::Decision(_) => "decision",
             EntryPayload::ContextSelection(_) => "context-selection",
         })
+        .filter(|kind| *kind != "decision")
         .collect();
+    let points: Vec<vak_control::DecisionPoint> = session
+        .chain_to_root()
+        .iter()
+        .filter_map(|entry| match &entry.payload {
+            EntryPayload::Decision(decision) => Some(decision.point()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        points,
+        vec![
+            vak_control::DecisionPoint::AdmitTurn,
+            vak_control::DecisionPoint::FrameStep,
+            vak_control::DecisionPoint::AcceptAnswer,
+            vak_control::DecisionPoint::EndTurn,
+        ],
+        "a turn's decisions read in order are its explanation"
+    );
     assert_eq!(
         kinds,
         vec![

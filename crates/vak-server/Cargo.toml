@@ -29,6 +29,7 @@ vak-commit = { workspace = true }
 vak-core = { workspace = true }
 vak-lifecycle = { workspace = true }
 vak-intent = { workspace = true }
+vak-control = { workspace = true }
 vak-plugin = { workspace = true }
 vak-delivery = { workspace = true }
 vak-llm = { workspace = true }

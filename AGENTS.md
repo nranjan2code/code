@@ -181,7 +181,8 @@ Read before changing behaviour in these areas:
   decision points and records each decision; a step contract sets
   reasoning, sampling, tools and output form from discovered model
   capabilities; one correction ladder; `vak-control` and `vak-judge` as
-  their own crates. Next to be built; start from
+  their own crates. Being built in stages C0–C7: C0 and C1 are done
+  (`crates/vak-control`, the `Decision` ledger entry); progress is in
   `docs/plans/handover-2026-10-11-control-plane.md`),
   `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
@@ -1743,6 +1744,14 @@ crates/vak-telemetry content-free structured telemetry (plan M5): the
                      lines forwarded under their caller's span (`forward`),
                      and the source tests that keep `eprintln!` out of
                      library code and messages literal
+crates/vak-control   the control plane's decisions (docs/design/
+                     88-control-plane.md), with NO vak dependencies: the
+                     closed set of decision points, the step contract, call
+                     and answer verdicts, corrections and endings, each a
+                     typed value. Every decision the loop makes is written
+                     as an audit-only `EntryPayload::Decision`, never
+                     model-visible; a turn's decisions in order are its
+                     explanation
 crates/vak-lifecycle the lifecycle reconciler's decisions (plan M7a,
                      docs/design/74 §3.1, §5), with NO vak dependencies:
                      retention labels and the deterministic plan over what

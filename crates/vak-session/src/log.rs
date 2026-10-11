@@ -785,6 +785,15 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::CallEffect(record)))
     }
 
+    /// Appends one control-plane decision (audit; never model-visible).
+    pub fn append_decision(
+        &mut self,
+        decision: vak_control::Decision,
+    ) -> Result<Entry, SessionError> {
+        let parent = self.tail_id.clone();
+        self.append(Entry::new(parent, EntryPayload::Decision(decision)))
+    }
+
     /// Appends a goal-lifecycle entry (audit; never model-visible).
     pub fn append_goal(&mut self, goal: crate::types::GoalEntry) -> Result<Entry, SessionError> {
         let parent = self.tail_id.clone();
@@ -1874,6 +1883,18 @@ impl SessionLog {
             .collect()
     }
 
+    /// The control plane's decisions on this branch, in order, each with
+    /// the turn it was made in (docs/design/88-control-plane.md §6).
+    pub fn decisions(&self) -> Vec<(Option<&str>, &vak_control::Decision)> {
+        self.chain_to_root()
+            .into_iter()
+            .filter_map(|e| match &e.payload {
+                EntryPayload::Decision(d) => Some((e.at_turn.as_deref(), d)),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn branch_at(&mut self, entry_id: &str) -> Result<(), SessionError> {
         if !self.by_id.contains_key(entry_id) {
             return Err(SessionError::Corrupt {
@@ -2027,11 +2048,15 @@ impl SessionLog {
 
     /// Inspect the latest message without constructing/cloning the whole chain.
     pub fn latest_message(&self) -> Option<&Message> {
+        self.latest_message_record().map(|record| &record.message)
+    }
+
+    pub fn latest_message_record(&self) -> Option<&MessageRecord> {
         let mut cursor = self.tail_id.as_deref();
         while let Some(id) = cursor {
             let entry = self.entries.get(*self.by_id.get(id)?)?;
             if let EntryPayload::Message(record) = &entry.payload {
-                return Some(&record.message);
+                return Some(record);
             }
             cursor = entry.parent_id.as_deref();
         }

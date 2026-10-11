@@ -1026,6 +1026,11 @@ pub enum EntryPayload {
     /// or wrote, or the MCP server that answered it
     /// (docs/design/85-turn-graph.md, G0). Audit-only, never model-visible.
     CallEffect(CallEffectRecord),
+    /// One decision of the control plane (docs/design/88-control-plane.md
+    /// §6): the point, the decider, the evidence and the choice. Audit-only,
+    /// never model-visible; a correction reaches the model only as the
+    /// control message rendered from it.
+    Decision(vak_control::Decision),
 }
 
 /// One effect of one tool call, named by the call's id.

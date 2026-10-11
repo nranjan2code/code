@@ -1524,6 +1524,76 @@ impl Agent {
         definitions
     }
 
+    async fn record_ending(&self, outcome: &TurnOutcome) {
+        use vak_control::{AnswerVerdict, Choice, Decision, End, Ending};
+        let end = match outcome {
+            TurnOutcome::Completed { .. } => {
+                self.record_decision(Decision::by_runtime(Choice::AcceptAnswer(
+                    AnswerVerdict::Accepted,
+                )))
+                .await;
+                End::Answered
+            }
+            TurnOutcome::Aborted { .. } => End::Aborted,
+            TurnOutcome::Failed { .. } => End::Failed,
+            TurnOutcome::MaxTurnsReached => End::StepLimit,
+        };
+        self.record_decision(Decision::by_runtime(Choice::EndTurn(Ending { end })))
+            .await;
+    }
+
+    async fn record_decision(&self, decision: vak_control::Decision) {
+        if let Err(error) = self.session.lock().await.append_decision(decision) {
+            tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "a decision was not recorded");
+        }
+    }
+
+    /// The contract a step was dispatched under (docs/design/88 §4). A
+    /// step that follows a runtime correction is a repair; every other step
+    /// acts.
+    async fn record_framing(&self, step: usize, request: &ChatRequest) {
+        use vak_control::{Depth, Reasoning};
+        let follows_correction = self
+            .session
+            .lock()
+            .await
+            .latest_message_record()
+            .is_some_and(|record| record.control_kind().is_some());
+        let reasoning = match (request.think, request.effort) {
+            (Some(false), _) => Reasoning::Off,
+            (_, Some(effort)) => Reasoning::Depth(match effort {
+                vak_llm::Effort::Low => Depth::Low,
+                vak_llm::Effort::Medium => Depth::Medium,
+                vak_llm::Effort::High => Depth::High,
+                vak_llm::Effort::XHigh => Depth::XHigh,
+                vak_llm::Effort::Max => Depth::Max,
+            }),
+            _ => Reasoning::Default,
+        };
+        let asked = vak_control::StepContract {
+            purpose: if follows_correction {
+                vak_control::Purpose::Repair
+            } else {
+                vak_control::Purpose::Act
+            },
+            reasoning,
+            sampling: vak_control::Sampling {
+                temperature: request.temperature,
+                ..Default::default()
+            },
+            tools: request.tools.iter().map(|tool| tool.name.clone()).collect(),
+            output: vak_control::OutputForm::Free,
+        };
+        self.record_decision(vak_control::Decision::by_runtime(
+            vak_control::Choice::FrameStep(vak_control::Framing {
+                step: u32::try_from(step).unwrap_or(u32::MAX),
+                asked,
+                applied: None,
+            }),
+        ))
+        .await;
+    }
+
     fn tool_definitions(&self) -> Vec<vak_llm::ToolDefinition> {
         let mut definitions = self.base_tool_definitions();
         let discovered = self
@@ -1565,6 +1635,18 @@ impl Agent {
         cancel: CancellationToken,
         events: mpsc::Sender<AgentEvent>,
     ) -> TurnOutcome {
+        self.record_decision(vak_control::Decision::by_runtime(
+            vak_control::Choice::AdmitTurn(vak_control::Admission {
+                agent: self
+                    .config
+                    .trace
+                    .as_ref()
+                    .map(|trace| trace.agent.to_string()),
+                model: self.config.model.clone(),
+                max_steps: u32::try_from(self.config.max_turns).unwrap_or(u32::MAX),
+            }),
+        ))
+        .await;
         let outcome = self
             .run_message_inner(prompt, steering, cancel.clone(), events.clone())
             .await;
@@ -1592,6 +1674,7 @@ impl Agent {
         // yet, and the next call to `run_message` will pick it up once it
         // does close.
         self.close_turn(&outcome).await;
+        self.record_ending(&outcome).await;
         if let Some(refresh) = &self.config.history_refresh {
             refresh();
         }
@@ -2304,6 +2387,7 @@ impl Agent {
                 ),
             );
             let mut request = base_request.clone();
+            self.record_framing(turn, &request).await;
 
             let mut response = {
                 // Run-level endurance: a sustained fault window (rate-limit
@@ -2442,7 +2526,7 @@ impl Agent {
                                 LlmError::ToolCallFormat(reason) => reason.as_str(),
                                 _ => unreachable!("matched ToolCallFormat"),
                             };
-                            if let Err(write_error) = self.session.lock().await.append_message(
+                            if let Err(write_error) = self.session.lock().await.append_correction(
                                 MessageRecord::control(
                                     vak_intent::control::ControlKind::ToolCallRepair,
                                     format!(
@@ -2633,7 +2717,7 @@ impl Agent {
                     .await;
                 // Never quotes the directive back: an echo after a tool result
                 // reads as the user asking again (docs/design/68 §6).
-                if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(
+                if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(
                     vak_intent::control::ControlKind::SteeringDrift,
                     format!(
                         "[steering-drift]: {drift_reason}. Refocus your next step on the user's latest message."
@@ -2683,7 +2767,7 @@ impl Agent {
                         .session
                         .lock()
                         .await
-                        .append_message(MessageRecord::control(
+                        .append_correction(MessageRecord::control(
                         vak_intent::control::ControlKind::EmptyStep,
                         // A provider can drop a call whose arguments do not
                         // parse (Ollama logs "tool call parsing failed" and
@@ -2725,7 +2809,7 @@ impl Agent {
                             return TurnOutcome::MaxTurnsReached;
                         }
                         let available = freshness_retrieval_hint(&tool_defs);
-                        if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(
+                        if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(
                             vak_intent::control::ControlKind::FreshnessCheck,
                             format!("[freshness-check]: This asks for a value as it stands now, but nothing was \
                              retrieved on this turn — a number carried over from an earlier answer is \
@@ -2761,7 +2845,7 @@ impl Agent {
                             return TurnOutcome::MaxTurnsReached;
                         }
                         let tool_list = tool_names.join(", ");
-                        if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
+                        if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
                                 "[grounding-check]: Your last answer does not use what {tool_list} just returned. \
                                  Answer the request in the person's message that opened this turn from \
                                  those results and name the sources you used, or, if they do not answer \
@@ -2789,7 +2873,7 @@ impl Agent {
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
-                        if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::FenceCheck, format!(
+                        if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(vak_intent::control::ControlKind::FenceCheck, format!(
                                 "[fence-check]: The ```vak card block in your last answer has invalid JSON and failed to parse \
                                  ({parse_error}). Resend the same answer with a syntactically valid JSON body this time — \
                                  double-check every object/array is closed and every key is quoted. If you can't produce \
@@ -2820,7 +2904,7 @@ impl Agent {
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
-                        if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::DuplicateCardCheck, format!(
+                        if let Err(error) = self.session.lock().await.append_correction(MessageRecord::control(vak_intent::control::ControlKind::DuplicateCardCheck, format!(
                                 "[duplicate-card-check]: You already emitted a `{dup_type}` card via the matching \
                                  emit_*_card tool call above, and the user already sees it. Resend your answer \
                                  WITHOUT the ```vak fence that repeats it — just the short narration around the \
@@ -2871,7 +2955,7 @@ impl Agent {
                         self.session
                             .lock()
                             .await
-                            .append_message(MessageRecord::control(
+                            .append_correction(MessageRecord::control(
                                 vak_intent::control::ControlKind::PlanCheck,
                                 message,
                             ))
@@ -2930,7 +3014,7 @@ impl Agent {
                             self.session
                                 .lock()
                                 .await
-                                .append_message(MessageRecord::control(
+                                .append_correction(MessageRecord::control(
                                     vak_intent::control::ControlKind::StopHook,
                                     stop_policy::hook_message(&reason),
                                 ))
@@ -4722,7 +4806,8 @@ impl Agent {
             &self.run_call_counts,
             &self.config.tools,
         )
-        .await?;
+        .await
+        .map_err(|(_, message)| message)?;
         let Some(sandbox) = self
             .config
             .sandbox
@@ -4992,7 +5077,7 @@ impl Agent {
         self.session
             .lock()
             .await
-            .append_message(MessageRecord::control(
+            .append_correction(MessageRecord::control(
                 vak_intent::control::ControlKind::StopGuard,
                 stop_policy::guard_message(&reason),
             ))?;
@@ -6474,16 +6559,25 @@ impl Agent {
 
         let mut authz: Vec<Result<(), String>> = Vec::with_capacity(n);
         for call in &calls {
-            authz.push(
-                authorize(
-                    &self.config,
-                    call,
-                    &cwd,
-                    &self.run_call_counts,
-                    &self.config.tools,
-                )
-                .await,
-            );
+            let verdict = authorize(
+                &self.config,
+                call,
+                &cwd,
+                &self.run_call_counts,
+                &self.config.tools,
+            )
+            .await;
+            self.record_decision(
+                vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(
+                    match &verdict {
+                        Ok(()) => vak_control::CallVerdict::Accepted,
+                        Err((by, _)) => vak_control::CallVerdict::Refused(*by),
+                    },
+                ))
+                .with(vak_control::Evidence::Call(call.id.clone())),
+            )
+            .await;
+            authz.push(verdict.map_err(|(_, message)| message));
         }
         let ids: Vec<String> = calls.iter().map(|c| c.id.clone()).collect();
 
@@ -8064,7 +8158,7 @@ async fn withdraw_tools(
         .session
         .lock()
         .await
-        .append_message(MessageRecord::control(
+        .append_correction(MessageRecord::control(
             vak_intent::control::ControlKind::RepairDirective,
             format!(
                 "{} {gone} is withdrawn for the rest of this turn: its calls kept failing \
@@ -8132,7 +8226,7 @@ async fn inject_repair_directive(
         .session
         .lock()
         .await
-        .append_message(MessageRecord::control(
+        .append_correction(MessageRecord::control(
             vak_intent::control::ControlKind::RepairDirective,
             parts.join("\n\n"),
         ))
@@ -8280,6 +8374,60 @@ fn bounded_error_summary(error: &str) -> String {
     bounded
 }
 
+/// The check a control kind reports (docs/design/88-control-plane.md §6).
+fn cause_of(kind: vak_intent::control::ControlKind) -> vak_control::Cause {
+    use vak_control::Cause;
+    use vak_intent::control::ControlKind;
+    match kind {
+        ControlKind::StopHook => Cause::StopHook,
+        ControlKind::StopGuard => Cause::StopGuard,
+        ControlKind::GroundingCheck => Cause::Grounding,
+        ControlKind::FenceCheck => Cause::Fence,
+        ControlKind::DuplicateCardCheck => Cause::DuplicateCard,
+        ControlKind::PresentationCheck => Cause::Presentation,
+        ControlKind::CardCompletionCheck => Cause::CardCompletion,
+        ControlKind::CardCompletenessCheck => Cause::CardCompleteness,
+        ControlKind::FreshnessCheck => Cause::Freshness,
+        ControlKind::EmptyStep => Cause::EmptyStep,
+        ControlKind::SteeringDrift => Cause::SteeringDrift,
+        ControlKind::TopicMismatchCheck => Cause::TopicMismatch,
+        ControlKind::RepairDirective => Cause::Repair,
+        ControlKind::PlanCheck => Cause::Plan,
+        ControlKind::ToolCallRepair => Cause::ToolCallRepair,
+    }
+}
+
+/// A runtime correction is its control message and the decision it was
+/// rendered from, written together.
+trait CorrectionLog {
+    fn append_correction(
+        &mut self,
+        record: MessageRecord,
+    ) -> Result<vak_session::Entry, vak_session::SessionError>;
+}
+
+impl CorrectionLog for SessionLog {
+    fn append_correction(
+        &mut self,
+        record: MessageRecord,
+    ) -> Result<vak_session::Entry, vak_session::SessionError> {
+        let cause = record.control_kind().map(cause_of);
+        let entry = self.append_message(record)?;
+        if let Some(cause) = cause {
+            self.append_decision(
+                vak_control::Decision::by_runtime(vak_control::Choice::Correct(
+                    vak_control::Correction {
+                        cause,
+                        rung: vak_control::Rung::Tell,
+                    },
+                ))
+                .with(vak_control::Evidence::Entry(entry.id.clone())),
+            )?;
+        }
+        Ok(entry)
+    }
+}
+
 /// Effectful repetitions reach a human at this count. An identical `read`
 /// remains inside its normal permission check for two more attempts, then
 /// fails as a tool value without asking a human to approve rereading a file.
@@ -8352,11 +8500,13 @@ async fn authorize(
     cwd: &std::path::Path,
     run_call_counts: &std::sync::Mutex<HashMap<String, u32>>,
     tools: &[Arc<dyn Tool>],
-) -> Result<(), String> {
+) -> Result<(), (vak_control::Refusal, String)> {
+    use vak_control::Refusal;
     if let Some(tool) = tools.iter().find(|tool| tool.name() == call.name) {
-        vak_tools::validate_input(&tool.schema(), &call.input)?;
+        vak_tools::validate_input(&tool.schema(), &call.input)
+            .map_err(|message| (Refusal::Schema, message))?;
         if let Some(reason) = tool.refusal(&call.input) {
-            return Err(reason);
+            return Err((Refusal::Tool, reason));
         }
     }
     if config
@@ -8364,9 +8514,9 @@ async fn authorize(
         .as_ref()
         .is_some_and(|check| check(&call.name, &call.input))
     {
-        return Err(format!(
-            "capability `{}` was revoked during this turn",
-            call.name
+        return Err((
+            Refusal::Revoked,
+            format!("capability `{}` was revoked during this turn", call.name),
         ));
     }
     let key = format!(
@@ -8382,7 +8532,13 @@ async fn authorize(
         *entry += 1;
         *entry
     };
-    let decision = if let Some(decision) = repeat_guard_decision(&call.name, n) {
+    let repeated = repeat_guard_decision(&call.name, n);
+    let refused_by = if repeated.is_some() {
+        Refusal::Repeated
+    } else {
+        Refusal::Policy
+    };
+    let decision = if let Some(decision) = repeated {
         decision
     } else if let Some(engine) = &config.permission {
         engine.evaluate(&call.name, &call.input, config.mode, cwd)
@@ -8391,7 +8547,7 @@ async fn authorize(
     };
     match decision {
         Decision::Allow => Ok(()),
-        Decision::Deny { reason } => Err(reason),
+        Decision::Deny { reason } => Err((refused_by, reason)),
         Decision::Ask { reason, source } => {
             if auto_approve(
                 config.approval_mode,
@@ -8407,9 +8563,9 @@ async fn authorize(
                     .as_ref()
                     .is_some_and(|check| check(&call.name, &call.input))
                 {
-                    return Err(format!(
-                        "capability `{}` was revoked during this turn",
-                        call.name
+                    return Err((
+                        Refusal::Revoked,
+                        format!("capability `{}` was revoked during this turn", call.name),
                     ));
                 }
                 return Ok(());
@@ -8429,9 +8585,9 @@ async fn authorize(
                     .as_ref()
                     .is_some_and(|check| check(&call.name, &call.input))
                 {
-                    return Err(format!(
-                        "capability `{}` was revoked during this turn",
-                        call.name
+                    return Err((
+                        Refusal::Revoked,
+                        format!("capability `{}` was revoked during this turn", call.name),
                     ));
                 }
                 return Ok(());
@@ -8451,9 +8607,12 @@ async fn authorize(
                         .as_ref()
                         .is_some_and(|check| check(&call.name, &call.input))
                     {
-                        Err(format!(
-                            "capability `{}` was revoked while approval was pending",
-                            call.name
+                        Err((
+                            Refusal::Revoked,
+                            format!(
+                                "capability `{}` was revoked while approval was pending",
+                                call.name
+                            ),
                         ))
                     } else {
                         Ok(())
@@ -8464,20 +8623,29 @@ async fn authorize(
                 // "denied by user" sent the model looking for a different
                 // tool — and the operator looking for a user who had done
                 // nothing — instead of naming the policy that decided.
-                Some(a) if !a.answerable() => Err(format!(
-                    "unattended surface: {reason}. No approver is configured to \
+                Some(a) if !a.answerable() => Err((
+                    Refusal::Unattended,
+                    format!(
+                        "unattended surface: {reason}. No approver is configured to \
                      answer it, so this capability cannot be used on this turn"
+                    ),
                 )),
                 // The gate's reason is written for the person asked; echoed
                 // alone ("denied by user: 'webfetch' needs approval") it read
                 // as a step still to take, and the model asked again twenty
                 // times in one turn.
-                Some(_) => Err(format!(
-                    "The person declined this call ({reason}). Do not make it again \
+                Some(_) => Err((
+                    Refusal::Person,
+                    format!(
+                        "The person declined this call ({reason}). Do not make it again \
                      in this turn: answer with what you already have, or say what you \
                      could not do without it."
+                    ),
                 )),
-                None => Err(format!("{reason} (no approver available)")),
+                None => Err((
+                    Refusal::Unattended,
+                    format!("{reason} (no approver available)"),
+                )),
             }
         }
     }

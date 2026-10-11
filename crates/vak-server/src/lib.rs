@@ -959,6 +959,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/attach", post(attach_session))
         .route("/sessions/{id}/diff", get(session_diff))
         .route("/sessions/{id}/receipts", get(session_receipts))
+        .route("/sessions/{id}/decisions", get(session_decisions))
         .route(
             "/sessions/{id}/work",
             get(session_work).post(session_work_command),
@@ -4882,7 +4883,8 @@ fn summarize_jsonl(
                 vak_session::EntryPayload::Presentation(_) => {}
                 vak_session::EntryPayload::TurnCard(_) => {}
                 vak_session::EntryPayload::EvidenceBody(_)
-                | vak_session::EntryPayload::CallEffect(_) => {}
+                | vak_session::EntryPayload::CallEffect(_)
+                | vak_session::EntryPayload::Decision(_) => {}
                 vak_session::EntryPayload::ContextSelection(_) => {}
             }
         }
@@ -7063,6 +7065,44 @@ async fn session_receipts(
         Some(log) => Ok(Json(log.receipts().into_iter().cloned().collect())),
         None => Err(StatusCode::NOT_FOUND),
     }
+}
+
+/// One decision of the control plane with the turn it was made in.
+#[derive(serde::Serialize)]
+struct TurnDecision {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn: Option<String>,
+    #[serde(flatten)]
+    decision: vak_control::Decision,
+}
+
+/// A session's decisions in order: each turn's explanation
+/// (docs/design/88-control-plane.md §6).
+async fn session_decisions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<TurnDecision>>, StatusCode> {
+    let collect = |log: &SessionLog| {
+        log.decisions()
+            .into_iter()
+            .map(|(turn, decision)| TurnDecision {
+                turn: turn.map(str::to_string),
+                decision: decision.clone(),
+            })
+            .collect::<Vec<_>>()
+    };
+    if let Some(handle) = state.get(&id) {
+        let guard = handle
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        return guard
+            .as_ref()
+            .map(|log| Json(collect(log)))
+            .ok_or(StatusCode::NOT_FOUND);
+    }
+    let session = open_historical_session(&state, &id).ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(collect(&session)))
 }
 
 async fn session_work(

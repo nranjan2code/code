@@ -19,6 +19,7 @@ uuid = { workspace = true }
 vak-config = { workspace = true }
 vak-storage = { workspace = true }
 vak-intent = { workspace = true }
+vak-control = { workspace = true }
 vak-llm = { workspace = true }
 
 [dev-dependencies]
