@@ -1,7 +1,7 @@
 # 88 — The control plane
 
-Status: proposal, requested by the maintainer on 2026-10-11. Nothing here is
-built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
+Status: proposal, requested by the maintainer on 2026-10-11. C0 done
+(2026-10-11: blast radius re-scanned, §12 decided); nothing else is built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
 satisfaction; the model never does) from satisfaction to every decision.
 The start prompt and working order for the session that builds it are in
@@ -179,7 +179,15 @@ thresholds and stay.
 
 ## 9. Blast radius
 
-To be re-scanned at the start of each stage; counts at `9c16054ba`.
+To be re-scanned at the start of each stage. Counts at `9c16054ba`,
+re-scanned at C0 on `139754d7c`: control kinds 15 (`ControlKind`), written
+or matched at 23 sites in `vak-agent/src/lib.rs`, 21 in
+`vak-server/src/projection.rs`, 4 in `vak-server/src/lib.rs` and 4 in
+`vak-session/src/turns.rs`; `ToolErrorKind::classify` read at
+`vak-agent/src/lib.rs` (2 sites) and `vak-core/src/lib.rs` (1);
+word-list constants 28 in `vak-intent` (`signals.rs` 23); `ChatRequest`
+has `temperature` and `think` but no top-p or top-k; the per-turn effort is
+set at `vak-core/src/lib.rs` (`cfg.effort`) from the engagement.
 
 - `crates/vak-agent/src/lib.rs` (9,787 lines): the loop's gates and its 12
   control-message sites.
@@ -232,14 +240,22 @@ from the ledger.
   finished on it; the block tools retired.
 - **C7**: `vak-eval` over real ledgers; `Promote` and the review path.
 
-## 12. Open questions for the maintainer
+## 12. Decisions (maintainer, 2026-10-11, at C0)
 
-1. Is the fixed reader kept only for safety (risk words, commands), with
-   every other reading removed, or is a model-made reading wanted for
-   anything?
-2. When a model cannot be constrained at all, is a free-form answer shown
-   as it is, or held to one correction first?
-3. May an `Answer` step drop tools from the request even though it changes
-   the request prefix for that step (cache and replayed-thinking cost)?
-4. Are step contract defaults one set for all models, or may configuration
-   set them per route?
+1. **The fixed reader keeps safety only**: risk words that raise stakes or
+   the approval floor, explicit control commands, and surface and
+   attachment facts. Every other reading that drives behaviour is removed
+   (reasoning depth from a "direct reply" reading, domains that load tools,
+   guessed outcome requirements). No model-made reading replaces it.
+2. **A model that cannot be constrained gets the same ladder**: one
+   `Correction` with the evidence; the frame cannot change, so the next
+   answer stands, shown as it is, with a typed `Ending` that says what the
+   contract asked and what the model could honour. No special case.
+3. **The turn's tools array stays byte-stable** (invariant 36). An `Answer`
+   step is framed by forced tool choice or an output schema where the model
+   supports either; tools are dropped from the request only for a model
+   that supports neither, and the receipt records that it was done.
+4. **Defaults are per purpose, overridable per route**: shipped defaults
+   for each purpose live in configuration; the Shared and project layers
+   and a route-keyed table may override them. Measured capabilities still
+   degrade what a model cannot honour.
