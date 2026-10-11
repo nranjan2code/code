@@ -74,6 +74,8 @@ pub struct ExecutorDeps {
     pub node_prompt: Option<NodePrompt>,
     pub prompt_layers: Vec<vak_session::types::PromptLayerDescriptor>,
     pub model: String,
+    /// What each purpose's steps ask of the model (docs/design/88 §4).
+    pub steps: vak_control::StepDefaults,
     pub tools: Vec<Arc<dyn Tool>>,
     pub read_only_tools: Vec<Arc<dyn Tool>>,
     pub max_turns: usize,

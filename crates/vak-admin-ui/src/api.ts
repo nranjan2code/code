@@ -1,5 +1,7 @@
 import type {
+  ControlLayer,
   Decision,
+  StepOverride,
   DataRulesPreview,
   DataIntegrity,
   ConversationLifecycle,
@@ -227,6 +229,15 @@ export const api = {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ keep_days: keepDays, digest }),
+    }).then((r) => handle(r)),
+  /** One layer's `[control]` and the effective step settings on the current route (docs/design/88). */
+  control: (scope: "user" | "project"): Promise<{ control: ControlLayer; route: string; effective: Record<string, StepOverride> }> =>
+    fetch(`/config/control?scope=${scope}`).then((r) => handle(r)),
+  setControl: (scope: "user" | "project", control: ControlLayer): Promise<{ saved: boolean }> =>
+    fetch(`/config/control?scope=${scope}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(control),
     }).then((r) => handle(r)),
   /** Verifies every stored record. Reads the whole data home once. */
   dataIntegrity: (): Promise<DataIntegrity> => fetch("/data/integrity").then((r) => handle(r)),

@@ -79,6 +79,13 @@ seven live run ids, and what is still open.
   steps of the turn reuse the cache (0.4 s): the message part of the request
   changes shape at each turn boundary.
 
+- C3a done 2026-10-11: step contract per purpose from `[control]`
+  (shipped, steps, routes), every side dispatch framed by it,
+  `direct_reply` removed, `/config/control`, Settings and admin editors;
+  seen live (asked low, wire sent default, receipt says it reasoned).
+- Next: C3b, tool loading by tool declarations only (no reading), the
+  misread ledger removed; then C4.
+
 ## Order of work
 
 1. **Doc 88, stages C0 to C7**, in order. Each stage: code, tests, docs,

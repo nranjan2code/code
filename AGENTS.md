@@ -181,9 +181,10 @@ Read before changing behaviour in these areas:
   decision points and records each decision; a step contract sets
   reasoning, sampling, tools and output form from discovered model
   capabilities; one correction ladder; `vak-control` and `vak-judge` as
-  their own crates. Being built in stages C0–C7: C0, C1 and C2 are done
+  their own crates. Being built in stages C0–C7: C0, C1, C2 and C3a are done
   (`crates/vak-control`, the `Decision` ledger entry, step settings with
-  model capabilities and what was applied on the receipt); progress is in
+  model capabilities and what was applied on the receipt, the step
+  contract per purpose from `[control]`); progress is in
   `docs/plans/handover-2026-10-11-control-plane.md`),
   `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
@@ -1068,10 +1069,9 @@ in progress, and the rest of V4 follows it.
     A resolved engagement may lower a budget, lower a permission ceiling, or
     *raise* an approval floor. It may never grant a tool, touch the route
     ladder, cap the turn budget or delegation, raise a cap, or lower a floor,
-    and the one thing it asks of a provider is less reasoning than its
-    default for a turn read as a direct reply, never more, and only where
-    the model can honour it (docs/design/01-llm.md, "Reasoning and
-    sampling"):
+    and it asks nothing of a provider: what a step asks for (reasoning,
+    sampling) is the step contract's, from its purpose and configuration
+    (docs/design/88-control-plane.md §4), never a reading:
     those caps only ever removed capacity from requests the reader got wrong.
     This is a property of the types rather than a rule to remember: `Limits`
     is a meet semilattice whose top element reproduces pre-kernel behaviour,

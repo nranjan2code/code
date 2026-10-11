@@ -236,6 +236,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             }
         };
         let deps = vak_flow::ExecutorDeps {
+            steps: self.core.step_defaults(),
             objects,
             provider: match self.core.provider() {
                 Ok(provider) => provider,
@@ -519,6 +520,9 @@ struct CoreInner {
     bedrock_region_override: std::sync::Mutex<Option<String>>,
     max_turns_runtime_pinned: std::sync::atomic::AtomicBool,
     evidence_max_age_override: std::sync::Mutex<Option<i64>>,
+    /// `[control]` as last persisted, so an edit applies at the next step
+    /// without a restart (invariant 31).
+    control_override: std::sync::Mutex<Option<vak_config::ControlSettings>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
     mode_runtime_pinned: std::sync::atomic::AtomicBool,
     permission_lease: std::sync::Mutex<CancellationToken>,
@@ -1368,6 +1372,7 @@ impl Core {
             bedrock_region_override: std::sync::Mutex::new(None),
             max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
             evidence_max_age_override: std::sync::Mutex::new(None),
+            control_override: std::sync::Mutex::new(None),
             mode_override: std::sync::Mutex::new(None),
             permission_lease: std::sync::Mutex::new(CancellationToken::new()),
             mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
@@ -1545,6 +1550,20 @@ impl Core {
     pub fn set_model(&self, model: String) {
         let route = self.effective_route();
         self.set_route(route.provider, model);
+    }
+
+    /// What each purpose's steps ask of the model on the effective route
+    /// (docs/design/88-control-plane.md §4).
+    pub fn step_defaults(&self) -> vak_control::StepDefaults {
+        self.step_defaults_for(&self.effective_provider(), &self.effective_model())
+    }
+
+    /// What each purpose's steps ask of the model on one route: the shipped
+    /// defaults with the live `[control]` layers applied.
+    pub fn step_defaults_for(&self, provider: &str, model: &str) -> vak_control::StepDefaults {
+        Self::read_override(&self.inner.control_override)
+            .unwrap_or_else(|| self.config().control.clone())
+            .step_defaults(provider, model)
     }
 
     pub fn effective_model(&self) -> String {
@@ -2829,6 +2848,7 @@ impl Core {
             &self.inner.evidence_max_age_override,
             Some(config.intent.evidence_max_age_secs),
         );
+        Self::write_override(&self.inner.control_override, Some(config.control.clone()));
         Self::write_override(
             &self.inner.bedrock_region_override,
             Some(config.bedrock_region.clone()),
@@ -5805,7 +5825,6 @@ impl Core {
             reasoning_required: false,
             evidence_required: false,
             structured_output: false,
-            direct_reply: false,
         });
         let demand = vak_llm::score_demand(vak_llm::DemandInput {
             estimated_input_tokens: 0,
@@ -6354,10 +6373,12 @@ impl Core {
             Some("You classify requests for an agent runtime. Answer with JSON only.".to_string());
         request.messages = vec![vak_llm::Message::user_text(user_prompt.clone())];
         request.max_tokens = Some(output_budget);
-        // A strict-JSON answer, not a deliberation: measured live on a
-        // thinking model, the default spent the whole budget in its thinking
-        // channel and returned nothing.
-        request.settings.reasoning = vak_control::Reasoning::Off;
+        // A strict-JSON answer, not a deliberation: the shipped `Classify`
+        // default asks for no reasoning (measured live on a thinking model,
+        // the default spent the whole budget thinking and returned nothing).
+        request.settings = self
+            .step_defaults_for(&provider_name, &model)
+            .get(vak_control::Purpose::Classify);
 
         // --- admission ----------------------------------------------------------
         use vak_agent::SpendGate as _;
@@ -7093,11 +7114,7 @@ impl Core {
             credential_id: turn_primary_credential_id,
         };
         cfg.provider_name = Some(turn_primary_provider.clone());
-        cfg.effort = engagement
-            .posture
-            .demand
-            .direct_reply
-            .then_some(vak_control::Depth::Low);
+        cfg.steps = self.step_defaults_for(&turn_primary_provider, &model);
         let mut turn_plan =
             self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand));
         // The engagement's modality constraint: a leg that cannot see is not
@@ -8461,7 +8478,11 @@ impl Core {
             Err(e) => return (session, CompactOutcome::failed(e.to_string())),
         };
         let model = self.effective_model();
-        let req = vak_context::assemble::compaction_request(&model, &transcript);
+        let req = vak_context::assemble::compaction_request(
+            &model,
+            &transcript,
+            self.step_defaults().get(vak_control::Purpose::Compact),
+        );
 
         let started = std::time::Instant::now();
         let mut receipt = vak_llm::WorkReceipt::new(

@@ -1674,3 +1674,7 @@ export type Decision = {
     | { point: "correct"; cause: string; rung: string }
     | { point: "end_turn"; end: string };
 };
+
+/// One purpose's step settings in a configuration layer; unset inherits.
+export type StepOverride = { reasoning?: string; temperature?: number; top_p?: number; top_k?: number };
+export type ControlLayer = { steps?: Record<string, StepOverride>; routes?: Record<string, Record<string, StepOverride>> };

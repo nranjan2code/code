@@ -825,6 +825,19 @@ export function instantiateAgentTemplate(
   });
 }
 
+/// One purpose's step settings in a configuration layer
+/// (docs/design/88-control-plane.md §4); an unset field inherits.
+export type StepOverride = { reasoning?: string; temperature?: number; top_p?: number; top_k?: number };
+export type ControlLayer = { steps?: Record<string, StepOverride>; routes?: Record<string, Record<string, StepOverride>> };
+
+export function getControl(scope: "user" | "project"): Promise<{ control: ControlLayer; route: string; effective: Record<string, StepOverride> }> {
+  return req(`/config/control?scope=${scope}`);
+}
+
+export function putControl(scope: "user" | "project", control: ControlLayer): Promise<{ saved: boolean }> {
+  return req(`/config/control?scope=${scope}`, { method: "PUT", body: JSON.stringify(control) });
+}
+
 export function getHooks(agent?: string): Promise<{ hooks: HookConfig[] }> {
   return req(withAgent("/config/hooks", agent));
 }

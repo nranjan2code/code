@@ -958,3 +958,30 @@ async fn browser_fixture() {
     });
     server.await.unwrap();
 }
+
+/// `PUT /config/control` writes one layer's `[control]`, `GET` returns that
+/// layer exactly, and the change reaches the live step defaults
+/// (docs/design/88-control-plane.md §4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn control_layer_round_trips_and_applies_live() {
+    let (app, core, _temp) = two_agent_app().await;
+    let (status, _) = call(
+        &app,
+        "PUT",
+        "/config/control",
+        json!({ "steps": { "act": { "reasoning": "low", "temperature": 0.2 } } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = call(&app, "GET", "/config/control", json!({})).await;
+    assert_eq!(body["control"]["steps"]["act"]["reasoning"], "low");
+    assert!(
+        body["control"]["routes"]
+            .as_object()
+            .is_none_or(|routes| routes.is_empty())
+    );
+    assert_eq!(body["effective"]["act"]["reasoning"], "low");
+    assert_eq!(body["effective"]["repair"]["reasoning"], "off");
+    let act = core.step_defaults().get(vak_control::Purpose::Act);
+    assert_eq!(act.sampling.temperature, Some(0.2));
+}

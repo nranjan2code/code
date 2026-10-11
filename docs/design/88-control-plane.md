@@ -17,7 +17,14 @@ applied and whether the response reasoned (`DispatchAttempt.applied`,
 `reasoned`), and the receipt what was asked (`WorkReceipt.asked`).
 `GET /runs/{id}/decisions` and the admin Run detail's "How it went" show a
 turn's decisions; the doctor reports the latest dispatch's settings.
-Later stages are not built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
+C3a done (2026-10-11): `FrameStep` (`vak_control::frame`) frames every
+step from its purpose and `StepDefaults` (shipped, then `[control.steps]`,
+then `[control.routes."provider/model"]`), for the turn's own steps and
+every side dispatch (plan, judge, classify, compact, summarise); the
+"direct reply" reading and `DemandHint::direct_reply` are removed;
+`/config/control` (user or project layer), Settings › "How the model
+thinks" and the admin's Models panel edit it live. C3b (tool loading no
+longer follows the reading) is next. Later stages are not built. Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
 satisfaction; the model never does) from satisfaction to every decision.
 The start prompt and working order for the session that builds it are in

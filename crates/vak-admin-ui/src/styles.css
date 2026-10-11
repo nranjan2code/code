@@ -1688,6 +1688,9 @@ a.tab-btn {
 .ops-detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; margin: 18px 0 0; }
 .ops-detail-grid div { display: grid; gap: 4px; padding: 9px 10px; background: var(--surface-raised); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); }
 .ops-detail-grid dt { color: var(--muted); font-size: 12px; text-transform: none; letter-spacing: .06em; }.ops-detail-grid dd { margin: 0; color: var(--text-soft); overflow-wrap: anywhere; }
+.step-settings { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.step-settings th, .step-settings td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-soft); }
+.step-settings input { width: 6.5em; }
 .decision-list { margin: 10px 0 0; padding-left: 22px; display: grid; gap: 6px; color: var(--text-soft); }
 .ops-related { margin-top: 14px; padding: 10px 12px; background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--border)); border-radius: var(--radius-sm); }.ops-related p { margin: 4px 0 0; color: var(--text-soft); }
 .ops-dependency-chain { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text-soft); font-size: 12.5px; }.ops-dependency-chain span:nth-child(even) { color: var(--muted); }

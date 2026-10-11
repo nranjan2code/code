@@ -94,11 +94,13 @@ answered dispatch records what was sent and what was known
 (`WorkReceipt.asked`), so "asked for no reasoning, the provider reasoned
 anyway" is a recorded fact.
 
-A turn's own steps ask for a depth only when its reading is a direct
-reply, and then only `low` (invariant 32, docs/design/47-commitment-kernel.md);
-doc 88 stage C3 replaces this reading with the step contract.
-Side dispatches that want a fast structured answer (classify, compaction,
-handoff, plan) ask for reasoning off.
+What a step asks for comes from its purpose and configuration, never a
+reading of the request (docs/design/88-control-plane.md §4): the shipped
+defaults keep the model's own reasoning for acting, planning, answering
+and judging, and ask for none for a repair and for the side dispatches
+that want a short structured answer (classify, compaction, handoff).
+`[control.steps.<purpose>]` and `[control.routes."provider/model".<purpose>]`
+override them field by field.
 
 ### Deferred tools and tool search
 

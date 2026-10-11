@@ -169,6 +169,8 @@ pub struct FileConfig {
     #[serde(default)]
     pub probe: ProbeSettings,
     #[serde(default)]
+    pub control: ControlSettings,
+    #[serde(default)]
     pub lifecycle: LifecycleSettings,
     #[serde(default)]
     pub intent: IntentSettings,
@@ -576,6 +578,51 @@ pub struct ProbeSettings {
     /// feedback; "full" opts in to running the horizon ladder against
     /// hosted models too.
     pub hosted: Option<String>,
+}
+
+/// `[control]`: what each purpose's steps ask of the model
+/// (docs/design/88-control-plane.md §4, §12.4). `steps` overrides the
+/// shipped defaults per purpose; `routes`, keyed `"provider/model"`,
+/// overrides them again for one route. Each field set wins over the layer
+/// below; an unset one inherits.
+#[derive(Debug, Clone, Deserialize, serde::Serialize, Default, PartialEq)]
+#[serde(default)]
+pub struct ControlSettings {
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub steps: std::collections::BTreeMap<vak_control::Purpose, vak_control::StepOverride>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub routes: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<vak_control::Purpose, vak_control::StepOverride>,
+    >,
+}
+
+impl ControlSettings {
+    /// The step defaults for a turn on this route.
+    pub fn step_defaults(&self, provider: &str, model: &str) -> vak_control::StepDefaults {
+        let defaults = vak_control::StepDefaults::shipped().with(&self.steps);
+        match self.routes.get(&format!("{provider}/{model}")) {
+            Some(route) => defaults.with(route),
+            None => defaults,
+        }
+    }
+
+    /// `over` (a narrower layer) on top of this one, field by field.
+    fn merge(&mut self, over: ControlSettings) {
+        fn layer(
+            base: &mut std::collections::BTreeMap<vak_control::Purpose, vak_control::StepOverride>,
+            over: std::collections::BTreeMap<vak_control::Purpose, vak_control::StepOverride>,
+        ) {
+            for (purpose, setting) in over {
+                let lower = base.get(&purpose).copied().unwrap_or_default();
+                base.insert(purpose, setting.over(lower));
+            }
+        }
+        layer(&mut self.steps, over.steps);
+        for (route, steps) in over.routes {
+            layer(self.routes.entry(route).or_default(), steps);
+        }
+    }
 }
 
 /// `[lifecycle]`: whether retention acts or only shows its plan
@@ -1223,6 +1270,23 @@ pub fn persist_hooks(path: &Path, hooks: &[HookConfig]) -> Result<(), ConfigErro
     })
 }
 
+/// Replaces the `[control]` table of the config file at `path` with
+/// `control` (docs/design/88-control-plane.md §4); an empty one removes it.
+pub fn persist_control(path: &Path, control: &ControlSettings) -> Result<(), ConfigError> {
+    update_config_file(path, |document| {
+        if *control == ControlSettings::default() {
+            document.remove("control");
+            return Ok(());
+        }
+        let value = toml::Value::try_from(control).map_err(|error| ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(error.to_string()),
+        })?;
+        document.insert("control".into(), value);
+        Ok(())
+    })
+}
+
 fn encode_hooks(path: &Path, hooks: &[HookConfig]) -> Result<toml::Value, ConfigError> {
     hooks
         .iter()
@@ -1321,6 +1385,8 @@ pub struct Config {
     pub work: WorkResolved,
     pub route: RouteResolved,
     pub probe: ProbeResolved,
+    /// `[control]`, merged across layers (docs/design/88 §4).
+    pub control: ControlSettings,
     pub lifecycle: LifecycleResolved,
     pub intent: IntentResolved,
     pub commitment: CommitmentResolved,
@@ -1651,6 +1717,7 @@ impl Default for Config {
             probe: ProbeResolved {
                 hosted: "none".into(),
             },
+            control: ControlSettings::default(),
             lifecycle: LifecycleResolved {
                 commit: true,
                 quota_bytes: None,
@@ -3119,6 +3186,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         }
     };
 
+    cfg.control = merged.control.clone();
     cfg.probe.hosted = match merged.probe.hosted.as_deref() {
         None | Some("none") => "none".into(),
         Some("full") => "full".into(),
@@ -4196,6 +4264,7 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.probe.hosted.is_some() {
         base.probe.hosted = over.probe.hosted;
     }
+    base.control.merge(over.control);
     if over.lifecycle.mode.is_some() {
         base.lifecycle.mode = over.lifecycle.mode;
     }
@@ -5305,6 +5374,31 @@ mod tests {
         assert!(
             !text.contains("fallback_models"),
             "an empty list removes the key:\n{text}"
+        );
+    }
+
+    #[test]
+    fn control_steps_override_per_purpose_and_per_route() {
+        use vak_control::{Depth, Purpose, Reasoning};
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[control.steps.act]\ntemperature = 0.2\n\n\
+             [control.routes.\"p/m\".act]\nreasoning = \"high\"\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        let elsewhere = cfg.control.step_defaults("p", "other").get(Purpose::Act);
+        assert_eq!(elsewhere.reasoning, Reasoning::Default);
+        assert_eq!(elsewhere.sampling.temperature, Some(0.2));
+        let on_route = cfg.control.step_defaults("p", "m").get(Purpose::Act);
+        assert_eq!(on_route.reasoning, Reasoning::Depth(Depth::High));
+        assert_eq!(on_route.sampling.temperature, Some(0.2));
+        assert_eq!(
+            cfg.control
+                .step_defaults("p", "m")
+                .get(Purpose::Repair)
+                .reasoning,
+            Reasoning::Off
         );
     }
 

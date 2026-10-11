@@ -130,6 +130,7 @@ fn deps_with_outcome(
     std::fs::create_dir_all(&home).unwrap();
     std::mem::forget(dir);
     ExecutorDeps {
+        steps: vak_control::StepDefaults::shipped(),
         objects: std::sync::Arc::new(vak_session::objects::MemoryObjects::default()),
         prompt_layers: Vec::new(),
         provider_route: "test".into(),

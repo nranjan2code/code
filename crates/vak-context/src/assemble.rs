@@ -59,14 +59,17 @@ pub fn compaction_prompt(transcript: &str) -> String {
 }
 
 /// Builds the compaction request over a rendered transcript segment.
-pub fn compaction_request(model: &str, transcript: &str) -> ChatRequest {
+pub fn compaction_request(
+    model: &str,
+    transcript: &str,
+    settings: vak_control::StepSettings,
+) -> ChatRequest {
     let mut req = ChatRequest::new(model);
     req.system = Some(COMPACTION_SYSTEM.to_string());
     req.messages = vec![Message::user_text(compaction_prompt(transcript))];
-    // A summary, not a deliberation: measured live, thinking made no
-    // difference to the summary and cost 3x the latency. A wire that cannot
-    // switch reasoning off sends its lowest depth instead.
-    req.settings.reasoning = vak_control::Reasoning::Off;
+    // The shipped `Compact` default asks for no reasoning: measured live,
+    // thinking made no difference to the summary and cost 3x the latency.
+    req.settings = settings;
     req
 }
 
@@ -365,17 +368,11 @@ mod tests {
 
     #[test]
     fn compaction_request_carries_marker_and_transcript() {
-        let req = compaction_request("m", "SEGMENT TEXT");
+        let req = compaction_request("m", "SEGMENT TEXT", Default::default());
         let system = req.system.clone().expect("system present");
         assert!(system.contains("context compactor"));
         let msg = &req.messages[0];
         assert!(msg.text_content().contains("SEGMENT TEXT"));
-    }
-
-    #[test]
-    fn compaction_request_asks_for_no_reasoning() {
-        let req = compaction_request("m", "SEGMENT TEXT");
-        assert_eq!(req.settings.reasoning, vak_control::Reasoning::Off);
     }
 
     #[test]

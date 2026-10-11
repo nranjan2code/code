@@ -1342,6 +1342,10 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/config/hooks", get(get_hooks).put(put_hooks))
         .route(
+            "/config/control",
+            get(get_control_layer).put(put_control_layer),
+        )
+        .route(
             "/config/prompts",
             get(get_prompt_layer).put(put_prompt_block),
         )
@@ -18738,6 +18742,118 @@ async fn get_hooks(
         })
         .collect::<Vec<_>>();
     Json(serde_json::json!({ "hooks": hooks })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct ControlScopeQuery {
+    /// `user` (the Shared layer) or `project` (the default).
+    #[serde(default)]
+    scope: Option<String>,
+}
+
+fn control_layer_path(
+    core: &vak_core::Core,
+    scope: Option<&str>,
+) -> Result<std::path::PathBuf, String> {
+    match scope.unwrap_or("project") {
+        "project" => Ok(vak_config::project_path(core.cwd())),
+        "user" => vak_config::global_path().ok_or_else(|| "user home unavailable".to_string()),
+        other => Err(format!("unknown scope '{other}' (user | project)")),
+    }
+}
+
+/// `[control]` exactly as one layer writes it (invariants 21, 27), with the
+/// effective defaults on the current route beside it for display.
+async fn get_control_layer(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<ControlScopeQuery>,
+) -> axum::response::Response {
+    let path = match control_layer_path(&state.core, q.scope.as_deref()) {
+        Ok(path) => path,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+    let layer = if path.is_file() {
+        match std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| toml::from_str::<vak_config::FileConfig>(&raw).ok())
+        {
+            Some(config) => config.control,
+            None => {
+                return (StatusCode::BAD_REQUEST, "config file is invalid").into_response();
+            }
+        }
+    } else {
+        vak_config::ControlSettings::default()
+    };
+    let effective = state.core.step_defaults();
+    let effective: serde_json::Map<String, serde_json::Value> = vak_control::PURPOSES
+        .iter()
+        .map(|purpose| {
+            let settings = effective.get(*purpose);
+            (
+                serde_json::to_value(purpose)
+                    .ok()
+                    .and_then(|v| v.as_str().map(str::to_string))
+                    .unwrap_or_default(),
+                serde_json::json!({
+                    "reasoning": vak_control::ReasoningSetting::from(settings.reasoning),
+                    "temperature": settings.sampling.temperature,
+                    "top_p": settings.sampling.top_p,
+                    "top_k": settings.sampling.top_k,
+                }),
+            )
+        })
+        .collect();
+    let route = state.core.effective_route();
+    Json(serde_json::json!({
+        "scope": q.scope.as_deref().unwrap_or("project"),
+        "control": layer,
+        "route": format!("{}/{}", route.provider, route.model),
+        "effective": effective,
+    }))
+    .into_response()
+}
+
+/// Replaces one layer's `[control]` and applies it from the next step.
+async fn put_control_layer(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<ControlScopeQuery>,
+    Json(control): Json<vak_config::ControlSettings>,
+) -> axum::response::Response {
+    let path = match control_layer_path(&state.core, q.scope.as_deref()) {
+        Ok(path) => path,
+        Err(message) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+    if let Err(error) = vak_config::persist_control(&path, &control) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    if state.core.refresh_persisted_preferences().is_err() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not apply the step settings",
+        )
+            .into_response();
+    }
+    state
+        .hub
+        .emit_config_changed("control_updated", "step settings");
+    Json(serde_json::json!({ "saved": true })).into_response()
 }
 
 async fn get_global_hooks() -> axum::response::Response {

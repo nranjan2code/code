@@ -109,7 +109,7 @@ pub struct Admission {
 
 /// What a step is for. A fact the runtime has, never a reading of the
 /// request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Purpose {
     Plan,
@@ -282,6 +282,165 @@ impl ModelCapabilities {
 pub struct Applied {
     pub settings: StepSettings,
     pub capabilities: ModelCapabilities,
+}
+
+/// Every purpose, in a fixed order.
+pub const PURPOSES: [Purpose; 8] = [
+    Purpose::Plan,
+    Purpose::Act,
+    Purpose::Answer,
+    Purpose::Repair,
+    Purpose::Classify,
+    Purpose::Compact,
+    Purpose::Judge,
+    Purpose::Summarise,
+];
+
+/// A reasoning setting as configuration spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningSetting {
+    Default,
+    Off,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
+
+impl From<ReasoningSetting> for Reasoning {
+    fn from(setting: ReasoningSetting) -> Self {
+        match setting {
+            ReasoningSetting::Default => Reasoning::Default,
+            ReasoningSetting::Off => Reasoning::Off,
+            ReasoningSetting::Low => Reasoning::Depth(Depth::Low),
+            ReasoningSetting::Medium => Reasoning::Depth(Depth::Medium),
+            ReasoningSetting::High => Reasoning::Depth(Depth::High),
+            ReasoningSetting::Xhigh => Reasoning::Depth(Depth::XHigh),
+            ReasoningSetting::Max => Reasoning::Depth(Depth::Max),
+        }
+    }
+}
+
+impl From<Reasoning> for ReasoningSetting {
+    fn from(reasoning: Reasoning) -> Self {
+        match reasoning {
+            Reasoning::Default => Self::Default,
+            Reasoning::Off => Self::Off,
+            Reasoning::Depth(Depth::Low) => Self::Low,
+            Reasoning::Depth(Depth::Medium) => Self::Medium,
+            Reasoning::Depth(Depth::High) => Self::High,
+            Reasoning::Depth(Depth::XHigh) => Self::Xhigh,
+            Reasoning::Depth(Depth::Max) => Self::Max,
+        }
+    }
+}
+
+/// One purpose's settings in a configuration layer: a field set there
+/// overrides the layer below, an unset one inherits it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StepOverride {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningSetting>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
+}
+
+impl StepOverride {
+    /// This layer over `lower`: each field this one sets wins.
+    pub fn over(self, lower: Self) -> Self {
+        Self {
+            reasoning: self.reasoning.or(lower.reasoning),
+            temperature: self.temperature.or(lower.temperature),
+            top_p: self.top_p.or(lower.top_p),
+            top_k: self.top_k.or(lower.top_k),
+        }
+    }
+
+    fn apply(self, settings: StepSettings) -> StepSettings {
+        StepSettings {
+            reasoning: self.reasoning.map_or(settings.reasoning, Reasoning::from),
+            sampling: Sampling {
+                temperature: self.temperature.or(settings.sampling.temperature),
+                top_p: self.top_p.or(settings.sampling.top_p),
+                top_k: self.top_k.or(settings.sampling.top_k),
+            },
+        }
+    }
+}
+
+/// The settings each purpose's steps are framed with: the shipped
+/// defaults, overridden by configuration (doc 88 §4, §12.4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StepDefaults(std::collections::BTreeMap<Purpose, StepSettings>);
+
+impl Default for StepDefaults {
+    fn default() -> Self {
+        Self::shipped()
+    }
+}
+
+impl StepDefaults {
+    /// What ships: a step that acts, plans, answers or judges keeps the
+    /// model's own reasoning; a repair and a side call that wants a short
+    /// structured answer ask for none. Sampling is left to the model.
+    pub fn shipped() -> Self {
+        Self(
+            PURPOSES
+                .into_iter()
+                .map(|purpose| {
+                    let reasoning = match purpose {
+                        Purpose::Plan | Purpose::Act | Purpose::Answer | Purpose::Judge => {
+                            Reasoning::Default
+                        }
+                        Purpose::Repair
+                        | Purpose::Classify
+                        | Purpose::Compact
+                        | Purpose::Summarise => Reasoning::Off,
+                    };
+                    (
+                        purpose,
+                        StepSettings {
+                            reasoning,
+                            sampling: Sampling::default(),
+                        },
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    /// These defaults with one configuration layer applied.
+    pub fn with(mut self, layer: &std::collections::BTreeMap<Purpose, StepOverride>) -> Self {
+        for (purpose, over) in layer {
+            let current = self.get(*purpose);
+            self.0.insert(*purpose, over.apply(current));
+        }
+        self
+    }
+
+    pub fn get(&self, purpose: Purpose) -> StepSettings {
+        self.0.get(&purpose).copied().unwrap_or_default()
+    }
+}
+
+/// `FrameStep` (doc 88 §3): the contract a step is dispatched under, from
+/// its purpose, the configured defaults and the tools the turn offers.
+pub fn frame(purpose: Purpose, defaults: &StepDefaults, tools: Vec<String>) -> StepContract {
+    let settings = defaults.get(purpose);
+    StepContract {
+        purpose,
+        reasoning: settings.reasoning,
+        sampling: settings.sampling,
+        tools,
+        output: OutputForm::Free,
+    }
 }
 
 /// The form the step's output must take.
@@ -496,6 +655,35 @@ mod tests {
         };
         assert_eq!(reported.meet(caps).reasoning, ReasoningSupport::Fixed);
         assert_eq!(reported.meet(caps).temperature, Support::Yes);
+    }
+
+    #[test]
+    fn configuration_layers_override_field_by_field() {
+        use std::collections::BTreeMap;
+        let shipped = StepDefaults::shipped();
+        assert_eq!(shipped.get(Purpose::Repair).reasoning, Reasoning::Off);
+        assert_eq!(shipped.get(Purpose::Act).reasoning, Reasoning::Default);
+        let workspace = BTreeMap::from([(
+            Purpose::Act,
+            StepOverride {
+                temperature: Some(0.3),
+                ..Default::default()
+            },
+        )]);
+        let route = BTreeMap::from([(
+            Purpose::Act,
+            StepOverride {
+                reasoning: Some(ReasoningSetting::Low),
+                ..Default::default()
+            },
+        )]);
+        let defaults = shipped.with(&workspace).with(&route);
+        let act = defaults.get(Purpose::Act);
+        assert_eq!(act.reasoning, Reasoning::Depth(Depth::Low));
+        assert_eq!(act.sampling.temperature, Some(0.3));
+        let contract = frame(Purpose::Act, &defaults, vec!["read".into()]);
+        assert_eq!(contract.reasoning, act.reasoning);
+        assert_eq!(contract.output, OutputForm::Free);
     }
 
     #[test]

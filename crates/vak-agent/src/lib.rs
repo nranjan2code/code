@@ -394,11 +394,10 @@ pub struct AgentConfig {
     /// targets one is refused with a message the model can act on.
     pub protected_paths: Vec<String>,
     pub retrieval_check: Option<RetrievalCheck>,
-    /// Reasoning depth asked of the provider for this turn's own steps.
-    /// `None` leaves the provider's default. `Core` sets it only to lower
-    /// it, for a turn read as a direct reply (invariant 32); an adapter
-    /// with no such dial, and Ollama always, ignores it.
-    pub effort: Option<vak_control::Depth>,
+    /// What each purpose's steps ask of the model on this turn's route
+    /// (docs/design/88-control-plane.md §4): the shipped defaults with the
+    /// configured `[control]` layers applied.
+    pub steps: vak_control::StepDefaults,
     /// What satisfies the freshness check: any call that observed current
     /// state this run. See `ObservationCheck`. Absent, only retrieval counts.
     pub observation_check: Option<ObservationCheck>,
@@ -580,7 +579,7 @@ impl AgentConfig {
             artifacts: None,
             protected_paths: Vec::new(),
             retrieval_check: None,
-            effort: None,
+            steps: vak_control::StepDefaults::shipped(),
             observation_check: None,
             envelope_check: None,
             presentation_rebuild: None,
@@ -1556,27 +1555,34 @@ impl Agent {
         }
     }
 
-    /// The contract a step was dispatched under (docs/design/88 §4). A
-    /// step that follows a runtime correction is a repair; every other step
-    /// acts.
-    async fn record_framing(&self, step: usize, request: &ChatRequest) {
+    /// What the next step is for (docs/design/88 §3): a step that follows
+    /// a runtime correction repairs; every other step acts.
+    async fn step_purpose(&self) -> vak_control::Purpose {
         let follows_correction = self
             .session
             .lock()
             .await
             .latest_message_record()
             .is_some_and(|record| record.control_kind().is_some());
-        let asked = vak_control::StepContract {
-            purpose: if follows_correction {
-                vak_control::Purpose::Repair
-            } else {
-                vak_control::Purpose::Act
-            },
-            reasoning: request.settings.reasoning,
-            sampling: request.settings.sampling,
-            tools: request.tools.iter().map(|tool| tool.name.clone()).collect(),
-            output: vak_control::OutputForm::Free,
-        };
+        if follows_correction {
+            vak_control::Purpose::Repair
+        } else {
+            vak_control::Purpose::Act
+        }
+    }
+
+    /// `FrameStep`: records the contract a step is dispatched under.
+    async fn record_framing(
+        &self,
+        step: usize,
+        purpose: vak_control::Purpose,
+        request: &ChatRequest,
+    ) {
+        let asked = vak_control::frame(
+            purpose,
+            &self.config.steps,
+            request.tools.iter().map(|tool| tool.name.clone()).collect(),
+        );
         self.record_decision(vak_control::Decision::by_runtime(
             vak_control::Choice::FrameStep(vak_control::Framing {
                 step: u32::try_from(step).unwrap_or(u32::MAX),
@@ -2194,7 +2200,11 @@ impl Agent {
                             estimated_tokens: tokens_before,
                         })
                         .await;
-                    let req = assemble::compaction_request(&model, &transcript);
+                    let req = assemble::compaction_request(
+                        &model,
+                        &transcript,
+                        self.config.steps.get(vak_control::Purpose::Compact),
+                    );
                     let mut ledger = StepLedger::new(
                         WorkPurpose::Summarize,
                         self.provider.name(),
@@ -2328,6 +2338,7 @@ impl Agent {
                     });
                 }
             }
+            let purpose = self.step_purpose().await;
             let base_request = {
                 let session = self.session.lock().await;
                 // `messages` is the explicit projection from the plan
@@ -2363,13 +2374,7 @@ impl Agent {
                     context_need: None,
                     cache,
                     previous_response_id: None,
-                    settings: vak_control::StepSettings {
-                        reasoning: self.config.effort.map_or(
-                            vak_control::Reasoning::Default,
-                            vak_control::Reasoning::Depth,
-                        ),
-                        sampling: vak_control::Sampling::default(),
-                    },
+                    settings: self.config.steps.get(purpose),
                 }
             };
             let mut base_request = base_request;
@@ -2383,7 +2388,7 @@ impl Agent {
                 ),
             );
             let mut request = base_request.clone();
-            self.record_framing(turn, &request).await;
+            self.record_framing(turn, purpose, &request).await;
             ledger.receipt.asked = Some(request.settings);
 
             let mut response = {
@@ -4140,7 +4145,7 @@ impl Agent {
             context_need: None,
             cache: None,
             previous_response_id: None,
-            settings: vak_control::StepSettings::default(),
+            settings: self.config.steps.get(vak_control::Purpose::Plan),
         };
         let mut ledger = StepLedger::new(
             WorkPurpose::Plan,
@@ -4869,6 +4874,7 @@ impl Agent {
                 &digest,
                 workspace_delta.as_deref(),
             ),
+            self.config.steps.get(vak_control::Purpose::Judge),
         );
         let mut ledger = StepLedger::new(
             WorkPurpose::Verify,
@@ -4919,7 +4925,11 @@ impl Agent {
         } else {
             String::new()
         };
-        let req = goal::handoff_request(&model, format!("{objective_line}{digest}"));
+        let req = goal::handoff_request(
+            &model,
+            format!("{objective_line}{digest}"),
+            self.config.steps.get(vak_control::Purpose::Summarise),
+        );
         let mut ledger = StepLedger::new(
             WorkPurpose::Summarize,
             self.provider.name(),

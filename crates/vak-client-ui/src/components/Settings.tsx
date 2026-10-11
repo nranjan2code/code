@@ -115,6 +115,67 @@ function TechnicalRow(props: { children: JSX.Element }) {
   return <details class="settings-technical"><summary><span>Technical details</span><Icon name="chevron" /></summary>{props.children}</details>;
 }
 
+const STEP_PURPOSES: [string, string, string][] = [
+  ["act", "While working", "Each step Vakyartha takes on your request."],
+  ["plan", "Planning", "Writing the plan for longer managed work."],
+  ["repair", "Fixing a mistake", "The step after Vakyartha points out a problem."],
+  ["judge", "Checking finished work", "Deciding whether a goal was met."],
+  ["classify", "Sorting requests", "Reading what a request asks for."],
+  ["compact", "Shortening history", "Summarising older parts of a long conversation."],
+  ["summarise", "Handing over", "Writing the summary a long task restarts from."],
+];
+
+const THINKING: [string, string][] = [["default", "The model's own"], ["off", "Off"], ["low", "Light"], ["medium", "Medium"], ["high", "Deep"]];
+
+function thinkingWord(value?: string): string {
+  return THINKING.find(([key]) => key === value)?.[1] ?? "The model's own";
+}
+
+/// How much the model thinks for each kind of step, shared by every agent
+/// (docs/design/88-control-plane.md §4). A model that cannot do what is
+/// asked does what it can, and the run's details say so.
+function StepSettingsGroup() {
+  const [layer, { refetch }] = createResource(() => api.getControl("user"));
+  const [error, setError] = createSignal("");
+  const save = async (purpose: string, patch: api.StepOverride) => {
+    const current = layer()?.control ?? {};
+    const steps = { ...(current.steps ?? {}) };
+    const next: api.StepOverride = { ...(steps[purpose] ?? {}), ...patch };
+    for (const key of Object.keys(next) as (keyof api.StepOverride)[]) {
+      if (next[key] === undefined || next[key] === "" || Number.isNaN(next[key])) delete next[key];
+    }
+    if (Object.keys(next).length) steps[purpose] = next;
+    else delete steps[purpose];
+    try {
+      await api.putControl("user", { ...current, steps });
+      setError("");
+      await refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <Group title="How the model thinks">
+      <Show when={error()}><p class="connect-error" role="alert">{error()}</p></Show>
+      <For each={STEP_PURPOSES}>
+        {([purpose, title, description]) => (
+          <Row title={title} description={description}>
+            <select aria-label={`${title}: thinking`} value={layer()?.control.steps?.[purpose]?.reasoning ?? ""} onChange={(event) => void save(purpose, { reasoning: event.currentTarget.value || undefined })}>
+              <option value="">{`Default (${thinkingWord(layer()?.effective[purpose]?.reasoning)})`}</option>
+              <For each={THINKING}>{([value, label]) => <option value={value}>{label}</option>}</For>
+            </select>
+          </Row>
+        )}
+      </For>
+      <TechnicalRow>
+        <Row title="Temperature while working" description="Higher varies the wording more; empty leaves it to the model.">
+          <input class="settings-number" type="number" min="0" max="2" step="0.1" value={layer()?.control.steps?.act?.temperature ?? ""} onChange={(event) => void save("act", { temperature: event.currentTarget.value === "" ? undefined : Number(event.currentTarget.value) })} />
+        </Row>
+      </TechnicalRow>
+    </Group>
+  );
+}
+
 function CapabilityIcon(props: { name: string }) {
   return <span class="capability-icon" style={{ "--capability-hue": `oklch(62% 0.14 ${capabilityHue(props.name)})` }}>{capabilityInitial(props.name)}</span>;
 }
@@ -2059,6 +2120,7 @@ export default function Settings() {
                   </Show>
                 </TechnicalRow>
               </Group>
+              <Show when={scope() === "user"}><StepSettingsGroup /></Show>
               <Show when={technicalDetails()}><div class="settings-actions">
                 <button class="btn primary" disabled={saving() || !agentDirty()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>
                 <Show when={technicalDetails()}>

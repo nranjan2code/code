@@ -115,7 +115,7 @@ export default function YourData(props: { open: (page: SettingsPageId) => void }
           <section class="settings-group" role="status">
             <h2>Everything was erased</h2>
             <div class="settings-card">
-              <div class="setting-row"><div class="setting-copy"><strong>Vakyartha has stopped</strong><span>{count(done().conversations, "conversation", "conversations")} and everything else it stored are gone. Start it again to set it up as new.</span></div><a class="settings-button" href={file()} download={`vakyartha-erasure-${done().id}.json`}>Save the receipt</a></div>
+              <div class="setting-row"><div class="setting-copy"><strong>Vakyartha has stopped</strong><span>{count(done().conversations, "conversation", "conversations")} and everything else it stored are gone. Start it again to set it up as new.</span></div><a class="settings-button" href={file()} download={`vakyartha-erasure-${done().id}.json`}>Save the record</a></div>
               <For each={done().not_reached}>{(line) => <div class="setting-row"><div class="setting-copy"><strong>Not reached</strong><span>{line}</span></div></div>}</For>
             </div>
           </section>
@@ -163,7 +163,7 @@ export default function YourData(props: { open: (page: SettingsPageId) => void }
                   <div class="settings-card">
                     <div class="setting-row danger"><div class="setting-copy"><strong>Remove all that Vakyartha has stored</strong><span>Conversations, files, memory, agents, automations, connected accounts and saved keys. Your own folders are never touched. This cannot be undone.{found().held > 0 ? ` ${count(found().held, "thing is", "things are")} on hold; release every hold first.` : ""}</span></div><Show when={!erasing()}><button type="button" class="settings-button danger" disabled={found().held > 0} onClick={() => setErasing(true)}>Erase everything…</button></Show></div>
                     <Show when={erasing()}>
-                      <div class="setting-row danger"><div class="setting-copy"><strong>Type “{found().confirm}” to go on</strong><span>Vakyartha will stop when it is done and leave one signed receipt.</span></div>
+                      <div class="setting-row danger"><div class="setting-copy"><strong>Type “{found().confirm}” to go on</strong><span>Vakyartha will stop when it is done and leave one signed record of what it erased.</span></div>
                         <span class="key-edit">
                           <input class="settings-input" aria-label={`Type ${found().confirm}`} value={typed()} onInput={(event) => setTyped(event.currentTarget.value)} />
                           <button type="button" class="settings-button" onClick={() => { setErasing(false); setTyped(""); }}>Cancel</button>

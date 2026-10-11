@@ -166,11 +166,16 @@ pub fn parse_verdicts(text: &str) -> Result<Vec<CriterionVerdict>, String> {
 }
 
 /// Builds the judge request over the digest.
-pub fn audit_request(model: &str, prompt: String) -> ChatRequest {
+pub fn audit_request(
+    model: &str,
+    prompt: String,
+    settings: vak_control::StepSettings,
+) -> ChatRequest {
     let mut req = ChatRequest::new(model);
+    req.settings = settings;
     req.system = Some(AUDIT_SYSTEM.to_string());
     req.messages = vec![vak_llm::Message::user_text(prompt)];
-    // The provider's default for thinking, deliberately. Measured live on
+    // The shipped `Judge` default keeps the provider's thinking. Measured live on
     // `gemma4:e2b-mlx` with the tolerant parser below: thinking on, 6/6
     // verdicts usable at ~8s; thinking off, 3/6 at ~2s, the rest lost to
     // mis-escaped quotes in the evidence field. A judge that fails closed
@@ -249,11 +254,15 @@ pub fn handoff_prompt(transcript_digest: &str) -> String {
     )
 }
 
-pub fn handoff_request(model: &str, prompt: String) -> ChatRequest {
+pub fn handoff_request(
+    model: &str,
+    prompt: String,
+    settings: vak_control::StepSettings,
+) -> ChatRequest {
     let mut req = ChatRequest::new(model);
     req.system = Some(HANDOFF_SYSTEM.to_string());
     req.messages = vec![vak_llm::Message::user_text(prompt)];
-    req.settings.reasoning = vak_control::Reasoning::Off;
+    req.settings = settings;
     req
 }
 

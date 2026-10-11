@@ -1070,6 +1070,7 @@ async fn run_flow_exec(
         }
     };
     let deps = vak_flow::ExecutorDeps {
+        steps: core.step_defaults(),
         objects,
         prompt_layers: Vec::new(),
         provider_route: core.effective_provider().to_string(),
@@ -2004,6 +2005,7 @@ async fn run_plan(
         return 2;
     }
     let deps = vak_flow::ExecutorDeps {
+        steps: core.step_defaults(),
         objects,
         prompt_layers: Vec::new(),
         provider_route: core.effective_provider().to_string(),
