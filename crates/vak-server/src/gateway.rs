@@ -169,10 +169,6 @@ impl InboundRequest {
 /// Long-poll ceiling for `wait: true` inbound messages.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(240);
 
-/// Upper bound on one background reflection pass (docs/design/29 P1) so a
-/// stuck auxiliary stream cannot hold the session ledger indefinitely.
-const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
-
 fn bindings_path(home: &std::path::Path) -> PathBuf {
     vak_config::scope::SharedScope::new(home).gateway_bindings()
 }
@@ -3808,22 +3804,11 @@ async fn execute_turn_chain(
                     // runs strictly after the reply above was handed over so
                     // delivery never waits on it, and while this chain still
                     // owns the ledger — a second in-process handle cannot
-                    // take the file lock. Bounded; failures collapse into
-                    // the outcome envelope.
+                    // take the file lock. Bounded by the operator's
+                    // `request_timeout_secs` inside the call; failures
+                    // collapse into the outcome envelope.
                     if !err && core.config().memory.reflection {
-                        let pass = tokio::time::timeout(
-                            REFLECTION_CALL_TIMEOUT,
-                            core.reflect_after_turn(&log, ""),
-                        )
-                        .await;
-                        match pass {
-                            Ok(outcome) => log_gateway_reflection(outcome),
-                            Err(_) => tracing::info!(
-                                kind = "reflection",
-                                outcome = "timed_out",
-                                "reflection was skipped"
-                            ),
-                        }
+                        log_gateway_reflection(core.reflect_after_turn(&log, "").await);
                     }
                     (Some(log), short_summary(&text), err)
                 }

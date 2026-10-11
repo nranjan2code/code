@@ -1600,16 +1600,11 @@ async fn run_exec(
     }
     // Post-turn reflection seam (docs/design/29 P1): the final assistant
     // text is already committed to the ledger, so no extra tail is passed.
-    // Bounded so a stuck auxiliary stream cannot hang the exit.
+    // The call is bounded by the operator's `request_timeout_secs`, so a
+    // stuck auxiliary stream cannot hang the exit.
     if let Some(session) = session.as_ref() {
-        let pass = tokio::time::timeout(
-            REFLECTION_CALL_TIMEOUT,
-            reflection_core.reflect_after_turn(session, ""),
-        )
-        .await;
-        if let Ok(outcome) = pass
-            && let Some(line) = exec_reflection_line(&outcome)
-        {
+        let outcome = reflection_core.reflect_after_turn(session, "").await;
+        if let Some(line) = exec_reflection_line(&outcome) {
             eprintln!("{line}");
         }
     }
@@ -1626,10 +1621,6 @@ async fn run_exec(
 fn timestamp_id() -> String {
     uuid::Uuid::now_v7().to_string()
 }
-
-/// Upper bound on one background reflection pass so a stuck auxiliary
-/// stream cannot hang process exit.
-const REFLECTION_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Footnote line for a post-turn reflection outcome: one dim line when the
 /// pass persisted something or was skipped for a reason worth acting on

@@ -19,10 +19,6 @@ use crate::AppState;
 /// Fixed ledger id of the dedicated heartbeat session.
 pub(crate) const HEARTBEAT_SESSION_ID: &str = "heartbeat";
 
-/// Upper bound on one heartbeat turn so a stuck stream cannot wedge the
-/// scheduler (mirrors REFLECTION_CALL_TIMEOUT).
-const HEARTBEAT_TURN_TIMEOUT: Duration = Duration::from_secs(120);
-
 /// Grace period for the agent loop to observe cancellation and hand the
 /// ledger back before the cycle gives up on it.
 const CANCEL_GRACE: Duration = Duration::from_secs(10);
@@ -218,12 +214,18 @@ async fn run_heartbeat_turn(
         None,
         events_tx,
     ));
-    let outcome = match tokio::time::timeout(HEARTBEAT_TURN_TIMEOUT, fut.as_mut()).await {
+    // A check-in runs until the next one is due (the operator's
+    // `[heartbeat] interval_secs`), never for a number of seconds picked
+    // here: a slow model that is still working is not cut
+    // (docs/design/88-control-plane.md §5a). A silent model is ended by the
+    // step's own silence limit.
+    let until_next = Duration::from_secs(cfg.interval_secs);
+    let outcome = match tokio::time::timeout(until_next, fut.as_mut()).await {
         Ok(result) => Some(result),
         Err(_) => {
             tracing::warn!(
                 kind = "heartbeat",
-                "a heartbeat turn exceeded its bound; cancelling"
+                "a heartbeat turn was still running when the next was due; cancelling"
             );
             cancel.cancel();
             // Abort preserves partial output: give the loop room to land

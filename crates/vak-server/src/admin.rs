@@ -377,10 +377,9 @@ fn forensics_row(
                     vak_llm::ContentBlock::ToolUse { id, name, input } => {
                         calls.insert(id.clone(), name.clone());
                         tool_name = Some(name.clone());
-                        match input.get("command").and_then(|value| value.as_str()) {
-                            Some(command) => parts.push(format!("[tool:{name}] {command}")),
-                            None => parts.push(format!("[tool:{name}]")),
-                        }
+                        // The call as it was made, arguments and all: a
+                        // refused call cannot be read back without them.
+                        parts.push(format!("[tool:{name}] {input}"));
                     }
                     vak_llm::ContentBlock::ToolResult {
                         tool_use_id,

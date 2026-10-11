@@ -5467,14 +5467,11 @@ async fn http_settle(
             // Background reflection seam (docs/design/29 P1): after the
             // summary is recorded and while this leg still owns the ledger
             // (a second in-process handle cannot take the file lock).
-            // Bounded; the result is deliberately ignored — a completed run
+            // Bounded by the operator's `request_timeout_secs` inside the
+            // call; the result is deliberately ignored — a completed run
             // never fails on reflection.
             if !is_error && handle.core.config().memory.reflection {
-                let _ = tokio::time::timeout(
-                    REFLECTION_CALL_TIMEOUT,
-                    handle.core.reflect_after_turn(&session_log, ""),
-                )
-                .await;
+                let _ = handle.core.reflect_after_turn(&session_log, "").await;
             }
             (Some(session_log), summary, is_error)
         }
@@ -20504,9 +20501,6 @@ pub(crate) fn split_model_pin(pin: &str, current_provider: &str) -> (String, Str
 // name a Provider.
 
 const SCRIPT_TIMEOUT_MS: u64 = 120_000;
-/// Upper bound on one background reflection pass (docs/design/29 P1) so a
-/// stuck auxiliary stream cannot pin a session handle indefinitely.
-const REFLECTION_CALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Fallback delivery surface for error alerts when a watchdog has no
 /// `deliver_to`: failures are never silent.
 pub(crate) const FALLBACK_ALERT_TARGET: &str = "log:vak";

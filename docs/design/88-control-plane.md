@@ -80,8 +80,20 @@ one form, the block tools retired, and the items carried below.
   per-shape tools as the reliable path and forbids a list of records inside
   a record in a list, which a document of blocks is. This slice therefore
   requires the block tool the plan named, one block per step, rather than
-  one nested document; retiring the block tools waits on a measurement
-  that a nested document is written as reliably.
+  one nested document. A first measurement on the dev route
+  (`scripts/measure_answer_form.py`, `qwen3.5:4b-mlx` on local Ollama,
+  2026-10-11, two requests, three blocks each, the same block fields both
+  ways, reasoning off) does not show the nested document to be the less
+  reliable form: all three blocks valid in 8 of 16 and 8 of 16 trials with
+  three flat tools, and in 10 of 16 and 11 of 16 with one `answer` tool
+  holding a list of blocks. The flat failures were one fault each time: a
+  list of strings (`steps`) sent as a single text that is not JSON, which
+  the argument reader rightly does not split. The nested failures were
+  mixed: a block missing a required field, a list of one where several
+  were asked, once the whole list as text. Sixteen trials on one model and
+  one wire decide nothing for every provider; before the block tools are
+  retired the same script needs running on each configured route, with the
+  real block schemas.
 
 ### Carried into later stages (found while building C0–C5)
 
@@ -99,8 +111,8 @@ one form, the block tools retired, and the items carried below.
   a verbatim repeated answer is unrelated; the repeat is a fact, the
   relation is a reading. The loop's `inspection_ids` is a table of tool
   names. Both go when the answer form frames the final step.
-- The remaining time constants in §5a (reflection, heartbeat, probe,
-  gateway wait, command and person waits) are not yet configuration.
+- The remaining time constants in §5a (probe, gateway wait, command and
+  person waits) are not yet configuration.
 - C6: delivery shape and `OutcomeSpec` requirements guessed from words
   (`apply_output_requirements`) are replaced by the answer form.
 - `vak runs` does not print decisions yet (the admin Run detail does). Builds on docs/design/86-model-plans-runtime-checks.md (the model
@@ -244,7 +256,7 @@ Audit of time constants in code at C4 (`b213cc1f6`), by what they bound:
 | Kind | Where | To do |
 |---|---|---|
 | A whole model dispatch | `AgentConfig::request_timeout` wrapped the entire streamed step | done at C5: it bounds silence between stream events (`within` in the agent loop) |
-| A whole model call, fixed | `REFLECTION_CALL_TIMEOUT` 120 s (defined three times: `vak-server/src/lib.rs`, `gateway.rs`, `vak/src/main.rs`), `HEARTBEAT_TURN_TIMEOUT` 120 s, `PROBE_REQUEST_TIMEOUT` 30 s, gateway `WAIT_TIMEOUT` 240 s | C5: one silence rule from `[control]`, no per-site constant |
+| A whole model call, fixed | `REFLECTION_CALL_TIMEOUT` 120 s (was defined three times) and `HEARTBEAT_TURN_TIMEOUT` 120 s are removed at C6: reflection is bounded by the operator's `request_timeout_secs` inside the call, and a check-in runs until the next is due (`[heartbeat] interval_secs`). Left: `PROBE_REQUEST_TIMEOUT` 30 s, gateway `WAIT_TIMEOUT` 240 s | the two left become configuration |
 | A command or script | bash `DEFAULT_TIMEOUT_MS` 120 s, `SCRIPT_TIMEOUT_MS` 120 s, hooks `DEFAULT_TIMEOUT_MS` 10 s | C5: the operator's limit, from configuration |
 | Waiting for a person | `QUESTION_TIMEOUT` 900 s, `HTTP_APPROVAL_TIMEOUT` 900 s | C5: configuration; silence still means no (invariant 15) |
 | Protection against a hostile or dead peer | discovery 15 s, MCP list 10 s, webfetch and browse totals, `VERIFY_DEADLINE`, delivery worker 5 s, credential probe | stay: they bound input Vak does not control, like the parser limits in §8 |

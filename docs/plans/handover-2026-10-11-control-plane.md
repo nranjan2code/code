@@ -140,6 +140,11 @@ seven live run ids, and what is still open.
   admin transcript does not show a call's arguments, so the exact text was
   not read back. This is the nested-list weakness doc 88's "Open in C6"
   weighs against one nested answer document.
+- Also done in C6 so far: the fixed 120 s reflection limit (three copies)
+  and the 120 s heartbeat limit are removed (doc 88 §5a); the admin
+  transcript shows each call's arguments; `scripts/measure_answer_form.py`
+  measures a nested answer document against flat block tools on a local
+  Ollama model (first numbers in doc 88, "Open in C6").
 - Next: the rest of C6, starting from doc 88's "Open in C6": decide by
   measurement whether one nested answer document is written as reliably as
   flat per-block tools before retiring the block tools; then the items
