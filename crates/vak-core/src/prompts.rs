@@ -867,7 +867,7 @@ mod tests {
     #[test]
     fn the_seed_carries_no_card_payload_examples() {
         let seed = seed("test");
-        assert!(seed.presentation_contract.contains("`answer` tool"));
+        assert!(seed.presentation_contract.contains("with the card tool"));
         assert!(
             seed.presentation_contract
                 .contains("cards are context, not new work")

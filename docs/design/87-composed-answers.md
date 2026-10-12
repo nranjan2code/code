@@ -1,9 +1,11 @@
 # 87 — Composed answers
 
 Status: direction approved by the maintainer on 2026-10-11; stage 1 done,
-stage 2 built: the outline, its layout and the answer as one `answer` call
-of blocks (§2), seen live on the local route and on one hosted route
-(docs/design/88-control-plane.md, C6). Stage 3 is not started. Builds on docs/design/86-model-plans-runtime-checks.md (the plan
+stage 2 built: the outline and its layout, with each card its own call of
+the card tool that owns its kind (§2; the maintainer's choice on
+2026-10-12, after one nested `answer` call of every block was measured as
+broken JSON on 7 of 16 captured steps against none for separate calls,
+docs/audits/cards-in-answers-2026-10-11.md). Stage 3 is not started. Builds on docs/design/86-model-plans-runtime-checks.md (the plan
 and its receipt check). Replaces the model-facing card vocabulary of
 doc 30-render-architecture §30.1 (twelve `emit_*_card` tools over 109
 domain-labelled `semantic_type`s); the rendering contract of
@@ -42,38 +44,32 @@ A turn's answer is composed by the runtime, not left to emit order:
 - **Outline.** The model's `plan` (doc 86) is the outline: its
   deliverables, in order, are the answer's sections. A turn with no plan
   is one section.
-- **Blocks.** The model writes its answer as one call of the loop-owned
-  `answer` tool: an ordered list of blocks, each a `text` block (prose) or
-  a card block of a kind some admitted card tool declares
-  (`Tool::card_kinds`). The tool is built at run time from whatever card
-  tools the turn admits, so it names no block, tool, provider or model; a
-  card tool is never offered, nor callable, by its own name. Each card
-  block is checked by the tool that owns its kind and recorded as a
-  `Presentation` with the source `Answer { tool_use_id, block }`, `block`
-  being its position in `blocks`. All blocks standing, the prose becomes
-  the closing message and the turn ends with no further model step; any
-  block failing, nothing is shown and each fault names its block, and a
-  field that belongs to another kind is named with the kinds that take it,
-  a `type` that is no kind is told the kinds there are, and `blocks` that
-  arrived as text which is not JSON is told where it breaks and inside
-  which block and field. An `answer` whose calls keep failing goes through
-  the repair stages like any tool (docs/design/15-reliability.md): its
-  schema is shown, then it is withdrawn with its card tools and the answer
-  is given as text.
-  A later `answer` in the same turn replaces the earlier one: the
-  projection shows only the turn's latest answer. A block's fields are the
-  union of the card tools' arguments, typed wherever the kinds agree on a
-  type. A `plan` deliverable whose form names a kind of block is read as a
-  card. A block that previews a file the run delivered for review is not
-  shown. A block
-  names its section with `answers`; one that names none is in no section
-  and is shown after the sections in block order, because the runtime did
-  not see where it belongs (the plan check counts such cards the same
-  way). A `text` block that answers a deliverable the plan lists as a card
-  is refused. The reply's text is in the one text section when the plan
-  has exactly one. The projection publishes this as the answer's outline
-  (`OutputTimeline.answers`), reading each block's own `answers`, and the
-  client lays the answer out from it.
+- **Blocks.** The model shows each part of its answer that has a card
+  shape by calling the card tool that owns its kind (`Tool::card_kinds`),
+  by that tool's own name and precise schema, and writes the rest as the
+  reply's text. A card call is the loop's own display channel, in every
+  permission mode: it is checked against its tool's schema, the plan, the
+  sources the conversation retrieved and the tool's rules, then recorded
+  as a `Presentation` of the call (`PresentationSource::ToolCall`). A card
+  identical to one already shown this turn is not shown twice; a card that
+  previews a file the run delivered for review is not shown. A card that
+  fails is refused with what to fix and goes through the repair stages like
+  any tool (docs/design/15-reliability.md): its schema is shown, then it is
+  withdrawn, and the part is given as text.
+  A card names its section with `answers`. A card that names a deliverable
+  the plan does not have is refused with the plan's names; a card that
+  names none (a tip beside the answer) is in no section and is shown after
+  the sections in emit order. A planned card counts as shown only when a
+  card names it: a count of cards once let two cards answering an earlier
+  request stand for a plan of two. A `plan` deliverable whose form names
+  a kind of card is a card of that kind (`Deliverable::kind`), so a step
+  can be required to call that kind's tool when the card is still missing.
+  The reply's text is in the one text section when the plan has exactly
+  one. The projection publishes this as the answer's outline
+  (`OutputTimeline.answers`), reading each card call's own `answers`, and
+  the client lays the answer out from it. Ledgers written while the answer
+  was one nested call keep their `PresentationSource::Answer` records,
+  which the projection still reads.
 - **Layout.** The client lays out the answer from the blocks' shapes,
   deterministically: a summary block leads as the headline; a comparison
   renders its options as columns; steps as a numbered flow; stats as one
@@ -84,27 +80,35 @@ A turn's answer is composed by the runtime, not left to emit order:
 
 ## 3. Blocks
 
-Each block kind is the arguments of the card tool that owns it, offered
-as one kind of block of `answer` (§2); the flat-schema portability rules of
+Each block kind is the arguments of the card tool that owns it, called by
+its own name (§2); the flat-schema portability rules of
 doc 30 §30.1 hold for every block. No block carries
 a topic enum: `semantic_type` is the block's own name, and an optional
 `label` holds the model's own words for what it is ("Weekly routine"),
 shown as the block's eyebrow.
 
-| Block | Shape | Absorbs |
+| Block | Shape | Also offered as (the same block, named for what it shows) |
 |---|---|---|
-| `summary` | headline, one to three sentences, up to five key points | overview, summary, detail lead |
-| `steps` | ordered steps: label, optional detail, optional `when` or duration, optional total | timeline, schedule, itinerary, agenda, milestones, steps, routines, plans |
-| `checklist` | unordered things to bring or do, each checkable | checklist, shopping, packing, reading lists |
-| `comparison` | options (2–6) each with a name, a short verdict and its strengths and weaknesses; aspects compared across options; an optional recommendation | comparison, pros/cons, decision, trade-off |
-| `table` | real tabular data: header and rows, numeric columns detected | data grid, inventory, budget, scorecard |
-| `stats` | one to six figures: label, value, unit, optional change | metric, weather, KPI, status readings |
-| `chart` | series over a category or time axis | chart types as today |
-| `callout` | tone (tip, note, warning, important) and text | alert, caveat |
-| `details` | labelled facts or question-and-answer pairs | FAQ, entity, document facts |
-| `sources` | findings, each tied to a retrieved source | research, news |
-| `recipe` | ingredients, steps, timings | recipe |
-| `media`, `ui_preview`, `diff`, `test_report`, `terminal` | as today | as today |
+| `lead` | headline, one to three sentences, up to five key points | |
+| `steps` | ordered steps: label, optional detail, optional `time` or duration, optional total | timeline, plan.timeline, itinerary, schedule, agenda, milestones, progress, status, lesson, habit_plan, project_plan, home_project, care_plan, event_plan, meal_plan, decision, decision_analysis, coding.deployment, coding.incident, coding.release |
+| `checklist` | unordered lines | shopping_list, reading_list, media_list, collection, notes, meeting_notes, follow_up, reminder, contact_log |
+| `comparison` | options (2–6) each with a name, a short verdict and its strengths and weaknesses; aspects compared across options; an optional recommendation | |
+| `table` | header and rows, numeric columns detected | data.grid, dataframe, comparison_table, pros_cons, decision_matrix, criteria_matrix, tradeoff_analysis, scorecard, inventory, budget, finance_summary, invoice_summary, travel_options, coding.benchmark, coding.dependencies |
+| `stats` | one to six figures: label, value, unit, optional change | |
+| `chart` | series over a category or time axis | trend, timeseries, bar_chart, metric_chart, comparison_chart, telemetry.chart |
+| `callout` | tone (tip, note, warning, important) and text | |
+| `details` | labelled facts or question-and-answer pairs | overview, summary, detail, faq, metric, telemetry.metric, map, route_map, calendar, availability, board, entity, evidence, document, graph, form, action, transaction, alert, conversation, progress_dashboard, simulation, search_results, coding.search, coding.architecture |
+| `research.synthesis` | findings, each tied to a retrieved source | research_brief, news, the social briefs |
+| `recipe` | ingredients, method, timings | recipe.card, recipe_summary, lifestyle.recipe, lifestyle.culinary_recipe |
+| `media`, `ui.preview`, `coding.diff`, `test.report`, `terminal.view` | as today | |
+
+A type is offered under the block whose stored payload its renderer and
+its pack already read, so a type keeps its own renderer, its
+pack and its validation. Every built-in pack's type is produced by some
+block, and a test fails when one is not. Stage 1 first removed these
+types; they came back on 2026-10-11 when that was found to have cut the
+model off from 66 types and 75 of the 88 active packs
+(docs/audits/cards-in-answers-2026-10-11.md).
 
 Builders check structure only (a table's rows have the header's cell
 count; a comparison has at least two options; a step has a label). Domain
@@ -113,9 +117,11 @@ the table's business.
 
 ## 4. Packs
 
-A pack accepts block types, not topic types. A starter pack that only
-renamed a topic for an existing block is removed (invariant 30); one that
-draws a block better (a richer comparison, a stat row) is enabled.
+A pack accepts the types a block is offered as (§3): the 86 built-in packs
+keep their types, and each is reached through the block that builds its
+type's payload. The block kinds of their own (`lead`, `stats`, `callout`,
+`details`, the options `comparison`) have no pack yet and draw through
+their client renderers; a pack for them is stage 3.
 
 ## 5. History
 
@@ -127,8 +133,8 @@ existing record is rewritten (invariants 2 and 29).
 
 1. **Blocks.** The new tools with flat schemas and structural builders;
    client renderers for `summary`, `steps`, `checklist`, a real
-   side-by-side `comparison`, `stats`, `callout` and `details`; the old
-   topic enums removed from the model-facing tools; prompt and tool
+   side-by-side `comparison`, `stats`, `callout` and `details`; each
+   topic type offered as a kind of the block that builds its shape; prompt and tool
    descriptions rewritten around blocks.
 2. **Composition.** The server projection groups a turn's blocks by the
    plan's sections; the client lays out the answer document with the

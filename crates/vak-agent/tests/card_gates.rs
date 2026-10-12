@@ -1,10 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! The presentation check: an answer the app's own signal/recipe detection
-//! says should be a card, written as prose with no card emitted, gets exactly
-//! one nudge. Real trigger: a gpt-5.6-luna answer to "how did the Indian stock
-//! market perform last week" that was a markdown table plus bullets, with the
-//! `emit_*_card` tools offered and unused.
+//! Card gates: a card that cites a page nothing in the conversation
+//! retrieved is refused, naming the URL, and never recorded.
 
 mod support;
 
@@ -280,15 +277,13 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
 #[tokio::test]
 async fn a_card_citing_an_unretrieved_page_is_never_shown() {
     let dir = tempdir().unwrap();
-    let cited = serde_json::json!({"blocks": [
-        {"type": "chart", "sources": [{"url": "https://made-up.example/report"}]}
-    ]});
+    let cited = serde_json::json!({"sources": [{"url": "https://made-up.example/report"}]});
     let (mut agent, _) = build_agent(
         &dir,
         "pc-uncited",
         vec![
-            tool_call_msg("c1", "answer", cited.clone()),
-            tool_call_msg("c2", "answer", cited),
+            tool_call_msg("c1", "emit_chart_card", cited.clone()),
+            tool_call_msg("c2", "emit_chart_card", cited),
             text_msg("I could not open that report, so I have no figures to chart."),
         ],
     )
@@ -309,5 +304,5 @@ async fn a_card_citing_an_unretrieved_page_is_never_shown() {
         .flat_map(|(_, message)| message.content.iter())
         .filter(|block| matches!(block, ContentBlock::ToolResult { content, is_error: true, .. } if content.contains("[uncited-source]") && content.contains("made-up.example")))
         .count();
-    assert_eq!(refused, 2, "each answer is refused, naming the URL");
+    assert_eq!(refused, 2, "each card is refused, naming the URL");
 }

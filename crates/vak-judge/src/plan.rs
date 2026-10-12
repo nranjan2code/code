@@ -35,13 +35,12 @@ pub struct Gap<'a> {
 }
 
 impl Gap<'_> {
-    /// How many planned cards have no card at all. A card that names no
-    /// planned deliverable still counts as one of them, but the runtime
-    /// never says which: it did not see that.
+    /// How many planned cards no card names. A card that names no planned
+    /// deliverable covers none of them: two such cards answering another
+    /// request once stood for a plan of two
+    /// (docs/audits/cards-in-answers-2026-10-11.md, F4).
     pub fn cards_short(&self) -> usize {
-        self.cards_unnamed
-            .len()
-            .saturating_sub(self.cards_unattributed)
+        self.cards_unnamed.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -59,7 +58,7 @@ pub fn verdict(gap: &Gap) -> AnswerVerdict {
 }
 
 /// Compares the plan with the receipts. A card covers the planned card its
-/// `answers` names; the rest are compared by count alone.
+/// `answers` names, and only that one.
 pub fn gap<'a>(plan: &'a [Deliverable], produced: &Produced) -> Gap<'a> {
     let same = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     let mut covered = vec![false; plan.len()];
@@ -112,6 +111,7 @@ mod tests {
         entries
             .iter()
             .map(|(name, form)| Deliverable {
+                kind: None,
                 name: (*name).into(),
                 form: *form,
             })
@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn a_card_covers_the_planned_card_it_names_and_the_rest_are_counted() {
+    fn a_card_covers_only_the_planned_card_it_names() {
         let declared = plan(&[
             ("routine", DeliverableForm::Card),
             ("comparison", DeliverableForm::Card),
@@ -153,14 +153,16 @@ mod tests {
         assert_eq!(left.cards_unnamed.len(), 1);
         assert_eq!(left.cards_unnamed[0].name, "routine");
 
+        // Two cards that name nothing cover neither planned card: two such
+        // cards answering another request once stood for a plan of two.
         let cards = [None, None];
-        assert!(gap(&declared, &produced(&cards, "")).is_empty());
+        assert_eq!(gap(&declared, &produced(&cards, "")).cards_short(), 2);
     }
 
     /// Found live (run_01a1293b-45c3-7f21-8fbf-bff3e2f9d3c6): one card that
     /// named nothing was attributed to the first planned card by emit
-    /// order, and the model was told the other was the one missing. The
-    /// runtime did not see which it was, so it names both and the count.
+    /// order. A card is never assigned a name the runtime did not see, and
+    /// one that names no planned card covers none of them.
     #[test]
     fn an_unattributed_card_is_counted_and_never_assigned_a_name() {
         let declared = plan(&[
@@ -169,7 +171,7 @@ mod tests {
         ]);
         let cards = [Some("first week".to_string())];
         let left = gap(&declared, &produced(&cards, ""));
-        assert_eq!(left.cards_short(), 1);
+        assert_eq!(left.cards_short(), 2);
         assert_eq!(left.cards_unnamed.len(), 2);
         assert_eq!(left.cards_unattributed, 1);
         assert_eq!(verdict(&left), AnswerVerdict::Held(Cause::Plan));

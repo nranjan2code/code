@@ -1502,8 +1502,15 @@ impl TurnCard {
                 }
             }
         };
+        // A turn that did not complete says how it ended, so a later turn
+        // never reads its request as one still waiting for an answer
+        // (docs/audits/cards-in-answers-2026-10-11.md, F3).
+        let ended = match self.outcome.as_str() {
+            "" | "completed" => String::new(),
+            outcome => format!(" \u{2192} ended: {outcome}"),
+        };
         format!(
-            "#{n} asked: {} \u{2192} did: {did_summary} \u{2192} {outcome_part}",
+            "#{n} asked: {} \u{2192} did: {did_summary} \u{2192} {outcome_part}{ended}",
             self.asked
         )
     }
@@ -1894,6 +1901,16 @@ mod tests {
         assert!(line.contains("research.synthesis"));
         assert!(line.contains("Rust news"));
         assert!(line.contains("ev:call-1"));
+        assert!(
+            !line.contains("ended:"),
+            "a completed turn says nothing more"
+        );
+        let failed = turn2.build_card("failed", String::new(), &|s| s.len() as u64 / 4);
+        assert!(
+            failed.line(2).ends_with("\u{2192} ended: failed"),
+            "{}",
+            failed.line(2)
+        );
     }
 
     #[test]

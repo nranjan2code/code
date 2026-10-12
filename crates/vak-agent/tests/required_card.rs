@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! The plan check's reframe rung (docs/design/88-control-plane.md §5): a
-//! planned card still missing after the model was told requires the
-//! `answer` document of one step, once.
+//! planned card still missing after the model was told requires one step
+//! to call the card tool of the kind the plan named, once.
 
 mod support;
 
@@ -71,6 +71,9 @@ impl Tool for StepsCard {
     }
     fn presents_cards(&self) -> bool {
         true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["steps".into()]
     }
     async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
         ToolOutput::ok("Shown to the user.")
@@ -186,13 +189,13 @@ fn plan(form: &str) -> AssistantMessage {
 }
 
 #[tokio::test]
-async fn planned_cards_still_missing_require_the_answer_of_one_step() {
+async fn a_planned_card_still_missing_requires_its_card_tool_once() {
     let dir = tempfile::tempdir().unwrap();
     let (mut agent, required) = agent(
         &dir,
         "required-card",
         vec![
-            plan("card"),
+            plan("steps"),
             text("Water on Monday and Thursday."),
             text("As I said: Monday and Thursday."),
             text("Still only words."),
@@ -205,7 +208,7 @@ async fn planned_cards_still_missing_require_the_answer_of_one_step() {
     );
     assert_eq!(
         *required.lock().unwrap(),
-        vec![None, None, None, Some("answer".to_string())],
+        vec![None, None, None, Some("emit_steps_card".to_string())],
         "told once, then one step is required to call the tool, then the answer stands"
     );
     let session = agent.session.lock().await;
@@ -230,8 +233,30 @@ async fn planned_cards_still_missing_require_the_answer_of_one_step() {
     );
 }
 
+/// A card whose kind the plan did not name has no tool to require: the
+/// model is told once and its answer then stands.
 #[tokio::test]
-async fn a_plan_with_no_card_never_requires_the_answer() {
+async fn a_planned_card_of_no_named_kind_is_told_once_and_never_required() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, required) = agent(
+        &dir,
+        "card-no-kind",
+        vec![
+            plan("card"),
+            text("Water on Monday and Thursday."),
+            text("As I said: Monday and Thursday."),
+        ],
+    );
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { response } if response.text_content() == "As I said: Monday and Thursday."),
+        "{outcome:?}"
+    );
+    assert!(required.lock().unwrap().iter().all(Option::is_none));
+}
+
+#[tokio::test]
+async fn a_plan_with_no_card_never_requires_a_card_tool() {
     let dir = tempfile::tempdir().unwrap();
     let (mut agent, required) = agent(
         &dir,
@@ -248,4 +273,164 @@ async fn a_plan_with_no_card_never_requires_the_answer() {
         "{outcome:?}"
     );
     assert!(required.lock().unwrap().iter().all(Option::is_none));
+}
+
+struct StepsBlock;
+
+#[async_trait]
+impl Tool for StepsBlock {
+    fn name(&self) -> &str {
+        "steps_block"
+    }
+    fn description(&self) -> &str {
+        "Steps in order."
+    }
+    fn schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {
+            "semantic_type": {"type": "string"},
+            "answers": {"type": "string"},
+            "steps": {"type": "array", "items": {"type": "string"}}
+        }, "required": ["steps"]})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["steps".into()]
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("Shown to the user.")
+    }
+}
+
+/// A card that names a deliverable the plan does not have is refused with
+/// the plan's names; one that names nothing is shown, outside the plan's
+/// sections, and the card that names its deliverable is shown
+/// (docs/audits/cards-in-answers-2026-10-11.md, F4).
+#[tokio::test]
+async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, _) = agent(
+        &dir,
+        "named-cards",
+        vec![
+            plan("card"),
+            call(
+                "a1",
+                "steps_block",
+                serde_json::json!({"steps": ["Water Monday"]}),
+            ),
+            call(
+                "a2",
+                "steps_block",
+                serde_json::json!({"answers": "morning routine", "steps": ["Wake"]}),
+            ),
+            call(
+                "a3",
+                "steps_block",
+                serde_json::json!({"answers": "Watering", "steps": ["Water Monday"]}),
+            ),
+            text("Water on Monday."),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(vak_tools::PlanTool), Arc::new(StepsBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let results: Vec<(String, bool, String)> = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } if tool_use_id.starts_with('a') => Some((tool_use_id, is_error, content)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(results.len(), 3, "{results:?}");
+    assert!(!results[0].1, "an unnamed card is shown: {results:?}");
+    assert!(
+        results[1].1
+            && results[1]
+                .2
+                .contains("\"morning routine\", which is not a card in your plan"),
+        "{results:?}"
+    );
+    assert!(!results[2].1, "{results:?}");
+}
+
+struct CalloutBlock;
+
+#[async_trait]
+impl Tool for CalloutBlock {
+    fn name(&self) -> &str {
+        "callout_block"
+    }
+    fn description(&self) -> &str {
+        "A note."
+    }
+    fn schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {
+            "semantic_type": {"type": "string", "enum": ["callout"]},
+            "text": {"type": "string"}
+        }, "required": ["text"]})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn card_kinds(&self) -> Vec<String> {
+        vec!["callout".into()]
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("Shown to the user.")
+    }
+}
+
+/// A card sent to a tool that does not show its kind is told which tool
+/// does, from the tools' own declared kinds.
+#[tokio::test]
+async fn a_kind_sent_to_the_wrong_card_tool_is_told_its_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut agent, _) = agent(
+        &dir,
+        "wrong-kind",
+        vec![
+            call(
+                "k1",
+                "callout_block",
+                serde_json::json!({"semantic_type": "steps", "text": "Water"}),
+            ),
+            text("Water on Monday."),
+        ],
+    );
+    agent.config.tools = vec![Arc::new(StepsBlock), Arc::new(CalloutBlock)];
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let refusal = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error: true,
+            } if tool_use_id == "k1" => Some(content),
+            _ => None,
+        })
+        .expect("refused");
+    assert!(
+        refusal.contains("`steps` is a kind of `steps_block`"),
+        "{refusal}"
+    );
 }

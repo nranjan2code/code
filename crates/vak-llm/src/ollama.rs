@@ -281,7 +281,10 @@ fn map_status_error(status: u16, body: &str, has_tools: bool) -> LlmError {
         .and_then(|v| v.get("error").and_then(|m| m.as_str().map(String::from)))
         .unwrap_or_else(|| body.chars().take(500).collect());
     let lower = message.to_ascii_lowercase();
-    if status == 400
+    // Ollama reports a tool call it could not parse from the model's output
+    // with 400 or, seen live on 2026-10-12, 500: either way the model's
+    // output, which a redo can repair, not a server fault.
+    if matches!(status, 400 | 500)
         && has_tools
         && [
             "xml syntax error",
@@ -788,6 +791,12 @@ mod tests {
             true,
         );
         assert!(matches!(error, LlmError::ToolCallFormat(_)));
+        let as_server_error = map_status_error(
+            500,
+            r#"{"error":"XML syntax error on line 11: element <function> closed by </parameter>"}"#,
+            true,
+        );
+        assert!(matches!(as_server_error, LlmError::ToolCallFormat(_)));
 
         let without_tools = map_status_error(
             400,

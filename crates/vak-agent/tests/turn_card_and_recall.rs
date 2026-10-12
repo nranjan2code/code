@@ -256,20 +256,20 @@ async fn fence_presentation_is_written_once() {
 #[tokio::test]
 async fn fence_presentation_deduped_against_tool_emitted_card() {
     let dir = tempdir().unwrap();
-    // The answer's prose repeats its own card as a `vak` fence with the
+    // The reply repeats the card it showed as a `vak` fence with the
     // IDENTICAL payload: the card is recorded once.
     let duplicate_fence = "Here's the chart you asked for.\n\n```vak\n{\"semantic_type\":\"chart\",\"title\":\"Sales\",\"points\":[{\"series\":\"s\",\"x\":\"1\",\"y\":1}]}\n```";
     let mut agent = build_agent(
         &dir,
         "fence-dedup",
-        vec![tool_call_msg(
-            "call_1",
-            "answer",
-            serde_json::json!({"blocks": [
-                {"type": "chart", "title": "Sales", "points": [{"series": "s", "x": "1", "y": 1}]},
-                {"type": "text", "text": duplicate_fence}
-            ]}),
-        )],
+        vec![
+            tool_call_msg(
+                "call_1",
+                "emit_chart_card",
+                serde_json::json!({"semantic_type": "chart", "title": "Sales", "points": [{"series": "s", "x": "1", "y": 1}]}),
+            ),
+            text_msg(duplicate_fence),
+        ],
         vec![Arc::new(FakeEmitChartCard)],
         true,
     );
@@ -291,8 +291,8 @@ async fn fence_presentation_deduped_against_tool_emitted_card() {
         "the duplicate fence must not add a second presentation: {presentations:?}"
     );
     assert!(matches!(
-        presentations[0].1.source,
-        PresentationSource::Answer { block: 0, .. }
+        &presentations[0].1.source,
+        PresentationSource::ToolCall { tool_use_id } if tool_use_id == "call_1"
     ));
 }
 

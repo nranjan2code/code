@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Cards are Vak's own display channel: a card block of the `answer` tool is
-//! checked by the tool that `presents_cards()` in every permission mode,
+//! Cards are Vak's own display channel: a card call is checked by the tool
+//! that `presents_cards()` in every permission mode,
 //! without an approval and without a denial in read-only. Real trigger: "Vak wants to use emit_metric_card — this needs
 //! your approval" shown under a card that had already rendered.
 
@@ -143,14 +143,20 @@ async fn answer_with_a_card(mode: Mode) -> (usize, usize) {
     cfg.tools = vec![Arc::new(CardTool { runs: runs.clone() })];
     let mut agent = Agent::new(
         Arc::new(Scripted(
-            Mutex::new(VecDeque::from([msg(
-                vec![ContentBlock::ToolUse {
-                    id: "a0".into(),
-                    name: "answer".into(),
-                    input: serde_json::json!({"blocks": [{"type": "metric"}]}),
-                }],
-                StopReason::ToolUse,
-            )])),
+            Mutex::new(VecDeque::from([
+                msg(
+                    vec![ContentBlock::ToolUse {
+                        id: "a0".into(),
+                        name: "emit_metric_card".into(),
+                        input: serde_json::json!({}),
+                    }],
+                    StopReason::ToolUse,
+                ),
+                msg(
+                    vec![ContentBlock::text("Shown above.")],
+                    StopReason::EndTurn,
+                ),
+            ])),
             crate::support::capacity_key(),
         )),
         log,

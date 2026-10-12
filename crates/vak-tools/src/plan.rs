@@ -48,9 +48,16 @@ pub fn parse_plan_args(args: &Value) -> Result<Vec<Deliverable>, String> {
                 "deliverables[{at}].name repeats \"{name}\"; give each deliverable once"
             ));
         }
+        let kind = entry
+            .get("kind")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|kind| !kind.is_empty())
+            .map(str::to_string);
         plan.push(Deliverable {
             name: name.to_string(),
             form,
+            kind,
         });
     }
     Ok(plan)

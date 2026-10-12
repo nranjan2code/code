@@ -7220,15 +7220,11 @@ impl Core {
             .and_then(|loaded| loaded.get(&sid).cloned())
             .unwrap_or_default();
         let surface = capability::build_tool_surface(&tools, progressive, &carried);
-        let mut card_tools: std::collections::HashSet<String> = tools
+        let card_tools: std::collections::HashSet<String> = tools
             .iter()
             .filter(|tool| tool.presents_cards())
             .map(|tool| tool.name().to_string())
             .collect();
-        // The card tools reach the model as one `answer` tool.
-        if !card_tools.is_empty() {
-            card_tools.insert(vak_agent::ANSWER.to_string());
-        }
         // What each tool declares it delivers: a file for review, an
         // artifact, or a change to the workspace.
         let delivering: std::collections::HashMap<String, Arc<dyn vak_tools::Tool>> = tools
@@ -8827,7 +8823,7 @@ mod channel_mcp_network_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let prompt = |surface: Surface| core.clone().with_surface(surface).system_prompt();
-        let cards = "`answer` tool";
+        let cards = "with the card tool";
         let preview = "appear in the user's preview automatically";
 
         let desktop = prompt(Surface::Desktop);

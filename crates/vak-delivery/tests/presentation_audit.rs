@@ -1735,7 +1735,6 @@ fn audit_recipe_selection() {
             &["research", "synthesis", "takeaways"],
             "research.synthesis",
         ),
-        ("metric", &["temperature", "forecast"], "weather.forecast"),
         ("collection", &["chart", "telemetry"], "data.multi_chart"),
     ];
 

@@ -85,8 +85,17 @@ reader and its refusal did not say why, a field of another kind was not
 named, the repair directive and the unknown-tool message listed the card
 tools as callable, a plan form naming a card's kind was refused, and the
 plan check's correction after an answer added a second copy of its cards
-(a later `answer` now replaces the turn's earlier one). The items carried
-below are not built.
+(a later `answer` now replaces the turn's earlier one). On 2026-10-12 the
+nested `answer` call was retired (maintainer's choice, after measurement,
+docs/audits/cards-in-answers-2026-10-11.md): on the same captured requests
+it came back as broken JSON in 7 of 16 steps, separate card calls in at
+most one. Each card is again its own call of the card tool that owns its
+kind, the loop's own display channel (`show_card`), recorded as
+`PresentationSource::ToolCall` with the deliverable its `answers` names;
+the outline and layout stay. The reframe rung requires the card tool of
+the kind the plan named (`Finding::CardRequired`, `Deliverable::kind`), and
+a card naming no planned deliverable is refused while the plan lists
+cards. The items carried below are not built.
 
 ### Open in C6 (found while building its first slice)
 
@@ -98,18 +107,19 @@ below are not built.
 - A wire that refuses a named tool choice is not learned yet: the
   capability is each adapter's fixed reach (`Unknown` for OpenAI-compatible
   endpoints, which sends it).
-- One answer document versus per-block tools, decided for the document.
-  Doc 30 §30.1 measured flat per-shape tools as the reliable path and
-  forbids a list of records inside a record in a list, which a document of
-  blocks is. A first measurement on the dev route
-  (`scripts/measure_answer_form.py`, `qwen3.5:4b-mlx` on local Ollama,
-  2026-10-11, two requests, three blocks each, the same block fields both
-  ways, reasoning off) did not show the nested document to be the less
-  reliable form: all three blocks valid in 8 of 16 and 8 of 16 trials with
-  three flat tools, and in 10 of 16 and 11 of 16 with one `answer` tool
-  holding a list of blocks. Sixteen trials on one model and one wire decide
-  nothing for every provider; the script is to be run on each configured
-  route with the real block schemas.
+- Tool arguments that fail as broken JSON, on every tool and not only
+  cards, are designed for in docs/design/89-constrained-tool-arguments.md
+  (proposal): a wire that can enforce a tool's schema is asked to, and an
+  unreadable call is regenerated under its schema before the model is
+  told.
+- One answer document versus per-block tools: decided for per-block tools
+  on 2026-10-12 (docs/audits/cards-in-answers-2026-10-11.md). The first
+  measurement used toy schemas with the same fields both ways and did not
+  see the fault; replaying Vak's real captured requests on the dev route
+  (`qwen3.5:4b-mlx`, eight runs each of two answer steps) gave good
+  `answer` calls in 5 and 2 of 8, one `answer` block per call (the union
+  schema) in 0 and 1, and separate card calls in 8 and 6. Other routes are
+  to be measured the same way, with the replay of a captured request.
 
 - Seen in the C6 live runs. Fixed since: every card was squeezed into half
   of a phone screen when an answer had no closing prose (that path skipped
@@ -119,8 +129,7 @@ below are not built.
   and 358 px card. Fixed too: a card block's refusal named the card tool to
   call again, and `office_apply`'s missing-anchor error pointed only at
   `doc_read`, not at the anchors an earlier result for the draft named.
-  An `answer` block citing a URL nothing retrieved is refused per block
-  (the citation check had looked only at direct card calls).
+  A card citing a URL nothing retrieved is refused.
   Still open, with no fault found in Vak's contract: asked for a new Word
   file, a model answered at its first step that it could not make one
   (`run_01a12aeb-04df-7200-b6f3-d57e0389aed9`). `office_apply` was offered
@@ -132,13 +141,7 @@ below are not built.
 - The same question from the live side (2026-10-11,
   docs/design/15-reliability.md "Staged repair"): in full turns on the dev
   route the `blocks` JSON was malformed in 9 of 11 `answer` calls, each a
-  single slip (a list not closed, an extra `}`, a `\$` escape) that voided
-  the whole document, because that wire carries each argument as text and
-  hands back what its provider cannot read. The refusal now names the
-  place and the repair ladder ends in a text answer, but the turns still
-  mostly end without cards. This weighs against the nested document on
-  such wires and is to be measured with `scripts/measure_answer_form.py`
-  on the real block schemas before the form is settled.
+  single slip that voided the whole document. Settled by the item above.
 
 ### Carried into later stages (found while building C0–C5)
 
@@ -181,7 +184,7 @@ below are not built.
   (`auto_approve`), the argument aliases in `normalize_tool_call`
   (`file_path` for `path`, `cmd` for `command`), `batch_has_file_dependency`,
   the audit command's and the scheduled script's lookup of `bash`, and the
-  loop-owned `plan`, `recall`, `task` and `answer` interceptions.
+  loop-owned `plan`, `recall`, `task` and card-call interceptions.
 
 Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
@@ -302,10 +305,9 @@ No count decides a rung. The operator's turn limit is the only number that
 bounds a run.
 
 A frame that is changed is changed in what the next request carries: a
-withdrawn tool leaves the offered tools as well as the admitted set, and
-withdrawing the loop-owned `answer` takes out the card tools it is made
-from (`Finding::AnswerWithdrawn`). Found live on 2026-10-11: neither held,
-so the same refusal was given eight times (docs/design/15-reliability.md).
+withdrawn tool leaves the offered tools as well as the admitted set. Found
+live on 2026-10-11: it did not, so the same refusal was given eight times
+(docs/design/15-reliability.md).
 
 ## 5a. Time
 

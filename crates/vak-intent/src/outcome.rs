@@ -512,6 +512,9 @@ pub struct OutcomeSpec {
 pub struct Deliverable {
     pub name: String,
     pub form: DeliverableForm,
+    /// For a card, the kind of card the plan named, when it named one: the
+    /// card tool a step can be required to call for it.
+    pub kind: Option<String>,
 }
 
 /// Runtime status of the primary deliverable. Produced output is not itself

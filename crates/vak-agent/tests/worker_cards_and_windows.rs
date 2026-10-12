@@ -310,12 +310,10 @@ async fn a_workers_card_is_shown_and_recallable_in_the_delegating_conversation()
         ),
         call(
             "c1",
-            "answer",
-            serde_json::json!({"blocks": [
-                {"type": "chart", "title": "Sales by month", "points": [{"series": "s", "x": "Jan", "y": 1}]},
-                {"type": "text", "text": "charted"}
-            ]}),
+            "emit_chart_card",
+            serde_json::json!({"semantic_type": "chart", "title": "Sales by month", "points": [{"series": "s", "x": "Jan", "y": 1}]}),
         ),
+        text_msg("charted"),
         text_msg("The worker charted the sales by month."),
     ]);
     let task = task_tool(&dir, provider.clone(), "parent-cards");

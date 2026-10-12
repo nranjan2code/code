@@ -176,6 +176,14 @@ Read before changing behaviour in these areas:
   acceptance remain open);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
+- **Tool arguments and structured output** — `89-constrained-tool-arguments.md`
+  (proposal, 2026-10-12: why tool calls and cards fail as broken JSON, how
+  every provider family Vak supports can enforce a schema, and the design:
+  a constraint capability per wire and model, strict tools, regenerating
+  unreadable arguments under the tool's schema, a ladder by fault class)
+  with docs/audits/cards-in-answers-2026-10-11.md (the measurements). Read
+  both before changing how a tool's arguments are asked for, read or
+  repaired. See "Tool arguments are written, then read" below.
 - **Proposals, not behaviour** — `88-control-plane.md` (the proposed
   control plane: the model proposes, the runtime decides at a closed set of
   decision points and records each decision; a step contract sets
@@ -1464,18 +1472,32 @@ in progress, and the rest of V4 follows it.
   real validated payloads. Universal semantic shapes compose across domains;
   they are not a coding-only card taxonomy. The step-by-step contributor
   guide is `docs/design/67-presentation-renderer-guide.md`. A model shows
-  cards by answering with the loop-owned `answer` tool
-  (`vak-agent/src/answer.rs`, docs/design/87-composed-answers.md §2): an
-  ordered list of blocks, each prose (`text`) or a card block of a kind an
-  admitted card tool declares (`Tool::card_kinds`). It is built at run time
-  from the card tools the turn admits (`vak-core/src/presentation_tools.rs`,
-  one per block shape: summary, steps, checklist, comparison, table, stats,
-  chart, callout, details, research, recipe, media, UI preview, diff, test
-  report and terminal), which are never offered or callable by their own
-  names; each card block is checked by the tool that owns its kind. A
-  valid call records its cards as `PresentationSource::Answer` presentations
-  and ends the turn with no further model step; any block failing, nothing
-  is shown and each fault names its block. The fence path, an inline
+  each card by calling the card tool that owns its kind, by its own name
+  and precise schema (`vak-core/src/presentation_tools.rs`, one per block
+  shape: summary, steps, checklist, comparison, table, stats, chart,
+  callout, details, research, recipe, media, UI preview, diff, test report
+  and terminal); one nested call of every block, tried as the `answer` tool,
+  came back as broken JSON on 7 of 16 captured steps against none for
+  separate calls (docs/audits/cards-in-answers-2026-10-11.md). A card call
+  is the loop's own display channel (`show_card` in `vak-agent`), in every
+  permission mode: checked against its schema, the plan, the sources the
+  conversation retrieved and its tool's rules, then recorded as a
+  `PresentationSource::ToolCall` presentation with the plan deliverable its
+  `answers` names, and the runtime lays the answer out from those names
+  (docs/design/87-composed-answers.md §2). A block's kinds are its own
+  first, then every registry type whose renderer and pack read the payload
+  it builds (`itinerary` and `meal_plan` are `steps`, `budget` is `table`,
+  `faq` and `map` are `details`), so every built-in pack draws a type some
+  block produces
+  (`every_starter_presentation_pack_compiles_with_its_emitter_payload`),
+  the client draws exactly the kinds the blocks produce
+  (`the_card_kinds_are_exactly_the_types_the_client_draws`), and one
+  argument name is one shape on every block
+  (`one_argument_name_is_one_shape_on_every_block`). A card that names in
+  `answers` a deliverable the plan does not have is refused with the plan's
+  names; a planned card counts as shown only when a card names it. `PresentationSource::Answer` is recorded
+  history only; nothing writes it. A card that fails is refused with
+  what to fix, and goes through the repair stages like any tool. The fence path, an inline
   ` ```vak ` fence, is the fallback when no card tool is admitted, and a
   fence carries the same arguments the block takes. A card block's
   arguments are flat beside `semantic_type`, use only the schema keywords
@@ -1508,8 +1530,7 @@ in progress, and the rest of V4 follows it.
   projected card carries `OutputKind::Card`, never `Information`/`Progress`/
   `Retry`, which chat views fold away (doc 30-output-engineering). When a
   **The card path has two validation gates.** After provider decoding,
-  `normalize_response_tool_uses` canonicalizes the provider call (for an
-  `answer` block, `answer::read` does the same per block): the one argument reader for every tool
+  `normalize_response_tool_uses` canonicalizes the provider call: the one argument reader for every tool
   (`vak_tools::read_arguments`, docs/design/04-tools.md "Reading
   arguments"), then the tool's own `Tool::fill_defaults`; this happens before the
   assistant message is ledgered. `authorize` then validates against the
@@ -1563,8 +1584,9 @@ in progress, and the rest of V4 follows it.
   with receipts (cards recorded, final text, files delivered, commands and
   changes) and a `[plan-check]` control names only what is missing, once,
   without discarding anything already produced; a planned card still
-  missing after that is required of one step as an `answer` call
-  (`ChatRequest::must_call`), once, and what is left then stands. No reading of the request
+  missing after that is required of one step as a call of the card tool
+  owning the kind the plan named for it (`Deliverable::kind`,
+  `ChatRequest::must_call`), once, and what is left then stands. No reading of the request
   or the answer sends a turn back: the request-vocabulary presentation check
   and the card-completeness self-audit are removed, and the stop gate holds
   a turn only on observed facts (an unclosed fence, an unreported tool
@@ -1832,7 +1854,7 @@ crates/vak-presentation  the CLOSED primitive vocabulary (Primitive enum in
                      PACKS (StoredPresentation/PresentationSpec, PresentationOrigin,
                      LibraryScope) are runtime-pluggable and compose existing
                      primitives with ZERO code change; seeds.rs is the worked
-                     example (87 disabled built-in starter definitions).
+                     example (86 disabled built-in starter definitions).
                      Four independently installed social add-ons contribute
                      12 more package-owned presentation layouts (three each),
                      seeded disabled and outside the built-in catalog. Adding a
@@ -1953,10 +1975,10 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      feedback back -- and owns the summariser call behind an
                      incremental compaction. Turn-close hook builds and
                      appends each turn's `TurnCard`; the empty-step and
-                     steering-drift gates live in the loop itself. The
-                     loop-owned `answer` tool (`answer.rs`), built at run
-                     time from the admitted card tools, is the turn's whole
-                     answer as one document of blocks
+                     steering-drift gates live in the loop itself. Card
+                     calls are the loop's own (`show_card`, `cards.rs`):
+                     each checked by its tool and recorded with the plan
+                     deliverable it answers
                      (docs/design/03-agent-loop.md,
                      docs/design/68-context-engine.md,
                      docs/design/87-composed-answers.md)
@@ -2269,6 +2291,35 @@ it, with the evidence, and leave it as an open question rather than a
 verdict about the model. (Recorded 2026-10-07: a "small model" verdict
 hid that `emit_table_card` refused a correct flat `{columns, rows}`
 table; its envelope was the cause.)
+
+## Tool arguments are written, then read
+
+What the measurements on 2026-10-11 and 2026-10-12 established
+(docs/audits/cards-in-answers-2026-10-11.md, docs/design/89-constrained-tool-arguments.md),
+for every provider and model:
+
+- A tool call's arguments are text the model writes. Most failures are
+  syntax (a stray `}`, a raw newline in a string, a list written as text),
+  not a misunderstanding, and grow with how long and how deeply nested one
+  argument is: one nested call of every card block was broken JSON in 7 of
+  16 captured steps, separate card calls with precise schemas in at most 1,
+  and one union schema shared by every block was worse than either.
+- Telling the model and showing the schema lowers that rate and cannot
+  remove it. What removes it is a schema the wire enforces (constrained
+  decoding): strict tools on OpenAI, Anthropic and Bedrock, a schema-bound
+  output on Gemini, Ollama, OpenAI-compatible servers and the rest; it was
+  valid in 16 of 16 on the dev route. A grammar guarantees structure only:
+  content stays the builders' and the runtime's checks.
+- Whether a wire and model enforce a schema is a capability declared by the
+  adapter and learned from refusal, like `tool_choice`, never inferred from
+  a provider's name. Until doc 89 is built, no adapter sends one.
+- Judge a change to how arguments are asked for by replaying Vak's own
+  captured requests on each route, never by a toy schema: the first
+  measurement used toy schemas and missed the fault entirely.
+- Keep one canonical schema per tool, precise and flat (doc 30 §30.1), and
+  one name for one shape across tools (`one_argument_name_is_one_shape_on_every_block`).
+  Never merge several tools' schemas into one, and never nest a whole
+  answer in one argument.
 
 ## No word lists, no tuned limits
 

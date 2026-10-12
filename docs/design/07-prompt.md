@@ -371,6 +371,13 @@ presentation update does not restore stale-context behavior.
   Prose is still the answer when no card makes it clearer, and a several-part
   answer still leads with a summary block. The seed is 1,594 words.
 
+- 2026-10-12, cards as calls again (docs/audits/cards-in-answers-2026-10-11.md).
+  The presentation bullet names no `answer` tool: each part with a card
+  shape is shown with the card tool for it, in reading order, naming its
+  plan deliverable in `answers`, and the rest is text. On the same captured
+  requests one nested `answer` call came back as broken JSON in 7 of 16
+  steps, separate card calls in at most one (a provider error). The seed is 1572 words.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

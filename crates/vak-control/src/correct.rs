@@ -35,13 +35,10 @@ pub enum Finding {
         cards_short: usize,
         /// Every other deliverable with no receipt, with its form.
         others: Vec<(String, String)>,
-        /// The tool the whole answer is given with, when the turn offers
-        /// one: giving it again replaces the answer already shown.
-        answer: Option<String>,
     },
-    /// Planned cards are still not shown, and the next step is framed to
-    /// give the answer as its one document.
-    AnswerRequired { tool: String, missing: Vec<String> },
+    /// A planned card is still not shown, and the next step is framed to
+    /// call the card tool of the kind the plan named for it.
+    CardRequired { name: String, tool: String },
     /// A stop hook the operator configured asked for more work.
     StopHook { reason: String },
     /// A completion gate with its own reason (goal mode, managed work).
@@ -66,9 +63,6 @@ pub enum Finding {
     /// Calls of these tools failed again after their schema was shown, and
     /// the tools are out of the turn.
     Withdrawn { tools: Vec<String> },
-    /// The tool the whole answer is given with was withdrawn the same way,
-    /// so this turn shows no card and the answer is the reply's own text.
-    AnswerWithdrawn { tool: String },
 }
 
 impl Finding {
@@ -78,7 +72,7 @@ impl Finding {
             Self::ToolCallFormat { .. } => Cause::ToolCallRepair,
             Self::EmptyStep => Cause::EmptyStep,
             Self::Fence { .. } => Cause::Fence,
-            Self::Plan { .. } | Self::AnswerRequired { .. } => Cause::Plan,
+            Self::Plan { .. } | Self::CardRequired { .. } => Cause::Plan,
             Self::StopHook { .. } => Cause::StopHook,
             Self::StopGuard { .. } => Cause::StopGuard,
             Self::Truncated { .. } => Cause::Truncated,
@@ -86,9 +80,7 @@ impl Finding {
             Self::KeepWorking => Cause::KeepWorking,
             Self::UnresolvedFailure { .. } => Cause::UnresolvedFailure,
             Self::WorkersRunning { .. } => Cause::WorkersRunning,
-            Self::SchemaShown { .. } | Self::Withdrawn { .. } | Self::AnswerWithdrawn { .. } => {
-                Cause::Repair
-            }
+            Self::SchemaShown { .. } | Self::Withdrawn { .. } => Cause::Repair,
         }
     }
 }
@@ -173,6 +165,31 @@ pub fn uncited_source(urls: &[String]) -> String {
     )
 }
 
+/// What a card is told when its `semantic_type` is a kind another card tool
+/// shows.
+pub fn card_kind_elsewhere(kind: &str, owner: &str) -> String {
+    format!(
+        "[card-kind]: not shown — `{kind}` is a kind of `{owner}`, not of this card. Call \
+         `{owner}` with `semantic_type` `{kind}` and that tool's own fields."
+    )
+}
+
+/// What a card is told when its `answers` names a deliverable the plan
+/// does not list: the card is not shown, and the plan's cards are given.
+pub fn card_unplanned(answers: &str, planned: &[String]) -> String {
+    let names = planned
+        .iter()
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "[card-plan]: not shown — `answers` is \"{answers}\", which is not a card in your \
+         plan. The cards it lists are {names}. Call it again with `answers` set to the one \
+         this card delivers, with the content that deliverable asks for, or leave `answers` \
+         out for a card the plan does not list."
+    )
+}
+
 /// What the model is told about a failed check, signed with the check's
 /// marker. It says who is speaking, because a model reads an unsigned
 /// reminder as the person's.
@@ -200,7 +217,6 @@ pub fn render(finding: &Finding, marker: &str) -> String {
             cards_unattributed,
             cards_short,
             others,
-            answer,
         } => {
             let mut parts = vec![format!(
                 "{marker}: Vakyartha's runtime compared your plan with what this turn \
@@ -225,28 +241,18 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                     .join(", ");
                 parts.push(format!("Nothing produced yet for: {listed}."));
             }
-            parts.push(match answer {
-                Some(tool) => format!(
-                    "Give the whole answer again with `{tool}`: every block it had and what is \
-                     missing, each block's `answers` set to its planned name. It replaces the \
-                     answer already shown. Or finish and say plainly why it is not needed. Do \
-                     not plan again."
-                ),
-                None => "Produce what is missing, or finish and say plainly why it is not \
-                         needed. Keep everything already produced and do not plan again."
+            parts.push(
+                "Show each missing card with its card tool, `answers` set to its planned name, \
+                 or finish and say plainly why it is not needed. Keep everything already shown \
+                 and do not plan again."
                     .to_string(),
-            });
+            );
             parts.join(" ")
         }
-        Finding::AnswerRequired { tool, missing } => format!(
-            "{marker}: Your plan lists {} as cards and none shows them. This step can only \
-             call `{tool}`: give your whole answer with it now, one block for each, with \
-             `answers` set to its planned name. This is not a message from the person.",
-            missing
-                .iter()
-                .map(|name| format!("\"{name}\""))
-                .collect::<Vec<_>>()
-                .join(", ")
+        Finding::CardRequired { name, tool } => format!(
+            "{marker}: Your plan lists \"{name}\" as a card and no card shows it. This step \
+             can only call `{tool}`: show it now with `answers` set to \"{name}\". This is not \
+             a message from the person."
         ),
         Finding::StopHook { reason } => format!(
             "{marker}: a stop hook asked for more work: {}. Do it now, or say plainly why you cannot.",
@@ -313,13 +319,6 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                  you have already produced."
             )
         }
-        Finding::AnswerWithdrawn { tool } => format!(
-            "{marker} `{tool}` is withdrawn for the rest of this turn: its calls kept failing \
-             after its schema was shown, so this turn shows no card. Do not call it again. \
-             Your next reply is the answer the person reads: write the whole answer in it \
-             as Markdown text, every part you meant to give, a table as a Markdown table \
-             and steps as a list."
-        ),
     }
 }
 
@@ -348,7 +347,6 @@ mod tests {
                 cards_unattributed: 1,
                 cards_short: 1,
                 others: vec![("fix".into(), "change".into())],
-                answer: Some("answer".into()),
             },
             "[plan-check]",
         );
@@ -371,9 +369,9 @@ mod tests {
             Finding::ToolCallFormat { reason: "x".into() },
             Finding::EmptyStep,
             Finding::Fence { error: "x".into() },
-            Finding::AnswerRequired {
+            Finding::CardRequired {
+                name: "x".into(),
                 tool: "x".into(),
-                missing: vec!["x".into()],
             },
             Finding::StopHook {
                 reason: "x.".into(),
@@ -397,7 +395,6 @@ mod tests {
             Finding::Withdrawn {
                 tools: vec!["x".into()],
             },
-            Finding::AnswerWithdrawn { tool: "x".into() },
         ];
         for finding in findings {
             assert!(render(&finding, "[m]").starts_with("[m]"), "{finding:?}");

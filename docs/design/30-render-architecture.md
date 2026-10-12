@@ -176,16 +176,14 @@ The envelope is recognized in three input forms:
 one level to get text, then look for our envelope within that text. The
 envelope format is identical regardless of provider.
 
-**Preferred emission path: blocks of the `answer` tool.** The model answers
-with one loop-owned `answer` call (docs/design/87-composed-answers.md §2):
-a list of blocks, each prose or a card block whose kind is declared by one
-of `vak-core/src/presentation_tools.rs`'s card tools, one per payload
-*shape*. Those tools are not offered by their own names; `answer` is built
-from them at run time, and each card block is checked by the tool that owns
-its kind: its `build` turns the block's arguments into the stored card,
-validates it against `SkillRegistry`, and a failure is a repairable error
-naming the block and field. The card is written as a `Presentation` ledger
-entry (`PresentationSource::Answer`) and never carried in result text, of
+**Preferred emission path: card tool calls.** The model shows each card by
+calling the card tool that owns its kind (docs/design/87-composed-answers.md
+§2), one of `vak-core/src/presentation_tools.rs`'s card tools, one per
+payload *shape*, by its own name: its `build` turns the call's arguments
+into the stored card, validates it against `SkillRegistry`, and a failure is
+a repairable error naming the field. The card is written as a
+`Presentation` ledger entry (`PresentationSource::ToolCall`) and never
+carried in result text, of
 which an over-long result's request carries only a window
 (docs/design/68-context-engine.md §3). A call is the *preferred* path over
 writing a ```vak fence directly (`docs/design/07-prompt.md` v3.4.5):

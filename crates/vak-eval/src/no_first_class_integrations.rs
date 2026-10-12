@@ -128,37 +128,12 @@ fn production_lines(text: &str) -> Vec<(usize, String)> {
 /// * `docs/` — out of the walked tree today (only `crates/*/src` is
 ///   scanned), kept here so the rule still reads correctly if the walk ever
 ///   widens.
-/// * `vak-core/src/presentation_tools.rs`'s `semantic_types` arrays — the
-///   `weather` semantic type is a card shape the runtime still emits
-///   (`emit_metric_card`), not a vendor name.
-/// * `vak-delivery/src/skills.rs`'s registry `provides` list and built-in
-///   recipe id mirror that same `weather` semantic type on the receiving
-///   side; the recipe id is consumed by `vak-agent`'s tests (outside this
-///   agent's scope to rename in the same change).
-/// * `vak-presentation/src/seeds.rs` declares the same card label and maps
-///   that label to a metric primitive. Only those exact declarations qualify.
-fn is_allowed(rel_path: &str, line: &str) -> bool {
+fn is_allowed(rel_path: &str) -> bool {
     if rel_path.starts_with("docs/") {
         return true;
     }
     if rel_path == "crates/vak-llm/src/registry.rs" {
         return true;
-    }
-    if rel_path == "crates/vak-core/src/presentation_tools.rs" && line.contains("semantic_types") {
-        return true;
-    }
-    if rel_path == "crates/vak-delivery/src/skills.rs" {
-        let trimmed = line.trim().trim_end_matches(',');
-        if trimmed == "\"weather\"" || trimmed == "\"weather.forecast\"" {
-            return true;
-        }
-    }
-    if rel_path == "crates/vak-presentation/src/seeds.rs" {
-        return matches!(
-            line.trim(),
-            "(\"weather\", \"weather\"),"
-                | "\"metric\" | \"benchmark\" | \"telemetry.metric\" | \"weather\" => Primitive::Metric,"
-        );
     }
     false
 }
@@ -176,9 +151,7 @@ pub fn scan_banned_tokens() -> Result<Vec<Offense>, String> {
             .map_err(|error| format!("{}: {error}", path.display()))?;
         for (line, stripped) in production_lines(&text) {
             let lower = stripped.to_ascii_lowercase();
-            if BANNED_TOKENS.iter().any(|token| lower.contains(token))
-                && !is_allowed(&rel, &stripped)
-            {
+            if BANNED_TOKENS.iter().any(|token| lower.contains(token)) && !is_allowed(&rel) {
                 offenses.push(Offense {
                     path: rel.clone(),
                     line,
@@ -197,16 +170,16 @@ mod tests {
 
     #[test]
     fn presentation_exception_does_not_allow_topic_routing() {
-        let path = "crates/vak-presentation/src/seeds.rs";
-        assert!(is_allowed(path, "(\"weather\", \"weather\"),"));
-        assert!(!is_allowed(
-            path,
-            "if query.contains(\"weather\") { use_tool(); }"
-        ));
-        assert!(!is_allowed(
+        // No topic is a card type of its own: the presentation registries
+        // have no exception.
+        for path in [
+            "crates/vak-presentation/src/seeds.rs",
+            "crates/vak-delivery/src/skills.rs",
+            "crates/vak-core/src/presentation_tools.rs",
             "crates/vak-agent/src/lib.rs",
-            "(\"weather\", \"weather\"),"
-        ));
+        ] {
+            assert!(!is_allowed(path), "{path}");
+        }
     }
 
     #[test]

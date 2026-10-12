@@ -475,12 +475,6 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["desktop", "terminal", "telegram"],
         ),
         (
-            "weather.forecast",
-            vec!["temperature", "forecast"],
-            vec!["metric"],
-            vec!["desktop", "terminal", "telegram"],
-        ),
-        (
             "travel.itinerary",
             vec!["travel"],
             vec!["itinerary"],
@@ -732,7 +726,7 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             // None of them need a dedicated validate_payload() arm: each
             // shares its shape with an already-registered sibling
             // (metric_chart/comparison_chart/telemetry.chart with chart;
-            // telemetry.metric/weather with metric; decision_matrix/
+            // telemetry.metric with metric; decision_matrix/
             // criteria_matrix/tradeoff_analysis with table;
             // lifestyle.recipe/lifestyle.culinary_recipe with recipe.card),
             // so the shared, permissive fallthrough in validate_payload
@@ -741,7 +735,6 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "comparison_chart",
             "telemetry.chart",
             "telemetry.metric",
-            "weather",
             // Composed-answer blocks (docs/design/87-composed-answers.md).
             "lead",
             "stats",

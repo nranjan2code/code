@@ -6,8 +6,7 @@
 
 mod fences;
 use fences::{find_malformed_vak_fence, vak_fence_bodies};
-mod answer;
-pub use answer::ANSWER;
+mod cards;
 pub use vak_control::TimeLimits;
 pub mod circuit;
 pub mod goal;
@@ -1117,15 +1116,15 @@ pub struct Agent {
     seen_calls: std::sync::Mutex<HashMap<String, SeenCall>>,
     /// This run's correction ladder (docs/design/88-control-plane.md §5).
     ladder: vak_control::Ladder,
-    /// An `answer` call whose every block stood, until the loop records
-    /// its cards and ends the turn on it.
-    answered: std::sync::Mutex<Option<Answered>>,
+    /// Each card a call of this step showed, with the plan deliverable
+    /// its `answers` named, until the loop adds them to the plan's receipts.
+    shown_cards: std::sync::Mutex<Vec<Option<String>>>,
     /// The tool the next step must call: the frame change a correction
     /// asked for (`OutputForm::Tool`). Taken when that step is framed.
     must_call: Option<String>,
-    /// Whether a step of this run was already framed to give the answer:
-    /// it is required once, never asked for again.
-    answer_required: bool,
+    /// The planned cards a step of this run was already framed to show:
+    /// each is required once, never asked for again.
+    cards_required: HashSet<String>,
     /// Whether this run has already announced its first workspace change.
     effect_announced: std::sync::atomic::AtomicBool,
     /// The latest plan the model declared this run (docs/design/
@@ -1170,9 +1169,9 @@ impl Agent {
             config,
             seen_calls: std::sync::Mutex::new(HashMap::new()),
             ladder: vak_control::Ladder::default(),
-            answered: std::sync::Mutex::new(None),
+            shown_cards: std::sync::Mutex::new(Vec::new()),
             must_call: None,
-            answer_required: false,
+            cards_required: HashSet::new(),
             effect_announced: std::sync::atomic::AtomicBool::new(false),
             declared_plan: std::sync::Mutex::new(None),
             deliveries: std::sync::Mutex::new(RunDeliveries::default()),
@@ -1297,9 +1296,6 @@ impl Agent {
                 }),
             ));
         }
-        // The card tools reach the model as the one `answer` tool
-        // (docs/design/87-composed-answers.md §2).
-        answer::offer(&mut definitions, &self.config.tools);
         definitions
     }
 
@@ -1498,7 +1494,7 @@ impl Agent {
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.ladder = vak_control::Ladder::default();
         self.must_call = None;
-        self.answer_required = false;
+        self.cards_required.clear();
         *self
             .declared_plan
             .lock()
@@ -2538,8 +2534,8 @@ impl Agent {
                 // plan lists and what the turn produced. Whatever is still
                 // missing after that, the turn ends as it stands.
                 // The plan's receipts (docs/design/86 §2.2): what is still
-                // missing, and whether a step can be framed to give the
-                // answer as its one document.
+                // missing, and whether a step can be framed to show a
+                // missing card with the tool of the kind the plan named.
                 let (plan_gap, requirable) = {
                     let plan = self
                         .declared_plan
@@ -2556,20 +2552,17 @@ impl Agent {
                                     || receipts.artifact_deliveries > 0,
                                 changed: receipts.has_execution_receipt(),
                                 checked: receipts.commands_run > 0 && !verification_stale,
-                                cards_withdrawn: self.repair.answer_withdrawn,
+                                cards_withdrawn: !self.cards_available(),
                             };
                             let gap = vak_judge::plan::gap(plan, &produced);
-                            // The answer can be required of a step when
-                            // planned cards are missing and this turn has
-                            // card tools to show them with.
-                            let requirable = (!self.answer_required
-                                && !gap.cards_unnamed.is_empty()
-                                && self.config.tools.iter().any(|tool| tool.presents_cards()))
-                            .then(|| {
-                                gap.cards_unnamed
-                                    .iter()
-                                    .map(|deliverable| deliverable.name.clone())
-                                    .collect::<Vec<_>>()
+                            // A step can be required to show a missing card
+                            // when the plan named its kind and the tool that
+                            // owns it is still offered; each card once.
+                            let requirable = gap.cards_unnamed.iter().find_map(|deliverable| {
+                                let kind = deliverable.kind.as_deref()?;
+                                let tool = cards::owner(kind, &self.config.tools)?;
+                                (!self.cards_required.contains(&deliverable.name))
+                                    .then(|| (deliverable.name.clone(), tool.name().to_string()))
                             });
                             let finding = (!gap.is_empty()).then(|| Finding::Plan {
                                 cards_unnamed: gap
@@ -2589,7 +2582,6 @@ impl Agent {
                                         )
                                     })
                                     .collect(),
-                                answer: self.answer_offered(),
                             });
                             (finding, requirable)
                         }
@@ -2597,20 +2589,18 @@ impl Agent {
                 };
                 // Told once, keeping everything produced. Still short after
                 // that, the frame changes where it can: one step is required
-                // to call `answer`, once. What is left then stands as the
-                // model's answer, and the decision trail says so.
+                // to call the missing card's tool, once. What is left then
+                // stands as the model's answer, and the decision trail says
+                // so.
                 if let Some(finding) = plan_gap
                     && turn + 1 < self.config.max_turns
                 {
                     let rung = self.ladder.step(Cause::Plan, requirable.is_some());
                     let finding = match (rung, requirable) {
-                        (Rung::Reframe, Some(missing)) => {
-                            self.answer_required = true;
-                            self.must_call = Some(answer::ANSWER.to_string());
-                            Finding::AnswerRequired {
-                                tool: answer::ANSWER.to_string(),
-                                missing,
-                            }
+                        (Rung::Reframe, Some((name, tool))) => {
+                            self.cards_required.insert(name.clone());
+                            self.must_call = Some(tool.clone());
+                            Finding::CardRequired { name, tool }
                         }
                         _ => finding,
                     };
@@ -2934,16 +2924,14 @@ impl Agent {
                     .filter_map(|y| y.delegated.as_ref())
                     .flat_map(|delegated| delegated.cards.iter().map(|_| None)),
             );
-            let answered = self
-                .answered
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            if let Some(answered) = &answered {
-                let answers = self.record_answer(answered).await;
-                cards_emitted_this_run |= !answers.is_empty();
-                card_answers.extend(answers);
-            }
+            let shown = std::mem::take(
+                &mut *self
+                    .shown_cards
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            cards_emitted_this_run |= !shown.is_empty();
+            card_answers.extend(shown);
             for (id, out) in &results {
                 match out {
                     ToolRunOutput::Ok(_) => {
@@ -3141,82 +3129,6 @@ impl Agent {
             {
                 return outcome;
             }
-            // An answer whose blocks all stood is the turn's answer: its
-            // prose is the model's closing message, and no further step is
-            // asked of it.
-            if let Some(answered) = answered {
-                // The plan's receipts are checked for an answer given this
-                // way too: told once, and what is then left stands.
-                let short = {
-                    let plan = self
-                        .declared_plan
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    plan.as_deref().and_then(|plan| {
-                        let gap = vak_judge::plan::gap(
-                            plan,
-                            &vak_judge::plan::Produced {
-                                cards: &card_answers,
-                                final_text: &answered.text,
-                                file_delivered: file_delivered_this_run
-                                    || receipts.artifact_deliveries > 0,
-                                changed: receipts.has_execution_receipt(),
-                                checked: receipts.commands_run > 0 && !verification_stale,
-                                cards_withdrawn: false,
-                            },
-                        );
-                        (!gap.is_empty()).then(|| Finding::Plan {
-                            cards_unnamed: gap
-                                .cards_unnamed
-                                .iter()
-                                .map(|deliverable| deliverable.name.clone())
-                                .collect(),
-                            cards_unattributed: gap.cards_unattributed,
-                            cards_short: gap.cards_short(),
-                            others: gap
-                                .others
-                                .iter()
-                                .map(|deliverable| {
-                                    (
-                                        deliverable.name.clone(),
-                                        deliverable.form.as_str().to_string(),
-                                    )
-                                })
-                                .collect(),
-                            answer: self.answer_offered(),
-                        })
-                    })
-                };
-                if let Some(finding) = short
-                    && turn + 1 < self.config.max_turns
-                {
-                    let rung = self.ladder.step(Cause::Plan, false);
-                    if let Err(error) = self.correct(finding, rung).await {
-                        return nudge_write_failed(error);
-                    }
-                    if rung == Rung::Tell {
-                        turn += 1;
-                        continue;
-                    }
-                }
-                let response = AssistantMessage {
-                    content: if answered.text.is_empty() {
-                        Vec::new()
-                    } else {
-                        vec![ContentBlock::text(answered.text)]
-                    },
-                    stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    model: self.config.model.clone(),
-                    response_id: None,
-                    applied: None,
-                };
-                if !response.content.is_empty() {
-                    self.append_assistant(&response).await;
-                }
-                return TurnOutcome::Completed { response };
-            }
-
             turn += 1;
         }
     }
@@ -3381,7 +3293,7 @@ impl Agent {
             TurnOutcome::Completed { .. } => "completed",
             TurnOutcome::Aborted { .. } => "cancelled",
             TurnOutcome::Failed { .. } => "failed",
-            TurnOutcome::MaxTurnsReached => "degraded",
+            TurnOutcome::MaxTurnsReached => "step_limit",
         };
         let Some((turn_id, raw_narration)) = ({
             let session = self.session.lock().await;
@@ -4539,16 +4451,10 @@ impl Agent {
             .and_then(|tool| tool.delivered_file(input))
     }
 
-    /// Whether `name` is one of this agent's tools and it declares that a
-    /// successful call presents a card (`Tool::presents_cards`).
-    /// The `answer` tool's name when this turn offers it: the card tools
-    /// it is built from are admitted.
-    fn answer_offered(&self) -> Option<String> {
-        self.config
-            .tools
-            .iter()
-            .any(|tool| tool.presents_cards())
-            .then(|| answer::ANSWER.to_string())
+    /// Whether this turn still offers a card tool: none withdrawn by
+    /// repair takes them all.
+    fn cards_available(&self) -> bool {
+        self.config.tools.iter().any(|tool| tool.presents_cards())
     }
 
     /// This agent's tool of that name.
@@ -4557,33 +4463,27 @@ impl Agent {
     }
 
     /// Whether a call by this name looks something up for the request, by
-    /// what its tool declares (`Tool::looks_up`). The loop's own `answer`
-    /// is the answer, never a look; a name no tool here has (an
-    /// integration's tool reached by its bare name) is counted as one.
+    /// what its tool declares (`Tool::looks_up`). A name no tool here has
+    /// (an integration's tool reached by its bare name) is counted as one.
     fn tool_looks_up(&self, name: &str) -> bool {
-        match self.tool_named(name) {
-            Some(tool) => tool.looks_up(),
-            None => name != answer::ANSWER,
-        }
+        self.tool_named(name).is_none_or(|tool| tool.looks_up())
     }
 
     /// Whether `name` was taken out of this turn by repair.
     fn is_withdrawn(&self, name: &str) -> bool {
-        (name == answer::ANSWER && self.repair.answer_withdrawn)
-            || self
-                .repair
-                .withdrawn
-                .iter()
-                .any(|(_, tool)| tool.name() == name)
+        self.repair
+            .withdrawn
+            .iter()
+            .any(|(_, tool)| tool.name() == name)
     }
 
-    /// Whether a call by this name shows cards: a card tool, or the
-    /// `answer` built from them.
+    /// Whether `name` is one of this agent's tools and it declares that a
+    /// successful call presents a card (`Tool::presents_cards`).
     fn tool_presents_cards(&self, name: &str) -> bool {
         self.config
             .tools
             .iter()
-            .any(|tool| tool.presents_cards() && (tool.name() == name || name == answer::ANSWER))
+            .any(|tool| tool.presents_cards() && tool.name() == name)
     }
 
     /// A prose or card answer is not a text-file request. Enforce the
@@ -5421,24 +5321,16 @@ impl Agent {
         let (plan_calls, calls): (Vec<_>, Vec<_>) = calls
             .into_iter()
             .partition(|call| vak_tools::canonical_tool_name(&call.name) == "plan");
-        // `answer` is the turn's whole answer as one document of blocks
-        // (docs/design/87-composed-answers.md §2); the loop reads it and
-        // has each block checked by the card tool that owns its kind.
-        let (answer_calls, calls): (Vec<_>, Vec<_>) = calls
+        // A card is the loop's own display channel (docs/design/
+        // 87-composed-answers.md §2): each call is checked by its tool and
+        // recorded as a card of the answer, in every permission mode.
+        let (card_calls, calls): (Vec<_>, Vec<_>) = calls
             .into_iter()
-            .partition(|call| call.name == answer::ANSWER);
+            .partition(|call| self.tool_presents_cards(&call.name));
         let mut results =
-            Vec::with_capacity(recall_calls.len() + plan_calls.len() + answer_calls.len());
-        for call in answer_calls {
-            let output = self.read_answer(&call).await;
-            // Its blocks are checked by their own tools, so its verdict is
-            // theirs: accepted when every block stood.
-            let verdict = match &output {
-                ToolRunOutput::Err(..) => {
-                    vak_control::CallVerdict::Refused(vak_control::Refusal::Tool)
-                }
-                _ => vak_control::CallVerdict::Accepted,
-            };
+            Vec::with_capacity(recall_calls.len() + plan_calls.len() + card_calls.len());
+        for call in card_calls {
+            let (output, verdict) = self.show_card(&call).await;
             self.record_decisions(vec![
                 vak_control::Decision::by_runtime(vak_control::Choice::AcceptCall(verdict))
                     .with(vak_control::Evidence::Call(call.id.clone())),
@@ -5718,15 +5610,113 @@ impl Agent {
         results
     }
 
-    /// Reads an `answer` call and has every card block checked by its own
-    /// tool. All of them standing, the answer is kept for the loop to record
-    /// and end the turn on; otherwise nothing is shown and each fault names
-    /// its block.
-    async fn read_answer(&self, call: &PendingToolCall) -> ToolRunOutput {
-        let blocks = match answer::read(&call.input, &self.config.tools) {
-            Ok(blocks) => blocks,
-            Err(errors) => return ToolRunOutput::Err(Fault::Shape, answer::refused(&errors)),
+    /// Shows one card: the call is checked against its tool's schema, the
+    /// plan, the sources this conversation retrieved and the tool's own
+    /// rules, then recorded as a presentation of the call with the plan
+    /// deliverable its `answers` names (docs/design/87-composed-answers.md
+    /// §2). A card identical to one already shown this turn is not shown
+    /// twice.
+    async fn show_card(&self, call: &PendingToolCall) -> (ToolRunOutput, vak_control::CallVerdict) {
+        use vak_control::{CallVerdict, Refusal};
+        let Some(tool) = self.tool_named(&call.name).cloned() else {
+            return (
+                ToolRunOutput::Err(
+                    Fault::Shape,
+                    unknown_tool_message(&call.name, &self.config.tools, &[]),
+                ),
+                CallVerdict::Refused(Refusal::Unknown),
+            );
         };
+        if let Err(message) = vak_tools::validate_input(&tool.schema(), &call.input) {
+            // A kind another card tool owns is shown with that tool: say
+            // which, read from the tools' own declared kinds.
+            let elsewhere = call
+                .input
+                .get("semantic_type")
+                .and_then(Value::as_str)
+                .filter(|kind| !tool.card_kinds().iter().any(|own| own == kind))
+                .and_then(|kind| {
+                    cards::owner(kind, &self.config.tools).map(|owner| (kind, owner.name()))
+                });
+            let message = match elsewhere {
+                Some((kind, owner)) => vak_control::card_kind_elsewhere(kind, owner),
+                None => message,
+            };
+            return (
+                ToolRunOutput::Err(Fault::Shape, message),
+                CallVerdict::Refused(Refusal::Schema),
+            );
+        }
+        let answers = call
+            .input
+            .get("answers")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        // A card names only a deliverable the plan has; one that names none
+        // is shown after the plan's sections, and covers no planned card in
+        // the plan check (docs/audits/cards-in-answers-2026-10-11.md, F4).
+        let planned: Vec<String> = self
+            .declared_plan
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|deliverable| deliverable.form == vak_intent::DeliverableForm::Card)
+            .map(|deliverable| deliverable.name.trim().to_string())
+            .collect();
+        if let Some(name) = answers.as_deref()
+            && !planned.is_empty()
+            && !planned
+                .iter()
+                .any(|planned| planned.eq_ignore_ascii_case(name))
+        {
+            return (
+                ToolRunOutput::Err(Fault::Shape, vak_control::card_unplanned(name, &planned)),
+                CallVerdict::Refused(Refusal::Tool),
+            );
+        }
+        // A card that previews a file this run delivered for review is not
+        // shown: the draft is in front of the person with its change list,
+        // and an imitation is not.
+        let previews_delivered = call
+            .input
+            .get("artifact_path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| {
+                self.deliveries
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .paths
+                    .iter()
+                    .any(|delivered| same_workspace_path(delivered, path))
+            });
+        if previews_delivered {
+            return (
+                ToolRunOutput::Ok(
+                    "Not shown: the draft this previews is already in front of the person for \
+                     review."
+                        .into(),
+                ),
+                CallVerdict::Accepted,
+            );
+        }
+        // A card cites only pages something in this conversation retrieved
+        // or was given.
+        let evidence = self
+            .session
+            .lock()
+            .await
+            .evidence_text(|name| self.tool_presents_cards(name));
+        let uncited = uncited_urls(&call.input, &evidence);
+        if !uncited.is_empty() {
+            return (
+                ToolRunOutput::Err(Fault::Shape, vak_control::uncited_source(&uncited)),
+                CallVerdict::Refused(Refusal::Tool),
+            );
+        }
         let cwd = self
             .session
             .lock()
@@ -5734,152 +5724,69 @@ impl Agent {
             .header()
             .map(|header| header.contract_cwd())
             .unwrap_or_default();
-        let ctx = ToolContext::new(cwd);
-        let evidence = self
-            .session
-            .lock()
-            .await
-            .evidence_text(|name| self.tool_presents_cards(name));
-        let mut errors = Vec::new();
-        let mut cards = Vec::new();
-        let mut text = Vec::new();
-        for (at, block) in blocks.into_iter().enumerate() {
-            match block {
-                answer::Block::Text {
-                    text: prose,
-                    answers,
-                } => {
-                    // A part the plan lists as a card is a card block: the
-                    // plan's own form decides it, not the prose.
-                    let planned_card = answers.as_deref().is_some_and(|name| {
-                        self.declared_plan
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .as_deref()
-                            .is_some_and(|plan| {
-                                plan.iter().any(|deliverable| {
-                                    deliverable.form == vak_intent::DeliverableForm::Card
-                                        && deliverable.name.trim().eq_ignore_ascii_case(name)
-                                })
-                            })
-                    });
-                    if planned_card {
-                        errors.push(format!(
-                            "blocks[{at}] answers \"{}\", which your plan lists as a card, but is a \
-                             `text` block. Give it the kind of block that shows it.",
-                            answers.unwrap_or_default()
-                        ));
-                    } else {
-                        text.push(prose);
-                    }
-                }
-                answer::Block::Card { tool, input } => {
-                    // A card that previews a file this run delivered for
-                    // review is not shown: the draft is in front of the
-                    // person with its change list, and an imitation is not.
-                    let previews_delivered = input
-                        .get("artifact_path")
-                        .and_then(Value::as_str)
-                        .is_some_and(|path| {
-                            self.deliveries
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .paths
-                                .iter()
-                                .any(|delivered| same_workspace_path(delivered, path))
-                        });
-                    if previews_delivered {
-                        continue;
-                    }
-                    // A card cites only pages something in this
-                    // conversation retrieved or was given.
-                    let uncited = uncited_urls(&input, &evidence);
-                    if !uncited.is_empty() {
-                        errors.push(format!(
-                            "blocks[{at}]: {}",
-                            vak_control::uncited_source(&uncited)
-                        ));
-                        continue;
-                    }
-                    let checked = tool.execute(&input, &ctx).await;
-                    if checked.is_error() {
-                        errors.push(format!("blocks[{at}]: {}", checked.content));
-                    } else {
-                        cards.push((at, tool.name().to_string(), input));
-                    }
-                }
-            }
+        let checked = tool.execute(&call.input, &ToolContext::new(cwd)).await;
+        if checked.is_error() {
+            return (
+                ToolRunOutput::Err(Fault::Shape, checked.content),
+                CallVerdict::Refused(Refusal::Tool),
+            );
         }
-        if !errors.is_empty() {
-            return ToolRunOutput::Err(Fault::Shape, answer::refused(&errors));
-        }
-        let shown = cards.len();
-        *self
-            .answered
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Answered {
-            call: call.id.clone(),
-            cards,
-            text: text.join("\n\n"),
-        });
-        ToolRunOutput::Ok(format!(
-            "The answer was given to the person ({shown} card(s) shown). The turn ends here."
-        ))
-    }
-
-    /// Records an answer's cards as presentations of its call, in block
-    /// order, and returns what each said it answers in the plan.
-    async fn record_answer(&self, answered: &Answered) -> Vec<Option<String>> {
         let Some(rebuild) = self.config.presentation_rebuild.clone() else {
-            return answered.cards.iter().map(|_| None).collect();
+            self.shown_cards
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(answers);
+            return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
+        };
+        let Some(info) = rebuild(call.name.as_str(), &call.input) else {
+            return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
         };
         let mut session = self.session.lock().await;
         let Some(turn_id) = session.latest_directive_entry_id() else {
-            return Vec::new();
+            return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
         };
+        let digest = vak_session::types::payload_digest(&info.payload);
+        if session.has_presentation(&turn_id, &digest) {
+            return (
+                ToolRunOutput::Ok(
+                    "This card is already shown to the person; it is not shown twice.".into(),
+                ),
+                CallVerdict::Accepted,
+            );
+        }
         let derived_from =
             session.non_card_evidence_since(&turn_id, |name| self.tool_presents_cards(name));
-        // An answer is the turn's whole document: a later one replaces an
-        // earlier one in the projection, so each records all its blocks,
-        // repeating none within itself.
-        let mut answers = Vec::new();
-        let mut recorded = std::collections::HashSet::new();
-        for (at, name, input) in &answered.cards {
-            let Some(info) = rebuild(name.as_str(), input) else {
-                continue;
-            };
-            let digest = vak_session::types::payload_digest(&info.payload);
-            if !recorded.insert(digest.clone()) {
-                continue;
+        let record = vak_session::types::PresentationRecord {
+            turn_id,
+            source: vak_session::types::PresentationSource::ToolCall {
+                tool_use_id: call.id.clone(),
+            },
+            semantic_type: info.semantic_type,
+            skill_id: info.skill_id,
+            skill_version: info.skill_version,
+            schema_version: info.schema_version,
+            payload: info.payload,
+            payload_digest: digest,
+            derived_from,
+            title: info.title,
+            identity_digest: info.identity_digest,
+        };
+        match session.append_presentation(record) {
+            Ok(entry) => {
+                self.shown_cards
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(answers);
+                (
+                    ToolRunOutput::Ok(format!("{} (presentation {})", checked.content, entry.id)),
+                    CallVerdict::Accepted,
+                )
             }
-            let record = vak_session::types::PresentationRecord {
-                turn_id: turn_id.clone(),
-                source: vak_session::types::PresentationSource::Answer {
-                    tool_use_id: answered.call.clone(),
-                    block: u32::try_from(*at).unwrap_or(u32::MAX),
-                },
-                semantic_type: info.semantic_type,
-                skill_id: info.skill_id,
-                skill_version: info.skill_version,
-                schema_version: info.schema_version,
-                payload: info.payload,
-                payload_digest: digest,
-                derived_from: derived_from.clone(),
-                title: info.title,
-                identity_digest: info.identity_digest,
-            };
-            if session.append_presentation(record).is_ok() {
-                answers.push(
-                    input
-                        .get("answers")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|name| !name.is_empty())
-                        .map(str::to_string),
-                );
-            }
+            Err(error) => (
+                ToolRunOutput::Err(Fault::Tool, format!("the card was not recorded: {error}")),
+                CallVerdict::Refused(Refusal::Tool),
+            ),
         }
-        answers
     }
 
     /// The turn's answer when the model repeated calls it had been told
@@ -5953,7 +5860,7 @@ impl Agent {
             .map(normalize_tool_call)
             .map(|call| normalize_mcp_call(call, &index))
             .map(|call| normalize_schema_wrapper(call, &self.config.tools))
-            .map(|call| answer::plan_forms(call, &self.config.tools))
+            .map(|call| cards::plan_forms(call, &self.config.tools))
             .collect::<Vec<_>>();
         self.load_called_deferred(&calls);
         let n = calls.len();
@@ -7322,16 +7229,7 @@ fn unknown_tool_message(name: &str, tools: &[Arc<dyn Tool>], skill_names: &[Stri
     if let Some(skill) = skill {
         return vak_control::skill_not_tool(name, skill);
     }
-    // What the model may call by name: a card tool is reached only as a
-    // block of `answer`.
-    let mut offered: Vec<&str> = tools
-        .iter()
-        .filter(|tool| !tool.presents_cards())
-        .map(|tool| tool.name())
-        .collect();
-    if tools.iter().any(|tool| tool.presents_cards()) {
-        offered.push(answer::ANSWER);
-    }
+    let offered: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
     vak_control::unknown_tool(
         name,
         &offered,
@@ -7415,11 +7313,8 @@ async fn reconcile_repair(
 }
 
 /// Takes tools whose calls failed again after their schema was shown out of
-/// this turn's admitted set, and says so. `answer` is the loop's own tool,
-/// made from the card tools the turn admits: withdrawing it takes those
-/// out, so it is no longer offered and the answer is given as text. A name
-/// that is not an admitted tool has nothing to withdraw: its own error
-/// already lists what is.
+/// this turn's admitted set, and says so. A name that is not an admitted
+/// tool has nothing to withdraw: its own error already lists what is.
 async fn withdraw_tools(
     agent: &mut Agent,
     names: &[String],
@@ -7427,14 +7322,10 @@ async fn withdraw_tools(
     let mut gone = Vec::new();
     let mut withdrawn = Vec::new();
     for name in names {
-        let whole_answer = name == answer::ANSWER;
         // From the end, so each place recorded is the one to put it back.
         let places: Vec<usize> = (0..agent.config.tools.len())
             .rev()
-            .filter(|at| {
-                let tool = &agent.config.tools[*at];
-                tool.name() == name.as_str() || (whole_answer && tool.presents_cards())
-            })
+            .filter(|at| agent.config.tools[*at].name() == name.as_str())
             .collect();
         if places.is_empty() {
             continue;
@@ -7451,9 +7342,6 @@ async fn withdraw_tools(
     if gone.is_empty() {
         return Ok(());
     }
-    let answer_gone = withdrawn.iter().any(|name| name == answer::ANSWER);
-    agent.repair.answer_withdrawn |= answer_gone;
-    withdrawn.retain(|name| name != answer::ANSWER);
     let gone = gone.join(", ");
     let _diagnostic = agent
         .record_activity(
@@ -7475,16 +7363,6 @@ async fn withdraw_tools(
             .correct(Finding::Withdrawn { tools: withdrawn }, Rung::Reframe)
             .await?;
     }
-    if answer_gone {
-        agent
-            .correct(
-                Finding::AnswerWithdrawn {
-                    tool: answer::ANSWER.to_string(),
-                },
-                Rung::Reframe,
-            )
-            .await?;
-    }
     Ok(())
 }
 
@@ -7496,8 +7374,7 @@ async fn inject_repair_directive(
     agent: &Agent,
     failed: &[String],
 ) -> Result<(), vak_session::SessionError> {
-    // What the model may call by name: the tools this turn offers, with
-    // `answer` in place of the card tools.
+    // What the model may call by name: the tools this turn offers.
     let definitions = agent.base_tool_definitions();
     let mut tools = Vec::new();
     let mut unknown = Vec::new();
@@ -7777,8 +7654,6 @@ struct RepairState {
     withdrawn: Vec<(usize, Arc<dyn Tool>)>,
     /// Latest error of a tool still under repair, for the diagnostic.
     last_error: Option<String>,
-    /// The `answer` tool was withdrawn, and its card tools with it.
-    answer_withdrawn: bool,
 }
 
 impl RepairState {
@@ -7805,12 +7680,7 @@ async fn authorize(
             .as_ref()
             .is_some_and(|check| check(&call.name, &call.input))
     };
-    // A card tool is reached only through a block of `answer`
-    // (docs/design/87-composed-answers.md §2): it is no tool the model is
-    // offered by its own name.
-    let tool = tools
-        .iter()
-        .find(|tool| tool.name() == call.name && !tool.presents_cards());
+    let tool = tools.iter().find(|tool| tool.name() == call.name);
     // `work` is the loop's own, offered whenever flows are admitted.
     let mut facts = CallFacts {
         known: tool.is_some() || (call.name == "work" && config.flow_dispatcher.is_some()),
@@ -7953,17 +7823,6 @@ async fn authorize(
     }
 }
 
-/// An `answer` call whose blocks all stood.
-struct Answered {
-    /// The call's id.
-    call: String,
-    /// Each card block: its position in `blocks`, the tool that owns its
-    /// kind and its arguments.
-    cards: Vec<(usize, String, Value)>,
-    /// The prose blocks, in order.
-    text: String,
-}
-
 /// What followed an answer a completion gate held.
 enum Held {
     /// The model was told and answers again.
@@ -8079,7 +7938,7 @@ fn normalize_response_tool_uses(
         let ContentBlock::ToolUse { id, name, input } = block else {
             continue;
         };
-        let call = answer::plan_forms(
+        let call = cards::plan_forms(
             normalize_schema_wrapper(
                 normalize_mcp_call(
                     normalize_tool_call(PendingToolCall {

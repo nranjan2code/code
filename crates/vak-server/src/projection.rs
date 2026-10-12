@@ -2917,7 +2917,7 @@ mod tests {
         for summary in ["revenue", "cost"] {
             let info = vak_core::presentation_tools::presentation_info(
                 "emit_chart_card",
-                &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary}),
+                &serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary}),
                 &skills,
             )
             .expect("fixture card validates");
@@ -4219,7 +4219,7 @@ mod tests {
         })
         .expect("append user message");
 
-        let chart_input = |summary: &str| serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary});
+        let chart_input = |summary: &str| serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary});
         let ack = || "Card displayed to the user (chart).".to_string();
 
         log.append_message(MessageRecord {
@@ -4378,7 +4378,7 @@ mod tests {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-1".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"}),
+                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"}),
             }]),
             meta: None,
         })
@@ -4399,7 +4399,7 @@ mod tests {
             &mut log,
             "emit_chart_card",
             "call-1",
-            &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"}),
+            &serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"}),
         );
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::text(
@@ -4417,7 +4417,7 @@ mod tests {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-2".into(),
                 name: "emit_chart_card".into(),
-                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"cost"}),
+                input: serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"cost"}),
             }]),
             meta: None,
         })
@@ -4438,12 +4438,12 @@ mod tests {
             &mut log,
             "emit_chart_card",
             "call-2",
-            &serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"cost"}),
+            &serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"cost"}),
         );
 
         // A later user turn may intentionally ask for the same card again.
         // Per-turn duplicate suppression must not hide it from the timeline.
-        let repeated_chart = serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"});
+        let repeated_chart = serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":"revenue"});
         log.append_message(MessageRecord {
             message: Message {
                 role: Role::User,
@@ -5020,8 +5020,7 @@ mod tests {
                 .iter()
                 .find(|(_, kind, _)| seed.spec.accepts.iter().any(|accepted| accepted == kind))
             else {
-                // A pack for a topic type no block emits any more is rebound
-                // or removed in docs/design/87-composed-answers.md stage 3.
+                failures.push(format!("{}: no card block produces its type", seed.spec.id));
                 continue;
             };
             // Packs read the stored card, which the tool builds from its
@@ -5334,7 +5333,7 @@ mod tests {
     }
 
     fn append_card_call(log: &mut SessionLog, id: &str, summary: &str) {
-        let input = serde_json::json!({"semantic_type":"chart","chart_type":"line","points":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary});
+        let input = serde_json::json!({"semantic_type":"chart","chart_type":"line","data":[{"series":"s","x":"Mon","y":1}],"accessible_summary":summary});
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: id.into(),

@@ -61,12 +61,9 @@ turn is ended for it:
    next run. The only bound on a model that keeps calling a withdrawn tool
    is the operator's own turn limit.
 
-The loop-owned `answer` tool is withdrawn the same way: the card tools it
-is made from leave the turn, so it is no longer offered, and the model is
-told (`Finding::AnswerWithdrawn`) that its next reply is the answer and to
-write the whole of it as Markdown text. The plan check then reads a
-planned card as text, because no card can be shown, and the outcome
-evaluation still records that the planned card was not shown.
+A card tool is withdrawn the same way. Once no card tool is left, the plan
+check reads a planned card as text, because no card can be shown, and the
+outcome evaluation still records that the planned card was not shown.
 
 A tool leaves its stage when a call of it succeeds, not when a step
 happens not to call it. The stages are per `Agent` run
@@ -104,9 +101,9 @@ summary, table and checklist as Markdown. Still open: on this route the
 model's `blocks` JSON was malformed in 9 of 11 `answer` calls (a list not
 closed, an extra `}`, a `\$` escape), also when told the exact place, so
 most turns end in text rather than cards. One slip anywhere in the one
-deep argument voids the whole call; whether the answer document should
-have a shape that survives that on wires which carry arguments as text is
-not decided here.
+deep argument voided the whole call. Decided on 2026-10-12: each card is
+its own call again, whose arguments are shallow
+(docs/audits/cards-in-answers-2026-10-11.md).
 
 ### Repeated calls (an observed state, no count)
 

@@ -313,7 +313,7 @@ function renderMetric(node: AdaptiveRenderNode, surface: RenderSurface) {
 }
 
 /**
- * Multi-field metric payloads (e.g. weather: temp/humidity/wind) render as a
+ * Multi-field metric payloads (several labelled readings) render as a
  * small grid instead of one label/value pair — this mirrors the legacy
  * "metric-grid-card" branch of the inline metric handler in
  * PresentationRenderer.tsx exactly, including its CSS class names, so the

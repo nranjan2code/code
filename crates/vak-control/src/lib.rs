@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 pub mod correct;
 
 pub use correct::{
-    Finding, Ladder, RECOVERY_NOTE, ShownTool, render, skill_not_tool, uncited_source, unknown_tool,
+    Finding, Ladder, RECOVERY_NOTE, ShownTool, card_kind_elsewhere, card_unplanned, render,
+    skill_not_tool, uncited_source, unknown_tool,
 };
 
 /// Who made a decision.

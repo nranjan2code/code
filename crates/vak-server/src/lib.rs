@@ -26806,8 +26806,14 @@ mod sandbox_promotion_tests {
         let effective = super::effective_presentation_library(&empty, "/tmp/vak-dev-workspace");
         assert_eq!(empty.definitions().count(), 0);
         assert!(empty.activations().is_empty());
-        assert_eq!(effective.definitions().count(), 87);
-        assert_eq!(effective.activations().len(), 87);
+        assert_eq!(
+            effective.definitions().count(),
+            vak_presentation::seeds::built_in_seed_pack().len()
+        );
+        assert_eq!(
+            effective.activations().len(),
+            vak_presentation::seeds::built_in_seed_pack().len()
+        );
         assert!(
             effective
                 .select_preferred("metric", "user", "/tmp/vak-dev-workspace")
@@ -26852,8 +26858,14 @@ mod sandbox_promotion_tests {
                 activated += 1;
             }
         }
-        assert_eq!(activated, 87);
-        assert_eq!(library.activations().len(), 87);
+        assert_eq!(
+            activated,
+            vak_presentation::seeds::built_in_seed_pack().len()
+        );
+        assert_eq!(
+            library.activations().len(),
+            vak_presentation::seeds::built_in_seed_pack().len()
+        );
 
         // Verify deactivate all
         let spec_ids: Vec<String> = library

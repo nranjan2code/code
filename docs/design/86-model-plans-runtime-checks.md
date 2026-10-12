@@ -58,10 +58,12 @@ dispatch on every turn.
 
 The model declares its plan with the broker-owned `plan` tool, intercepted
 in the agent loop like `recall` (it needs the session, never a worker). Its
-one argument is `deliverables`, a list of records `{name, form}`. When a
-planned card is still missing after the model was told, one step is
-required to call `answer` (docs/design/87-composed-answers.md §2;
-docs/design/88-control-plane.md §5, the reframe rung):
+one argument is `deliverables`, a list of records `{name, form}`. A form
+that names a kind of card is a card of that kind (`Deliverable::kind`).
+When a planned card is still missing after the model was told, one step is
+required to call the card tool of that kind, once, when the plan named one
+(docs/design/87-composed-answers.md §2; docs/design/88-control-plane.md
+§5, the reframe rung):
 
 - `name` — the deliverable in the model's own words ("weekly routine",
   "shelf vs meal comparison").
@@ -87,12 +89,12 @@ delivers, by the name the plan gave it.
 When the model ends the turn, the runtime reads the latest plan revision and
 the turn's receipts:
 
-- `card`: a card recorded this turn whose `answers` names it. A card that
-  names no planned deliverable is counted, never attributed: the planned
-  cards no card names are compared with those cards by number alone, and
-  the runtime does not say which one a card was.
-  Once the turn can show no card (the `answer` tool was withdrawn,
-  docs/design/15-reliability.md), a planned card is checked as text.
+- `card`: a card recorded this turn whose `answers` names it, and only
+  that. A card naming a deliverable the plan does not have is refused when
+  it is called; a card that names none, or that a worker showed, covers no
+  planned card and is never attributed one. Once the turn can show no card (every card tool was
+  withdrawn, docs/design/15-reliability.md), a planned card is checked as
+  text.
 - `text`: the final text is non-empty.
 - `file`: a delivered-file receipt.
 - `change`: an execution or edit receipt.
@@ -118,9 +120,9 @@ unsigned message for the person, planned three more times and invented a
 The outcome evaluation reads the same receipts
 (`vak_judge::outcome::PlannedReceipts`): a turn whose plan lists more
 cards than were recorded, or a file no call delivered, is not `produced`,
-whatever its final text says. Found live on 2026-10-11: after every
-`answer` call had been refused, a reply saying the table "has been
-delivered" stood as a produced outcome.
+whatever its final text says. Found live on 2026-10-11: after every card
+had been refused, a reply saying the table "has been delivered" stood as a
+produced outcome.
 
 A turn with no plan is not gated on guesses. What the runtime observed still
 gates it: an unresolved tool failure, and files changed after the last check.
