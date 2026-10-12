@@ -26,6 +26,12 @@ impl McpTool {
     /// what lets a live-data reading reach a configured search server;
     /// servers refine it by declaring their own `serves`.
     pub const SERVES: &'static [&'static str] = &["live-data", "web", "documents", "messaging"];
+    /// What this tool declares to the permission engine; the tool is built
+    /// per turn, so the engine is told this before one exists.
+    pub const PERMISSION: vak_permission::Declared = vak_permission::Declared::new(
+        vak_permission::Reach::Integration,
+        vak_permission::Subject::IntegrationCall,
+    );
 
     pub fn new(manager: Arc<McpManager>) -> Self {
         McpTool {
@@ -91,6 +97,10 @@ impl McpTool {
 
 #[async_trait]
 impl Tool for McpTool {
+    fn permission(&self) -> vak_permission::Declared {
+        Self::PERMISSION
+    }
+
     fn name(&self) -> &str {
         "mcp"
     }

@@ -1315,7 +1315,8 @@ pub(super) async fn send_mail_candidate(
         "revision": candidate.revision,
     });
     if matches!(
-        engine.evaluate(
+        // A provider effect reaches outside this machine, whatever its kind.
+        engine.evaluate_as(
             match &candidate.action {
                 ProposedAction::SendMail { .. } => "mail_calendar_send",
                 ProposedAction::CreateEvent { .. } => "mail_calendar_event_create",
@@ -1323,6 +1324,7 @@ pub(super) async fn send_mail_candidate(
                 ProposedAction::CancelEvent { .. } => "mail_calendar_event_cancel",
                 ProposedAction::RespondToEvent { .. } => "mail_calendar_event_respond",
             },
+            vak_permission::Declared::reach(vak_permission::Reach::Network),
             &permission_args,
             mode,
             core.cwd()
@@ -1653,7 +1655,13 @@ pub(super) async fn reconcile_event_candidate(
     };
     let args = serde_json::json!({"agent_id": agent_id, "account_id": account.id, "candidate_id": candidate.id, "candidate_digest": request.candidate_digest});
     if matches!(
-        engine.evaluate("mail_calendar_event_reconcile", &args, mode, core.cwd()),
+        engine.evaluate_as(
+            "mail_calendar_event_reconcile",
+            vak_permission::Declared::reach(vak_permission::Reach::Network),
+            &args,
+            mode,
+            core.cwd(),
+        ),
         vak_permission::Decision::Deny { .. }
     ) {
         return (
@@ -1867,7 +1875,13 @@ pub(super) async fn reconcile_mail_candidate(
     };
     let args = serde_json::json!({"agent_id": agent_id, "account_id": account.id, "candidate_id": candidate.id, "candidate_digest": request.candidate_digest});
     if matches!(
-        engine.evaluate("mail_calendar_mail_reconcile", &args, mode, core.cwd()),
+        engine.evaluate_as(
+            "mail_calendar_mail_reconcile",
+            vak_permission::Declared::reach(vak_permission::Reach::Network),
+            &args,
+            mode,
+            core.cwd(),
+        ),
         vak_permission::Decision::Deny { .. }
     ) {
         return (

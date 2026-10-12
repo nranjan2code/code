@@ -221,6 +221,10 @@ fn request_error_message(e: &reqwest::Error) -> String {
 
 #[async_trait]
 impl Tool for WebFetchTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::reach(vak_permission::Reach::Network)
+    }
+
     fn name(&self) -> &str {
         "webfetch"
     }

@@ -360,6 +360,10 @@ impl Tool for BrokeredTool {
         self.inner.always_loaded()
     }
 
+    fn permission(&self) -> vak_permission::Declared {
+        self.inner.permission()
+    }
+
     fn time_limit_argument(&self) -> Option<&'static str> {
         self.inner.time_limit_argument()
     }

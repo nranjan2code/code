@@ -1,3 +1,4 @@
+use crate::reach::Subject;
 use globset::{Glob, GlobSet};
 use serde_json::Value;
 
@@ -91,13 +92,13 @@ impl Rule {
     /// This is deliberately NOT the test for `Allow`; see
     /// [`crate::engine::PermissionEngine::evaluate`], which requires an
     /// allow rule to cover every effect the invocation can have.
-    pub fn matches(&self, tool: &str, args: &Value) -> bool {
+    pub fn matches(&self, tool: &str, subject: Subject, args: &Value) -> bool {
         if !self.targets(tool) {
             return false;
         }
         match &self.arg_glob {
             None => true,
-            Some(gs) => arg_candidates(tool, args).iter().any(|c| gs.is_match(c)),
+            Some(gs) => arg_candidates(subject, args).iter().any(|c| gs.is_match(c)),
         }
     }
 
@@ -109,17 +110,25 @@ impl Rule {
     }
 }
 
-/// Extracts every string a restrictive (deny/ask) rule may match against.
-/// Bash contributes the raw command plus each top-level segment; file tools
-/// contribute their path; MCP calls contribute `server/tool`.
+/// Extracts every string a restrictive (deny/ask) rule may match against,
+/// from what the tool declared as its rule subject: a command contributes
+/// the raw command plus each top-level segment, a path tool its path, an
+/// integration call `server/tool`.
 ///
 /// Restrictive matching is best-effort by design: the raw command is always
 /// included so a `-Bash(*rm *)` rule still fires on a command whose structure
 /// defeats segmentation.
-pub fn arg_candidates(tool: &str, args: &Value) -> Vec<String> {
-    match tool {
-        "bash" => {
-            let Some(cmd) = args.get("command").and_then(|c| c.as_str()) else {
+pub fn arg_candidates(subject: Subject, args: &Value) -> Vec<String> {
+    let text = |argument: &str| {
+        args.get(argument)
+            .and_then(Value::as_str)
+            .map(|value| vec![value.to_string()])
+            .unwrap_or_default()
+    };
+    match subject {
+        Subject::Nothing => Vec::new(),
+        Subject::Command(argument) => {
+            let Some(cmd) = args.get(argument).and_then(Value::as_str) else {
                 return Vec::new();
             };
             let mut out = vec![cmd.to_string()];
@@ -130,32 +139,15 @@ pub fn arg_candidates(tool: &str, args: &Value) -> Vec<String> {
             }
             out
         }
-        "write" | "edit" | "read" | "doc_read" | "office_apply" | "glob" | "grep" => args
-            .get("path")
-            .and_then(|p| p.as_str())
-            .map(|p| vec![p.to_string()])
-            .unwrap_or_default(),
-        "skill" => args
-            .get("name")
-            .and_then(|name| name.as_str())
-            .map(|name| vec![name.to_string()])
-            .unwrap_or_default(),
-        "mcp" => match (
-            args.get("action").and_then(|a| a.as_str()),
-            args.get("server").and_then(|s| s.as_str()),
-            args.get("tool").and_then(|t| t.as_str()),
+        Subject::Path { argument, .. } | Subject::Value(argument) => text(argument),
+        Subject::IntegrationCall => match (
+            args.get("action").and_then(Value::as_str),
+            args.get("server").and_then(Value::as_str),
+            args.get("tool").and_then(Value::as_str),
         ) {
-            (Some("call"), Some(server), Some(mcp_tool)) => {
-                vec![format!("{server}/{mcp_tool}")]
-            }
+            (Some("call"), Some(server), Some(tool)) => vec![format!("{server}/{tool}")],
             _ => Vec::new(),
         },
-        "task" => args
-            .get("label")
-            .and_then(|l| l.as_str())
-            .map(|l| vec![l.to_string()])
-            .unwrap_or_default(),
-        _ => Vec::new(),
     }
 }
 
@@ -168,11 +160,11 @@ pub fn arg_candidates(tool: &str, args: &Value) -> Vec<String> {
 /// allow rule may then claim coverage, and the invocation falls through to
 /// the mode default. Restrictive rules are unaffected: they match through
 /// [`arg_candidates`], which always includes the raw command.
-pub fn allow_coverage_units(tool: &str, args: &Value) -> Option<Vec<Vec<String>>> {
-    if tool != "bash" {
-        return Some(vec![arg_candidates(tool, args)]);
-    }
-    let cmd = args.get("command").and_then(|c| c.as_str())?;
+pub fn allow_coverage_units(subject: Subject, args: &Value) -> Option<Vec<Vec<String>>> {
+    let Subject::Command(argument) = subject else {
+        return Some(vec![arg_candidates(subject, args)]);
+    };
+    let cmd = args.get(argument).and_then(|c| c.as_str())?;
     if is_opaque_command(cmd) {
         return None;
     }
@@ -379,7 +371,7 @@ fn valid_name(w: &str) -> bool {
 /// A blanket allow rule (no pattern) covers the whole invocation. Otherwise
 /// every unit from [`allow_coverage_units`] must be matched by some allow
 /// rule; one covered segment never authorizes its neighbours.
-pub(crate) fn allow_covers(rules: &[Rule], tool: &str, args: &Value) -> bool {
+pub(crate) fn allow_covers(rules: &[Rule], tool: &str, subject: Subject, args: &Value) -> bool {
     let allows: Vec<&Rule> = rules
         .iter()
         .filter(|r| r.decision == RuleDecision::Allow && r.targets(tool))
@@ -390,7 +382,7 @@ pub(crate) fn allow_covers(rules: &[Rule], tool: &str, args: &Value) -> bool {
     if allows.iter().any(|r| r.arg_glob.is_none()) {
         return true;
     }
-    let Some(units) = allow_coverage_units(tool, args) else {
+    let Some(units) = allow_coverage_units(subject, args) else {
         return false;
     };
     !units.is_empty()
@@ -409,7 +401,12 @@ mod opaque_substitution_tests {
             "command": "printf '%s' \"$(touch hidden-effect)\""
         });
         let rule = Rule::parse("+Bash(printf *)").expect("valid allow rule");
-        assert!(!allow_covers(&[rule], "bash", &args));
+        assert!(!allow_covers(
+            &[rule],
+            "bash",
+            Subject::Command("command"),
+            &args
+        ));
     }
 
     #[test]
@@ -418,6 +415,11 @@ mod opaque_substitution_tests {
             "command": "printf '%s' \"`touch hidden-effect`\""
         });
         let rule = Rule::parse("+Bash(printf *)").expect("valid allow rule");
-        assert!(!allow_covers(&[rule], "bash", &args));
+        assert!(!allow_covers(
+            &[rule],
+            "bash",
+            Subject::Command("command"),
+            &args
+        ));
     }
 }

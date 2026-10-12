@@ -7,12 +7,13 @@
 //! product's whole claim rests on: an `Allow` decision means every effect the
 //! invocation can have is covered by an explicit rule.
 
+mod support;
+
 use serde_json::json;
 use vak_permission::{Decision, Mode, PermissionEngine};
 
 fn engine(rules: &[&str]) -> PermissionEngine {
-    PermissionEngine::from_rule_strings(&rules.iter().map(|r| r.to_string()).collect::<Vec<_>>())
-        .expect("rules parse")
+    support::engine(&rules.iter().map(|r| r.to_string()).collect::<Vec<_>>()).expect("rules parse")
 }
 
 fn decide(rules: &[&str], command: &str) -> Decision {
@@ -252,12 +253,9 @@ mod paths {
     }
 
     fn write_decision(ws: &Path, path: &str) -> Decision {
-        PermissionEngine::default().evaluate(
-            "write",
-            &json!({ "path": path }),
-            Mode::WorkspaceWrite,
-            ws,
-        )
+        PermissionEngine::default()
+            .with_tools(support::built_in())
+            .evaluate("write", &json!({ "path": path }), Mode::WorkspaceWrite, ws)
     }
 
     /// A symlinked directory used to escape containment because a
@@ -327,12 +325,14 @@ mod paths {
         std::fs::write(outside.join("secret.txt"), b"secret").expect("secret");
         w.link("escape", &outside);
 
-        let d = PermissionEngine::default().evaluate(
-            "read",
-            &json!({ "path": "escape/secret.txt" }),
-            Mode::ReadOnly,
-            &w.ws(),
-        );
+        let d = PermissionEngine::default()
+            .with_tools(support::built_in())
+            .evaluate(
+                "read",
+                &json!({ "path": "escape/secret.txt" }),
+                Mode::ReadOnly,
+                &w.ws(),
+            );
         assert!(matches!(d, Decision::Deny { .. }));
     }
 }

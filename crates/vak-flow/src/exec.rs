@@ -754,7 +754,7 @@ async fn authorize_flow_tool(
             if vak_agent::auto_approve(
                 deps.approval_mode,
                 source,
-                tool,
+                engine.declared(tool),
                 args,
                 deps.mode,
                 deps.sandbox.is_some(),

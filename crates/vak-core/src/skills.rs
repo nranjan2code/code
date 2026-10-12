@@ -185,6 +185,12 @@ impl SkillTool {
     /// Declared as a constant so capability declarations can read it
     /// without the turn's admitted skill set.
     pub const SERVES: &'static [&'static str] = &["documents", "orchestration"];
+    /// What this tool declares to the permission engine; the tool is built
+    /// per turn, so the engine is told this before one exists.
+    pub const PERMISSION: vak_permission::Declared = vak_permission::Declared::new(
+        vak_permission::Reach::ReadStore,
+        vak_permission::Subject::Value("name"),
+    );
 
     /// The skill catalogue itself is in the prompt (`prompt_section_from_capabilities`),
     /// once; the tool carries only the admitted names, as its schema enum.
@@ -204,6 +210,10 @@ impl SkillTool {
 
 #[async_trait]
 impl vak_tools::Tool for SkillTool {
+    fn permission(&self) -> vak_permission::Declared {
+        Self::PERMISSION
+    }
+
     fn name(&self) -> &str {
         "skill"
     }

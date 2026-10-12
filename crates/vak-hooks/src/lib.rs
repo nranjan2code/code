@@ -72,11 +72,21 @@ impl HookOutcome {
     }
 }
 
+/// The tool call a hook runs for: its name, what the tool declared a
+/// permission rule about it matches (a hook's matcher is a rule), and its
+/// arguments.
+#[derive(Debug, Clone, Copy)]
+pub struct ToolCall<'a> {
+    pub name: &'a str,
+    pub subject: vak_permission::Subject,
+    pub input: &'a Value,
+}
+
 fn hook_input(
     event: HookEvent,
     session_id: &str,
     cwd: &Path,
-    tool: Option<(&str, &Value)>,
+    tool: Option<ToolCall<'_>>,
     extra: Option<&str>,
 ) -> Value {
     let mut v = serde_json::json!({
@@ -84,8 +94,8 @@ fn hook_input(
         "session_id": session_id,
         "cwd": cwd.display().to_string(),
     });
-    if let Some((name, input)) = tool {
-        v["tool"] = serde_json::json!({"name": name, "input": input});
+    if let Some(call) = tool {
+        v["tool"] = serde_json::json!({"name": call.name, "input": call.input});
     }
     if let Some(text) = extra {
         v["text"] = Value::String(text.to_string());
@@ -99,7 +109,7 @@ pub async fn run_hooks(
     event: HookEvent,
     session_id: &str,
     cwd: &Path,
-    tool: Option<(&str, &Value)>,
+    tool: Option<ToolCall<'_>>,
     extra: Option<&str>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> HookOutcome {
@@ -112,7 +122,7 @@ pub async fn run_hooks_with_recorder(
     event: HookEvent,
     session_id: &str,
     cwd: &Path,
-    tool: Option<(&str, &Value)>,
+    tool: Option<ToolCall<'_>>,
     extra: Option<&str>,
     cancel: &tokio_util::sync::CancellationToken,
     recorder: Option<HookRecorder<'_>>,
@@ -122,8 +132,8 @@ pub async fn run_hooks_with_recorder(
         if hook.event != event {
             continue;
         }
-        if let (Some(rule), Some((name, input))) = (&hook.matcher, tool)
-            && !rule.matches(name, input)
+        if let (Some(rule), Some(call)) = (&hook.matcher, tool)
+            && !rule.matches(call.name, call.subject, call.input)
         {
             continue;
         }
@@ -152,7 +162,7 @@ async fn run_one(
     event: HookEvent,
     session_id: &str,
     cwd: &Path,
-    tool: Option<(&str, &Value)>,
+    tool: Option<ToolCall<'_>>,
     extra: Option<&str>,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> HookOutcome {

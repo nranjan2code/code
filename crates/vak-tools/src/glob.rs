@@ -14,6 +14,16 @@ pub struct GlobTool;
 
 #[async_trait]
 impl Tool for GlobTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::new(
+            vak_permission::Reach::ReadPath,
+            vak_permission::Subject::Path {
+                argument: "path",
+                required: false,
+            },
+        )
+    }
+
     fn name(&self) -> &str {
         "glob"
     }

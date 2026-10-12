@@ -188,6 +188,10 @@ fn basename(path: &Path) -> String {
 
 #[async_trait]
 impl Tool for WebBrowseTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::reach(vak_permission::Reach::Network)
+    }
+
     fn name(&self) -> &str {
         "browse"
     }

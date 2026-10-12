@@ -14,6 +14,13 @@ pub struct BashTool;
 
 #[async_trait]
 impl Tool for BashTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::new(
+            vak_permission::Reach::Command,
+            vak_permission::Subject::Command("command"),
+        )
+    }
+
     fn name(&self) -> &str {
         "bash"
     }

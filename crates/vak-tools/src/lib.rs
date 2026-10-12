@@ -218,6 +218,14 @@ pub trait Tool: Send + Sync {
         &[]
     }
 
+    /// What this tool reaches and what a permission rule about it matches
+    /// (`vak_permission::Declared`). The engine's mode defaults read this,
+    /// never the tool's name. A tool that declares nothing is an unknown:
+    /// read-only mode denies it and workspace-write asks.
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::default()
+    }
+
     /// Loaded into every turn's schemas: the tools a model works with on
     /// most turns (reading, searching and changing files, running commands,
     /// fetching a page, planning, discovery). Every other tool that declares

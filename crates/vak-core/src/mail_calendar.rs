@@ -622,8 +622,19 @@ fn first_href(values: &Value) -> Result<&str, vak_mail_calendar::provider::Provi
         .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)
 }
 
+impl MailCalendarTool {
+    /// What this tool declares to the permission engine, known before one
+    /// is built.
+    pub const PERMISSION: vak_permission::Declared =
+        vak_permission::Declared::reach(vak_permission::Reach::ReadStore);
+}
+
 #[async_trait::async_trait]
 impl vak_tools::Tool for MailCalendarTool {
+    fn permission(&self) -> vak_permission::Declared {
+        Self::PERMISSION
+    }
+
     fn name(&self) -> &str {
         "mail_calendar"
     }

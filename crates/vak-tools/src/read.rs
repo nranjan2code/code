@@ -11,6 +11,16 @@ pub struct ReadTool;
 
 #[async_trait]
 impl Tool for ReadTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::new(
+            vak_permission::Reach::ReadPath,
+            vak_permission::Subject::Path {
+                argument: "path",
+                required: true,
+            },
+        )
+    }
+
     fn name(&self) -> &str {
         "read"
     }

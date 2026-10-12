@@ -2,6 +2,15 @@ use serde_json::json;
 use vak_agent::{ApprovalMode, auto_approve};
 use vak_permission::{AskSource, Mode};
 
+/// What the built-in tool of this name declares to the permission engine.
+fn declared(name: &str) -> vak_permission::Declared {
+    vak_tools::brokered_tools(std::path::PathBuf::new(), &[])
+        .iter()
+        .find(|tool| tool.name() == name)
+        .map(|tool| tool.permission())
+        .unwrap_or_default()
+}
+
 #[test]
 fn approve_safe_never_bypasses_explicit_rules_or_circuit_breaker()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -11,7 +20,7 @@ fn approve_safe_never_bypasses_explicit_rules_or_circuit_breaker()
     assert!(!auto_approve(
         ApprovalMode::ApproveSafe,
         AskSource::Rule,
-        "write",
+        declared("write"),
         &input,
         Mode::WorkspaceWrite,
         true,
@@ -20,7 +29,7 @@ fn approve_safe_never_bypasses_explicit_rules_or_circuit_breaker()
     assert!(!auto_approve(
         ApprovalMode::ApproveSafe,
         AskSource::CircuitBreaker,
-        "read",
+        declared("read"),
         &input,
         Mode::ReadOnly,
         true,
@@ -29,7 +38,7 @@ fn approve_safe_never_bypasses_explicit_rules_or_circuit_breaker()
     assert!(!auto_approve(
         ApprovalMode::AutoApprove,
         AskSource::CircuitBreaker,
-        "read",
+        declared("read"),
         &input,
         Mode::ReadOnly,
         true,
@@ -47,7 +56,7 @@ fn approve_safe_rejects_paths_that_escape_the_workspace() -> Result<(), Box<dyn 
     assert!(!auto_approve(
         ApprovalMode::ApproveSafe,
         AskSource::Scope,
-        "write",
+        declared("write"),
         &input,
         Mode::WorkspaceWrite,
         true,

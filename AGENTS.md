@@ -1912,7 +1912,9 @@ crates/vak-tools     read/write/edit/bash/glob/grep/webfetch/browse/
                      loop (never dispatched to a worker) and answers from
                      the session by turn number, presentation id, or
                      evidence id (docs/design/68-context-engine.md §3, §5)
-crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny. Deny/Ask
+crates/vak-permission rule engine: modes × rules -> Allow/Ask/Deny, over
+                     what each tool declares (reach.rs: its reach and the
+                     argument a rule matches; no tool names). Deny/Ask
                      match existentially (one bad effect gates the call);
                      Allow is UNIVERSAL — every segment of a compound shell
                      command must be covered, or the call falls through to
@@ -2355,6 +2357,14 @@ removed, and the change is verified with real turns.
   and nothing already produced is discarded to end a turn.
 - No domain, provider or tool is first-class: nothing names one to make it
   work.
+
+A tool's permission is what it declares, never its name: its reach and
+the argument a rule matches (`Tool::permission`, `vak_permission::Declared`,
+docs/design/08-permissions.md "Declared reach"). The engine, rules, hook
+matchers, remembered approvals and `auto_approve` read the declaration; a
+new tool declares one, and a check that is not a tool call (a provider
+effect) states its reach where it checks. Add no table of tool names to
+`vak-permission` or its callers.
 
 A tool error says where its fault lies as a typed value at its source
 (`ToolOutput::error(Fault::…, …)`, `vak_control::Fault`): add no reader of

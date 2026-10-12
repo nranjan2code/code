@@ -137,9 +137,10 @@ async fn answer_with_a_card(mode: Mode) -> (usize, usize) {
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
     cfg.mode = mode;
-    cfg.permission = Some(Arc::new(
-        PermissionEngine::default().with_presenting_tools(["emit_metric_card".to_string()]),
-    ));
+    cfg.permission = Some(Arc::new(PermissionEngine::default().with_tools([(
+        "emit_metric_card".to_string(),
+        vak_permission::Declared::reach(vak_permission::Reach::Display),
+    )])));
     cfg.tools = vec![Arc::new(CardTool { runs: runs.clone() })];
     let mut agent = Agent::new(
         Arc::new(Scripted(
@@ -188,8 +189,10 @@ async fn card_tools_run_without_approval_in_every_mode() {
 
 #[test]
 fn a_tool_the_host_did_not_declare_as_presenting_still_needs_approval() {
-    let engine =
-        PermissionEngine::default().with_presenting_tools(["emit_metric_card".to_string()]);
+    let engine = PermissionEngine::default().with_tools([(
+        "emit_metric_card".to_string(),
+        vak_permission::Declared::reach(vak_permission::Reach::Display),
+    )]);
     let cwd = std::env::temp_dir();
     let decision = engine.evaluate(
         "emit_lookalike_card",
@@ -273,9 +276,10 @@ async fn a_failed_card_does_not_hold_back_a_complete_answer() {
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
     cfg.mode = Mode::WorkspaceWrite;
-    cfg.permission = Some(Arc::new(
-        PermissionEngine::default().with_presenting_tools(["emit_metric_card".to_string()]),
-    ));
+    cfg.permission = Some(Arc::new(PermissionEngine::default().with_tools([(
+        "emit_metric_card".to_string(),
+        vak_permission::Declared::reach(vak_permission::Reach::Display),
+    )])));
     cfg.tools = vec![Arc::new(StrictCardTool)];
     let answer = "Copper trades at about $6.70 per pound, according to the exchange quote.";
     let mut agent = Agent::new(

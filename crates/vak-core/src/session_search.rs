@@ -56,8 +56,19 @@ fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
     }
 }
 
+impl SessionSearchTool {
+    /// What this tool declares to the permission engine, known before one
+    /// is built.
+    pub const PERMISSION: vak_permission::Declared =
+        vak_permission::Declared::reach(vak_permission::Reach::ReadStore);
+}
+
 #[async_trait::async_trait]
 impl vak_tools::Tool for SessionSearchTool {
+    fn permission(&self) -> vak_permission::Declared {
+        Self::PERMISSION
+    }
+
     fn name(&self) -> &str {
         "session_search"
     }

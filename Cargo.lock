@@ -7466,6 +7466,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "vak-config",
+ "vak-permission",
  "vak-tools",
 ]
 
@@ -7727,6 +7728,7 @@ dependencies = [
  "vak-llm",
  "vak-ooxml",
  "vak-pdf",
+ "vak-permission",
  "vak-sandbox",
  "vak-session",
  "vak-telemetry",

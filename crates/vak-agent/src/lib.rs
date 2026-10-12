@@ -59,12 +59,13 @@ pub enum ApprovalMode {
 pub fn auto_approve(
     approval_mode: ApprovalMode,
     source: AskSource,
-    tool: &str,
+    declared: vak_permission::Declared,
     input: &Value,
     mode: Mode,
     sandboxed: bool,
     cwd: &std::path::Path,
 ) -> bool {
+    use vak_permission::{Reach, Subject};
     if matches!(source, AskSource::Rule | AskSource::CircuitBreaker) {
         return false;
     }
@@ -76,18 +77,15 @@ pub fn auto_approve(
     {
         return false;
     }
-    if matches!(tool, "read" | "glob" | "grep" | "ls" | "search") {
-        return true;
-    }
-    if matches!(tool, "write" | "edit") {
-        return input
-            .get("path")
+    match (declared.reach, declared.subject) {
+        (Reach::ReadPath, _) => true,
+        (Reach::WritePath, Subject::Path { argument, .. }) => input
+            .get(argument)
             .and_then(Value::as_str)
-            .is_some_and(|path| {
-                vak_permission::path_in_workspace(std::path::Path::new(path), cwd)
-            });
+            .is_some_and(|path| vak_permission::path_in_workspace(std::path::Path::new(path), cwd)),
+        (Reach::Command, _) => sandboxed && !matches!(mode, Mode::FullAccess),
+        _ => false,
     }
-    tool == "bash" && sandboxed && !matches!(mode, Mode::FullAccess)
 }
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -7166,13 +7164,22 @@ async fn execute_one(
     let call_recorder = call_recorder
         .as_ref()
         .map(|recorder| recorder as vak_hooks::HookRecorder<'_>);
+    // A hook's matcher is a permission rule: it matches what the tool
+    // declared a rule about it matches.
+    let hook_subject = vak_tools::tool_for_call(tools, &call.name)
+        .map(|tool| tool.permission().subject)
+        .unwrap_or_default();
     if let Some(hooks) = hooks {
         let pre = vak_hooks::run_hooks_with_recorder(
             hooks.clone(),
             vak_hooks::HookEvent::PreToolUse,
             session_id,
             cwd,
-            Some((&call.name, &call.input)),
+            Some(vak_hooks::ToolCall {
+                name: &call.name,
+                subject: hook_subject,
+                input: &call.input,
+            }),
             None,
             cancel,
             call_recorder,
@@ -7334,7 +7341,11 @@ async fn execute_one(
             vak_hooks::HookEvent::PostToolUse,
             session_id,
             cwd,
-            Some((&hook_name, &hook_input)),
+            Some(vak_hooks::ToolCall {
+                name: &hook_name,
+                subject: hook_subject,
+                input: &hook_input,
+            }),
             Some(post_reason),
             cancel,
             call_recorder,
@@ -7918,7 +7929,11 @@ async fn authorize(
             Decision::Allow
         } else {
             match &config.permission {
-                Some(engine) => engine.evaluate(&call.name, &call.input, config.mode, cwd),
+                Some(engine) => {
+                    let declared = vak_tools::tool_for_call(&config.tools, &call.name)
+                        .map_or_else(|| engine.declared(&call.name), |tool| tool.permission());
+                    engine.evaluate_as(&call.name, declared, &call.input, config.mode, cwd)
+                }
                 None => Decision::Allow,
             }
         };
@@ -7944,7 +7959,16 @@ async fn authorize(
             let covered = auto_approve(
                 config.approval_mode,
                 source,
-                &call.name,
+                vak_tools::tool_for_call(&config.tools, &call.name).map_or_else(
+                    || {
+                        config
+                            .permission
+                            .as_ref()
+                            .map(|engine| engine.declared(&call.name))
+                            .unwrap_or_default()
+                    },
+                    |tool| tool.permission(),
+                ),
                 &call.input,
                 config.mode,
                 config.sandbox.is_some(),
@@ -8722,6 +8746,15 @@ mod auto_approve_tests {
         tempfile::tempdir().unwrap()
     }
 
+    /// What the built-in tool of this name declares to the permission engine.
+    fn declared(name: &str) -> vak_permission::Declared {
+        vak_tools::brokered_tools(std::path::PathBuf::new(), &[])
+            .iter()
+            .find(|tool| tool.name() == name)
+            .map(|tool| tool.permission())
+            .unwrap_or_default()
+    }
+
     #[test]
     fn rule_and_circuit_breaker_sources_never_auto_approve() {
         let cwd = ws();
@@ -8730,7 +8763,7 @@ mod auto_approve_tests {
                 !auto_approve(
                     ApprovalMode::AutoApprove,
                     source,
-                    "bash",
+                    declared("bash"),
                     &serde_json::json!({"command": "ls"}),
                     Mode::WorkspaceWrite,
                     true,
@@ -8748,7 +8781,7 @@ mod auto_approve_tests {
         assert!(auto_approve(
             ApprovalMode::AutoApprove,
             AskSource::ModeDefault,
-            "bash",
+            declared("bash"),
             &json,
             Mode::WorkspaceWrite,
             true,
@@ -8765,7 +8798,7 @@ mod auto_approve_tests {
             auto_approve(
                 ApprovalMode::ApproveSafe,
                 AskSource::ModeDefault,
-                "bash",
+                declared("bash"),
                 &serde_json::json!({"command": "cargo test"}),
                 Mode::WorkspaceWrite,
                 true,
@@ -8777,7 +8810,7 @@ mod auto_approve_tests {
             auto_approve(
                 ApprovalMode::ApproveSafe,
                 AskSource::ModeDefault,
-                "bash",
+                declared("bash"),
                 &serde_json::json!({"command": "cargo test"}),
                 Mode::ReadOnly,
                 true,
@@ -8797,7 +8830,7 @@ mod auto_approve_tests {
             !auto_approve(
                 ApprovalMode::ApproveSafe,
                 AskSource::ModeDefault,
-                "bash",
+                declared("bash"),
                 &serde_json::json!({"command": "rm -rf /"}),
                 Mode::WorkspaceWrite,
                 false,
@@ -8809,7 +8842,7 @@ mod auto_approve_tests {
             !auto_approve(
                 ApprovalMode::ApproveSafe,
                 AskSource::ModeDefault,
-                "bash",
+                declared("bash"),
                 &serde_json::json!({"command": "ls"}),
                 Mode::FullAccess,
                 true,
@@ -8822,12 +8855,12 @@ mod auto_approve_tests {
     #[test]
     fn approve_safe_auto_approves_read_tools() {
         let cwd = ws();
-        for tool in ["read", "glob", "grep", "ls", "search"] {
+        for tool in ["read", "glob", "grep", "doc_read"] {
             assert!(
                 auto_approve(
                     ApprovalMode::ApproveSafe,
                     AskSource::ModeDefault,
-                    tool,
+                    declared(tool),
                     &serde_json::json!({}),
                     Mode::WorkspaceWrite,
                     false,
@@ -8848,7 +8881,7 @@ mod auto_approve_tests {
             auto_approve(
                 ApprovalMode::ApproveSafe,
                 AskSource::ModeDefault,
-                "write",
+                declared("write"),
                 &serde_json::json!({"path": "notes.txt", "content": "x"}),
                 Mode::WorkspaceWrite,
                 false,
@@ -8861,7 +8894,7 @@ mod auto_approve_tests {
             !auto_approve(
                 ApprovalMode::ApproveSafe,
                 AskSource::ModeDefault,
-                "write",
+                declared("write"),
                 &serde_json::json!({"path": outside.to_string_lossy(), "content": "x"}),
                 Mode::WorkspaceWrite,
                 false,
@@ -8878,7 +8911,7 @@ mod auto_approve_tests {
         assert!(auto_approve(
             ApprovalMode::ApproveSafe,
             AskSource::Scope,
-            "write",
+            declared("write"),
             &serde_json::json!({"path": "ok.txt", "content": "x"}),
             Mode::WorkspaceWrite,
             false,
@@ -8892,7 +8925,7 @@ mod auto_approve_tests {
         assert!(!auto_approve(
             ApprovalMode::Ask,
             AskSource::ModeDefault,
-            "read",
+            declared("read"),
             &serde_json::json!({}),
             Mode::WorkspaceWrite,
             true,
@@ -8910,7 +8943,7 @@ mod auto_approve_tests {
             !auto_approve(
                 ApprovalMode::ApproveSafe,
                 AskSource::ModeDefault,
-                "bash",
+                declared("bash"),
                 &serde_json::json!({}),
                 Mode::WorkspaceWrite,
                 false,
@@ -8922,7 +8955,7 @@ mod auto_approve_tests {
             auto_approve(
                 ApprovalMode::ApproveSafe,
                 AskSource::ModeDefault,
-                "bash",
+                declared("bash"),
                 &serde_json::json!({}),
                 Mode::WorkspaceWrite,
                 true,

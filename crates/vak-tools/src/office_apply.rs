@@ -45,6 +45,16 @@ pub struct OfficeApplyTool;
 
 #[async_trait]
 impl Tool for OfficeApplyTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::new(
+            vak_permission::Reach::WritePath,
+            vak_permission::Subject::Path {
+                argument: "path",
+                required: false,
+            },
+        )
+    }
+
     fn name(&self) -> &str {
         "office_apply"
     }

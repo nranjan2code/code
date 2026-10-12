@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use serde_json::json;
 use vak_permission::engine::Decision;
 use vak_permission::{Mode, PermissionEngine, Rule};
@@ -32,7 +34,7 @@ fn rule_parsing_forms() {
 
 #[test]
 fn allow_rule_beats_mode_default() {
-    let eng = PermissionEngine::from_rule_strings(&["Bash(git *)".to_string()]).unwrap();
+    let eng = support::engine(&["Bash(git *)".to_string()]).unwrap();
     let d = eng.evaluate(
         "bash",
         &bash("git push"),
@@ -44,9 +46,7 @@ fn allow_rule_beats_mode_default() {
 
 #[test]
 fn deny_rule_wins_over_allow_mode() {
-    let eng =
-        PermissionEngine::from_rule_strings(&["-Bash(rm *)".to_string(), "Bash(*)".to_string()])
-            .unwrap();
+    let eng = support::engine(&["-Bash(rm *)".to_string(), "Bash(*)".to_string()]).unwrap();
     let d = eng.evaluate(
         "bash",
         &bash("rm -rf /tmp/x"),
@@ -66,7 +66,7 @@ fn deny_rule_wins_over_allow_mode() {
 
 #[test]
 fn bash_subcommand_matching() {
-    let eng = PermissionEngine::from_rule_strings(&["Bash(git push *)".to_string()]).unwrap();
+    let eng = support::engine(&["Bash(git push *)".to_string()]).unwrap();
     let d = eng.evaluate(
         "bash",
         &bash("npm test && git push origin main"),
@@ -98,7 +98,7 @@ fn bash_subcommand_matching() {
 
 #[test]
 fn read_only_mode_allows_reads_denies_writes() {
-    let eng = PermissionEngine::default();
+    let eng = PermissionEngine::default().with_tools(support::built_in());
     let d = eng.evaluate(
         "read",
         &json!({"path": "a.txt"}),
@@ -135,7 +135,7 @@ fn restricted_modes_deny_reads_outside_workspace() {
     std::fs::create_dir_all(&cwd).unwrap();
     let outside = cwd.parent().unwrap().join("vak-perm-secret.txt");
     std::fs::write(&outside, "secret").unwrap();
-    let eng = PermissionEngine::default();
+    let eng = PermissionEngine::default().with_tools(support::built_in());
 
     for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
         for tool in ["read", "glob", "grep"] {
@@ -168,12 +168,14 @@ fn restricted_read_scope_resolves_symlinks() {
         std::fs::write(&outside, "secret").unwrap();
         std::os::unix::fs::symlink(&outside, cwd.join("looks-safe")).unwrap();
 
-        let d = PermissionEngine::default().evaluate(
-            "read",
-            &json!({"path": "looks-safe"}),
-            Mode::WorkspaceWrite,
-            &cwd,
-        );
+        let d = PermissionEngine::default()
+            .with_tools(support::built_in())
+            .evaluate(
+                "read",
+                &json!({"path": "looks-safe"}),
+                Mode::WorkspaceWrite,
+                &cwd,
+            );
         assert!(matches!(d, Decision::Deny { .. }));
 
         let _ = std::fs::remove_dir_all(&cwd);
@@ -185,7 +187,7 @@ fn restricted_read_scope_resolves_symlinks() {
 fn workspace_write_scopes_file_tools() {
     let cwd = std::env::temp_dir().join("vak-perm-test");
     std::fs::create_dir_all(&cwd).unwrap();
-    let eng = PermissionEngine::default();
+    let eng = PermissionEngine::default().with_tools(support::built_in());
 
     let inside = cwd.join("sub/inner.txt");
     std::fs::create_dir_all(inside.parent().unwrap()).unwrap();
@@ -226,7 +228,7 @@ fn workspace_write_scopes_file_tools() {
 
 #[test]
 fn bash_asks_in_workspace_write_by_default() {
-    let eng = PermissionEngine::default();
+    let eng = PermissionEngine::default().with_tools(support::built_in());
     let d = eng.evaluate(
         "bash",
         &bash("cargo test"),
@@ -241,11 +243,7 @@ fn bash_asks_in_workspace_write_by_default() {
 
 #[test]
 fn first_matching_rule_wins_in_order() {
-    let eng = PermissionEngine::from_rule_strings(&[
-        "?Bash(npm *)".to_string(),
-        "Bash(npm *)".to_string(),
-    ])
-    .unwrap();
+    let eng = support::engine(&["?Bash(npm *)".to_string(), "Bash(npm *)".to_string()]).unwrap();
     let d = eng.evaluate(
         "bash",
         &bash("npm run build"),
@@ -262,11 +260,8 @@ fn first_matching_rule_wins_in_order() {
 fn deny_beats_allow_regardless_of_registration_order() {
     // Deny registered AFTER the allow: severity aggregation must still
     // pick Deny. Under first-match-wins this silently allowed.
-    let eng = PermissionEngine::from_rule_strings(&[
-        "Bash(git *)".to_string(),
-        "-Bash(git push *)".to_string(),
-    ])
-    .unwrap();
+    let eng =
+        support::engine(&["Bash(git *)".to_string(), "-Bash(git push *)".to_string()]).unwrap();
     let d = eng.evaluate(
         "bash",
         &bash("git push origin main"),
@@ -286,11 +281,7 @@ fn deny_beats_allow_regardless_of_registration_order() {
 
 #[test]
 fn substitution_and_newline_commands_are_opaque_to_allow_patterns() {
-    let eng = PermissionEngine::from_rule_strings(&[
-        "Bash(git *)".to_string(),
-        "-Bash(rm *)".to_string(),
-    ])
-    .unwrap();
+    let eng = support::engine(&["Bash(git *)".to_string(), "-Bash(rm *)".to_string()]).unwrap();
 
     for cmd in [
         "git status\nrm -rf ~",
@@ -312,7 +303,7 @@ fn substitution_and_newline_commands_are_opaque_to_allow_patterns() {
 
 #[test]
 fn blanket_rules_still_cover_opaque_commands() {
-    let eng = PermissionEngine::from_rule_strings(&["Bash(*)".to_string()]).unwrap();
+    let eng = support::engine(&["Bash(*)".to_string()]).unwrap();
     let d = eng.evaluate(
         "bash",
         &bash("git status\necho hi"),
@@ -324,11 +315,8 @@ fn blanket_rules_still_cover_opaque_commands() {
 
 #[test]
 fn mcp_calls_match_server_tool_candidates() {
-    let eng = PermissionEngine::from_rule_strings(&[
-        "-Mcp(evil-server/*)".to_string(),
-        "Mcp(docs/*)".to_string(),
-    ])
-    .unwrap();
+    let eng =
+        support::engine(&["-Mcp(evil-server/*)".to_string(), "Mcp(docs/*)".to_string()]).unwrap();
     let args = json!({"action": "call", "server": "docs", "tool": "search", "arguments": {}});
     let d = eng.evaluate(
         "mcp",
@@ -352,6 +340,7 @@ fn mcp_calls_match_server_tool_candidates() {
 fn declared_write_scope_denies_other_direct_file_mutations_before_rules() {
     let cwd = std::env::temp_dir().join("vak-permission-write-scope-test");
     let engine = PermissionEngine::default()
+        .with_tools(support::built_in())
         .restrict_write_paths(&cwd, &[std::path::PathBuf::from("app.py")]);
 
     let allowed = engine.evaluate(
@@ -373,7 +362,7 @@ fn declared_write_scope_denies_other_direct_file_mutations_before_rules() {
 
 #[test]
 fn task_tool_scope_beats_full_access_and_explicit_allow() {
-    let engine = PermissionEngine::from_rule_strings(&["+remember".into(), "+write".into()])
+    let engine = support::engine(&["+remember".into(), "+write".into()])
         .unwrap()
         .restrict_tools(&["read", "write", "edit"]);
     let cwd = std::env::temp_dir();

@@ -1855,6 +1855,10 @@ impl EmitCardTool {
 
 #[async_trait]
 impl Tool for EmitCardTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::reach(vak_permission::Reach::Display)
+    }
+
     fn name(&self) -> &str {
         self.shape.name
     }
@@ -2113,16 +2117,6 @@ pub fn emit_tool_for(semantic_type: &str) -> Option<&'static str> {
         .iter()
         .find(|shape| shape.semantic_types.contains(&semantic_type))
         .map(|shape| shape.name)
-}
-
-/// Names of every tool that declares `presents_cards()`, for the permission
-/// engine: a card is Vak's own display channel and needs no approval.
-pub fn presenting_tool_names() -> Vec<String> {
-    EmitCardTool::all()
-        .iter()
-        .filter(|tool| tool.presents_cards())
-        .map(|tool| tool.name().to_string())
-        .collect()
 }
 
 /// Rebuilds an `emit_*_card` call's validated output from the call's own
@@ -3238,7 +3232,11 @@ mod tests {
                 );
             }
         }
-        assert_eq!(presenting_tool_names().len(), SHAPES.len());
+        assert!(
+            EmitCardTool::all()
+                .iter()
+                .all(|tool| tool.permission().reach == vak_permission::Reach::Display)
+        );
     }
 
     #[test]

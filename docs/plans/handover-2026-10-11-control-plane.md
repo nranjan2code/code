@@ -83,15 +83,10 @@ Done on 2026-10-12 (all pushed, gate green at `dd0c9c945`, 291 suites):
   through `vak_tools::tool_for_call`.
 
 Next, in order:
-1. Item 3, groups 3–4: the permission engine sorts tools by name
-   (`READ_TOOLS`, `WRITE_TOOLS`, `LEARNING_TOOLS`, `NETWORK_TOOLS` with the
-   mail/calendar sends, `COORDINATION_TOOLS`, `tool == "bash"`, the `mcp`
-   list action), and so do `NETWORK_TOOLS` in vak-core, `auto_approve` and
-   `scoped_allow_rule`. Design: each tool declares its reach (a closed set
-   in vak-permission, which depends on nothing) and the engine is given the
-   classification built from declarations, as `presenting` already is; a
-   tool that declares nothing is classified as reaching outside (fail
-   closed). Guard with `crates/vak-permission/tests/escapes.rs`.
+1. Done 2026-10-12: item 3, groups 3–4. Tools declare their permission
+   reach and rule subject (`Tool::permission`); the engine, rules, hook
+   matchers, remembered approvals and `auto_approve` read it
+   (docs/design/08-permissions.md "Declared reach").
 2. Item 3, group 5: argument aliases in `normalize_tool_call`, the bash
    and office_apply prompt sections, `CHANNEL_BLOCKABLE_TOOLS`,
    `TASK_COPY_TOOLS`, the flow tool's read-only list (`"read" | "glob" |

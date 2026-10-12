@@ -1,5 +1,5 @@
 # 08 — Permissions (vak-permission)
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; declared reach replaces the name tables (2026-10-12)
 
 ## Model
 
@@ -58,6 +58,52 @@ is deliberately narrow: shell commands keep their normal sandbox and approval
 semantics, so a caller needing filesystem confinement for arbitrary shell code
 must use a restricted sandbox/worktree rather than infer shell effects from
 text.
+
+## Declared reach (2026-10-12)
+
+The engine knows no tool by name. Each tool declares, through
+`Tool::permission`, a `vak_permission::Declared`: its **reach** (`Display`,
+`Coordination`, `ReadPath`, `ReadStore`, `WritePath`, `Learning`, `Command`,
+`Network`, `Integration`, or `Other`) and its **rule subject** (what a rule's
+pattern matches: the path in a named argument, the shell command in a named
+argument, the text of a named argument, an integration call's
+`server/tool`, or nothing). The mode defaults read the reach; rules, hook
+matchers, remembered approvals (`scoped_allow_rule`) and approval
+descriptions read the subject.
+
+| Reach | read-only | workspace-write | full-access |
+|---|---|---|---|
+| `Display`, `Coordination` | allow (after deny and ask rules) | allow | allow |
+| `ReadPath` | allow inside the workspace, deny outside; a required path missing is a deny | same | allow |
+| `ReadStore` | allow | allow | allow |
+| `Learning` | deny | allow | allow |
+| `WritePath` | deny | allow inside the workspace, ask outside or with no path | allow |
+| `Command` | deny | ask | allow |
+| `Network` | ask | ask | allow |
+| `Integration` | its `list` action reads; anything else is `Other` | same | allow |
+| `Other` (nothing declared) | deny | ask | allow |
+
+Where the engine learns the declarations:
+- `Core::build_permission_engine` gives it what the Core's tools and the
+  card tools declare (`vak_core::declarations`, `built_in_declarations`).
+- The agent loop authorizes each call with the declaration of the tool the
+  call names in the run's own tool list (`PermissionEngine::evaluate_as`),
+  so a tool loaded or withdrawn mid-run is judged by what it is.
+- A check that is not a tool call states the reach of what it checks: a
+  provider effect (a mail send, a calendar change or its reconciliation) is
+  `Network` (`vak-server/src/mail_calendar.rs`).
+
+`auto_approve` (approval mode `approve-safe`) reads the declaration too: a
+path read, a write inside the workspace and a sandboxed command outside
+full-access are safe. `doc_read` and `office_apply` now count, as their
+siblings did; the name list had left them out. A mail or calendar RSVP is
+`Network` like every other provider effect; the name list had left it out,
+so read-only now asks rather than denies it.
+
+The permission tests run the engine on a table of what the built-in tools
+declare (`crates/vak-permission/tests/support/mod.rs`); vak-core's
+`built_in_tools_declare_what_the_permission_tests_assume` checks every
+declaring tool against it.
 
 ## Rules
 

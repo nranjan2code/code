@@ -583,6 +583,13 @@ impl TaskTool {
 
 #[async_trait]
 impl Tool for TaskTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::new(
+            vak_permission::Reach::Other,
+            vak_permission::Subject::Value("label"),
+        )
+    }
+
     fn name(&self) -> &str {
         "task"
     }

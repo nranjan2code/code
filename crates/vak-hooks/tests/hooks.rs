@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::sync::Arc;
+use vak_hooks::ToolCall;
+use vak_permission::Subject;
 
 use serde_json::json;
 use tempfile::tempdir;
@@ -27,7 +29,11 @@ async fn silent_exit_zero_is_no_opinion() {
         HookEvent::PreToolUse,
         "s",
         dir.path(),
-        Some(("bash", &json!({"command": "ls"}))),
+        Some(ToolCall {
+            name: "bash",
+            subject: Subject::Command("command"),
+            input: &json!({"command": "ls"}),
+        }),
         None,
         &CancellationToken::new(),
     )
@@ -43,7 +49,11 @@ async fn json_block_decision_blocks_with_reason() {
         HookEvent::PreToolUse,
         "s",
         dir.path(),
-        Some(("bash", &json!({"command": "rm -rf /"}))),
+        Some(ToolCall {
+            name: "bash",
+            subject: Subject::Command("command"),
+            input: &json!({"command": "rm -rf /"}),
+        }),
         None,
         &CancellationToken::new(),
     )
@@ -60,7 +70,11 @@ async fn exit_two_blocks_with_stderr_reason() {
         HookEvent::PreToolUse,
         "s",
         dir.path(),
-        Some(("bash", &json!({"command": "x"}))),
+        Some(ToolCall {
+            name: "bash",
+            subject: Subject::Command("command"),
+            input: &json!({"command": "x"}),
+        }),
         None,
         &CancellationToken::new(),
     )
@@ -79,7 +93,14 @@ async fn handler_receives_event_json_on_stdin() {
         HookEvent::PreToolUse,
         "sess-1",
         dir.path(),
-        Some(("edit", &json!({"path": "a.txt"}))),
+        Some(ToolCall {
+            name: "edit",
+            subject: Subject::Path {
+                argument: "path",
+                required: false,
+            },
+            input: &json!({"path": "a.txt"}),
+        }),
         None,
         &CancellationToken::new(),
     )
@@ -110,7 +131,11 @@ async fn matcher_filters_by_tool_and_args() {
         HookEvent::PreToolUse,
         "s",
         dir.path(),
-        Some(("bash", &json!({"command": "git push origin main"}))),
+        Some(ToolCall {
+            name: "bash",
+            subject: Subject::Command("command"),
+            input: &json!({"command": "git push origin main"}),
+        }),
         None,
         &CancellationToken::new(),
     )
@@ -122,7 +147,11 @@ async fn matcher_filters_by_tool_and_args() {
         HookEvent::PreToolUse,
         "s",
         dir.path(),
-        Some(("bash", &json!({"command": "git status"}))),
+        Some(ToolCall {
+            name: "bash",
+            subject: Subject::Command("command"),
+            input: &json!({"command": "git status"}),
+        }),
         None,
         &CancellationToken::new(),
     )
@@ -147,7 +176,11 @@ async fn timeout_kills_hook_and_reports() {
         HookEvent::PreToolUse,
         "s",
         dir.path(),
-        Some(("bash", &json!({}))),
+        Some(ToolCall {
+            name: "bash",
+            subject: Subject::Command("command"),
+            input: &json!({}),
+        }),
         None,
         &CancellationToken::new(),
     )
@@ -172,7 +205,11 @@ async fn closed_failure_mode_blocks_on_timeout_and_nonzero_exit() {
         HookEvent::PreToolUse,
         "s",
         dir.path(),
-        Some(("bash", &json!({}))),
+        Some(ToolCall {
+            name: "bash",
+            subject: Subject::Command("command"),
+            input: &json!({}),
+        }),
         None,
         &CancellationToken::new(),
     )
@@ -192,7 +229,11 @@ async fn closed_failure_mode_blocks_on_timeout_and_nonzero_exit() {
         HookEvent::PreToolUse,
         "s",
         dir.path(),
-        Some(("bash", &json!({}))),
+        Some(ToolCall {
+            name: "bash",
+            subject: Subject::Command("command"),
+            input: &json!({}),
+        }),
         None,
         &CancellationToken::new(),
     )

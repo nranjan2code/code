@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 use crate::Mode;
+use crate::reach::{Declared, Reach, Subject};
 use crate::rules::{Rule, RuleDecision};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -26,64 +28,11 @@ pub struct PermissionEngine {
     write_scope: Option<Vec<PathBuf>>,
     /// Host-imposed execution vocabulary. Checked before user allow rules.
     allowed_tools: Option<Vec<String>>,
-    /// Tools that only display something to the user (`Tool::presents_cards`).
-    /// Supplied by the host from the tools' own declarations, never inferred
-    /// from a name here.
-    presenting: Vec<String>,
+    /// What each tool declared it reaches and what a rule about it matches
+    /// (`Tool::permission`), supplied by the host from the tools it offers.
+    /// A tool not here is `Declared::default()`: an unknown.
+    declared: HashMap<String, Declared>,
 }
-
-/// Tools that read and change nothing. `commitments` reads the Agent's own
-/// portfolio, like `session_search` reads its own history: a model that must
-/// ask a person before it may look at its own obligations cannot answer
-/// "what are you working on?" on an unattended surface at all.
-const READ_TOOLS: [&str; 10] = [
-    "read",
-    "doc_read",
-    "glob",
-    "grep",
-    "ls",
-    "search",
-    "session_search",
-    "skill",
-    "commitments",
-    "mail_calendar",
-];
-/// Tools that only coordinate agents inside this run and touch no file,
-/// process or network: a worker asking its parent a question, and a parent
-/// looking at or talking to its own workers
-/// (docs/design/84-worker-questions-and-control.md). Allowed in every mode,
-/// after any `deny`/`ask` rule, because gating a question on an approval
-/// would make the question impossible to ask. An answer or a message is
-/// information, never permission.
-const COORDINATION_TOOLS: [&str; 2] = ["ask_parent", "workers"];
-const PATH_SCOPED_READ_TOOLS: [&str; 5] = ["read", "doc_read", "glob", "grep", "ls"];
-const WRITE_TOOLS: [&str; 3] = ["write", "edit", "office_apply"];
-/// Learning-loop journaling into vak's own per-workspace store
-/// (docs/design/26-learning.md): sanctioned under workspace-write, still
-/// denied by read-only's default arm below.
-const LEARNING_TOOLS: [&str; 3] = ["remember", "forget_memory", "propose_skill"];
-/// Tools whose reach exceeds the workspace (docs/design/29-personal-os.md
-/// P4). Outside FullAccess they gate on approval rather than following the
-/// surrounding mode's arm: read-only would otherwise deny them outright,
-/// and the intent is "a human may still say yes", not "never".
-///
-/// This lives HERE, in the mode arms, rather than being injected as a
-/// synthetic `?webfetch` rule by the engine's caller. An injected rule is
-/// indistinguishable from one an operator typed, and `auto_approve`
-/// deliberately refuses to resolve rule-sourced asks on the model's behalf
-/// — so the injection silently made `approval_mode = "auto-approve"` a
-/// no-op for exactly these two tools while working for every other one.
-/// A mode default must be sourced as a mode default.
-const NETWORK_TOOLS: [&str; 8] = [
-    "webfetch",
-    "browse",
-    "mail_calendar_send",
-    "mail_calendar_event_create",
-    "mail_calendar_event_update",
-    "mail_calendar_event_cancel",
-    "mail_calendar_event_reconcile",
-    "mail_calendar_mail_reconcile",
-];
 
 impl PermissionEngine {
     pub fn new(rules: Vec<Rule>) -> Self {
@@ -91,7 +40,7 @@ impl PermissionEngine {
             rules,
             write_scope: None,
             allowed_tools: None,
-            presenting: Vec::new(),
+            declared: HashMap::new(),
         }
     }
 
@@ -104,17 +53,21 @@ impl PermissionEngine {
             rules,
             write_scope: None,
             allowed_tools: None,
-            presenting: Vec::new(),
+            declared: HashMap::new(),
         })
     }
 
-    /// Declare the tools that present cards. They show the user something
-    /// Vak already holds and reach nothing outside the conversation, so every
-    /// mode lets them through (read-only included) with no approval. An
-    /// operator's explicit Deny or Ask rule still wins.
-    pub fn with_presenting_tools(mut self, names: impl IntoIterator<Item = String>) -> Self {
-        self.presenting = names.into_iter().collect();
+    /// What the offered tools declared (`Tool::permission`). Added to what
+    /// was declared before, a later declaration of a name replacing an
+    /// earlier one.
+    pub fn with_tools(mut self, declared: impl IntoIterator<Item = (String, Declared)>) -> Self {
+        self.declared.extend(declared);
         self
+    }
+
+    /// What `tool` declared, or an unknown's nothing.
+    pub fn declared(&self, tool: &str) -> Declared {
+        self.declared.get(tool).copied().unwrap_or_default()
     }
 
     pub fn rules(&self) -> &[Rule] {
@@ -170,6 +123,20 @@ impl PermissionEngine {
         mode: Mode,
         cwd: &std::path::Path,
     ) -> Decision {
+        self.evaluate_as(tool, self.declared(tool), args, mode, cwd)
+    }
+
+    /// `evaluate` with the declaration of the tool the call names, as the
+    /// caller holds it: a run's own tools may differ from those the engine
+    /// was told of when it was built.
+    pub fn evaluate_as(
+        &self,
+        tool: &str,
+        declared: Declared,
+        args: &Value,
+        mode: Mode,
+        cwd: &std::path::Path,
+    ) -> Decision {
         if self
             .allowed_tools
             .as_ref()
@@ -179,10 +146,10 @@ impl PermissionEngine {
                 reason: format!("'{tool}' is outside this run's tool scope"),
             };
         }
-        if WRITE_TOOLS.contains(&tool)
+        if declared.reach == Reach::WritePath
             && let Some(scope) = &self.write_scope
         {
-            let Some(path) = args.get("path").and_then(|value| value.as_str()) else {
+            let Some(path) = path_argument(declared.subject, args) else {
                 return Decision::Deny {
                     reason: "write scope requires a path argument".into(),
                 };
@@ -194,109 +161,104 @@ impl PermissionEngine {
                 };
             }
         }
-        if self
-            .rules
-            .iter()
-            .any(|rule| rule.decision == RuleDecision::Deny && rule.matches(tool, args))
-        {
+        if self.rules.iter().any(|rule| {
+            rule.decision == RuleDecision::Deny && rule.matches(tool, declared.subject, args)
+        }) {
             return Decision::Deny {
-                reason: format!("denied by rule: {}", describe(tool, args)),
+                reason: format!("denied by rule: {}", describe(tool, declared.subject, args)),
             };
         }
-        if self
-            .rules
-            .iter()
-            .any(|rule| rule.decision == RuleDecision::Ask && rule.matches(tool, args))
-        {
+        if self.rules.iter().any(|rule| {
+            rule.decision == RuleDecision::Ask && rule.matches(tool, declared.subject, args)
+        }) {
             return Decision::Ask {
-                reason: format!("rule requires approval: {}", describe(tool, args)),
+                reason: format!(
+                    "rule requires approval: {}",
+                    describe(tool, declared.subject, args)
+                ),
                 source: AskSource::Rule,
             };
         }
-        if crate::rules::allow_covers(&self.rules, tool, args)
-            || self.presenting.iter().any(|name| name == tool)
-            || COORDINATION_TOOLS.contains(&tool)
+        // A display or coordination tool reaches nothing, so every mode lets
+        // it through after the operator's deny and ask rules: gating a
+        // question on an approval would make the question impossible to ask.
+        if crate::rules::allow_covers(&self.rules, tool, declared.subject, args)
+            || matches!(declared.reach, Reach::Display | Reach::Coordination)
         {
             return Decision::Allow;
         }
+        let lists_catalogue = declared.reach == Reach::Integration
+            && args.get("action").and_then(Value::as_str) == Some("list");
 
         match mode {
             Mode::FullAccess => Decision::Allow,
-            Mode::ReadOnly => {
-                if READ_TOOLS.contains(&tool) {
-                    scoped_read_decision(tool, args, cwd)
-                } else if tool == "mcp"
-                    && args.get("action").and_then(|a| a.as_str()) == Some("list")
-                {
-                    Decision::Allow
-                } else if NETWORK_TOOLS.contains(&tool) {
-                    Decision::Ask {
-                        reason: format!("'{tool}' reaches outside the workspace"),
-                        source: AskSource::ModeDefault,
-                    }
-                } else {
-                    Decision::Deny {
-                        reason: format!(
-                            "read-only mode denies '{tool}'; switch modes or add a rule"
-                        ),
-                    }
-                }
-            }
-            Mode::WorkspaceWrite => {
-                if READ_TOOLS.contains(&tool) {
-                    return scoped_read_decision(tool, args, cwd);
-                }
-                if tool == "mcp" && args.get("action").and_then(|a| a.as_str()) == Some("list") {
-                    return Decision::Allow;
-                }
-                if WRITE_TOOLS.contains(&tool) {
-                    return match args.get("path").and_then(|p| p.as_str()) {
-                        Some(path) => {
-                            if path_in_workspace(std::path::Path::new(path), cwd) {
-                                Decision::Allow
-                            } else {
-                                Decision::Ask {
-                                    reason: format!("'{path}' is outside the workspace"),
-                                    source: AskSource::Scope,
-                                }
-                            }
-                        }
-                        None => Decision::Ask {
-                            reason: "missing path argument".into(),
-                            source: AskSource::ModeDefault,
-                        },
-                    };
-                }
-                if LEARNING_TOOLS.contains(&tool) {
-                    return Decision::Allow;
-                }
-                if tool == "bash" {
-                    return Decision::Ask {
-                        reason: format!("shell command needs approval: {}", describe(tool, args)),
-                        source: AskSource::ModeDefault,
-                    };
-                }
-                Decision::Ask {
-                    reason: format!("'{}' needs approval: {}", tool, describe(tool, args)),
+            Mode::ReadOnly => match declared.reach {
+                Reach::ReadPath => scoped_read_decision(declared.subject, args, cwd),
+                Reach::ReadStore => Decision::Allow,
+                _ if lists_catalogue => Decision::Allow,
+                Reach::Network => Decision::Ask {
+                    reason: format!("'{tool}' reaches outside the workspace"),
                     source: AskSource::ModeDefault,
-                }
-            }
+                },
+                _ => Decision::Deny {
+                    reason: format!("read-only mode denies '{tool}'; switch modes or add a rule"),
+                },
+            },
+            Mode::WorkspaceWrite => match declared.reach {
+                Reach::ReadPath => scoped_read_decision(declared.subject, args, cwd),
+                Reach::ReadStore | Reach::Learning => Decision::Allow,
+                _ if lists_catalogue => Decision::Allow,
+                Reach::WritePath => match path_argument(declared.subject, args) {
+                    Some(path) if path_in_workspace(Path::new(path), cwd) => Decision::Allow,
+                    Some(path) => Decision::Ask {
+                        reason: format!("'{path}' is outside the workspace"),
+                        source: AskSource::Scope,
+                    },
+                    None => Decision::Ask {
+                        reason: "missing path argument".into(),
+                        source: AskSource::ModeDefault,
+                    },
+                },
+                Reach::Command => Decision::Ask {
+                    reason: format!(
+                        "shell command needs approval: {}",
+                        describe(tool, declared.subject, args)
+                    ),
+                    source: AskSource::ModeDefault,
+                },
+                _ => Decision::Ask {
+                    reason: format!(
+                        "'{}' needs approval: {}",
+                        tool,
+                        describe(tool, declared.subject, args)
+                    ),
+                    source: AskSource::ModeDefault,
+                },
+            },
         }
     }
 }
 
-fn scoped_read_decision(tool: &str, args: &Value, cwd: &std::path::Path) -> Decision {
-    if !PATH_SCOPED_READ_TOOLS.contains(&tool) {
-        return Decision::Allow;
+/// The path a path-scoped tool's call names, by its declared argument.
+fn path_argument(subject: Subject, args: &Value) -> Option<&str> {
+    match subject {
+        Subject::Path { argument, .. } => args.get(argument).and_then(Value::as_str),
+        _ => None,
     }
-    let path = args.get("path").and_then(|p| p.as_str());
-    if tool == "read" && path.is_none() {
+}
+
+fn scoped_read_decision(subject: Subject, args: &Value, cwd: &Path) -> Decision {
+    let Subject::Path { argument, required } = subject else {
+        return Decision::Allow;
+    };
+    let path = args.get(argument).and_then(Value::as_str);
+    if required && path.is_none() {
         return Decision::Deny {
-            reason: "read requires a workspace-scoped path".into(),
+            reason: format!("a workspace-scoped `{argument}` is required"),
         };
     }
     match path {
-        Some(path) if !path_in_workspace(std::path::Path::new(path), cwd) => Decision::Deny {
+        Some(path) if !path_in_workspace(Path::new(path), cwd) => Decision::Deny {
             reason: format!(
                 "'{path}' is outside the workspace; use full-access or an explicit scoped rule"
             ),
@@ -305,45 +267,28 @@ fn scoped_read_decision(tool: &str, args: &Value, cwd: &std::path::Path) -> Deci
     }
 }
 
-fn describe(tool: &str, args: &Value) -> String {
-    match tool {
-        "bash" => args
-            .get("command")
-            .and_then(|c| c.as_str())
-            .map(|c| {
-                let preview: String = c.chars().take(80).collect();
-                format!("bash `{preview}`")
+/// The call as a person reads it in an approval: the tool and what its
+/// rule subject names.
+fn describe(tool: &str, subject: Subject, args: &Value) -> String {
+    match subject {
+        Subject::Command(_) => crate::rules::arg_candidates(subject, args)
+            .first()
+            .map(|command| {
+                let preview: String = command.chars().take(80).collect();
+                format!("{tool} `{preview}`")
             })
-            .unwrap_or_else(|| "bash".into()),
-        "write" | "edit" | "read" | "doc_read" | "office_apply" => args
-            .get("path")
-            .and_then(|p| p.as_str())
-            .map(|p| format!("{tool} {p}"))
             .unwrap_or_else(|| tool.to_string()),
-        "mcp" => match (
-            args.get("action").and_then(|a| a.as_str()),
-            args.get("server").and_then(|s| s.as_str()),
-            args.get("tool").and_then(|t| t.as_str()),
-        ) {
-            (Some("call"), Some(server), Some(mcp_tool)) => {
-                format!("mcp call {server}/{mcp_tool}")
-            }
-            (Some("call"), Some(server), None) => format!("mcp call {server}/<missing tool>"),
-            (Some("list"), _, _) => "mcp list".to_string(),
-            _ => "mcp".to_string(),
+        Subject::IntegrationCall => match args.get("action").and_then(Value::as_str) {
+            Some("list") => format!("{tool} list"),
+            _ => crate::rules::arg_candidates(subject, args)
+                .first()
+                .map(|call| format!("{tool} call {call}"))
+                .unwrap_or_else(|| tool.to_string()),
         },
-        "task" => {
-            let label = args
-                .get("label")
-                .and_then(|l| l.as_str())
-                .map(String::from)
-                .unwrap_or_else(|| {
-                    let prompt = args.get("prompt").and_then(|p| p.as_str()).unwrap_or("");
-                    prompt.chars().take(60).collect()
-                });
-            format!("task '{label}'")
-        }
-        other => other.to_string(),
+        _ => crate::rules::arg_candidates(subject, args)
+            .first()
+            .map(|value| format!("{tool} {value}"))
+            .unwrap_or_else(|| tool.to_string()),
     }
 }
 
@@ -410,10 +355,11 @@ fn normalize_scope_path(path: &Path, cwd: &Path) -> PathBuf {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::test_support as support;
 
     #[test]
     fn mail_calendar_is_a_read_capability_but_explicit_rules_still_win() {
-        let empty = PermissionEngine::default();
+        let empty = PermissionEngine::default().with_tools(support::built_in());
         assert_eq!(
             empty.evaluate(
                 "mail_calendar",
@@ -423,8 +369,7 @@ mod tests {
             ),
             Decision::Allow
         );
-        let denied =
-            PermissionEngine::from_rule_strings(&["-mail_calendar".into()]).expect("valid rule");
+        let denied = support::engine(&["-mail_calendar".into()]).expect("valid rule");
         assert!(matches!(
             denied.evaluate(
                 "mail_calendar",
@@ -438,7 +383,7 @@ mod tests {
 
     #[test]
     fn mail_calendar_send_requires_approval_in_read_only_and_workspace_write() {
-        let engine = PermissionEngine::default();
+        let engine = PermissionEngine::default().with_tools(support::built_in());
         for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
             assert!(matches!(
                 engine.evaluate(
@@ -450,8 +395,7 @@ mod tests {
                 Decision::Ask { .. }
             ));
         }
-        let denied = PermissionEngine::from_rule_strings(&["-mail_calendar_send".into()])
-            .expect("valid rule");
+        let denied = support::engine(&["-mail_calendar_send".into()]).expect("valid rule");
         assert!(matches!(
             denied.evaluate(
                 "mail_calendar_send",
@@ -465,7 +409,7 @@ mod tests {
 
     #[test]
     fn mail_calendar_provider_reconciliation_requires_an_explicit_read_approval() {
-        let engine = PermissionEngine::default();
+        let engine = PermissionEngine::default().with_tools(support::built_in());
         for action in [
             "mail_calendar_mail_reconcile",
             "mail_calendar_event_reconcile",
@@ -484,8 +428,7 @@ mod tests {
                     "{action} in {mode:?}"
                 );
             }
-            let denied =
-                PermissionEngine::from_rule_strings(&[format!("-{action}")]).expect("valid rule");
+            let denied = support::engine(&[format!("-{action}")]).expect("valid rule");
             assert!(matches!(
                 denied.evaluate(
                     action,
@@ -500,7 +443,7 @@ mod tests {
 
     #[test]
     fn mail_calendar_event_create_requires_approval_and_explicit_deny_wins() {
-        let engine = PermissionEngine::default();
+        let engine = PermissionEngine::default().with_tools(support::built_in());
         for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
             assert!(matches!(
                 engine.evaluate(
@@ -530,8 +473,7 @@ mod tests {
                 Decision::Ask { .. }
             ));
         }
-        let denied = PermissionEngine::from_rule_strings(&["-mail_calendar_event_create".into()])
-            .expect("valid rule");
+        let denied = support::engine(&["-mail_calendar_event_create".into()]).expect("valid rule");
         assert!(matches!(
             denied.evaluate(
                 "mail_calendar_event_create",
@@ -542,8 +484,7 @@ mod tests {
             Decision::Deny { .. }
         ));
         let denied_update =
-            PermissionEngine::from_rule_strings(&["-mail_calendar_event_update".into()])
-                .expect("valid rule");
+            support::engine(&["-mail_calendar_event_update".into()]).expect("valid rule");
         assert!(matches!(
             denied_update.evaluate(
                 "mail_calendar_event_update",
@@ -554,8 +495,7 @@ mod tests {
             Decision::Deny { .. }
         ));
         let denied_cancel =
-            PermissionEngine::from_rule_strings(&["-mail_calendar_event_cancel".into()])
-                .expect("valid rule");
+            support::engine(&["-mail_calendar_event_cancel".into()]).expect("valid rule");
         assert!(matches!(
             denied_cancel.evaluate(
                 "mail_calendar_event_cancel",
@@ -572,14 +512,17 @@ mod tests {
         let task_args = serde_json::json!({
             "label": "build project"
         });
-        assert_eq!(describe("task", &task_args), "task 'build project'");
+        assert_eq!(
+            describe("task", Subject::Value("label"), &task_args),
+            "task build project"
+        );
     }
 
     #[test]
     fn coordination_tools_are_allowed_in_every_mode_but_a_deny_rule_still_wins() {
         let cwd = std::path::Path::new(".");
         let args = serde_json::json!({"question": "Which year?"});
-        let open = PermissionEngine::new(Vec::new());
+        let open = PermissionEngine::new(Vec::new()).with_tools(support::built_in());
         for mode in [Mode::ReadOnly, Mode::WorkspaceWrite, Mode::FullAccess] {
             for tool in ["ask_parent", "workers"] {
                 assert!(
@@ -588,7 +531,8 @@ mod tests {
                 );
             }
         }
-        let denied = PermissionEngine::new(vec![Rule::parse("-ask_parent").unwrap()]);
+        let denied = PermissionEngine::new(vec![Rule::parse("-ask_parent").unwrap()])
+            .with_tools(support::built_in());
         assert!(matches!(
             denied.evaluate("ask_parent", &args, Mode::FullAccess, cwd),
             Decision::Deny { .. }

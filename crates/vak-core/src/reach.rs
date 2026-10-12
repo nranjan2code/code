@@ -162,7 +162,7 @@ fn resolve(probe: &Probe<'_>, tool: &str, args: &serde_json::Value) -> (Reach, S
             if vak_agent::auto_approve(
                 probe.approval_mode,
                 source,
-                tool,
+                probe.engine.declared(tool),
                 args,
                 probe.mode,
                 probe.sandboxed,

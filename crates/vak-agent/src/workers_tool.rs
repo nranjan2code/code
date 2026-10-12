@@ -286,6 +286,10 @@ fn unknown(id: &str) -> ToolOutput {
 
 #[async_trait::async_trait]
 impl Tool for WorkersTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::reach(vak_permission::Reach::Coordination)
+    }
+
     fn name(&self) -> &str {
         "workers"
     }

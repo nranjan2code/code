@@ -4,6 +4,11 @@
 
 #![cfg_attr(test, allow(clippy::expect_used, clippy::panic, clippy::unwrap_used))]
 
+/// What the permission tests assume the built-in tools declare.
+#[cfg(test)]
+#[path = "../../vak-permission/tests/support/mod.rs"]
+mod permission_fixture;
+
 pub mod admission;
 pub mod agent_definitions;
 pub mod agent_network;
@@ -2037,6 +2042,16 @@ impl Core {
     /// immutable loaded config and so could not see a runtime rule change;
     /// routing through the `Core` is what keeps "what the engine evaluates"
     /// and "what the operator last set" the same answer.
+    /// What every tool this Core offers declares to the permission engine:
+    /// its own tools and the card tools. The agent loop adds what the tools
+    /// of a run declare, its own included.
+    fn permission_declarations(&self) -> Vec<(String, vak_permission::Declared)> {
+        let tools = self.scoped_tools(&ToolScope::default());
+        let mut declared = built_in_declarations();
+        declared.extend(declarations(tools.iter().map(|tool| tool.as_ref())));
+        declared
+    }
+
     pub fn build_permission_engine(
         &self,
         extra: &[String],
@@ -2045,7 +2060,7 @@ impl Core {
         vak_permission::PermissionEngine::from_rule_strings(&rule_specs_from(
             &allow, &ask, &deny, extra,
         ))
-        .map(|engine| engine.with_presenting_tools(presentation_tools::presenting_tool_names()))
+        .map(|engine| engine.with_tools(self.permission_declarations()))
         .map(|engine| {
             if self.task_copy_boundary {
                 engine.restrict_tools(TASK_COPY_TOOLS)
@@ -3019,7 +3034,8 @@ impl Core {
         tool: &str,
         args: &serde_json::Value,
     ) -> Result<String, CoreError> {
-        let Some(spec) = scoped_allow_rule(tool, args) else {
+        let declared = self.build_permission_engine(&[])?.declared(tool);
+        let Some(spec) = scoped_allow_rule(tool, declared, args) else {
             return Err(CoreError::Config(vak_config::ConfigError::Read {
                 path: vak_config::scope::WorkspaceScope::relative().permissions_local(),
                 source: std::io::Error::other(format!(
@@ -3029,7 +3045,7 @@ impl Core {
             }));
         };
         let rule = vak_permission::Rule::parse(&spec).map_err(CoreError::Rule)?;
-        if !rule.matches(tool, args) {
+        if !rule.matches(tool, declared.subject, args) {
             return Err(CoreError::Config(vak_config::ConfigError::Read {
                 path: vak_config::scope::WorkspaceScope::relative().permissions_local(),
                 source: std::io::Error::other(format!(
@@ -3260,11 +3276,11 @@ impl Core {
         };
         let mut servers: Vec<String> = self.effective_mcp().servers.into_keys().collect();
         servers.sort();
-        let registered = self.tool_names();
-        let network: Vec<String> = NETWORK_TOOLS
+        let network: Vec<String> = self
+            .scoped_tools(&ToolScope::default())
             .iter()
-            .filter(|tool| registered.iter().any(|name| name == *tool))
-            .map(|tool| (*tool).to_string())
+            .filter(|tool| tool.permission().reach == vak_permission::Reach::Network)
+            .map(|tool| tool.name().to_string())
             .collect();
         let skills: Vec<String> = self.skills().into_iter().map(|s| s.name).collect();
         reach::standings(&reach::Probe {
@@ -9275,10 +9291,43 @@ mod learned_rule_tests {
     /// not is granting something the operator never looked at, which is why
     /// `learn_from_call` round-trips before writing.
     fn derives_and_matches(tool: &str, args: serde_json::Value, expected: &str) {
-        let spec = scoped_allow_rule(tool, &args).expect("derives a rule");
+        let declared = built_in_declared(tool);
+        let spec = scoped_allow_rule(tool, declared, &args).expect("derives a rule");
         assert_eq!(spec, expected);
         let rule = vak_permission::Rule::parse(&spec).expect("parses");
-        assert!(rule.matches(tool, &args), "{spec} must match its own call");
+        assert!(
+            rule.matches(tool, declared.subject, &args),
+            "{spec} must match its own call"
+        );
+    }
+
+    /// The permission tests run the engine on a table of what the built-in
+    /// tools declare; each tool must declare exactly that.
+    #[test]
+    fn built_in_tools_declare_what_the_permission_tests_assume() {
+        let real = built_in_declarations();
+        let assumed = crate::permission_fixture::built_in();
+        for (name, declared) in &real {
+            if *declared == vak_permission::Declared::default() {
+                continue;
+            }
+            // The fixture names one card tool; every card declares the same.
+            let fixture = assumed.iter().find(|(tool, _)| tool == name).or_else(|| {
+                (declared.reach == vak_permission::Reach::Display)
+                    .then(|| assumed.iter().find(|(_, d)| d.reach == declared.reach))
+                    .flatten()
+            });
+            assert_eq!(fixture.map(|(_, d)| d), Some(declared), "{name}");
+        }
+    }
+
+    /// What the built-in tool of this name declares to the permission engine.
+    fn built_in_declared(name: &str) -> vak_permission::Declared {
+        built_in_declarations()
+            .into_iter()
+            .find(|(tool, _)| tool == name)
+            .map(|(_, declared)| declared)
+            .unwrap_or_default()
     }
 
     #[test]
@@ -9325,7 +9374,12 @@ mod learned_rule_tests {
             "git commit -m \"unbalanced",
         ] {
             assert!(
-                scoped_allow_rule("bash", &json!({ "command": command })).is_none(),
+                scoped_allow_rule(
+                    "bash",
+                    built_in_declared("bash"),
+                    &json!({ "command": command })
+                )
+                .is_none(),
                 "must refuse to narrow: {command}"
             );
         }
@@ -9342,7 +9396,7 @@ mod learned_rule_tests {
         let args = json!({ "path": "src/a[1].rs" });
         // The spec is derivable and syntactically valid...
         assert_eq!(
-            scoped_allow_rule("write", &args).as_deref(),
+            scoped_allow_rule("write", built_in_declared("write"), &args).as_deref(),
             Some("+write(src/a[1].rs)")
         );
         // ...but it does not cover its own call, so nothing is written.
@@ -9358,8 +9412,22 @@ mod learned_rule_tests {
     fn network_tools_are_never_remembered_from_one_call() {
         // A URL does not generalize, and a blanket `+webfetch` is a config
         // decision rather than something that falls out of a single yes.
-        assert!(scoped_allow_rule("webfetch", &json!({ "url": "https://x" })).is_none());
-        assert!(scoped_allow_rule("browse", &json!({ "url": "https://x" })).is_none());
+        assert!(
+            scoped_allow_rule(
+                "webfetch",
+                built_in_declared("webfetch"),
+                &json!({ "url": "https://x" })
+            )
+            .is_none()
+        );
+        assert!(
+            scoped_allow_rule(
+                "browse",
+                built_in_declared("browse"),
+                &json!({ "url": "https://x" })
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -9503,7 +9571,7 @@ pub fn build_engine_with(
     extra: &[String],
 ) -> Result<vak_permission::PermissionEngine, CoreError> {
     vak_permission::PermissionEngine::from_rule_strings(&rule_specs(config, extra))
-        .map(|engine| engine.with_presenting_tools(presentation_tools::presenting_tool_names()))
+        .map(|engine| engine.with_tools(built_in_declarations()))
         .map_err(CoreError::Rule)
 }
 
@@ -9550,12 +9618,22 @@ fn rule_specs_from(
 /// The shapes match `vak_permission`'s own argument candidates, which is
 /// what makes the round-trip check in [`Core::learn_from_call`] meaningful
 /// rather than a tautology over a string this function invented.
-pub fn scoped_allow_rule(tool: &str, args: &serde_json::Value) -> Option<String> {
-    match tool {
-        "bash" => {
-            let command = args.get("command")?.as_str()?;
+pub fn scoped_allow_rule(
+    tool: &str,
+    declared: vak_permission::Declared,
+    args: &serde_json::Value,
+) -> Option<String> {
+    use vak_permission::{Reach, Subject};
+    match (declared.reach, declared.subject) {
+        // A network tool is deliberately absent: a URL no glob over one
+        // call generalizes safely, and a blanket allow is a decision for
+        // the config file, made deliberately, not one to fall out of a
+        // single yes.
+        (Reach::Network, _) => None,
+        (_, Subject::Command(argument)) => {
+            let command = args.get(argument)?.as_str()?;
             // Exactly one executable segment, enumerable, no hidden effects.
-            let units = vak_permission::rules::allow_coverage_units(tool, args)?;
+            let units = vak_permission::rules::allow_coverage_units(declared.subject, args)?;
             if units.len() != 1 {
                 return None;
             }
@@ -9563,29 +9641,68 @@ pub fn scoped_allow_rule(tool: &str, args: &serde_json::Value) -> Option<String>
             if first.is_empty() || first.contains(['/', '$', '`', '"', '\'']) {
                 return None;
             }
-            Some(format!("+bash({first} *)"))
+            Some(format!("+{tool}({first} *)"))
         }
         // The exact path, not its directory: an approval for one file is not
         // an approval for its neighbours.
-        "write" | "edit" => Some(format!("+{tool}({})", args.get("path")?.as_str()?)),
-        "mcp" => {
+        (Reach::WritePath, Subject::Path { argument, .. }) => {
+            Some(format!("+{tool}({})", args.get(argument)?.as_str()?))
+        }
+        (_, Subject::IntegrationCall) => {
             if args.get("action")?.as_str()? != "call" {
                 return None;
             }
-            Some(format!("+mcp({}/*)", args.get("server")?.as_str()?))
+            Some(format!("+{tool}({}/*)", args.get("server")?.as_str()?))
         }
-        "task" => Some(format!("+task({})", args.get("label")?.as_str()?)),
-        // Everything else — network tools included — is deliberately absent.
-        // `webfetch` takes a URL that no glob over one call generalizes
-        // safely, and a blanket `+webfetch` is a decision for the config
-        // file, made deliberately, not one to fall out of a single yes.
+        (Reach::Other, Subject::Value(argument)) => {
+            Some(format!("+{tool}({})", args.get(argument)?.as_str()?))
+        }
         _ => None,
     }
 }
 
-/// Tools whose reach exceeds the workspace: network-capable capabilities
-/// registered next to built-ins (docs/design/29-personal-os.md P4).
-pub const NETWORK_TOOLS: [&str; 2] = ["webfetch", "browse"];
+/// What every tool in `tools` declares to the permission engine.
+pub fn declarations<'a>(
+    tools: impl IntoIterator<Item = &'a dyn vak_tools::Tool>,
+) -> Vec<(String, vak_permission::Declared)> {
+    tools
+        .into_iter()
+        .map(|tool| (tool.name().to_string(), tool.permission()))
+        .collect()
+}
+
+/// What the built-in tools and the card tools declare, for an engine built
+/// from configuration alone.
+pub fn built_in_declarations() -> Vec<(String, vak_permission::Declared)> {
+    let mut built_in = vak_tools::brokered_tools(PathBuf::new(), &[]);
+    built_in.push(Arc::new(vak_tools::WebFetchTool::new(PathBuf::new())));
+    built_in.push(Arc::new(vak_tools::WebBrowseTool::new(PathBuf::new())));
+    let cards = presentation_tools::EmitCardTool::all();
+    let mut declared = declarations(built_in.iter().map(|tool| tool.as_ref()));
+    declared.extend(declarations(
+        cards.iter().map(|tool| tool as &dyn vak_tools::Tool),
+    ));
+    // Built per turn or by a Core, so declared by their types.
+    for (name, permission) in [
+        ("skill", skills::SkillTool::PERMISSION),
+        ("mcp", vak_mcp::McpTool::PERMISSION),
+        (
+            "session_search",
+            session_search::SessionSearchTool::PERMISSION,
+        ),
+        (
+            "commitments",
+            tools_commitments::CommitmentsTool::PERMISSION,
+        ),
+        ("remember", learning::RememberTool::PERMISSION),
+        ("forget_memory", learning::ForgetMemoryTool::PERMISSION),
+        ("propose_skill", learning::ProposeSkillTool::PERMISSION),
+        ("mail_calendar", mail_calendar::MailCalendarTool::PERMISSION),
+    ] {
+        declared.push((name.to_string(), permission));
+    }
+    declared
+}
 
 /// What a channel overlay's `tools_allow = []` ("block this category")
 /// denies at the rule layer. Visibility filtering already removes these
@@ -10366,7 +10483,7 @@ mod webfetch_classification_tests {
     fn no_rule_outside_fullaccess_asks_fullaccess_allows() {
         let cfg = vak_config::Config::default();
         for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
-            for tool in NETWORK_TOOLS {
+            for tool in ["webfetch", "browse"] {
                 let d = decide(&cfg, &[], mode, tool);
                 assert!(
                     matches!(d, Decision::Ask { .. }),
@@ -10374,7 +10491,7 @@ mod webfetch_classification_tests {
                 );
             }
         }
-        for tool in NETWORK_TOOLS {
+        for tool in ["webfetch", "browse"] {
             let d = decide(&cfg, &[], PermissionMode::FullAccess, tool);
             assert!(
                 matches!(d, Decision::Allow),
@@ -10549,7 +10666,7 @@ mod webfetch_classification_tests {
         let cfg = vak_config::Config::default();
         for mode in [PermissionMode::ReadOnly, PermissionMode::WorkspaceWrite] {
             let engine = build_engine_with(&cfg, &[]).unwrap();
-            for tool in NETWORK_TOOLS {
+            for tool in ["webfetch", "browse"] {
                 let decision =
                     engine.evaluate(tool, &serde_json::json!({}), to_mode(mode), dir.path());
                 let Decision::Ask { source, .. } = decision else {
@@ -10564,7 +10681,7 @@ mod webfetch_classification_tests {
                     vak_agent::auto_approve(
                         vak_agent::ApprovalMode::AutoApprove,
                         source,
-                        tool,
+                        engine.declared(tool),
                         &serde_json::json!({}),
                         to_mode(mode),
                         false,
@@ -10597,7 +10714,7 @@ mod webfetch_classification_tests {
         assert!(!vak_agent::auto_approve(
             vak_agent::ApprovalMode::AutoApprove,
             source,
-            "webfetch",
+            vak_permission::Declared::reach(vak_permission::Reach::Network),
             &serde_json::json!({}),
             Mode::WorkspaceWrite,
             false,

@@ -4,12 +4,14 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod support;
+
 use serde_json::json;
 use vak_permission::{Mode, PermissionEngine};
 
 #[test]
 fn learning_tools_allowed_under_workspace_write_without_rules() {
-    let engine = PermissionEngine::default();
+    let engine = PermissionEngine::default().with_tools(support::built_in());
     for tool in ["remember", "forget_memory", "propose_skill"] {
         let d = engine.evaluate(
             tool,
@@ -26,7 +28,7 @@ fn learning_tools_allowed_under_workspace_write_without_rules() {
 
 #[test]
 fn remember_denied_in_read_only() {
-    let engine = PermissionEngine::default();
+    let engine = PermissionEngine::default().with_tools(support::built_in());
     let d = engine.evaluate(
         "remember",
         &json!({}),
@@ -38,7 +40,7 @@ fn remember_denied_in_read_only() {
 
 #[test]
 fn session_search_is_a_read() {
-    let engine = PermissionEngine::default();
+    let engine = PermissionEngine::default().with_tools(support::built_in());
     for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
         let d = engine.evaluate(
             "session_search",
@@ -58,7 +60,7 @@ fn session_search_is_a_read() {
 /// because the read needed an approver nobody could be.
 #[test]
 fn commitments_is_a_read() {
-    let engine = PermissionEngine::default();
+    let engine = PermissionEngine::default().with_tools(support::built_in());
     for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
         let d = engine.evaluate(
             "commitments",
@@ -72,7 +74,7 @@ fn commitments_is_a_read() {
         );
     }
     // An operator's rule still wins.
-    let engine = PermissionEngine::from_rule_strings(&["-commitments".to_string()]).unwrap();
+    let engine = support::engine(&["-commitments".to_string()]).unwrap();
     let d = engine.evaluate(
         "commitments",
         &json!({}),
@@ -86,7 +88,7 @@ fn commitments_is_a_read() {
 fn explicit_deny_rule_still_beats_learning_allowance() {
     // Severity aggregation: a user's deny rule outranks the built-in
     // WorkspaceWrite allowance.
-    let engine = PermissionEngine::from_rule_strings(&["-remember".to_string()]).unwrap();
+    let engine = support::engine(&["-remember".to_string()]).unwrap();
     let d = engine.evaluate(
         "remember",
         &json!({}),

@@ -179,12 +179,20 @@ cards. The items carried below are not built.
   "dummy") are removed: a command that ran is a command that ran. A
   delegated task and a remembered fact now count as a change when the
   call is made, by their workspace claim, as a write always did.
-  Tool names still read in the loop: the auto-approve table for
-  `read | glob | grep | ls | search`, `write | edit` and `bash`
-  (`auto_approve`), the argument aliases in `normalize_tool_call`
+  Done on 2026-10-12: card membership reads `presents_cards`; delivered
+  files and a continued save read `delivered_file` and `file_access`
+  (`vak_tools::tool_for_call`); the permission engine, its rules, hook
+  matchers, remembered approvals and `auto_approve` read each tool's
+  declared reach and rule subject (`Tool::permission`, docs/design/
+  08-permissions.md "Declared reach"), and the engine's name tables,
+  vak-core's `NETWORK_TOOLS` and `presenting_tool_names` are gone.
+  Tool names still read: the argument aliases in `normalize_tool_call`
   (`file_path` for `path`, `cmd` for `command`), `batch_has_file_dependency`,
-  the audit command's and the scheduled script's lookup of `bash`, and the
-  loop-owned `plan`, `recall`, `task` and card-call interceptions.
+  the audit command's and the scheduled script's lookup of `bash`, the bash
+  and `office_apply` prompt sections, `CHANNEL_BLOCKABLE_TOOLS`,
+  `TASK_COPY_TOOLS`, the flow tool's read-only list, and the loop-owned
+  `plan`, `recall`, `task` and card-call interceptions (which are the
+  loop's own tools).
 
 Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates

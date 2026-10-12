@@ -33,6 +33,16 @@ const UNSUPPORTED: &[(&str, &str)] = &[
 
 #[async_trait]
 impl Tool for DocReadTool {
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::new(
+            vak_permission::Reach::ReadPath,
+            vak_permission::Subject::Path {
+                argument: "path",
+                required: false,
+            },
+        )
+    }
+
     fn name(&self) -> &str {
         "doc_read"
     }

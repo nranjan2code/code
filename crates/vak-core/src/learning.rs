@@ -27,8 +27,19 @@ pub struct ForgetMemoryTool {
     pub cwd: PathBuf,
 }
 
+impl ForgetMemoryTool {
+    /// What this tool declares to the permission engine, known before one
+    /// is built.
+    pub const PERMISSION: vak_permission::Declared =
+        vak_permission::Declared::reach(vak_permission::Reach::Learning);
+}
+
 #[async_trait::async_trait]
 impl vak_tools::Tool for ForgetMemoryTool {
+    fn permission(&self) -> vak_permission::Declared {
+        Self::PERMISSION
+    }
+
     fn name(&self) -> &str {
         "forget_memory"
     }
@@ -94,8 +105,19 @@ impl vak_tools::Tool for ForgetMemoryTool {
     }
 }
 
+impl RememberTool {
+    /// What this tool declares to the permission engine, known before one
+    /// is built.
+    pub const PERMISSION: vak_permission::Declared =
+        vak_permission::Declared::reach(vak_permission::Reach::Learning);
+}
+
 #[async_trait::async_trait]
 impl vak_tools::Tool for RememberTool {
+    fn permission(&self) -> vak_permission::Declared {
+        Self::PERMISSION
+    }
+
     fn name(&self) -> &str {
         "remember"
     }
@@ -206,8 +228,19 @@ pub struct ProposeSkillTool {
     pub session_id: String,
 }
 
+impl ProposeSkillTool {
+    /// What this tool declares to the permission engine, known before one
+    /// is built.
+    pub const PERMISSION: vak_permission::Declared =
+        vak_permission::Declared::reach(vak_permission::Reach::Learning);
+}
+
 #[async_trait::async_trait]
 impl vak_tools::Tool for ProposeSkillTool {
+    fn permission(&self) -> vak_permission::Declared {
+        Self::PERMISSION
+    }
+
     fn name(&self) -> &str {
         "propose_skill"
     }

@@ -286,7 +286,7 @@ state. Nothing in this struct can be edited through any API, because
 | Field | Built by | Present when | Notes |
 |---|---|---|---|
 | `capability_contract` | seed | always | |
-| `presentation_contract` | seed | any admitted tool satisfies `presentation_tools::is_card_tool` | |
+| `presentation_contract` | seed | any admitted tool declares `presents_cards` | |
 | `document_contract` | seed | `office_apply` admitted | |
 | `sandbox_contract` | seed | `bash` admitted | a channel bot without execution gets a shorter prompt |
 | `surface` | `Surface::prompt_section` | always | one of nine fixed texts; Desktop and Web add the preview sentence |

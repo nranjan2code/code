@@ -3,6 +3,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+mod support;
+
 use serde_json::json;
 use vak_permission::{Decision, Mode, PermissionEngine};
 
@@ -13,8 +15,9 @@ fn decide(tool: &str, path: &str, mode: Mode) -> Decision {
         std::thread::current().id()
     ));
     std::fs::create_dir_all(&workspace).unwrap();
-    let decision =
-        PermissionEngine::default().evaluate(tool, &json!({ "path": path }), mode, &workspace);
+    let decision = PermissionEngine::default()
+        .with_tools(support::built_in())
+        .evaluate(tool, &json!({ "path": path }), mode, &workspace);
     let _ = std::fs::remove_dir_all(&workspace);
     decision
 }
