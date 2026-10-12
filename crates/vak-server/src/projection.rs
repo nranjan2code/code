@@ -270,6 +270,47 @@ pub(crate) fn run_cards(session: &SessionLog) -> Vec<vak_delivery::StructuredOut
         .collect()
 }
 
+/// The turn the tool call `execution` belongs to and that turn's result,
+/// which a draft put up for Review is bound to: what the turn answered
+/// with, its words, else the card it showed, else the evaluation that
+/// closed it. `None` when the call is not in the timeline, `Err` when its
+/// turn has answered nothing yet. A turn that answered with a card and no
+/// words still has a draft to review.
+pub(crate) fn result_of_execution(
+    timeline: &OutputTimeline,
+    execution: &str,
+) -> Option<Result<(String, String), ()>> {
+    let turn_id = timeline.items.iter().find_map(|item| {
+        item.provenance.as_ref().and_then(|value| {
+            (value.tool_call_id.as_deref() == Some(execution)).then(|| item.turn_id.clone())
+        })
+    })?;
+    let in_turn = || {
+        timeline
+            .items
+            .iter()
+            .rev()
+            .filter(|item| item.turn_id == turn_id)
+    };
+    let result_id = in_turn()
+        .find_map(|item| {
+            (item.role == OutputRole::Assistant)
+                .then(|| item.outcome.as_ref().map(|value| value.result_id.clone()))
+                .flatten()
+        })
+        .or_else(|| {
+            in_turn()
+                .find(|item| item.kind == OutputKind::Card)
+                .map(|item| item.id.clone())
+        })
+        .or_else(|| {
+            in_turn()
+                .find(|item| item.role == OutputRole::Assistant && item.kind == OutputKind::Outcome)
+                .map(|item| item.id.clone())
+        });
+    Some(result_id.map(|result| (turn_id, result)).ok_or(()))
+}
+
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
     let builtin = PresentationPlanner {
         skills: vak_delivery::built_in_skill_registry(),
@@ -5363,6 +5404,61 @@ mod tests {
             },
         )
         .expect("create")
+    }
+
+    /// A turn that answered with a card and no words has a result its draft
+    /// is reviewed under: the card. Found live 2026-10-12, when such a
+    /// turn's draft could not be opened for Review.
+    #[test]
+    fn a_turn_answered_with_a_card_alone_has_a_result_for_review() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "card-only");
+        log.append_message(MessageRecord {
+            message: Message::user_text("Chart the week and save it."),
+            meta: None,
+        })
+        .expect("request");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::ToolUse {
+                id: "w1".into(),
+                name: "write".into(),
+                input: serde_json::json!({"path": "week.md", "content": "Mon 1"}),
+            }]),
+            meta: None,
+        })
+        .expect("call");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: "w1".into(),
+                    content: "Wrote week.md".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .expect("result");
+        let timeline = snapshot("card-only", &log);
+        assert_eq!(
+            super::result_of_execution(&timeline, "w1"),
+            Some(Err(())),
+            "nothing answered yet"
+        );
+        assert_eq!(super::result_of_execution(&timeline, "other"), None);
+
+        append_card_call(&mut log, "c1", "the week");
+        let timeline = snapshot("card-only", &log);
+        let card = timeline
+            .items
+            .iter()
+            .find(|item| item.kind == OutputKind::Card)
+            .expect("the card is projected");
+        let (turn, result) = super::result_of_execution(&timeline, "w1")
+            .expect("the call is in the timeline")
+            .expect("the card is the result");
+        assert_eq!(turn, card.turn_id);
+        assert_eq!(result, card.id);
     }
 
     fn append_card_call(log: &mut SessionLog, id: &str, summary: &str) {

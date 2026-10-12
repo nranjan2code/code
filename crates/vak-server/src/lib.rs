@@ -13697,24 +13697,14 @@ fn sandbox_result_binding(
     } else {
         return Err((StatusCode::NOT_FOUND, "unknown session"));
     };
-    let Some(turn_id) = timeline.items.iter().find_map(|item| {
-        item.provenance.as_ref().and_then(|value| {
-            (value.tool_call_id.as_deref() == Some(execution_id)).then(|| item.turn_id.clone())
-        })
-    }) else {
-        return Err((
+    match crate::projection::result_of_execution(&timeline, execution_id) {
+        Some(Ok(binding)) => Ok(binding),
+        Some(Err(())) => Err((StatusCode::CONFLICT, "result is not ready for review")),
+        None => Err((
             StatusCode::NOT_FOUND,
             "execution is not part of this session",
-        ));
-    };
-    let Some(result_id) = timeline.items.iter().rev().find_map(|item| {
-        (item.turn_id == turn_id && item.role == vak_delivery::OutputRole::Assistant)
-            .then(|| item.outcome.as_ref().map(|value| value.result_id.clone()))
-            .flatten()
-    }) else {
-        return Err((StatusCode::CONFLICT, "result is not ready for review"));
-    };
-    Ok((turn_id, result_id))
+        )),
+    }
 }
 
 fn sandbox_execution_scratch(
