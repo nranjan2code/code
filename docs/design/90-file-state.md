@@ -170,6 +170,25 @@ and `/library/{id}/state`):
    "Changed outside Vak", "In the trash"). Its glimpse is the head the
    person would act on: the newest waiting draft, else the workspace file.
 
+### 5.1 Where it came from, and the way back
+
+Every version names its origin from the record, never from guessing:
+
+| Origin | From the record | Reached by |
+|---|---|---|
+| A turn of a conversation | the event's trace: Agent, session, turn, call, run (§3.5 keeps `turn`; stage 1) | opening the conversation at that turn, with the call highlighted |
+| What the turn was given | the reads and fetches before the call in that turn (`derived_from`, the catalog's lineage, M6.4): the workspace files, the earlier drafts and the web pages it read | each input as a link: a file to its own page, a page to its URL |
+| Why the turn ran | the run's cause: the person's message, an automation and its trigger, a channel message, a worker for a parent | the message, the automation, or the parent conversation |
+| A person | `Person` source, with the action (put back, edited, saved) | that version's comments and its Review |
+| Outside Vak | an `Observed` version (D2), with when Vak noticed | the version before it, to compare |
+
+On the artifact page each node opens its origin. The Agent gets the same
+facts in the note (§3.2), "made in turn 41 of this conversation from
+`budget.xlsx` and the earlier draft", and reaches them with `recall` by
+turn or evidence id. In another conversation, `recall` reaches back only
+where the grants allow (M8.3b), and the note says when the origin is a
+conversation this one cannot open.
+
 The Agent reaches the same thing through `recall` and `session_search`
 (§3.3) and the note on every path it touches (§3.2). Whatever the person
 does on the page, the next turn reads it, because both come from the
