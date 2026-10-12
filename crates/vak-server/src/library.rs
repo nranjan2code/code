@@ -640,6 +640,7 @@ pub(crate) fn attach(
             VersionSource::Call { session, .. } => ("Vakyartha", Some(session)),
             VersionSource::Candidate { session, .. } => ("Vakyartha, for review", Some(session)),
             VersionSource::Person => ("the person", None),
+            VersionSource::Workspace => ("an edit made outside Vakyartha", None),
         };
         let from = session
             .filter(|session| !session.is_empty())

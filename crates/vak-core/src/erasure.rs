@@ -1310,7 +1310,8 @@ impl Core {
                     | crate::artifacts::VersionSource::Candidate { session, .. } => {
                         session == session_id
                     }
-                    crate::artifacts::VersionSource::Person => false,
+                    crate::artifacts::VersionSource::Person
+                    | crate::artifacts::VersionSource::Workspace => false,
                 });
             if here {
                 owners.push(artifact.id.to_string());

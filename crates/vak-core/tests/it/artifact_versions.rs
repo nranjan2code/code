@@ -541,3 +541,69 @@ fn a_search_hit_names_its_file_and_state() {
     let told = vak_core::file_state::describe(&artifacts, cwd.path(), &id, "vak").unwrap();
     assert!(told.contains("in the workspace"), "{told}");
 }
+
+/// An edit made outside Vak is recorded as a version of what it changed when
+/// Vak next reads the file, and a draft made before it is told it does not
+/// include it (doc 90 D2, §3.2).
+#[test]
+fn an_outside_edit_is_recorded_and_a_draft_made_before_it_is_behind() {
+    let (shared, tenant) = home();
+    let cwd = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(cwd.path()).unwrap();
+    let space = vak_session::trace::local::space(cwd.path()).to_string();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let id = artifacts
+        .declare(
+            &space,
+            "vak",
+            "notes.md",
+            ArtifactKind::Document,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let person = |bytes: &'static [u8], parent| NewVersion {
+        parent,
+        bytes,
+        source: VersionSource::Person,
+    };
+    // The accepted file, then a draft made from it.
+    let accepted = artifacts
+        .version(id, person(b"one", None), None, None)
+        .unwrap();
+    artifacts
+        .record(id, ArtifactStep::Promoted { version: accepted }, None, None)
+        .unwrap();
+    std::fs::write(cwd.path().join("notes.md"), b"one").unwrap();
+    let draft = artifacts
+        .version(id, person(b"one, and a draft", Some(accepted)), None, None)
+        .unwrap();
+
+    let before = vak_core::file_state::observe(&artifacts, &space, cwd.path(), "notes.md").unwrap();
+    assert!(!before.changed_outside);
+    assert!(before.drafts.iter().all(|d| !d.behind), "{before:?}");
+
+    // Someone edits the file by hand.
+    std::fs::write(cwd.path().join("notes.md"), b"one, edited by hand").unwrap();
+    let after = vak_core::file_state::observe(&artifacts, &space, cwd.path(), "notes.md").unwrap();
+    assert!(after.changed_outside, "{after:?}");
+    let artifact = artifacts.get(&id.to_string()).unwrap();
+    let observed = artifact
+        .versions
+        .iter()
+        .find(|v| matches!(v.source, VersionSource::Workspace))
+        .expect("the edit is a version");
+    assert_eq!(observed.parent, Some(accepted));
+    let waiting = after.drafts.iter().find(|d| d.version == draft).unwrap();
+    assert!(waiting.behind, "{after:?}");
+    let told = vak_core::file_state::note(&after, "vak").unwrap();
+    assert!(told.contains("edit made outside Vak"), "{told}");
+    assert!(told.contains("which it does not include"), "{told}");
+
+    // Reading again records nothing more.
+    vak_core::file_state::observe(&artifacts, &space, cwd.path(), "notes.md").unwrap();
+    let again = artifacts.get(&id.to_string()).unwrap();
+    assert_eq!(again.versions.len(), artifact.versions.len());
+}

@@ -51,6 +51,10 @@ pub enum VersionSource {
     Candidate { session: String, candidate: String },
     /// A person's own edit or upload.
     Person,
+    /// Seen in the workspace: bytes no version held, which Vak found when it
+    /// read the file, an edit made outside Vak (docs/design/90-file-state.md,
+    /// D2).
+    Workspace,
 }
 
 /// One row of the `artifacts/` chain.

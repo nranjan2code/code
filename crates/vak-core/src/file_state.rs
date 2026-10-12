@@ -73,6 +73,9 @@ pub struct Draft {
     pub state: DraftState,
     /// The draft deletes the file: accepting it removes the workspace file.
     pub removes: bool,
+    /// The workspace's current version is not among the draft's ancestors:
+    /// the draft was made before it and does not include it (doc 90 §3.2).
+    pub behind: bool,
 }
 
 /// The state of one workspace path (doc 90 §3.1).
@@ -85,6 +88,8 @@ pub struct FileState {
     pub drafts: Vec<Draft>,
     /// The Agent that authored the artifact; `None` with no record.
     pub owner: Option<String>,
+    /// The workspace file is an edit Vak found made outside it (D2).
+    pub changed_outside: bool,
 }
 
 /// The state of `path` given its artifact (if recorded) and what the
@@ -97,6 +102,7 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
             workspace_is: WorkspaceIs::Unrecorded,
             drafts: Vec::new(),
             owner: None,
+            changed_outside: false,
         };
     };
     let workspace_is = workspace_is(artifact, &workspace);
@@ -125,9 +131,23 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
         .collect();
     candidates.sort_by_key(|version| Reverse(version.at));
 
+    let ancestors = |version: &Version| {
+        let mut seen = Vec::new();
+        let mut next = version.parent;
+        while let Some(id) = next.filter(|id| !seen.contains(id)) {
+            seen.push(id);
+            next = artifact
+                .versions
+                .iter()
+                .find(|v| v.id == id)
+                .and_then(|v| v.parent);
+        }
+        seen
+    };
     let drafts = candidates
         .into_iter()
         .map(|version| Draft {
+            behind: current.is_some_and(|current| !ancestors(version).contains(&current)),
             version: version.id,
             draft_name: draft_name(artifact, version),
             turn: version.turn.clone(),
@@ -143,6 +163,12 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
         workspace_is,
         drafts,
         owner: Some(artifact.agent.clone()),
+        changed_outside: current.is_some_and(|current| {
+            artifact
+                .versions
+                .iter()
+                .any(|v| v.id == current && matches!(v.source, VersionSource::Workspace))
+        }),
     }
 }
 
@@ -239,15 +265,41 @@ pub fn observe(artifacts: &Artifacts, space: &str, cwd: &Path, path: &str) -> Op
     let normal = workspace_path(cwd, path);
     // A path Vak never recorded has nothing to say beyond the folder: the
     // file is not read, so a model reading large files pays nothing.
-    let artifact = artifacts.get(&artifact_id(space, &normal).to_string())?;
-    let workspace = match std::fs::read(cwd.join(&normal)) {
-        Ok(bytes) => Workspace::Present {
-            digest: hex::encode(sha2::Sha256::digest(&bytes)),
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Workspace::Absent,
+    let id = artifact_id(space, &normal);
+    let artifact = artifacts.get(&id.to_string())?;
+    let bytes = match std::fs::read(cwd.join(&normal)) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(_) => return None,
     };
-    Some(file_state(Some(&artifact), &normal, workspace))
+    let workspace = |bytes: &Option<Vec<u8>>| match bytes {
+        Some(bytes) => Workspace::Present {
+            digest: hex::encode(sha2::Sha256::digest(bytes)),
+        },
+        None => Workspace::Absent,
+    };
+    let state = file_state(Some(&artifact), &normal, workspace(&bytes));
+    // Bytes no version holds are an edit made outside Vak: recorded as a
+    // version of what they changed (D2), so the history shows it and a
+    // draft made before it says so. A failed write leaves the state as read.
+    if let (WorkspaceIs::Changed { since }, Some(found)) = (&state.workspace_is, &bytes) {
+        let recorded = artifacts.version(
+            id,
+            crate::artifacts::NewVersion {
+                parent: Some(*since),
+                bytes: found,
+                source: VersionSource::Workspace,
+            },
+            None,
+            None,
+        );
+        if recorded.is_ok()
+            && let Some(artifact) = artifacts.get(&id.to_string())
+        {
+            return Some(file_state(Some(&artifact), &normal, workspace(&bytes)));
+        }
+    }
+    Some(state)
 }
 
 /// What a search hit on the artifact `id` says of its file (doc 90 §3.3):
@@ -255,14 +307,7 @@ pub fn observe(artifacts: &Artifacts, space: &str, cwd: &Path, path: &str) -> Op
 /// workspace as recorded.
 pub fn describe(artifacts: &Artifacts, cwd: &Path, id: &str, agent: &str) -> Option<String> {
     let artifact = artifacts.get(id)?;
-    let workspace = match std::fs::read(cwd.join(&artifact.path)) {
-        Ok(bytes) => Workspace::Present {
-            digest: hex::encode(sha2::Sha256::digest(&bytes)),
-        },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Workspace::Absent,
-        Err(_) => return None,
-    };
-    let state = file_state(Some(&artifact), &artifact.path, workspace);
+    let state = observe(artifacts, &artifact.space, cwd, &artifact.path)?;
     Some(match note(&state, agent) {
         Some(note) => format!("file `{}`\n{note}", artifact.path),
         None => format!("file `{}`, in the workspace as recorded", artifact.path),
@@ -319,6 +364,10 @@ pub fn note(state: &FileState, agent: &str) -> Option<String> {
         (WorkspaceIs::NotYet, Workspace::Absent) => {
             Some(format!("`{}` is not in the workspace.", state.path))
         }
+        (WorkspaceIs::Version(id), _) if state.changed_outside => Some(format!(
+            "`{}` in the workspace is an edit made outside Vak (version {id}).",
+            state.path
+        )),
         (WorkspaceIs::Version(id), _) if !state.drafts.is_empty() => {
             Some(format!("`{}` matches version {id}.", state.path))
         }
@@ -367,6 +416,11 @@ fn draft_line(draft: &Draft) -> String {
     };
     if draft.removes {
         parts.push("deletes the file".to_string());
+    }
+    if draft.behind {
+        parts.push(
+            "made before the workspace's current copy, which it does not include".to_string(),
+        );
     }
     if let Some(turn) = &draft.turn {
         parts.push(format!("made in turn {turn}"));
