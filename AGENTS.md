@@ -2411,7 +2411,7 @@ gate, then commit each step on its own.
 
 **One integration-test binary per crate.** A crate's integration tests are
 modules of `tests/it/main.rs`, so the crate graph links once rather than
-once per file (220 test binaries became 69 on 2026-10-12). A test file
+once per file (220 test binaries became 73 on 2026-10-12). A test file
 stays in `tests/` as its own binary only when it needs its own process:
 it acts on the whole data home (a restore, a sync, key rotation, a
 lifecycle pass, erasure, holds, an integrity check, a catalog rebuild) or

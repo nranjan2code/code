@@ -17,7 +17,6 @@ mod intent_projection;
 mod intent_wiring;
 mod learning_loop;
 mod ledger_objects;
-mod lifecycle_quota;
 mod mcp_env_interp;
 mod permissions_local;
 mod reflection;

@@ -2,6 +2,8 @@
 //! (plan M7a-d part 5, docs/design/74 §3.3).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use vak_core::lifecycle::QuotaState;

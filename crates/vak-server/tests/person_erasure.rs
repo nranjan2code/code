@@ -3,6 +3,8 @@
 //! own.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
