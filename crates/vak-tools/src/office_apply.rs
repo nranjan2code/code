@@ -268,6 +268,22 @@ impl Tool for OfficeApplyTool {
                 );
             }
             (None, None) => OfficeOrigin::Blank,
+            // A draft never changes once written (each call writes its own),
+            // so the digest that guards a read file against a later change
+            // guards nothing here: the draft's own bytes are the base.
+            (Some(source), None) if crate::drafts::draft_of(source).is_some() => {
+                match crate::drafts::existing(ctx, source).and_then(|draft| {
+                    std::fs::read(&draft)
+                        .map(|bytes| (draft, bytes))
+                        .map_err(|error| error.to_string())
+                }) {
+                    Ok((draft, bytes)) => OfficeOrigin::File {
+                        path: draft,
+                        base_digest: sha256_hex(&bytes),
+                    },
+                    Err(error) => return ToolOutput::error(Fault::Target, error),
+                }
+            }
             (Some(source), None) => {
                 return ToolOutput::error(
                     Fault::Shape,
@@ -1369,6 +1385,26 @@ mod tests {
             document.lines().join("\n").contains("Slide 2: Q3"),
             "the chained draft keeps the first edit"
         );
+
+        // A draft never changes once written, so revising from one needs no
+        // digest; a workspace file still does (doc 90, live 2026-10-12).
+        let fourth = run(
+            dir.path(),
+            serde_json::json!({
+                "path": "q3.pptx",
+                "source": draft_path(&third),
+                "ops": [{"op": "set_title", "title": "Q3 review, final"}]
+            }),
+        )
+        .await;
+        assert!(!fourth.is_error(), "{}", fourth.content);
+        let latest = on_disk(dir.path(), &draft_path(&fourth));
+        let document = vak_ooxml::read::read(
+            std::io::Cursor::new(std::fs::read(latest).unwrap()),
+            vak_ooxml::Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(document.title.as_deref(), Some("Q3 review, final"));
     }
 
     #[tokio::test]
