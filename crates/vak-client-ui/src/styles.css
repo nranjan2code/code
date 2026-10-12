@@ -6553,11 +6553,13 @@ code.ic[data-previewable="true"]:hover {
 .office-view-not-read summary { width: fit-content; cursor: pointer; }
 .office-view-not-read p { margin: 8px 0 0; line-height: 1.5; }
 .office-view-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(140px, 200px) minmax(0, 1fr); gap: clamp(14px, 2vw, 32px); }
+/* A document with no headings has no rail: the page takes the whole view. */
+.office-view-body:not(:has(> .office-outline)) { grid-template-columns: minmax(0, 1fr); }
 .office-outline-toggle { display: none; }
 .office-outline { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-right: 6px; border-right: 1px solid var(--border-soft); }
 .office-outline button { padding: var(--space-1) var(--space-2); border: 0; border-radius: 6px; background: transparent; color: var(--text-soft); font-size: var(--fs-meta); text-align: left; overflow-wrap: anywhere; padding-left: calc(8px + var(--depth, 0) * 10px); }
 .office-outline button:hover { background: var(--surface-hover); color: var(--text); }
-.office-units { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-bottom: var(--space-3); }
+.office-units { grid-column: -2 / -1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding-bottom: var(--space-3); }
 .office-unit { position: relative; padding: 6px 10px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; }
 .office-unit:hover { background: var(--surface-hover); }
 .office-unit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -6667,6 +6669,7 @@ code.ic[data-previewable="true"]:hover {
 .office-structure { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-2); padding-bottom: var(--space-3); font-size: var(--fs-meta); }
 .office-structure p { margin: 0; color: var(--text-soft); }
 .office-structure h4 { margin: 6px 0 0; font-size: var(--fs-meta); }
+.office-table { min-width: 100%; }
 .office-table td { white-space: normal; overflow-wrap: anywhere; }
 .office-external td { background: color-mix(in srgb, var(--yellow) 6%, transparent); }
 /* By the view's own width, not the window's: in split view the Canvas is
