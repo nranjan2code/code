@@ -79,7 +79,7 @@ pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
 /// `presentation`, or `id` names what to recall; `range` is only meaningful
 /// with `id` but is not rejected when present alongside another field (the
 /// resolver simply ignores it). A `query` beside a precise target (`id`,
-/// `presentation`, `turn`) is the reason for the recall, not a second
+/// `presentation`, `turn`, `turn_id`) is the reason for the recall, not a second
 /// target: the target is recalled. Refusing it left a model that named the
 /// evidence it wanted, and why, with nothing (found live, 2026-10-10).
 fn parse_target(args: &Value) -> Result<RecallRequest, String> {
@@ -108,8 +108,12 @@ fn parse_target(args: &Value) -> Result<RecallRequest, String> {
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if let Some(turn_id) = turn_id {
-        if turn.is_some() || presentation.is_some() || id.is_some() || query.is_some() {
-            return Err("turn_id cannot be combined with another recall target".into());
+        // A query beside it is the reason for the recall, as beside any
+        // precise target; only a second precise target is a contradiction.
+        if turn.is_some() || presentation.is_some() || id.is_some() {
+            return Err(
+                "turn_id cannot be combined with turn, presentation or id: name one of them".into(),
+            );
         }
         if turn_id.len() > 128 {
             return Err("turn_id is too long".into());
@@ -346,6 +350,29 @@ mod tests {
 
     /// The call a model made on a deployed host: every property filled,
     /// a real evidence id and a query saying what it wanted from it.
+    /// A query beside a `turn_id` is why the turn is wanted: the turn is
+    /// reopened, here and in another conversation. Refusing it left a model
+    /// that copied a search hit's turn_id, with its search words still in
+    /// the call, with nothing (2026-10-12).
+    #[test]
+    fn a_query_beside_a_turn_id_reopens_the_turn() {
+        assert_eq!(
+            parse_recall_args(&json!({"turn_id": "t-9", "query": "the Lisbon notes"})).unwrap(),
+            RecallRequest::TurnId("t-9".into())
+        );
+        assert_eq!(
+            parse_recall_args(
+                &json!({"turn_id": "t-9", "query": "the notes", "conversation": "c-1"})
+            )
+            .unwrap(),
+            RecallRequest::Elsewhere {
+                conversation: "c-1".into(),
+                request: Box::new(RecallRequest::TurnId("t-9".into())),
+            }
+        );
+        assert!(parse_recall_args(&json!({"turn_id": "t-9", "turn": 3})).is_err());
+    }
+
     #[test]
     fn a_query_beside_an_evidence_id_recalls_the_evidence() {
         let call = json!({
@@ -392,7 +419,6 @@ mod tests {
             parse_recall_args(&json!({"turn_id": "stable", "turn": 0, "query": ""})).unwrap(),
             RecallRequest::TurnId("stable".into())
         );
-        assert!(parse_recall_args(&json!({"turn_id": "stable", "query": "topic"})).is_err());
         assert!(parse_recall_args(&json!({"turn_id": "stable", "id": "evidence"})).is_err());
     }
 
