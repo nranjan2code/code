@@ -170,9 +170,15 @@ impl LocalObjectStore {
         self.authority.health()?;
         let id = self.id_key.id(plaintext);
         let path = self.object_path(&id);
-        if path.exists() {
-            let grant = self.grant_path(&id, scope);
-            if grant.exists() {
+        let grant = self.grant_path(&id, scope);
+        if let Ok(body) = fs::read(&path) {
+            // A grant counts only when its key opens the body: one left by
+            // a writer still losing a race to create the body does not yet.
+            let opens = grant.exists()
+                && self
+                    .read_grant_key(&grant)
+                    .is_ok_and(|key| seal::open(&key, id.0.as_bytes(), &body).is_ok());
+            if opens {
                 // Putting again is naming again: the grant's age restarts,
                 // so a collection that spares young grants spares an
                 // object a save has just reused and not yet linked.
@@ -187,12 +193,26 @@ impl LocalObjectStore {
                 return Ok(id);
             }
         }
-        let key: [u8; KEY_LEN] = seal::random()?;
+        // The grant first, and never over another writer's: a second
+        // writer of the same scope takes the key the first one granted, so
+        // both seal the body under one key and whichever creates it, the
+        // scope's grant opens it.
+        let mut key: Vec<u8> = seal::random::<KEY_LEN>()?.to_vec();
+        let w = self.authority.wrap(scope, &key)?;
+        if !self.create_atomic(&grant, &w.encode())? {
+            match self.read_grant_key(&grant) {
+                Ok(granted) => key = granted,
+                Err(StorageError::AuthorityUnavailable(m)) => {
+                    return Err(StorageError::AuthorityUnavailable(m));
+                }
+                // A grant nothing can read is replaced.
+                Err(_) => self.write_grant(&id, scope, &key)?,
+            }
+        }
         let body = self.seal_body(&id, &key, plaintext)?;
-        // The grant first, then the body only if no other writer created
-        // it: a writer that lost that race takes the winner's key, which
-        // its grant was written before its body, so it is always there.
-        self.write_grant(&id, scope, &key)?;
+        // The body only if no other writer created it: a writer that lost
+        // that race takes the winner's key, whose grant was written before
+        // its body, so it is always there.
         if !self.create_atomic(&path, &body)? {
             match self.recover_key(&id)? {
                 Some(winner) if winner.as_slice() != key.as_slice() => {
@@ -448,6 +468,33 @@ mod tests {
                     b"[]",
                     "round {round}: {scope} lost its key to a racing writer"
                 );
+            }
+        }
+    }
+
+    /// A put that has returned is readable at once, whoever else is putting
+    /// the same bytes in the same scope: a grant never holds a key that does
+    /// not open the body. Found 2026-10-12 as a Document read failing with
+    /// "open failed" while another thread saved the same content.
+    #[test]
+    fn the_same_bytes_put_at_once_in_one_scope_are_readable_as_each_put_returns() {
+        for round in 0..200 {
+            let dir = tempfile::tempdir().unwrap();
+            let a = Arc::new(MemoryKeyAuthority::new().unwrap());
+            let shared = Arc::new(store(dir.path(), [9; 32], &a));
+            let barrier = Arc::new(std::sync::Barrier::new(8));
+            let writers: Vec<_> = (0..8)
+                .map(|_| {
+                    let (s, barrier) = (shared.clone(), barrier.clone());
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        let id = s.put(b"{}", "one").unwrap();
+                        s.get(&id, "one").map(|_| ()).map_err(|e| e.to_string())
+                    })
+                })
+                .collect();
+            for writer in writers {
+                assert_eq!(writer.join().unwrap(), Ok(()), "round {round}");
             }
         }
     }

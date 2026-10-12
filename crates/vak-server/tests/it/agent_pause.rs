@@ -179,10 +179,17 @@ async fn pause_without_stop_running_lets_a_running_turn_finish_and_refuses_the_n
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["stopped_runs"], 0);
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    assert!(
-        running(&app, &newsy).await,
-        "a plain pause never stops a running turn"
-    );
+    if !running(&app, &newsy).await {
+        let (_, sessions) = call(&app, "GET", "/sessions", json!({})).await;
+        let (_, transcript) = call(
+            &app,
+            "GET",
+            &format!("/sessions/{newsy}/transcript"),
+            json!({}),
+        )
+        .await;
+        panic!("a plain pause never stops a running turn: {sessions}\n{transcript}");
+    }
 
     // Release the hung turn the supported way, then ask for another.
     let (status, _) = call(

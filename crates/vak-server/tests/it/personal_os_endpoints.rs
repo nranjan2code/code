@@ -205,8 +205,9 @@ async fn memory_list_forget_amend_across_scopes() {
         .send()
         .await
         .unwrap();
-    assert_eq!(res.status(), 200);
+    let status = res.status();
     let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(status, 200, "{body}");
     assert_eq!(body["forgotten"], serde_json::json!(ws.id));
     assert!(vak_core::memory::list_notes(&srv.home, &srv.cwd).is_empty());
     assert_eq!(vak_core::memory::list_profile_notes(&srv.home).len(), 1);
