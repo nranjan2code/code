@@ -149,7 +149,7 @@ impl Tool for OfficeApplyTool {
                 "ops": {
                     "type": "array",
                     "minItems": 1,
-                    "description": "Ops applied in order; any failure writes nothing. Open XML Review offers individual choices for up to 100 ops per draft; PDF allows at most 200 ops per call. Each names its `op` and only that op's fields. Anchors come from doc_read of the source: paragraphs p:1A2B3C4D or p@12, cells Budget!B4, slides slide:256, shapes slide:256/shape:3, placeholders slide:256/placeholder:title.",
+                    "description": "Ops applied in order; any failure writes nothing. Open XML Review offers individual choices for up to 100 ops per draft; PDF allows at most 200 ops per call. Each names its `op` and only that op's fields. Anchors are copied exactly as doc_read printed them for the source: a paragraph is p:1A2B3C4D (its id) where the file gives paragraphs ids, else p@12 (its position), never a mix of the two; cells Budget!B4, slides slide:256, shapes slide:256/shape:3, placeholders slide:256/placeholder:title.",
                     "items": { "oneOf": op_schemas() }
                 }
             },
@@ -564,7 +564,7 @@ fn op_schemas() -> Value {
     serde_json::json!([
         op(
             "replace_paragraph_text",
-            serde_json::json!({ "anchor": anchor("paragraph anchor, e.g. p@12; in a PDF, a line, e.g. page:3/line:12"), "text": text }),
+            serde_json::json!({ "anchor": anchor("paragraph anchor exactly as doc_read printed it: p:1A2B3C4D or p@12; in a PDF, a line, e.g. page:3/line:12"), "text": text }),
             &["anchor", "text"],
             "Word: give the paragraph's whole new text, as it should read. Only the words that differ become tracked changes; its formatting, links, footnote marks and fields stay as they are. PDF: replace one visible page line using Helvetica at the old position/size; it may not match the source font, and lines inside form XObjects cannot be replaced. Only WinAnsi/Latin text can be written."
         ),

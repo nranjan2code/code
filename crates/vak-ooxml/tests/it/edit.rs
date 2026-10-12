@@ -899,7 +899,7 @@ fn a_paragraph_named_by_its_text_gets_its_anchor_in_the_error() {
     .unwrap_err()
     .to_string();
     assert!(
-        error.ends_with("(anchors look like p:1A2B3C4D or p@12)"),
+        error.ends_with("copy the anchor exactly as printed)"),
         "{error}"
     );
 }
