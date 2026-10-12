@@ -1,5 +1,7 @@
 # Handover — 2026-10-11: build the control plane
 
+Superseded for new work by docs/plans/handover-2026-10-12.md (2026-10-12); this file keeps the C6 history.
+
 ## Prompt for a fresh session
 
 "Continue the control plane in /Users/nisheethranjan/Projects/Vak/code on
