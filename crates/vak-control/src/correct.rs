@@ -23,8 +23,10 @@ pub enum Finding {
     ToolCallFormat { reason: String },
     /// The response carried neither text nor a call.
     EmptyStep {
-        /// Thinking arrived: the step was reasoned, not lost in transit.
-        thought: bool,
+        /// What the step thought, as it arrived; empty when nothing did.
+        /// Quoted back, because not every wire shows a model its own
+        /// thinking again.
+        thinking: String,
         /// A call already succeeded this turn: its result stands.
         done: bool,
     },
@@ -246,20 +248,26 @@ pub fn render(finding: &Finding, marker: &str) -> String {
         Finding::ToolCallFormat { reason } => format!(
             "{marker}: The inference provider could not parse the structured tool call it generated ({reason}). This was an output-format failure before any tool ran. Continue the same request from the admitted tool schemas and regenerate valid structured arguments. Do not repeat the malformed envelope. If the request needs several outputs, complete them with the admitted tools; if no tool call is needed, answer directly."
         ),
-        Finding::EmptyStep { thought, done } => {
-            // Found live 2026-10-13: told first to "make the same call
-            // again", a model whose answer was in its thinking repeated the
-            // write it had already made until the step limit.
-            let next = if *thought {
-                "Your last response held only thinking: nothing in it reached the \
-                 person, and no tool call reached Vak. If it holds your answer, write \
-                 the answer as text. If it planned a call, make that call."
-            } else {
+        Finding::EmptyStep { thinking, done } => {
+            // Found live 2026-10-13: told to act on thinking the Ollama
+            // wire never shows back, a model redid the request from its
+            // start, rewriting a file it had already written, to the step
+            // limit. The thinking is quoted as the evidence.
+            let next = if thinking.trim().is_empty() {
                 "Nothing arrived from your last response: no visible answer and no \
                  tool call. A tool call whose arguments are not valid JSON can be \
                  dropped before it reaches Vak, so if you made one, make it again with \
                  valid JSON arguments that follow its schema. Or write the answer as \
                  text."
+                    .to_string()
+            } else {
+                format!(
+                    "Your last response held only thinking. Thinking reaches neither \
+                     the person nor Vak, and it may not be shown to you again, so here \
+                     it is:\n<thinking>\n{}\n</thinking>\nIf it holds your answer, \
+                     write that answer as text. If it planned a call, make that call.",
+                    thinking.trim()
+                )
             };
             let stands = if *done {
                 " The calls that already succeeded in this turn stand; do not make \
@@ -435,16 +443,42 @@ mod tests {
         assert!(told.contains("\"fix\" (change)"), "{told}");
     }
 
+    /// The thinking a thinking-only step wrote is quoted back whole, and
+    /// a step with none is told a call may have been dropped.
+    #[test]
+    fn an_empty_step_quotes_the_thinking_it_had() {
+        let told = render(
+            &Finding::EmptyStep {
+                thinking: "The file exists. I should tell the person.".into(),
+                done: true,
+            },
+            "[empty-step]",
+        );
+        assert!(
+            told.contains("<thinking>\nThe file exists. I should tell the person.\n</thinking>")
+        );
+        assert!(told.contains("do not make them again"), "{told}");
+        let told = render(
+            &Finding::EmptyStep {
+                thinking: " ".into(),
+                done: false,
+            },
+            "[empty-step]",
+        );
+        assert!(told.contains("dropped before it reaches Vak"), "{told}");
+        assert!(!told.contains("<thinking>"));
+    }
+
     #[test]
     fn every_finding_is_signed_with_its_marker() {
         let findings = [
             Finding::ToolCallFormat { reason: "x".into() },
             Finding::EmptyStep {
-                thought: true,
+                thinking: "x".into(),
                 done: true,
             },
             Finding::EmptyStep {
-                thought: false,
+                thinking: String::new(),
                 done: false,
             },
             Finding::Fence { error: "x".into() },

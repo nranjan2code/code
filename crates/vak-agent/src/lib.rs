@@ -2536,9 +2536,17 @@ impl Agent {
                     if let Err(error) = self
                         .correct(
                             Finding::EmptyStep {
-                                thought: response.content.iter().any(|block| {
-                                    matches!(block, vak_llm::ContentBlock::Thinking { .. })
-                                }),
+                                thinking: response
+                                    .content
+                                    .iter()
+                                    .filter_map(|block| match block {
+                                        vak_llm::ContentBlock::Thinking { text, .. } => {
+                                            Some(text.as_str())
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n"),
                                 done: call_succeeded_this_run,
                             },
                             Rung::Tell,
