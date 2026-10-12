@@ -92,8 +92,9 @@ Next, in order:
    `Tool::prompt_contract`, `restrict_reach`). Item 3 is done.
 3. Done 2026-10-12: `office_apply` reads a draft named as `path` as a
    revision from it; digests print bare; the loop now runs each tool's
-   `fill_defaults`. Open: a pending draft is not found by its workspace
-   name (doc 72 ledger, 2026-10-12).
+   `fill_defaults`. A pending draft not found by its workspace name, and
+   every other state a file can be in across turns, is designed in
+   docs/design/90-file-state.md (decisions D1–D3 taken); build its stages.
 4. `recall` refuses a query with a `turn_id` ("cannot be combined").
 5. Open, no contract fault found yet: a card claimed a command printed
    "ready" when the receipt says it stopped at its limit (run_01a12edd).
