@@ -1,0 +1,50 @@
+//! The crate's integration tests, one binary (each file a module).
+
+#[path = "../support/mod.rs"]
+mod support;
+
+mod agent_chats;
+mod agent_pause;
+mod bus_config;
+mod card_kinds_sync;
+mod channel_office_round_trip;
+mod chat_bridges;
+mod control_vocabulary_sync;
+mod data_rules;
+mod doc_read_worker;
+mod feed_pipeline_is_gone;
+mod gateway;
+mod gateway_approvals;
+mod gateway_questions;
+mod headless_auth;
+mod headless_tool_run;
+mod heartbeat_personal_os;
+mod http_e2e;
+mod inbox_endpoints;
+mod intake_api;
+mod learning_endpoints;
+mod ledger_lock_during_spawns;
+mod library_api;
+mod library_editing;
+mod library_sharing;
+mod mail_calendar_worker;
+mod mcp_endpoints;
+mod media_passthrough;
+mod multi_bot_identity;
+mod page_reader_worker;
+mod persistent_preview_worker;
+mod person_erasure;
+mod personal_os_endpoints;
+mod plugin_catalog_lifecycle;
+mod scheduled_runs;
+mod scheduler_personal_os;
+mod search_endpoint;
+mod search_scope;
+mod social_owner_access;
+mod telegram_bridge;
+mod telemetry_endpoints;
+mod trash;
+mod verification_worker;
+mod web_client;
+mod webhook_delivery;
+mod worker_questions_http;

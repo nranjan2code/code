@@ -6,7 +6,7 @@
 
 /// What the permission tests assume the built-in tools declare.
 #[cfg(test)]
-#[path = "../../vak-permission/tests/support/mod.rs"]
+#[path = "../../vak-permission/tests/it/support/mod.rs"]
 mod permission_fixture;
 
 pub mod admission;

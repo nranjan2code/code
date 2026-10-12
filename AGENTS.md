@@ -1624,7 +1624,7 @@ in progress, and the rest of V4 follows it.
   not in the model's final text. The two lists the desktop client keeps
   (`INLINE_HINT_MARKERS`, `CONTEXT_BLOCK_TAGS` in `structured.ts`) are checked
   for exact equality with the Rust vocabulary by
-  `vak-server/tests/control_vocabulary_sync.rs`.
+  `vak-server/tests/it/control_vocabulary_sync.rs`.
   Identifiers that name a lockable resource are unique by construction, not by
   clock: a child worker's session id carries a process-wide sequence number
   (`task.rs::next_child_session_id`), because ids that were the clock's
@@ -2402,6 +2402,26 @@ loop fills it; nothing fills a limit by a tool's name.
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 scripts/check-version.sh && python3 scripts/check_doc_paths.py
 ```
+
+`scripts/gate.sh` runs exactly that and times each step. While working,
+`scripts/gate.sh --changed` checks only the crates changed against
+`origin/main` and every crate that depends on them; it never stands in for
+the full gate before a commit. Batch several finished steps under one full
+gate, then commit each step on its own.
+
+**One integration-test binary per crate.** A crate's integration tests are
+modules of `tests/it/main.rs`, so the crate graph links once rather than
+once per file (220 test binaries became 69 on 2026-10-12). A test file
+stays in `tests/` as its own binary only when it needs its own process:
+it acts on the whole data home (a restore, a sync, key rotation, a
+lifecycle pass, erasure, holds, an integrity check, a catalog rebuild) or
+it changes process-global state (a `set_override`, the telemetry
+subscriber, the global config file, a count of syncs or fences). Tests in
+one binary share one isolated home, so a test there reads only what it
+made, never a whole list it did not filter. A test that fails only beside
+others is a test that reads more than it made: fix that, or give it its own
+binary if what it acts on really is the whole home. Never split a test out
+just to make the failure go away.
 
 **Touched a frontend or the public site? Rebuild it, or the binary ships
 the previous one.**

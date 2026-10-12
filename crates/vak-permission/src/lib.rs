@@ -8,7 +8,7 @@
 extern crate self as vak_permission;
 
 #[cfg(test)]
-#[path = "../tests/support/mod.rs"]
+#[path = "../tests/it/support/mod.rs"]
 mod test_support;
 
 pub mod engine;

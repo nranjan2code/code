@@ -591,7 +591,7 @@ Context engine (docs/design/68-context-engine.md). Found from a weather question
 - Runtime-authored and derived traffic is no longer sent to clients: `/transcript` omits nudges, derived context blocks and the frozen contract (system prompt and prompt layers) that no client read. An answer the runtime sent back for a redo is an internal draft and is no longer projected, so the user sees the redo, not both.
 - Fixed channels, webhooks, the inbox and routine summaries receiving no card content: a card emitted through a tool is not in the model's final text, so they got "the chart is shown above" with nothing above it. `projection::text_with_run_cards` prepends the latest turn's cards (deterministic text form) to the narration.
 - Fixed a spurious "session is locked by another process" failure when several `task` workers launch in the same wave. A child session's id was the clock's nanoseconds alone; parallel launches can read the same value (clock resolution is coarser than the launch rate), so two children shared one ledger file and the second failed to lock it, after which the stop gate added an extra parent turn. Ids now carry a process-wide sequence number and cannot collide. This was the cause of the intermittent `fanout` test failure that blocked a release (the parent's script was "exhausted" by that extra turn); the id scheme dates from 2026-08-21.
-- `vak-server/tests/control_vocabulary_sync.rs` fails the build unless the client's two lists equal the Rust vocabulary exactly (mutation-checked).
+- `vak-server/tests/it/control_vocabulary_sync.rs` fails the build unless the client's two lists equal the Rust vocabulary exactly (mutation-checked).
 
 ## 3.4.8 — 2026-09-19
 

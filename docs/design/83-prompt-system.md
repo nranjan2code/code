@@ -627,7 +627,7 @@ Inline hints are marker lines inside other text: `[recovery]` and
 displayed to the user…" and "Already drafted…" are tool results, not
 nudges. The vocabulary is one module, `crates/vak-intent/src/control.rs`;
 the client's copy is checked against it by
-`crates/vak-server/tests/control_vocabulary_sync.rs`. Context tags such as
+`crates/vak-server/tests/it/control_vocabulary_sync.rs`. Context tags such as
 `system_reminder` or `scratchpad` are in `CONTEXT_BLOCK_TAGS` for stripping
 only; nothing in the current tree emits them.
 
@@ -979,7 +979,7 @@ current prompt.
 | `flow_node_prompts_follow_the_node`, `builtin_domain_roles_admitted_in_role_prompts` | workers and roles |
 | `prefix_digest_is_stable_for_identical_input`, `chat_request_chars_counts_tool_schemas_not_just_messages` | caching accounting |
 | `contract_author_example_parses` | contract author text matches its parser |
-| `crates/vak-server/tests/control_vocabulary_sync.rs` | nudge and tag vocabulary shared with the client |
+| `crates/vak-server/tests/it/control_vocabulary_sync.rs` | nudge and tag vocabulary shared with the client |
 
 ---
 

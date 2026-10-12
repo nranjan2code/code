@@ -52,7 +52,7 @@ test (`general_suite_fully_green`) and in the default `vak eval`.
 | general-error-adapts-noncode | failed lookup → error-driven correction |
 
 Beyond the scripted suites, harness behavior in general flows is covered by
-`crates/vak-agent/tests/general_flows.rs`: mid-run steering, abort
+`crates/vak-agent/tests/it/general_flows.rs`: mid-run steering, abort
 preserving partial artifacts, the stop gate blocking unverified reports,
 compaction during long research sessions (append-only asserted against the
 raw JSONL), MCP meta-tool lookups, and read-only mode denials.

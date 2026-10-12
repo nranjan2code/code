@@ -631,7 +631,7 @@ returned by discovery or admin APIs.
 - `cargo test -p vak-core` — the new `voice` doctor check reports
   `Ok("disabled")` when off and an `Err` with a remedy when enabled
   without a resolvable credential.
-- `crates/vak-server/tests/telegram_bridge.rs` — a voice update reaches
+- `crates/vak-server/tests/it/telegram_bridge.rs` — a voice update reaches
   a transcript reaches `/gateway/inbound`; `sendVoice` fires only when
   the speaker supports Opus, and text-only degrades visibly when it
   doesn't.

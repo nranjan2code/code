@@ -101,7 +101,7 @@ siblings did; the name list had left them out. A mail or calendar RSVP is
 so read-only now asks rather than denies it.
 
 The permission tests run the engine on a table of what the built-in tools
-declare (`crates/vak-permission/tests/support/mod.rs`); vak-core's
+declare (`crates/vak-permission/tests/it/support/mod.rs`); vak-core's
 `built_in_tools_declare_what_the_permission_tests_assume` checks every
 declaring tool against it.
 

@@ -257,7 +257,7 @@ crates/vak-core/src/capability/
                   and the stable tool catalogue the prompt lists
 ```
 
-Tests: `crates/vak-core/tests/capability_lifecycle.rs` pins the behaviours
+Tests: `crates/vak-core/tests/it/capability_lifecycle.rs` pins the behaviours
 that failed silently — a down server is named and never faked, a recovered
 server becomes usable with no restart, capabilities can be added, edited and
 removed while running, a quiet world never churns the epoch, and an

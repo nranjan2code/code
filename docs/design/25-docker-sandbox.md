@@ -106,7 +106,7 @@ image   = "alpine:3.20"   # default alpine:3.20
 
 ## Verification
 
-`crates/vak-core/tests/docker_sandbox.rs` (skips cleanly when no daemon):
+`crates/vak-core/tests/it/docker_sandbox.rs` (skips cleanly when no daemon):
 
 1. wrap() structure: mount, workdir, caps, quoting.
 2. Live exec: marker output from inside the container.

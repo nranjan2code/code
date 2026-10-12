@@ -947,7 +947,7 @@ lifecycle, and the property test that no engagement derived from any reading in
 the reachable space (10 acts × 4 horizons × 4 stakes × 4 evidence × 3 clarity ×
 3 attendance × 4 autonomy × 2 slice settings) ever widens the baseline.
 
-`crates/vak-session/tests/intent_entries.rs` proves the projection: the note
+`crates/vak-session/tests/it/intent_entries.rs` proves the projection: the note
 reaches the model immediately before the turn it governs, only the newest one
 applies, a silent engagement costs zero tokens, replay reproduces the recorded
 bytes, and notes stay out of the compaction packet.

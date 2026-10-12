@@ -21,6 +21,6 @@ cargo test --offline --locked -p vak-tools mime_parser
 cargo test --offline --locked -p vak-core mail_calendar
 cargo test --offline --locked -p vak-server mail_calendar
 cargo test --offline --locked -p vak-server --lib restart_requeues_inflight_mail_watch_items_from_the_agent_vault
-cargo test --offline --locked -p vak-server --test mail_calendar_worker
+cargo test --offline --locked -p vak-server --test it mail_calendar_worker::
 
 printf '%s\n' 'Mail/calendar mock regression pack passed.'

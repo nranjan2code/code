@@ -802,7 +802,7 @@ are real.**
 ## 15. What shipped, and what it is measured by
 
 Phases 0–4 are implemented. The security boundaries are covered by
-`crates/vak-server/tests/web_client.rs`, which drives the **real secured
+`crates/vak-server/tests/it/web_client.rs`, which drives the **real secured
 router over a real socket** rather than calling handlers directly — the
 middleware is the security property here, so a handler test would prove
 nothing about it:

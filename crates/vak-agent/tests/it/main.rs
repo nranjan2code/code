@@ -1,0 +1,46 @@
+//! The crate's integration tests, one binary (each file a module).
+
+mod support;
+
+mod adoption_matrix;
+mod agent_loop;
+mod approval;
+mod background_workers;
+mod capacity_feedback;
+mod card_gates;
+mod card_permission;
+mod card_repair;
+mod circuit;
+mod compaction;
+mod context_leg;
+mod context_loop;
+mod context_tail;
+mod doom_loop;
+mod drift_and_replan;
+mod empty_step;
+mod fanout;
+mod general_flows;
+mod goal_mode;
+mod hooks;
+mod make_another;
+mod malformed_fence_check;
+mod permissions;
+mod recall_elsewhere;
+mod reliability;
+mod required_card;
+mod reset_mid_turn;
+mod route_ladder;
+mod run_endurance;
+mod run_trace;
+mod slow_listener;
+mod small_horizon;
+mod spend_gate;
+mod stop_guard;
+mod tool_call_ids;
+mod tool_refusal;
+mod turn_card_and_recall;
+mod work_receipts;
+mod worker_cards_and_windows;
+mod worker_questions;
+mod worker_tail;
+mod workers;

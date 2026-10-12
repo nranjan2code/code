@@ -484,7 +484,7 @@ Consequences, all enforced by tests:
   shareable. A file is produced when the request names a file, document, or
   saved artifact as a deliverable.
 - **The TypeScript copy cannot drift.** The client keeps `INLINE_HINT_MARKERS`
-  and `CONTEXT_BLOCK_TAGS`; `vak-server/tests/control_vocabulary_sync.rs`
+  and `CONTEXT_BLOCK_TAGS`; `vak-server/tests/it/control_vocabulary_sync.rs`
   fails the build unless they equal the Rust lists exactly.
 
 ### What is typed, and what is still judgement
