@@ -99,6 +99,13 @@ Next, in order:
    (`a4da5133c`). Next: `recall`/`session_search` reaching artifacts (§3.3),
    stage 4 (`Observed` versions, the base check at promotion), stage 5 (the
    person's view: a mockup for review first).
+   Also built: search hits name their file and state (`ce157b0d0`); a
+   draft source needs no digest (`0aa59b41f`); anchors copied exactly
+   (`8af62b756`); a scope-key race between stores in one process fixed
+   (`2d43b2f20`). Open: the outcome evaluation marks an answer unverified
+   when a tool failed and the same tool never succeeded later, even when
+   another tool achieved the work (doc 86's receipt check); the model's
+   success claim after a turn that produced no draft is not marked.
    Tests: one integration binary per crate (`tests/it/`); 73 binaries; a
    test that acts on the whole home keeps its own (AGENTS.md). Use
    `scripts/gate.sh`, and `--changed` while working.
