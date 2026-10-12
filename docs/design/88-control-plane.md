@@ -363,12 +363,13 @@ they bound:
 | Protection against a hostile or dead peer | discovery 15 s, MCP list 10 s, webfetch and browse totals, `VERIFY_DEADLINE`, delivery worker 5 s, credential probe | stay: they bound input Vak does not control, like the parser limits in §8 |
 | Freshness of a cache or a liveness beat | profile and discovery TTLs, reconcile intervals, `LIVENESS_RENEW_SECS` | stay: they schedule work and end nothing |
 
+The `vak flow` and `vak plan` commands and the flow tool build their
+executor with the operator's `request_timeout_secs` (`Core::request_timeout`,
+the one reading the turn path uses; 2026-10-12), no longer a fixed 600 s.
 Still open here: bash's `MAX_TIMEOUT_MS` (600 s, also written in its
-schema) caps the limit a call may name; the `vak flow` and `vak plan`
-commands and the flow tool build their executor with a fixed 600 s
-`request_timeout` instead of the operator's `request_timeout_secs`; and an
-ending caused by an operator's limit is reported by the tool or the wait
-that hit it, not yet as a field of the turn's `Ending`.
+schema) caps the limit a call may name; and an ending caused by an
+operator's limit is reported by the tool or the wait that hit it, not yet
+as a field of the turn's `Ending`.
 
 ## 6. Records
 

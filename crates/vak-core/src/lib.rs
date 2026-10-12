@@ -282,7 +282,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             outcome: Some(outcome),
             max_retries: 0,
             retry_base_backoff_ms: 100,
-            request_timeout: Some(std::time::Duration::from_secs(600)),
+            request_timeout: self.core.request_timeout(),
             circuit_breaker: None,
             run_retry_attempts: 0,
             run_retry_base_backoff_ms: 1000,
@@ -1597,6 +1597,14 @@ impl Core {
         Self::read_override(&self.inner.control_override)
             .unwrap_or_else(|| self.config().control.clone())
             .time_limits()
+    }
+
+    /// The operator's per-request timeout (`request_timeout_secs`); `0`
+    /// means no timeout. The normal turn path and the flow and plan
+    /// executors all read it here.
+    pub fn request_timeout(&self) -> Option<std::time::Duration> {
+        (self.inner.config.request_timeout_secs > 0)
+            .then(|| std::time::Duration::from_secs(self.inner.config.request_timeout_secs))
     }
 
     pub fn effective_model(&self) -> String {
@@ -6774,13 +6782,7 @@ impl Core {
         cfg.dispatch_ceiling = (cfg.max_retries.saturating_add(1))
             .saturating_mul(cfg.run_retry_attempts.saturating_add(1));
         cfg.time_limits = self.time_limits();
-        cfg.request_timeout = if self.inner.config.request_timeout_secs == 0 {
-            None
-        } else {
-            Some(std::time::Duration::from_secs(
-                self.inner.config.request_timeout_secs,
-            ))
-        };
+        cfg.request_timeout = self.request_timeout();
         // Per-turn route planning: assemble a fresh ladder using the current
         // evidence ledger, belief state, warm discovery cache, and demand facts
         // from this turn's intent resolution. This replaces the admission-frozen
