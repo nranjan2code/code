@@ -185,11 +185,16 @@ Read before changing behaviour in these areas:
   with docs/audits/cards-in-answers-2026-10-11.md (the measurements). Read
   both before changing how a tool's arguments are asked for, read or
   repaired. See "Tool arguments are written, then read" below.
-- **Files across turns** — `90-file-state.md` (proposal, decisions taken
-  2026-10-12: what a turn is told about a path from the artifact record,
-  whatever happened to it since, any number of turns later: waiting,
-  sibling, undone, saved, trashed and erased drafts, and edits made outside
-  Vak, recorded as `Observed` versions). Read it before changing how a tool
+- **Files across turns** — `90-file-state.md` (in progress, decisions taken
+  2026-10-12; stages 1 to 4 built: what a turn is told about a path from the
+  artifact record, whatever happened to it since, any number of turns later:
+  waiting, sibling, undone, saved, trashed and erased drafts, and edits made
+  outside Vak, recorded as versions found in the workspace
+  (`VersionSource::Workspace`). Accepting a version that is behind the
+  workspace's current copy is refused until the person says to replace it:
+  decide that only from `file_state::behind`, and give every new version
+  the parent it was really made from, never the newest head by default).
+  Read it before changing how a tool
   reads or changes a file across turns.
 - **Proposals, not behaviour** — `88-control-plane.md` (the proposed
   control plane: the model proposes, the runtime decides at a closed set of

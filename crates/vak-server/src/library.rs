@@ -98,7 +98,39 @@ pub(crate) fn note_review(state: &AppState, record: &vak_sandbox::DurableRecord)
                 };
                 // A draft that deletes the file proposes a version in which
                 // it is gone.
-                let made = if deletes {
+                // The draft a call already recorded is the version put up
+                // for Review, with the parent it was made from: a second
+                // version made from the newest head would hide that the
+                // workspace changed after the draft (doc 90 §3.4).
+                let digest = vak_sandbox::digest(&bytes);
+                let digest = digest.trim_start_matches("sha256:");
+                let drafted = artifact
+                    .versions
+                    .iter()
+                    .filter(|version| {
+                        version.is_present()
+                            && !version.removed
+                            && !version.promoted
+                            && version.proposal().is_none()
+                            && version.digest == digest
+                            && matches!(version.source, VersionSource::Call { .. })
+                    })
+                    .max_by_key(|version| version.at)
+                    .map(|version| version.id);
+                // Otherwise it was made from what the workspace held when it
+                // was frozen: the version with those bytes.
+                let parent = parent.or_else(|| {
+                    let base = file.base_hash.as_deref()?.trim_start_matches("sha256:");
+                    artifact
+                        .versions
+                        .iter()
+                        .filter(|version| !version.removed && version.digest == base)
+                        .max_by_key(|version| (version.promoted, version.at))
+                        .map(|version| version.id)
+                });
+                let made = if let Some(drafted) = drafted.filter(|_| !deletes) {
+                    Ok(drafted)
+                } else if deletes {
                     artifacts.removal(
                         id,
                         parent,
@@ -514,6 +546,42 @@ pub(crate) struct Accept {
     /// the one promotion a draft gets.
     #[serde(default)]
     pub also: Vec<VersionRef>,
+    /// The person was shown that the workspace file changed after this
+    /// draft was made, and chose to replace it (doc 90 §3.4).
+    #[serde(default)]
+    pub replace_newer: bool,
+}
+
+/// The files of `versions` whose workspace copy was made after the version
+/// and is not part of it (doc 90 §3.4): accepting one replaces work the
+/// draft never saw. Reads each file once, which records an edit made
+/// outside Vak as a version (D2), so it is kept whatever the person chooses.
+fn behind(state: &AppState, versions: &[(String, String)]) -> Vec<String> {
+    let artifacts = state.core.artifacts();
+    let mut found = Vec::new();
+    for (id, version) in versions {
+        let Some(artifact) = artifacts.get(id) else {
+            continue;
+        };
+        let Ok(version) = vak_session::ids::VersionId::parse(version) else {
+            continue;
+        };
+        let Some(observed) = vak_core::file_state::observe(
+            &artifacts,
+            &artifact.space,
+            state.core.cwd(),
+            &artifact.path,
+        ) else {
+            continue;
+        };
+        // Read again: the observation may have recorded a version.
+        if let Some(artifact) = artifacts.get(id)
+            && vak_core::file_state::behind(&artifact, &observed, version)
+        {
+            found.push(artifact.path.clone());
+        }
+    }
+    found
 }
 
 #[derive(serde::Deserialize)]
@@ -534,12 +602,15 @@ pub(crate) async fn version_accept(
         Ok(review) => review,
         Err(response) => return *response,
     };
+    let Json(body) = body.unwrap_or_default();
     let mut files = vec![review.path];
-    for other in body.map(|Json(body)| body.also).unwrap_or_default() {
+    let mut versions = vec![(id, version)];
+    for other in body.also {
         match in_review(&state, &other.artifact, &other.version) {
             Ok(also) if also.session == review.session && also.candidate == review.candidate => {
                 if !files.contains(&also.path) {
                     files.push(also.path);
+                    versions.push((other.artifact, other.version));
                 }
             }
             Ok(_) => {
@@ -549,6 +620,20 @@ pub(crate) async fn version_accept(
                 );
             }
             Err(response) => return *response,
+        }
+    }
+    if !body.replace_newer {
+        let behind = behind(&state, &versions);
+        if !behind.is_empty() {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "the file in the folder changed after this draft was made",
+                    "kind": "behind",
+                    "behind": behind,
+                })),
+            )
+                .into_response();
         }
     }
     crate::promote_sandbox_candidate(

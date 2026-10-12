@@ -2111,9 +2111,11 @@ export async function exportSandboxCandidate(sessionId: string, executionId: str
 }
 
 /** Accepts a version into the workspace, with the other versions the same
- *  draft proposes (`also`), in the one promotion a draft gets. */
-export async function acceptVersion(at: VersionRef, also: VersionRef[] = []): Promise<SandboxPromotionRecord> {
-  const response = await req<{ kind: "Promotion"; record: SandboxPromotionRecord }>(`${versionUrl(at)}/accept`, { method: "POST", body: JSON.stringify({ also }) });
+ *  draft proposes (`also`), in the one promotion a draft gets. A file that
+ *  changed in the folder after the draft was made is refused (`ApiError`
+ *  of kind `behind`, its body naming the files) until `replaceNewer`. */
+export async function acceptVersion(at: VersionRef, also: VersionRef[] = [], replaceNewer = false): Promise<SandboxPromotionRecord> {
+  const response = await req<{ kind: "Promotion"; record: SandboxPromotionRecord }>(`${versionUrl(at)}/accept`, { method: "POST", body: JSON.stringify({ also, replace_newer: replaceNewer }) });
   return response.record;
 }
 

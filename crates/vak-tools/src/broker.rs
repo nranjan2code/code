@@ -1504,7 +1504,10 @@ fn lineage_source(
     if expected.len() < 16 || !digest.starts_with(&expected) {
         return Err(format!(
             "{} changed after the draft was made from it",
-            path.display()
+            path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned()
+            )
         ));
     }
     Ok(bytes)

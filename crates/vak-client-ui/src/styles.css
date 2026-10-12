@@ -797,6 +797,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-comments article strong, .artifact-canvas-comments article strong { color: var(--text-soft); font-size: var(--fs-caption); }
 .candidate-review-comments article p, .artifact-canvas-comments article p { margin: 5px 0 0; color: var(--text); font-size: var(--fs-meta); line-height: 1.45; white-space: pre-wrap; }
 .candidate-review .sheet-footer > span { margin-right: auto; color: var(--muted); font-size: var(--fs-meta); }
+.candidate-review .sheet-footer > .candidate-review-changed-since { flex-basis: 100%; margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--accent-wash); color: var(--text); font-size: var(--fs-control); line-height: 1.45; }
 @media (max-width: 700px) { .candidate-review-decision-grid, .candidate-review-columns { grid-template-columns: 1fr; } .candidate-review-columns pre { min-height: 110px; max-height: 180px; } .candidate-review .sheet-footer > span { flex-basis: 100%; } }
 .settings-load-error { margin-bottom: 14px; padding: 10px var(--space-3); border: 1px solid var(--red); border-radius: 8px; color: var(--red); font-size: var(--fs-meta); }
 .composer-lookup-error { margin: 0 var(--space-4) var(--space-2); color: var(--yellow); font-size: var(--fs-meta); }

@@ -26,15 +26,15 @@ pub enum Workspace {
 pub enum WorkspaceIs {
     /// No artifact is recorded for this path.
     Unrecorded,
-    /// An artifact exists, but the workspace file is absent and no version
-    /// was ever accepted into the workspace. "Never accepted into the
-    /// workspace": the record and the folder have not met yet.
+    /// An artifact exists, but the record and the folder have not met yet:
+    /// no version was ever accepted into the workspace or found there, and
+    /// the file is absent or holds bytes no version has (a file that was
+    /// there before Vak recorded anything of it).
     NotYet,
     /// The workspace file's bytes are those of this recorded version.
     Version(VersionId),
     /// The file differs from every version: edited outside Vak since
-    /// `since`, the latest accepted version (or the latest version when
-    /// none was accepted).
+    /// `since`, the version the workspace last held.
     Changed { since: VersionId },
     /// An accepted version's file is no longer in the workspace.
     Missing { accepted: VersionId },
@@ -131,23 +131,10 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
         .collect();
     candidates.sort_by_key(|version| Reverse(version.at));
 
-    let ancestors = |version: &Version| {
-        let mut seen = Vec::new();
-        let mut next = version.parent;
-        while let Some(id) = next.filter(|id| !seen.contains(id)) {
-            seen.push(id);
-            next = artifact
-                .versions
-                .iter()
-                .find(|v| v.id == id)
-                .and_then(|v| v.parent);
-        }
-        seen
-    };
     let drafts = candidates
         .into_iter()
         .map(|version| Draft {
-            behind: current.is_some_and(|current| !ancestors(version).contains(&current)),
+            behind: current.is_some_and(|current| !ancestors(artifact, version).contains(&current)),
             version: version.id,
             draft_name: draft_name(artifact, version),
             turn: version.turn.clone(),
@@ -164,22 +151,55 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
         drafts,
         owner: Some(artifact.agent.clone()),
         changed_outside: current.is_some_and(|current| {
-            artifact
-                .versions
-                .iter()
-                .any(|v| v.id == current && matches!(v.source, VersionSource::Workspace))
+            artifact.versions.iter().any(|v| {
+                v.id == current
+                    && v.parent.is_some()
+                    && matches!(v.source, VersionSource::Workspace)
+            })
         }),
     }
+}
+
+fn ancestors(artifact: &Artifact, version: &Version) -> Vec<VersionId> {
+    let mut seen = Vec::new();
+    let mut next = version.parent;
+    while let Some(id) = next.filter(|id| !seen.contains(id)) {
+        seen.push(id);
+        next = artifact
+            .versions
+            .iter()
+            .find(|v| v.id == id)
+            .and_then(|v| v.parent);
+    }
+    seen
+}
+
+/// Whether `version` was made before the workspace's current copy and does
+/// not include it (`Draft::behind`), for any version, a draft or not: what
+/// Review asks before a version replaces the workspace file (doc 90 §3.4).
+/// `state` is a fresh observation of the version's own path.
+pub fn behind(artifact: &Artifact, state: &FileState, version: VersionId) -> bool {
+    let WorkspaceIs::Version(current) = state.workspace_is else {
+        return false;
+    };
+    current != version
+        && artifact
+            .versions
+            .iter()
+            .find(|known| known.id == version)
+            .is_some_and(|known| !ancestors(artifact, known).contains(&current))
 }
 
 fn workspace_is(artifact: &Artifact, workspace: &Workspace) -> WorkspaceIs {
     if artifact.versions.is_empty() {
         return WorkspaceIs::NotYet;
     }
+    // What the workspace last held, as far as the record knows: a version
+    // accepted into it, or an edit found in it.
     let accepted = artifact
         .versions
         .iter()
-        .filter(|version| version.promoted)
+        .filter(|version| version.promoted || matches!(version.source, VersionSource::Workspace))
         .max_by_key(|version| version.at);
     match workspace {
         Workspace::Present { digest } => {
@@ -192,9 +212,7 @@ fn workspace_is(artifact: &Artifact, workspace: &Workspace) -> WorkspaceIs {
             if let Some(version) = matching {
                 return WorkspaceIs::Version(version.id);
             }
-            let since =
-                accepted.or_else(|| artifact.versions.iter().max_by_key(|version| version.at));
-            since.map_or(WorkspaceIs::NotYet, |version| WorkspaceIs::Changed {
+            accepted.map_or(WorkspaceIs::NotYet, |version| WorkspaceIs::Changed {
                 since: version.id,
             })
         }
@@ -282,17 +300,15 @@ pub fn observe(artifacts: &Artifacts, space: &str, cwd: &Path, path: &str) -> Op
     // Bytes no version holds are an edit made outside Vak: recorded as a
     // version of what they changed (D2), so the history shows it and a
     // draft made before it says so. A failed write leaves the state as read.
-    if let (WorkspaceIs::Changed { since }, Some(found)) = (&state.workspace_is, &bytes) {
-        let recorded = artifacts.version(
-            id,
-            crate::artifacts::NewVersion {
-                parent: Some(*since),
-                bytes: found,
-                source: VersionSource::Workspace,
-            },
-            None,
-            None,
-        );
+    // A file that was there before the record knew it is its first
+    // workspace version, with no parent: a draft made from it has a base.
+    let parent = match (&state.workspace_is, &state.workspace) {
+        (WorkspaceIs::Changed { since }, _) => Some(Some(*since)),
+        (WorkspaceIs::NotYet, Workspace::Present { .. }) => Some(None),
+        _ => None,
+    };
+    if let (Some(parent), Some(found)) = (parent, &bytes) {
+        let recorded = artifacts.found_in_workspace(id, parent, found);
         if recorded.is_ok()
             && let Some(artifact) = artifacts.get(&id.to_string())
         {

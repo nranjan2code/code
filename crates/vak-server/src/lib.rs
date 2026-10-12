@@ -24695,6 +24695,110 @@ mod sandbox_promotion_tests {
         assert!(!dir.path().join("result.json").exists());
     }
 
+    /// Doc 90 §3.4: a draft made before the file was edited outside Vak is
+    /// not accepted over that edit until the person says to replace it,
+    /// though the candidate was frozen after the edit, so promotion's own
+    /// baseline matches. The edit is kept as a version either way.
+    #[tokio::test]
+    async fn a_draft_made_before_an_outside_edit_is_not_accepted_over_it_unasked() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core);
+        std::fs::write(dir.path().join("a.txt"), "base").unwrap();
+        let artifacts = state.core.artifacts();
+        let artifact = artifacts
+            .declare(
+                &vak_session::trace::local::space(state.core.cwd()).to_string(),
+                "vak",
+                "a.txt",
+                vak_core::artifacts::ArtifactKind::File,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let version = |parent, bytes: &[u8], source| {
+            artifacts
+                .version(
+                    artifact,
+                    vak_core::artifacts::NewVersion {
+                        parent,
+                        bytes,
+                        source,
+                    },
+                    None,
+                    None,
+                )
+                .unwrap()
+        };
+        let base = version(None, b"base", vak_core::artifacts::VersionSource::Person);
+        artifacts
+            .record(
+                artifact,
+                vak_core::artifacts::ArtifactStep::Promoted { version: base },
+                None,
+                None,
+            )
+            .unwrap();
+        let drafted = version(
+            Some(base),
+            b"first",
+            vak_core::artifacts::VersionSource::Call {
+                session: "session-1".into(),
+                call: "e1".into(),
+            },
+        );
+        std::fs::write(dir.path().join("a.txt"), "edited by hand").unwrap();
+
+        let scratch = exec_dir(dir.path(), ".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("a.txt"), "first")
+            .await
+            .unwrap();
+        let candidate = export_candidate(&state).await;
+        let (id, proposed) = proposed_version(&state, &candidate.candidate.candidate_id, "a.txt");
+        assert_eq!(proposed, drafted.to_string());
+
+        let refused = library::version_accept(
+            State(state.clone()),
+            Path((id.clone(), proposed.clone())),
+            None,
+        )
+        .await;
+        assert_eq!(refused.status(), StatusCode::CONFLICT);
+        let body = body_json(refused).await;
+        assert_eq!(body["kind"], "behind");
+        assert_eq!(body["behind"], serde_json::json!(["a.txt"]));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "edited by hand"
+        );
+        let recorded = artifacts.get(&id).unwrap();
+        assert!(recorded.versions.iter().any(|version| matches!(
+            version.source,
+            vak_core::artifacts::VersionSource::Workspace
+        ) && version.parent == Some(base)));
+
+        let accepted = library::version_accept(
+            State(state.clone()),
+            Path((id, proposed)),
+            Some(Json(library::Accept {
+                also: Vec::new(),
+                replace_newer: true,
+            })),
+        )
+        .await;
+        assert_eq!(accepted.status(), StatusCode::OK);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "first"
+        );
+    }
+
     /// Plan M8.4c-c: a draft of several files is accepted once, by one of
     /// its versions with the others; a version of another draft is refused.
     #[tokio::test]
@@ -24751,6 +24855,7 @@ mod sandbox_promotion_tests {
                     artifact: other.to_string(),
                     version: unproposed.to_string(),
                 }],
+                replace_newer: false,
             })),
         )
         .await;
@@ -24765,6 +24870,7 @@ mod sandbox_promotion_tests {
                     artifact: b_artifact.clone(),
                     version: b_version.clone(),
                 }],
+                replace_newer: false,
             })),
         )
         .await;

@@ -607,3 +607,68 @@ fn an_outside_edit_is_recorded_and_a_draft_made_before_it_is_behind() {
     let again = artifacts.get(&id.to_string()).unwrap();
     assert_eq!(again.versions.len(), artifact.versions.len());
 }
+
+/// A draft of a file that was in the folder before Vak recorded anything of
+/// it is a version of that file: the file is the record's first version,
+/// the draft its child, and reading the file later does not make the draft
+/// look as if it missed an edit (doc 90 §3.5). A hand edit after it does.
+#[test]
+fn a_draft_of_a_file_vak_never_recorded_is_made_from_that_file() {
+    let (shared, tenant) = home();
+    let cwd = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(cwd.path()).unwrap();
+    std::fs::write(cwd.path().join("plan.docx"), b"as the person wrote it").unwrap();
+    let executions = vak_config::scope::executions_root(cwd.path());
+    let dir = executions.join("vak").join("call_p");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("plan.docx"), b"with the Agent's change").unwrap();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let sink = CallSink {
+        artifacts: artifacts.clone(),
+        cwd: cwd.path().to_path_buf(),
+        executions,
+        agent: "vak".into(),
+    };
+    sink.declared(
+        &vak_tools::ArtifactClaim {
+            path: "plan.docx".into(),
+            declared: true,
+            title: None,
+            summary: None,
+            drafted: true,
+            based_on: None,
+        },
+        Some("ses"),
+        "call_p",
+        None,
+    );
+    let space = vak_session::trace::local::space(cwd.path()).to_string();
+    let artifact = artifacts
+        .list()
+        .into_iter()
+        .find(|a| a.space == space && a.path == "plan.docx")
+        .unwrap();
+    let found = artifact
+        .versions
+        .iter()
+        .find(|v| matches!(v.source, VersionSource::Workspace))
+        .expect("the file in the folder is a version");
+    assert_eq!(found.parent, None);
+    let draft = artifact
+        .versions
+        .iter()
+        .find(|v| matches!(v.source, VersionSource::Call { .. }))
+        .expect("the draft is a version");
+    assert_eq!(draft.parent, Some(found.id));
+
+    let state = vak_core::file_state::observe(&artifacts, &space, cwd.path(), "plan.docx").unwrap();
+    assert!(!state.changed_outside, "{state:?}");
+    assert!(state.drafts.iter().all(|d| !d.behind), "{state:?}");
+    assert!(!vak_core::file_state::behind(&artifact, &state, draft.id));
+
+    std::fs::write(cwd.path().join("plan.docx"), b"edited by hand since").unwrap();
+    let state = vak_core::file_state::observe(&artifacts, &space, cwd.path(), "plan.docx").unwrap();
+    let artifact = artifacts.get(&artifact.id.to_string()).unwrap();
+    assert!(state.changed_outside, "{state:?}");
+    assert!(vak_core::file_state::behind(&artifact, &state, draft.id));
+}

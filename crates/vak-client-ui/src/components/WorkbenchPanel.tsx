@@ -152,6 +152,8 @@ export default function WorkbenchPanel() {
   const [pendingCandidates, setPendingCandidates] = createSignal<api.SandboxCandidateRecord[]>([]);
   const [candidateBusy, setCandidateBusy] = createSignal(false);
   const [promotionMessage, setPromotionMessage] = createSignal<string | null>(null);
+  /** Files of the draft in Review whose copy in the folder changed after the draft was made. */
+  const [changedSince, setChangedSince] = createSignal<string[] | null>(null);
   // The session's durable sandbox records: what an execution's acceptance
   // can still undo is derived from these, never from what this page did.
   const [sandboxRecords, setSandboxRecords] = createSignal<api.SandboxRecord[]>([]);
@@ -278,6 +280,7 @@ export default function WorkbenchPanel() {
     setCandidate(null);
     setPendingCandidates([]);
     setPromotionMessage(null);
+    setChangedSince(null);
     setReviewOpen(false);
     setReviewedPath(null);
     setReviewedFiles([]);
@@ -566,6 +569,7 @@ export default function WorkbenchPanel() {
       const requested = requestedCandidateId ? saved.find((record) => record.candidate.candidate_id === requestedCandidateId) : undefined;
       if (requested) selectCandidate(requested);
       else if (!saved.some((record) => record.candidate.candidate_id === candidate()?.candidate.candidate_id)) selectCandidate(saved[saved.length - 1]);
+      setChangedSince(null);
       setReviewOpen(true);
       return;
     }
@@ -576,6 +580,7 @@ export default function WorkbenchPanel() {
       if (activeId() !== sessionId) return;
       setPendingCandidates((current) => [...current, prepared]);
       selectCandidate(prepared);
+      setChangedSince(null);
       setReviewOpen(true);
     } catch (error) {
       setPromotionMessage(error instanceof Error ? error.message : String(error));
@@ -754,21 +759,25 @@ export default function WorkbenchPanel() {
     }
   };
 
-  const promoteCandidate = async () => {
+  const promoteCandidate = async (replaceNewer = false) => {
     const value = candidate();
     if (!value || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || reviewFileError() || officeExcluded().size > 0) return;
     setCandidateBusy(true);
     try {
       // One promotion for the draft: the first chosen file's version, with the others.
       const chosen = await Promise.all(reviewedFiles().map((path) => api.versionOf(value.session_id, value.candidate.candidate_id, path)));
-      const receipt = await api.acceptVersion(chosen[0], chosen.slice(1));
+      const receipt = await api.acceptVersion(chosen[0], chosen.slice(1), replaceNewer);
+      setChangedSince(null);
       setPromotionMessage(null);
       recordAppended(value.session_id, { kind: "Promotion", record: receipt });
       setReviewOpen(false);
       setPendingCandidates((current) => current.filter((record) => record.execution_id !== value.execution_id));
       setCandidate(null);
     } catch (error) {
-      setPromotionMessage(error instanceof Error ? error.message : String(error));
+      // The folder's copy changed after the draft was made: say so, and let the person decide.
+      const behind = error instanceof api.ApiError && error.kind === "behind" ? (error.body as { behind?: string[] } | null)?.behind : undefined;
+      if (behind?.length) setChangedSince(behind);
+      else setPromotionMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setCandidateBusy(false);
     }
@@ -822,9 +831,10 @@ export default function WorkbenchPanel() {
           onClose={() => setReviewOpen(false)}
           busy={candidateBusy()}
           footer={<>
+              <Show when={changedSince()}>{(files) => <span class="candidate-review-changed-since" role="alert">{files().length === 1 ? `${files()[0].split("/").pop()} was changed in ${destinationLabel()} after this draft was made, and the draft does not include that change.` : `${files().length} files were changed in ${destinationLabel()} after this draft was made, and the draft does not include those changes.`} Accepting replaces what is there now. You can undo it, and the replaced copy stays in the file's history.</span>}</Show>
               <span>{officeExcluded().size > 0 ? "Make a version with the changes you kept, or keep every change, before accepting." : `Applying ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "change" : "changes"} to ${destinationLabel()} · ${reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed`}</span>
               <button type="button" class="btn" onClick={() => setReviewOpen(false)}>Keep as draft</button>
-              <button type="button" class="btn primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError() || officeExcluded().size > 0} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
+              <button type="button" class="btn primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError() || officeExcluded().size > 0} onClick={() => void promoteCandidate(!!changedSince())}>{candidateBusy() ? "Accepting…" : changedSince() ? "Replace and accept" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
           </>}
         >
             <div>

@@ -1,6 +1,6 @@
 # 90 — What a turn knows about a file
 
-Status: in progress. Decisions taken 2026-10-12 (D1–D4, §4). Built 2026-10-12: stage 1 (`vak_core::file_state`, `Version::turn`, `Version::undone`), stage 2 (the note on every path a call reads or changes, the record's fact first after a failure) and the listing half of stage 3 (`Tool::lists_paths`: a glob is told of matching drafts not in the folder). A draft for review is now recorded as a version from the call's own draft, its revision as its child (`ArtifactClaim::drafted`, `based_on`); before, none was. A `session_search` hit names its file and state. Stage 4 part 1 built: an edit made outside Vak is a `VersionSource::Workspace` version recorded when Vak next reads the file, and a draft made before the workspace's current version is `behind`. Next: stage 4 part 2 (Review refuses or warns before accepting a `behind` draft), then stage 5 after the mockup's review. Builds on the
+Status: in progress. Decisions taken 2026-10-12 (D1–D4, §4). Built 2026-10-12: stage 1 (`vak_core::file_state`, `Version::turn`, `Version::undone`), stage 2 (the note on every path a call reads or changes, the record's fact first after a failure) and the listing half of stage 3 (`Tool::lists_paths`: a glob is told of matching drafts not in the folder). A draft for review is now recorded as a version from the call's own draft, its revision as its child (`ArtifactClaim::drafted`, `based_on`); before, none was. A `session_search` hit names its file and state. Stage 4 part 1 built: an edit made outside Vak is a `VersionSource::Workspace` version recorded when Vak next reads the file, and a draft made before the workspace's current version is `behind`. Stage 4 part 2 built: accepting a version that is behind the workspace's current copy is refused until the person says to replace it (§3.4), the workspace's own history is its accepted and found versions, and a file that was in the folder before the record knew it is the record's first version. Next: stage 5 after the mockup's review. Builds on the
 artifact record of data-architecture M8 (`vak_core::artifacts`,
 docs/design/82-library.md) and the Review loop of
 docs/design/72-openxml-documents.md and 54-task-environments-and-promotion.md.
@@ -117,9 +117,37 @@ A change names the file it is for (`path`) and the bytes it starts from
 named as `path` as a revision from that draft (2026-10-12). `write` and
 `edit` get the same: a call that changes a path with waiting drafts is told
 which bytes it started from. The record links the new version to its
-parent. Review shows what was based on what. Promotion refuses a version
-whose base no longer matches the workspace file. This is to be verified;
-it is promotion's own check, not the loop's.
+parent. Review shows what was based on what.
+
+Accepting has two checks, and neither is the loop's. Promotion's own
+(`vak_sandbox::promote_recoverable`) compares the workspace file with what
+it held when the candidate was frozen for Review, so it catches a change
+made while the draft was in Review. It cannot see a change made between the
+draft and the freeze: a draft made on Monday, the file edited by hand on
+Tuesday and Review opened on Wednesday froze Tuesday's file as its base and
+would replace it. That one is the record's: `POST
+/library/{id}/versions/{version}/accept` observes each file it would
+replace (which records an outside edit as a version, D2) and, when the
+version is behind the workspace's current one (`file_state::behind`),
+answers 409 with `kind: "behind"` and the files, and changes nothing.
+Review then says the file changed after the draft was made and that the
+draft does not include it, and the person either keeps the draft or
+accepts with `replace_newer`. The replaced copy stays a version, and Undo
+puts it back.
+
+Three facts make `behind` true only when it is:
+
+- The version put up for Review is the draft the call recorded, with the
+  parent it was made from, never a second version made from the newest
+  head. A candidate with no recorded draft (work done by a command) is a
+  child of the version holding the bytes the workspace had at the freeze.
+- A draft made from the workspace file is a child of the workspace's
+  current version, read when the draft is recorded, never of whichever
+  draft is newest.
+- The workspace's own history is the versions accepted into it and the
+  versions found in it. A file that was in the folder before Vak recorded
+  anything of it is found as the first version, with no parent, and is not
+  an edit made outside Vak.
 
 ### 3.5 Record what is missing (additive, invariant 29)
 

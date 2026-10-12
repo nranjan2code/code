@@ -747,6 +747,46 @@ impl Artifacts {
         {
             return Ok(parent);
         }
+        self.add_version(artifact, parent, digest, new, trace, actor)
+    }
+
+    /// Records what the workspace holds at the artifact's path as a
+    /// version found there (doc 90 §3.5), made from exactly `parent`: the
+    /// version the workspace last held, or none for a file that was there
+    /// before anything of it was recorded.
+    pub fn found_in_workspace(
+        &self,
+        artifact: ArtifactId,
+        parent: Option<VersionId>,
+        bytes: &[u8],
+    ) -> Result<VersionId, ArtifactError> {
+        let digest = {
+            use sha2::Digest;
+            hex::encode(sha2::Sha256::digest(bytes))
+        };
+        self.add_version(
+            artifact,
+            parent,
+            digest,
+            NewVersion {
+                parent,
+                bytes,
+                source: VersionSource::Workspace,
+            },
+            None,
+            None,
+        )
+    }
+
+    fn add_version(
+        &self,
+        artifact: ArtifactId,
+        parent: Option<VersionId>,
+        digest: String,
+        new: NewVersion<'_>,
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<VersionId, ArtifactError> {
         if new.bytes.len() as u64 > MAX_VERSION_BYTES {
             return Err(ArtifactError::Invalid(
                 "the file is larger than a version keeps".into(),
@@ -1090,6 +1130,21 @@ impl vak_tools::ArtifactSink for CallSink {
                                 }
                                 _ => None,
                             })
+                    })
+                    // A draft made from the workspace file is a version of
+                    // what the workspace holds now, an edit made outside
+                    // Vak included (doc 90 §3.5), never of whichever draft
+                    // happens to be newest.
+                    .or_else(|| {
+                        if !declaration.drafted {
+                            return None;
+                        }
+                        match crate::file_state::observe(&self.artifacts, &space, &self.cwd, &path)?
+                            .workspace_is
+                        {
+                            crate::file_state::WorkspaceIs::Version(id) => Some(id),
+                            _ => None,
+                        }
                     });
                 self.artifacts.version(
                     artifact,
