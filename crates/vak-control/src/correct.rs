@@ -201,6 +201,23 @@ pub fn card_unplanned(answers: &str, planned: &[String]) -> String {
     )
 }
 
+/// What a call stopped at its time limit is told: below the operator's
+/// longest limit it may ask for more; at it, asking again changes nothing.
+pub fn limit_reached(named: u64, ceiling: u64) -> String {
+    if named >= ceiling {
+        format!(
+            "\n[limit]: {ceiling}ms is the longest the operator allows a command here, and \
+             the call already ran that long; it did not finish. Do less at a time, or say \
+             that it could not finish within the limit."
+        )
+    } else {
+        format!(
+            "\n[limit]: the call may name a longer limit, up to {ceiling}ms (the operator's \
+             longest), or do less at a time."
+        )
+    }
+}
+
 /// A card that names no deliverable while the plan's cards are not all
 /// shown: the plan check pairs a card with its deliverable only by name.
 pub fn card_unnamed(open: &[String]) -> String {
@@ -351,6 +368,12 @@ pub fn render(finding: &Finding, marker: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_limit_below_the_maximum_may_ask_for_more_and_one_at_it_may_not() {
+        assert!(limit_reached(5_000, 600_000).contains("up to 600000ms"));
+        assert!(limit_reached(5_000, 5_000).contains("already ran that long"));
+    }
 
     #[test]
     fn a_check_is_told_once_then_reframed_or_left_to_stand() {

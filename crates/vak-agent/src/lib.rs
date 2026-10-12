@@ -6215,6 +6215,7 @@ impl Agent {
                                     sandbox.as_ref(),
                                     self.config.trace.as_ref(),
                                     &self.call_yields,
+                                    self.config.time_limits,
                                     cancel,
                                     events,
                                 ),
@@ -6304,6 +6305,7 @@ impl Agent {
                 let agent_id = agent_id.clone();
                 let trace = self.config.trace.clone();
                 let yields = self.call_yields.clone();
+                let limits = self.config.time_limits;
                 let call_span = tool_call_span(&self.step_span, &call);
                 join.spawn(tracing::Instrument::instrument(
                     async move {
@@ -6320,6 +6322,7 @@ impl Agent {
                             sandbox.as_ref(),
                             trace.as_ref(),
                             &yields,
+                            limits,
                             &cancel,
                             &events,
                         )
@@ -7142,6 +7145,7 @@ async fn execute_one(
     sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
     trace: Option<&vak_session::trace::TraceKey>,
     yields: &CallYields,
+    limits: vak_control::TimeLimits,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
@@ -7359,6 +7363,21 @@ async fn execute_one(
         && let Some(hint) = tool_recovery_hint(*fault)
     {
         content.push_str(hint);
+    }
+    // A call stopped at its limit is told whether a longer one is allowed,
+    // so it never asks again for what it already had.
+    if let ToolRunOutput::Err(Fault::Limit, content) = &mut output
+        && let Some(named) = tools
+            .iter()
+            .find(|tool| tool.name() == call.name)
+            .and_then(|tool| tool.time_limit_argument())
+            .and_then(|argument| activity_input.get(argument))
+            .and_then(Value::as_u64)
+    {
+        content.push_str(&vak_control::limit_reached(
+            named,
+            limits.command_max_secs.saturating_mul(1000),
+        ));
     }
 
     let result_content = match &output {

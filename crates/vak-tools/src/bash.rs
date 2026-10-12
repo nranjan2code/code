@@ -248,9 +248,7 @@ impl Tool for BashTool {
                     }
                     sink.emit_finished(-1, duration_ms, paths.clone());
                 }
-                let mut reason = format!(
-                    "command stopped at its time limit of {timeout_ms}ms; name a longer `timeout_ms`, up to the operator's maximum, or run less at a time"
-                );
+                let mut reason = format!("command stopped at its time limit of {timeout_ms}ms");
                 if !paths.is_empty() {
                     reason.push_str(&format!(
                         ". {} file(s) were preserved before timeout: {}. \
