@@ -239,6 +239,14 @@ pub struct Version {
     /// Its bytes were erased.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub erased: bool,
+    /// The turn the version was made in, from its event's trace (doc 90
+    /// §3.5). Absent on a row written without a turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+    /// Accepted into the workspace, then put back by an undo; cleared when a
+    /// later promotion accepts it again (doc 90 §3.5).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub undone: bool,
 }
 
 impl Version {
@@ -398,6 +406,11 @@ fn fold(state: &mut State, bytes: &[u8]) {
     };
 
     let key = event.artifact.to_string();
+    let turn = event
+        .trace
+        .as_ref()
+        .and_then(|trace| trace.turn)
+        .map(|turn| turn.to_string());
     if let ArtifactStep::Declared {
         space,
         agent,
@@ -462,6 +475,8 @@ fn fold(state: &mut State, bytes: &[u8]) {
                     trashed_at: None,
                     restored_at: None,
                     erased: false,
+                    turn: turn.clone(),
+                    undone: false,
                 });
             }
         }
@@ -487,6 +502,8 @@ fn fold(state: &mut State, bytes: &[u8]) {
                     trashed_at: None,
                     restored_at: None,
                     erased: false,
+                    turn: turn.clone(),
+                    undone: false,
                 });
             }
         }
@@ -497,6 +514,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 .find(|known| known.id == version)
             {
                 found.promoted = true;
+                found.undone = false;
                 found.trashed_at = None;
             }
         }
@@ -521,6 +539,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
                 .find(|known| known.id == version)
             {
                 found.promoted = false;
+                found.undone = true;
             }
         }
         ArtifactStep::Saved { version } => {
@@ -1061,5 +1080,103 @@ impl vak_tools::ArtifactSink for CallSink {
                 "a declared deliverable was not recorded"
             );
         }
+    }
+}
+
+/// Folds events the way the chain's reader does, without a store, for the
+/// projections' tests (doc 90 §5, stage 1).
+#[cfg(test)]
+pub(crate) fn replay(events: &[ArtifactEvent]) -> Vec<Artifact> {
+    let mut state = State::default();
+    for event in events {
+        let bytes = serde_json::to_vec(event).expect("an event serializes");
+        fold(&mut state, &bytes);
+    }
+    state.artifacts.into_values().collect()
+}
+
+#[cfg(test)]
+mod fold_tests {
+    use super::*;
+    use vak_session::ids::{AgentId, SpaceId, TenantId, TurnId};
+    use vak_session::trace::{Cause, TraceKey};
+
+    fn at(secs: i64) -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp(secs, 0).expect("a valid timestamp")
+    }
+
+    fn event(
+        artifact: ArtifactId,
+        secs: i64,
+        turn: Option<TurnId>,
+        step: ArtifactStep,
+    ) -> ArtifactEvent {
+        let trace = turn.map(|turn| {
+            let mut key = TraceKey::root(
+                TenantId::new(),
+                SpaceId::new(),
+                AgentId::new(),
+                Cause::Heartbeat,
+            );
+            key.turn = Some(turn);
+            key
+        });
+        ArtifactEvent {
+            artifact,
+            at: at(secs),
+            trace,
+            actor: None,
+            step,
+        }
+    }
+
+    #[test]
+    fn turn_survives_the_fold_and_undo_is_set_and_cleared() {
+        let artifact = artifact_id("space", "notes.md");
+        let (version, turn) = (VersionId::new(), TurnId::new());
+        let events = vec![
+            event(
+                artifact,
+                1,
+                None,
+                ArtifactStep::Declared {
+                    space: "space".into(),
+                    agent: "vak".into(),
+                    path: "notes.md".into(),
+                    kind: ArtifactKind::File,
+                    title: None,
+                    summary: None,
+                },
+            ),
+            event(
+                artifact,
+                2,
+                Some(turn),
+                ArtifactStep::Versioned {
+                    version,
+                    parent: None,
+                    object: None,
+                    digest: "d".into(),
+                    size: 1,
+                    source: VersionSource::Person,
+                },
+            ),
+            event(artifact, 3, None, ArtifactStep::Promoted { version }),
+            event(artifact, 4, None, ArtifactStep::PromotionUndone { version }),
+        ];
+        let found = replay(&events);
+        let found = found.first().expect("the artifact folds");
+        let made = found.versions.first().expect("the version folds");
+        assert_eq!(made.turn, Some(turn.to_string()));
+        assert!(made.undone && !made.promoted);
+
+        let mut again = events.clone();
+        again.push(event(artifact, 5, None, ArtifactStep::Promoted { version }));
+        let found = replay(&again);
+        let made = found
+            .first()
+            .and_then(|artifact| artifact.versions.first())
+            .expect("the version folds");
+        assert!(made.promoted && !made.undone);
     }
 }

@@ -1,6 +1,6 @@
 # 90 — What a turn knows about a file
 
-Status: proposal, decisions taken 2026-10-12 (D1–D3, §4); stage 1 next. Builds on the
+Status: in progress. Decisions taken 2026-10-12 (D1–D4, §4); stage 1 built 2026-10-12 (`vak_core::file_state`, `Version::turn`, `Version::undone`); stage 2 next. Builds on the
 artifact record of data-architecture M8 (`vak_core::artifacts`,
 docs/design/82-library.md) and the Review loop of
 docs/design/72-openxml-documents.md and 54-task-environments-and-promotion.md.

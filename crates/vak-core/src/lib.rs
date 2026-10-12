@@ -26,6 +26,7 @@ pub mod discovery;
 pub mod entities;
 pub mod erasure;
 pub mod file_mentions;
+pub mod file_state;
 pub mod files;
 pub mod finops;
 pub mod grants;
