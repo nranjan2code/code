@@ -14,6 +14,10 @@ pub struct BashTool;
 
 #[async_trait]
 impl Tool for BashTool {
+    fn prompt_contract(&self) -> Option<crate::PromptContract> {
+        Some(crate::PromptContract::Sandbox)
+    }
+
     fn permission(&self) -> vak_permission::Declared {
         vak_permission::Declared::new(
             vak_permission::Reach::Command,
@@ -45,6 +49,11 @@ impl Tool for BashTool {
 
     fn description(&self) -> &str {
         "Execute any command, program, or script in the execution sandbox: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Commands run in the workspace, the same place `read` and `write` work; temporary files and tool caches go to `.vak/scratch/`. A command that never exits is killed at its timeout. Never create or change a Word, Excel, PowerPoint, PDF or Visio file with a command or script (no PDF or Office libraries, converters or exporters): those files reach the person only as a draft they review, made with office_apply; when office_apply is not available, or for a Visio drawing, say that instead of building one."
+    }
+
+    /// A command sent as `cmd`, `script`, `code` or `input` is the command.
+    fn fill_defaults(&self, args: &mut Value) {
+        crate::arguments::alias(args, "command", &["cmd", "script", "code", "input"]);
     }
 
     fn schema(&self) -> Value {

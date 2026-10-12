@@ -280,7 +280,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             read_only_tools: self
                 .tools
                 .iter()
-                .filter(|tool| matches!(tool.name(), "read" | "glob" | "grep"))
+                .filter(|tool| tool.permission().reach == vak_permission::Reach::ReadPath)
                 .cloned()
                 .collect(),
             max_turns: self.core.effective_max_turns(),
@@ -348,20 +348,14 @@ fn valid_managed_flow_name(name: &str) -> bool {
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system-prompt.md");
-/// The file tools of a task copy. `doc_read` and `office_apply` are how an
-/// Office file is read and changed at all (`read`, `write` and `edit` refuse
-/// a package); both run in the worker, confined to the copy, and
-/// `office_apply` writes only a draft, in the copy's execution root.
-const TASK_COPY_TOOLS: &[&str] = &[
-    "read",
-    "glob",
-    "grep",
-    "ls",
-    "write",
-    "edit",
-    "bash",
-    "doc_read",
-    "office_apply",
+/// What a task copy may use: tools that read and change files and run
+/// commands, confined to the copy. `doc_read` and `office_apply` are among
+/// them, because they are how an Office file is read and changed at all;
+/// both run in the worker, and `office_apply` writes only a draft.
+const TASK_COPY_REACH: &[vak_permission::Reach] = &[
+    vak_permission::Reach::ReadPath,
+    vak_permission::Reach::WritePath,
+    vak_permission::Reach::Command,
 ];
 
 /// Re-exported so consumers (and tests) can name config types via vak_core.
@@ -2063,7 +2057,7 @@ impl Core {
         .map(|engine| engine.with_tools(self.permission_declarations()))
         .map(|engine| {
             if self.task_copy_boundary {
-                engine.restrict_tools(TASK_COPY_TOOLS)
+                engine.restrict_reach(TASK_COPY_REACH)
             } else {
                 engine
             }
@@ -2441,9 +2435,10 @@ impl Core {
         // narrowing enforced by visibility, and contributes no rule here.
         if policy.tools_allow.as_ref().is_some_and(|a| a.is_empty()) {
             rules.extend(
-                CHANNEL_BLOCKABLE_TOOLS
-                    .iter()
-                    .map(|tool| format!("-{tool}")),
+                self.permission_declarations()
+                    .into_iter()
+                    .filter(|(_, declared)| CHANNEL_BLOCKABLE_REACH.contains(&declared.reach))
+                    .map(|(tool, _)| format!("-{tool}")),
             );
         }
         rules.extend(
@@ -3619,23 +3614,27 @@ impl Core {
                 standing.push('\n');
             }
         }
-        let has_bash = capabilities
-            .iter()
-            .any(|c| c.kind == CapabilityKind::Tool && c.name == "bash");
         let admitted_tools: std::collections::BTreeSet<&str> = capabilities
             .iter()
             .filter(|c| c.kind == CapabilityKind::Tool)
             .map(|c| c.name.as_str())
             .collect();
-        let has_cards = self
+        let admitted: Vec<Arc<dyn vak_tools::Tool>> = self
             .scoped_tools(&ToolScope::default())
-            .iter()
-            .any(|tool| admitted_tools.contains(tool.name()) && tool.presents_cards());
-        let has_office = capabilities
-            .iter()
-            .any(|c| c.kind == CapabilityKind::Tool && c.name == "office_apply");
-        // Each code-owned contract appears only where it is true: cards where
-        // card tools are admitted, the sandbox where `bash` is.
+            .into_iter()
+            .filter(|tool| admitted_tools.contains(tool.name()))
+            .collect();
+        let declares = |contract| {
+            admitted
+                .iter()
+                .any(|tool| tool.prompt_contract() == Some(contract))
+        };
+        let has_cards = admitted.iter().any(|tool| tool.presents_cards());
+        let has_office = declares(vak_tools::PromptContract::Document);
+        let has_bash = declares(vak_tools::PromptContract::Sandbox);
+        // Each code-owned contract appears only where it is true: while an
+        // admitted tool declares it (`Tool::presents_cards`,
+        // `Tool::prompt_contract`).
         let runtime = prompts::RuntimeSections {
             capability_contract: seed.capability_contract,
             presentation_contract: if has_cards {
@@ -7066,7 +7065,7 @@ impl Core {
                 return Err(CoreError::MissingEngine);
             };
             cfg.permission = Some(std::sync::Arc::new(
-                engine.as_ref().clone().restrict_tools(TASK_COPY_TOOLS),
+                engine.as_ref().clone().restrict_reach(TASK_COPY_REACH),
             ));
         }
         let Some(engine) = cfg.permission.clone() else {
@@ -9705,23 +9704,18 @@ pub fn built_in_declarations() -> Vec<(String, vak_permission::Declared)> {
 }
 
 /// What a channel overlay's `tools_allow = []` ("block this category")
-/// denies at the rule layer. Visibility filtering already removes these
-/// from the registry; the rules are the second, execution-scoped half, so
-/// a path that assembles its own tool list cannot reintroduce one.
-const CHANNEL_BLOCKABLE_TOOLS: [&str; 11] = [
-    "read",
-    "write",
-    "edit",
-    "bash",
-    "glob",
-    "grep",
-    "remember",
-    "forget_memory",
-    "propose_skill",
-    "webfetch",
-    "browse",
+/// denies at the rule layer: every tool that reads or changes files, runs a
+/// command, learns or reaches the network. Visibility filtering already
+/// removes these from the registry; the rules are the second,
+/// execution-scoped half, so a path that assembles its own tool list cannot
+/// reintroduce one.
+const CHANNEL_BLOCKABLE_REACH: &[vak_permission::Reach] = &[
+    vak_permission::Reach::ReadPath,
+    vak_permission::Reach::WritePath,
+    vak_permission::Reach::Command,
+    vak_permission::Reach::Learning,
+    vak_permission::Reach::Network,
 ];
-
 trait KebabLower {
     fn to_kebab_lowercase(&self) -> String;
 }

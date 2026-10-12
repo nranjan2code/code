@@ -43,6 +43,11 @@ impl Tool for ReadTool {
         "Read a text file from disk. Returns numbered lines. Use offset/limit to page through large files. For Word, Excel, PowerPoint, Visio and PDF files use doc_read."
     }
 
+    /// A path sent as `file_path` or `file` is the path.
+    fn fill_defaults(&self, args: &mut Value) {
+        crate::arguments::alias(args, "path", &["file_path", "file"]);
+    }
+
     fn schema(&self) -> Value {
         serde_json::json!({
             "type": "object",

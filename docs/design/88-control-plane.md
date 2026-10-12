@@ -186,13 +186,17 @@ cards. The items carried below are not built.
   declared reach and rule subject (`Tool::permission`, docs/design/
   08-permissions.md "Declared reach"), and the engine's name tables,
   vak-core's `NETWORK_TOOLS` and `presenting_tool_names` are gone.
-  Tool names still read: the argument aliases in `normalize_tool_call`
-  (`file_path` for `path`, `cmd` for `command`), `batch_has_file_dependency`,
-  the audit command's and the scheduled script's lookup of `bash`, the bash
-  and `office_apply` prompt sections, `CHANNEL_BLOCKABLE_TOOLS`,
-  `TASK_COPY_TOOLS`, the flow tool's read-only list, and the loop-owned
-  `plan`, `recall`, `task` and card-call interceptions (which are the
-  loop's own tools).
+  Also done the same day: an argument alias is its tool's own
+  `fill_defaults` (`vak_tools::arguments::alias`), which wrappers now
+  forward; a batch runs in order when two calls touch one path by
+  `Tool::file_access`; the audit command and a scheduled script use the
+  tool that declares the `Command` reach, called in its declared argument
+  names (`vak_tools::command_call`); the sandbox and document prompt
+  contracts appear while an admitted tool declares them
+  (`Tool::prompt_contract`); a task copy and a channel block restrict by
+  reach (`PermissionEngine::restrict_reach`); the flow tool's read-only
+  tools are those that read paths. No tool name decides behaviour outside
+  the loop's own tools (`plan`, `recall`, `task`, `work`, the card calls).
 
 Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates

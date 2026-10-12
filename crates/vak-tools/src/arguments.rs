@@ -300,6 +300,21 @@ fn record_of(schema: &Value, text: &str) -> Option<Value> {
     Some(Value::Object(record))
 }
 
+/// Moves the first of `aliases` present to `key` when `key` is missing: a
+/// tool's own `fill_defaults` uses it for a name it accepts for one of its
+/// arguments. The value is moved as sent, never reshaped.
+pub fn alias(args: &mut Value, key: &str, aliases: &[&str]) {
+    let Some(fields) = args.as_object_mut() else {
+        return;
+    };
+    if fields.contains_key(key) {
+        return;
+    }
+    if let Some(value) = aliases.iter().find_map(|alias| fields.remove(*alias)) {
+        fields.insert(key.to_string(), value);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

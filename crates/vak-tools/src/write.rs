@@ -59,6 +59,11 @@ impl Tool for WriteTool {
         "Write a text file the user requested in the workspace, creating parent directories as needed. Do not create a file just to duplicate an answer already delivered in cards or prose. Overwrites the file if it exists. Not for Word, Excel, PowerPoint or PDF files: those are made with office_apply."
     }
 
+    /// A path sent as `file_path` or `file` is the path.
+    fn fill_defaults(&self, args: &mut Value) {
+        crate::arguments::alias(args, "path", &["file_path", "file"]);
+    }
+
     fn schema(&self) -> Value {
         serde_json::json!({
             "type": "object",

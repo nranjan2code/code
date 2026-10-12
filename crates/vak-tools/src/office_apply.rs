@@ -45,6 +45,10 @@ pub struct OfficeApplyTool;
 
 #[async_trait]
 impl Tool for OfficeApplyTool {
+    fn prompt_contract(&self) -> Option<crate::PromptContract> {
+        Some(crate::PromptContract::Document)
+    }
+
     fn permission(&self) -> vak_permission::Declared {
         vak_permission::Declared::new(
             vak_permission::Reach::WritePath,

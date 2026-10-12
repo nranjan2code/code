@@ -87,10 +87,9 @@ Next, in order:
    reach and rule subject (`Tool::permission`); the engine, rules, hook
    matchers, remembered approvals and `auto_approve` read it
    (docs/design/08-permissions.md "Declared reach").
-2. Item 3, group 5: argument aliases in `normalize_tool_call`, the bash
-   and office_apply prompt sections, `CHANNEL_BLOCKABLE_TOOLS`,
-   `TASK_COPY_TOOLS`, the flow tool's read-only list (`"read" | "glob" |
-   "grep"`, vak-core ~285), `batch_has_file_dependency`.
+2. Done 2026-10-12: item 3, group 5 (aliases in each tool's
+   `fill_defaults`, `file_access` for batch order, `command_call`,
+   `Tool::prompt_contract`, `restrict_reach`). Item 3 is done.
 3. `office_apply` revisions: given a draft's path as `path`, it answers
    "the directory for .vak/scratch/… does not exist" and "is inside .vak";
    the model never learned to pass `source` (live, porto-notes.docx).

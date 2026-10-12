@@ -360,6 +360,14 @@ impl Tool for BrokeredTool {
         self.inner.always_loaded()
     }
 
+    fn fill_defaults(&self, args: &mut Value) {
+        self.inner.fill_defaults(args)
+    }
+
+    fn prompt_contract(&self) -> Option<crate::PromptContract> {
+        self.inner.prompt_contract()
+    }
+
     fn permission(&self) -> vak_permission::Declared {
         self.inner.permission()
     }

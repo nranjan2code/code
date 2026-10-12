@@ -364,7 +364,10 @@ fn declared_write_scope_denies_other_direct_file_mutations_before_rules() {
 fn task_tool_scope_beats_full_access_and_explicit_allow() {
     let engine = support::engine(&["+remember".into(), "+write".into()])
         .unwrap()
-        .restrict_tools(&["read", "write", "edit"]);
+        .restrict_reach(&[
+            vak_permission::Reach::ReadPath,
+            vak_permission::Reach::WritePath,
+        ]);
     let cwd = std::env::temp_dir();
     assert!(matches!(
         engine.evaluate(

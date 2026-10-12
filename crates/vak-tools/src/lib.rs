@@ -226,6 +226,12 @@ pub trait Tool: Send + Sync {
         vak_permission::Declared::default()
     }
 
+    /// The code-owned prompt contract this tool's use needs, shown only
+    /// while a tool that declares it is admitted.
+    fn prompt_contract(&self) -> Option<PromptContract> {
+        None
+    }
+
     /// Loaded into every turn's schemas: the tools a model works with on
     /// most turns (reading, searching and changing files, running commands,
     /// fetching a page, planning, discovery). Every other tool that declares
@@ -403,6 +409,31 @@ pub fn brokered_default_tools(worker_exe: std::path::PathBuf) -> Vec<std::sync::
 /// The tool in `tools` that a recorded call named `name` ran. The name is
 /// matched the way the agent loop matches a call (`canonical_tool_name`), so
 /// a ledger record reads back to the same tool it was made with. Readers of
+/// A call of `tool` that runs `command` within `limit_ms`, in the argument
+/// names the tool declares (its command subject and its time-limit
+/// argument), or `None` when the tool runs no command.
+pub fn command_call(tool: &dyn Tool, command: &str, limit_ms: u64) -> Option<Value> {
+    let vak_permission::Subject::Command(argument) = tool.permission().subject else {
+        return None;
+    };
+    let mut call = serde_json::Map::new();
+    call.insert(argument.to_string(), Value::from(command));
+    if let Some(limit) = tool.time_limit_argument() {
+        call.insert(limit.to_string(), Value::from(limit_ms));
+    }
+    Some(Value::Object(call))
+}
+
+/// A code-owned section of the system prompt a tool's use needs
+/// (docs/design/07-prompt.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptContract {
+    /// How Office files and PDFs are read and changed: drafts for review.
+    Document,
+    /// What the execution sandbox allows a command.
+    Sandbox,
+}
+
 /// recorded calls use this and then the tool's declarations, never the name.
 pub fn tool_for_call<'a>(
     tools: &'a [std::sync::Arc<dyn Tool>],

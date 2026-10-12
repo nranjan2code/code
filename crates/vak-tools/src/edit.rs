@@ -46,6 +46,11 @@ impl Tool for EditTool {
         "Apply exact string replacements to a text file. All edits are atomic: every old_text must match exactly once or the whole operation fails without changes. Word, Excel, PowerPoint and PDF files are not text: change them with office_apply."
     }
 
+    /// A path sent as `file_path` or `file` is the path.
+    fn fill_defaults(&self, args: &mut Value) {
+        crate::arguments::alias(args, "path", &["file_path", "file"]);
+    }
+
     fn schema(&self) -> Value {
         serde_json::json!({
             "type": "object",

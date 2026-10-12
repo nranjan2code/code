@@ -20652,7 +20652,10 @@ async fn execute_script(
     script: &str,
     trace: Option<vak_session::trace::TraceKey>,
 ) -> ScriptOutcome {
-    let bash = core.agent_tools().into_iter().find(|t| t.name() == "bash");
+    let bash = core
+        .agent_tools()
+        .into_iter()
+        .find(|t| t.permission().reach == vak_permission::Reach::Command);
     let Some(bash) = bash else {
         return ScriptOutcome {
             ok: false,
@@ -20669,10 +20672,14 @@ async fn execute_script(
         new_documents: Vec::new(),
         executions: None,
     };
-    let args = serde_json::json!({
-        "command": script,
-        "timeout_ms": core.time_limits().script_secs * 1000,
-    });
+    let Some(args) =
+        vak_tools::command_call(bash.as_ref(), script, core.time_limits().script_secs * 1000)
+    else {
+        return ScriptOutcome {
+            ok: false,
+            text: "script task failed: the command tool declares no command argument".to_string(),
+        };
+    };
     let out = bash.execute(&args, &ctx).await;
     if out.is_error() {
         ScriptOutcome {

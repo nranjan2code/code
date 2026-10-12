@@ -4120,8 +4120,8 @@ impl Agent {
             .config
             .tools
             .iter()
-            .find(|t| t.name() == "bash")
-            .ok_or_else(|| "no bash tool available for verification".to_string())?;
+            .find(|t| t.permission().reach == vak_permission::Reach::Command)
+            .ok_or_else(|| "no command tool available for verification".to_string())?;
         let cwd = self
             .session
             .lock()
@@ -4163,10 +4163,12 @@ impl Agent {
         };
         // The command is bounded by the operator's limit, as any command is
         // (docs/design/88-control-plane.md §5a).
-        let input = serde_json::json!({
-            "command": cmd,
-            "timeout_ms": self.config.time_limits.command_secs.saturating_mul(1000),
-        });
+        let input = vak_tools::command_call(
+            tool.as_ref(),
+            cmd,
+            self.config.time_limits.command_secs.saturating_mul(1000),
+        )
+        .ok_or_else(|| "the command tool declares no command argument".to_string())?;
         let out = tool.execute(&input, &ctx).await;
         if out.is_error() {
             Err(vak_session::bash_digest(&out.content))
@@ -6140,7 +6142,7 @@ impl Agent {
             || n == 1
             || self.config.work_mode == WorkMode::Managed
             || calls.iter().any(|call| call.name == "work")
-            || batch_has_file_dependency(&calls)
+            || batch_has_file_dependency(&calls, &self.config.tools)
         {
             let mut out = Vec::with_capacity(n);
             for (call, verdict) in calls.into_iter().zip(authz) {
@@ -6746,16 +6748,23 @@ mod verification_stale_tests {
 /// A model may issue `write(path)` and `read(path)` in one tool batch. Those
 /// calls have an order dependency even when parallel tools are enabled: the
 /// read must observe the saved bytes, not race the write in another worker.
-fn batch_has_file_dependency(calls: &[PendingToolCall]) -> bool {
-    calls.iter().enumerate().any(|(i, first)| {
-        let Some(path) = first.input.get("path").and_then(Value::as_str) else {
+fn batch_has_file_dependency(calls: &[PendingToolCall], tools: &[Arc<dyn Tool>]) -> bool {
+    let access: Vec<Option<(vak_tools::FileAccess, String)>> = calls
+        .iter()
+        .map(|call| vak_tools::tool_for_call(tools, &call.name)?.file_access(&call.input))
+        .collect();
+    access.iter().enumerate().any(|(i, first)| {
+        let Some((first_access, path)) = first else {
             return false;
         };
-        matches!(first.name.as_str(), "write" | "edit" | "read")
-            && calls.iter().skip(i + 1).any(|second| {
-                second.input.get("path").and_then(Value::as_str) == Some(path)
-                    && matches!(second.name.as_str(), "write" | "edit" | "read")
-                    && (first.name != "read" || second.name != "read")
+        access
+            .iter()
+            .skip(i + 1)
+            .flatten()
+            .any(|(second_access, second_path)| {
+                second_path == path
+                    && !(*first_access == vak_tools::FileAccess::Read
+                        && *second_access == vak_tools::FileAccess::Read)
             })
     })
 }
@@ -6763,6 +6772,10 @@ fn batch_has_file_dependency(calls: &[PendingToolCall]) -> bool {
 #[cfg(test)]
 mod file_batch_dependency_tests {
     use super::{PendingToolCall, batch_has_file_dependency};
+
+    fn tools() -> Vec<std::sync::Arc<dyn vak_tools::Tool>> {
+        vak_tools::brokered_tools(std::path::PathBuf::new(), &[])
+    }
 
     fn call(name: &str, path: &str) -> PendingToolCall {
         PendingToolCall {
@@ -6774,22 +6787,22 @@ mod file_batch_dependency_tests {
 
     #[test]
     fn same_file_write_and_read_run_in_model_order() {
-        assert!(batch_has_file_dependency(&[
-            call("write", "report.csv"),
-            call("read", "report.csv")
-        ]));
-        assert!(batch_has_file_dependency(&[
-            call("read", "report.csv"),
-            call("edit", "report.csv")
-        ]));
-        assert!(!batch_has_file_dependency(&[
-            call("write", "a.csv"),
-            call("read", "b.csv")
-        ]));
-        assert!(!batch_has_file_dependency(&[
-            call("read", "a.csv"),
-            call("read", "a.csv")
-        ]));
+        assert!(batch_has_file_dependency(
+            &[call("write", "report.csv"), call("read", "report.csv")],
+            &tools()
+        ));
+        assert!(batch_has_file_dependency(
+            &[call("read", "report.csv"), call("edit", "report.csv")],
+            &tools()
+        ));
+        assert!(!batch_has_file_dependency(
+            &[call("write", "a.csv"), call("read", "b.csv")],
+            &tools()
+        ));
+        assert!(!batch_has_file_dependency(
+            &[call("read", "a.csv"), call("read", "a.csv")],
+            &tools()
+        ));
     }
 }
 
@@ -6797,27 +6810,6 @@ fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
     let canonical = vak_tools::canonical_tool_name(&call.name);
     if canonical != call.name {
         call.name = canonical.to_string();
-    }
-    if (call.name == "read" || call.name == "write" || call.name == "edit")
-        && call.input.is_object()
-        && let Some(obj) = call.input.as_object_mut()
-        && !obj.contains_key("path")
-        && let Some(file_path) = obj.get("file_path").or_else(|| obj.get("file")).cloned()
-    {
-        obj.insert("path".into(), file_path);
-    }
-    if call.name == "bash"
-        && call.input.is_object()
-        && let Some(obj) = call.input.as_object_mut()
-        && !obj.contains_key("command")
-        && let Some(cmd) = obj
-            .get("cmd")
-            .or_else(|| obj.get("script"))
-            .or_else(|| obj.get("code"))
-            .or_else(|| obj.get("input"))
-            .cloned()
-    {
-        obj.insert("command".into(), cmd);
     }
     call
 }
@@ -8527,8 +8519,14 @@ mod tool_recovery_tests {
                 "file_path": "src/main.rs"
             }),
         };
-        let normalized_read = normalize_tool_call(read_call);
+        let mut normalized_read = normalize_tool_call(read_call);
         assert_eq!(normalized_read.name, "read");
+        // The alias is the read tool's own (`fill_defaults`), not the loop's.
+        vak_tools::brokered_tools(std::path::PathBuf::new(), &[])
+            .iter()
+            .find(|tool| tool.name() == "read")
+            .expect("read")
+            .fill_defaults(&mut normalized_read.input);
         assert_eq!(
             normalized_read.input.get("path").and_then(|v| v.as_str()),
             Some("src/main.rs")

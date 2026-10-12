@@ -26,8 +26,9 @@ pub enum AskSource {
 pub struct PermissionEngine {
     rules: Vec<Rule>,
     write_scope: Option<Vec<PathBuf>>,
-    /// Host-imposed execution vocabulary. Checked before user allow rules.
-    allowed_tools: Option<Vec<String>>,
+    /// The reaches an isolated run may use at all, imposed by its host.
+    /// Checked before every rule and mode.
+    allowed_reach: Option<Vec<Reach>>,
     /// What each tool declared it reaches and what a rule about it matches
     /// (`Tool::permission`), supplied by the host from the tools it offers.
     /// A tool not here is `Declared::default()`: an unknown.
@@ -39,7 +40,7 @@ impl PermissionEngine {
         PermissionEngine {
             rules,
             write_scope: None,
-            allowed_tools: None,
+            allowed_reach: None,
             declared: HashMap::new(),
         }
     }
@@ -52,7 +53,7 @@ impl PermissionEngine {
         Ok(PermissionEngine {
             rules,
             write_scope: None,
-            allowed_tools: None,
+            allowed_reach: None,
             declared: HashMap::new(),
         })
     }
@@ -102,10 +103,10 @@ impl PermissionEngine {
         self
     }
 
-    /// Narrow an isolated run to these tool names. No configured allow rule
-    /// or broad permission mode can re-enable a tool outside this set.
-    pub fn restrict_tools(mut self, names: &[&str]) -> Self {
-        self.allowed_tools = Some(names.iter().map(|name| name.to_ascii_lowercase()).collect());
+    /// Narrow an isolated run to tools of these reaches. No configured allow
+    /// rule or broad permission mode can re-enable a tool outside them.
+    pub fn restrict_reach(mut self, reaches: &[Reach]) -> Self {
+        self.allowed_reach = Some(reaches.to_vec());
         self
     }
 
@@ -138,9 +139,9 @@ impl PermissionEngine {
         cwd: &std::path::Path,
     ) -> Decision {
         if self
-            .allowed_tools
+            .allowed_reach
             .as_ref()
-            .is_some_and(|allowed| !allowed.iter().any(|name| name.eq_ignore_ascii_case(tool)))
+            .is_some_and(|allowed| !allowed.contains(&declared.reach))
         {
             return Decision::Deny {
                 reason: format!("'{tool}' is outside this run's tool scope"),

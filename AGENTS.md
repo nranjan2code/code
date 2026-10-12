@@ -2364,7 +2364,12 @@ docs/design/08-permissions.md "Declared reach"). The engine, rules, hook
 matchers, remembered approvals and `auto_approve` read the declaration; a
 new tool declares one, and a check that is not a tool call (a provider
 effect) states its reach where it checks. Add no table of tool names to
-`vak-permission` or its callers.
+`vak-permission` or its callers, and decide nothing else by a tool's name
+either: a tool declares what it is (`permission`, `prompt_contract`,
+`file_access`, `delivered_file`, `presents_cards`, `fill_defaults` for a
+name it accepts for an argument), and a wrapper forwards every
+declaration. Only the loop's own tools (`plan`, `recall`, `task`, `work`,
+the card calls) are recognised by name, because the loop defines them.
 
 A tool error says where its fault lies as a typed value at its source
 (`ToolOutput::error(Fault::…, …)`, `vak_control::Fault`): add no reader of
