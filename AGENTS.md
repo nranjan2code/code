@@ -1496,7 +1496,11 @@ in progress, and the rest of V4 follows it.
   argument name is one shape on every block
   (`one_argument_name_is_one_shape_on_every_block`). A card that names in
   `answers` a deliverable the plan does not have is refused with the plan's
-  names; a planned card counts as shown only when a card names it. `PresentationSource::Answer` is recorded
+  names, and one that names none while planned cards are still unnamed is
+  refused with those names; a planned card counts as shown only when a card
+  names it. Text written in reply to a plan check that followed an answer
+  is addressed to the runtime and is not projected (doc 86 §2.2). A table
+  card whose rows are one cell each is refused as a list. `PresentationSource::Answer` is recorded
   history only; nothing writes it. A card that fails is refused with
   what to fix, and goes through the repair stages like any tool. The fence path, an inline
   ` ```vak ` fence, is the fallback when no card tool is admitted, and a

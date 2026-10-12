@@ -91,8 +91,11 @@ the turn's receipts:
 
 - `card`: a card recorded this turn whose `answers` names it, and only
   that. A card naming a deliverable the plan does not have is refused when
-  it is called; a card that names none, or that a worker showed, covers no
-  planned card and is never attributed one. Once the turn can show no card (every card tool was
+  it is called, and so is a card that names none while the plan has cards
+  no card has named yet: the refusal lists them, so the model links a card
+  to its deliverable while it works rather than at the end of the turn. A
+  card that names none once every planned card is named, or that a worker
+  showed, covers no planned card and is never attributed one. Once the turn can show no card (every card tool was
   withdrawn, docs/design/15-reliability.md), a planned card is checked as
   text.
 - `text`: the final text is non-empty.
@@ -108,7 +111,13 @@ person, lists what the plan names and what was observed (the planned cards
 no card names, how many cards were shown without a planned name, and each
 other deliverable with no receipt), and asks for what is missing or a plain
 reason. If the next step still leaves one missing, the turn ends as it
-stands rather than looping.
+stands rather than looping. When an answer with text came before the check,
+text written in reply to it is addressed to the runtime: the projection and
+the transcript leave it out, and the person keeps the answer they were given
+and the cards and files the reply adds. Found live on 2026-10-12
+(run_01a12e85-d4ba-79c2-93e5-2f3f3295fd85): four cards named no deliverable,
+the check said both were missing, and the model's status report ("All four
+cards from the plan have been shown") reached the person as a second answer.
 
 Found live on 2026-10-11 (run_01a1293b-45c3-7f21-8fbf-bff3e2f9d3c6), before
 this wording: a card that named nothing was attributed to the first planned

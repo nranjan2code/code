@@ -349,6 +349,12 @@ fn build_table(args: &Map<String, Value>) -> Result<Value, String> {
     })?)?;
     let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
     let (labels, rows) = table_rows(&lines)?;
+    if labels.len() < 2 {
+        return Err(format!(
+            "every row is one cell, so this is a list, not a table: put a row's cells in one string separated by |, the header first (\"{} | …\"), then one string per row",
+            labels.first().map_or("Column", String::as_str)
+        ));
+    }
     let numeric: Vec<bool> = (0..labels.len())
         .map(|column| {
             let cells: Vec<&str> = rows
@@ -1782,7 +1788,7 @@ fn fixture_for(shape_name: &str) -> Value {
             "tests": [{"name": "it_works", "status": "passed"}]
         }),
         "emit_terminal_card" => serde_json::json!({"command": "ls", "output": "a.rs"}),
-        "emit_table_card" => serde_json::json!({"rows": ["Name", "Alice"]}),
+        "emit_table_card" => serde_json::json!({"rows": ["Name | Role", "Alice | Lead"]}),
         "emit_steps_card" => serde_json::json!({
             "title": "T",
             "steps": [{"label": "Step 1", "detail": "d"}]
@@ -2633,6 +2639,16 @@ mod tests {
         assert_eq!(payload["rows"].as_array().unwrap().len(), 2);
         assert_eq!(payload["rows"][0]["Name"], "---");
         assert_eq!(payload["rows"][0]["Value"], "---");
+    }
+
+    #[test]
+    fn a_table_of_one_cell_rows_is_refused_with_how_to_write_it() {
+        let refused = built(
+            "emit_table_card",
+            serde_json::json!({"rows": ["Category", "Subcategory", "Day 1", "Total"]}),
+        )
+        .unwrap_err();
+        assert!(refused.contains("separated by |"), "{refused}");
     }
 
     #[test]

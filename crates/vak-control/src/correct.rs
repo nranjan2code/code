@@ -201,6 +201,21 @@ pub fn card_unplanned(answers: &str, planned: &[String]) -> String {
     )
 }
 
+/// A card that names no deliverable while the plan's cards are not all
+/// shown: the plan check pairs a card with its deliverable only by name.
+pub fn card_unnamed(open: &[String]) -> String {
+    let names = open
+        .iter()
+        .map(|name| format!("\"{name}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "[card-plan]: not shown — this card sets no `answers`, and your plan's cards \
+         not shown yet are {names}. Call it again with `answers` set to the one this card \
+         delivers. A card your plan does not list goes after them."
+    )
+}
+
 /// What the model is told about a failed check, signed with the check's
 /// marker. It says who is speaking, because a model reads an unsigned
 /// reminder as the person's.

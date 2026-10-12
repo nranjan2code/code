@@ -304,8 +304,10 @@ impl Tool for StepsBlock {
 }
 
 /// A card that names a deliverable the plan does not have is refused with
-/// the plan's names; one that names nothing is shown, outside the plan's
-/// sections, and the card that names its deliverable is shown
+/// the plan's names; one that names nothing is refused with the planned
+/// cards not shown yet, so the model links them while it works rather than
+/// at the plan check; the card that names its deliverable is shown, and
+/// once every planned card is shown an unnamed one is too
 /// (docs/audits/cards-in-answers-2026-10-11.md, F4).
 #[tokio::test]
 async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
@@ -330,6 +332,11 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
                 "steps_block",
                 serde_json::json!({"answers": "Watering", "steps": ["Water Monday"]}),
             ),
+            call(
+                "a4",
+                "steps_block",
+                serde_json::json!({"steps": ["Feed Friday"]}),
+            ),
             text("Water on Monday."),
         ],
     );
@@ -353,8 +360,11 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
             _ => None,
         })
         .collect();
-    assert_eq!(results.len(), 3, "{results:?}");
-    assert!(!results[0].1, "an unnamed card is shown: {results:?}");
+    assert_eq!(results.len(), 4, "{results:?}");
+    assert!(
+        results[0].1 && results[0].2.contains("not shown yet are \"watering\""),
+        "an unnamed card waits for the plan's: {results:?}"
+    );
     assert!(
         results[1].1
             && results[1]
@@ -363,6 +373,10 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
         "{results:?}"
     );
     assert!(!results[2].1, "{results:?}");
+    assert!(
+        !results[3].1,
+        "an unnamed card after the plan's: {results:?}"
+    );
 }
 
 struct CalloutBlock;

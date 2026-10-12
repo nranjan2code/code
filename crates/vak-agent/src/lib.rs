@@ -1130,6 +1130,8 @@ pub struct Agent {
     /// The latest plan the model declared this run (docs/design/
     /// 86-model-plans-runtime-checks.md), checked when the turn ends.
     declared_plan: std::sync::Mutex<Option<Vec<vak_intent::Deliverable>>>,
+    /// The plan deliverables this run's shown cards named in `answers`.
+    named_cards: std::sync::Mutex<Vec<String>>,
     deliveries: std::sync::Mutex<RunDeliveries>,
     /// What each call in flight produced beyond its result text, drained
     /// when the batch's results are recorded (`CallYield`).
@@ -1174,6 +1176,7 @@ impl Agent {
             cards_required: HashSet::new(),
             effect_announced: std::sync::atomic::AtomicBool::new(false),
             declared_plan: std::sync::Mutex::new(None),
+            named_cards: std::sync::Mutex::new(Vec::new()),
             deliveries: std::sync::Mutex::new(RunDeliveries::default()),
             call_yields: CallYields::default(),
             active_goal: None,
@@ -1505,6 +1508,10 @@ impl Agent {
             .declared_plan
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        self.named_cards
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         *self
             .deliveries
             .lock()
@@ -1658,6 +1665,10 @@ impl Agent {
             .declared_plan
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        self.named_cards
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         *self
             .deliveries
             .lock()
@@ -5817,6 +5828,24 @@ impl Agent {
                 CallVerdict::Refused(Refusal::Tool),
             );
         }
+        if answers.is_none() {
+            let named = self
+                .named_cards
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let open: Vec<String> = planned
+                .iter()
+                .filter(|planned| !named.iter().any(|name| name.eq_ignore_ascii_case(planned)))
+                .cloned()
+                .collect();
+            if !open.is_empty() {
+                return (
+                    ToolRunOutput::Err(Fault::Shape, vak_control::card_unnamed(&open)),
+                    CallVerdict::Refused(Refusal::Tool),
+                );
+            }
+        }
         // A card that previews a file this run delivered for review is not
         // shown: the draft is in front of the person with its change list,
         // and an imitation is not.
@@ -5871,6 +5900,12 @@ impl Agent {
             );
         }
         let Some(rebuild) = self.config.presentation_rebuild.clone() else {
+            if let Some(name) = &answers {
+                self.named_cards
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(name.clone());
+            }
             self.shown_cards
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -5912,6 +5947,12 @@ impl Agent {
         };
         match session.append_presentation(record) {
             Ok(entry) => {
+                if let Some(name) = &answers {
+                    self.named_cards
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(name.clone());
+                }
                 self.shown_cards
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)

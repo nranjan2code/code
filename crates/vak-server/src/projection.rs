@@ -927,6 +927,14 @@ fn snapshot_inner(
     // next such nudge would be rejecting.
     let mut last_assistant_entry: Option<String> = None;
     let mut rejected_drafts: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // A plan check that follows an answer asks only for what the plan still
+    // lacks (docs/design/86-model-plans-runtime-checks.md §2.2); the text
+    // written in reply to it is addressed to the runtime, so the person
+    // keeps the answer they were given and sees only the cards and files
+    // the reply adds.
+    let mut answered_in_turn = false;
+    let mut replying_to_runtime = false;
+    let mut runtime_replies: std::collections::HashSet<String> = std::collections::HashSet::new();
     for entry in chain {
         match &entry.payload {
             EntryPayload::Message(record) => {
@@ -943,6 +951,11 @@ fn snapshot_inner(
                     card_group_by_type.clear();
                     seen_cards.clear();
                     repair_armed = false;
+                    answered_in_turn = false;
+                    replying_to_runtime = false;
+                }
+                if control == Some(vak_intent::control::ControlKind::PlanCheck) {
+                    replying_to_runtime = answered_in_turn;
                 }
                 if control.is_some_and(|kind| kind.retries_answer()) {
                     repair_armed = true;
@@ -958,6 +971,12 @@ fn snapshot_inner(
                     })
                 {
                     last_assistant_entry = Some(entry.id.clone());
+                    if replying_to_runtime {
+                        runtime_replies.insert(entry.id.clone());
+                        replying_to_runtime = false;
+                    } else {
+                        answered_in_turn = true;
+                    }
                 }
                 if record.message.role == Role::User
                     && control.is_none()
@@ -1620,6 +1639,17 @@ fn snapshot_inner(
                     .as_ref()
                     .and_then(|p| p.entry_id.as_ref())
                     .is_some_and(|entry| rejected_drafts.contains(entry)))
+        });
+    }
+    if !runtime_replies.is_empty() {
+        deduplicated.retain(|item| {
+            item.kind == OutputKind::Card
+                || !(item.role == OutputRole::Assistant
+                    && item
+                        .provenance
+                        .as_ref()
+                        .and_then(|p| p.entry_id.as_ref())
+                        .is_some_and(|entry| runtime_replies.contains(entry)))
         });
     }
     if !ids_to_remove.is_empty() {
@@ -5792,6 +5822,59 @@ mod tests {
             .position(|i| i.role == vak_delivery::OutputRole::Assistant)
             .expect("an answer");
         assert!(card_at < answer_at, "the card precedes its narration");
+    }
+
+    /// Text written in reply to a plan check that followed an answer is
+    /// addressed to the runtime: the person keeps the answer, and a card the
+    /// reply adds is still shown.
+    #[test]
+    fn a_reply_to_a_plan_check_after_an_answer_is_not_projected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = channel_log(&dir, "plan-reply");
+        log.append_message(MessageRecord {
+            message: Message::user_text("plan a trip"),
+            meta: None,
+        })
+        .expect("u");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("THE-ANSWER itinerary")]),
+            meta: None,
+        })
+        .expect("answer");
+        log.append_message(MessageRecord::control(
+            vak_intent::control::ControlKind::PlanCheck,
+            "[plan-check]: the plan's budget card is missing",
+        ))
+        .expect("check");
+        append_card_call(&mut log, "c1", "Budget 500");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![ContentBlock::text("STATUS-REPLY all cards shown")]),
+            meta: None,
+        })
+        .expect("reply");
+        let timeline = snapshot("plan-reply", &log);
+        let assistant_text: Vec<String> = timeline
+            .items
+            .iter()
+            .filter(|i| i.role == vak_delivery::OutputRole::Assistant)
+            .map(|i| i.fallback_text.clone())
+            .collect();
+        assert!(
+            assistant_text.iter().any(|t| t.contains("THE-ANSWER")),
+            "{assistant_text:?}"
+        );
+        assert!(
+            !assistant_text.iter().any(|t| t.contains("STATUS-REPLY")),
+            "{assistant_text:?}"
+        );
+        assert!(
+            timeline
+                .items
+                .iter()
+                .any(|i| i.kind == OutputKind::Card && i.fallback_text.contains("Budget 500")),
+            "{:?}",
+            timeline.items
+        );
     }
 
     /// A draft the runtime sent back for a redo is internal: the user sees the
