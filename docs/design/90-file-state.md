@@ -142,6 +142,9 @@ it is promotion's own check, not the loop's.
   it.
 - **D3. Sibling drafts:** all heads are listed, newest first, each with the
   turn it came from.
+- **D4. Vak's own record and words only:** versions live in Vak's storage
+  and are described in Vak's own terms. No Git repository, Git vocabulary or
+  Git binding.
 
 ## 5. One view for the person and the Agent
 
