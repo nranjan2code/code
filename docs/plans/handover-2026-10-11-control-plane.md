@@ -4,21 +4,13 @@
 
 "Continue the control plane in /Users/nisheethranjan/Projects/Vak/code on
 main, inside stage C6. Everything is committed and pushed; the full gate
-was green on the code at `5ba4eaad3` (289 suites) and only this file
-changed after it.
+was green at `dd0c9c945` (291 suites) and only this file changed after it.
 
-Read AGENTS.md (especially 'No word lists, no tuned limits' and
-'Investigating a failure'), docs/design/88-control-plane.md (Status, §5a
-including 'Still open here', §12, 'Open in C6', 'Carried into later
-stages'), then this file: 'Where C6 stands', 'Done since', 'Next, in
-order', Rules and Traps.
-
-Done in the last session: the §5a time constants are `[control.limits]`
-(`vak_control::TimeLimits`, `Core::time_limits`,
-`Tool::time_limit_argument`), seen live in
-`run_01a12b7f-2142-7062-85f7-b5c2879cf4f2`; the loop's receipts read tool
-declarations (`Tool::command`, `Tool::looks_up`, `Tool::planned`) and
-`is_substantive_command` is removed.
+Read AGENTS.md (especially 'No word lists, no tuned limits', 'Tool
+arguments are written, then read' and 'Investigating a failure'),
+docs/design/88-control-plane.md (§5a, §12, 'Open in C6', 'Carried'),
+docs/design/89-constrained-tool-arguments.md, then this file: 'Where C6
+stands', 'Done on 2026-10-12', 'Next, in order', Rules and Traps.
 
 Take the next item under 'Next, in order', finish it whole (code, tests,
 docs, screens), run the gate, commit and push, then the next.
@@ -74,30 +66,46 @@ Done since, in the next session (2026-10-11):
   reads. The same live run ended answered with no correction. The full
   gate was green on this tree (289 suites).
 
+Done on 2026-10-12 (all pushed, gate green at `dd0c9c945`, 291 suites):
+- Doc 89 stages 1–4, constrained tool arguments (`9b1859b47`).
+- Cards name their deliverable while the model works; text written in
+  reply to a plan check after an answer is not projected; a table of
+  one-cell rows is refused (`fdd96b317`; live run_01a12eb0, no status
+  message).
+- Item 2 whole: `vak flow`/`vak plan`/the flow tool use
+  `Core::request_timeout` (`a68cb3db3`); `command_max_secs` replaces bash's
+  cap, a limit ending is `Fault::Limit`, the goal audit's fixed 120 s is
+  gone (`29152420a`); a limited call is told whether it may ask for longer
+  (`eb02efdbf`, live run_01a12edd). `AskParentTool` already took
+  `question_secs` at runtime; only a test uses the shipped default.
+- Item 3, first two of five groups (`dd0c9c945`): card membership by
+  `presents_cards`, delivered files by `delivered_file`/`file_access`
+  through `vak_tools::tool_for_call`.
+
 Next, in order:
-1. Done: the admin transcript route paged from the oldest entry and both
-   admin screens asked for one page, so a conversation past 500 rows lost
-   its newest turn. With no `offset` it now returns the newest page, and
-   Session Forensics has "Show earlier entries" (seen live on
-   `ses_01a12500…`, 3226 rows).
-2. §5a's three open points: bash's 600 s `MAX_TIMEOUT_MS` (also in its
-   schema), the fixed 600 s `request_timeout` in the `vak flow` and
-   `vak plan` executors, and an operator-limit ending recorded in the
-   turn's `Ending`. The CLI question prompt uses the shipped question
-   limit, not the configured one.
-3. The tool names the loop still reads (doc 88 'Carried'): `auto_approve`,
-   the argument aliases in `normalize_tool_call`,
-   `batch_has_file_dependency`, the audit command's and scheduled
-   script's lookup of `bash`.
-4. The horizon reading still sets the context profile (`derive_context`)
-   and an unattended gate's fallback (`Authority::gate_fallback`).
-5. A wire that refuses a named tool choice is not learned; the hosted
-   named tool choice has not been sent live (needs a hosted check).
-6. `scripts/measure_answer_form.py` with the real block schema on each
-   configured route.
-7. Open with no contract fault found: one "cannot create Word files"
-   answer with `office_apply` offered but deferred (doc 88).
-8. Then C7 (doc 88 §11).
+1. Item 3, groups 3–4: the permission engine sorts tools by name
+   (`READ_TOOLS`, `WRITE_TOOLS`, `LEARNING_TOOLS`, `NETWORK_TOOLS` with the
+   mail/calendar sends, `COORDINATION_TOOLS`, `tool == "bash"`, the `mcp`
+   list action), and so do `NETWORK_TOOLS` in vak-core, `auto_approve` and
+   `scoped_allow_rule`. Design: each tool declares its reach (a closed set
+   in vak-permission, which depends on nothing) and the engine is given the
+   classification built from declarations, as `presenting` already is; a
+   tool that declares nothing is classified as reaching outside (fail
+   closed). Guard with `crates/vak-permission/tests/escapes.rs`.
+2. Item 3, group 5: argument aliases in `normalize_tool_call`, the bash
+   and office_apply prompt sections, `CHANNEL_BLOCKABLE_TOOLS`,
+   `TASK_COPY_TOOLS`, the flow tool's read-only list (`"read" | "glob" |
+   "grep"`, vak-core ~285), `batch_has_file_dependency`.
+3. `office_apply` revisions: given a draft's path as `path`, it answers
+   "the directory for .vak/scratch/… does not exist" and "is inside .vak";
+   the model never learned to pass `source` (live, porto-notes.docx).
+4. `recall` refuses a query with a `turn_id` ("cannot be combined").
+5. Open, no contract fault found yet: a card claimed a command printed
+   "ready" when the receipt says it stopped at its limit (run_01a12edd).
+6. Still open from before: the horizon reading in `derive_context`
+   and `Authority::gate_fallback`; a wire refusing a named tool choice is
+   not learned; `scripts/measure_answer_form.py`; the deferred
+   `office_apply` "cannot create Word files" answer; then C7.
 
 ## Rules the maintainer set (all still in force)
 
