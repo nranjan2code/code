@@ -30,6 +30,28 @@ pub fn name(ctx: &ToolContext, execution: &str, relative: &Path) -> String {
         .replace('\\', "/")
 }
 
+/// The workspace file a draft's name is a draft of: `.vak/scratch/<agent>/
+/// <execution>/<path>` names a draft of `<path>`. Read from the name alone;
+/// whether the draft exists and is this Agent's is `existing`'s to say.
+pub fn draft_of(name: &str) -> Option<String> {
+    let given = Path::new(name);
+    if given.is_absolute() {
+        return None;
+    }
+    let rest = given.strip_prefix(vak_config::scope::SCRATCH_DIR).ok()?;
+    let mut parts = rest.components();
+    let (Some(Component::Normal(_)), Some(Component::Normal(_))) = (parts.next(), parts.next())
+    else {
+        return None;
+    };
+    let file = parts.as_path();
+    (!file.as_os_str().is_empty()
+        && file
+            .components()
+            .all(|part| matches!(part, Component::Normal(_))))
+    .then(|| file.to_string_lossy().replace('\\', "/"))
+}
+
 /// The existing file `name` names, canonical and confined: a draft of this
 /// call's Agent inside its execution root, or a file inside the workspace.
 pub fn existing(ctx: &ToolContext, name: &str) -> Result<PathBuf, String> {
@@ -85,6 +107,21 @@ fn confined(path: &Path, root: &Path, name: &str) -> Result<PathBuf, String> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_draft_name_names_the_file_it_is_a_draft_of() {
+        assert_eq!(
+            draft_of(".vak/scratch/vak/call_uk75anxh/porto-notes.docx").as_deref(),
+            Some("porto-notes.docx")
+        );
+        assert_eq!(
+            draft_of(".vak/scratch/vak/x/docs/a.docx").as_deref(),
+            Some("docs/a.docx")
+        );
+        assert_eq!(draft_of("porto-notes.docx"), None);
+        assert_eq!(draft_of(".vak/scratch/vak/x"), None);
+        assert_eq!(draft_of(".vak/scratch/vak/x/../a.docx"), None);
+    }
 
     fn ctx(workspace: &Path, executions: &Path, agent: &str) -> ToolContext {
         ToolContext::new(workspace.to_path_buf())

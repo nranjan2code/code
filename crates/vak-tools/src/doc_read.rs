@@ -292,7 +292,7 @@ fn office(path: &Path, request: &Request) -> Result<String, String> {
     if let Some(title) = &document.title {
         out.push_str(&format!(" · title: {title}"));
     }
-    out.push_str(&format!(" · sha256 {digest}…"));
+    out.push_str(&format!(" · sha256 {digest}"));
     let stats = document
         .stats
         .iter()
@@ -458,7 +458,7 @@ fn pdf(path: &Path, request: &Request) -> Result<String, String> {
     if let Some(title) = document.title() {
         out.push_str(&format!(" · title: {title}"));
     }
-    out.push_str(&format!(" · sha256 {digest}…"));
+    out.push_str(&format!(" · sha256 {digest}"));
     let stats = document
         .stats()
         .iter()

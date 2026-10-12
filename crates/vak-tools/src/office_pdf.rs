@@ -61,7 +61,7 @@ fn source(origin: &OfficeOrigin) -> Result<Option<Vec<u8>>, String> {
         .to_ascii_lowercase();
     if expected.len() < 16 || !digest.starts_with(&expected) {
         return Err(format!(
-            "base_digest {expected:?} does not match the source (sha256 {}…); the file changed since it was read or the digest was mistyped. Pass the sha256 exactly as the read shows it, `{}…`, without completing it; if the file changed, read it again (doc_read, or `vak office read`) and use the anchors and sha256 from that read",
+            "base_digest {expected:?} does not match the source (sha256 {}); the file changed since it was read or the digest was mistyped. Pass the sha256 exactly as the read shows it, `{}`; if the file changed, read it again (doc_read, or `vak office read`) and use the anchors and sha256 from that read",
             &digest[..16],
             &digest[..16]
         ));
@@ -117,7 +117,7 @@ impl Job {
                 .map_err(|error| format!("cannot create the draft directory: {error}"))?;
         }
         write_atomically(&self.draft, &applied.bytes)?;
-        let mut report = format!("Draft sha256 {}….\n", &sha256_hex(&applied.bytes)[..16]);
+        let mut report = format!("Draft sha256 {}.\n", &sha256_hex(&applied.bytes)[..16]);
         for result in &applied.results {
             report.push_str(&format!("- {result}\n"));
         }

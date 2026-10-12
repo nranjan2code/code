@@ -90,9 +90,10 @@ Next, in order:
 2. Done 2026-10-12: item 3, group 5 (aliases in each tool's
    `fill_defaults`, `file_access` for batch order, `command_call`,
    `Tool::prompt_contract`, `restrict_reach`). Item 3 is done.
-3. `office_apply` revisions: given a draft's path as `path`, it answers
-   "the directory for .vak/scratch/… does not exist" and "is inside .vak";
-   the model never learned to pass `source` (live, porto-notes.docx).
+3. Done 2026-10-12: `office_apply` reads a draft named as `path` as a
+   revision from it; digests print bare; the loop now runs each tool's
+   `fill_defaults`. Open: a pending draft is not found by its workspace
+   name (doc 72 ledger, 2026-10-12).
 4. `recall` refuses a query with a `turn_id` ("cannot be combined").
 5. Open, no contract fault found yet: a card claimed a command printed
    "ready" when the receipt says it stopped at its limit (run_01a12edd).

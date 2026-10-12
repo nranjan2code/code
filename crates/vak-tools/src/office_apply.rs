@@ -49,6 +49,27 @@ impl Tool for OfficeApplyTool {
         Some(crate::PromptContract::Document)
     }
 
+    /// A draft named as `path` is a revision of the workspace file it is a
+    /// draft of, made from that draft: `path` is the file and `source` the
+    /// draft, as a revision is asked for. Read from the draft's name alone.
+    fn fill_defaults(&self, args: &mut Value) {
+        let Some(fields) = args.as_object_mut() else {
+            return;
+        };
+        let Some(draft) = fields
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
+            return;
+        };
+        let Some(file) = crate::drafts::draft_of(&draft) else {
+            return;
+        };
+        fields.insert("path".into(), Value::from(file));
+        fields.entry("source").or_insert_with(|| Value::from(draft));
+    }
+
     fn permission(&self) -> vak_permission::Declared {
         vak_permission::Declared::new(
             vak_permission::Reach::WritePath,
@@ -717,7 +738,7 @@ pub(crate) fn apply_checked(
         .to_ascii_lowercase();
     if base_digest.len() < 16 || !digest.starts_with(&base_digest) {
         return Err(format!(
-            "base_digest {base_digest:?} does not match the source (sha256 {}…); the file changed since it was read or the digest was mistyped. Pass the sha256 exactly as the read shows it, `{}…`, without completing it; if the file changed, read it again (doc_read, or `vak office read`) and use the anchors and sha256 from that read",
+            "base_digest {base_digest:?} does not match the source (sha256 {}); the file changed since it was read or the digest was mistyped. Pass the sha256 exactly as the read shows it, `{}`; if the file changed, read it again (doc_read, or `vak office read`) and use the anchors and sha256 from that read",
             &digest[..16],
             &digest[..16]
         ));
@@ -751,7 +772,7 @@ impl Job {
                 .map_err(|error| format!("cannot create the draft directory: {error}"))?;
         }
         write_atomically(&self.draft, &applied.bytes)?;
-        let mut report = format!("Draft sha256 {}….\n", &sha256_hex(&applied.bytes)[..16]);
+        let mut report = format!("Draft sha256 {}.\n", &sha256_hex(&applied.bytes)[..16]);
         for result in &applied.results {
             report.push_str(&format!(
                 "- {}: {} ({})\n",
@@ -882,6 +903,24 @@ fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    /// A draft named as `path` is a revision of its workspace file made from
+    /// it; a `source` the call names is kept.
+    #[test]
+    fn a_draft_named_as_path_is_a_revision_from_it() {
+        let draft = ".vak/scratch/vak/call_1/porto-notes.docx";
+        let mut args = serde_json::json!({"path": draft, "ops": []});
+        OfficeApplyTool.fill_defaults(&mut args);
+        assert_eq!(args["path"], "porto-notes.docx");
+        assert_eq!(args["source"], draft);
+        let mut named = serde_json::json!({"path": draft, "source": "other.docx"});
+        OfficeApplyTool.fill_defaults(&mut named);
+        assert_eq!(named["path"], "porto-notes.docx");
+        assert_eq!(named["source"], "other.docx");
+        let mut plain = serde_json::json!({"path": "porto-notes.docx"});
+        OfficeApplyTool.fill_defaults(&mut plain);
+        assert_eq!(plain, serde_json::json!({"path": "porto-notes.docx"}));
+    }
 
     /// A text tool's refusal of a document says how to make a new one as
     /// well as how to change one, and a read is pointed at doc_read.

@@ -6915,6 +6915,9 @@ fn normalize_schema_wrapper(mut call: PendingToolCall, tools: &[Arc<dyn Tool>]) 
         input = unwrapped;
         vak_tools::read_arguments(&schema, &mut input);
     }
+    // Then the shapes only this tool reads (docs/design/04-tools.md,
+    // "Reading arguments"): an alias it accepts, a draft named as a path.
+    tool.fill_defaults(&mut input);
     call.input = input;
     call
 }
@@ -8505,6 +8508,34 @@ mod tool_recovery_tests {
             "{unknown}"
         );
         assert!(unknown.contains("[recovery]"), "{unknown}");
+    }
+
+    /// The loop runs each tool's own `fill_defaults` before a call is
+    /// checked, so a shape only that tool reads (a draft named as an Office
+    /// path, an alias) reaches authorization already read.
+    #[test]
+    fn a_tools_own_defaults_run_before_the_call_is_checked() {
+        let tools = vak_tools::brokered_tools(std::path::PathBuf::new(), &[]);
+        let draft = ".vak/scratch/vak/call_1/porto-notes.docx";
+        let call = super::normalize_schema_wrapper(
+            super::PendingToolCall {
+                id: "1".into(),
+                name: "office_apply".into(),
+                input: serde_json::json!({"path": draft, "ops": []}),
+            },
+            &tools,
+        );
+        assert_eq!(call.input["path"], "porto-notes.docx");
+        assert_eq!(call.input["source"], draft);
+        let call = super::normalize_schema_wrapper(
+            super::PendingToolCall {
+                id: "2".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"cmd": "ls"}),
+            },
+            &tools,
+        );
+        assert_eq!(call.input["command"], "ls");
     }
 
     #[test]
