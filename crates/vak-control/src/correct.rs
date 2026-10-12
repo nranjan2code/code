@@ -22,7 +22,12 @@ pub enum Finding {
     /// The provider could not parse the tool call the model generated.
     ToolCallFormat { reason: String },
     /// The response carried neither text nor a call.
-    EmptyStep,
+    EmptyStep {
+        /// Thinking arrived: the step was reasoned, not lost in transit.
+        thought: bool,
+        /// A call already succeeded this turn: its result stands.
+        done: bool,
+    },
     /// A card fence in the answer does not parse.
     Fence { error: String },
     /// The declared plan has deliverables with no receipt.
@@ -70,7 +75,7 @@ impl Finding {
     pub fn cause(&self) -> Cause {
         match self {
             Self::ToolCallFormat { .. } => Cause::ToolCallRepair,
-            Self::EmptyStep => Cause::EmptyStep,
+            Self::EmptyStep { .. } => Cause::EmptyStep,
             Self::Fence { .. } => Cause::Fence,
             Self::Plan { .. } | Self::CardRequired { .. } => Cause::Plan,
             Self::StopHook { .. } => Cause::StopHook,
@@ -241,14 +246,32 @@ pub fn render(finding: &Finding, marker: &str) -> String {
         Finding::ToolCallFormat { reason } => format!(
             "{marker}: The inference provider could not parse the structured tool call it generated ({reason}). This was an output-format failure before any tool ran. Continue the same request from the admitted tool schemas and regenerate valid structured arguments. Do not repeat the malformed envelope. If the request needs several outputs, complete them with the admitted tools; if no tool call is needed, answer directly."
         ),
-        Finding::EmptyStep => format!(
-            "{marker}: Nothing arrived from your last response: no visible answer \
-             and no tool call. A tool call whose arguments are not valid JSON can be \
-             dropped before it reaches Vak, so if you made one, make the same call again \
-             with valid JSON arguments that follow its schema. This is the request in \
-             the person's message that opened this turn, not a new one. Or write the \
-             answer as text."
-        ),
+        Finding::EmptyStep { thought, done } => {
+            // Found live 2026-10-13: told first to "make the same call
+            // again", a model whose answer was in its thinking repeated the
+            // write it had already made until the step limit.
+            let next = if *thought {
+                "Your last response held only thinking: nothing in it reached the \
+                 person, and no tool call reached Vak. If it holds your answer, write \
+                 the answer as text. If it planned a call, make that call."
+            } else {
+                "Nothing arrived from your last response: no visible answer and no \
+                 tool call. A tool call whose arguments are not valid JSON can be \
+                 dropped before it reaches Vak, so if you made one, make it again with \
+                 valid JSON arguments that follow its schema. Or write the answer as \
+                 text."
+            };
+            let stands = if *done {
+                " The calls that already succeeded in this turn stand; do not make \
+                 them again."
+            } else {
+                ""
+            };
+            format!(
+                "{marker}: {next}{stands} This is still the request in the person's \
+                 message that opened this turn, not a new one."
+            )
+        }
         Finding::Fence { error } => format!(
             "{marker}: The ```vak card block in your last answer has invalid JSON and failed to parse \
              ({error}). Resend the same answer with a syntactically valid JSON body this time — \
@@ -416,7 +439,14 @@ mod tests {
     fn every_finding_is_signed_with_its_marker() {
         let findings = [
             Finding::ToolCallFormat { reason: "x".into() },
-            Finding::EmptyStep,
+            Finding::EmptyStep {
+                thought: true,
+                done: true,
+            },
+            Finding::EmptyStep {
+                thought: false,
+                done: false,
+            },
             Finding::Fence { error: "x".into() },
             Finding::CardRequired {
                 name: "x".into(),

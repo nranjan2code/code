@@ -1707,6 +1707,8 @@ impl Agent {
         // A tool delivered a file the person reviews through its own card
         // (an Office draft): the answer need not present it again.
         let mut file_delivered_this_run = false;
+        // A call succeeded this run: an empty step is told its result stands.
+        let mut call_succeeded_this_run = false;
         // Each card recorded this run, in emit order, with the plan
         // deliverable its `answers` field named.
         let mut card_answers: Vec<Option<String>> = Vec::new();
@@ -2531,7 +2533,18 @@ impl Agent {
                     if turn + 1 >= self.config.max_turns {
                         return TurnOutcome::MaxTurnsReached;
                     }
-                    if let Err(error) = self.correct(Finding::EmptyStep, Rung::Tell).await {
+                    if let Err(error) = self
+                        .correct(
+                            Finding::EmptyStep {
+                                thought: response.content.iter().any(|block| {
+                                    matches!(block, vak_llm::ContentBlock::Thinking { .. })
+                                }),
+                                done: call_succeeded_this_run,
+                            },
+                            Rung::Tell,
+                        )
+                        .await
+                    {
                         return nudge_write_failed(error);
                     }
                     let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
@@ -2937,6 +2950,9 @@ impl Agent {
                 .filter(|(_, out)| matches!(out, ToolRunOutput::Ok(_)))
                 .filter_map(|(id, _)| call_names.get(id).cloned())
                 .collect();
+            call_succeeded_this_run |= results
+                .iter()
+                .any(|(_, out)| matches!(out, ToolRunOutput::Ok(_)));
             file_delivered_this_run |= results.iter().any(|(id, out)| {
                 matches!(out, ToolRunOutput::Ok(_))
                     && call_names

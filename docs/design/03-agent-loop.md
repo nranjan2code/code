@@ -91,7 +91,14 @@ Five bounded, system-authored checks run inside the loop, each with its own
   parsing failed" and returns nothing), so the nudge says a call may have
   been lost and asks for the same call again with valid JSON, rather than
   telling the model it made none — told that, it planned afresh and once
-  fetched a web page instead of re-sending the card it had written.
+  fetched a web page instead of re-sending the card it had written. The
+  finding carries two observed facts (`Finding::EmptyStep { thought, done }`):
+  when thinking arrived, the nudge says the thinking reached no one, and
+  asks for the answer as text or the call it planned; when a call already
+  succeeded this turn, it says that result stands and is not made again.
+  Found live 2026-10-13: told first to "make the same call again", a model
+  whose answer sat in its thinking repeated a finished `write` to the step
+  limit.
 - **`[steering-drift]`**: a step ends with no tool call and its final text
   repeats a prior turn's `TurnCard` narration verbatim instead of addressing
   the current directive — domain no longer enters the check. The nudge

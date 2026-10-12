@@ -613,7 +613,7 @@ stateDiagram-v2
 
 | Marker | Fires when | Asks for |
 |---|---|---|
-| `[empty-step]` | a thinking-only response | nothing arrived; a call whose arguments were not valid JSON can be dropped, so make the same call again with valid JSON, or write the answer |
+| `[empty-step]` | a thinking-only response | with thinking: write the answer as text or make the call it planned; with nothing at all: a call with invalid JSON can be dropped, so make it again, or write the answer; either way, calls that already succeeded stand |
 | `[steering-drift]` | the step served a different directive | refocus on the latest message (never quotes it) |
 | `[presentation-check]` | the prose reads as a card shape | call the matching card tool (also loads it) |
 | `[fence-check]` | an inline `vak` fence failed to parse | fix it |
