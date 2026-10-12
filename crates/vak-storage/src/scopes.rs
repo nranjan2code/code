@@ -20,7 +20,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct ScopeKeys {
     root: PathBuf,
     authority: Arc<dyn KeyAuthority>,
-    seq: AtomicU64,
+}
+
+/// A temporary name's number, process-wide: two key stores over one root in
+/// one process must never share a temporary name, or one creator links the
+/// other's key and seals with its own (as `objects` already guards).
+fn next_temporary() -> u64 {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    SEQ.fetch_add(1, Ordering::Relaxed)
 }
 
 impl ScopeKeys {
@@ -31,7 +38,6 @@ impl ScopeKeys {
         Ok(Self {
             root: root.to_path_buf(),
             authority,
-            seq: AtomicU64::new(0),
         })
     }
 
@@ -40,7 +46,7 @@ impl ScopeKeys {
     }
 
     fn write_atomic(&self, dest: &Path, bytes: &[u8]) -> Result<()> {
-        let n = self.seq.fetch_add(1, Ordering::Relaxed);
+        let n = next_temporary();
         let tmp = self
             .root
             .join("tmp")
@@ -121,7 +127,7 @@ impl ScopeKeys {
     /// Writes `dest` only if nothing is there; `false` when another creator
     /// got there first, whose bytes stand.
     fn write_new(&self, dest: &Path, bytes: &[u8]) -> Result<bool> {
-        let n = self.seq.fetch_add(1, Ordering::Relaxed);
+        let n = next_temporary();
         let tmp = self
             .root
             .join("tmp")
@@ -323,6 +329,42 @@ mod tests {
 
     fn keys(dir: &Path, a: &Arc<MemoryKeyAuthority>) -> ScopeKeys {
         ScopeKeys::open(dir, a.clone()).unwrap()
+    }
+
+    /// Many key stores over one root in one process, creating the same and
+    /// different scopes at once: every creator is handed the key that is on
+    /// disk, never one another creator overwrote (live, 2026-10-12: a test
+    /// binary sealed a Document under a key the disk did not hold).
+    #[test]
+    fn concurrent_stores_over_one_root_agree_on_every_key() {
+        let a = Arc::new(MemoryKeyAuthority::new().unwrap());
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().to_path_buf();
+        let handed: Vec<(String, [u8; KEY_LEN])> = std::thread::scope(|threads| {
+            let workers: Vec<_> = (0..16)
+                .map(|n| {
+                    let (a, root) = (a.clone(), root.clone());
+                    threads.spawn(move || {
+                        let store = ScopeKeys::open(&root, a).unwrap();
+                        ["tenant".to_string(), format!("scope-{n}")]
+                            .into_iter()
+                            .map(|scope| {
+                                let key = store.create(&scope).unwrap();
+                                (scope, key.0)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|w| w.join().unwrap())
+                .collect()
+        });
+        let reader = keys(&root, &a);
+        for (scope, key) in handed {
+            assert_eq!(reader.get(&scope).unwrap().0, key, "{scope}");
+        }
     }
 
     #[test]
