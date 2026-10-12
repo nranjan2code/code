@@ -803,6 +803,7 @@ fn continued_saved_file(
     session: &SessionLog,
     intent: &vak_intent::Intent,
     workspace: &Path,
+    tools: &[Arc<dyn vak_tools::Tool>],
 ) -> bool {
     let threads = intent
         .strands
@@ -842,11 +843,15 @@ fn continued_saved_file(
             vak_session::EntryPayload::Message(record) if same_thread => {
                 for block in &record.message.content {
                     match block {
-                        vak_llm::ContentBlock::ToolUse { id, name, input }
-                            if vak_tools::canonical_tool_name(name) == "write" =>
-                        {
+                        vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                            let written = vak_tools::tool_for_call(tools, name)
+                                .and_then(|tool| tool.file_access(input))
+                                .filter(|(access, _)| {
+                                    matches!(access, vak_tools::FileAccess::Write)
+                                })
+                                .map(|(_, path)| path);
                             if let (Some(path), Some(content)) = (
-                                input.get("path").and_then(serde_json::Value::as_str),
+                                written,
                                 input.get("content").and_then(serde_json::Value::as_str),
                             ) {
                                 writes.insert(id.clone(), (PathBuf::from(path), content.into()));
@@ -894,6 +899,36 @@ mod continuation_receipt_tests {
     use vak_session::types::{
         ActivityKind, ActivityRecord, ActivityStatus, IntentRecord, MessageRecord,
     };
+    use vak_tools::{Tool, ToolContext, ToolOutput};
+
+    /// Writes a file under a name no built-in tool has; it declares the
+    /// write, so the carry-forward depends on the declaration alone.
+    struct StubWriteTool;
+
+    #[async_trait::async_trait]
+    impl Tool for StubWriteTool {
+        fn name(&self) -> &str {
+            "store_file"
+        }
+
+        fn description(&self) -> &str {
+            "stores a file"
+        }
+
+        fn schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn file_access(&self, args: &serde_json::Value) -> Option<(vak_tools::FileAccess, String)> {
+            args.get("path")
+                .and_then(serde_json::Value::as_str)
+                .map(|path| (vak_tools::FileAccess::Write, path.to_string()))
+        }
+
+        async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+            ToolOutput::ok("saved")
+        }
+    }
 
     #[tokio::test]
     async fn only_capped_same_thread_unchanged_saved_file_can_carry_forward() {
@@ -932,7 +967,7 @@ mod continuation_receipt_tests {
             .append_message(MessageRecord {
                 message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::ToolUse {
                     id: "write-1".into(),
-                    name: "write".into(),
+                    name: "store_file".into(),
                     input: serde_json::json!({"path": "report.csv", "content": "value\n60\n"}),
                 }]),
                 meta: None,
@@ -964,15 +999,37 @@ mod continuation_receipt_tests {
         };
         let mut continuation = vak_intent::Intent::general(1);
         continuation.strands.push(strand.clone());
-        assert!(continued_saved_file(&session, &continuation, dir.path()));
+        let tools: Vec<Arc<dyn vak_tools::Tool>> = vec![Arc::new(StubWriteTool)];
+        assert!(!continued_saved_file(
+            &session,
+            &continuation,
+            dir.path(),
+            &[]
+        ));
+        assert!(continued_saved_file(
+            &session,
+            &continuation,
+            dir.path(),
+            &tools
+        ));
         std::fs::write(&file, "value\n99\n").unwrap();
-        assert!(!continued_saved_file(&session, &continuation, dir.path()));
+        assert!(!continued_saved_file(
+            &session,
+            &continuation,
+            dir.path(),
+            &tools
+        ));
         std::fs::write(&file, "value\n60\n").unwrap();
         continuation.strands[0].lineage = Lineage::Continues {
             thread_id: "other".into(),
             merges: Vec::new(),
         };
-        assert!(!continued_saved_file(&session, &continuation, dir.path()));
+        assert!(!continued_saved_file(
+            &session,
+            &continuation,
+            dir.path(),
+            &tools
+        ));
         continuation.strands[0] = strand;
         session
             .append_activity(ActivityRecord {
@@ -984,7 +1041,12 @@ mod continuation_receipt_tests {
                 data: Default::default(),
             })
             .unwrap();
-        assert!(!continued_saved_file(&session, &continuation, dir.path()));
+        assert!(!continued_saved_file(
+            &session,
+            &continuation,
+            dir.path(),
+            &tools
+        ));
     }
 }
 
@@ -3544,9 +3606,15 @@ impl Core {
         let has_bash = capabilities
             .iter()
             .any(|c| c.kind == CapabilityKind::Tool && c.name == "bash");
-        let has_cards = capabilities
+        let admitted_tools: std::collections::BTreeSet<&str> = capabilities
             .iter()
-            .any(|c| c.kind == CapabilityKind::Tool && presentation_tools::is_card_tool(&c.name));
+            .filter(|c| c.kind == CapabilityKind::Tool)
+            .map(|c| c.name.as_str())
+            .collect();
+        let has_cards = self
+            .scoped_tools(&ToolScope::default())
+            .iter()
+            .any(|tool| admitted_tools.contains(tool.name()) && tool.presents_cards());
         let has_office = capabilities
             .iter()
             .any(|c| c.kind == CapabilityKind::Tool && c.name == "office_apply");
@@ -6623,8 +6691,12 @@ impl Core {
             intent::projection_is_narrowing(&engagement.limits),
             "a derived engagement widened the baseline"
         );
-        cfg.continued_saved_file =
-            continued_saved_file(&session, &resolved_intent, &self.inner.cwd);
+        cfg.continued_saved_file = continued_saved_file(
+            &session,
+            &resolved_intent,
+            &self.inner.cwd,
+            &self.agent_tools(),
+        );
         cfg.outcome = Some(admitted_outcome.clone());
 
         // ---- turn-capability assembly (docs/design/41-capability-registry.md § Turn) ----

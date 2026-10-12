@@ -392,6 +392,21 @@ pub fn brokered_default_tools(worker_exe: std::path::PathBuf) -> Vec<std::sync::
     brokered_tools(worker_exe, &[])
 }
 
+/// The tool in `tools` that a recorded call named `name` ran. The name is
+/// matched the way the agent loop matches a call (`canonical_tool_name`), so
+/// a ledger record reads back to the same tool it was made with. Readers of
+/// recorded calls use this and then the tool's declarations, never the name.
+pub fn tool_for_call<'a>(
+    tools: &'a [std::sync::Arc<dyn Tool>],
+    name: &str,
+) -> Option<&'a dyn Tool> {
+    let name = canonical_tool_name(name);
+    tools
+        .iter()
+        .find(|tool| tool.name() == name)
+        .map(|tool| tool.as_ref())
+}
+
 /// The default tools behind the broker, each told which Office files are
 /// new to the workspace a task copy was made from (see
 /// [`ToolContext::new_documents`]).

@@ -1414,13 +1414,16 @@ fn snapshot_inner(
                             // anything renders from it, and the tool's own
                             // stored result is read, never rewritten.
                             if !failed {
-                                // An `emit_*_card` call's card is read from
-                                // its own `Presentation` ledger entry
+                                // A card call's card is read from its own
+                                // `Presentation` ledger entry
                                 // (docs/design/68-context-engine.md §10),
                                 // keyed by this call's `tool_use_id` —
                                 // written once, at validation, and never
                                 // rebuilt from the call's arguments here.
-                                let name_is_card = vak_core::presentation_tools::is_card_tool(name);
+                                // Only a tool that `presents_cards()` writes
+                                // a `ToolCall` presentation (the agent's
+                                // `show_card`), so the entry is the fact.
+                                let has_card_entry = presentation_by_tool_use_id.contains_key(id);
                                 let recorded = |(entry_id, record): &(
                                     String,
                                     &vak_session::types::PresentationRecord,
@@ -1440,7 +1443,7 @@ fn snapshot_inner(
                                 // Each output with the Presentation entry it
                                 // was written as, when it has one.
                                 let outputs: Vec<(vak_delivery::StructuredOutput, Option<String>)> =
-                                    if name_is_card {
+                                    if has_card_entry {
                                         presentation_by_tool_use_id
                                             .get(id)
                                             .map(|(entry_id, record)| {
@@ -1476,7 +1479,7 @@ fn snapshot_inner(
                                     // The same card emitted twice in one answer is one
                                     // card, armed retry or not: identical content has
                                     // nothing to supersede and nothing to add.
-                                    if name_is_card
+                                    if has_card_entry
                                         && !seen_cards.insert(
                                             serde_json::to_string(&output).unwrap_or_default(),
                                         )

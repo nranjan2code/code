@@ -2125,11 +2125,6 @@ pub fn presenting_tool_names() -> Vec<String> {
         .collect()
 }
 
-/// Whether `name` is one of the `emit_*_card` tools.
-pub fn is_card_tool(name: &str) -> bool {
-    SHAPES.iter().any(|shape| shape.name == name)
-}
-
 /// Rebuilds an `emit_*_card` call's validated output from the call's own
 /// arguments — the ledger records these untruncated, so nothing depends on
 /// the tool result text (which the tool framework line-truncates at ~2000

@@ -2209,7 +2209,11 @@ pub(crate) struct TurnDraft {
 /// with the last draft of it: an `office_apply` call's draft is at
 /// `.vak/scratch/<agent>/<call id>/<path>`, the convention Review's lineage
 /// relies on too.
-fn turn_drafts(log: &vak_session::SessionLog, workspace: &std::path::Path) -> Vec<TurnDraft> {
+fn turn_drafts(
+    log: &vak_session::SessionLog,
+    workspace: &std::path::Path,
+    tools: &[std::sync::Arc<dyn vak_tools::Tool>],
+) -> Vec<TurnDraft> {
     let Some(directive) = log.latest_directive_entry_id() else {
         return Vec::new();
     };
@@ -2227,8 +2231,10 @@ fn turn_drafts(log: &vak_session::SessionLog, workspace: &std::path::Path) -> Ve
         }
         for block in &message.content {
             match block {
-                vak_llm::ContentBlock::ToolUse { id, name, input } if name == "office_apply" => {
-                    if let Some(path) = input.get("path").and_then(serde_json::Value::as_str) {
+                vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                    let delivered = vak_tools::tool_for_call(tools, name)
+                        .and_then(|tool| tool.delivered_file(input));
+                    if let Some(path) = delivered {
                         calls.push((id.clone(), path.trim().to_string()));
                     }
                 }
@@ -3796,7 +3802,7 @@ async fn execute_turn_chain(
                     if let Some(tx) = reply_tx {
                         let _ = tx.send(ChatReply {
                             text: text.clone(),
-                            drafts: turn_drafts(&log, core.cwd()),
+                            drafts: turn_drafts(&log, core.cwd(), &core.agent_tools()),
                             cards,
                         });
                     }
@@ -5499,5 +5505,90 @@ mod tests {
             "018f-aaaa-a1b2c3"
         );
         assert_eq!(gw.resolve_gate(true, None).unwrap().id, "018f-bbbb-d4b2c3");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod turn_draft_tests {
+    use super::*;
+    use vak_session::types::MessageRecord;
+    use vak_tools::{Tool, ToolContext, ToolOutput};
+
+    /// A tool under a name no built-in tool has. It declares its draft, so
+    /// the draft is found through the declaration and never the name.
+    struct StubDraftTool;
+
+    #[async_trait::async_trait]
+    impl Tool for StubDraftTool {
+        fn name(&self) -> &str {
+            "store_draft"
+        }
+
+        fn description(&self) -> &str {
+            "stores a draft"
+        }
+
+        fn schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn delivered_file(&self, args: &serde_json::Value) -> Option<String> {
+            args.get("path")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        }
+
+        async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+            ToolOutput::ok("stored")
+        }
+    }
+
+    #[tokio::test]
+    async fn a_draft_is_found_by_what_its_tool_declares_not_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            dir.path().join("sessions"),
+        ));
+        let mut session = core.start_session().await.unwrap();
+        session
+            .append_message(MessageRecord {
+                message: vak_llm::Message::user_text("Make the report"),
+                meta: None,
+            })
+            .unwrap();
+        session
+            .append_message(MessageRecord {
+                message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::ToolUse {
+                    id: "call-1".into(),
+                    name: "store_draft".into(),
+                    input: serde_json::json!({"path": " report.docx "}),
+                }]),
+                meta: None,
+            })
+            .unwrap();
+        session
+            .append_message(MessageRecord {
+                message: vak_llm::Message {
+                    role: vak_llm::Role::Assistant,
+                    content: vec![vak_llm::ContentBlock::tool_result("call-1", "stored")],
+                },
+                meta: None,
+            })
+            .unwrap();
+        let draft = vak_config::scope::execution_dir(dir.path(), "vak")
+            .join("call-1")
+            .join("report.docx");
+        std::fs::create_dir_all(draft.parent().unwrap()).unwrap();
+        std::fs::write(&draft, b"draft").unwrap();
+
+        let stub: Vec<Arc<dyn Tool>> = vec![Arc::new(StubDraftTool)];
+        let found = turn_drafts(&session, dir.path(), &stub);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].path, "report.docx");
+        assert_eq!(found[0].draft, draft);
+
+        assert!(turn_drafts(&session, dir.path(), &[]).is_empty());
     }
 }

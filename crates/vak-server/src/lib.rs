@@ -14046,17 +14046,25 @@ fn saved_candidate(
 /// each call whose source was an earlier draft to the file the chain
 /// started from (docs/design/72, P3). Only successful calls count; the
 /// worker then refuses a lineage that does not reproduce the draft.
-/// Each `office_apply` call in a session that succeeded, in ledger order,
-/// with its arguments. A call's id is its execution id, so it names the
+/// Each successful call in a session whose tool declares a delivered file
+/// (`Tool::delivered_file`, the Office draft tool), in ledger order, with
+/// its arguments. A call's id is its execution id, so it names the
 /// directory its draft is in (`vak_tools::office_apply::draft_dir`).
-fn successful_office_calls(log: &vak_session::SessionLog) -> Vec<(String, serde_json::Value)> {
+fn successful_office_calls(
+    log: &vak_session::SessionLog,
+    tools: &[Arc<dyn vak_tools::Tool>],
+) -> Vec<(String, serde_json::Value)> {
     let mut calls = Vec::new();
     let mut succeeded = std::collections::HashSet::new();
     for (_, message) in log.message_chain() {
         for block in &message.content {
             match block {
-                vak_llm::ContentBlock::ToolUse { id, name, input } if name == "office_apply" => {
-                    calls.push((id.clone(), input.clone()));
+                vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                    let delivers = vak_tools::tool_for_call(tools, name)
+                        .is_some_and(|tool| tool.delivered_file(input).is_some());
+                    if delivers {
+                        calls.push((id.clone(), input.clone()));
+                    }
                 }
                 vak_llm::ContentBlock::ToolResult {
                     tool_use_id,
@@ -14081,6 +14089,7 @@ fn successful_office_calls(log: &vak_session::SessionLog) -> Vec<(String, serde_
 fn revision_office_drafts(
     log: &vak_session::SessionLog,
     task_root: &std::path::Path,
+    tools: &[Arc<dyn vak_tools::Tool>],
 ) -> Vec<vak_sandbox::RevisionDraft> {
     let Ok(root) = task_root.canonicalize() else {
         return Vec::new();
@@ -14089,7 +14098,7 @@ fn revision_office_drafts(
         .header()
         .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()));
     let mut drafts: Vec<vak_sandbox::RevisionDraft> = Vec::new();
-    for (call_id, args) in successful_office_calls(log).into_iter().rev() {
+    for (call_id, args) in successful_office_calls(log, tools).into_iter().rev() {
         let Some(relative) = args
             .get("path")
             .and_then(serde_json::Value::as_str)
@@ -14132,9 +14141,10 @@ fn office_lineage(
     // A file not yet in the workspace is a new document, whose Word edits
     // were written clean; the replay must write them the same way.
     let new_file = !confined_path(&root, path).is_some_and(|file| file.is_file());
+    let tools = state.core.agent_tools();
     let collect = |log: &vak_session::SessionLog| {
         let calls: std::collections::HashMap<_, _> =
-            successful_office_calls(log).into_iter().collect();
+            successful_office_calls(log, &tools).into_iter().collect();
         let agent = log
             .header()
             .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()));
@@ -14867,7 +14877,7 @@ async fn dispatch_candidate_revision(
         let mut new_candidate_id = None;
         let completed = match outcome {
             Ok((vak_agent::TurnOutcome::Completed { response }, log)) => {
-                let drafts = revision_office_drafts(&log, &task_root);
+                let drafts = revision_office_drafts(&log, &task_root, &state.core.agent_tools());
                 if let Ok(mut slot) = child.session.lock() {
                     *slot = Some(log);
                 }
@@ -27425,5 +27435,96 @@ mod context_links_tests {
             "file:src/parser.rs"
         );
         assert_eq!(json["plans"][0]["turn_id"], turn);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod delivered_file_declaration_tests {
+    use super::*;
+    use vak_session::types::MessageRecord;
+    use vak_tools::{Tool, ToolContext, ToolOutput};
+
+    /// Delivers a file under a name no built-in tool has.
+    struct StubDraftTool;
+
+    #[async_trait::async_trait]
+    impl Tool for StubDraftTool {
+        fn name(&self) -> &str {
+            "store_draft"
+        }
+
+        fn description(&self) -> &str {
+            "stores a draft"
+        }
+
+        fn schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        fn delivered_file(&self, args: &serde_json::Value) -> Option<String> {
+            args.get("path")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        }
+
+        async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+            ToolOutput::ok("stored")
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_calls_are_selected_by_declared_delivery_not_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = vak_core::Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_shared_scope(vak_config::scope::SharedScope::new(
+            dir.path().join("sessions"),
+        ));
+        let mut session = core.start_session().await.unwrap();
+        session
+            .append_message(MessageRecord {
+                message: vak_llm::Message::assistant(vec![
+                    vak_llm::ContentBlock::ToolUse {
+                        id: "ok".into(),
+                        name: "store_draft".into(),
+                        input: serde_json::json!({"path": "a.docx"}),
+                    },
+                    vak_llm::ContentBlock::ToolUse {
+                        id: "failed".into(),
+                        name: "store_draft".into(),
+                        input: serde_json::json!({"path": "b.docx"}),
+                    },
+                    vak_llm::ContentBlock::ToolUse {
+                        id: "other".into(),
+                        name: "read".into(),
+                        input: serde_json::json!({"path": "c.docx"}),
+                    },
+                ]),
+                meta: None,
+            })
+            .unwrap();
+        session
+            .append_message(MessageRecord {
+                message: vak_llm::Message {
+                    role: vak_llm::Role::Assistant,
+                    content: vec![
+                        vak_llm::ContentBlock::tool_result("ok", "stored"),
+                        vak_llm::ContentBlock::ToolResult {
+                            tool_use_id: "failed".into(),
+                            content: "refused".into(),
+                            is_error: true,
+                        },
+                        vak_llm::ContentBlock::tool_result("other", "read"),
+                    ],
+                },
+                meta: None,
+            })
+            .unwrap();
+
+        let tools: Vec<Arc<dyn vak_tools::Tool>> = vec![Arc::new(StubDraftTool)];
+        let calls = successful_office_calls(&session, &tools);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "ok");
+        assert!(successful_office_calls(&session, &[]).is_empty());
     }
 }
