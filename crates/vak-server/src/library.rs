@@ -1294,6 +1294,7 @@ async fn save_answer(State(state): State<AppState>, Json(body): Json<AnswerSave>
                     source: VersionSource::Call {
                         session: body.session.clone(),
                         call: body.turn.clone(),
+                        in_workspace: false,
                     },
                 },
                 None,
@@ -2016,6 +2017,7 @@ mod tests {
                     source: VersionSource::Call {
                         session: "01920000-0000-7000-8000-00000000aaaa".into(),
                         call: "toolu_1".into(),
+                        in_workspace: false,
                     },
                 },
                 None,

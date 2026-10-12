@@ -39,6 +39,7 @@ async fn edits_become_the_file_and_late_put_backs_become_siblings() {
                 source: VersionSource::Call {
                     session: String::new(),
                     call: "c".into(),
+                    in_workspace: false,
                 },
             },
             None,

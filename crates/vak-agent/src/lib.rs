@@ -1055,6 +1055,11 @@ struct CallYield {
     /// Files the call read or wrote and the MCP server that answered it,
     /// recorded as `CallEffect` entries (docs/design/85-turn-graph.md, G0).
     effects: Vec<vak_session::types::CallEffect>,
+    /// Workspace files the call reported writing beyond the one it names
+    /// (bash's scan): each continues its artifact as a version of this
+    /// call, so Vak's own change is never later found as an edit made
+    /// outside it (docs/design/90-file-state.md).
+    wrote: Vec<String>,
 }
 
 type CallYields = Arc<StdMutex<HashMap<String, CallYield>>>;
@@ -3001,26 +3006,14 @@ impl Agent {
                 match out {
                     ToolRunOutput::Ok(_) => {
                         receipts.successful_tool_calls += 1;
-                        if let Some(claim) = call_names
+                        // Its versions were recorded where it ran
+                        // (`execute_one`), before its file was described.
+                        if call_names
                             .get(id)
                             .zip(call_inputs.get(id))
-                            .and_then(|(name, input)| self.tool_artifact(name, input))
+                            .is_some_and(|(name, input)| self.tool_artifact(name, input).is_some())
                         {
                             receipts.artifact_deliveries += 1;
-                            if let Some(sink) = &self.config.artifacts {
-                                let session = self
-                                    .session
-                                    .lock()
-                                    .await
-                                    .header()
-                                    .map(|header| header.session_id.clone());
-                                sink.declared(
-                                    &claim,
-                                    session.as_deref(),
-                                    id,
-                                    self.config.trace.as_ref(),
-                                );
-                            }
                         }
                         // A look at something, by what the tool declares:
                         // it shows no card and changes no workspace.
@@ -6260,6 +6253,7 @@ impl Agent {
                                     &self.call_yields,
                                     self.config.time_limits,
                                     self.config.file_note.as_ref(),
+                                    self.config.artifacts.as_ref(),
                                     cancel,
                                     events,
                                 ),
@@ -6351,6 +6345,7 @@ impl Agent {
                 let yields = self.call_yields.clone();
                 let limits = self.config.time_limits;
                 let file_note = self.config.file_note.clone();
+                let artifacts = self.config.artifacts.clone();
                 let call_span = tool_call_span(&self.step_span, &call);
                 join.spawn(tracing::Instrument::instrument(
                     async move {
@@ -6369,6 +6364,7 @@ impl Agent {
                             &yields,
                             limits,
                             file_note.as_ref(),
+                            artifacts.as_ref(),
                             &cancel,
                             &events,
                         )
@@ -7186,6 +7182,7 @@ async fn execute_one(
     yields: &CallYields,
     limits: vak_control::TimeLimits,
     file_note: Option<&FileNote>,
+    artifacts: Option<&Arc<dyn vak_tools::ArtifactSink>>,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
@@ -7350,6 +7347,7 @@ async fn execute_one(
                         .unwrap_or_else(std::sync::PoisonError::into_inner),
                 );
                 let mut effects = Vec::new();
+                let mut wrote = Vec::new();
                 for path in reported {
                     let path = path.trim_start_matches("./").to_string();
                     if std::path::Path::new(&path).starts_with(vak_config::scope::PROJECT_DIR)
@@ -7357,16 +7355,16 @@ async fn execute_one(
                     {
                         continue;
                     }
+                    wrote.push(path.clone());
                     effects.push(file_effect(cwd, vak_tools::FileAccess::Write, path).await);
                 }
                 if !effects.is_empty() {
-                    yields
+                    let mut yields = yields
                         .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .entry(call.id.clone())
-                        .or_default()
-                        .effects
-                        .extend(effects);
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let yielded = yields.entry(call.id.clone()).or_default();
+                    yielded.effects.extend(effects);
+                    yielded.wrote.extend(wrote);
                 }
             }
             output
@@ -7431,6 +7429,56 @@ async fn execute_one(
             named,
             limits.command_max_secs.saturating_mul(1000),
         ));
+    }
+
+    // A successful call's versions are recorded before its file is
+    // described: described first, a file the call itself wrote held bytes
+    // no version had, and was recorded as an edit made outside Vak (found
+    // live 2026-10-13). Its declared deliverable, then each file it
+    // reported writing without naming it, which continues its artifact if
+    // it is one and never makes a new one.
+    if let (Some(sink), ToolRunOutput::Ok(_)) = (artifacts, &output) {
+        let wrote = yields
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&call.id)
+            .map(|yielded| yielded.wrote.clone())
+            .unwrap_or_default();
+        // A tool that claims nothing but changed the file it names (an
+        // edit) continues that file's artifact the same way.
+        let claims = vak_tools::tool_for_call(tools, &call.name)
+            .and_then(|tool| {
+                tool.artifact(&activity_input).or_else(|| {
+                    match tool.file_access(&activity_input)? {
+                        (vak_tools::FileAccess::Write, path) => Some(vak_tools::ArtifactClaim {
+                            path,
+                            declared: false,
+                            title: None,
+                            summary: None,
+                            drafted: false,
+                            based_on: None,
+                        }),
+                        _ => None,
+                    }
+                })
+            })
+            .into_iter()
+            .chain(wrote.into_iter().map(|path| vak_tools::ArtifactClaim {
+                path,
+                declared: false,
+                title: None,
+                summary: None,
+                drafted: false,
+                based_on: None,
+            }));
+        for claim in claims {
+            sink.declared(
+                &claim,
+                (!session_id.is_empty()).then_some(session_id),
+                &call.id,
+                trace,
+            );
+        }
     }
 
     // What the record says about the file this call touched is part of its

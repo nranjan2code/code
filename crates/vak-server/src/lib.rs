@@ -24750,6 +24750,7 @@ mod sandbox_promotion_tests {
             vak_core::artifacts::VersionSource::Call {
                 session: "session-1".into(),
                 call: "e1".into(),
+                in_workspace: false,
             },
         );
         std::fs::write(dir.path().join("a.txt"), "edited by hand").unwrap();

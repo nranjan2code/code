@@ -46,7 +46,15 @@ pub enum ArtifactKind {
 #[serde(tag = "from", rename_all = "snake_case")]
 pub enum VersionSource {
     /// A tool call that wrote the deliverable.
-    Call { session: String, call: String },
+    Call {
+        session: String,
+        call: String,
+        /// The call wrote the workspace file itself rather than a draft:
+        /// the version is what the workspace held, never one waiting for
+        /// review (docs/design/90-file-state.md).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        in_workspace: bool,
+    },
     /// A Review candidate of the file (its draft before promotion).
     Candidate { session: String, candidate: String },
     /// A person's own edit or upload.
@@ -1135,6 +1143,14 @@ impl vak_tools::ArtifactSink for CallSink {
                     // what the workspace holds now, an edit made outside
                     // Vak included (doc 90 §3.5), never of whichever draft
                     // happens to be newest.
+                    // A call that wrote the workspace file changed what the
+                    // workspace last held.
+                    .or_else(|| {
+                        if declaration.drafted {
+                            return None;
+                        }
+                        crate::file_state::last_held(&self.artifacts.get(&artifact.to_string())?)
+                    })
                     .or_else(|| {
                         if !declaration.drafted {
                             return None;
@@ -1154,6 +1170,7 @@ impl vak_tools::ArtifactSink for CallSink {
                         source: VersionSource::Call {
                             session: session.unwrap_or_default().to_string(),
                             call: call.to_string(),
+                            in_workspace: !declaration.drafted,
                         },
                     },
                     trace,

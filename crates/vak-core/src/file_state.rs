@@ -36,7 +36,8 @@ pub enum WorkspaceIs {
     /// The file differs from every version: edited outside Vak since
     /// `since`, the version the workspace last held.
     Changed { since: VersionId },
-    /// An accepted version's file is no longer in the workspace.
+    /// The version the workspace last held (accepted, or found there) is
+    /// not there now.
     Missing { accepted: VersionId },
 }
 
@@ -71,6 +72,9 @@ pub struct Draft {
     /// The version it was made from.
     pub parent: Option<VersionId>,
     pub state: DraftState,
+    /// What made the version; an unnamed draft is described by it, never
+    /// by an author Vak did not record.
+    pub source: VersionSource,
     /// The draft deletes the file: accepting it removes the workspace file.
     pub removes: bool,
     /// The workspace's current version is not among the draft's ancestors:
@@ -120,7 +124,11 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
         .iter()
         .filter(|version| {
             // A proposed deletion is a draft like any other until accepted.
-            (!version.removed || version.proposal().is_some())
+            // A copy the workspace held (found there, or written there by a
+            // call) was never proposed: once the workspace moves on it is
+            // history, not a draft.
+            !in_workspace(version)
+                && (!version.removed || version.proposal().is_some())
                 && !version.promoted
                 && Some(version.id) != current
                 && !artifact
@@ -140,6 +148,7 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
             turn: version.turn.clone(),
             parent: version.parent,
             state: draft_state(version),
+            source: version.source.clone(),
             removes: version.removed,
         })
         .collect();
@@ -190,6 +199,31 @@ pub fn behind(artifact: &Artifact, state: &FileState, version: VersionId) -> boo
             .is_some_and(|known| !ancestors(artifact, known).contains(&current))
 }
 
+/// The version was the workspace's own copy when it was made: found there,
+/// or written there by a call rather than drafted.
+fn in_workspace(version: &Version) -> bool {
+    matches!(
+        version.source,
+        VersionSource::Workspace
+            | VersionSource::Call {
+                in_workspace: true,
+                ..
+            }
+    )
+}
+
+/// The newest version the workspace held as far as the record knows: one
+/// accepted into it, found in it, or written to it. A call that writes the
+/// workspace file makes its version a child of this one.
+pub fn last_held(artifact: &Artifact) -> Option<VersionId> {
+    artifact
+        .versions
+        .iter()
+        .filter(|version| version.promoted || in_workspace(version))
+        .max_by_key(|version| version.at)
+        .map(|version| version.id)
+}
+
 fn workspace_is(artifact: &Artifact, workspace: &Workspace) -> WorkspaceIs {
     if artifact.versions.is_empty() {
         return WorkspaceIs::NotYet;
@@ -199,7 +233,7 @@ fn workspace_is(artifact: &Artifact, workspace: &Workspace) -> WorkspaceIs {
     let accepted = artifact
         .versions
         .iter()
-        .filter(|version| version.promoted || matches!(version.source, VersionSource::Workspace))
+        .filter(|version| version.promoted || in_workspace(version))
         .max_by_key(|version| version.at);
     match workspace {
         Workspace::Present { digest } => {
@@ -370,7 +404,7 @@ pub fn note(state: &FileState, agent: &str) -> Option<String> {
             state.path
         )),
         (WorkspaceIs::Missing { accepted }, _) => Some(format!(
-            "`{}` was accepted as version {accepted} and is no longer in the workspace.",
+            "`{}` was in the workspace as version {accepted} and is not there now.",
             state.path
         )),
         (WorkspaceIs::NotYet, Workspace::Absent) if !state.drafts.is_empty() => Some(format!(
@@ -427,7 +461,12 @@ fn draft_line(draft: &Draft) -> String {
         (None, DraftState::Erased) => "erased, contents gone".to_string(),
         (None, _) => {
             parts.push(state_words(&draft.state));
-            "no name: made by a person".to_string()
+            match draft.source {
+                VersionSource::Person => "no name: made by the person",
+                VersionSource::Candidate { .. } => "no name: a Review candidate",
+                VersionSource::Call { .. } | VersionSource::Workspace => "no name",
+            }
+            .to_string()
         }
     };
     if draft.removes {
@@ -551,6 +590,7 @@ mod tests {
             VersionSource::Call {
                 session: "ses".into(),
                 call: call.into(),
+                in_workspace: false,
             }
         }
 
@@ -571,6 +611,44 @@ mod tests {
         assert_eq!(found.workspace_is, WorkspaceIs::Unrecorded);
         assert!(found.drafts.is_empty());
         assert_eq!(found.owner, None);
+    }
+
+    /// Found live 2026-10-13: each `write` straight to the workspace was
+    /// listed as a draft "waiting for review, made before the workspace's
+    /// current copy". A call's own workspace write is what the workspace
+    /// held, and the next one is its child.
+    #[test]
+    fn a_call_that_wrote_the_workspace_left_no_draft() {
+        let written = |call: &str| VersionSource::Call {
+            session: "ses".into(),
+            call: call.into(),
+            in_workspace: true,
+        };
+        let mut record = Record::new("vak");
+        let first = record.version(2, None, None, b"one", written("call_a"));
+        let artifact = record.artifact().unwrap();
+        assert_eq!(last_held(&artifact), Some(first));
+        let second = record.version(3, None, Some(first), b"two", written("call_b"));
+        let found = file_state(record.artifact().as_ref(), PATH, present(b"two"));
+        assert!(found.drafts.is_empty(), "{:?}", found.drafts);
+        assert_eq!(found.workspace_is, WorkspaceIs::Version(second));
+        let gone = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
+        assert_eq!(gone.workspace_is, WorkspaceIs::Missing { accepted: second });
+    }
+
+    /// Found live 2026-10-13: after a file was deleted, the copy Vak had
+    /// found in the workspace was listed as "made by a person: waiting for
+    /// review". Nothing proposed it and nothing recorded who made it.
+    #[test]
+    fn a_copy_found_in_the_workspace_is_never_a_draft() {
+        let mut record = Record::new("vak");
+        record.version(2, None, None, b"one", VersionSource::Workspace);
+        let found = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
+        assert!(found.drafts.is_empty(), "{:?}", found.drafts);
+        assert!(
+            !note(&found, "vak").unwrap_or_default().contains("made by"),
+            "{found:?}"
+        );
     }
 
     #[test]
@@ -852,7 +930,7 @@ mod tests {
         assert_eq!(
             note(&found, "vak").expect("a note"),
             format!(
-                "[file] `porto-notes.docx` was accepted as version {accepted} and is no longer in the workspace."
+                "[file] `porto-notes.docx` was in the workspace as version {accepted} and is not there now."
             )
         );
     }
@@ -889,7 +967,7 @@ mod tests {
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
         let text = note(&found, "vak").expect("a note");
         assert!(
-            text.contains("- no name: made by a person: saved by the person"),
+            text.contains("- no name: a Review candidate: saved by the person"),
             "{text}"
         );
         assert!(!text.contains("pass that draft"), "{text}");
@@ -951,7 +1029,7 @@ mod tests {
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
         let text = note(&found, "vak").expect("a note");
         assert!(
-            text.contains("- no name: made by a person: waiting for review, deletes the file"),
+            text.contains("- no name: a Review candidate: waiting for review, deletes the file"),
             "{text}"
         );
     }

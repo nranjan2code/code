@@ -56,6 +56,7 @@ fn draft(
                 source: VersionSource::Call {
                     session: session.to_string(),
                     call: "call-1".into(),
+                    in_workspace: false,
                 },
             },
             None,
