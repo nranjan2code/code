@@ -212,7 +212,10 @@ impl PermissionEngine {
                 Reach::WritePath => match path_argument(declared.subject, args) {
                     Some(path) if path_in_workspace(Path::new(path), cwd) => Decision::Allow,
                     Some(path) => Decision::Ask {
-                        reason: format!("'{path}' is outside the workspace"),
+                        reason: format!(
+                            "'{path}' is outside the workspace, which is {}",
+                            cwd.display()
+                        ),
                         source: AskSource::Scope,
                     },
                     None => Decision::Ask {
@@ -261,7 +264,8 @@ fn scoped_read_decision(subject: Subject, args: &Value, cwd: &Path) -> Decision 
     match path {
         Some(path) if !path_in_workspace(Path::new(path), cwd) => Decision::Deny {
             reason: format!(
-                "'{path}' is outside the workspace; use full-access or an explicit scoped rule"
+                "'{path}' is outside the workspace, which is {}; a file in it is named by its path relative to the workspace. Reaching outside it needs full-access or an explicit scoped rule",
+                cwd.display()
             ),
         },
         _ => Decision::Allow,

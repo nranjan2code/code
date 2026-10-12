@@ -80,11 +80,14 @@ impl ToolContext {
     /// workspace: the fact a "no such file" alone does not state. A path
     /// written with a leading slash is taken as the machine's, not the
     /// workspace's, and the caller was told only that nothing is there.
-    pub fn outside_note(&self, p: &Path) -> &'static str {
+    pub fn outside_note(&self, p: &Path) -> String {
         if p.is_absolute() && !within(p, &self.cwd) {
-            ". This is an absolute path outside the workspace; a file in the workspace is named by its path relative to the workspace, with no leading slash"
+            format!(
+                ". This is an absolute path outside the workspace, which is {}; a file in the workspace is named by its path relative to the workspace, with no leading slash",
+                self.cwd.display()
+            )
         } else {
-            ""
+            String::new()
         }
     }
 
@@ -144,7 +147,7 @@ mod outside_tests {
         let ctx = ToolContext::new(PathBuf::from("/work/space"));
         assert!(
             ctx.outside_note(Path::new("/notes.md"))
-                .contains("outside the workspace")
+                .contains("outside the workspace, which is /work/space;")
         );
         assert_eq!(ctx.outside_note(Path::new("notes.md")), "");
         assert_eq!(ctx.outside_note(Path::new("/work/space/notes.md")), "");
