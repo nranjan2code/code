@@ -146,6 +146,30 @@ impl Tool for McpTool {
         })
     }
 
+    /// A call of a server's tool takes that tool's discovered schema for its
+    /// `arguments`, once the server has been listed; until then the
+    /// broker's own.
+    fn call_schema(&self, args: &Value) -> Value {
+        let mut schema = self.schema();
+        let named = |key: &str| args.get(key).and_then(Value::as_str);
+        let (Some("call"), Some(server), Some(tool)) =
+            (named("action"), named("server"), named("tool"))
+        else {
+            return schema;
+        };
+        let discovered = self
+            .manager
+            .observations()
+            .get(server)
+            .and_then(|observation| observation.tools.as_ref())
+            .and_then(|tools| tools.iter().find(|info| info.name == tool))
+            .map(|info| info.input_schema.clone());
+        if let Some(arguments) = discovered {
+            schema["properties"]["arguments"] = arguments;
+        }
+        schema
+    }
+
     async fn execute(&self, args: &Value, _ctx: &ToolContext) -> ToolOutput {
         match args.get("action").and_then(|a| a.as_str()) {
             Some("list") => self.list(args).await,

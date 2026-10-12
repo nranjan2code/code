@@ -247,6 +247,7 @@ async fn complete_text(
     cancel: &CancellationToken,
 ) -> Result<String, String> {
     let request = ChatRequest {
+        output_schema: None,
         must_call: None,
         model: deps.model.clone(),
         system: Some(system.to_string()),

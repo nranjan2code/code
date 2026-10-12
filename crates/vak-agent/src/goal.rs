@@ -175,6 +175,30 @@ pub fn audit_request(
     req.settings = settings;
     req.system = Some(AUDIT_SYSTEM.to_string());
     req.messages = vec![vak_llm::Message::user_text(prompt)];
+    // The verdict is data: a wire that enforces a schema is asked to
+    // (docs/design/89-constrained-tool-arguments.md §4.3); the reply is
+    // read by `parse_verdicts` either way.
+    req.output_schema = Some(vak_llm::OutputSchema {
+        name: "verdicts".into(),
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "criterion": {"type": "string"},
+                            "verdict": {"type": "string", "enum": ["pass", "fail", "unknown"]},
+                            "evidence": {"type": "string"}
+                        },
+                        "required": ["criterion", "verdict", "evidence"]
+                    }
+                }
+            },
+            "required": ["results"]
+        }),
+    });
     // The shipped `Judge` default keeps the provider's thinking. Measured live on
     // `gemma4:e2b-mlx` with the tolerant parser below: thinking on, 6/6
     // verdicts usable at ~8s; thinking off, 3/6 at ~2s, the rest lost to

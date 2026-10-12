@@ -1296,6 +1296,12 @@ impl Agent {
                 }),
             ));
         }
+        // Card tools carry the largest structured arguments: where a wire
+        // limits how many tools it enforces, they go strict first
+        // (docs/design/89-constrained-tool-arguments.md §4.2).
+        for definition in &mut definitions {
+            definition.prefer_strict = self.tool_presents_cards(&definition.name);
+        }
         definitions
     }
 
@@ -2086,6 +2092,7 @@ impl Agent {
                     breakpoints: cache_breakpoints(&messages),
                 });
                 ChatRequest {
+                    output_schema: None,
                     must_call,
                     model,
                     system: Some(self.config.system_prefix.clone()),
@@ -2218,6 +2225,7 @@ impl Agent {
                                         breakpoints: cache_breakpoints(&messages),
                                     });
                                 ChatRequest {
+                                    output_schema: None,
                                     must_call: None,
                                     model: self.config.model.clone(),
                                     system: Some(self.config.system_prefix.clone()),
@@ -2353,6 +2361,11 @@ impl Agent {
                 let used = recorded_tool_use_ids(&session);
                 assign_unique_tool_use_ids(&mut response, &mut calls, used);
             }
+            // A call whose arguments could not be read is written again
+            // under its tool's schema before it is ledgered
+            // (docs/design/89-constrained-tool-arguments.md §4.3).
+            self.regenerate_unreadable(&request, &mut response, &mut calls, &cancel, &events)
+                .await;
 
             outcome_turns += 1;
 
@@ -3449,6 +3462,7 @@ impl Agent {
         // config.model reflects the per-turn effective route set by run_turn_inner.
         let model = self.config.model.clone();
         let authoring_request = ChatRequest {
+            output_schema: None,
             must_call: None,
             model: model.clone(),
             system: Some(CONTRACT_AUTHOR_SYSTEM.into()),
@@ -5608,6 +5622,131 @@ impl Agent {
         }
         results.extend(answered);
         results
+    }
+
+    /// Writes again, under each tool's own schema, the arguments of every
+    /// call in `response` that could not be read: text written as a JSON
+    /// list or record that does not parse (`vak_tools::unreadable`), or
+    /// arguments that fail the schema from a tool that already failed this
+    /// turn. The
+    /// call keeps its tool and the model's intent; only the encoding
+    /// changes, in a step of purpose `repair` whose output the wire
+    /// enforces where it can (docs/design/89-constrained-tool-arguments.md
+    /// §4.3). The model's own text and the fault are kept in an activity,
+    /// so the ledger shows both what was written and what ran.
+    async fn regenerate_unreadable(
+        &self,
+        request: &ChatRequest,
+        response: &mut AssistantMessage,
+        calls: &mut [PendingToolCall],
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) {
+        for block in &mut response.content {
+            let ContentBlock::ToolUse { id, name, input } = block else {
+                continue;
+            };
+            let Some(tool) = self.tool_named(name).cloned() else {
+                continue;
+            };
+            let schema = tool.call_schema(input);
+            // A syntax fault is rewritten at once: telling the model where
+            // its text breaks has not stopped the next slip. A shape fault
+            // (valid JSON, wrong fields) is told first, and rewritten when
+            // the same tool fails again this turn (doc 89 §4.4).
+            let fault = match vak_tools::unreadable(&schema, input) {
+                Some(fault) => fault,
+                None if self.repair.failing.contains(name.as_str()) => {
+                    match vak_tools::validate_input(&schema, input) {
+                        Err(fault) => fault,
+                        Ok(()) => continue,
+                    }
+                }
+                None => continue,
+            };
+            let written = input.clone();
+            let fresh = self
+                .regenerate_arguments(request, &tool, &schema, &written, &fault, cancel, events)
+                .await;
+            let mut data = std::collections::BTreeMap::new();
+            data.insert("call".to_string(), id.clone());
+            data.insert("tool".to_string(), name.clone());
+            data.insert("fault".to_string(), fault);
+            data.insert("written".to_string(), written.to_string());
+            let status = match fresh {
+                Some(fresh) => {
+                    if let Some(call) = calls.iter_mut().find(|call| call.id == *id) {
+                        call.input = fresh.clone();
+                    }
+                    *input = fresh;
+                    vak_session::ActivityStatus::Succeeded
+                }
+                None => vak_session::ActivityStatus::Failed,
+            };
+            self.record_activity(
+                vak_session::ActivityKind::Diagnostic,
+                status,
+                "arguments-regenerated".into(),
+                None,
+                data,
+            )
+            .await;
+        }
+    }
+
+    /// One call's arguments, written again under `schema` from the request
+    /// the model just answered, the call as it wrote it and the reader's
+    /// fault. `None` when the step fails or what it writes does not stand
+    /// against the schema either: the call then runs as written and is
+    /// refused by name.
+    #[allow(clippy::too_many_arguments)]
+    async fn regenerate_arguments(
+        &self,
+        request: &ChatRequest,
+        tool: &Arc<dyn Tool>,
+        schema: &Value,
+        written: &Value,
+        fault: &str,
+        cancel: &CancellationToken,
+        events: &mpsc::Sender<AgentEvent>,
+    ) -> Option<Value> {
+        let mut req = request.clone();
+        req.tools = Vec::new();
+        req.must_call = None;
+        req.messages
+            .push(Message::assistant(vec![ContentBlock::text(format!(
+                "Calling `{}` with: {written}",
+                tool.name()
+            ))]));
+        req.messages
+            .push(Message::user_text(vak_control::regenerate_arguments(
+                tool.name(),
+                fault,
+            )));
+        req.output_schema = Some(vak_llm::OutputSchema {
+            name: tool.name().to_string(),
+            schema: schema.clone(),
+        });
+        req.settings = self.config.steps.get(vak_control::Purpose::Repair);
+        let mut ledger = StepLedger::new(
+            WorkPurpose::Repair,
+            self.provider.name(),
+            &req.model,
+            self.config.dispatch_ceiling.min(3),
+        );
+        let reply = self
+            .complete_with_reliability(&req, cancel, events, false, &mut ledger)
+            .await;
+        let _ = self
+            .session
+            .lock()
+            .await
+            .append_receipt(ledger.take_receipt());
+        let mut fresh: Value = serde_json::from_str(reply.ok()?.text_content().trim()).ok()?;
+        tool.fill_defaults(&mut fresh);
+        vak_tools::read_arguments(schema, &mut fresh);
+        vak_tools::validate_input(schema, &fresh).ok()?;
+        Some(fresh)
     }
 
     /// Shows one card: the call is checked against its tool's schema, the

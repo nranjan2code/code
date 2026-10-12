@@ -590,6 +590,9 @@ pub struct DispatchSettings {
     capabilities: vak_control::ModelCapabilities,
     pub settings: vak_control::StepSettings,
     refused: Option<vak_control::StepSettings>,
+    /// The constraints this dispatch first sent, when a refusal made it send
+    /// the request again without them (strict tools, schema output).
+    dropped_constraints: Option<vak_control::StepSettings>,
     forced: vak_control::Forced,
 }
 
@@ -607,8 +610,23 @@ impl DispatchSettings {
             capabilities,
             settings: capabilities.honour(asked),
             refused: None,
+            dropped_constraints: None,
             forced: vak_control::Forced::NotAsked,
         }
+    }
+
+    /// Notes whether the request offers tools: strict tools mean nothing
+    /// without them, so none is asked for.
+    pub fn offering_tools(mut self, offers: bool) -> Self {
+        self.settings.strict_tools &= offers;
+        self
+    }
+
+    /// Notes whether the request asks for its output in a schema, and asks
+    /// for it to be enforced where the model can take that.
+    pub fn asking_output(mut self, asks: bool) -> Self {
+        self.settings.schema_output = asks && self.capabilities.schema_output.sends();
+        self
     }
 
     /// Notes that the request names a tool the step must call, so the
@@ -623,8 +641,19 @@ impl DispatchSettings {
     }
 
     /// After a request the provider refused as invalid: whether to send it
-    /// once more without the optional settings.
+    /// again, first without strict tools, then without the optional
+    /// settings. Each is dropped once.
     pub fn retry_without_settings(&mut self) -> bool {
+        if self.settings.strict_tools || self.settings.schema_output {
+            self.dropped_constraints = Some(vak_control::StepSettings {
+                strict_tools: self.settings.strict_tools,
+                schema_output: self.settings.schema_output,
+                ..Default::default()
+            });
+            self.settings.strict_tools = false;
+            self.settings.schema_output = false;
+            return true;
+        }
         if self.refused.is_some() || self.settings == vak_control::StepSettings::default() {
             return false;
         }
@@ -636,7 +665,14 @@ impl DispatchSettings {
     /// After a request the provider took: records what a refusal before it
     /// showed, and returns what this dispatch sent.
     pub fn accepted(mut self) -> vak_control::Applied {
-        if let Some(sent) = self.refused {
+        // Taken as soon as the constraints were dropped: they were what the
+        // provider refused. Taken only once the settings went too: the
+        // settings were, and the constraints were never tried without them.
+        let refused = match (self.dropped_constraints, self.refused) {
+            (Some(constraints), None) => Some(constraints),
+            (_, refused) => refused,
+        };
+        if let Some(sent) = refused {
             let refusing = vak_control::ModelCapabilities::default().refusing(sent);
             record_capabilities(&self.wire, &self.model, refusing);
             self.capabilities = self.capabilities.meet(refusing);
@@ -932,6 +968,63 @@ mod tests {
 
     // Each test below uses its own unique model id: the capability cache is
     // a process-wide static, and tests in this module run concurrently.
+    #[test]
+    fn strict_tools_refused_alone_are_learned_and_the_settings_kept() {
+        use vak_control::{Depth, ModelCapabilities, Reasoning, StepSettings, Support};
+        let reach = ModelCapabilities {
+            strict_tools: Support::Unknown,
+            reasoning: vak_control::ReasoningSupport::Graded,
+            ..Default::default()
+        };
+        let asked = StepSettings {
+            reasoning: Reasoning::Depth(Depth::High),
+            strict_tools: true,
+            ..Default::default()
+        };
+        let mut dispatch =
+            DispatchSettings::new("wire-strict", reach, "test-model-strict-1", asked)
+                .offering_tools(true);
+        assert!(dispatch.settings.strict_tools);
+        assert!(dispatch.retry_without_settings());
+        assert!(!dispatch.settings.strict_tools, "strict tools go first");
+        assert_eq!(dispatch.settings.reasoning, Reasoning::Depth(Depth::High));
+        let applied = dispatch.accepted();
+        assert_eq!(applied.capabilities.strict_tools, Support::No);
+        let next = DispatchSettings::new("wire-strict", reach, "test-model-strict-1", asked);
+        assert!(
+            !next.settings.strict_tools,
+            "learned for this wire and model"
+        );
+        assert_eq!(next.settings.reasoning, Reasoning::Depth(Depth::High));
+        let without_tools =
+            DispatchSettings::new("wire-strict", reach, "test-model-strict-2", asked)
+                .offering_tools(false);
+        assert!(!without_tools.settings.strict_tools);
+    }
+
+    #[test]
+    fn strict_tools_are_not_blamed_when_the_settings_were_refused() {
+        use vak_control::{Depth, ModelCapabilities, Reasoning, StepSettings, Support};
+        let reach = ModelCapabilities {
+            strict_tools: Support::Unknown,
+            reasoning: vak_control::ReasoningSupport::Graded,
+            ..Default::default()
+        };
+        let asked = StepSettings {
+            reasoning: Reasoning::Depth(Depth::High),
+            strict_tools: true,
+            ..Default::default()
+        };
+        let mut dispatch =
+            DispatchSettings::new("wire-strict", reach, "test-model-strict-3", asked)
+                .offering_tools(true);
+        assert!(dispatch.retry_without_settings());
+        assert!(dispatch.retry_without_settings(), "then the settings");
+        assert!(!dispatch.retry_without_settings(), "nothing left to drop");
+        let applied = dispatch.accepted();
+        assert_eq!(applied.capabilities.strict_tools, Support::Unknown);
+    }
+
     #[test]
     fn a_refused_setting_is_learned_only_once_the_request_without_it_is_taken() {
         use vak_control::{Depth, ModelCapabilities, Reasoning, ReasoningSupport, StepSettings};

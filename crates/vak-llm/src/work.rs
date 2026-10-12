@@ -13,6 +13,10 @@ pub enum WorkPurpose {
     Plan,
     /// A main agent-loop model step.
     Execute,
+    /// A call's arguments written again under its tool's schema, after the
+    /// model's text could not be read
+    /// (docs/design/89-constrained-tool-arguments.md §4.3).
+    Repair,
     /// The compaction summarizer call.
     Summarize,
     /// Completion-audit judge call (Phase H).

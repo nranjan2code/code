@@ -22,6 +22,7 @@ pub mod registry;
 pub mod route;
 pub mod sse;
 pub mod stream;
+pub mod strict;
 pub mod turn;
 pub mod types;
 pub mod work;
@@ -41,8 +42,8 @@ pub use route::{
 pub use stream::{EventSink, EventStream, StreamEvent};
 pub use turn::current_turn_boundary;
 pub use types::{
-    AssistantMessage, CacheBreakpoint, CacheHints, ChatRequest, ContentBlock, Message, Role,
-    StopReason, ToolDefinition, Usage,
+    AssistantMessage, CacheBreakpoint, CacheHints, ChatRequest, ContentBlock, Message,
+    OutputSchema, Role, StopReason, ToolDefinition, Usage,
 };
 pub use work::{
     AttemptReason, DispatchAttempt, DispatchBudget, DispatchCeiling, FailureDomain, Settlement,

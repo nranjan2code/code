@@ -1,8 +1,10 @@
 # 89 — Constrained tool arguments
 
-Status: proposal, 2026-10-12. Written at the maintainer's request after
-cards stopped reaching the screen and tool calls kept failing: a design, not
-a spot fix. Nothing here is built. Builds on doc 88 (the control plane: step
+Status: stages 1 to 4 built 2026-10-12 (the capability, strict tools,
+schema-bound output on every wire, regeneration of unreadable calls, the
+ladder by fault class); stage 5 (richer schemas under a constraint) in
+progress. Written at the maintainer's request after cards stopped reaching
+the screen and tool calls kept failing: a design, not a spot fix. Builds on doc 88 (the control plane: step
 contracts, model capabilities, the correction ladder) and
 docs/audits/cards-in-answers-2026-10-11.md (the measurements). No provider,
 model or tool is first-class: every mechanism below is a capability an
@@ -178,6 +180,33 @@ measured there, and the numbers go in this document. The dev route is one
 row; hosted routes are measured with one-off checks, as the maintainer
 allows.
 
+## 4.7 Where it applies: every structured output, not only cards
+
+| Where the model writes data | How it is constrained now |
+|---|---|
+| Every tool call in the agent loop: built-in, plugin, skill and loop-owned tools (`plan`, `task`, `recall`), cards included | strict tools where the wire enforces them (§4.2); regeneration under the tool's schema when unreadable (§4.3) |
+| An MCP server's tool, called through the `mcp` broker | regeneration against the tool's discovered `inputSchema` (`Tool::call_schema`); the broker's own schema has a free `arguments` object, so it has no strict form |
+| The completion judge's verdicts (`goal::audit_request`) | schema-bound output; the lenient reader stays |
+| Post-turn reflection's proposals (`reflection.rs`) | schema-bound output; the lenient reader stays |
+| A managed-work contract (`/until-done`, `AuthoredContract`) | not yet: its schema would be a second copy of the session's work types; to derive from the types themselves |
+| The flow planner, compaction and handoff | read no JSON from the model's text; nothing to constrain |
+
+## 4.8 Built
+
+- `vak_control::ModelCapabilities::{strict_tools, schema_output}` and
+  `StepSettings::{strict_tools, schema_output}`: declared per adapter
+  (`REACH`), honoured per dispatch, and learned from a refused request by
+  sending it again without the constraints first
+  (`DispatchSettings::retry_without_settings`); only a refusal the
+  constraints alone explain is recorded against them.
+- `vak_llm::strict`: the OpenAI and Anthropic strict forms of a canonical
+  schema and the choice of strict tools within Anthropic's published limits
+  (`ToolDefinition::prefer_strict`, set for card tools).
+- `ChatRequest::output_schema`, rendered by every adapter in its own form.
+- `vak_tools::unreadable` (the syntax fault), `Tool::call_schema`,
+  `WorkPurpose::Repair`, and the loop's `regenerate_unreadable` with its
+  `arguments-regenerated` activity keeping what the model first wrote.
+
 ## 5. What it replaces
 
 - The single response to every tool failure (tell, show the schema,
@@ -207,3 +236,14 @@ allows.
   go strict: the card tools first, or the tools that failed this run?
 - Regeneration costs one extra model step per unreadable call. Accept it on
   every route, or only where the wire constrains output?
+
+### Stage 5 measurement (2026-10-12, not built)
+
+The captured note-taking request, replayed 8 times on the dev route under
+Ollama `format` with the table card's `rows` as a list of cell lists
+(`array` of `array` of `string`): 5 of 8 came back as a grid (a header and
+rows of one width, at least 2 cells and 3 rows), 3 of 8 did not. Under the
+same constraint with `A | B` row strings, every reply was valid JSON but its
+rows were single cells. A richer schema under a constraint helps without
+settling it; stage 5 waits on a measurement on a hosted strict route before
+it is built.

@@ -364,6 +364,10 @@ impl Tool for BrokeredTool {
         self.inner.time_limit_argument()
     }
 
+    fn call_schema(&self, args: &Value) -> Value {
+        self.inner.call_schema(args)
+    }
+
     fn command(&self, args: &Value) -> Option<String> {
         self.inner.command(args)
     }

@@ -165,6 +165,17 @@ pub fn uncited_source(urls: &[String]) -> String {
     )
 }
 
+/// What the step that writes a call's arguments again is asked: the call as
+/// the model wrote it is in front of it, and only its encoding is to change
+/// (docs/design/89-constrained-tool-arguments.md §4.3).
+pub fn regenerate_arguments(tool: &str, fault: &str) -> String {
+    format!(
+        "[arguments]: The arguments of that `{tool}` call could not be read: {fault}. Write the \
+         same call's arguments again as JSON that follows the tool's schema, keeping every value \
+         you meant to send. This is not a message from the person."
+    )
+}
+
 /// What a card is told when its `semantic_type` is a kind another card tool
 /// shows.
 pub fn card_kind_elsewhere(kind: &str, owner: &str) -> String {

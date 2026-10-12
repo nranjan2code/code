@@ -145,6 +145,9 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::Yes,
     tool_choice: vak_control::Support::Yes,
+    // docs/design/89-constrained-tool-arguments.md §2: strict tool use and `output_config.format` exist on the models that support them; the rest refuse, which is learned.
+    strict_tools: vak_control::Support::Unknown,
+    schema_output: vak_control::Support::Unknown,
 };
 
 /// `settings` (what the model can honour of the step's) and `fast_mode` are
@@ -218,12 +221,23 @@ pub fn build_body(
                 "name": "tool_search_tool_regex",
             }));
         }
-        for t in &request.tools {
+        // The tools whose schemas the wire enforces, in their strict form
+        // (docs/design/89-constrained-tool-arguments.md §4.2).
+        let strict = if settings.strict_tools {
+            crate::strict::select(&request.tools, crate::strict::Dialect::Anthropic)
+        } else {
+            vec![None; request.tools.len()]
+        };
+        for (t, strict) in request.tools.iter().zip(strict) {
             let mut tool = serde_json::json!({
                 "name": t.name,
                 "description": t.description,
                 "input_schema": t.parameters,
             });
+            if let Some(schema) = strict {
+                tool["input_schema"] = schema;
+                tool["strict"] = serde_json::json!(true);
+            }
             // A deferred tool never carries `cache_control`: its schema is
             // never in the stable prefix, so there is nothing to mark
             // cacheable (docs/design/68 §5/§11).
@@ -250,6 +264,18 @@ pub fn build_body(
     }
     if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
         body["output_config"] = serde_json::json!({ "effort": crate::types::depth_str(depth) });
+    }
+    // Output in a schema the wire enforces (docs/design/89 §4.3).
+    if let Some(output) = request
+        .output_schema
+        .as_ref()
+        .filter(|_| settings.schema_output)
+    {
+        let schema =
+            crate::strict::strict_schema(&output.schema, crate::strict::Dialect::Anthropic)
+                .unwrap_or_else(|| output.schema.clone());
+        body["output_config"]["format"] =
+            serde_json::json!({"type": "json_schema", "schema": schema});
     }
     Ok(body)
 }
@@ -691,7 +717,9 @@ impl Provider for AnthropicProvider {
             &request.model,
             request.settings,
         )
-        .requiring(request.must_call.is_some());
+        .requiring(request.must_call.is_some())
+        .offering_tools(!request.tools.is_empty())
+        .asking_output(request.output_schema.is_some());
         // Thinking cannot be switched off on this wire; the lowest effort is
         // the nearest it can honour, and the receipt says so.
         if dispatch.settings.reasoning == vak_control::Reasoning::Off {
@@ -714,13 +742,16 @@ impl Provider for AnthropicProvider {
         // parameter, and fast mode has its own rate-limit bucket that can
         // 429 while standard speed would not. Each retry strips exactly the
         // feature that failed and resends once; a second failure is final.
+        // A refused request is sent again without strict tools, then without
+        // its optional settings (`DispatchSettings::retry_without_settings`).
+        while response.status().as_u16() == 400 && dispatch.retry_without_settings() {
+            response = self
+                .send_once(&request, dispatch.settings, fast_mode, &cancel)
+                .await?;
+        }
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            if status == 400 && dispatch.retry_without_settings() {
-                response = self
-                    .send_once(&request, dispatch.settings, fast_mode, &cancel)
-                    .await?;
-            } else if status == 429 && fast_mode {
+            if status == 429 && fast_mode {
                 let headers = response.headers().clone();
                 let retry_after = retry_after_header(&response);
                 observe_anthropic_capacity_response(

@@ -235,6 +235,9 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::No,
     tool_choice: vak_control::Support::Unknown,
+    // docs/design/89-constrained-tool-arguments.md §2: `strict` tools and a `json_schema` response format exist on OpenAI and on many compatible servers; one that refuses is learned.
+    strict_tools: vak_control::Support::Unknown,
+    schema_output: vak_control::Support::Unknown,
 };
 
 pub fn build_body(
@@ -269,18 +272,28 @@ pub fn build_body(
         }
     }
     if !request.tools.is_empty() {
+        // The tools whose schemas the wire enforces, in their strict form
+        // (docs/design/89-constrained-tool-arguments.md §4.2).
+        let strict = if settings.strict_tools {
+            crate::strict::select(&request.tools, crate::strict::Dialect::OpenAi)
+        } else {
+            vec![None; request.tools.len()]
+        };
         let tools: Vec<Value> = request
             .tools
             .iter()
-            .map(|t: &ToolDefinition| {
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters,
-                    },
-                })
+            .zip(strict)
+            .map(|(t, strict): (&ToolDefinition, Option<Value>)| {
+                let mut function = serde_json::json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters,
+                });
+                if let Some(schema) = strict {
+                    function["parameters"] = schema;
+                    function["strict"] = serde_json::json!(true);
+                }
+                serde_json::json!({"type": "function", "function": function})
             })
             .collect();
         body["tools"] = Value::Array(tools);
@@ -290,6 +303,22 @@ pub fn build_body(
         request.must_call.as_deref(),
         crate::models::ToolChoiceWire::OpenAiChat,
     );
+    // Output in a schema the wire enforces (docs/design/89 §4.3).
+    if let Some(output) = request
+        .output_schema
+        .as_ref()
+        .filter(|_| settings.schema_output)
+    {
+        let strict = crate::strict::strict_schema(&output.schema, crate::strict::Dialect::OpenAi);
+        body["response_format"] = serde_json::json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": output.name,
+                "strict": strict.is_some(),
+                "schema": strict.unwrap_or_else(|| output.schema.clone()),
+            }
+        });
+    }
     if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
         let level = crate::types::three_level(depth);
         if config.openrouter {
@@ -657,7 +686,9 @@ impl Provider for OpenAiCompletionsProvider {
             &request.model,
             request.settings,
         )
-        .requiring(request.must_call.is_some());
+        .requiring(request.must_call.is_some())
+        .offering_tools(!request.tools.is_empty())
+        .asking_output(request.output_schema.is_some());
         // Reasoning cannot be switched off on this wire: the lowest depth is
         // the nearest it can honour, and the receipt says so.
         if dispatch.settings.reasoning == vak_control::Reasoning::Off {
@@ -917,6 +948,34 @@ mod build_body_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
     use crate::types::CacheHints;
+
+    #[test]
+    fn strict_settings_send_the_strict_form_of_each_tool() {
+        let config = OpenAiConfig::default();
+        let mut req = req_with_cache();
+        req.tools = vec![ToolDefinition::new(
+            "steps",
+            "Steps.",
+            serde_json::json!({"type": "object", "properties": {
+                "title": {"type": "string"},
+                "steps": {"type": "array", "items": {"type": "string"}}
+            }, "required": ["steps"]}),
+        )];
+        let strict = vak_control::StepSettings {
+            strict_tools: true,
+            ..Default::default()
+        };
+        let body = build_body(&config, &req, strict).unwrap();
+        let function = &body["tools"][0]["function"];
+        assert_eq!(function["strict"], true);
+        assert_eq!(function["parameters"]["additionalProperties"], false);
+        assert_eq!(
+            function["parameters"]["properties"]["title"]["type"],
+            serde_json::json!(["string", "null"])
+        );
+        let plain = build_body(&config, &req, Default::default()).unwrap();
+        assert!(plain["tools"][0]["function"].get("strict").is_none());
+    }
 
     fn req_with_cache() -> ChatRequest {
         let mut req = ChatRequest::new("gpt-5.6");

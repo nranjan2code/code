@@ -177,10 +177,11 @@ Read before changing behaviour in these areas:
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
 - **Tool arguments and structured output** — `89-constrained-tool-arguments.md`
-  (proposal, 2026-10-12: why tool calls and cards fail as broken JSON, how
-  every provider family Vak supports can enforce a schema, and the design:
-  a constraint capability per wire and model, strict tools, regenerating
-  unreadable arguments under the tool's schema, a ladder by fault class)
+  (built 2026-10-12, stages 1–4: why tool calls and cards fail as broken
+  JSON, how every provider family Vak supports can enforce a schema, a
+  constraint capability per wire and model, strict tools, schema-bound
+  output, regenerating unreadable arguments under the tool's schema, a
+  ladder by fault class, and where it applies beyond cards)
   with docs/audits/cards-in-answers-2026-10-11.md (the measurements). Read
   both before changing how a tool's arguments are asked for, read or
   repaired. See "Tool arguments are written, then read" below.
@@ -2311,8 +2312,17 @@ for every provider and model:
   valid in 16 of 16 on the dev route. A grammar guarantees structure only:
   content stays the builders' and the runtime's checks.
 - Whether a wire and model enforce a schema is a capability declared by the
-  adapter and learned from refusal, like `tool_choice`, never inferred from
-  a provider's name. Until doc 89 is built, no adapter sends one.
+  adapter (`REACH`: `strict_tools`, `schema_output`) and learned from
+  refusal, like `tool_choice`, never inferred from a provider's name. Tools
+  go strict where the wire enforces them (`vak_llm::strict`, card tools
+  first within a wire's limits), and a step whose output is data sets
+  `ChatRequest::output_schema` rather than parsing JSON out of prose.
+- A call whose arguments cannot be read (`vak_tools::unreadable`), or that
+  fails its schema again from a tool that already failed this turn, is
+  written again under the tool's own schema (`Tool::call_schema`, which an
+  integration broker narrows to the discovered tool) before it is ledgered;
+  the ledger keeps what the model first wrote. Never add a repair that
+  guesses at broken JSON: the regeneration is the repair.
 - Judge a change to how arguments are asked for by replaying Vak's own
   captured requests on each route, never by a toy schema: the first
   measurement used toy schemas and missed the fault entirely.

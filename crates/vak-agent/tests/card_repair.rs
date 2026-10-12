@@ -28,8 +28,9 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::context::ToolContext;
 use vak_tools::{Tool, ToolOutput};
 
-/// What each request offered and required.
-type Seen = Arc<Mutex<Vec<(Vec<String>, Option<String>)>>>;
+/// What each request offered and required, and the schema its output was
+/// asked in.
+type Seen = Arc<Mutex<Vec<(Vec<String>, Option<String>, Option<String>)>>>;
 
 struct Scripted {
     capacity_key: String,
@@ -55,6 +56,7 @@ impl Provider for Scripted {
         self.seen.lock().unwrap().push((
             request.tools.iter().map(|tool| tool.name.clone()).collect(),
             request.must_call,
+            request.output_schema.map(|output| output.name),
         ));
         let next = self.responses.lock().unwrap().pop_front();
         let (mut sink, rx) = stream::channel(16);
@@ -120,6 +122,10 @@ fn call(id: &str, name: &str, input: Value) -> AssistantMessage {
     )
 }
 
+fn text(t: &str) -> AssistantMessage {
+    message(vec![ContentBlock::text(t)], StopReason::EndTurn)
+}
+
 /// The call seen live: the table's `rows` list is never closed, so the
 /// provider could not read it and passed its text on.
 fn broken_card(id: &str) -> AssistantMessage {
@@ -177,11 +183,16 @@ async fn a_card_that_keeps_failing_is_located_shown_its_schema_then_withdrawn() 
             responses: Mutex::new(VecDeque::from(vec![
                 plan("p1"),
                 broken_card("a1"),
+                // Each unreadable call is first written again under its
+                // schema; here that fails too, so the ladder goes on.
+                text("not json"),
                 // A step that calls something else does not start the
                 // ladder again.
                 plan("p2"),
                 broken_card("a2"),
+                text("not json"),
                 broken_card("a3"),
+                text("not json"),
                 message(
                     vec![ContentBlock::text(
                         "Obsidian keeps notes local; Notion syncs.",
@@ -221,20 +232,31 @@ async fn a_card_that_keeps_failing_is_located_shown_its_schema_then_withdrawn() 
         "{outcome:?}"
     );
     let seen = seen.lock().unwrap();
-    assert_eq!(seen.len(), 6, "{seen:?}");
+    assert_eq!(seen.len(), 9, "{seen:?}");
+    // Every regeneration offers no tool and asks for the card's schema.
+    let (steps, rewrites): (Vec<_>, Vec<_>) =
+        seen.iter().partition(|(_, _, output)| output.is_none());
+    assert_eq!(rewrites.len(), 3, "{seen:?}");
     assert!(
-        seen[..5]
+        rewrites
             .iter()
-            .all(|(tools, _)| tools.iter().any(|name| name == "emit_table_card")),
+            .all(|(tools, _, output)| tools.is_empty()
+                && output.as_deref() == Some("emit_table_card")),
         "{seen:?}"
     );
     assert!(
-        !seen[5].0.iter().any(|name| name == "emit_table_card")
-            && seen[5].0.iter().any(|name| name == "plan"),
+        steps[..5]
+            .iter()
+            .all(|(tools, _, _)| tools.iter().any(|name| name == "emit_table_card")),
+        "{seen:?}"
+    );
+    assert!(
+        !steps[5].0.iter().any(|name| name == "emit_table_card")
+            && steps[5].0.iter().any(|name| name == "plan"),
         "after the withdrawal the card tool is not offered: {seen:?}"
     );
     assert!(
-        seen.iter().all(|(_, required)| required.is_none()),
+        seen.iter().all(|(_, required, _)| required.is_none()),
         "{seen:?}"
     );
 
@@ -261,4 +283,217 @@ async fn a_card_that_keeps_failing_is_located_shown_its_schema_then_withdrawn() 
         1,
         "{text}"
     );
+}
+
+/// An unreadable call is written again under its tool's schema before it is
+/// ledgered: the call runs with the arguments that stand, and the ledger
+/// keeps what the model first wrote (docs/design/89 §4.3).
+#[tokio::test]
+async fn an_unreadable_call_is_regenerated_under_its_schema_and_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
+        agent: None,
+        session_id: "card-regenerated".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "scripted".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "full-access".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let ledger = SessionPath::new_session_file(&home, dir.path(), "card-regenerated");
+    let log = SessionLog::create(ledger.clone(), header).unwrap();
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let rewritten = json!({"semantic_type": "table", "answers": "comparison",
+        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"]});
+    let mut agent = Agent::new(
+        Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
+            responses: Mutex::new(VecDeque::from(vec![
+                broken_card("a1"),
+                text(&rewritten.to_string()),
+                text("Obsidian keeps notes local; Notion syncs."),
+            ])),
+            seen: seen.clone(),
+        }),
+        log,
+        {
+            let mut cfg = AgentConfig::new("sys");
+            cfg.model = "test-model".into();
+            cfg.tools = vec![Arc::new(TableCard)];
+            cfg.mode = vak_permission::Mode::FullAccess;
+            cfg.permission = Some(Arc::new(PermissionEngine::default()));
+            cfg.stop_policy = None;
+            cfg
+        },
+    );
+    let outcome = agent
+        .run(
+            "compare two note apps",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert!(seen[1].0.is_empty(), "the rewrite offers no tool: {seen:?}");
+        assert_eq!(seen[1].2.as_deref(), Some("emit_table_card"));
+    }
+    let session = agent.session.lock().await;
+    let ran = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .find_map(|block| match block {
+            ContentBlock::ToolUse { id, input, .. } if id == "a1" => Some(input),
+            _ => None,
+        })
+        .expect("the call is ledgered");
+    assert_eq!(ran["rows"], json!(["Obsidian | Local", "Notion | Cloud"]));
+    let refused = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .any(|block| matches!(block, ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "a1"));
+    assert!(!refused, "the rewritten call ran");
+    drop(session);
+    let text = SessionLog::text(&ledger);
+    assert!(text.contains("arguments-regenerated"), "{text}");
+    assert!(
+        text.contains("Notion | Cloud\\\", \\\"type\\\""),
+        "what the model wrote is kept: {text}"
+    );
+}
+
+/// A call that is valid JSON but the wrong shape is told first; the same
+/// tool's next such call is written again under its schema (doc 89 §4.4).
+#[tokio::test]
+async fn a_second_call_of_the_wrong_shape_is_regenerated_under_its_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
+        agent: None,
+        session_id: "card-shape-regenerated".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "scripted".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "full-access".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let ledger = SessionPath::new_session_file(&home, dir.path(), "card-shape-regenerated");
+    let log = SessionLog::create(ledger.clone(), header).unwrap();
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let rewritten = json!({"semantic_type": "table", "answers": "comparison",
+        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"]});
+    let mut agent = Agent::new(
+        Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
+            responses: Mutex::new(VecDeque::from(vec![
+                call(
+                    "a0",
+                    "emit_table_card",
+                    json!({"semantic_type": "table", "rows": ["A | B"]}),
+                ),
+                call(
+                    "a1",
+                    "emit_table_card",
+                    json!({"semantic_type": "table", "rows": ["A | B"]}),
+                ),
+                text(&rewritten.to_string()),
+                text("Obsidian keeps notes local; Notion syncs."),
+            ])),
+            seen: seen.clone(),
+        }),
+        log,
+        {
+            let mut cfg = AgentConfig::new("sys");
+            cfg.model = "test-model".into();
+            cfg.tools = vec![Arc::new(TableCard)];
+            cfg.mode = vak_permission::Mode::FullAccess;
+            cfg.permission = Some(Arc::new(PermissionEngine::default()));
+            cfg.stop_policy = None;
+            cfg
+        },
+    );
+    let outcome = agent
+        .run(
+            "compare two note apps",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 4, "{seen:?}");
+        assert!(
+            seen[1].2.is_none(),
+            "the first wrong shape is told: {seen:?}"
+        );
+        assert_eq!(seen[2].2.as_deref(), Some("emit_table_card"), "{seen:?}");
+    }
+    let session = agent.session.lock().await;
+    let ran = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .find_map(|block| match block {
+            ContentBlock::ToolUse { id, input, .. } if id == "a1" => Some(input),
+            _ => None,
+        })
+        .expect("the call is ledgered");
+    assert_eq!(ran["rows"], json!(["Obsidian | Local", "Notion | Cloud"]));
+    let refused = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .any(|block| matches!(block, ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "a1"));
+    assert!(!refused, "the rewritten call ran");
+    drop(session);
+    let text = SessionLog::text(&ledger);
+    assert!(text.contains("arguments-regenerated"), "{text}");
 }

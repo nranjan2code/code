@@ -36,7 +36,7 @@ pub mod write;
 use async_trait::async_trait;
 use serde_json::Value;
 
-pub use arguments::{JsonFault, json_fault, read_arguments};
+pub use arguments::{JsonFault, json_fault, read_arguments, unreadable};
 pub use context::ToolContext;
 pub use contract::validate_input;
 pub use find_tools::FindToolsTool;
@@ -288,6 +288,15 @@ pub trait Tool: Send + Sync {
     /// from this declaration (docs/design/88-control-plane.md §5a).
     fn time_limit_argument(&self) -> Option<&'static str> {
         None
+    }
+
+    /// The schema this call's arguments follow: the tool's own, unless the
+    /// tool knows a narrower one for this call (an integration broker knows
+    /// the discovered schema of the tool a call names). What regenerates an
+    /// unreadable call writes it against this
+    /// (docs/design/89-constrained-tool-arguments.md §4.3).
+    fn call_schema(&self, _args: &Value) -> Value {
+        self.schema()
     }
 
     /// Arguments this tool fills in itself when a call leaves them out,

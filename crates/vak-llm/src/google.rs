@@ -78,6 +78,9 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::Yes,
     tool_choice: vak_control::Support::Yes,
+    // docs/design/89-constrained-tool-arguments.md §2: function calling mode `VALIDATED` is not yet verified live, so arguments are not asked to be enforced; `responseJsonSchema` constrains output.
+    strict_tools: vak_control::Support::No,
+    schema_output: vak_control::Support::Unknown,
 };
 
 pub fn build_body(
@@ -251,6 +254,18 @@ pub fn build_body(
     }
     if let Some(k) = sampling.top_k {
         generation.insert("topK".into(), serde_json::json!(k));
+    }
+    // Output in a schema the wire enforces (docs/design/89 §4.3).
+    if let Some(output) = request
+        .output_schema
+        .as_ref()
+        .filter(|_| settings.schema_output)
+    {
+        generation.insert(
+            "responseMimeType".into(),
+            serde_json::json!("application/json"),
+        );
+        generation.insert("responseJsonSchema".into(), output.schema.clone());
     }
     if !generation.is_empty() {
         body["generationConfig"] = Value::Object(generation);
@@ -577,7 +592,9 @@ impl Provider for GoogleProvider {
             &request.model,
             request.settings,
         )
-        .requiring(request.must_call.is_some());
+        .requiring(request.must_call.is_some())
+        .offering_tools(!request.tools.is_empty())
+        .asking_output(request.output_schema.is_some());
         // Reasoning cannot be switched off on this wire: the lowest depth is
         // the nearest it can honour, and the receipt says so.
         if dispatch.settings.reasoning == vak_control::Reasoning::Off {

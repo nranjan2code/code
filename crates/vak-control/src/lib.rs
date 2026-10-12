@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 pub mod correct;
 
 pub use correct::{
-    Finding, Ladder, RECOVERY_NOTE, ShownTool, card_kind_elsewhere, card_unplanned, render,
-    skill_not_tool, uncited_source, unknown_tool,
+    Finding, Ladder, RECOVERY_NOTE, ShownTool, card_kind_elsewhere, card_unplanned,
+    regenerate_arguments, render, skill_not_tool, uncited_source, unknown_tool,
 };
 
 /// Who made a decision.
@@ -161,12 +161,21 @@ pub struct Sampling {
 }
 
 /// The settings a request carries for one step: how much the model
-/// reasons and how it samples.
+/// reasons and how it samples, and whether its tools' arguments are
+/// enforced by the wire (docs/design/89-constrained-tool-arguments.md).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct StepSettings {
     pub reasoning: Reasoning,
     #[serde(default)]
     pub sampling: Sampling,
+    /// The tools were sent in the wire's strict form, so the provider
+    /// enforces their schemas while the model writes the arguments.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub strict_tools: bool,
+    /// The model's output was asked for in a schema the wire enforces
+    /// (structured output).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub schema_output: bool,
 }
 
 /// Whether a model takes one setting.
@@ -222,6 +231,14 @@ pub struct ModelCapabilities {
     /// Whether the wire can be told to call one named tool.
     #[serde(default)]
     pub tool_choice: Support,
+    /// Whether the wire enforces a tool's schema on the arguments the
+    /// model writes (strict tools; docs/design/89 §4.1).
+    #[serde(default)]
+    pub strict_tools: Support,
+    /// Whether the wire enforces a schema on the model's output itself
+    /// (structured output; docs/design/89 §4.3).
+    #[serde(default)]
+    pub schema_output: Support,
 }
 
 impl ModelCapabilities {
@@ -235,6 +252,8 @@ impl ModelCapabilities {
         };
         let keep = |support: Support, value| if support.sends() { value } else { None };
         StepSettings {
+            strict_tools: asked.strict_tools && self.strict_tools.sends(),
+            schema_output: asked.schema_output && self.schema_output.sends(),
             reasoning,
             sampling: Sampling {
                 temperature: keep(self.temperature, asked.sampling.temperature),
@@ -264,6 +283,12 @@ impl ModelCapabilities {
         if sent.sampling.top_k.is_some() {
             self.top_k = Support::No;
         }
+        if sent.strict_tools {
+            self.strict_tools = Support::No;
+        }
+        if sent.schema_output {
+            self.schema_output = Support::No;
+        }
         self
     }
 
@@ -282,6 +307,8 @@ impl ModelCapabilities {
             top_p: self.top_p.meet(other.top_p),
             top_k: self.top_k.meet(other.top_k),
             tool_choice: self.tool_choice.meet(other.tool_choice),
+            strict_tools: self.strict_tools.meet(other.strict_tools),
+            schema_output: self.schema_output.meet(other.schema_output),
         }
     }
 }
@@ -391,6 +418,8 @@ impl StepOverride {
 
     fn apply(self, settings: StepSettings) -> StepSettings {
         StepSettings {
+            strict_tools: settings.strict_tools,
+            schema_output: settings.schema_output,
             reasoning: self.reasoning.map_or(settings.reasoning, Reasoning::from),
             sampling: Sampling {
                 temperature: self.temperature.or(settings.sampling.temperature),
@@ -523,9 +552,14 @@ impl StepDefaults {
                     };
                     (
                         purpose,
+                        // Every step asks for its tools' schemas to be
+                        // enforced; a wire that cannot is never sent it
+                        // (`ModelCapabilities::honour`).
                         StepSettings {
                             reasoning,
                             sampling: Sampling::default(),
+                            strict_tools: true,
+                            schema_output: false,
                         },
                     )
                 })
@@ -764,6 +798,8 @@ mod tests {
     #[test]
     fn a_model_is_asked_only_what_it_can_honour() {
         let asked = StepSettings {
+            strict_tools: false,
+            schema_output: false,
             reasoning: Reasoning::Depth(Depth::Low),
             sampling: Sampling {
                 temperature: Some(0.2),
@@ -791,6 +827,8 @@ mod tests {
     #[test]
     fn a_refused_request_narrows_only_what_it_sent() {
         let sent = StepSettings {
+            strict_tools: false,
+            schema_output: false,
             reasoning: Reasoning::Depth(Depth::High),
             sampling: Sampling::default(),
         };

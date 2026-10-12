@@ -166,6 +166,37 @@ fn extract_json(reply: &str) -> Option<&str> {
     None
 }
 
+/// The shape `parse_proposals` reads.
+fn proposals_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "notes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "note": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["fact", "decision", "preference", "reference", "invariant", "procedural"]},
+                        "tag": {"type": "string"}
+                    },
+                    "required": ["note", "kind"]
+                }
+            },
+            "skill": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "instructions": {"type": "string"}
+                },
+                "required": ["name", "description", "instructions"]
+            }
+        },
+        "required": ["notes"]
+    })
+}
+
 pub fn parse_proposals(reply: &str) -> Proposals {
     let Some(json) = extract_json(reply) else {
         return Proposals::default();
@@ -271,6 +302,13 @@ pub async fn propose(
     req.system = Some(system_prompt());
     req.messages = vec![user];
     req.max_tokens = Some(MAX_TOKENS);
+    // The proposals are data: a wire that enforces a schema is asked to
+    // (docs/design/89-constrained-tool-arguments.md §4.3); the reply is
+    // read by `parse_proposals` either way.
+    req.output_schema = Some(vak_llm::OutputSchema {
+        name: "proposals".into(),
+        schema: proposals_schema(),
+    });
 
     let estimated_input = (req.system.as_deref().unwrap_or("").chars().count() as u64
         + tail.chars().count() as u64)

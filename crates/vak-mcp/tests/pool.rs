@@ -168,3 +168,34 @@ async fn the_observer_hears_what_demand_learned() {
     assert_eq!(rx.try_recv().unwrap(), "fake");
     assert!(manager.observations()["fake"].tools.is_none());
 }
+
+/// A call of a listed server tool is written against that tool's own
+/// discovered schema (docs/design/89-constrained-tool-arguments.md §4.3);
+/// before the server is listed, against the broker's.
+#[tokio::test]
+async fn a_call_schema_is_the_discovered_tools_once_listed() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("spawns");
+    let script = format!("exec python3 '{}'", server_script().display());
+    let manager = Arc::new(pool("fake", counted(&marker, &script), dir.path()));
+    let tool = McpTool::new(manager.clone());
+    let call = serde_json::json!({"action": "call", "server": "fake", "tool": "echo"});
+    assert_eq!(tool.call_schema(&call), tool.schema(), "nothing listed yet");
+    assert_eq!(spawns(&marker), 0, "asking for a schema starts nothing");
+    manager.list_tools("fake").await.unwrap();
+    let discovered = manager.observations()["fake"]
+        .tools
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|info| info.name == "echo")
+        .unwrap()
+        .input_schema
+        .clone();
+    assert_eq!(
+        tool.call_schema(&call)["properties"]["arguments"],
+        discovered
+    );
+    let list = serde_json::json!({"action": "list", "server": "fake"});
+    assert_eq!(tool.call_schema(&list), tool.schema());
+}

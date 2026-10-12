@@ -19,6 +19,40 @@ pub fn read_arguments(schema: &Value, args: &mut Value) {
     read(schema, args);
 }
 
+/// The first value in `args`, read by `read_arguments`, that `schema` asks
+/// for as a list or a record and that is still text which does not parse:
+/// a syntax fault, which only rewriting the text repairs
+/// (docs/design/89-constrained-tool-arguments.md §4.3). It is named by its
+/// path from the arguments, `arguments.rows`.
+pub fn unreadable(schema: &Value, args: &Value) -> Option<String> {
+    fault_in(schema, args, "arguments")
+}
+
+fn fault_in(schema: &Value, value: &Value, path: &str) -> Option<String> {
+    let (list, record) = (accepts(schema, "array"), accepts(schema, "object"));
+    if let Value::String(text) = value
+        && (list || record)
+    {
+        return json_fault(text).map(|fault| fault.describe(path));
+    }
+    if list && let (Some(items), Value::Array(values)) = (schema.get("items"), value) {
+        return values
+            .iter()
+            .enumerate()
+            .find_map(|(at, item)| fault_in(items, item, &format!("{path}[{at}]")));
+    }
+    if let (Some(properties), Value::Object(fields)) =
+        (schema.get("properties").and_then(Value::as_object), value)
+    {
+        return fields.iter().find_map(|(name, field)| {
+            properties
+                .get(name)
+                .and_then(|property| fault_in(property, field, &format!("{path}.{name}")))
+        });
+    }
+    None
+}
+
 /// Where text sent for a list or a record stops being JSON. Some wires
 /// carry every argument as text and their provider reads it; text it
 /// cannot read arrives here as sent, and the caller is told where it
@@ -418,6 +452,28 @@ mod tests {
         assert!(
             read["items"].is_null(),
             "a required field stays for validation"
+        );
+    }
+
+    #[test]
+    fn unreadable_names_the_field_whose_text_is_broken_json() {
+        let schema = serde_json::json!({"type": "object", "properties": {
+            "title": {"type": "string"},
+            "rows": {"type": "array", "items": {"type": "string"}}
+        }});
+        let mut args = serde_json::json!({"title": "T", "rows": "[\"A | B\", \"1 | 2\"]\n[\"x\"]"});
+        read_arguments(&schema, &mut args);
+        let fault = unreadable(&schema, &args).expect("rows is broken");
+        assert!(
+            fault.starts_with("arguments.rows is not valid JSON"),
+            "{fault}"
+        );
+        let mut fine = serde_json::json!({"title": "T", "rows": "[\"A | B\"]"});
+        read_arguments(&schema, &mut fine);
+        assert!(unreadable(&schema, &fine).is_none());
+        assert!(
+            unreadable(&schema, &serde_json::json!({"title": "[not json"})).is_none(),
+            "a field asked for as text is never a syntax fault"
         );
     }
 }

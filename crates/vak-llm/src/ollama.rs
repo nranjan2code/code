@@ -167,6 +167,14 @@ pub fn build_body(
         request.must_call.as_deref(),
         crate::models::ToolChoiceWire::OnlyOffered,
     );
+    // Output in a schema the wire enforces (docs/design/89 §4.3).
+    if let Some(output) = request
+        .output_schema
+        .as_ref()
+        .filter(|_| settings.schema_output)
+    {
+        body["format"] = output.schema.clone();
+    }
     Ok(body)
 }
 
@@ -179,6 +187,9 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::Yes,
     tool_choice: vak_control::Support::No,
+    // docs/design/89-constrained-tool-arguments.md §2: tool-call arguments are parsed from the model text and never constrained; `format` constrains output.
+    strict_tools: vak_control::Support::No,
+    schema_output: vak_control::Support::Yes,
 };
 
 fn append_message(
@@ -551,7 +562,9 @@ impl Provider for OllamaProvider {
             &request.model,
             request.settings,
         )
-        .requiring(request.must_call.is_some());
+        .requiring(request.must_call.is_some())
+        .offering_tools(!request.tools.is_empty())
+        .asking_output(request.output_schema.is_some());
         let response = loop {
             let body = build_body(&self.config, &request, num_ctx, dispatch.settings)?;
             let mut req = self.http.post(&url).json(&body);
@@ -680,6 +693,8 @@ mod tests {
         let body = build_body(&OllamaConfig::default(), &req, None, depth).unwrap();
         assert!(body.get("think").is_none());
         let off = REACH.honour(StepSettings {
+            strict_tools: false,
+            schema_output: false,
             reasoning: Reasoning::Off,
             sampling: vak_control::Sampling {
                 temperature: Some(0.0),

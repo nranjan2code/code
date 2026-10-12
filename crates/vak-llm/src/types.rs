@@ -135,6 +135,11 @@ pub struct ToolDefinition {
     /// deferred tool.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub defer: bool,
+    /// Sent strict before other tools when a wire limits how many go strict
+    /// (docs/design/89-constrained-tool-arguments.md §4.2): the caller's
+    /// choice, so this crate never needs to know what a tool is for.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prefer_strict: bool,
 }
 
 impl ToolDefinition {
@@ -144,6 +149,7 @@ impl ToolDefinition {
             description: description.into(),
             parameters,
             defer: false,
+            prefer_strict: false,
         }
     }
 
@@ -355,6 +361,19 @@ pub struct ChatRequest {
     /// where the wire has none, and reports which in
     /// `AssistantMessage::applied`.
     pub must_call: Option<String>,
+    /// The schema the model's output must follow, when this step's output
+    /// is data rather than prose (docs/design/89-constrained-tool-arguments.md
+    /// §4.3). An adapter whose wire enforces one sends it in the wire's own
+    /// form; one that cannot sends the request as it is, and the caller
+    /// validates what comes back either way.
+    pub output_schema: Option<OutputSchema>,
+}
+
+/// A named schema for a step's output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutputSchema {
+    pub name: String,
+    pub schema: Value,
 }
 
 impl ChatRequest {
@@ -370,6 +389,7 @@ impl ChatRequest {
             cache: None,
             previous_response_id: None,
             settings: vak_control::StepSettings::default(),
+            output_schema: None,
         }
     }
 }

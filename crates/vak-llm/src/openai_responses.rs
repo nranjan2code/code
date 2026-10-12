@@ -71,6 +71,9 @@ const REACH: vak_control::ModelCapabilities = vak_control::ModelCapabilities {
     top_p: vak_control::Support::Yes,
     top_k: vak_control::Support::No,
     tool_choice: vak_control::Support::Yes,
+    // docs/design/89-constrained-tool-arguments.md §2: `strict` tools and `text.format` `json_schema`; a model that refuses is learned.
+    strict_tools: vak_control::Support::Unknown,
+    schema_output: vak_control::Support::Unknown,
 };
 
 pub fn build_body(
@@ -113,15 +116,26 @@ pub fn build_body(
         }
     }
     if !request.tools.is_empty() {
+        // The tools whose schemas the wire enforces, in their strict form;
+        // the rest say so, rather than being normalized by the provider
+        // (docs/design/89-constrained-tool-arguments.md §4.2).
+        let strict = if settings.strict_tools {
+            crate::strict::select(&request.tools, crate::strict::Dialect::OpenAi)
+        } else {
+            vec![None; request.tools.len()]
+        };
         let tools: Vec<Value> = request
             .tools
             .iter()
-            .map(|t: &ToolDefinition| {
+            .zip(strict)
+            .map(|(t, strict): (&ToolDefinition, Option<Value>)| {
+                let is_strict = strict.is_some();
                 serde_json::json!({
                     "type": "function",
                     "name": t.name,
                     "description": t.description,
-                    "parameters": t.parameters,
+                    "parameters": strict.unwrap_or_else(|| t.parameters.clone()),
+                    "strict": is_strict,
                 })
             })
             .collect();
@@ -132,6 +146,20 @@ pub fn build_body(
         request.must_call.as_deref(),
         crate::models::ToolChoiceWire::OpenAiResponses,
     );
+    // Output in a schema the wire enforces (docs/design/89 §4.3).
+    if let Some(output) = request
+        .output_schema
+        .as_ref()
+        .filter(|_| settings.schema_output)
+    {
+        let strict = crate::strict::strict_schema(&output.schema, crate::strict::Dialect::OpenAi);
+        body["text"]["format"] = serde_json::json!({
+            "type": "json_schema",
+            "name": output.name,
+            "strict": strict.is_some(),
+            "schema": strict.unwrap_or_else(|| output.schema.clone()),
+        });
+    }
     if let vak_control::Reasoning::Depth(depth) = settings.reasoning {
         body["reasoning"] = serde_json::json!({ "effort": crate::types::three_level(depth) });
     }
@@ -513,7 +541,9 @@ impl Provider for OpenAiResponsesProvider {
             &request.model,
             request.settings,
         )
-        .requiring(request.must_call.is_some());
+        .requiring(request.must_call.is_some())
+        .offering_tools(!request.tools.is_empty())
+        .asking_output(request.output_schema.is_some());
         // Reasoning cannot be switched off on this wire: the lowest depth is
         // the nearest it can honour, and the receipt says so.
         if dispatch.settings.reasoning == vak_control::Reasoning::Off {
