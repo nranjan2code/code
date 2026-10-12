@@ -143,7 +143,45 @@ it is promotion's own check, not the loop's.
 - **D3. Sibling drafts:** all heads are listed, newest first, each with the
   turn it came from.
 
-## 5. Stages
+## 5. One view for the person and the Agent
+
+The model's note (§3.2) and what the person sees are two renderings of one
+`FileState`, never two contracts (invariant 30). The person sees it in
+three places, from the same server projection (`GET /library/files?path=`
+and `/library/{id}/state`):
+
+1. **The artifact page's history** (doc 82 §5.3) becomes a version graph,
+   not a list. One lane for the workspace file, with its accepted versions
+   and `Observed` outside edits, and a branch for each draft, with siblings
+   side by side. Each node carries its state as a word and a mark: waiting,
+   accepted, undone, saved, in the trash until a date, erased, and changed
+   outside Vak. It also says who made it and links to the turn that did, in
+   that conversation. Every node's actions are the ones its state allows:
+   Review, Accept, Undo, Restore, Compare with the workspace copy, Continue
+   from this version, and Download. Nothing offered can fail for a reason
+   the page already knows.
+2. **In the conversation**, a draft card shows the file's live state, not
+   the state when the card was made. "Waiting for review" becomes "Accepted
+   12 Oct" or "Undone" or "Changed outside Vak since", read from the
+   projection when the card is drawn. A strip above the composer lists
+   the files this conversation has in play that need the person: drafts
+   waiting, and files changed since a draft was made.
+3. **The Library list** (doc 82 §4) filters by state ("Waiting for review",
+   "Changed outside Vak", "In the trash"). Its glimpse is the head the
+   person would act on: the newest waiting draft, else the workspace file.
+
+The Agent reaches the same thing through `recall` and `session_search`
+(§3.3) and the note on every path it touches (§3.2). Whatever the person
+does on the page, the next turn reads it, because both come from the
+record.
+
+The design follows doc 75 and DESIGN.md: everyday words, no ids or hashes
+unless Show technical details is on, one accent for live state, and a
+working layout at 390 × 844. Before the page is built, a reference mockup of
+the version graph, the card states and the in-play strip, in light and dark
+and on a phone, goes to the maintainer for review (doc 70's ledger).
+
+## 6. Stages
 
 1. The projection and its record fields (§3.1, §3.5 `turn` and `undone`),
    with a test per row of §3.2's table, built from real record steps.
@@ -152,3 +190,7 @@ it is promotion's own check, not the loop's.
    revise again, undo, and ask for "the old draft" in a new session.
 3. Finding without the name (§3.3).
 4. `Observed` versions and the base check at promotion (§3.4, §3.5), per D2.
+5. The person's view (§5): the mockup for review first, then the version
+   graph on the artifact page, live card states, the in-play strip and the
+   Library's state filters, verified in the browser at 1440 × 900 and
+   390 × 844, light and dark.
