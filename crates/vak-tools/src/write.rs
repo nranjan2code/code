@@ -116,7 +116,11 @@ impl Tool for WriteTool {
         {
             return ToolOutput::error(
                 Fault::Tool,
-                format!("cannot create directory {}: {e}", parent.display()),
+                format!(
+                    "cannot create directory {}: {e}{}",
+                    parent.display(),
+                    ctx.outside_note(&path)
+                ),
             );
         }
         match write_atomic(&path, content.as_bytes()).await {
@@ -207,9 +211,16 @@ mod control_path_tests {
 
 pub(crate) async fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    // The temporary file's own name is not the caller's: an error names
+    // only what went wrong, and the caller names the path it asked for.
+    let bare = |error: std::io::Error| {
+        error
+            .raw_os_error()
+            .map_or_else(|| error.kind().into(), std::io::Error::from_raw_os_error)
+    };
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(bare)?;
     use std::io::Write as _;
-    file.write_all(bytes)?;
+    file.write_all(bytes).map_err(bare)?;
     file.persist(path).map(|_| ()).map_err(|error| error.error)
 }
 
@@ -219,6 +230,18 @@ mod tests {
 
     use super::*;
     use crate::{SandboxEvent, SandboxEventSink};
+
+    /// Found live 2026-10-13: a refused write said `at path "/.tmpQPMP2I"`,
+    /// a name the caller never wrote.
+    #[tokio::test]
+    async fn a_failed_write_never_names_its_temporary_file() {
+        let workspace = tempfile::tempdir().unwrap();
+        let error = write_atomic(&workspace.path().join("missing/notes.md"), b"x")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(!error.to_string().contains(".tmp"), "{error}");
+    }
 
     #[tokio::test]
     async fn write_reports_any_file_as_an_artifact() {

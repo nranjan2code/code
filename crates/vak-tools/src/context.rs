@@ -81,7 +81,7 @@ impl ToolContext {
     /// written with a leading slash is taken as the machine's, not the
     /// workspace's, and the caller was told only that nothing is there.
     pub fn outside_note(&self, p: &Path) -> &'static str {
-        if p.is_absolute() && !p.starts_with(&self.cwd) {
+        if p.is_absolute() && !within(p, &self.cwd) {
             ". This is an absolute path outside the workspace; a file in the workspace is named by its path relative to the workspace, with no leading slash"
         } else {
             ""
@@ -107,7 +107,31 @@ pub fn shared_ctx(dir: &Path) -> Arc<ToolContext> {
     Arc::new(ToolContext::new(dir.to_path_buf()))
 }
 
+/// Whether `p` is inside `root`, both resolved through their nearest
+/// existing ancestor, so `/tmp/x` and `/private/tmp/x` are one place and a
+/// file that does not exist yet still has an answer.
+fn within(p: &Path, root: &Path) -> bool {
+    fn resolved(p: &Path) -> PathBuf {
+        let mut rest = Vec::new();
+        let mut at = p;
+        loop {
+            if let Ok(real) = at.canonicalize() {
+                return rest.iter().rev().fold(real, |path, part| path.join(part));
+            }
+            match (at.parent(), at.file_name()) {
+                (Some(parent), Some(name)) => {
+                    rest.push(name.to_os_string());
+                    at = parent;
+                }
+                _ => return p.to_path_buf(),
+            }
+        }
+    }
+    p.starts_with(root) || resolved(p).starts_with(resolved(root))
+}
+
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod outside_tests {
     use super::*;
 
@@ -124,5 +148,20 @@ mod outside_tests {
         );
         assert_eq!(ctx.outside_note(Path::new("notes.md")), "");
         assert_eq!(ctx.outside_note(Path::new("/work/space/notes.md")), "");
+    }
+
+    /// Found live 2026-10-13: the workspace was `/private/tmp/…` and a path
+    /// written through the `/tmp` link was called outside it.
+    #[cfg(unix)]
+    #[test]
+    fn a_path_through_a_link_to_the_workspace_is_inside() {
+        let base = tempfile::tempdir().unwrap();
+        let real = base.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = base.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let ctx = ToolContext::new(real.canonicalize().unwrap());
+        assert_eq!(ctx.outside_note(&link.join("missing/notes.md")), "");
+        assert_ne!(ctx.outside_note(&base.path().join("notes.md")), "");
     }
 }
