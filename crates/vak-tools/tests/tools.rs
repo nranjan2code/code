@@ -214,7 +214,12 @@ async fn bash_timeout_kills_process() {
     .await;
     assert!(out.is_error());
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
-    assert!(out.content.contains("timed out"));
+    assert_eq!(
+        out.fault,
+        Some(vak_control::Fault::Limit),
+        "{}",
+        out.content
+    );
 }
 
 #[tokio::test]

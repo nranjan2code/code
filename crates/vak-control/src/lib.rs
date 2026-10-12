@@ -442,6 +442,9 @@ pub struct TimeLimits {
     pub reply_secs: u64,
     /// A command whose call names no limit of its own.
     pub command_secs: u64,
+    /// The longest limit a command's call may name; a call that names more
+    /// runs with this.
+    pub command_max_secs: u64,
     /// A scheduled script.
     pub script_secs: u64,
     /// A hook that sets no limit of its own.
@@ -459,6 +462,7 @@ impl TimeLimits {
             probe_secs: 30,
             reply_secs: 240,
             command_secs: 120,
+            command_max_secs: 600,
             script_secs: 120,
             hook_secs: 10,
             question_secs: 900,
@@ -474,6 +478,7 @@ impl TimeLimits {
             probe_secs: pick(over.probe_secs, self.probe_secs),
             reply_secs: pick(over.reply_secs, self.reply_secs),
             command_secs: pick(over.command_secs, self.command_secs),
+            command_max_secs: pick(over.command_max_secs, self.command_max_secs),
             script_secs: pick(over.script_secs, self.script_secs),
             hook_secs: pick(over.hook_secs, self.hook_secs),
             question_secs: pick(over.question_secs, self.question_secs),
@@ -500,6 +505,8 @@ pub struct TimeLimitsOverride {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_max_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub script_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hook_secs: Option<u64>,
@@ -516,6 +523,7 @@ impl TimeLimitsOverride {
             probe_secs: self.probe_secs.or(lower.probe_secs),
             reply_secs: self.reply_secs.or(lower.reply_secs),
             command_secs: self.command_secs.or(lower.command_secs),
+            command_max_secs: self.command_max_secs.or(lower.command_max_secs),
             script_secs: self.script_secs.or(lower.script_secs),
             hook_secs: self.hook_secs.or(lower.hook_secs),
             question_secs: self.question_secs.or(lower.question_secs),
@@ -677,6 +685,11 @@ pub enum Fault {
     Refused,
     /// The run was cancelled.
     Cancelled,
+    /// The operator's configured limit for the wait was reached and the
+    /// work was stopped there (docs/design/88-control-plane.md §5a): the
+    /// call may name a longer one, up to the operator's maximum, or do
+    /// less at a time.
+    Limit,
 }
 
 /// Whether a proposed answer ends the turn.
@@ -898,11 +911,16 @@ mod tests {
         };
         let narrow = TimeLimitsOverride {
             command_secs: Some(45),
+            command_max_secs: Some(0),
             approval_secs: Some(0),
             ..Default::default()
         };
         let limits = TimeLimits::shipped().with(narrow.over(wide));
         assert_eq!(limits.command_secs, 45);
+        assert_eq!(
+            limits.command_max_secs,
+            TimeLimits::shipped().command_max_secs
+        );
         assert_eq!(limits.hook_secs, 20);
         assert_eq!(limits.approval_secs, TimeLimits::shipped().approval_secs);
         assert_eq!(limits.reply_secs, TimeLimits::shipped().reply_secs);

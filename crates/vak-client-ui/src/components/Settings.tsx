@@ -178,6 +178,7 @@ function StepSettingsGroup() {
 
 const TIME_LIMITS: [keyof api.TimeLimits, string, string, boolean][] = [
   ["command_secs", "A command", "How long a command may run when the request sets no time of its own.", false],
+  ["command_max_secs", "Longest command limit", "The most time a command may be given. A longer request runs with this.", false],
   ["script_secs", "A scheduled script", "How long a script run by an automation may take.", false],
   ["approval_secs", "An approval", "How long a request for your approval waits. With no answer it is refused.", false],
   ["question_secs", "A question from a helper", "How long a helper's question waits for your answer before it works without one.", false],

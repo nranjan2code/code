@@ -329,7 +329,8 @@ code went by. A wait ends on an observed state:
 
 The operator's limits are `[control.limits]`, in seconds, each with its
 shipped default (`vak_control::TimeLimits`): `command_secs` 120 (a command
-whose call names no limit), `script_secs` 120 (a scheduled script),
+whose call names no limit), `command_max_secs` 600 (the longest limit a
+command's call may name; a call that names more runs with this), `script_secs` 120 (a scheduled script),
 `hook_secs` 10 (a hook that sets none of its own), `approval_secs` 900 and
 `question_secs` 900 (waiting for a person; silence still means no,
 invariant 15), `reply_secs` 240 (how long a channel's `wait` request is
@@ -366,10 +367,12 @@ they bound:
 The `vak flow` and `vak plan` commands and the flow tool build their
 executor with the operator's `request_timeout_secs` (`Core::request_timeout`,
 the one reading the turn path uses; 2026-10-12), no longer a fixed 600 s.
-Still open here: bash's `MAX_TIMEOUT_MS` (600 s, also written in its
-schema) caps the limit a call may name; and an ending caused by an
-operator's limit is reported by the tool or the wait that hit it, not yet
-as a field of the turn's `Ending`.
+The loop also clamps a limit a call did name to `command_max_secs`, so the
+bound on one command is the operator's setting, not a constant in `bash`.
+An operator's limit ends a call or a wait, never a turn by itself (the
+turn's own limit is `End::StepLimit`): a command stopped at its limit fails
+with `Fault::Limit`, which the call's `failed` decision records, so the
+trail says it was the limit and not the tool (2026-10-12).
 
 ## 6. Records
 

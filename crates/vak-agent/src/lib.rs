@@ -4163,16 +4163,13 @@ impl Agent {
             new_documents: Vec::new(),
             executions: None,
         };
-        let input = serde_json::json!({ "command": cmd });
-        let out = match tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            tool.execute(&input, &ctx),
-        )
-        .await
-        {
-            Ok(o) => o,
-            Err(_) => return Err("timed out after 120s".to_string()),
-        };
+        // The command is bounded by the operator's limit, as any command is
+        // (docs/design/88-control-plane.md §5a).
+        let input = serde_json::json!({
+            "command": cmd,
+            "timeout_ms": self.config.time_limits.command_secs.saturating_mul(1000),
+        });
+        let out = tool.execute(&input, &ctx).await;
         if out.is_error() {
             Err(vak_session::bash_digest(&out.content))
         } else {
@@ -8142,8 +8139,9 @@ fn normalize_response_tool_uses(
 /// (`[control.limits] command_secs`, docs/design/88-control-plane.md §5a).
 /// The tool declares which argument holds its limit
 /// (`Tool::time_limit_argument`); the loop keeps no table of names. Filled
-/// before the call is ledgered, so the record shows the limit it ran with,
-/// and a limit the call wrote is never changed.
+/// before the call is ledgered, so the record shows the limit it ran with.
+/// A limit the call wrote is kept, but no longer than the operator's
+/// `command_max_secs` (in the same unit, milliseconds for bash).
 fn fill_time_limit(
     name: &str,
     input: &mut Value,
@@ -8157,10 +8155,22 @@ fn fill_time_limit(
     else {
         return;
     };
-    if let Some(arguments) = input.as_object_mut() {
-        arguments
-            .entry(argument)
-            .or_insert_with(|| Value::from(limits.command_secs.saturating_mul(1000)));
+    let Some(arguments) = input.as_object_mut() else {
+        return;
+    };
+    let ceiling = limits.command_max_secs.saturating_mul(1000);
+    match arguments.get_mut(argument) {
+        Some(named) => {
+            if let Some(ms) = named.as_u64().filter(|ms| *ms > ceiling) {
+                *named = Value::from(ceiling.min(ms));
+            }
+        }
+        None => {
+            arguments.insert(
+                argument.to_string(),
+                Value::from(limits.command_secs.saturating_mul(1000).min(ceiling)),
+            );
+        }
     }
 }
 
@@ -8426,7 +8436,13 @@ mod tool_recovery_tests {
     #[test]
     fn only_a_call_whose_shape_was_wrong_gets_the_recovery_note() {
         assert!(tool_recovery_hint(Fault::Shape).is_some());
-        for fault in [Fault::Target, Fault::Tool, Fault::Refused, Fault::Cancelled] {
+        for fault in [
+            Fault::Target,
+            Fault::Tool,
+            Fault::Refused,
+            Fault::Cancelled,
+            Fault::Limit,
+        ] {
             assert!(tool_recovery_hint(fault).is_none(), "{fault:?}");
         }
     }
@@ -8949,6 +8965,19 @@ mod time_limit_tests {
         let mut input = json!({"wait_ms": 5_000});
         fill_time_limit("anything", &mut input, &tools, limits());
         assert_eq!(input, json!({"wait_ms": 5_000}));
+    }
+
+    #[test]
+    fn a_limit_above_the_operators_maximum_is_clamped() {
+        let tools: Vec<std::sync::Arc<dyn Tool>> =
+            vec![std::sync::Arc::new(Timed(Some("wait_ms")))];
+        let capped = vak_control::TimeLimits {
+            command_max_secs: 60,
+            ..limits()
+        };
+        let mut input = json!({"wait_ms": 900_000});
+        fill_time_limit("anything", &mut input, &tools, capped);
+        assert_eq!(input, json!({"wait_ms": 60_000}));
     }
 
     #[test]

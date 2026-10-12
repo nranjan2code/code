@@ -7,7 +7,6 @@ use tokio::io::AsyncReadExt;
 
 use crate::{Tool, ToolContext, ToolOutput, artifact::guess_mime_type};
 
-const MAX_TIMEOUT_MS: u64 = 600_000;
 const MAX_CAPTURE: usize = 1 << 20;
 const MAX_SCAN_ENTRIES: usize = 50_000;
 
@@ -46,7 +45,7 @@ impl Tool for BashTool {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
-                "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 600000, "description": "Timeout in milliseconds (default: the configured command limit; maximum 10 minutes)"},
+                "timeout_ms": {"type": "integer", "minimum": 1000, "description": "Timeout in milliseconds (default: the configured command limit; the operator's maximum for a command caps a larger value)"},
                 "cwd": {"type": "string", "description": "Folder to run in, relative to the workspace root (default: the workspace root)"}
             },
             "required": ["command"]
@@ -80,7 +79,7 @@ impl Tool for BashTool {
             .get("timeout_ms")
             .and_then(|t| t.as_u64())
             .unwrap_or(vak_control::TimeLimits::shipped().command_secs * 1000)
-            .clamp(1000, MAX_TIMEOUT_MS);
+            .max(1000);
 
         // The command works in the workspace, where `read`/`write`/`edit`
         // work, so what one tool writes the next can read. Running each
@@ -249,7 +248,9 @@ impl Tool for BashTool {
                     }
                     sink.emit_finished(-1, duration_ms, paths.clone());
                 }
-                let mut reason = format!("command timed out after {timeout_ms}ms");
+                let mut reason = format!(
+                    "command stopped at its time limit of {timeout_ms}ms; name a longer `timeout_ms`, up to the operator's maximum, or run less at a time"
+                );
                 if !paths.is_empty() {
                     reason.push_str(&format!(
                         ". {} file(s) were preserved before timeout: {}. \
@@ -258,7 +259,7 @@ impl Tool for BashTool {
                         paths.join(", ")
                     ));
                 }
-                return ToolOutput::error(Fault::Tool, interrupted_output(&out, &err, &reason));
+                return ToolOutput::error(Fault::Limit, interrupted_output(&out, &err, &reason));
             }
             _ = cancelled => {
                 telemetry_cancel.cancel();

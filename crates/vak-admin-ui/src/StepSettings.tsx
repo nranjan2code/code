@@ -104,6 +104,7 @@ export function StepSettingsPanel() {
 
 const TIME_LIMITS: [keyof TimeLimits, string, string][] = [
   ["command_secs", "A command", "When the call names no limit of its own"],
+  ["command_max_secs", "Longest command limit", "The most a command's call may name; a longer one runs with this"],
   ["script_secs", "A scheduled script", "A script an automation runs"],
   ["hook_secs", "A hook", "When the hook sets no limit of its own"],
   ["approval_secs", "An approval", "Waiting for a person; no answer means no"],
