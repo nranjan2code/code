@@ -1135,6 +1135,17 @@ fn agent_identity_text(agent: &vak_session::types::AgentIdentity) -> String {
     text
 }
 
+/// The `Workspace:` line. Without it a model told only "in the workspace"
+/// has to guess where that is; found live 2026-10-13, one wrote every file
+/// to `/workspace/…` and looped on the refusals.
+pub fn workspace_section(cwd: &std::path::Path) -> String {
+    format!(
+        "\nWorkspace: {}. Name a file in it by its path relative to the workspace \
+(`notes.md`, `src/app.py`), with no leading slash; commands start in it.\n",
+        cwd.display()
+    )
+}
+
 /// The per-turn time line (docs/design/68-context-engine.md §6). Names the
 /// host's IANA zone rather than a bare offset, so a daylight-saving date
 /// converts correctly, and says whether that zone is the person's: on a
@@ -3654,6 +3665,7 @@ impl Core {
                 String::new()
             },
             surface: self.surface.prompt_section(),
+            workspace: workspace_section(self.cwd()),
             skills: skills::prompt_section_from_capabilities(capabilities),
             mcp: mcp_config_section(&server_caps),
             standing,

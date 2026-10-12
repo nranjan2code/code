@@ -47,7 +47,8 @@ lifetime, order, ledger record and worked scenarios) see
 `docs/design/83-prompt-system.md`.
 
 Current seed: `crates/vak-core/src/system-prompt.md` (block-marked),
-plus a runtime `Surface:` line and any appended surface notes. Layer composition, editing surfaces, and
+plus a runtime `Surface:` line, any appended surface notes, and a runtime
+`Workspace:` line naming the folder the turn works in. Layer composition, editing surfaces, and
 trust are specified in doc 45.
 Editable per layer; see doc 45. The layered blocks are the only way to set
 identity and rules: the whole-prompt `.vak/SYSTEM.md` override was retired in
@@ -377,6 +378,13 @@ presentation update does not restore stale-context behavior.
   plan deliverable in `answers`, and the rest is text. On the same captured
   requests one nested `answer` call came back as broken JSON in 7 of 16
   steps, separate card calls in at most one (a provider error). The seed is 1572 words.
+
+- 2026-10-13, the `Workspace:` line (code-owned, `vak_core::workspace_section`,
+  in the stable prefix after `Surface:`; the seed is unchanged). It names the
+  workspace folder and says a file in it is named by its path relative to
+  the workspace, with no leading slash. Found live in a workspace-write
+  turn: nothing said where "the workspace" was, the model wrote every file
+  to `/workspace/…`, was refused each time, and ran to the step limit.
 
 ## Successor
 

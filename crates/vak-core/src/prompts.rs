@@ -325,6 +325,9 @@ pub struct RuntimeSections {
     /// The generated `Surface:` line. A `surface_note` block is appended
     /// after it; nothing can replace it.
     pub surface: String,
+    /// The generated `Workspace:` line: the folder the turn works in and
+    /// how a file in it is named. Code-owned like `surface`.
+    pub workspace: String,
     /// Advertised skills, from the admitted capability packet.
     pub skills: String,
     /// Configured MCP servers and their discovered tool catalogue.
@@ -590,6 +593,7 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     text.push('\n');
     for section in [
         &surface,
+        &runtime.workspace,
         &runtime.skills,
         &runtime.mcp,
         &runtime.tool_index,
@@ -1313,6 +1317,26 @@ mod tests {
         assert!(!out.text.contains("Temporal context"));
         assert!(out.tail.contains("Temporal context"));
         assert!(!out.tail.contains("stance"), "{}", out.tail);
+    }
+
+    /// The workspace is named in the stable prefix, after the surface, so
+    /// a file is never looked for at a guessed root.
+    #[test]
+    fn the_workspace_is_named_in_the_prefix_after_the_surface() {
+        let runtime = RuntimeSections {
+            surface: "\nSurface: desktop app.\n".into(),
+            workspace: crate::workspace_section(std::path::Path::new("/work/space")),
+            ..Default::default()
+        };
+        let out = resolve(
+            &[LayerInput::new(PromptLayer::Seed, None, seed_content())],
+            &runtime,
+        );
+        let surface = out.text.find("Surface: desktop app.").unwrap();
+        let workspace = out.text.find("Workspace: /work/space.").unwrap();
+        assert!(surface < workspace, "{}", out.text);
+        assert!(out.text.contains("relative to the workspace"));
+        assert!(!out.tail.contains("Workspace:"));
     }
 
     #[test]
