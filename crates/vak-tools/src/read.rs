@@ -105,7 +105,11 @@ impl Tool for ReadTool {
             Err(e) => {
                 return ToolOutput::error(
                     Fault::Target,
-                    format!("cannot read {}: {e}", path.display()),
+                    format!(
+                        "cannot read {}: {e}{}",
+                        path.display(),
+                        ctx.outside_note(&path)
+                    ),
                 );
             }
         };

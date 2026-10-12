@@ -110,7 +110,11 @@ impl Tool for EditTool {
             Err(e) => {
                 return ToolOutput::error(
                     Fault::Target,
-                    format!("cannot read {}: {e}", path.display()),
+                    format!(
+                        "cannot read {}: {e}{}",
+                        path.display(),
+                        ctx.outside_note(&path)
+                    ),
                 );
             }
         };
@@ -184,7 +188,14 @@ impl Tool for EditTool {
             buf.as_bytes().to_vec()
         };
         if let Err(e) = crate::write::write_atomic(&path, &final_bytes).await {
-            return ToolOutput::error(Fault::Tool, format!("cannot write {}: {e}", path.display()));
+            return ToolOutput::error(
+                Fault::Tool,
+                format!(
+                    "cannot write {}: {e}{}",
+                    path.display(),
+                    ctx.outside_note(&path)
+                ),
+            );
         }
         crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &path, &ctx.cwd);
 

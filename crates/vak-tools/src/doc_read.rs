@@ -128,7 +128,11 @@ impl Tool for DocReadTool {
                     .unwrap_or_default();
                 return ToolOutput::error(
                     Fault::Target,
-                    format!("cannot open file '{}': {error}{hint}", p.display()),
+                    format!(
+                        "cannot open file '{}': {error}{}{hint}",
+                        p.display(),
+                        ctx.outside_note(p)
+                    ),
                 );
             }
         };

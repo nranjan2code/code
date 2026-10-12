@@ -76,6 +76,18 @@ impl ToolContext {
         self
     }
 
+    /// What a failure on `p` adds when `p` is an absolute path outside the
+    /// workspace: the fact a "no such file" alone does not state. A path
+    /// written with a leading slash is taken as the machine's, not the
+    /// workspace's, and the caller was told only that nothing is there.
+    pub fn outside_note(&self, p: &Path) -> &'static str {
+        if p.is_absolute() && !p.starts_with(&self.cwd) {
+            ". This is an absolute path outside the workspace; a file in the workspace is named by its path relative to the workspace, with no leading slash"
+        } else {
+            ""
+        }
+    }
+
     pub fn resolve(&self, p: &Path) -> PathBuf {
         if p.is_absolute() {
             p.to_path_buf()
@@ -93,4 +105,24 @@ impl Default for ToolContext {
 
 pub fn shared_ctx(dir: &Path) -> Arc<ToolContext> {
     Arc::new(ToolContext::new(dir.to_path_buf()))
+}
+
+#[cfg(test)]
+mod outside_tests {
+    use super::*;
+
+    /// A failure on a path written with a leading slash says the path is
+    /// outside the workspace; a workspace path, relative or absolute, adds
+    /// nothing. Found live 2026-10-13: told only "No such file" for
+    /// `/notes.md`, a model went looking across the machine.
+    #[test]
+    fn a_failure_outside_the_workspace_says_so() {
+        let ctx = ToolContext::new(PathBuf::from("/work/space"));
+        assert!(
+            ctx.outside_note(Path::new("/notes.md"))
+                .contains("outside the workspace")
+        );
+        assert_eq!(ctx.outside_note(Path::new("notes.md")), "");
+        assert_eq!(ctx.outside_note(Path::new("/work/space/notes.md")), "");
+    }
 }

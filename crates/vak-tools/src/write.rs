@@ -128,9 +128,14 @@ impl Tool for WriteTool {
                     path.display()
                 ))
             }
-            Err(e) => {
-                ToolOutput::error(Fault::Tool, format!("cannot write {}: {e}", path.display()))
-            }
+            Err(e) => ToolOutput::error(
+                Fault::Tool,
+                format!(
+                    "cannot write {}: {e}{}",
+                    path.display(),
+                    ctx.outside_note(&path)
+                ),
+            ),
         }
     }
 }
