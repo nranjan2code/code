@@ -329,6 +329,20 @@ impl TurnOutcome {
     }
 }
 
+/// What a call asked of the workspace, for `AgentConfig::file_note`
+/// (docs/design/90-file-state.md §3.2, §3.3).
+#[derive(Debug, Clone, Copy)]
+pub enum FileQuery<'a> {
+    /// The one file a call read or changed.
+    Path(&'a str),
+    /// The paths a call listed by pattern.
+    Pattern(&'a str),
+}
+
+/// The lookup `AgentConfig::file_note` holds: what a call asked in, the
+/// note about the record's files out.
+pub type FileNote = Arc<dyn Fn(FileQuery<'_>) -> Option<String> + Send + Sync>;
+
 pub struct AgentConfig {
     /// The admitted result contract for this run. It is execution context,
     /// not model-authored authority; permission and broker checks remain the
@@ -427,6 +441,10 @@ pub struct AgentConfig {
     /// what a command runs under when its call names no limit, and how
     /// long a worker's question waits for a person.
     pub time_limits: vak_control::TimeLimits,
+    /// What the record says about a workspace path a call touched (doc 90
+    /// §3.2): the path in, the note out. Attached to the call's result,
+    /// whether it succeeded or failed. None adds nothing.
+    pub file_note: Option<FileNote>,
     /// Shared cross-run provider-health breaker. None disables.
     pub circuit_breaker: Option<Arc<CircuitBreaker>>,
     /// Run-level endurance: when a model step exhausts its retry budget with
@@ -579,6 +597,7 @@ impl AgentConfig {
             retry_base_backoff_ms: 500,
             request_timeout: Some(std::time::Duration::from_secs(600)),
             time_limits: vak_control::TimeLimits::shipped(),
+            file_note: None,
             circuit_breaker: None,
             run_retry_attempts: 6,
             run_retry_base_backoff_ms: 2_000,
@@ -6216,6 +6235,7 @@ impl Agent {
                                     self.config.trace.as_ref(),
                                     &self.call_yields,
                                     self.config.time_limits,
+                                    self.config.file_note.as_ref(),
                                     cancel,
                                     events,
                                 ),
@@ -6306,6 +6326,7 @@ impl Agent {
                 let trace = self.config.trace.clone();
                 let yields = self.call_yields.clone();
                 let limits = self.config.time_limits;
+                let file_note = self.config.file_note.clone();
                 let call_span = tool_call_span(&self.step_span, &call);
                 join.spawn(tracing::Instrument::instrument(
                     async move {
@@ -6323,6 +6344,7 @@ impl Agent {
                             trace.as_ref(),
                             &yields,
                             limits,
+                            file_note.as_ref(),
                             &cancel,
                             &events,
                         )
@@ -7139,6 +7161,7 @@ async fn execute_one(
     trace: Option<&vak_session::trace::TraceKey>,
     yields: &CallYields,
     limits: vak_control::TimeLimits,
+    file_note: Option<&FileNote>,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
@@ -7384,6 +7407,30 @@ async fn execute_one(
             named,
             limits.command_max_secs.saturating_mul(1000),
         ));
+    }
+
+    // What the record says about the file this call touched is part of its
+    // result, whether the call worked or not (doc 90 §3.2).
+    if let Some(note) = file_note.and_then(|note| {
+        let tool = vak_tools::tool_for_call(tools, &call.name)?;
+        if let Some((_, path)) = tool.file_access(&activity_input) {
+            return note(FileQuery::Path(&path));
+        }
+        let pattern = tool.lists_paths(&activity_input)?;
+        note(FileQuery::Pattern(&pattern))
+    }) {
+        // After a failure the record's fact comes first: a folder's "no
+        // such file" read alone, live, made the model say a draft it had
+        // made did not exist (doc 90).
+        match &mut output {
+            ToolRunOutput::Ok(content) => {
+                content.push('\n');
+                content.push_str(&note);
+            }
+            ToolRunOutput::Err(_, content) => {
+                *content = format!("{note}\n{content}");
+            }
+        }
     }
 
     let result_content = match &output {

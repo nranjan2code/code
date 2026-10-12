@@ -40,6 +40,18 @@ impl Tool for GlobTool {
         "Find files matching a glob pattern (supports **). Returns matching paths relative to the search directory."
     }
 
+    fn lists_paths(&self, args: &Value) -> Option<String> {
+        let pattern = args.get("pattern").and_then(Value::as_str)?;
+        match args
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|dir| dir.trim_end_matches('/'))
+        {
+            Some(dir) if !dir.is_empty() && dir != "." => Some(format!("{dir}/{pattern}")),
+            _ => Some(pattern.to_string()),
+        }
+    }
+
     fn schema(&self) -> Value {
         serde_json::json!({
             "type": "object",

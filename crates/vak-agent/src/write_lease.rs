@@ -168,6 +168,10 @@ impl Tool for ScopedWriteTool {
         self.inner.always_loaded()
     }
 
+    fn lists_paths(&self, args: &Value) -> Option<String> {
+        self.inner.lists_paths(args)
+    }
+
     fn fill_defaults(&self, args: &mut Value) {
         self.inner.fill_defaults(args)
     }

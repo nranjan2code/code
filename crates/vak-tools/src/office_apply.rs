@@ -88,6 +88,25 @@ impl Tool for OfficeApplyTool {
         &["documents"]
     }
 
+    /// A draft for review of `path`, revised from `source` when that is an
+    /// earlier draft: the record links the two (docs/design/90-file-state.md).
+    fn artifact(&self, args: &Value) -> Option<crate::ArtifactClaim> {
+        let path = self.delivered_file(args)?;
+        let based_on = args
+            .get("source")
+            .and_then(Value::as_str)
+            .filter(|source| crate::drafts::draft_of(source).is_some())
+            .map(str::to_string);
+        Some(crate::ArtifactClaim {
+            path,
+            declared: true,
+            title: None,
+            summary: None,
+            drafted: true,
+            based_on,
+        })
+    }
+
     fn delivered_file(&self, args: &Value) -> Option<String> {
         args.get("path").and_then(Value::as_str).map(str::to_string)
     }

@@ -149,6 +149,13 @@ pub struct ArtifactClaim {
     pub declared: bool,
     pub title: Option<String>,
     pub summary: Option<String>,
+    /// The call wrote a draft of `path` for review, not the workspace file:
+    /// the bytes are the call's own draft
+    /// (`.vak/scratch/<agent>/<call>/<path>`, docs/design/90-file-state.md).
+    pub drafted: bool,
+    /// The draft the call started from, by its name, when it revised one:
+    /// the new version's parent.
+    pub based_on: Option<String>,
 }
 
 /// Where the agent loop reports every successful call's claim (plan M8):
@@ -259,6 +266,14 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// The pattern of workspace paths a call with these arguments lists
+    /// (a glob), relative to the workspace: the loop also lists recorded
+    /// files matching it that are not in the folder yet
+    /// (docs/design/90-file-state.md §3.3).
+    fn lists_paths(&self, _args: &Value) -> Option<String> {
+        None
+    }
+
     /// The workspace file a successful call with these arguments produces,
     /// and whether the call declares it a deliverable for the person
     /// (docs/design/82-library.md §3). The runtime reads this only from the
@@ -270,6 +285,8 @@ pub trait Tool: Send + Sync {
             declared: true,
             title: None,
             summary: None,
+            drafted: true,
+            based_on: None,
         })
     }
 

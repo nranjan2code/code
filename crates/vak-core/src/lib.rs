@@ -6870,6 +6870,26 @@ impl Core {
         cfg.dispatch_ceiling = (cfg.max_retries.saturating_add(1))
             .saturating_mul(cfg.run_retry_attempts.saturating_add(1));
         cfg.time_limits = self.time_limits();
+        // What the record says about a file a call touches (doc 90 §3.2).
+        // Built from values, so the loop's closure outlives this Core borrow.
+        let file_artifacts = self.artifacts();
+        let file_space = vak_session::trace::local::space(&self.inner.cwd).to_string();
+        let file_cwd = self.inner.cwd.clone();
+        let file_agent = self
+            .agent_identity()
+            .map(|agent| agent.id.clone())
+            .unwrap_or_else(|| "vak".into());
+        cfg.file_note = Some(Arc::new(
+            move |query: vak_agent::FileQuery<'_>| match query {
+                vak_agent::FileQuery::Path(path) => {
+                    let state = file_state::observe(&file_artifacts, &file_space, &file_cwd, path)?;
+                    file_state::note(&state, &file_agent)
+                }
+                vak_agent::FileQuery::Pattern(pattern) => {
+                    file_state::matching_note(&file_artifacts, &file_space, &file_cwd, pattern)
+                }
+            },
+        ));
         cfg.request_timeout = self.request_timeout();
         // Per-turn route planning: assemble a fresh ladder using the current
         // evidence ledger, belief state, warm discovery cache, and demand facts

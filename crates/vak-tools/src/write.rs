@@ -52,6 +52,8 @@ impl Tool for WriteTool {
             declared: title.is_some(),
             title,
             summary: text("summary"),
+            drafted: false,
+            based_on: None,
         })
     }
 

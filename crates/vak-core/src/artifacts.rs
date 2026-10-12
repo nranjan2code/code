@@ -1035,44 +1035,72 @@ impl vak_tools::ArtifactSink for CallSink {
         if !declaration.declared && self.artifacts.get(&known.to_string()).is_none() {
             return;
         }
-        let artifact = if declaration.declared {
-            self.artifacts.declare(
-                &space,
-                &self.agent,
-                &path,
-                kind,
-                declaration.title.clone(),
-                declaration.summary.clone(),
-                trace,
-                None,
-            )
+        // A drafted claim's bytes are this call's own draft of the path,
+        // not the workspace file (doc 90): found before anything is
+        // declared, so a path is never an entry with no version.
+        let bytes_at = if declaration.drafted {
+            let draft = Path::new(vak_config::scope::SCRATCH_DIR)
+                .join(&self.agent)
+                .join(call)
+                .join(&path);
+            self.file(&draft.to_string_lossy())
         } else {
-            Ok(known)
+            self.file(&declaration.path)
         };
-        let recorded = artifact.and_then(|artifact| {
-            let file = self.file(&declaration.path).ok_or_else(|| {
-                ArtifactError::Invalid("the declared file is not in the workspace".into())
-            })?;
-            if std::fs::metadata(&file).map_err(store_error)?.len() > MAX_VERSION_BYTES {
-                return Err(ArtifactError::Invalid(
-                    "the file is larger than a version keeps".into(),
-                ));
-            }
-            let bytes = std::fs::read(&file).map_err(store_error)?;
-            self.artifacts.version(
-                artifact,
-                NewVersion {
-                    parent: None,
-                    bytes: &bytes,
-                    source: VersionSource::Call {
-                        session: session.unwrap_or_default().to_string(),
-                        call: call.to_string(),
+        let recorded = bytes_at
+            .ok_or_else(|| ArtifactError::Invalid("the declared file was not found".into()))
+            .and_then(|file| {
+                if std::fs::metadata(&file).map_err(store_error)?.len() > MAX_VERSION_BYTES {
+                    return Err(ArtifactError::Invalid(
+                        "the file is larger than a version keeps".into(),
+                    ));
+                }
+                let bytes = std::fs::read(&file).map_err(store_error)?;
+                let artifact = if declaration.declared {
+                    self.artifacts.declare(
+                        &space,
+                        &self.agent,
+                        &path,
+                        kind,
+                        declaration.title.clone(),
+                        declaration.summary.clone(),
+                        trace,
+                        None,
+                    )?
+                } else {
+                    known
+                };
+                // A revision of an earlier draft is that draft's child.
+                let parent = declaration
+                    .based_on
+                    .as_deref()
+                    .and_then(vak_tools::drafts::execution_of)
+                    .and_then(|execution| {
+                        self.artifacts
+                            .get(&artifact.to_string())?
+                            .versions
+                            .iter()
+                            .find_map(|version| match &version.source {
+                                VersionSource::Call { call, .. } if *call == execution => {
+                                    Some(version.id)
+                                }
+                                _ => None,
+                            })
+                    });
+                self.artifacts.version(
+                    artifact,
+                    NewVersion {
+                        parent,
+                        bytes: &bytes,
+                        source: VersionSource::Call {
+                            session: session.unwrap_or_default().to_string(),
+                            call: call.to_string(),
+                        },
                     },
-                },
-                trace,
-                None,
-            )
-        });
+                    trace,
+                    None,
+                )
+            });
         if let Err(error) = recorded {
             tracing::warn!(
                 kind = "artifact",

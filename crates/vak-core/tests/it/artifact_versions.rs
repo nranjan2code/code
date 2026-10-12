@@ -129,6 +129,8 @@ fn saved_version_survives_origin_erasure() {
         declared: true,
         title: Some("The plan".into()),
         summary: Some("What we will do".into()),
+        drafted: false,
+        based_on: None,
     };
     sink.declared(
         &claim,
@@ -158,6 +160,8 @@ fn saved_version_survives_origin_erasure() {
         declared: false,
         title: None,
         summary: None,
+        drafted: false,
+        based_on: None,
     };
     sink.declared(&helper, None, "toolu_2", None);
     assert!(artifacts.list().iter().all(|a| a.path != "helper.py"));
@@ -167,6 +171,8 @@ fn saved_version_survives_origin_erasure() {
         declared: false,
         title: None,
         summary: None,
+        drafted: false,
+        based_on: None,
     };
     sink.declared(&revision, None, "toolu_3", None);
     let revised = artifacts.get(&artifact.id.to_string()).unwrap();
@@ -372,4 +378,114 @@ fn a_guests_comments_go_with_their_key_and_the_artifact_stays() {
     assert_eq!(left.title.as_deref(), Some("Brief"));
     assert_eq!(left.comments.len(), 1);
     assert_eq!(left.comments[0].text, "agreed, will do");
+}
+
+/// A draft for review is recorded from the call's own draft, not the
+/// workspace file it is for; a revision of it names it as its parent; and a
+/// draft that cannot be found leaves no entry with no version (doc 90).
+#[test]
+fn a_draft_is_a_version_and_its_revision_is_its_child() {
+    let (shared, tenant) = home();
+    let cwd = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(cwd.path()).unwrap();
+    let executions = vak_config::scope::executions_root(cwd.path());
+    let write_draft = |call: &str, bytes: &[u8]| {
+        let dir = executions.join("vak").join(call);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("notes.docx"), bytes).unwrap();
+    };
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let sink = CallSink {
+        artifacts: artifacts.clone(),
+        cwd: cwd.path().to_path_buf(),
+        executions: executions.clone(),
+        agent: "vak".into(),
+    };
+    let drafted = |based_on: Option<&str>| vak_tools::ArtifactClaim {
+        path: "notes.docx".into(),
+        declared: true,
+        title: None,
+        summary: None,
+        drafted: true,
+        based_on: based_on.map(str::to_string),
+    };
+    let space = vak_session::trace::local::space(cwd.path()).to_string();
+    let notes = |artifacts: &Artifacts| {
+        artifacts
+            .list()
+            .into_iter()
+            .find(|a| a.space == space && a.path == "notes.docx")
+    };
+
+    // No draft on disk: nothing is declared.
+    sink.declared(&drafted(None), Some("ses"), "call_none", None);
+    assert!(notes(&artifacts).is_none());
+
+    write_draft("call_a", b"first draft");
+    sink.declared(&drafted(None), Some("ses"), "call_a", None);
+    let first = notes(&artifacts).unwrap().head().unwrap().id;
+
+    write_draft("call_b", b"second draft");
+    sink.declared(
+        &drafted(Some(".vak/scratch/vak/call_a/notes.docx")),
+        Some("ses"),
+        "call_b",
+        None,
+    );
+    let artifact = notes(&artifacts).unwrap();
+    assert_eq!(artifact.versions.len(), 2);
+    let second = artifact.head().unwrap();
+    assert_eq!(second.parent, Some(first));
+    assert_eq!(
+        artifacts.bytes(&artifact, &second.id).unwrap(),
+        b"second draft"
+    );
+}
+
+/// A listing by pattern is told of recorded files it cannot see because
+/// they are drafts not yet in the workspace, and only of those (doc 90 §3.3).
+#[test]
+fn a_listing_is_told_of_matching_drafts_not_in_the_workspace() {
+    let (shared, tenant) = home();
+    let cwd = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(cwd.path()).unwrap();
+    let executions = vak_config::scope::executions_root(cwd.path());
+    let dir = executions.join("vak").join("call_m");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("madrid-notes.docx"), b"draft").unwrap();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let sink = CallSink {
+        artifacts: artifacts.clone(),
+        cwd: cwd.path().to_path_buf(),
+        executions,
+        agent: "vak".into(),
+    };
+    let claim = vak_tools::ArtifactClaim {
+        path: "madrid-notes.docx".into(),
+        declared: true,
+        title: None,
+        summary: None,
+        drafted: true,
+        based_on: None,
+    };
+    sink.declared(&claim, Some("ses"), "call_m", None);
+    let space = vak_session::trace::local::space(cwd.path()).to_string();
+
+    let told =
+        vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "**/*madrid*.docx")
+            .expect("the draft is listed");
+    assert!(told.contains("`madrid-notes.docx`"), "{told}");
+    assert!(
+        told.contains(".vak/scratch/vak/call_m/madrid-notes.docx"),
+        "{told}"
+    );
+    assert!(
+        vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "*.xlsx").is_none()
+    );
+
+    // Accepted into the folder, the listing sees it itself.
+    std::fs::write(cwd.path().join("madrid-notes.docx"), b"draft").unwrap();
+    assert!(
+        vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "*.docx").is_none()
+    );
 }

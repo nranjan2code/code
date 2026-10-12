@@ -1,7 +1,5 @@
 //! The crate's integration tests, one binary (each file a module).
 
-mod support;
-
 mod adoption_matrix;
 mod agent_loop;
 mod approval;
@@ -19,6 +17,7 @@ mod doom_loop;
 mod drift_and_replan;
 mod empty_step;
 mod fanout;
+mod file_note;
 mod general_flows;
 mod goal_mode;
 mod hooks;
@@ -36,6 +35,7 @@ mod slow_listener;
 mod small_horizon;
 mod spend_gate;
 mod stop_guard;
+mod support;
 mod tool_call_ids;
 mod tool_refusal;
 mod turn_card_and_recall;

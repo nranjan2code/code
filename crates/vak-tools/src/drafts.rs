@@ -52,6 +52,20 @@ pub fn draft_of(name: &str) -> Option<String> {
     .then(|| file.to_string_lossy().replace('\\', "/"))
 }
 
+/// The execution (the call) that wrote the draft `name` names.
+pub fn execution_of(name: &str) -> Option<String> {
+    draft_of(name)?;
+    let rest = Path::new(name)
+        .strip_prefix(vak_config::scope::SCRATCH_DIR)
+        .ok()?;
+    let mut parts = rest.components();
+    parts.next()?;
+    match parts.next()? {
+        Component::Normal(execution) => Some(execution.to_string_lossy().into_owned()),
+        _ => None,
+    }
+}
+
 /// The existing file `name` names, canonical and confined: a draft of this
 /// call's Agent inside its execution root, or a file inside the workspace.
 pub fn existing(ctx: &ToolContext, name: &str) -> Result<PathBuf, String> {
