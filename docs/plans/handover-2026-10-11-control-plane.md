@@ -94,7 +94,14 @@ Next, in order:
    revision from it; digests print bare; the loop now runs each tool's
    `fill_defaults`. A pending draft not found by its workspace name, and
    every other state a file can be in across turns, is designed in
-   docs/design/90-file-state.md (decisions D1–D3 taken); build its stages.
+   docs/design/90-file-state.md (decisions D1–D4 taken). Built: stage 1,
+   stage 2, the listing half of stage 3, drafts recorded as versions
+   (`a4da5133c`). Next: `recall`/`session_search` reaching artifacts (§3.3),
+   stage 4 (`Observed` versions, the base check at promotion), stage 5 (the
+   person's view: a mockup for review first).
+   Tests: one integration binary per crate (`tests/it/`); 73 binaries; a
+   test that acts on the whole home keeps its own (AGENTS.md). Use
+   `scripts/gate.sh`, and `--changed` while working.
 4. `recall` refuses a query with a `turn_id` ("cannot be combined").
 5. Open, no contract fault found yet: a card claimed a command printed
    "ready" when the receipt says it stopped at its limit (run_01a12edd).
