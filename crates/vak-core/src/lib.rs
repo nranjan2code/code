@@ -7927,7 +7927,20 @@ impl Core {
                                 // a planned card is missing is the plan
                                 // check's to say, from receipts.
                                 if !card_tools.contains(canonical) {
-                                    failures.call(id, canonical);
+                                    // The file it reaches, by the name the
+                                    // record keeps: a draft and the file it
+                                    // becomes are one file.
+                                    let reached = delivering
+                                        .get(canonical)
+                                        .and_then(|tool| tool.file_access(input))
+                                        .map(|(access, path)| vak_judge::call::Reached {
+                                            file: crate::file_state::workspace_path(
+                                                self.cwd(),
+                                                &path,
+                                            ),
+                                            writes: access == vak_tools::FileAccess::Write,
+                                        });
+                                    failures.call(id, canonical, reached);
                                 }
                             }
                             vak_llm::ContentBlock::ToolResult {

@@ -105,31 +105,50 @@ pub fn counts(fault: Fault) -> bool {
     !matches!(fault, Fault::Shape | Fault::Cancelled)
 }
 
+/// The workspace file a call reaches, as its tool declares it, and whether
+/// the call changes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reached {
+    pub file: String,
+    pub writes: bool,
+}
+
 /// The failed calls of one turn that nothing later repaired. A failure is
-/// repaired by a later successful call of the same tool, never by the
-/// answer's wording.
+/// repaired by a later successful call of the same tool, or by a later
+/// successful call that reached the same file (a failed change only by a
+/// call that changes it), never by the answer's wording. A file that could
+/// not be read under one name and was then read through its draft, or by
+/// another tool, was read.
 #[derive(Debug, Default, Clone)]
 pub struct Failures {
-    names: HashMap<String, String>,
-    unrecovered: HashMap<String, String>,
+    calls: HashMap<String, (String, Option<Reached>)>,
+    unrecovered: HashMap<String, (String, Option<Reached>)>,
 }
 
 impl Failures {
-    pub fn call(&mut self, call_id: &str, tool: &str) {
-        self.names.insert(call_id.into(), tool.into());
+    pub fn call(&mut self, call_id: &str, tool: &str, reached: Option<Reached>) {
+        self.calls.insert(call_id.into(), (tool.into(), reached));
     }
 
     pub fn failed(&mut self, call_id: &str, fault: Fault) {
         if counts(fault)
-            && let Some(tool) = self.names.get(call_id)
+            && let Some(call) = self.calls.get(call_id)
         {
-            self.unrecovered.insert(call_id.into(), tool.clone());
+            self.unrecovered.insert(call_id.into(), call.clone());
         }
     }
 
     pub fn succeeded(&mut self, call_id: &str) {
-        if let Some(tool) = self.names.get(call_id) {
-            self.unrecovered.retain(|_, failed| failed != tool);
+        if let Some((tool, reached)) = self.calls.get(call_id) {
+            self.unrecovered.retain(|_, (failed, wanted)| {
+                let same_file = match (wanted.as_ref(), reached) {
+                    (Some(wanted), Some(reached)) => {
+                        wanted.file == reached.file && (reached.writes || !wanted.writes)
+                    }
+                    _ => false,
+                };
+                failed != tool && !same_file
+            });
         }
     }
 
@@ -138,7 +157,7 @@ impl Failures {
     }
 
     pub fn clear(&mut self) {
-        self.names.clear();
+        self.calls.clear();
         self.unrecovered.clear();
     }
 }
@@ -210,11 +229,11 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_is_cleared_only_by_the_same_tool_succeeding() {
+    fn a_failure_is_cleared_by_the_same_tool_succeeding() {
         let mut failures = Failures::default();
-        failures.call("a", "read");
-        failures.call("b", "grep");
-        failures.call("c", "read");
+        failures.call("a", "read", None);
+        failures.call("b", "grep", None);
+        failures.call("c", "read", None);
         failures.failed("a", Fault::Target);
         failures.succeeded("b");
         assert!(failures.has_unrecovered());
@@ -223,9 +242,38 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_on_a_file_is_cleared_by_another_tool_reaching_that_file() {
+        let at = |file: &str, writes| {
+            Some(Reached {
+                file: file.into(),
+                writes,
+            })
+        };
+        let mut failures = Failures::default();
+        failures.call("a", "read", at("notes.docx", false));
+        failures.call("b", "doc_read", at("other.docx", false));
+        failures.call("c", "doc_read", at("notes.docx", false));
+        failures.failed("a", Fault::Target);
+        failures.succeeded("b");
+        assert!(failures.has_unrecovered(), "another file repairs nothing");
+        failures.succeeded("c");
+        assert!(!failures.has_unrecovered());
+
+        // A change that failed is not repaired by reading the file.
+        failures.call("d", "edit", at("notes.docx", true));
+        failures.call("e", "read", at("notes.docx", false));
+        failures.call("f", "office_apply", at("notes.docx", true));
+        failures.failed("d", Fault::Tool);
+        failures.succeeded("e");
+        assert!(failures.has_unrecovered());
+        failures.succeeded("f");
+        assert!(!failures.has_unrecovered());
+    }
+
+    #[test]
     fn a_call_that_never_ran_or_was_cancelled_is_not_a_failure_of_the_work() {
         let mut failures = Failures::default();
-        failures.call("a", "plan");
+        failures.call("a", "plan", None);
         failures.failed("a", Fault::Shape);
         failures.failed("a", Fault::Cancelled);
         assert!(!failures.has_unrecovered());
