@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File history mockup</title>
+<!-- Reference mockup for docs/design/90-file-state.md §5 (stage 5), for the
+     maintainer's review before anything is built. Tokens and rules from
+     DESIGN.md: Ink and Saffron, saffron only for what needs the person,
+     colour never alone, sentence case, nothing under 12px. -->
+<style>
+:root {
+  --paper:#F7F7F8; --surface:#FFFFFF; --sidebar:#F2F2F4; --line:#DEDEE3;
+  --ink:#202127; --ink-2:#41434D; --ink-3:#646674; --muted:#5C5E6A;
+  --primary:#2F3C94; --primary-wash:#E8EAF6; --on-primary:#FFFFFF;
+  --saffron:#F5A400; --saffron-wash:#FCEFD9; --saffron-ink:#8A5300;
+  --success:#2E6B4A; --danger:#A33A3A; --info:#2F5580;
+  --radius-control:8px; --radius-card:12px; --radius-sheet:16px;
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:#18191B; --surface:#202124; --sidebar:#1D1E21; --line:#383A42;
+    --ink:#F0F0F2; --ink-2:#D0D1D7; --ink-3:#A7A9B3; --muted:#B5B7C0;
+    --primary:#A3ADF7; --primary-wash:color-mix(in srgb, #A3ADF7 16%, #202124); --on-primary:#0F1120;
+    --saffron-wash:color-mix(in srgb, #F5A400 18%, #202124); --saffron-ink:#F5C46B;
+    --success:#7FC39B; --danger:#E59A9A; --info:#9DB8DA;
+  }
+}
+:root[data-theme="dark"] {
+  --paper:#18191B; --surface:#202124; --sidebar:#1D1E21; --line:#383A42;
+  --ink:#F0F0F2; --ink-2:#D0D1D7; --ink-3:#A7A9B3; --muted:#B5B7C0;
+  --primary:#A3ADF7; --primary-wash:color-mix(in srgb, #A3ADF7 16%, #202124); --on-primary:#0F1120;
+  --saffron-wash:color-mix(in srgb, #F5A400 18%, #202124); --saffron-ink:#F5C46B;
+  --success:#7FC39B; --danger:#E59A9A; --info:#9DB8DA;
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--paper); color:var(--ink); font:400 14px/21px var(--font); }
+.top { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 24px; border-bottom:1px solid var(--line); background:var(--surface); position:sticky; top:0; z-index:5; }
+.top h1 { margin:0; font:600 18px/26px var(--font); }
+.top p { margin:0; color:var(--ink-3); font-size:13px; line-height:18px; }
+.board-label { margin:32px 24px 8px; font:600 13px/18px var(--font); color:var(--ink-3); }
+.boards { display:flex; flex-wrap:wrap; gap:24px; padding:0 24px 48px; align-items:flex-start; }
+.frame { background:var(--paper); border:1px solid var(--line); border-radius:var(--radius-sheet); overflow:hidden; }
+.frame.desk { width:min(1180px, 100%); }
+.frame.phone { width:390px; max-width:100%; }
+button { font:500 14px/20px var(--font); border-radius:var(--radius-control); padding:7px 12px; cursor:pointer; }
+.btn-primary { background:var(--primary); color:var(--on-primary); border:1px solid var(--primary); }
+.btn { background:var(--surface); color:var(--ink); border:1px solid var(--line); }
+.btn-text { background:none; border:0; color:var(--primary); padding:6px 4px; }
+.btn-danger { background:color-mix(in srgb, var(--danger) 10%, var(--surface)); color:var(--danger); border:1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); }
+.mono { font-family:var(--mono); font-size:13px; }
+.meta { color:var(--ink-3); font-size:13px; line-height:18px; }
+.pill { display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:999px; border:1px solid var(--line); font:500 12px/18px var(--font); color:var(--ink-2); background:var(--surface); white-space:nowrap; }
+.dot { width:9px; height:9px; border-radius:999px; flex:none; }
+/* State marks: a shape and a word for every state (Colour Is Never Alone). */
+.st-waiting .dot { background:var(--saffron); box-shadow:0 0 0 3px var(--saffron-wash); }
+.pill.st-waiting { color:var(--saffron-ink); border-color:color-mix(in srgb, var(--saffron) 45%, var(--line)); background:var(--saffron-wash); }
+.st-accepted .dot { background:var(--success); }
+.st-changed .dot { background:transparent; border:2px solid var(--info); }
+.st-undone .dot { background:transparent; border:2px dashed var(--ink-3); }
+.st-trash .dot { background:var(--line); }
+.st-current .dot { background:var(--primary); }
+
+/* Artifact page */
+.page { display:grid; grid-template-columns: minmax(0, 1fr) 420px; min-height:640px; }
+.doc { padding:24px 32px; border-right:1px solid var(--line); background:var(--surface); }
+.doc-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:16px; }
+.doc-head h2 { margin:0; font:600 22px/28px var(--font); }
+.doc-head .where { margin-top:4px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.notice { display:flex; gap:12px; align-items:flex-start; padding:12px 14px; border-radius:var(--radius-card); border:1px solid color-mix(in srgb, var(--info) 35%, var(--line)); background:color-mix(in srgb, var(--info) 7%, var(--surface)); margin-bottom:16px; color:var(--ink); }
+.notice b { font-weight:600; }
+.notice .actions { margin-top:8px; display:flex; gap:8px; flex-wrap:wrap; }
+.sheet { border:1px solid var(--line); border-radius:var(--radius-card); padding:28px 36px; font:400 16px/26px var(--font); color:var(--ink); background:var(--surface); }
+.sheet h3 { margin:0 0 12px; font:600 18px/26px var(--font); }
+.sheet p { margin:0 0 14px; }
+ins { background:color-mix(in srgb, var(--success) 14%, transparent); text-decoration:none; border-bottom:1px solid var(--success); }
+.side { padding:20px; background:var(--paper); display:flex; flex-direction:column; gap:16px; }
+.side h4 { margin:0; font:600 14px/20px var(--font); }
+.legend { display:flex; gap:6px; flex-wrap:wrap; }
+
+.graph { position:relative; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card); padding:12px 12px 4px; }
+.node { position:relative; display:grid; grid-template-columns: 44px minmax(0,1fr); gap:6px; padding:6px 4px 10px; border-radius:var(--radius-control); cursor:pointer; }
+.node:hover { background:color-mix(in srgb, var(--ink) 4%, transparent); }
+.node.sel { background:var(--primary-wash); }
+.rail { position:relative; }
+.rail .line { position:absolute; left:11px; top:0; bottom:-10px; width:2px; background:var(--line); }
+.rail .branch { position:absolute; left:11px; top:-12px; width:22px; height:24px; border-left:2px solid var(--line); border-bottom:2px solid var(--line); border-bottom-left-radius:10px; }
+.rail .line.b { left:33px; }
+.rail .pin { position:absolute; top:6px; width:14px; height:14px; border-radius:999px; border:2px solid var(--surface); }
+.rail .pin.l0 { left:5px; } .rail .pin.l1 { left:27px; }
+.st-accepted .pin { background:var(--success); }
+.st-current .pin { background:var(--primary); }
+.st-waiting .pin { background:var(--saffron); box-shadow:0 0 0 3px var(--saffron-wash); }
+.st-changed .pin { background:var(--surface); border-color:var(--info); }
+.st-undone .pin { background:var(--surface); border:2px dashed var(--ink-3); }
+.st-trash .pin { background:var(--line); }
+.node .t { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.node .t b { font-weight:500; }
+.node .d { color:var(--ink-3); font-size:13px; line-height:18px; }
+.node .warn { margin-top:4px; color:var(--info); font-size:13px; line-height:18px; }
+.lane-label { font:500 12px/16px var(--font); color:var(--ink-3); margin:2px 4px 6px 48px; }
+
+.origin { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card); padding:14px; display:flex; flex-direction:column; gap:10px; }
+.origin .row { display:grid; grid-template-columns: 108px minmax(0,1fr); gap:8px; font-size:13px; line-height:18px; }
+.origin .row span:first-child { color:var(--ink-3); }
+.origin a { color:var(--primary); text-decoration:none; }
+.origin a:hover { text-decoration:underline; }
+.origin .acts { display:flex; gap:8px; flex-wrap:wrap; padding-top:4px; border-top:1px solid var(--line); }
+
+/* Chat */
+.chat { display:flex; flex-direction:column; min-height:560px; background:var(--paper); }
+.thread { flex:1; padding:24px 40px; display:flex; flex-direction:column; gap:16px; }
+.bubble-you { align-self:flex-end; background:var(--primary-wash); color:var(--ink); padding:10px 14px; border-radius:14px; max-width:70%; }
+.answer { font:400 16px/26px var(--font); max-width:720px; }
+.card { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card); padding:14px 16px; display:flex; gap:12px; align-items:center; max-width:720px; }
+.card .icon { width:36px; height:36px; border-radius:8px; background:var(--primary-wash); color:var(--primary); display:grid; place-items:center; font:600 12px/1 var(--font); flex:none; }
+.card .body { flex:1; min-width:0; }
+.card .name { font:500 14px/20px var(--font); }
+.card .state { display:flex; gap:8px; align-items:center; margin-top:2px; flex-wrap:wrap; }
+.card .acts { display:flex; gap:8px; }
+.card.past { opacity:1; }
+.strip { margin:0 40px; padding:10px 12px; border:1px solid color-mix(in srgb, var(--saffron) 45%, var(--line)); background:var(--saffron-wash); border-radius:12px; display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+.strip .lead { display:flex; align-items:center; gap:10px; color:var(--ink); }
+.strip .lead b { font-weight:600; }
+.strip .items { display:flex; gap:8px; flex-wrap:wrap; }
+.strip .item { display:inline-flex; align-items:center; gap:8px; padding:4px 10px; border-radius:999px; background:var(--surface); border:1px solid var(--line); font:500 13px/18px var(--font); color:var(--ink); }
+.composer { margin:12px 40px 24px; padding:14px 16px; border:1px solid var(--line); border-radius:var(--radius-sheet); background:var(--surface); color:var(--ink-3); }
+
+/* Phone */
+.phone .bar { padding:14px 16px; border-bottom:1px solid var(--line); background:var(--surface); display:flex; align-items:center; gap:10px; }
+.phone .bar b { font:600 16px/22px var(--font); }
+.phone .pad { padding:16px; display:flex; flex-direction:column; gap:12px; }
+.phone .graph { padding:8px 8px 2px; }
+.phone .tabs { display:flex; gap:8px; }
+.phone .tab { padding:6px 12px; border-radius:999px; border:1px solid var(--line); font:500 13px/18px var(--font); color:var(--ink-2); background:var(--surface); }
+.phone .tab.on { background:var(--primary-wash); border-color:transparent; color:var(--ink); }
+
+@media (max-width: 900px) {
+  .page { grid-template-columns: 1fr; }
+  .doc { border-right:0; border-bottom:1px solid var(--line); padding:16px; }
+  .thread, .strip, .composer { margin-left:16px; margin-right:16px; padding-left:0; padding-right:0; }
+  .thread { padding:16px 0; }
+}
+</style>
+</head>
+<body>
+<div class="top">
+  <div>
+    <h1>File history: reference mockup</h1>
+    <p>Doc 90 §5 · one record seen by you and the Agent · for review before it is built</p>
+  </div>
+  <button class="btn" id="theme" type="button">Switch to dark</button>
+</div>
+
+<div class="board-label">1 · The artifact page, desktop 1440 · the version graph and where each version came from</div>
+<div class="boards">
+  <section class="frame desk" aria-label="Artifact page">
+    <div class="page">
+      <div class="doc">
+        <div class="doc-head">
+          <div>
+            <h2>Lisbon notes</h2>
+            <div class="where">
+              <span class="mono">lisbon-notes.docx</span>
+              <span class="pill st-changed"><span class="dot"></span>Changed outside Vak on 13 Oct</span>
+              <span class="pill st-waiting"><span class="dot"></span>2 drafts wait for you</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn">Download</button>
+            <button class="btn-primary">Continue working</button>
+          </div>
+        </div>
+        <div class="notice">
+          <span class="dot" style="margin-top:6px;border:2px solid var(--info)"></span>
+          <div>
+            <b>The waiting draft "Tram 28" was made before your edit of 13 Oct.</b>
+            Accepting it as it is would drop the paragraph you added about Sintra.
+            <div class="actions">
+              <button class="btn-primary">Ask Vak to redo it from your copy</button>
+              <button class="btn">Compare both</button>
+            </div>
+          </div>
+        </div>
+        <div class="sheet" aria-label="Draft preview">
+          <h3>Lisbon</h3>
+          <p>Lisbon, the soul of Portugal, offers a rich tapestry of historic landmarks. Begin at Belém, where Manuelian architecture dazzles visitors…</p>
+          <p>Venture into Alfama to explore centuries of Moorish and Portuguese heritage, where whitewashed towers like Miradouro das Portas do Inferno…</p>
+          <p>The Belém Tower, a Manuelian fortress completed in 1515, stands at the riverbank as Portugal's most iconic symbol. <ins>You can also reach it via tram 28, which circles the city connecting historic Alfama with Belém and Graça.</ins></p>
+        </div>
+        <p class="meta" style="margin-top:10px">Showing the selected version, "Tram 28", with its change marked against the version it was made from.</p>
+      </div>
+
+      <aside class="side">
+        <div>
+          <h4>History</h4>
+          <div class="legend" style="margin-top:8px">
+            <span class="pill st-current"><span class="dot"></span>In your folder</span>
+            <span class="pill st-accepted"><span class="dot"></span>Accepted</span>
+            <span class="pill st-waiting"><span class="dot"></span>Waiting for you</span>
+            <span class="pill st-changed"><span class="dot"></span>Changed outside Vak</span>
+            <span class="pill st-undone"><span class="dot"></span>Undone</span>
+            <span class="pill st-trash"><span class="dot"></span>In the trash</span>
+          </div>
+        </div>
+        <div class="graph" role="list" aria-label="Versions, newest first">
+          <div class="lane-label">Newest first</div>
+
+          <div class="node st-waiting sel" role="listitem" tabindex="0">
+            <div class="rail"><span class="line"></span><span class="line b"></span><span class="pin l1"></span></div>
+            <div><div class="t"><b>Tram 28</b><span class="pill st-waiting"><span class="dot"></span>Waiting for you</span></div>
+              <div class="d">Vak · today 18:52 · from "Belém Tower"</div>
+              <div class="warn">Made before your edit of 13 Oct</div></div>
+          </div>
+
+          <div class="node st-waiting" role="listitem" tabindex="0">
+            <div class="rail"><span class="line"></span><span class="line b"></span><span class="pin l1"></span></div>
+            <div><div class="t"><b>Shorter version</b><span class="pill st-waiting"><span class="dot"></span>Waiting for you</span></div>
+              <div class="d">Vak · today 18:40 · from "Belém Tower" · beside "Tram 28"</div></div>
+          </div>
+
+          <div class="node st-current" role="listitem" tabindex="0">
+            <div class="rail"><span class="line"></span><span class="branch"></span><span class="pin l0"></span></div>
+            <div><div class="t"><b>Your edit: Sintra paragraph</b><span class="pill st-changed"><span class="dot"></span>Changed outside Vak</span></div>
+              <div class="d">You, outside Vak · noticed 13 Oct · in your folder now</div></div>
+          </div>
+
+          <div class="node st-accepted" role="listitem" tabindex="0">
+            <div class="rail"><span class="line"></span><span class="pin l0"></span></div>
+            <div><div class="t"><b>Belém Tower</b><span class="pill st-accepted"><span class="dot"></span>Accepted 12 Oct</span></div>
+              <div class="d">Vak · 12 Oct 16:40 · accepted by you</div></div>
+          </div>
+
+          <div class="node st-undone" role="listitem" tabindex="0">
+            <div class="rail"><span class="line"></span><span class="pin l0"></span></div>
+            <div><div class="t"><b>Ribeira at sunset</b><span class="pill st-undone"><span class="dot"></span>Undone by you</span></div>
+              <div class="d">Vak · 12 Oct 15:58 · accepted, then undone 16:05</div></div>
+          </div>
+
+          <div class="node st-trash" role="listitem" tabindex="0">
+            <div class="rail"><span class="line"></span><span class="pin l0"></span></div>
+            <div><div class="t"><b>Two-column layout</b><span class="pill st-trash"><span class="dot"></span>In the trash until 11 Dec</span></div>
+              <div class="d">Vak · 12 Oct 15:30 · never reviewed</div></div>
+          </div>
+
+          <div class="node st-accepted" role="listitem" tabindex="0">
+            <div class="rail"><span class="pin l0"></span></div>
+            <div><div class="t"><b>First draft</b><span class="pill st-accepted"><span class="dot"></span>Accepted 12 Oct</span></div>
+              <div class="d">Vak · 12 Oct 15:10 · made the file</div></div>
+          </div>
+        </div>
+
+        <div class="origin" aria-label="Where the selected version came from">
+          <h4>Where "Tram 28" came from</h4>
+          <div class="row"><span>Conversation</span><span><a href="#">Vak · today, the turn that asked for it ↗</a></span></div>
+          <div class="row"><span>You asked</span><span>"In the Lisbon document you made for me earlier, add a sentence about riding tram 28."</span></div>
+          <div class="row"><span>It read first</span><span><a href="#">"Belém Tower" draft</a> · <a href="#">the Library entry</a></span></div>
+          <div class="row"><span>Why it ran</span><span>Your message</span></div>
+          <div class="row"><span>Made from</span><span><a href="#">"Belém Tower"</a>, not your later edit</span></div>
+          <div class="acts">
+            <button class="btn-primary">Review and accept</button>
+            <button class="btn">Compare with your folder</button>
+            <button class="btn-text">Continue from this version</button>
+            <button class="btn-danger">Move to trash</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+</div>
+
+<div class="board-label">2 · In the conversation · a draft card shows the file's state now, and a strip lists what needs you</div>
+<div class="boards">
+  <section class="frame desk" aria-label="Conversation">
+    <div class="chat">
+      <div class="thread">
+        <div class="bubble-you">Make me a new Word file lisbon-notes.docx with a heading and two paragraphs on what to see.</div>
+        <div class="card past">
+          <div class="icon">DOC</div>
+          <div class="body"><div class="name">lisbon-notes.docx · first draft</div>
+            <div class="state"><span class="pill st-accepted"><span class="dot"></span>Accepted 12 Oct</span><span class="meta">since then: 2 more versions and your edit</span></div></div>
+          <div class="acts"><button class="btn-text">Open history</button></div>
+        </div>
+        <div class="bubble-you">In the Lisbon document you made for me earlier, add a sentence about riding tram 28.</div>
+        <div class="answer">I added the tram 28 sentence to the Belém Tower paragraph. It's a draft for you to review; it was made from the version you accepted on 12 Oct, before your Sintra edit.</div>
+        <div class="card">
+          <div class="icon">DOC</div>
+          <div class="body"><div class="name">lisbon-notes.docx · "Tram 28"</div>
+            <div class="state"><span class="pill st-waiting"><span class="dot"></span>Waiting for you</span><span class="pill st-changed"><span class="dot"></span>Missing your edit of 13 Oct</span></div></div>
+          <div class="acts"><button class="btn">Open</button><button class="btn-primary">Review changes</button></div>
+        </div>
+      </div>
+      <div class="strip" role="region" aria-label="Needs you">
+        <div class="lead"><span class="dot" style="background:var(--saffron);box-shadow:0 0 0 3px var(--surface)"></span><b>Needs you</b><span class="meta" style="color:var(--ink-2)">3 files</span></div>
+        <div class="items">
+          <span class="item"><span class="mono">lisbon-notes.docx</span> 2 drafts</span>
+          <span class="item"><span class="mono">budget.xlsx</span> changed outside Vak since its draft</span>
+          <span class="item"><span class="mono">porto-notes.docx</span> 1 draft</span>
+        </div>
+      </div>
+      <div class="composer">Ask Vakyartha anything…</div>
+    </div>
+  </section>
+</div>
+
+<div class="board-label">3 · Phone 390 × 844 · the same page, history first</div>
+<div class="boards">
+  <section class="frame phone" aria-label="Artifact page on a phone">
+    <div class="bar"><span aria-hidden="true">‹</span><b>Lisbon notes</b></div>
+    <div class="pad">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <span class="pill st-changed"><span class="dot"></span>Changed outside Vak</span>
+        <span class="pill st-waiting"><span class="dot"></span>2 drafts wait</span>
+      </div>
+      <div class="tabs"><span class="tab on">History</span><span class="tab">Document</span><span class="tab">Comments</span></div>
+      <div class="graph">
+        <div class="node st-waiting sel"><div class="rail"><span class="line"></span><span class="line b"></span><span class="pin l1"></span></div>
+          <div><div class="t"><b>Tram 28</b></div><div class="d">Waiting for you · today 18:52</div><div class="warn">Made before your edit</div></div></div>
+        <div class="node st-waiting"><div class="rail"><span class="line"></span><span class="line b"></span><span class="pin l1"></span></div>
+          <div><div class="t"><b>Shorter version</b></div><div class="d">Waiting for you · today 18:40</div></div></div>
+        <div class="node st-current"><div class="rail"><span class="line"></span><span class="branch"></span><span class="pin l0"></span></div>
+          <div><div class="t"><b>Your edit: Sintra</b></div><div class="d">Changed outside Vak · in your folder</div></div></div>
+        <div class="node st-accepted"><div class="rail"><span class="line"></span><span class="pin l0"></span></div>
+          <div><div class="t"><b>Belém Tower</b></div><div class="d">Accepted 12 Oct</div></div></div>
+        <div class="node st-undone"><div class="rail"><span class="pin l0"></span></div>
+          <div><div class="t"><b>Ribeira at sunset</b></div><div class="d">Undone by you</div></div></div>
+      </div>
+      <button class="btn-primary" style="width:100%">Review "Tram 28"</button>
+      <button class="btn" style="width:100%">Ask Vak to redo it from your copy</button>
+    </div>
+  </section>
+</div>
+
+<script>
+  const button = document.getElementById("theme");
+  const root = document.documentElement;
+  const dark = () => root.dataset.theme === "dark" ||
+    (!root.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+  const label = () => { button.textContent = dark() ? "Switch to light" : "Switch to dark"; };
+  button.addEventListener("click", () => { root.dataset.theme = dark() ? "light" : "dark"; label(); });
+  label();
+</script>
+</body>
+</html>

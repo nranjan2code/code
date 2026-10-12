@@ -201,7 +201,9 @@ The design follows doc 75 and DESIGN.md: everyday words, no ids or hashes
 unless Show technical details is on, one accent for live state, and a
 working layout at 390 × 844. Before the page is built, a reference mockup of
 the version graph, the card states and the in-play strip, in light and dark
-and on a phone, goes to the maintainer for review (doc 70's ledger).
+and on a phone, goes to the maintainer for review (doc 70's ledger): it is
+`docs/assets/file-history-2026/file-history.html` (2026-10-12, awaiting
+review).
 
 ## 6. Stages
 
