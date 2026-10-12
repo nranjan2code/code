@@ -250,6 +250,25 @@ pub fn observe(artifacts: &Artifacts, space: &str, cwd: &Path, path: &str) -> Op
     Some(file_state(Some(&artifact), &normal, workspace))
 }
 
+/// What a search hit on the artifact `id` says of its file (doc 90 §3.3):
+/// its workspace path, then the note about its state, or that it is in the
+/// workspace as recorded.
+pub fn describe(artifacts: &Artifacts, cwd: &Path, id: &str, agent: &str) -> Option<String> {
+    let artifact = artifacts.get(id)?;
+    let workspace = match std::fs::read(cwd.join(&artifact.path)) {
+        Ok(bytes) => Workspace::Present {
+            digest: hex::encode(sha2::Sha256::digest(&bytes)),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Workspace::Absent,
+        Err(_) => return None,
+    };
+    let state = file_state(Some(&artifact), &artifact.path, workspace);
+    Some(match note(&state, agent) {
+        Some(note) => format!("file `{}`\n{note}", artifact.path),
+        None => format!("file `{}`, in the workspace as recorded", artifact.path),
+    })
+}
+
 /// The recorded files a listing by `pattern` cannot see, because they are
 /// not in the workspace yet (doc 90 §3.3): each with its newest draft.
 /// `None` when every match is in the folder.

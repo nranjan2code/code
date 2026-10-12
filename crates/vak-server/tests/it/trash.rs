@@ -142,6 +142,7 @@ async fn trashed_session_absent_from_every_search() {
         audience: Default::default(),
         space: Some(vak_session::trace::local::space(&cwd).to_string()),
         trash: vak_config::scope::SharedScope::new(home.clone()),
+        file: None,
     };
     let ctx = vak_tools::ToolContext {
         cwd: cwd.clone(),

@@ -27,7 +27,13 @@ pub struct SessionSearchTool {
     /// Where the trash is kept: read at every call, so a session trashed
     /// mid-turn is gone from the next search.
     pub trash: vak_config::scope::SharedScope,
+    /// What the record says about a deliverable a hit names: its workspace
+    /// path and state (docs/design/90-file-state.md §3.3), by artifact id.
+    pub file: Option<FileLookup>,
 }
+
+/// An artifact id in, its file and state out (`SessionSearchTool::file`).
+pub type FileLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 /// How a hit is named to the model: the id `forget_memory` and recall take.
 fn hit_label(node: &vak_catalog::Node) -> (String, &'static str) {
@@ -177,6 +183,15 @@ impl vak_tools::Tool for SessionSearchTool {
                     {
                         out.push_str(&format!("  {link}\n"));
                     }
+                    // A deliverable names its file and what the record says
+                    // of it now, so a later turn can reach it by name.
+                    if hit.node.kind == "artifact"
+                        && let Some(file) = self.file.as_ref().and_then(|file| file(&hit.node.id))
+                    {
+                        for line in file.lines() {
+                            out.push_str(&format!("  {line}\n"));
+                        }
+                    }
                 }
                 vak_tools::ToolOutput::ok(out)
             }
@@ -220,6 +235,7 @@ mod tests {
             },
             space: Some(vak_session::trace::local::space(cwd).to_string()),
             trash: vak_config::scope::SharedScope::new(home),
+            file: None,
         }
     }
 

@@ -489,3 +489,55 @@ fn a_listing_is_told_of_matching_drafts_not_in_the_workspace() {
         vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "*.docx").is_none()
     );
 }
+
+/// A search hit on a deliverable names its file and the record's state of
+/// it: a draft until accepted, then in the workspace as recorded (doc 90 §3.3).
+#[test]
+fn a_search_hit_names_its_file_and_state() {
+    let (shared, tenant) = home();
+    let cwd = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(cwd.path()).unwrap();
+    let executions = vak_config::scope::executions_root(cwd.path());
+    let dir = executions.join("vak").join("call_r");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rome-notes.docx"), b"draft").unwrap();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let sink = CallSink {
+        artifacts: artifacts.clone(),
+        cwd: cwd.path().to_path_buf(),
+        executions,
+        agent: "vak".into(),
+    };
+    sink.declared(
+        &vak_tools::ArtifactClaim {
+            path: "rome-notes.docx".into(),
+            declared: true,
+            title: None,
+            summary: None,
+            drafted: true,
+            based_on: None,
+        },
+        Some("ses"),
+        "call_r",
+        None,
+    );
+    let space = vak_session::trace::local::space(cwd.path()).to_string();
+    let id = artifacts
+        .list()
+        .into_iter()
+        .find(|a| a.space == space && a.path == "rome-notes.docx")
+        .unwrap()
+        .id
+        .to_string();
+
+    let told = vak_core::file_state::describe(&artifacts, cwd.path(), &id, "vak").unwrap();
+    assert!(told.starts_with("file `rome-notes.docx`"), "{told}");
+    assert!(
+        told.contains(".vak/scratch/vak/call_r/rome-notes.docx"),
+        "{told}"
+    );
+
+    std::fs::write(cwd.path().join("rome-notes.docx"), b"draft").unwrap();
+    let told = vak_core::file_state::describe(&artifacts, cwd.path(), &id, "vak").unwrap();
+    assert!(told.contains("in the workspace"), "{told}");
+}

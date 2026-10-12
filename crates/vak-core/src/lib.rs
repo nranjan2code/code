@@ -3992,6 +3992,17 @@ impl Core {
                 audience,
                 space: Some(vak_session::trace::local::space(&self.inner.cwd).to_string()),
                 trash: self.shared_scope(),
+                file: {
+                    let artifacts = self.artifacts();
+                    let cwd = self.inner.cwd.clone();
+                    let agent = self
+                        .agent_identity()
+                        .map(|agent| agent.id.clone())
+                        .unwrap_or_else(|| "vak".into());
+                    Some(Arc::new(move |id: &str| {
+                        file_state::describe(&artifacts, &cwd, id, &agent)
+                    }))
+                },
             }));
         }
         // Provider reads stay broker-owned: the model receives only a narrow

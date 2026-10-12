@@ -121,6 +121,7 @@ async fn quarantined_item_absent_from_agent_retrieval() {
         },
         space: Some(vak_session::trace::local::space(cwd.path()).to_string()),
         trash: shared.clone(),
+        file: None,
     };
     let found = agent_search(&tool, "zanzibar").await;
     assert!(found.contains(&open), "{found}");
