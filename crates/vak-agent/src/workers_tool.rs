@@ -280,6 +280,14 @@ impl WorkersTool {
     }
 }
 
+/// What a background worker wrote can hold anything it read, the owner's
+/// data and words someone else wrote alike (docs/design/08-permissions.md
+/// "Provenance").
+fn worker_words(mut output: ToolOutput) -> ToolOutput {
+    output.provenance = vak_control::Provenance::BOTH;
+    output
+}
+
 fn unknown(id: &str) -> ToolOutput {
     ToolOutput::error(Fault::Target, format!("unknown worker '{id}'"))
 }
@@ -348,7 +356,7 @@ impl Tool for WorkersTool {
             Some("status") => needs_id(id).unwrap_or_else(|| self.status(id)),
             Some("message") => needs_id(id).unwrap_or_else(|| self.message(id, text)),
             Some("reply") => needs_id(id).unwrap_or_else(|| self.reply(id, text)),
-            Some("result") => needs_id(id).unwrap_or_else(|| self.result(id)),
+            Some("result") => needs_id(id).unwrap_or_else(|| worker_words(self.result(id))),
             Some("stop") => needs_id(id).unwrap_or_else(|| self.stop(id)),
             Some("wait") => {
                 let ids = args
@@ -367,7 +375,7 @@ impl Tool for WorkersTool {
                     .and_then(Value::as_u64)
                     .unwrap_or(DEFAULT_WAIT_SECS)
                     .clamp(1, MAX_WAIT_SECS);
-                self.wait(ids, Duration::from_secs(secs), ctx).await
+                worker_words(self.wait(ids, Duration::from_secs(secs), ctx).await)
             }
             _ => ToolOutput::error(
                 Fault::Shape,

@@ -20758,6 +20758,7 @@ async fn execute_script(
         trace,
         new_documents: Vec::new(),
         executions: None,
+        provenance: vak_control::Provenance::NONE,
     };
     let Some(args) =
         vak_tools::command_call(bash.as_ref(), script, core.time_limits().script_secs * 1000)

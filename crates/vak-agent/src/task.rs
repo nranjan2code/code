@@ -1014,6 +1014,10 @@ impl TaskTool {
         }
 
         let mut cfg = AgentConfig::new(child_system_prompt.clone());
+        // The worker's task was written from what the delegating turn held,
+        // so the worker starts holding it (docs/design/08-permissions.md
+        // "Provenance").
+        cfg.inherited_provenance = ctx.provenance;
         cfg.model = self.deps.model.clone();
         cfg.tail = self.deps.tail.clone();
         let child_tool_names: std::collections::BTreeSet<_> =
@@ -1266,6 +1270,8 @@ impl DriveChild {
             })
             .collect();
         let mut output = worker_output(&session_id, outcome, contracted);
+        // What the worker wrote can hold anything its turn held.
+        output.provenance = agent.held();
         if !cards.is_empty() {
             output.delegated = Some(vak_tools::DelegatedCards {
                 session_id: session_id.clone(),

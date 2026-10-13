@@ -111,6 +111,13 @@ pub struct Turn {
     /// it served (docs/design/85-turn-graph.md, G1). Built from entries that
     /// name this turn in `Entry::at_turn`.
     pub links: Vec<TurnLink>,
+    /// What this turn's results held, joined over its calls
+    /// (`CallEffect::Provenance`, docs/design/08-permissions.md
+    /// "Provenance"); its card keeps it, so a later request that carries
+    /// the turn carries what it held.
+    pub provenance: vak_control::Provenance,
+    /// What each of this turn's calls held, by tool_use_id, for `recall`.
+    call_provenance: HashMap<String, vak_control::Provenance>,
     /// The turn's closing card, once written (`EntryPayload::TurnCard`).
     pub card: Option<TurnCard>,
     /// Canonical closing-card entry address for selected projection.
@@ -380,7 +387,8 @@ impl TurnLink {
             crate::types::CallEffect::Mcp(_)
             | crate::types::CallEffect::Fetched { .. }
             | crate::types::CallEffect::Account { .. }
-            | crate::types::CallEffect::Failed { .. } => {
+            | crate::types::CallEffect::Failed { .. }
+            | crate::types::CallEffect::Provenance(_) => {
                 return None;
             }
         };
@@ -536,6 +544,8 @@ impl TurnIndex {
                                     evidence_bodies: HashMap::new(),
                                     reading: pending_readings.remove(&entry.id),
                                     links: pending_links.remove(&entry.id).unwrap_or_default(),
+                                    provenance: vak_control::Provenance::NONE,
+                                    call_provenance: HashMap::new(),
                                     raw_tail: Vec::new(),
                                 });
                             } else if has_tool_result && let Some(turn) = turns.last_mut() {
@@ -600,6 +610,21 @@ impl TurnIndex {
                     }
                 }
                 EntryPayload::CallEffect(record) => {
+                    if let crate::types::CallEffect::Provenance(labels) = record.effect {
+                        if let Some(turn) = entry
+                            .at_turn
+                            .as_ref()
+                            .and_then(|id| turns.iter_mut().rev().find(|turn| &turn.id == id))
+                        {
+                            turn.provenance = turn.provenance.join(labels);
+                            let call = turn
+                                .call_provenance
+                                .entry(record.tool_use_id.clone())
+                                .or_default();
+                            *call = call.join(labels);
+                        }
+                        continue;
+                    }
                     let (Some(turn_id), Some(link)) =
                         (&entry.at_turn, TurnLink::from_effect(&record.effect))
                     else {
@@ -790,6 +815,11 @@ impl TurnIndex {
 }
 
 impl Turn {
+    /// What call `tool_use_id` of this turn held, when it was recorded.
+    pub fn call_provenance(&self, tool_use_id: &str) -> Option<vak_control::Provenance> {
+        self.call_provenance.get(tool_use_id).copied()
+    }
+
     fn tool_use(&self, id: &str) -> Option<(&str, &Value)> {
         self.steps
             .iter()
@@ -1020,6 +1050,7 @@ impl Turn {
             reading,
             tokens_full,
             tokens_card: 0,
+            provenance: self.provenance,
         };
         // Rendered card cost is unrelated to the richer search projection.
         // Planning remeasures with the actual ordinal and current profile.
@@ -1433,6 +1464,10 @@ pub struct TurnCard {
     pub reading: ReadingKey,
     pub tokens_full: u64,
     pub tokens_card: u64,
+    /// What the turn's results held (docs/design/08-permissions.md
+    /// "Provenance"): a request that carries this card carries it.
+    #[serde(default, skip_serializing_if = "vak_control::Provenance::is_none")]
+    pub provenance: vak_control::Provenance,
 }
 
 impl TurnCard {

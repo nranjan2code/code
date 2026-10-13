@@ -678,6 +678,7 @@ mod tests {
             trace: None,
             new_documents: Vec::new(),
             executions: None,
+            provenance: vak_control::Provenance::NONE,
         };
         let loaded = tool
             .execute(&serde_json::json!({"name": "code-task"}), &ctx)

@@ -153,6 +153,7 @@ async fn trashed_session_absent_from_every_search() {
         trace: None,
         new_documents: Vec::new(),
         executions: None,
+        provenance: vak_control::Provenance::NONE,
     };
     let tool_search = || async {
         search_tool

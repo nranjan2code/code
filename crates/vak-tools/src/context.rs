@@ -22,6 +22,9 @@ pub struct ToolContext {
     /// The space's execution root, resolved by the host so a worker with a
     /// scrubbed environment finds the same one; `None` resolves it here.
     pub executions: Option<PathBuf>,
+    /// What the calling turn held when the call was made: a delegated
+    /// worker starts with it (docs/design/08-permissions.md "Provenance").
+    pub provenance: vak_control::Provenance,
 }
 
 impl ToolContext {
@@ -35,6 +38,7 @@ impl ToolContext {
             trace: None,
             new_documents: Vec::new(),
             executions: None,
+            provenance: vak_control::Provenance::NONE,
         }
     }
 

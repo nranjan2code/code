@@ -21,6 +21,7 @@ async fn run(tool: &dyn Tool, dir: &Path, args: serde_json::Value) -> ToolOutput
         trace: None,
         new_documents: Vec::new(),
         executions: None,
+        provenance: vak_control::Provenance::NONE,
     };
     tool.execute(&args, &ctx).await
 }

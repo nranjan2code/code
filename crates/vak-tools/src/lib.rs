@@ -85,9 +85,29 @@ pub struct ToolOutput {
     /// The connected provider account the content came from, when it did:
     /// the result is then kept under that account's key (plan M7a-b).
     pub account: Option<String>,
+    /// What this result holds beyond what its tool declares
+    /// (`Tool::provenance`): a delegated worker's result holds what the
+    /// worker held. The calling loop joins the two.
+    pub provenance: vak_control::Provenance,
 }
 
 pub use vak_session::types::McpSource;
+
+/// What results of a tool of this reach hold, when it declares nothing
+/// more: reading the workspace, Vak's own records or a command's output is
+/// the owner's data; the network and an integration server answer in
+/// someone else's words.
+pub fn provenance_of_reach(reach: vak_permission::Reach) -> vak_control::Provenance {
+    use vak_control::Provenance;
+    use vak_permission::Reach;
+    match reach {
+        Reach::ReadPath | Reach::ReadStore | Reach::Command | Reach::Learning => {
+            Provenance::PRIVATE
+        }
+        Reach::Network | Reach::Integration => Provenance::UNTRUSTED,
+        Reach::Display | Reach::Coordination | Reach::WritePath | Reach::Other => Provenance::NONE,
+    }
+}
 
 /// Whether a call reads or writes the file it names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +132,7 @@ impl ToolOutput {
             delegated: None,
             mcp_source: None,
             account: None,
+            provenance: vak_control::Provenance::NONE,
         }
     }
 
@@ -128,6 +149,7 @@ impl ToolOutput {
             delegated: None,
             mcp_source: None,
             account: None,
+            provenance: vak_control::Provenance::NONE,
         }
     }
 
@@ -253,6 +275,24 @@ pub trait Tool: Send + Sync {
     /// read-only mode denies it and workspace-write asks.
     fn permission(&self) -> vak_permission::Declared {
         vak_permission::Declared::default()
+    }
+
+    /// What this tool's results hold: the owner's data, words someone else
+    /// wrote, both or neither (docs/design/08-permissions.md "Provenance").
+    /// Read from its reach unless it declares otherwise.
+    fn provenance(&self) -> vak_control::Provenance {
+        provenance_of_reach(self.permission().reach)
+    }
+
+    /// Whether a call to this tool can send what the turn holds off this
+    /// machine. Read from its reach unless it declares otherwise; a shell
+    /// command is one only where the sandbox leaves it the network, which
+    /// the calling loop decides.
+    fn leaves_machine(&self) -> bool {
+        matches!(
+            self.permission().reach,
+            vak_permission::Reach::Network | vak_permission::Reach::Integration
+        )
     }
 
     /// The code-owned prompt contract this tool's use needs, shown only

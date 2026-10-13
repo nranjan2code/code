@@ -20,6 +20,11 @@ pub enum AskSource {
     Scope,
     ModeDefault,
     CircuitBreaker,
+    /// The turn holds the owner's data and words someone else wrote, and
+    /// the call can leave the machine (docs/design/08-permissions.md
+    /// "Provenance"). Raised by the calling loop, never by a rule; nothing
+    /// pre-authorizes it.
+    Provenance,
 }
 
 #[derive(Debug, Clone, Default)]

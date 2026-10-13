@@ -171,6 +171,10 @@ plugin trust, and deep policy-drift audits.
 - Keep model-provider inference on a separate trusted channel. Network denial
   inside Bash does not prevent data placed in model-visible tool output from
   reaching the configured provider.
+- Implemented 2026-10-13: the provenance gate. A call that can leave the
+  machine goes to a person once a request holds both the owner's data and
+  words someone else wrote, across turns and into delegated workers
+  (docs/design/08-permissions.md "Provenance").
 
 ### P1 — control-plane and supply-chain safety
 

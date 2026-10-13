@@ -472,6 +472,7 @@ mod tests {
             },
             tokens_full,
             tokens_card,
+            provenance: vak_control::Provenance::NONE,
         }
     }
 

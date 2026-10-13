@@ -8,6 +8,9 @@
 use serde::{Deserialize, Serialize};
 
 pub mod correct;
+pub mod provenance;
+
+pub use provenance::{Held, Provenance};
 
 pub use correct::{
     Finding, Ladder, RECOVERY_NOTE, ShownTool, card_file_missing, card_kind_elsewhere,

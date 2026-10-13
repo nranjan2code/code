@@ -85,12 +85,15 @@ impl LedgerDir {
 /// card that closes a turn. Everything else becomes durable at the next
 /// commit point or when the ledger closes. A failed call's fault touched
 /// nothing outside: it is written before the call's result and commits
-/// with it.
+/// with it. What a result holds (`Provenance`) touched nothing outside
+/// either: it commits with the next commit point, at the latest the card
+/// that keeps it.
 fn commits(entry: &Entry) -> bool {
     match &entry.payload {
-        EntryPayload::CallEffect(record) => {
-            !matches!(record.effect, crate::types::CallEffect::Failed { .. })
-        }
+        EntryPayload::CallEffect(record) => !matches!(
+            record.effect,
+            crate::types::CallEffect::Failed { .. } | crate::types::CallEffect::Provenance(_)
+        ),
         EntryPayload::Header(_) | EntryPayload::TurnCard(_) => true,
         EntryPayload::Message(record) => {
             record.message.role == vak_llm::Role::User && record.control_kind().is_none()
@@ -1104,6 +1107,53 @@ impl SessionLog {
                 _ => None,
             })
             .collect()
+    }
+
+    /// What a request built from `plan` carries from earlier turns: what
+    /// every turn it holds at any fidelity, in its packet or as a retrieved
+    /// turn held (docs/design/08-permissions.md "Provenance").
+    pub fn carried_provenance(&self, plan: &WorkingSetPlan) -> vak_control::Provenance {
+        let cards = self.turn_cards();
+        let mut carried = vak_control::Provenance::NONE;
+        let mut in_packet = false;
+        for (turn_id, card) in &cards {
+            let first = plan
+                .packet_range
+                .as_ref()
+                .is_some_and(|(first, _)| first == turn_id);
+            in_packet |= first;
+            let held = in_packet
+                || plan.per_turn.iter().any(|(id, _)| id == turn_id)
+                || plan.retrieved.iter().any(|id| id == turn_id);
+            if held {
+                carried = carried.join(card.provenance);
+            }
+            if plan
+                .packet_range
+                .as_ref()
+                .is_some_and(|(_, last)| last == turn_id)
+            {
+                in_packet = false;
+            }
+        }
+        carried
+    }
+
+    /// What call `tool_use_id` held, as the loop recorded it
+    /// (`CallEffect::Provenance`); `None` when nothing was recorded.
+    pub fn call_provenance(&self, tool_use_id: &str) -> Option<vak_control::Provenance> {
+        self.chain_to_root()
+            .into_iter()
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::CallEffect(record) if record.tool_use_id == tool_use_id => {
+                    match record.effect {
+                        crate::types::CallEffect::Provenance(labels) => Some(labels),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .reduce(vak_control::Provenance::join)
     }
 
     /// Resolves a tool_use_id to its full `Evidence` — the tool name, its

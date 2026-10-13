@@ -1078,6 +1078,10 @@ pub enum CallEffect {
     /// it (docs/design/88-control-plane.md §8). A refused call is a
     /// `Decision` instead.
     Failed { fault: vak_control::Fault },
+    /// What the call's result holds: the owner's data, words someone else
+    /// wrote, or both, from what its tool declares and where the result
+    /// came from (docs/design/08-permissions.md "Provenance").
+    Provenance(vak_control::Provenance),
 }
 
 /// Which MCP server answered a call: the configured name, what the server

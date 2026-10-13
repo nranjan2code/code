@@ -84,6 +84,13 @@ impl vak_tools::Tool for AgentNetworkTool {
         "agent_network"
     }
 
+    /// Its results can hold the owner's data and words someone else wrote
+    /// (docs/design/08-permissions.md "Provenance"): another
+    /// Agent writes what it read.
+    fn provenance(&self) -> vak_control::Provenance {
+        vak_control::Provenance::BOTH
+    }
+
     fn serves(&self) -> &'static [&'static str] {
         &["messaging"]
     }

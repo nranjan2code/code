@@ -27,6 +27,7 @@ async fn agent_search(tool: &vak_core::session_search::SessionSearchTool, query:
         trace: None,
         new_documents: Vec::new(),
         executions: None,
+        provenance: vak_control::Provenance::NONE,
     };
     tool.execute(&serde_json::json!({ "query": query }), &ctx)
         .await

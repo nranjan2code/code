@@ -184,6 +184,14 @@ impl Tool for ScopedWriteTool {
         self.inner.permission()
     }
 
+    fn provenance(&self) -> vak_control::Provenance {
+        self.inner.provenance()
+    }
+
+    fn leaves_machine(&self) -> bool {
+        self.inner.leaves_machine()
+    }
+
     fn time_limit_argument(&self) -> Option<&'static str> {
         self.inner.time_limit_argument()
     }

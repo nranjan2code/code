@@ -20,6 +20,7 @@ fn ctx_with(cwd: &std::path::Path, mode: SandboxMode) -> ToolContext {
         trace: None,
         new_documents: Vec::new(),
         executions: None,
+        provenance: vak_control::Provenance::NONE,
     }
 }
 
@@ -182,6 +183,7 @@ async fn deny_sandbox_returns_error_at_runtime() {
         trace: None,
         new_documents: Vec::new(),
         executions: None,
+        provenance: vak_control::Provenance::NONE,
     };
 
     let out = BashTool
@@ -212,6 +214,7 @@ async fn off_mode_allows_unrestricted_writes() {
         trace: None,
         new_documents: Vec::new(),
         executions: None,
+        provenance: vak_control::Provenance::NONE,
     };
 
     let out = run(

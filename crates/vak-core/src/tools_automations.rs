@@ -72,6 +72,12 @@ impl vak_tools::Tool for AutomationsTool {
         "automations"
     }
 
+    /// Its results are Vak's own records of the owner's
+    /// (docs/design/08-permissions.md "Provenance").
+    fn provenance(&self) -> vak_control::Provenance {
+        vak_control::Provenance::PRIVATE
+    }
+
     fn serves(&self) -> &'static [&'static str] {
         &["orchestration"]
     }

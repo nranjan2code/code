@@ -1,5 +1,5 @@
 # 08 — Permissions (vak-permission)
-Status: implemented in 2.0.0; declared reach replaces the name tables (2026-10-12)
+Status: implemented in 2.0.0; declared reach replaces the name tables (2026-10-12); the provenance gate (2026-10-13)
 
 ## Model
 
@@ -104,6 +104,70 @@ The permission tests run the engine on a table of what the built-in tools
 declare (`crates/vak-permission/tests/it/support/mod.rs`); vak-core's
 `built_in_tools_declare_what_the_permission_tests_assume` checks every
 declaring tool against it.
+
+## Provenance (2026-10-13)
+
+A request that carries both the owner's data and words someone else wrote is
+the one in which an injected instruction can carry that data off the
+machine: a web page or an email tells the model to put a file's contents in
+a URL. Neither alone is that risk. Research that only reads the web holds
+nothing of the owner's; work on the owner's files holds no stranger's words.
+So the gate is the two together, and nothing reads a word of the content.
+
+**Labels.** Every tool result holds a `vak_control::Provenance`: `private`
+(something the owner keeps in Vak: a workspace file, Vak's own records, a
+connected account's data) and `untrusted` (words someone other than the
+owner wrote: a web page, an integration server's answer, a message that
+reached a connected account). A tool declares it with `Tool::provenance`,
+read from its reach unless it says otherwise (`provenance_of_reach`):
+
+| Reach | Holds |
+|---|---|
+| `ReadPath`, `ReadStore`, `Command`, `Learning` | private |
+| `Network`, `Integration` | untrusted |
+| `Display`, `Coordination`, `WritePath`, `Other` | nothing |
+
+Declared beyond their reach: `session_search` and `agent_network` hold both
+(the catalog indexes past results and intake items; another Agent writes
+what it read), `entity_record`, `entity_query` and `automations` hold
+private, and `flow` holds both. A result adds what its own output says
+(`ToolOutput::provenance`): a connected account's result holds both (it is
+the owner's mail and a stranger's words), a `task` worker's result holds what
+the worker held, and a background worker's result or wait holds both. A
+`recall` result holds private, and what the turn or call it reopens held; a
+search of cards, a card payload or another conversation is taken to hold
+both, since nothing recorded says otherwise. An error is labelled like a
+success: a server's error carries its words too.
+
+**Where labels live.** The loop records each labelled result as
+`CallEffect::Provenance` naming its call, and joins it into what the turn
+holds (`vak_control::Held`, which names where each kind came from). A turn's
+labels are the join over its calls (`Turn::provenance`), and its card keeps
+them (`TurnCard::provenance`). A request holds what its open turn has
+received and what every earlier turn its plan carries held, at any fidelity,
+in its packet or retrieved (`SessionLog::carried_provenance`), so an
+injection read in one turn cannot act unseen in the next. Labels only join
+within a turn; each turn starts from what the run inherited. A `task` worker
+starts holding what its parent held when it delegated
+(`AgentConfig::inherited_provenance`, from `ToolContext::provenance`),
+because its task was written from it.
+
+**The gate.** Once a turn holds both, a call that can leave the machine is
+put to the person (`AskSource::Provenance`), with the reason naming where
+each kind came from. A tool declares that it can leave with
+`Tool::leaves_machine`: true for `Network` and `Integration` by default, and
+for `flow` and the tool-less `work`, which run other tools. A shell command
+can leave only where the sandbox leaves it the network: with no sandbox or in
+full-access. The gate only adds a requirement: a denial stands; an ask a
+rule raised is asked once, with both reasons. Nothing pre-authorizes it: not
+`approve-safe` or `auto-approve`, not an envelope, not a remembered
+approval. On a surface nobody answers it is refused (invariant 15).
+
+**What it does not do.** It reads no content and guesses nothing from
+words. It does not stop the model from writing the owner's data into its
+answer, which the owner reads. It does not cover a provider effect, which is
+reviewed per candidate (invariant 41). A static flow's own nodes are not
+model-steered; the `flow` call that runs one is gated.
 
 ## Rules
 

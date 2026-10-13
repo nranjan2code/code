@@ -24,6 +24,7 @@ mod hooks;
 mod make_another;
 mod malformed_fence_check;
 mod permissions;
+mod provenance;
 mod recall_elsewhere;
 mod reliability;
 mod required_card;

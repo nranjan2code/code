@@ -133,6 +133,12 @@ impl vak_tools::Tool for EntityRecordTool {
         "entity_record"
     }
 
+    /// Its results are Vak's own records of the owner's
+    /// (docs/design/08-permissions.md "Provenance").
+    fn provenance(&self) -> vak_control::Provenance {
+        vak_control::Provenance::PRIVATE
+    }
+
     fn serves(&self) -> &'static [&'static str] {
         &["memory"]
     }
@@ -310,6 +316,12 @@ pub struct EntityQueryTool {
 impl vak_tools::Tool for EntityQueryTool {
     fn name(&self) -> &str {
         "entity_query"
+    }
+
+    /// Its results are Vak's own records of the owner's
+    /// (docs/design/08-permissions.md "Provenance").
+    fn provenance(&self) -> vak_control::Provenance {
+        vak_control::Provenance::PRIVATE
     }
 
     fn serves(&self) -> &'static [&'static str] {
@@ -495,6 +507,7 @@ mod tests {
             trace: None,
             new_documents: Vec::new(),
             executions: None,
+            provenance: vak_control::Provenance::NONE,
         };
 
         // Record entity via tool

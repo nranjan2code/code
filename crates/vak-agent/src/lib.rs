@@ -66,7 +66,10 @@ pub fn auto_approve(
     cwd: &std::path::Path,
 ) -> bool {
     use vak_permission::{Reach, Subject};
-    if matches!(source, AskSource::Rule | AskSource::CircuitBreaker) {
+    if matches!(
+        source,
+        AskSource::Rule | AskSource::CircuitBreaker | AskSource::Provenance
+    ) {
         return false;
     }
     if matches!(approval_mode, ApprovalMode::AutoApprove) {
@@ -142,6 +145,17 @@ struct ManagedFlowTool {
 impl Tool for ManagedFlowTool {
     fn name(&self) -> &str {
         "flow"
+    }
+
+    /// A flow's nodes call tools of their own, so what it returns can hold
+    /// anything and what it runs can leave the machine
+    /// (docs/design/08-permissions.md "Provenance").
+    fn provenance(&self) -> vak_control::Provenance {
+        vak_control::Provenance::BOTH
+    }
+
+    fn leaves_machine(&self) -> bool {
+        true
     }
 
     fn serves(&self) -> &'static [&'static str] {
@@ -412,6 +426,10 @@ pub struct AgentConfig {
     /// Pre-authorization from a live envelope, consulted at an `Ask` gate
     /// before the approver. See `EnvelopeCheck`. Absent, every gate asks.
     pub envelope_check: Option<EnvelopeCheck>,
+    /// What a delegated worker's parent held when it delegated: every turn
+    /// of this run starts holding it (docs/design/08-permissions.md
+    /// "Provenance"). `NONE` for a run nobody delegated.
+    pub inherited_provenance: vak_control::Provenance,
     /// Run once per run, when the first call that may change the workspace
     /// is accepted and before it runs (`Tool::changes_workspace`): the host
     /// checkpoints the workspace here.
@@ -585,6 +603,7 @@ impl AgentConfig {
             protected_paths: Vec::new(),
             steps: vak_control::StepDefaults::shipped(),
             envelope_check: None,
+            inherited_provenance: vak_control::Provenance::NONE,
             before_effect: None,
             presentation_rebuild: None,
             history_recall: None,
@@ -1058,6 +1077,9 @@ struct CallYield {
     /// call, so Vak's own change is never later found as an edit made
     /// outside it (docs/design/90-file-state.md).
     wrote: Vec<String>,
+    /// The tool that answered, naming the source of what its result holds
+    /// when the turn's labels are joined (`CallEffect::Provenance`).
+    tool: String,
 }
 
 type CallYields = Arc<StdMutex<HashMap<String, CallYield>>>;
@@ -1134,6 +1156,10 @@ pub struct Agent {
     /// What each call of this run last returned, by its name and arguments
     /// (`SeenCall`), since the last accepted change to the workspace.
     seen_calls: std::sync::Mutex<HashMap<String, SeenCall>>,
+    /// What this turn's requests have held so far, and from where
+    /// (docs/design/08-permissions.md "Provenance"). Only ever joins within
+    /// a turn; a new turn starts from what the run inherited.
+    held: std::sync::Mutex<vak_control::Held>,
     /// This run's correction ladder (docs/design/88-control-plane.md §5).
     ladder: vak_control::Ladder,
     /// Each card a call of this step showed, with the plan deliverable
@@ -1177,6 +1203,7 @@ pub struct Agent {
 impl Agent {
     pub fn new(provider: Arc<dyn Provider>, session: SessionLog, mut config: AgentConfig) -> Self {
         let session = Arc::new(Mutex::new(session));
+        let inherited = config.inherited_provenance;
         if let Some(dispatcher) = config.flow_dispatcher.clone() {
             config.tools.push(Arc::new(ManagedFlowTool {
                 dispatcher,
@@ -1190,6 +1217,7 @@ impl Agent {
             session,
             config,
             seen_calls: std::sync::Mutex::new(HashMap::new()),
+            held: std::sync::Mutex::new(vak_control::Held::starting_with(inherited)),
             ladder: vak_control::Ladder::default(),
             shown_cards: std::sync::Mutex::new(Vec::new()),
             must_call: None,
@@ -1524,6 +1552,11 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        *self
+            .held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            vak_control::Held::starting_with(self.config.inherited_provenance);
         self.effect_announced
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.ladder = vak_control::Ladder::default();
@@ -1686,6 +1719,11 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        *self
+            .held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            vak_control::Held::starting_with(self.config.inherited_provenance);
         *self
             .declared_plan
             .lock()
@@ -2110,6 +2148,10 @@ impl Agent {
                 // stays in the ledger and is searched through `recall` only
                 // when the model needs an earlier detail.
                 let (mut messages, directive_at) = session.derive_with_plan_and_directive(&plan);
+                self.note_held(
+                    vak_control::provenance::EARLIER_TURNS,
+                    session.carried_provenance(&plan),
+                );
                 // The tail is one final text block on the turn's directive
                 // (after any tool_result blocks the directive itself
                 // carries), never a separate consecutive user message and
@@ -2243,6 +2285,10 @@ impl Agent {
                                 let session = self.session.lock().await;
                                 let (mut messages, directive_at) =
                                     session.derive_with_plan_and_directive(&plan);
+                                self.note_held(
+                                    vak_control::provenance::EARLIER_TURNS,
+                                    session.carried_provenance(&plan),
+                                );
                                 attach_tail(&mut messages, &turn_tail, directive_at);
                                 // This request just changed shape earlier
                                 // than the open turn's own tail (a smaller
@@ -3216,6 +3262,9 @@ impl Agent {
                 continue;
             };
             for effect in std::mem::take(&mut yielded.effects) {
+                if let vak_session::types::CallEffect::Provenance(labels) = effect {
+                    self.note_held(&yielded.tool, labels);
+                }
                 if let Err(error) =
                     session.append_call_effect(vak_session::types::CallEffectRecord {
                         tool_use_id: id.clone(),
@@ -3355,6 +3404,34 @@ impl Agent {
     /// already carrying a card (`TurnIndex` rebuilds `turn.card` from any
     /// existing `TurnCard` entry) is left alone, since a card is written
     /// once and never rewritten.
+    /// Adds what one source holds to what this turn holds
+    /// (docs/design/08-permissions.md "Provenance").
+    fn note_held(&self, source: &str, labels: vak_control::Provenance) {
+        if labels.is_none() {
+            return;
+        }
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .note(source, labels);
+    }
+
+    /// What this turn holds, with where each kind came from.
+    fn held_now(&self) -> vak_control::Held {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// What this turn has held so far.
+    pub fn held(&self) -> vak_control::Provenance {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .labels()
+    }
+
     async fn close_turn(&mut self, outcome: &TurnOutcome) {
         let outcome_label = match outcome {
             TurnOutcome::Completed { .. } => "completed",
@@ -4221,6 +4298,7 @@ impl Agent {
             &self.seen_calls,
             &self.config.tools,
             &[],
+            &self.held_now(),
             cancel,
         )
         .await
@@ -4242,6 +4320,7 @@ impl Agent {
             trace: None,
             new_documents: Vec::new(),
             executions: None,
+            provenance: self.held(),
         };
         // The command is bounded by the operator's limit, as any command is
         // (docs/design/88-control-plane.md §5a).
@@ -5478,6 +5557,18 @@ impl Agent {
         for call in recall_calls {
             let output = match self.resolve_recall(&call.input, cancel).await {
                 Ok(content) => {
+                    let labels = self.recall_provenance(&call.input).await;
+                    {
+                        let mut yields = self
+                            .call_yields
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let yielded = yields.entry(call.id.clone()).or_default();
+                        yielded
+                            .effects
+                            .push(vak_session::types::CallEffect::Provenance(labels));
+                        yielded.tool = call.name.clone();
+                    }
                     ToolRunOutput::Ok(windowed_result(&call.id, content, &self.call_yields))
                 }
                 // A malformed call is an ordinary correctable error: the
@@ -5641,6 +5732,40 @@ impl Agent {
                 ))),
             },
         }
+    }
+
+    /// What a `recall` result holds (docs/design/08-permissions.md
+    /// "Provenance"): the owner's own history always, and what the turn or
+    /// call it reopens held. A search of cards, a card payload and another
+    /// conversation are taken to hold words someone else wrote, since
+    /// nothing recorded says they do not.
+    async fn recall_provenance(&self, input: &Value) -> vak_control::Provenance {
+        use vak_control::Provenance;
+        let Ok(request) = vak_tools::parse_recall_args(input) else {
+            return Provenance::NONE;
+        };
+        let session = self.session.lock().await;
+        let reopened = match request {
+            RecallRequest::Turn(n) => TurnIndex::from_log(&session)
+                .turn_by_number(n as usize)
+                .map(|turn| turn.provenance),
+            RecallRequest::TurnId(id) => TurnIndex::from_log(&session)
+                .turn_by_id(&id)
+                .map(|turn| turn.provenance),
+            RecallRequest::Id { id, .. } => session.call_provenance(&id).or_else(|| {
+                session.evidence(&id).and_then(|evidence| {
+                    self.config
+                        .tools
+                        .iter()
+                        .find(|tool| tool.name() == evidence.tool)
+                        .map(|tool| tool.provenance())
+                })
+            }),
+            RecallRequest::Presentation(_)
+            | RecallRequest::Search { .. }
+            | RecallRequest::Elsewhere { .. } => None,
+        };
+        Provenance::PRIVATE.join(reopened.unwrap_or(Provenance::UNTRUSTED))
     }
 
     async fn execute_batch_inner(
@@ -6219,6 +6344,7 @@ impl Agent {
         let read_first = Arc::new(self.turn_reads().await);
         let mut authz: Vec<Result<(), (Fault, String)>> = Vec::with_capacity(n);
         let mut verdicts = Vec::with_capacity(n);
+        let held = self.held_now();
         for call in &calls {
             let verdict = authorize(
                 &self.config,
@@ -6227,6 +6353,7 @@ impl Agent {
                 &self.seen_calls,
                 &self.config.tools,
                 &skill_names,
+                &held,
                 cancel,
             )
             .await;
@@ -6350,6 +6477,7 @@ impl Agent {
                                     tool_activity_recorder.as_ref(),
                                     sandbox.as_ref(),
                                     self.config.trace.as_ref(),
+                                    self.held(),
                                     &self.call_yields,
                                     self.config.time_limits,
                                     self.config.file_note.as_ref(),
@@ -6444,6 +6572,7 @@ impl Agent {
                 let agent_id = agent_id.clone();
                 let trace = self.config.trace.clone();
                 let yields = self.call_yields.clone();
+                let held = self.held();
                 let limits = self.config.time_limits;
                 let file_note = self.config.file_note.clone();
                 let artifacts = self.config.artifacts.clone();
@@ -6463,6 +6592,7 @@ impl Agent {
                             tool_activity_recorder.as_ref(),
                             sandbox.as_ref(),
                             trace.as_ref(),
+                            held,
                             &yields,
                             limits,
                             file_note.as_ref(),
@@ -7282,6 +7412,7 @@ async fn execute_one(
     tool_activity_recorder: Option<&ToolActivityRecorder>,
     sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
     trace: Option<&vak_session::trace::TraceKey>,
+    held: vak_control::Provenance,
     yields: &CallYields,
     limits: vak_control::TimeLimits,
     file_note: Option<&FileNote>,
@@ -7388,7 +7519,9 @@ async fn execute_one(
                 trace: call_trace,
                 new_documents: Vec::new(),
                 executions: None,
+                provenance: held,
             };
+            let declared_labels = tool.provenance();
             let file_access = tool.file_access(&call.input);
             let fetched = tool.fetched(&call.input);
             let declared = file_access
@@ -7420,13 +7553,27 @@ async fn execute_one(
                             effects.push(vak_session::types::CallEffect::Fetched { url });
                         }
                     }
+                    // What the result holds, failed or not: an error can
+                    // carry a server's words as well as a success can
+                    // (docs/design/08-permissions.md "Provenance").
+                    let labels =
+                        declared_labels
+                            .join(out.provenance)
+                            .join(if out.account.is_some() {
+                                vak_control::Provenance::BOTH
+                            } else {
+                                vak_control::Provenance::NONE
+                            });
+                    if !labels.is_none() {
+                        effects.push(vak_session::types::CallEffect::Provenance(labels));
+                    }
                     if !effects.is_empty() {
-                        yields
+                        let mut yields = yields
                             .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .entry(call.id.clone())
-                            .or_default()
-                            .effects = effects;
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let yielded = yields.entry(call.id.clone()).or_default();
+                        yielded.effects = effects;
+                        yielded.tool = hook_name.clone();
                     }
                     if let Some(delegated) = out.delegated {
                         yields
@@ -8103,6 +8250,51 @@ async fn ask_unless_cancelled(
     }
 }
 
+/// Whether `call` can send what the turn holds off this machine: a tool
+/// that declares so, and a shell command wherever the sandbox leaves it the
+/// network. A call no tool answers (`work`) runs other tools, so it can.
+fn leaves_machine(
+    config: &AgentConfig,
+    call: &PendingToolCall,
+    tool: Option<&Arc<dyn Tool>>,
+) -> bool {
+    let Some(tool) = tool else {
+        return call.name == "work";
+    };
+    if tool.permission().reach == vak_permission::Reach::Command {
+        return config.sandbox.is_none() || matches!(config.mode, Mode::FullAccess);
+    }
+    tool.leaves_machine()
+}
+
+/// Puts a call that can leave the machine to a person once the turn holds
+/// the owner's data and words someone else wrote together
+/// (docs/design/08-permissions.md "Provenance"). It only adds a
+/// requirement: a denial stands, and nothing pre-authorizes this ask.
+fn provenance_gate(
+    config: &AgentConfig,
+    call: &PendingToolCall,
+    tool: Option<&Arc<dyn Tool>>,
+    held: &vak_control::Held,
+    decision: Decision,
+) -> Decision {
+    if !held.labels().gates_exits() || !leaves_machine(config, call, tool) {
+        return decision;
+    }
+    match decision {
+        Decision::Deny { .. } => decision,
+        Decision::Allow => Decision::Ask {
+            reason: held.gate_reason(),
+            source: AskSource::Provenance,
+        },
+        Decision::Ask { reason, .. } => Decision::Ask {
+            reason: format!("{reason}; {}", held.gate_reason()),
+            source: AskSource::Provenance,
+        },
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn authorize(
     config: &AgentConfig,
     call: &PendingToolCall,
@@ -8110,6 +8302,7 @@ async fn authorize(
     seen_calls: &std::sync::Mutex<HashMap<String, SeenCall>>,
     tools: &[Arc<dyn Tool>],
     skill_names: &[String],
+    held: &vak_control::Held,
     cancel: &CancellationToken,
 ) -> Result<(), (vak_control::Refusal, String)> {
     use vak_control::{CallVerdict, Refusal};
@@ -8170,6 +8363,7 @@ async fn authorize(
                 None => Decision::Allow,
             }
         };
+        let decision = provenance_gate(config, call, tool, held, decision);
         match decision {
             Decision::Allow => {}
             Decision::Deny { reason } => {
@@ -8206,12 +8400,14 @@ async fn authorize(
                 config.mode,
                 config.sandbox.is_some(),
                 cwd,
-            ) || (!matches!(source, AskSource::Rule | AskSource::CircuitBreaker)
-                && config
-                    .envelope_check
-                    .as_ref()
-                    .and_then(|check| check(&call.name, &call.input))
-                    .is_some());
+            ) || (!matches!(
+                source,
+                AskSource::Rule | AskSource::CircuitBreaker | AskSource::Provenance
+            ) && config
+                .envelope_check
+                .as_ref()
+                .and_then(|check| check(&call.name, &call.input))
+                .is_some());
             let answer = if covered {
                 Asked::Covered
             } else {
@@ -9580,7 +9776,8 @@ mod file_effect_tests {
             CallEffect::Mcp(_)
             | CallEffect::Fetched { .. }
             | CallEffect::Account { .. }
-            | CallEffect::Failed { .. } => None,
+            | CallEffect::Failed { .. }
+            | CallEffect::Provenance(_) => None,
         }
     }
 

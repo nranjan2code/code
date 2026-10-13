@@ -79,6 +79,13 @@ impl vak_tools::Tool for SessionSearchTool {
         "session_search"
     }
 
+    /// Its results can hold the owner's data and words someone else wrote
+    /// (docs/design/08-permissions.md "Provenance"): the catalog
+    /// indexes past results, intake items included.
+    fn provenance(&self) -> vak_control::Provenance {
+        vak_control::Provenance::BOTH
+    }
+
     fn serves(&self) -> &'static [&'static str] {
         &["memory"]
     }
@@ -275,6 +282,7 @@ mod tests {
             trace: None,
             new_documents: Vec::new(),
             executions: None,
+            provenance: vak_control::Provenance::NONE,
         };
 
         let out = tool
@@ -310,6 +318,7 @@ mod tests {
             trace: None,
             new_documents: Vec::new(),
             executions: None,
+            provenance: vak_control::Provenance::NONE,
         };
         let out = tool
             .execute(&serde_json::json!({"query": "anything at all"}), &ctx)
@@ -387,6 +396,7 @@ mod tests {
             trace: None,
             new_documents: Vec::new(),
             executions: None,
+            provenance: vak_control::Provenance::NONE,
         };
         let out = tool
             .execute(
@@ -435,6 +445,7 @@ mod tests {
             trace: None,
             new_documents: Vec::new(),
             executions: None,
+            provenance: vak_control::Provenance::NONE,
         };
         let out = tool
             .execute(

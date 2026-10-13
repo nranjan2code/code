@@ -1457,6 +1457,20 @@ in progress, and the rest of V4 follows it.
     before it ends (`Core::backup_restore`). Live verification never
     commits or erases on the operator's real data home.
 
+43. **The owner's data and someone else's words together put every exit
+    to a person** (docs/design/08-permissions.md "Provenance"). Every tool
+    result is labelled private, untrusted, both or neither from what its
+    tool declares (`Tool::provenance`) and where it came from (a connected
+    account, a worker, a recalled turn), recorded as
+    `CallEffect::Provenance` and kept on the turn's card. A request holds
+    what its open turn received and what every earlier turn its plan
+    carries held; a delegated worker starts with what its parent held. Once
+    a request holds both, a call that can leave the machine
+    (`Tool::leaves_machine`; a shell command only where the sandbox leaves
+    it the network) is an `AskSource::Provenance` ask that nothing
+    pre-authorizes and an unanswered surface refuses. Labels only join
+    within a turn, and nothing reads a word of the content to set one.
+
 ## Code rules
 
 - Edition 2024, stable toolchain. `cargo fmt` + `cargo clippy -D warnings` must pass.
@@ -2398,7 +2412,8 @@ matchers, remembered approvals and `auto_approve` read the declaration; a
 new tool declares one, and a check that is not a tool call (a provider
 effect) states its reach where it checks. Add no table of tool names to
 `vak-permission` or its callers, and decide nothing else by a tool's name
-either: a tool declares what it is (`permission`, `prompt_contract`,
+either: a tool declares what it is (`permission`, `provenance`,
+`leaves_machine`, `prompt_contract`,
 `file_access`, `delivered_file`, `presents_cards`, `fill_defaults` for a
 name it accepts for an argument), and a wrapper forwards every
 declaration. Only the loop's own tools (`plan`, `recall`, `task`, `work`,
