@@ -36,6 +36,19 @@ fn fault_in(schema: &Value, value: &Value, path: &str) -> Option<String> {
         return json_fault(text).map(|fault| fault.describe(path));
     }
     if list && let (Some(items), Value::Array(values)) = (schema.get("items"), value) {
+        // The whole list written as text and sent as its one item: its
+        // items are text, and that text is a list that does not read
+        // (measured: a table's `rows` as `["[\"A | B\", \"C | D\",\"\"]"]`).
+        if let [Value::String(text)] = values.as_slice()
+            && !accepts(items, "array")
+            && text
+                .trim_start()
+                .strip_prefix('[')
+                .is_some_and(|rest| rest.trim_start().starts_with('"'))
+            && let Some(fault) = json_fault(text)
+        {
+            return Some(fault.describe(&format!("{path}[0]")));
+        }
         return values
             .iter()
             .enumerate()
@@ -490,5 +503,28 @@ mod tests {
             unreadable(&schema, &serde_json::json!({"title": "[not json"})).is_none(),
             "a field asked for as text is never a syntax fault"
         );
+    }
+
+    #[test]
+    fn a_whole_list_written_as_its_one_item_is_unreadable() {
+        let schema = serde_json::json!({"type": "object", "properties": {
+            "rows": {"type": "array", "items": {"type": "string"}}
+        }});
+        let mut args = serde_json::json!({"rows": [
+            "[\"Plant | Ranking\",\"ZZ | Top tier\",\"Pothos | High,\"\"]"
+        ]});
+        read_arguments(&schema, &mut args);
+        let fault = unreadable(&schema, &args).expect("the one item is a broken list");
+        assert!(
+            fault.starts_with("arguments.rows[0] is not valid JSON"),
+            "{fault}"
+        );
+        for fine in [
+            serde_json::json!({"rows": ["[x] buy milk"]}),
+            serde_json::json!({"rows": ["[draft | x"]}),
+            serde_json::json!({"rows": ["[\"A | B\"", "1 | 2"]}),
+        ] {
+            assert!(unreadable(&schema, &fine).is_none(), "{fine}");
+        }
     }
 }
