@@ -1818,7 +1818,9 @@ crates/vak-judge     receipts to verdicts (docs/design/88-control-plane.md
                      where a refusal's fault lies (call.rs), a turn's
                      unrecovered failures, the plan check (plan.rs) and the
                      outcome, requirement and completion evaluation
-                     (outcome.rs). The loop gathers facts and carries out
+                     (outcome.rs), and what real turns measure by model
+                     and the patterns `Promote` offers for review
+                     (measure.rs). The loop gathers facts and carries out
                      what these return
 crates/vak-lifecycle the lifecycle reconciler's decisions (plan M7a,
                      docs/design/74 §3.1, §5), with NO vak dependencies:

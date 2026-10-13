@@ -523,6 +523,18 @@ from the ledger.
 - **C6**: the answer form as the `Answer` step's contract; doc 87 stage 2
   finished on it; the block tools retired.
 - **C7**: `vak-eval` over real ledgers; `Promote` and the review path.
+  Maintainer's choices (2026-10-13): `Promote` offers findings for review,
+  never drafted changes, shown in the CLI and the admin console. C7a is
+  built: each finished turn's facts are read from its decisions
+  (`vak_core::measure::turn_facts`: model, steps, seconds, each call's
+  verdict by tool, failures of calls that ran, corrections, ending), and
+  `vak_judge::measure` measures them by model and offers every contract
+  pattern it saw as a `Proposal` (a tool refused before it ran, a tool
+  that ran and failed, a correction, the step limit), most frequent
+  first, with no threshold: a person decides. A person declining, a rule
+  denying and a cancelled run are the system working, not patterns.
+  `vak eval --ledgers [--json]` prints it. C7b: the review record and the
+  admin screen.
 
 ## 12. Decisions (maintainer, 2026-10-11, at C0)
 

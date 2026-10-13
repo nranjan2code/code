@@ -151,6 +151,14 @@ pub(crate) enum Command {
         provider: Option<String>,
         #[arg(long)]
         model: Option<String>,
+        /// Measure the turns recorded in this install's ledgers instead:
+        /// how often each model kept each contract, and the patterns
+        /// offered for review (docs/design/88-control-plane.md, C7)
+        #[arg(long, conflicts_with_all = ["live", "report"])]
+        ledgers: bool,
+        /// With --ledgers, print the report as JSON
+        #[arg(long, requires = "ledgers")]
+        json: bool,
     },
     /// Serve the agent over HTTP+SSE, including the web client at /app
     Serve {

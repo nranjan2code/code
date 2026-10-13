@@ -40,6 +40,7 @@ pub mod intent;
 pub mod keys;
 pub mod learning;
 pub mod lifecycle;
+pub mod measure;
 pub mod memory;
 pub mod onboarding;
 pub mod presentation_tools;

@@ -574,3 +574,61 @@ async fn the_commitment_context_follows_the_commitment_not_the_words() {
     assert_ne!(contexts[0], vak_intent::ContextProfile::Full);
     assert_eq!(contexts[1], vak_intent::ContextProfile::Full);
 }
+
+/// C7 (docs/design/88-control-plane.md): a finished turn's facts are read
+/// from its decisions, a call is named by the tool the model called, and a
+/// refused call is one refusal, never also a failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_turns_facts_come_from_its_decisions() {
+    let call = AssistantMessage {
+        content: vec![ContentBlock::ToolUse {
+            id: "toolu_ghost".into(),
+            name: "no_such_tool".into(),
+            input: serde_json::json!({}),
+        }],
+        stop_reason: vak_llm::types::StopReason::ToolUse,
+        usage: Usage::default(),
+        model: "test-model".into(),
+        response_id: None,
+        applied: None,
+    };
+    let (core, _cwd) = core_with(
+        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        vec![call, text("done"), text("done")],
+    );
+    let session = core.start_session().await.unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(64);
+    let (_, session) = core
+        .run_turn_with(
+            session,
+            "do the thing",
+            CancellationToken::new(),
+            None,
+            None,
+            None,
+            tx,
+        )
+        .await
+        .unwrap();
+    let turns = vak_core::measure::turn_facts(&session);
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    let turn = &turns[0];
+    assert!(turn.steps >= 2, "{turn:?}");
+    assert_eq!(turn.ending, Some(vak_control::End::Answered));
+    assert!(turn.seconds.is_some(), "the admission was read: {turn:?}");
+    assert_eq!(
+        turn.calls,
+        vec![(
+            "no_such_tool".to_string(),
+            vak_control::CallVerdict::Refused(vak_control::Refusal::Unknown)
+        )]
+    );
+    assert!(turn.failures.is_empty(), "{turn:?}");
+    let proposals = vak_judge::measure::promote(&turns);
+    assert!(
+        proposals
+            .iter()
+            .any(|p| p.key.ends_with("|tool_refused:no_such_tool:unknown")),
+        "{proposals:?}"
+    );
+}

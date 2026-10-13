@@ -18,6 +18,7 @@ mod digest;
 mod doctor;
 mod effects;
 mod entities_cli;
+mod eval_ledgers;
 mod format;
 mod inbox;
 mod install;
@@ -632,7 +633,15 @@ async fn main() {
             live,
             provider,
             model,
-        }) => run_eval(report, generated, seed, offset, live, provider, model).await,
+            ledgers,
+            json,
+        }) => {
+            if ledgers {
+                eval_ledgers::run(cwd, json)
+            } else {
+                run_eval(report, generated, seed, offset, live, provider, model).await
+            }
+        }
         Some(Command::Open {
             surface,
             port,

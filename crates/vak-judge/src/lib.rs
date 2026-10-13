@@ -7,5 +7,6 @@
 //! or an error.
 
 pub mod call;
+pub mod measure;
 pub mod outcome;
 pub mod plan;

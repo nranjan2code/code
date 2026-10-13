@@ -47,6 +47,7 @@ pub enum DecisionPoint {
     AcceptAnswer,
     Correct,
     EndTurn,
+    Promote,
 }
 
 /// One decision: who made it, from what, and what it chose. The point is
@@ -89,6 +90,7 @@ pub enum Choice {
     AcceptAnswer(AnswerVerdict),
     Correct(Correction),
     EndTurn(Ending),
+    Promote(Proposal),
 }
 
 impl Choice {
@@ -100,6 +102,7 @@ impl Choice {
             Self::AcceptAnswer(_) => DecisionPoint::AcceptAnswer,
             Self::Correct(_) => DecisionPoint::Correct,
             Self::EndTurn(_) => DecisionPoint::EndTurn,
+            Self::Promote(_) => DecisionPoint::Promote,
         }
     }
 }
@@ -647,7 +650,7 @@ pub enum CallVerdict {
 }
 
 /// What refused a call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Refusal {
     /// The name is no tool this turn offers.
@@ -671,7 +674,7 @@ pub enum Refusal {
 /// Where a failed call's fault lies: what would have to change for it to
 /// succeed. Named by whoever fails the call, where it fails; never read
 /// from an error's wording.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Fault {
     /// The call's shape: a name that is no tool, or arguments the tool does
@@ -764,6 +767,48 @@ pub enum End {
     Aborted,
     Failed,
     StepLimit,
+}
+
+/// A pattern measured over real turns that a person may want changed in
+/// Vak itself: a contract the model kept failing, by model. Only faults
+/// that lie in a call's shape, its target, a tool or the runtime's checks
+/// are patterns; a person declining or a rule denying is the system
+/// working.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Pattern {
+    /// Calls to this tool were refused before they ran.
+    ToolRefused { tool: String, refusal: Refusal },
+    /// Calls to this tool ran and failed.
+    ToolFailed { tool: String, fault: Fault },
+    /// Turns needed this correction.
+    Corrected { cause: Cause },
+    /// Turns ended at the operator's step limit.
+    StepLimit,
+}
+
+/// What `Promote` offers for review: a pattern on one model, how often it
+/// happened against how often it could have (calls of that tool, or
+/// turns), and the turns that show it. Nothing changes itself: a person
+/// accepts or dismisses it (docs/design/43-governed-self-evolution.md).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proposal {
+    /// Stable across measurements: the same pattern on the same model is
+    /// the same proposal, so a review of it holds.
+    pub key: String,
+    pub model: String,
+    pub pattern: Pattern,
+    pub count: u64,
+    pub of: u64,
+    pub turns: Vec<String>,
+}
+
+/// A person's answer to a proposal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Review {
+    Accepted,
+    Dismissed,
 }
 
 #[cfg(test)]
