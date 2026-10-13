@@ -4656,6 +4656,11 @@ html[data-visual-pack="dimensional"] .agent-mark.dimensional-failed.state-idle .
 .agent-mark.state-success .agent-mark-atlas { background-position: 66.6667% 100%; }
 .agent-mark.state-acknowledge .agent-mark-atlas { background-position: 100% 100%; }
 .agent-mark.interactive { cursor: pointer; }
+.agent-mark-loop { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; pointer-events: none; user-select: none; }
+.agent-mark.has-loop .agent-mark-loop { opacity: 1; }
+.agent-mark.has-loop .agent-mark-fallback, .agent-mark.has-loop .agent-mark-atlas, .agent-mark.has-loop .agent-mark-dimensional { visibility: hidden; }
+.agent-mark.has-loop.state-listening .agent-mark-loop { filter: drop-shadow(0 0 2px hsl(var(--companion-hue) 80% 62% / .6)); }
+.agent-mark.has-loop.state-waiting .agent-mark-loop { opacity: .78; }
 @media (prefers-reduced-motion: no-preference) {
   .agent-mark.is-visible.state-idle .agent-mark-atlas { animation: companion-idle 6.4s steps(1, end) infinite; }
   .agent-mark.is-visible.state-working .agent-mark-atlas { animation: companion-work 1.4s steps(1, end) infinite; }

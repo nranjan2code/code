@@ -18,7 +18,7 @@ import { openAgentChat, refreshBackend, refreshSessions, switchWorkspace } from 
 import * as api from "../api";
 import AgentMark from "./AgentMark";
 import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS, type AgentCharacter } from "../agentGlyph";
-import { playCharacterCue } from "../characterSound";
+import { playCompanionSound } from "../soundCues";
 import { sortByRecent } from "../agentRecents";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
@@ -441,7 +441,7 @@ export default function AgentPickerModal() {
                 <legend>Character</legend>
                 <div class="agent-companion-picker">
                   <For each={AGENT_CHARACTER_IDS.filter((id) => id !== "vak" || agent.id === "vak")}>{(character) =>
-                    <button type="button" class="agent-companion-choice" classList={{ active: editCharacter() === character }} aria-label={`Choose ${AGENT_CHARACTERS[character].name}, ${AGENT_CHARACTERS[character].kind}`} aria-pressed={editCharacter() === character} onClick={() => { setEditCharacter(character); playCharacterCue(character); }}>
+                    <button type="button" class="agent-companion-choice" classList={{ active: editCharacter() === character }} aria-label={`Choose ${AGENT_CHARACTERS[character].name}, ${AGENT_CHARACTERS[character].kind}`} aria-pressed={editCharacter() === character} onClick={() => { setEditCharacter(character); playCompanionSound(character); }}>
                       <AgentMark character={character} motion={editAnimation()} size={52} state={editCharacter() === character ? "listening" : "idle"} interactive />
                       <strong>{AGENT_CHARACTERS[character].name}</strong><small>{AGENT_CHARACTERS[character].kind}</small>
                     </button>

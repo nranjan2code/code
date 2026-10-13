@@ -297,7 +297,7 @@ character tiers), transparent and seamless:
 - 512 and 256 run at 12 fps, 128 and 64 at 8 fps; 64 and 128 weigh 150 to
   400 KB each.
 
-**How the app should use them** (not wired in yet): animate only the
+**How the app uses them** (wired in 2026-10-13, see "In the app" below): animate only the
 character that is speaking, listening or working, and show the existing
 still art (`crates/vak-client-ui/public/characters/<id>-<size>.webp`)
 everywhere else, so a long chat never plays dozens of loops; pick the size
@@ -307,22 +307,60 @@ beyond idle (listening, thinking, done, error) are best made in code over
 the same loop (a slower or faster playback rate, a lift, a soft glow in the
 character's hue from `agentGlyph.ts`) rather than with more video.
 
-**Open: the companion sounds miss their notes.** Measuring the strongest
-pitch in each take of `sounds/companions/` against the character's `cue`
-in `agentGlyph.ts` found none on its two notes (for example Mira asks
-G4→C5 and measures about C6→D♯5; the measure is rough and can catch an
-overtone). The sound-effects model does not follow pitch. The instrument
-and feel are each character's; the notes are not yet. The fix is
-deterministic: take one clean struck note from the character's own take
-and pitch-shift it to the two cue notes, so the sound and the app's cue
-agree exactly.
+**In the app.** `tools/export_app_assets.py` writes the copies the client
+ships: `crates/vak-client-ui/public/assets/brand/dimensional/loops/<id>-<64|128>.webp`
+(8 fps, about 6 MB for all sixteen) and
+`crates/vak-client-ui/public/assets/sounds/<family>/<moment>.mp3` (leading
+silence removed, stopped by 1.2 s with a fade, levelled to about −22
+LUFS). In the client:
+
+- `AgentMark` plays a character's loop in the **Dimensional 3D** visual pack
+  while it is listening, thinking, working or waiting and on screen; idle,
+  off-screen and Classic-pack marks keep their still art and expression
+  atlas. Reduce motion (the app setting or the operating system's) keeps
+  the still. Listening adds a soft glow in the character's hue; waiting
+  dims it slightly.
+- `soundCues.ts` is the one path for interface sounds. Work starting plays
+  `listening`, finishing `turn-finished`, failing `error`, a request for
+  approval `approval-needed`, and any other notification `notification`.
+  Settings › Sound has the on/off switch and the family (Glass by default);
+  choosing a family plays it. Quiet hours silence every sound except a
+  request for approval. The synthesized start and finish tones it replaces
+  are gone.
+
+**The companion signatures are tuned (2026-10-13).** The first takes had
+each character's instrument but not its notes (the sound-effects model does
+not follow pitch). One clean single note of each instrument was generated
+(`sounds/companions/source/<character>-<take>.mp3`; Vakyartha's is the Glass
+family's `notification`), and `tools/tune_companions.py` repitches it by
+resampling, as a sampler does, to the two cue notes from `agentGlyph.ts`,
+writing `sounds/companions/<id>.mp3`. It measures pitch with YIN, tries the
+cleanest notes in turn, re-measures the written file and requires a strong
+partial at each target itself (which caught an octave error in Beni's first
+source). Two runs give identical files. Measured:
+
+| Character | Instrument | Notes | Off by (cents) |
+|---|---|---|---|
+| Vakyartha | glass marimba | G4 → D5 | −0.8, −0.2 |
+| Mira | felt piano | G4 → C5 | 0.0, 0.0 |
+| Moss | kalimba | E4 → G4 | −1.0, −0.9 |
+| Nori | vibraphone | A4 → D5 | −0.4, +0.7 |
+| Pip | glockenspiel | C5 → E5 | +3.0, +0.9 |
+| Lumi | celesta | B4 → F♯5 | +0.1, +0.3 |
+| Tavi | wooden flute | F4 → A♯4 | +8.9, +6.8 |
+| Beni | marimba | D4 → G4 | −0.6, +0.1 |
+
+Pip's glockenspiel and Tavi's flute are repitched down by more than an
+octave, which darkens them; listen to those two first. The app plays these
+on a deliberate click of a character (`playCompanionSound`); the
+synthesized two-tone cue they replace is gone.
 
 **Records.** `elevenlabs/generations.json` holds every generation of the
-flow (104 so far): its id, session, the file it became here, model, full
+flow (118 so far): its id, session, the file it became here, model, full
 prompt, settings, length, time and credits. It is exported from the
 connector's run status with every signed link and workspace code removed;
-nothing in this folder grants access to the account. About 22,540 credits
-were spent on these 104, plus the voice designs, which reported no cost.
+nothing in this folder grants access to the account. About 22,770 credits
+were spent on these 118, plus the voice designs, which reported no cost.
 
 ## Files in this folder
 
@@ -340,7 +378,10 @@ were spent on these 104, plus the voice designs, which reported no cost.
 - `speech/en/`, `speech/hi/`: spoken lines and announcements.
 - `loops/<id>-idle-<size>.webp`: transparent idle loops for the app.
 - `elevenlabs/generations.json`: every generation's record.
-- `tools/fetch_flow_results.py`, `tools/make_loops.py`: how files were fetched and loops made.
+- `tools/fetch_flow_results.py`, `tools/make_loops.py`, `tools/export_app_assets.py`,
+  `tools/tune_companions.py`, `tools/export_records.py`: how files were
+  fetched, loops made, app copies written, companion sounds tuned and
+  records exported.
 
 Every file is listed under its asset's `takes` in `manifest.json`, with its
 length in seconds. All 71 were downloaded on 2026-10-13. These are raw

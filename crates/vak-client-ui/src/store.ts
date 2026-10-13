@@ -1,3 +1,4 @@
+import { isSoundFamily, playSound, type SoundFamily } from "./soundCues";
 import { isThemeChoice, type ThemeChoice } from "./theme";
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
@@ -662,10 +663,11 @@ export interface UiPreferences {
   voiceEnabled: boolean;
   voiceName: string;
   voicePersona: string;
-  /** Short synthesized chime when a turn starts and when it finishes — the
-   * audible counterpart to the visual "working" indicators, independent of
-   * voice narration (which requires a round-trip to /voice/speak). */
+  /** Interface sounds (`soundCues.ts`): work starting and finishing, an
+   * error, a request for approval and a notification — the audible
+   * counterpart to the visual indicators, independent of voice narration. */
   soundCues: boolean;
+  soundFamily: SoundFamily;
 }
 
 const defaultUiPreferences: UiPreferences = {
@@ -690,6 +692,7 @@ const defaultUiPreferences: UiPreferences = {
   voiceName: "",
   voicePersona: "",
   soundCues: true,
+  soundFamily: "glass",
 };
 
 function loadUiPreferences(): UiPreferences {
@@ -698,6 +701,7 @@ function loadUiPreferences(): UiPreferences {
     // A theme that no longer exists resolves to Match system (DESIGN.md).
     if (!isThemeChoice(stored.theme)) stored.theme = "system";
     if (!["classic", "dimensional"].includes(stored.visualPack)) stored.visualPack = "classic";
+    if (!isSoundFamily(stored.soundFamily)) stored.soundFamily = "glass";
     if (!Object.prototype.hasOwnProperty.call(interfaceFonts, stored.interfaceFont)) stored.interfaceFont = "inter";
     if (!Object.prototype.hasOwnProperty.call(contentFonts, stored.contentFont)) stored.contentFont = "inherit";
     if (!Object.prototype.hasOwnProperty.call(codeFonts, stored.codeFont)) stored.codeFont = "system";
@@ -782,59 +786,6 @@ export const [bestOfRuns, setBestOfRuns] = createSignal<BestRun[] | null>(null);
 
 // ---- sound cues --------------------------------------------------------
 //
-// Two short synthesized tones (WebAudio oscillators, no asset files, no
-// network round-trip) so a turn starting/finishing is audible even when the
-// user isn't looking at the window. Independent of voice narration below,
-// which requires a live backend and a TTS call and is meant for spoken
-// summaries, not a reflexive UI cue.
-
-let cueCtx: AudioContext | null = null;
-
-function audioCtx(): AudioContext | null {
-  if (!uiPreferences.soundCues) return null;
-  try {
-    cueCtx ??= new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    if (cueCtx.state === "suspended") void cueCtx.resume();
-    return cueCtx;
-  } catch {
-    return null; // WebAudio unavailable/blocked — cues are best-effort
-  }
-}
-
-/** A single soft, short sine-wave blip at `freq` Hz, fading in/out to avoid a click. */
-function tone(ctx: AudioContext, freq: number, startAt: number, duration = 0.09, gain = 0.05) {
-  const osc = ctx.createOscillator();
-  const g = ctx.createGain();
-  osc.type = "sine";
-  osc.frequency.value = freq;
-  g.gain.setValueAtTime(0, startAt);
-  g.gain.linearRampToValueAtTime(gain, startAt + 0.012);
-  g.gain.linearRampToValueAtTime(0, startAt + duration);
-  osc.connect(g).connect(ctx.destination);
-  osc.start(startAt);
-  osc.stop(startAt + duration + 0.02);
-}
-
-/** Rising two-note chime: a turn just started working. */
-export function cueTurnStart() {
-  const ctx = audioCtx();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  tone(ctx, 523.25, t); // C5
-  tone(ctx, 659.25, t + 0.08); // E5
-}
-
-/** Falling two-note chime: a turn finished (success). Errors stay silent
- * here — a failed run already surfaces via the error note/banner and
- * shouldn't sound identical to "done". */
-export function cueTurnFinish(isError: boolean) {
-  const ctx = audioCtx();
-  if (!ctx || isError) return;
-  const t = ctx.currentTime;
-  tone(ctx, 659.25, t); // E5
-  tone(ctx, 880, t + 0.08); // A5
-}
-
 // ---- voice narration (docs/design: Voice & Personality for vak) ------------
 
 let voiceAudioEl: HTMLAudioElement | null = null;
@@ -1268,7 +1219,7 @@ export function applyEvent(
   }
   if ("TurnStart" in ev) {
     markRunning(id, true, b);
-    cueTurnStart();
+    playSound("listening");
     noteRetry(id, false);
   } else if ("TextDelta" in ev) {
     noteRetry(id, false);
@@ -1310,6 +1261,7 @@ export function applyEvent(
           reason: ev.ApprovalRequested.reason,
           resolved: null,
         }]);
+    playSound("approval-needed");
     opts.onApproval?.(ev.ApprovalRequested.id, ev.ApprovalRequested.tool);
   } else if ("WorkerQuestion" in ev) {
     updateList("main", id, (items) => items.some((item) => item.kind === "question" && item.id === ev.WorkerQuestion.id)
@@ -1407,7 +1359,7 @@ export function applyEvent(
     // awkwardly aloud; a one-word cue is enough to signal completion.
     // Voice conversations own playback. Turn completion is surfaced in the
     // transcript and must not trigger an unscoped one-shot narration request.
-    cueTurnFinish(badOutcome);
+    playSound(badOutcome ? "error" : "turn-finished");
     opts.onFinish?.(message);
   } else if ("Sandbox" in ev) {
     const sb = ev.Sandbox;

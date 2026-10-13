@@ -1,3 +1,4 @@
+import { playSound, SOUND_FAMILIES, type SoundFamily } from "../soundCues";
 import { trapFocus } from "../focusTrap";
 import YourData from "./YourData";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
@@ -2077,7 +2078,10 @@ export default function Settings() {
                 </TechnicalRow>
               </Group>
               <Group title="Sound">
-                <Row title="Sound cues" description="A short chime when work starts and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
+                <Row title="Sound cues" description="A short sound when work starts, finishes or fails, when something needs your OK, and for a notification."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
+                <Show when={uiPreferences.soundCues}>
+                  <Row title="Sound family" description="One instrument for every sound. Choosing one plays it."><select aria-label="Sound family" value={uiPreferences.soundFamily} onChange={(event) => { const family = event.currentTarget.value as SoundFamily; updateUiPreference("soundFamily", family); playSound("turn-finished", family); }}><For each={SOUND_FAMILIES}>{(family) => <option value={family.id}>{family.label}</option>}</For></select></Row>
+                </Show>
               </Group>
             </Show>
 

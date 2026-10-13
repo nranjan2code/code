@@ -1575,6 +1575,199 @@
         }
       ],
       "status": "made"
+    },
+    {
+      "kind": "sound source",
+      "character": "mira",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Single felt piano note, one clean strike, natural decay, close-mic, dry, nothing else (see generations.json for the exact words)",
+      "takes": [
+        {
+          "file": "sounds/companions/source/mira-1.mp3"
+        },
+        {
+          "file": "sounds/companions/source/mira-2.mp3"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "sound source",
+      "character": "moss",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Single kalimba note, one clean strike, natural decay, close-mic, dry, nothing else (see generations.json for the exact words)",
+      "takes": [
+        {
+          "file": "sounds/companions/source/moss-1.mp3"
+        },
+        {
+          "file": "sounds/companions/source/moss-2.mp3"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "sound source",
+      "character": "nori",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Single vibraphone note, one clean strike, natural decay, close-mic, dry, nothing else (see generations.json for the exact words)",
+      "takes": [
+        {
+          "file": "sounds/companions/source/nori-1.mp3"
+        },
+        {
+          "file": "sounds/companions/source/nori-2.mp3"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "sound source",
+      "character": "pip",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Single glockenspiel note, one clean strike, natural decay, close-mic, dry, nothing else (see generations.json for the exact words)",
+      "takes": [
+        {
+          "file": "sounds/companions/source/pip-1.mp3"
+        },
+        {
+          "file": "sounds/companions/source/pip-2.mp3"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "sound source",
+      "character": "lumi",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Single celesta note, one clean strike, natural decay, close-mic, dry, nothing else (see generations.json for the exact words)",
+      "takes": [
+        {
+          "file": "sounds/companions/source/lumi-1.mp3"
+        },
+        {
+          "file": "sounds/companions/source/lumi-2.mp3"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "sound source",
+      "character": "tavi",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Single wooden flute note, one clean strike, natural decay, close-mic, dry, nothing else (see generations.json for the exact words)",
+      "takes": [
+        {
+          "file": "sounds/companions/source/tavi-1.mp3"
+        },
+        {
+          "file": "sounds/companions/source/tavi-2.mp3"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "sound source",
+      "character": "beni",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Single marimba note, one clean strike, natural decay, close-mic, dry, nothing else (see generations.json for the exact words)",
+      "takes": [
+        {
+          "file": "sounds/companions/source/beni-1.mp3"
+        },
+        {
+          "file": "sounds/companions/source/beni-2.mp3"
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "companion signature (tuned)",
+      "character": "vak",
+      "made_by": "tools/tune_companions.py",
+      "takes": [
+        {
+          "file": "sounds/companions/vak.mp3"
+        }
+      ],
+      "status": "made, verified within 20 cents"
+    },
+    {
+      "kind": "companion signature (tuned)",
+      "character": "mira",
+      "made_by": "tools/tune_companions.py",
+      "takes": [
+        {
+          "file": "sounds/companions/mira.mp3"
+        }
+      ],
+      "status": "made, verified within 20 cents"
+    },
+    {
+      "kind": "companion signature (tuned)",
+      "character": "moss",
+      "made_by": "tools/tune_companions.py",
+      "takes": [
+        {
+          "file": "sounds/companions/moss.mp3"
+        }
+      ],
+      "status": "made, verified within 20 cents"
+    },
+    {
+      "kind": "companion signature (tuned)",
+      "character": "nori",
+      "made_by": "tools/tune_companions.py",
+      "takes": [
+        {
+          "file": "sounds/companions/nori.mp3"
+        }
+      ],
+      "status": "made, verified within 20 cents"
+    },
+    {
+      "kind": "companion signature (tuned)",
+      "character": "pip",
+      "made_by": "tools/tune_companions.py",
+      "takes": [
+        {
+          "file": "sounds/companions/pip.mp3"
+        }
+      ],
+      "status": "made, verified within 20 cents"
+    },
+    {
+      "kind": "companion signature (tuned)",
+      "character": "lumi",
+      "made_by": "tools/tune_companions.py",
+      "takes": [
+        {
+          "file": "sounds/companions/lumi.mp3"
+        }
+      ],
+      "status": "made, verified within 20 cents"
+    },
+    {
+      "kind": "companion signature (tuned)",
+      "character": "tavi",
+      "made_by": "tools/tune_companions.py",
+      "takes": [
+        {
+          "file": "sounds/companions/tavi.mp3"
+        }
+      ],
+      "status": "made, verified within 20 cents"
+    },
+    {
+      "kind": "companion signature (tuned)",
+      "character": "beni",
+      "made_by": "tools/tune_companions.py",
+      "takes": [
+        {
+          "file": "sounds/companions/beni.mp3"
+        }
+      ],
+      "status": "made, verified within 20 cents"
     }
   ]
 }

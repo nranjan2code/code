@@ -33,6 +33,13 @@ export function characterAtlas(id: AgentCharacter, tier: CharacterTier): string 
   return `${CHARACTER_BASE}${id}-atlas-${tier}.webp`;
 }
 
+/** A character's transparent idle loop for the dimensional pack, made from
+ * its portrait (docs/brand/media/tools/export_app_assets.py). Shipped at 64
+ * and 128 only: a loop plays on small, active marks. */
+export function characterLoop(id: AgentCharacter, tier: CharacterTier): string {
+  return `${import.meta.env.BASE_URL}assets/brand/dimensional/loops/${id}-${Math.min(tier, 128)}.webp`;
+}
+
 export function agentGlyph(character: string | undefined): string {
   return agentCharacter(character).name.slice(0, 1);
 }

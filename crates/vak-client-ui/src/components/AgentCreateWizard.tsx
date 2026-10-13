@@ -3,7 +3,7 @@ import { agentCreateOpen, setAgentCreateOpen, setAgentsEpoch, technicalDetails }
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS, type AgentCharacter } from "../agentGlyph";
-import { playCharacterCue } from "../characterSound";
+import { playCompanionSound } from "../soundCues";
 import AgentMark from "./AgentMark";
 import Sheet from "./Sheet";
 
@@ -193,7 +193,7 @@ export default function AgentCreateWizard() {
                       classList={{ active: character() === c }}
                       aria-label={`Choose ${AGENT_CHARACTERS[c].name}, ${AGENT_CHARACTERS[c].kind}`}
                       aria-pressed={character() === c}
-                      onClick={() => { setCharacter(c); playCharacterCue(c); }}
+                      onClick={() => { setCharacter(c); playCompanionSound(c); }}
                     >
                       <AgentMark character={c} size={56} state={character() === c ? "listening" : "idle"} interactive />
                       <strong>{AGENT_CHARACTERS[c].name}</strong>

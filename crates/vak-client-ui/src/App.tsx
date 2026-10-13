@@ -1,3 +1,4 @@
+import { inQuietHours, playSound } from "./soundCues";
 import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, For, Suspense } from "solid-js";
 import { host } from "./host";
 import { interfaceFonts, contentFonts, codeFonts } from "./typography";
@@ -386,7 +387,10 @@ export async function notifyOnce(source: string, title: string, body: string, ro
   if (now - (lastNotifyAt.get(source) ?? 0) < NOTIFY_DEDUPE_MS) return;
   lastNotifyAt.set(source, now);
   if (route) pendingRoute = route;
-  await notify(title, body, source.startsWith("approval:"));
+  const approval = source.startsWith("approval:");
+  // An approval already sounded when its request arrived on the stream.
+  if (!approval && uiPreferences.notifications) playSound("notification");
+  await notify(title, body, approval);
 }
 
 /** Where a notification click should land. Consumed by `applyRoute`. */
@@ -448,9 +452,7 @@ export async function applyRoute(hash: string) {
 
 async function notify(title: string, body: string, critical = false) {
   if (!uiPreferences.notifications) return;
-  const hour = new Date().getHours();
-  const quiet = uiPreferences.quietHours === "22-07" && (hour >= 22 || hour < 7);
-  if (quiet && !critical) return;
+  if (inQuietHours() && !critical) return;
   const route = pendingRoute;
   pendingRoute = null;
   // OS notification centre on the desktop, the Web Notifications API in a
