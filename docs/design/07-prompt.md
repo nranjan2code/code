@@ -396,6 +396,12 @@ presentation update does not restore stale-context behavior.
   this card answers with", not as the plan deliverable it names. Word
   count unchanged.
 
+- 2026-10-13, the sandbox bullet on files keys on what the person will keep
+  or run, not on the content being code: "When the work is itself a file
+  (code, …)" made a small HTML snippet a file to write, so a model asked to
+  preview a button, and not to write a file, wrote one and picked the file
+  preview. A snippet or a preview is not a file. The seed is 1588 words.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus
