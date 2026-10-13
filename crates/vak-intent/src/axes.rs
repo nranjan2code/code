@@ -180,16 +180,6 @@ impl Horizon {
             .into_iter()
             .find(|h| h.as_str() == value.trim().to_ascii_lowercase())
     }
-
-    /// Work at this horizon earns a durable commitment of its own.
-    ///
-    /// Only work that outlives the session: multi-step work inside one
-    /// session runs under its plan (the managed work contract), and opening a
-    /// month-long obligation for it left the ledger full of commitments
-    /// nobody would ever close.
-    pub fn opens_commitment(self) -> bool {
-        self == Horizon::Durable
-    }
 }
 
 /// Blast radius if the work goes wrong.

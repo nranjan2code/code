@@ -1415,9 +1415,13 @@ fn engagement_context_profile_per_act_and_horizon() {
         assert_eq!(engagement.posture.context, ContextProfile::Working);
     }
 
+    // A reading never asks for the commitment's context, however durable
+    // its words sound: that follows from the turn working on a commitment.
     for act in [Act::Modify, Act::Operate] {
         let r = reading_simple(act, Horizon::Durable, Stakes::Reversible, Evidence::None);
-        let engagement = derive(&r, &Authority::default());
+        let mut engagement = derive(&r, &Authority::default());
+        assert_eq!(engagement.posture.context, ContextProfile::Working);
+        vak_intent::serve_commitment(&mut engagement, &r, &Authority::default());
         assert_eq!(engagement.posture.context, ContextProfile::Full);
     }
 }
@@ -1681,18 +1685,16 @@ fn authority_approval_ceiling_composes_only_tightens() {
 }
 
 #[test]
-fn authority_gate_fallback_by_attendance_and_horizon() {
+fn authority_gate_fallback_by_attendance_and_commitment() {
     let auth = authority_of(Autonomy::Assisted, Attendance::Interactive);
-    assert_eq!(auth.gate_fallback(Horizon::Turn), GateFallback::Deny);
-    assert_eq!(auth.gate_fallback(Horizon::Durable), GateFallback::Deny);
+    assert_eq!(auth.gate_fallback(false), GateFallback::Deny);
+    assert_eq!(auth.gate_fallback(true), GateFallback::Deny);
 
-    // Only work durable enough to own a commitment has somewhere to park a
-    // question; multi-step work inside one session fails closed like a turn.
+    // Only work on an open commitment has somewhere to park a question; any
+    // other unattended turn fails closed, whatever its words said.
     let auth = authority_of(Autonomy::Delegated, Attendance::Unattended);
-    assert_eq!(auth.gate_fallback(Horizon::Durable), GateFallback::Defer);
-    assert_eq!(auth.gate_fallback(Horizon::Session), GateFallback::Deny);
-    assert_eq!(auth.gate_fallback(Horizon::Immediate), GateFallback::Deny);
-    assert_eq!(auth.gate_fallback(Horizon::Turn), GateFallback::Deny);
+    assert_eq!(auth.gate_fallback(true), GateFallback::Defer);
+    assert_eq!(auth.gate_fallback(false), GateFallback::Deny);
 }
 
 #[test]
@@ -2864,7 +2866,8 @@ fn prompt_note_for_deferred_work() {
         Evidence::None,
     );
     let auth = authority_of(Autonomy::Delegated, Attendance::Unattended);
-    let engagement = derive(&r, &auth);
+    let mut engagement = derive(&r, &auth);
+    vak_intent::serve_commitment(&mut engagement, &r, &auth);
     let note = engagement.posture.note.as_deref().unwrap_or("");
     assert!(
         note.contains("Nobody") || note.contains("queued"),
@@ -3500,9 +3503,16 @@ fn pipeline_audited_work_requires_attested() {
 }
 
 #[test]
-fn pipeline_long_horizon_renders_full_context() {
+fn pipeline_full_context_follows_the_commitment_not_the_words() {
     let intent = resolve_text("check the cloud bill every day and alert me");
     assert_eq!(intent.reading.horizon, Horizon::Durable);
+    assert_ne!(intent.engagement.posture.context, ContextProfile::Full);
+    let serving = intent
+        .strands
+        .iter()
+        .map(|strand| strand.strand_id.clone())
+        .collect();
+    let intent = vak_intent::apply_commitments(intent, &serving, &Authority::default());
     assert_eq!(intent.engagement.posture.context, ContextProfile::Full);
 }
 
@@ -3568,30 +3578,32 @@ fn authority_stakes_autonomy_hil_matrix() {
     for &stakes in &Stakes::ALL {
         for &autonomy in &Autonomy::ALL {
             for &attendance in &Attendance::ALL {
-                for &horizon in &[Horizon::Turn, Horizon::Durable] {
-                    let r = reading_simple(Act::Modify, horizon, stakes, Evidence::None);
+                for serving in [false, true] {
+                    let r = reading_simple(Act::Modify, Horizon::Durable, stakes, Evidence::None);
                     let auth = authority_of(autonomy, attendance);
-                    let engagement = derive(&r, &auth);
+                    let mut engagement = derive(&r, &auth);
+                    if serving {
+                        vak_intent::serve_commitment(&mut engagement, &r, &auth);
+                    }
 
                     if stakes == Stakes::Irreversible {
-                        // Someone present: interrupt. Nobody present and the
-                        // work durable enough to park the question: defer to
+                        // Someone present: interrupt. Nobody present and a
+                        // commitment to park the question on: defer to
                         // the inbox rather than raise a gate that can only
                         // time out.
-                        let expected = if !attendance.can_answer_now() && horizon.opens_commitment()
-                        {
+                        let expected = if !attendance.can_answer_now() && serving {
                             HilMode::Defer
                         } else {
                             HilMode::Interrupt
                         };
                         assert_eq!(
                             engagement.posture.hil, expected,
-                            "stakes={stakes:?} autonomy={autonomy:?} attendance={attendance:?} horizon={horizon:?}"
+                            "stakes={stakes:?} autonomy={autonomy:?} attendance={attendance:?} serving={serving}"
                         );
                     }
 
                     if !attendance.can_answer_now()
-                        && horizon.opens_commitment()
+                        && serving
                         && stakes.rank() >= Stakes::Costly.rank()
                     {
                         assert_eq!(engagement.posture.hil, HilMode::Defer);

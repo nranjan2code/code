@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::authority::{Authority, Autonomy, Envelope};
 use crate::axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Stakes};
-use crate::engage::{Engagement, HilMode, derive};
+use crate::engage::{Engagement, HilMode, derive, serve_commitment};
 use crate::reading::{Confidences, Intent, Provenance, Reading, Tier};
 use crate::signals::{ClauseRead, Extraction, Request, Signal, SignalKind};
 use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, ThreadFact};
@@ -829,6 +829,34 @@ pub fn implied_stakes(act: Act) -> Stakes {
 }
 
 // ----------------------------------------------------------- envelopes ---
+
+/// Set the posture of the strands that work on an open commitment
+/// (`serving` holds their ids): which commitments a turn works on is the
+/// runtime's decision, made after the reading, so this runs before
+/// [`apply_envelopes`], whose grant leaves a deferred strand deferred.
+pub fn apply_commitments(
+    intent: Intent,
+    serving: &BTreeSet<String>,
+    authority: &Authority,
+) -> Intent {
+    if serving.is_empty() {
+        return intent;
+    }
+    let mut strands = intent.strands.clone();
+    for strand in strands
+        .iter_mut()
+        .filter(|strand| serving.contains(&strand.strand_id))
+    {
+        serve_commitment(&mut strand.engagement, &strand.reading, authority);
+    }
+    let engagement = recompose(&strands);
+    Intent {
+        reading: intent.reading,
+        strands,
+        engagement,
+        provenance: intent.provenance,
+    }
+}
 
 /// Narrow an intent by the grants on the commitments its strands serve.
 ///

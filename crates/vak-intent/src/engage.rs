@@ -440,7 +440,24 @@ pub fn derive(reading: &Reading, authority: &Authority) -> Engagement {
 /// a turn will touch.
 pub fn apply_authority(engagement: &mut Engagement, reading: &Reading, authority: &Authority) {
     engagement.limits.approval_ceiling = authority.approval_ceiling(reading.stakes);
-    engagement.posture.gate_fallback = authority.gate_fallback(reading.horizon);
+}
+
+/// The posture of a strand that works on an open commitment, a fact the
+/// runtime decides (`/until-done`, `/goal replace`, or a thread's open
+/// commitment), never a reading of the words: it sees its obligations
+/// (`ContextProfile::Full`), and a gate nobody here can answer is parked
+/// rather than failed. Costly work with nobody present waits in the inbox
+/// instead of raising a gate that can only time out.
+pub fn serve_commitment(engagement: &mut Engagement, reading: &Reading, authority: &Authority) {
+    let posture = &mut engagement.posture;
+    posture.context = ContextProfile::Full;
+    posture.gate_fallback = authority.gate_fallback(true);
+    if posture.gate_fallback == GateFallback::Defer
+        && reading.stakes.rank() >= Stakes::Costly.rank()
+    {
+        posture.hil = HilMode::Defer;
+        posture.note = derive_note(reading, HilMode::Defer);
+    }
 }
 
 /// Derive the appropriate epistemic cognitive stance from the reading.
@@ -473,15 +490,8 @@ pub fn derive_epistemic_stance(reading: &Reading) -> EpistemicStance {
 }
 
 fn derive_hil(reading: &Reading, authority: &Authority) -> HilMode {
-    let needs_a_human = reading.stakes.rank() >= Stakes::Costly.rank();
-    // Nobody to ask and somewhere to park the question: wait rather than
-    // fail. This covers irreversible work too — an irreversible step with
-    // nobody present must reach the inbox, not raise a gate that can only
-    // time out. "Interrupt" is what happens when someone is here to be
-    // interrupted.
-    if needs_a_human && authority.gate_fallback(reading.horizon) == GateFallback::Defer {
-        return HilMode::Defer;
-    }
+    // `Defer` needs a commitment to park the question on, which only the
+    // runtime knows: `serve_commitment` sets it.
     // Irreversible stakes always interrupt whatever was delegated.
     if reading.stakes == Stakes::Irreversible {
         return HilMode::Interrupt;
@@ -564,10 +574,9 @@ fn derive_stop(reading: &Reading) -> StopProfile {
     }
 }
 
+/// `Full` is never derived from a reading: it is set by [`serve_commitment`]
+/// when the turn works on an open commitment.
 fn derive_context(reading: &Reading) -> ContextProfile {
-    if reading.horizon.opens_commitment() {
-        return ContextProfile::Full;
-    }
     if reading
         .acts()
         .iter()
@@ -699,14 +708,16 @@ mod tests {
     }
 
     #[test]
-    fn durable_work_renders_full_context() {
+    fn work_on_a_commitment_renders_full_context() {
         let r = reading(
             Act::Modify,
             Horizon::Durable,
             Stakes::Reversible,
             Evidence::Verified,
         );
-        let engagement = derive(&r, &Authority::default());
+        let mut engagement = derive(&r, &Authority::default());
+        assert_eq!(engagement.posture.context, ContextProfile::Working);
+        serve_commitment(&mut engagement, &r, &Authority::default());
         assert_eq!(engagement.posture.context, ContextProfile::Full);
         assert_eq!(engagement.posture.stop, StopProfile::Verification);
         assert_eq!(
@@ -755,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn unattended_durable_costly_work_defers_rather_than_interrupting() {
+    fn unattended_costly_work_on_a_commitment_defers_rather_than_interrupting() {
         let r = reading(
             Act::Operate,
             Horizon::Durable,
@@ -766,7 +777,14 @@ mod tests {
             autonomy: Autonomy::Delegated,
             attendance: Attendance::Unattended,
         };
-        let engagement = derive(&r, &authority);
+        let mut engagement = derive(&r, &authority);
+        assert_ne!(
+            engagement.posture.hil,
+            HilMode::Defer,
+            "durable words alone defer nothing"
+        );
+        assert_eq!(engagement.posture.gate_fallback, GateFallback::Deny);
+        serve_commitment(&mut engagement, &r, &authority);
         assert_eq!(engagement.posture.hil, HilMode::Defer);
         assert_eq!(engagement.posture.gate_fallback, GateFallback::Defer);
     }

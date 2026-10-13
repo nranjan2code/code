@@ -12,7 +12,7 @@ there.
 | I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice, **strands** | `Core::resolve_turn_intent_with_escalation` |
 | I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler | `commitments::plan_episodes` then `begin_episodes` — one commitment per thread |
 | I2 | admission, intent ledger entry, `[intent]`/`[commitment]` config, `vak intent explain` | `IntentRecord` (reading, strands, engagement, note) |
-| I3 | route demand, per-commitment budget, prompt projection, **context profile** | `plan_route_ladder(demand)`, `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only an explicitly referenced preceding turn at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`) |
+| I3 | route demand, per-commitment budget, prompt projection, **context profile** | `plan_route_ladder(demand)`, `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only an explicitly referenced preceding turn at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`); `full` is set only for a strand working on an open commitment (`apply_commitments`), never by a reading |
 | I4 | capability slicing (progressive disclosure) | stage-4 exclusion for a confident reading; the tool surface (core vs. deferred) for every reading |
 | I5 | envelopes: `vak grant` / `vak revoke`; a live grant narrows the strands that serve its commitment and pre-authorizes, one gate at a time, the actions it covers; revocation honoured on read | `vak_intent::apply_envelopes` → `intent::permission_mode` → `cfg.mode` and `spend_ceiling_usd` → the run cap; `intent::envelope_check` → `AgentConfig::envelope_check` |
 | I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
@@ -456,8 +456,10 @@ Chosen by `attendance × stakes × autonomy`.
 **Defer** is the new one. An unattended surface used to fail closed
 unconditionally — correct for a one-shot turn, wrong for month-long work, which
 should wait rather than fail. Deferring needs somewhere to park the question,
-so it is only offered when the horizon opens a commitment; a one-shot
-unattended turn still fails closed exactly as before. It covers irreversible
+so it is only offered when the turn works on an open commitment, a fact
+the runtime decides (`vak_intent::apply_commitments`), never the horizon
+reading (docs/design/88-control-plane.md); any other unattended turn fails
+closed. It covers irreversible
 work too: an irreversible step with nobody present reaches the inbox, not a
 gate that can only time out. Wiring: `intent::DeferringApprover` wraps the
 run's approver when `gate_fallback` is `Defer`; a gate the inner approver

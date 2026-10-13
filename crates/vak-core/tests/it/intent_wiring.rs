@@ -526,3 +526,51 @@ async fn a_deferred_gate_reaches_the_inbox_and_suspends_the_commitment() {
     assert_eq!(inbox[0].kind, vak_core::inbox::Kind::ApprovalPending);
     assert!(inbox[0].body.contains("rotate-keys"));
 }
+
+/// The commitment's context is a fact about the turn, never a reading of its
+/// words (docs/design/88-control-plane.md): a request that only sounds
+/// durable gets no commitment context, and one asked for with `/until-done`
+/// works on a commitment and records `full`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_commitment_context_follows_the_commitment_not_the_words() {
+    let (core, _cwd) = core_with(
+        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+        (0..8).map(|_| text("noted")).collect(),
+    );
+    let contexts = |session: &vak_session::SessionLog| -> Vec<vak_intent::ContextProfile> {
+        session
+            .chain_to_root()
+            .iter()
+            .filter_map(|entry| match &entry.payload {
+                vak_session::EntryPayload::Intent(record) => {
+                    Some(record.engagement.posture.context)
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let mut session = core.start_session().await.unwrap();
+    for prompt in [
+        "check the cloud bill every day and alert me",
+        "/until-done check the cloud bill every day and alert me",
+    ] {
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
+        session = core
+            .run_turn_with(
+                session,
+                prompt,
+                CancellationToken::new(),
+                None,
+                None,
+                None,
+                tx,
+            )
+            .await
+            .unwrap()
+            .1;
+    }
+    let contexts = contexts(&session);
+    assert_eq!(contexts.len(), 2, "{contexts:?}");
+    assert_ne!(contexts[0], vak_intent::ContextProfile::Full);
+    assert_eq!(contexts[1], vak_intent::ContextProfile::Full);
+}

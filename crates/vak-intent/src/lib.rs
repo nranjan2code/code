@@ -79,7 +79,7 @@ pub use axes::{
 pub use engage::DOMAIN_VOCABULARY;
 pub use engage::{
     ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode, OutputShape,
-    Posture, StopProfile, apply_authority, derive,
+    Posture, StopProfile, apply_authority, derive, serve_commitment,
 };
 pub use goal::{
     GoalControlState, GoalRelation, GoalState, GoalUpdate, goal_relation, next_goal_update,
@@ -95,7 +95,8 @@ pub use outcome::{
 };
 pub use reading::{Confidences, Intent, Provenance, Reading, Tier};
 pub use resolve::{
-    Declared, RESOLVER_VERSION, ResolverConfig, apply_envelopes, implied_stakes, resolve,
+    Declared, RESOLVER_VERSION, ResolverConfig, apply_commitments, apply_envelopes, implied_stakes,
+    resolve,
 };
 pub use signals::{
     Attachment, HistoryFacts, Request, Signal, SignalKind, Surface, WorkspaceFacts, extract,

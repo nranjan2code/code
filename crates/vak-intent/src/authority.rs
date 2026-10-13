@@ -30,7 +30,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::axes::{Attendance, Horizon, Stakes};
+use crate::axes::{Attendance, Stakes};
 
 /// How much authority a human has delegated for this work.
 ///
@@ -471,15 +471,16 @@ impl Authority {
     /// What to do with a gate that was raised and cannot be answered here.
     ///
     /// Deferring needs somewhere to park the question, so it is only offered
-    /// when the work is durable enough to own a commitment. A one-shot
-    /// unattended turn still fails closed, exactly as before.
-    pub fn gate_fallback(&self, horizon: Horizon) -> GateFallback {
+    /// when the turn works on an open commitment, a fact the runtime knows
+    /// (a commitment opens only when asked for explicitly), never one read
+    /// from the request's words. Any other unattended turn fails closed.
+    pub fn gate_fallback(&self, serves_commitment: bool) -> GateFallback {
         if self.attendance.can_answer_now() {
             // Somebody is here; the gate resolves the ordinary way and this
             // fallback never applies.
             return GateFallback::Deny;
         }
-        if horizon.opens_commitment() {
+        if serves_commitment {
             GateFallback::Defer
         } else {
             GateFallback::Deny
@@ -610,21 +611,15 @@ mod tests {
     }
 
     #[test]
-    fn unattended_durable_work_defers_instead_of_failing_closed() {
+    fn unattended_work_on_a_commitment_defers_instead_of_failing_closed() {
         let authority = Authority {
             autonomy: Autonomy::Delegated,
             attendance: Attendance::Unattended,
         };
-        assert_eq!(
-            authority.gate_fallback(Horizon::Durable),
-            GateFallback::Defer
-        );
-        // A one-shot turn has nowhere to park the question, so it still fails
-        // closed exactly as it did before.
-        assert_eq!(
-            authority.gate_fallback(Horizon::Immediate),
-            GateFallback::Deny
-        );
+        assert_eq!(authority.gate_fallback(true), GateFallback::Defer);
+        // A turn with no commitment has nowhere to park the question, so it
+        // fails closed.
+        assert_eq!(authority.gate_fallback(false), GateFallback::Deny);
     }
 
     #[test]

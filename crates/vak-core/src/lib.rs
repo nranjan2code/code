@@ -6718,6 +6718,13 @@ impl Core {
             durable,
             chrono::Utc::now(),
         );
+        let serving: std::collections::BTreeSet<String> = episode_plan
+            .strands
+            .iter()
+            .map(|planned| planned.strand_id.clone())
+            .collect();
+        let resolved_intent =
+            vak_intent::apply_commitments(resolved_intent, &serving, &turn_authority);
         let envelopes = episode_plan.envelopes();
         let mut resolved_intent = if envelopes.is_empty() {
             resolved_intent
