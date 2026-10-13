@@ -262,6 +262,68 @@ The exact prompt of each of the 30 sounds is in `manifest.json`. Choose by
 playing a family's six in a row at low volume on a laptop and a phone, then
 in the app: the right family is the one you stop noticing by the third day.
 
+## Batch 4: spoken lines, announcements, every companion moving (2026-10-13)
+
+**Spoken lines** (`speech/en/`, Vakyartha's saved voice, `eleven_v4`, two
+takes each): the greeting, approval needed, done, error, and the film's two
+lines. Each line says what happened and what the person controls, never
+filler. The exact words are in `manifest.json`.
+
+**Announcements** (`speech/en/announce-*.mp3`): new email, reminder,
+meeting soon, task done, scheduled work finished, good morning. They are
+deliberately generic (no names, times or counts), so one file serves every
+case and nothing personal is ever baked into audio; the screen carries the
+details. Hindi versions were made once (`speech/hi/`) and are kept;
+**English is the shipping language for now** (decided 2026-10-13).
+
+**Announcement sounds** for the same moments in the two leading families,
+`sounds/system/{glass,santoor}/{new-email,reminder,meeting-soon,scheduled-finished}.mp3`;
+task done uses the family's `success`.
+
+**Theme, instrumental** (`music/theme-instrumental-*.mp3`): the theme again
+with the node set to `instrumental: true`, `lyrics_type: instrumental`. The
+first two takes ran with vocals allowed; prefer these.
+
+**Every companion moves.** `video/<character>-idle.mp4` for all eight
+(Kling 2.5 Turbo from each portrait, about 2,120 credits each), each with
+its signature gesture. `tools/make_loops.py` turns them into
+`loops/<id>-idle-<size>.webp` at 512, 256, 128 and 64 px (the app's
+character tiers), transparent and seamless:
+
+- The videos have a black background; only black connected to the frame's
+  edge becomes transparent, so pupils and noses stay. Checked on the dark
+  and light themes.
+- Each loop plays forward then back, so it never jumps.
+- 512 and 256 run at 12 fps, 128 and 64 at 8 fps; 64 and 128 weigh 150 to
+  400 KB each.
+
+**How the app should use them** (not wired in yet): animate only the
+character that is speaking, listening or working, and show the existing
+still art (`crates/vak-client-ui/public/characters/<id>-<size>.webp`)
+everywhere else, so a long chat never plays dozens of loops; pick the size
+by rendered pixels times device pixel ratio; show the still under
+`prefers-reduced-motion: reduce`; pause when the tab is hidden. States
+beyond idle (listening, thinking, done, error) are best made in code over
+the same loop (a slower or faster playback rate, a lift, a soft glow in the
+character's hue from `agentGlyph.ts`) rather than with more video.
+
+**Open: the companion sounds miss their notes.** Measuring the strongest
+pitch in each take of `sounds/companions/` against the character's `cue`
+in `agentGlyph.ts` found none on its two notes (for example Mira asks
+G4→C5 and measures about C6→D♯5; the measure is rough and can catch an
+overtone). The sound-effects model does not follow pitch. The instrument
+and feel are each character's; the notes are not yet. The fix is
+deterministic: take one clean struck note from the character's own take
+and pitch-shift it to the two cue notes, so the sound and the app's cue
+agree exactly.
+
+**Records.** `elevenlabs/generations.json` holds every generation of the
+flow (104 so far): its id, session, the file it became here, model, full
+prompt, settings, length, time and credits. It is exported from the
+connector's run status with every signed link and workspace code removed;
+nothing in this folder grants access to the account. About 22,540 credits
+were spent on these 104, plus the voice designs, which reported no cost.
+
 ## Files in this folder
 
 - `manifest.json`: every asset, its prompt (or voice description and line),
@@ -275,7 +337,10 @@ in the app: the right family is the one you stop noticing by the third day.
 - `music/theme-<take>.mp3`: two 30 s takes of the theme.
 - `images/hero-<take>.webp`: four 1024 × 576 hero illustrations.
 - `video/vakyartha-idle.mp4`: the 5 s idle loop.
-- `tools/fetch_flow_results.py`: how every file above was fetched.
+- `speech/en/`, `speech/hi/`: spoken lines and announcements.
+- `loops/<id>-idle-<size>.webp`: transparent idle loops for the app.
+- `elevenlabs/generations.json`: every generation's record.
+- `tools/fetch_flow_results.py`, `tools/make_loops.py`: how files were fetched and loops made.
 
 Every file is listed under its asset's `takes` in `manifest.json`, with its
 length in seconds. All 71 were downloaded on 2026-10-13. These are raw

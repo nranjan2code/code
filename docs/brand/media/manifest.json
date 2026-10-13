@@ -889,6 +889,692 @@
           "seconds": 2.0
         }
       ]
+    },
+    {
+      "kind": "speech",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Hello, I'm Vakyartha. Tell me what you need, in your own words. I'll show you what I'm doing as I go, and nothing leaves without your OK.",
+      "takes": [
+        {
+          "file": "speech/en/greeting-1.mp3",
+          "seconds": 9.4
+        },
+        {
+          "file": "speech/en/greeting-2.mp3",
+          "seconds": 9.5
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "speech",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "This one needs your OK before I go ahead.",
+      "takes": [
+        {
+          "file": "speech/en/approval-needed-1.mp3",
+          "seconds": 3.2
+        },
+        {
+          "file": "speech/en/approval-needed-2.mp3",
+          "seconds": 3.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "speech",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Done. It's in your Library, and you can undo it anytime.",
+      "takes": [
+        {
+          "file": "speech/en/done-1.mp3",
+          "seconds": 4.1
+        },
+        {
+          "file": "speech/en/done-2.mp3",
+          "seconds": 4.2
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "speech",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "That didn't work. Here's what I tried, and what I'd do next.",
+      "takes": [
+        {
+          "file": "speech/en/error-1.mp3",
+          "seconds": 4.4
+        },
+        {
+          "file": "speech/en/error-2.mp3",
+          "seconds": 4.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "speech",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Here's what changed.",
+      "takes": [
+        {
+          "file": "speech/en/heres-what-changed-1.mp3",
+          "seconds": 1.6
+        },
+        {
+          "file": "speech/en/heres-what-changed-2.mp3",
+          "seconds": 1.6
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "speech",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Ready when you are.",
+      "takes": [
+        {
+          "file": "speech/en/ready-when-you-are-1.mp3",
+          "seconds": 1.5
+        },
+        {
+          "file": "speech/en/ready-when-you-are-2.mp3",
+          "seconds": 1.4
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "announcement",
+      "event": "new-email",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "You have new email.",
+      "takes": [
+        {
+          "file": "speech/en/announce-new-email.mp3",
+          "seconds": 1.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "announcement",
+      "event": "new-email",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "hi",
+      "text": "आपका नया ईमेल आया है।",
+      "takes": [
+        {
+          "file": "speech/hi/announce-new-email.mp3",
+          "seconds": 2.1
+        }
+      ],
+      "status": "downloaded (kept; English is the shipping language for now)"
+    },
+    {
+      "kind": "announcement",
+      "event": "reminder",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "A quick reminder for you.",
+      "takes": [
+        {
+          "file": "speech/en/announce-reminder.mp3",
+          "seconds": 1.9
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "announcement",
+      "event": "reminder",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "hi",
+      "text": "आपके लिए एक छोटा सा रिमाइंडर।",
+      "takes": [
+        {
+          "file": "speech/hi/announce-reminder.mp3",
+          "seconds": 2.5
+        }
+      ],
+      "status": "downloaded (kept; English is the shipping language for now)"
+    },
+    {
+      "kind": "announcement",
+      "event": "meeting-soon",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your next meeting starts soon.",
+      "takes": [
+        {
+          "file": "speech/en/announce-meeting-soon.mp3",
+          "seconds": 2.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "announcement",
+      "event": "meeting-soon",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "hi",
+      "text": "आपकी अगली मीटिंग जल्द ही शुरू होने वाली है।",
+      "takes": [
+        {
+          "file": "speech/hi/announce-meeting-soon.mp3",
+          "seconds": 3.3
+        }
+      ],
+      "status": "downloaded (kept; English is the shipping language for now)"
+    },
+    {
+      "kind": "announcement",
+      "event": "task-done",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your task is done.",
+      "takes": [
+        {
+          "file": "speech/en/announce-task-done.mp3",
+          "seconds": 1.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "announcement",
+      "event": "task-done",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "hi",
+      "text": "आपका काम पूरा हो गया है।",
+      "takes": [
+        {
+          "file": "speech/hi/announce-task-done.mp3",
+          "seconds": 2.2
+        }
+      ],
+      "status": "downloaded (kept; English is the shipping language for now)"
+    },
+    {
+      "kind": "announcement",
+      "event": "scheduled-finished",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Your scheduled work has finished. The results are ready.",
+      "takes": [
+        {
+          "file": "speech/en/announce-scheduled-finished.mp3",
+          "seconds": 3.7
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "announcement",
+      "event": "scheduled-finished",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "hi",
+      "text": "आपका तय किया हुआ काम पूरा हो गया है। नतीजे तैयार हैं।",
+      "takes": [
+        {
+          "file": "speech/hi/announce-scheduled-finished.mp3",
+          "seconds": 5.0
+        }
+      ],
+      "status": "downloaded (kept; English is the shipping language for now)"
+    },
+    {
+      "kind": "announcement",
+      "event": "good-morning",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "en",
+      "text": "Good morning. Here's your day.",
+      "takes": [
+        {
+          "file": "speech/en/announce-good-morning.mp3",
+          "seconds": 2.1
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "announcement",
+      "event": "good-morning",
+      "voice_id": "FQKmle1kREMgn23tqx5q",
+      "model": "eleven_v4",
+      "language": "hi",
+      "text": "सुप्रभात। यह रहा आपका आज का दिन।",
+      "takes": [
+        {
+          "file": "speech/hi/announce-good-morning.mp3",
+          "seconds": 3.9
+        }
+      ],
+      "status": "downloaded (kept; English is the shipping language for now)"
+    },
+    {
+      "kind": "music",
+      "model": "eleven_music_v2_5",
+      "settings": {
+        "instrumental": true,
+        "lyrics_type": "instrumental",
+        "duration_seconds": 30
+      },
+      "prompt": "(same prompt as music/theme)",
+      "takes": [
+        {
+          "file": "music/theme-instrumental-1.mp3",
+          "seconds": 30.0
+        },
+        {
+          "file": "music/theme-instrumental-2.mp3",
+          "seconds": 30.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "video",
+      "character": "mira",
+      "model": "kling-2.5-turbo",
+      "source_image": "docs/brand/characters/mira.png",
+      "gesture": "tail flick",
+      "prompt": "see README, Animation template",
+      "takes": [
+        {
+          "file": "video/mira-idle.mp4",
+          "seconds": null
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "video",
+      "character": "moss",
+      "model": "kling-2.5-turbo",
+      "source_image": "docs/brand/characters/moss.png",
+      "gesture": "leaves stir",
+      "prompt": "see README, Animation template",
+      "takes": [
+        {
+          "file": "video/moss-idle.mp4",
+          "seconds": null
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "video",
+      "character": "nori",
+      "model": "kling-2.5-turbo",
+      "source_image": "docs/brand/characters/nori.png",
+      "gesture": "whiskers twitch",
+      "prompt": "see README, Animation template",
+      "takes": [
+        {
+          "file": "video/nori-idle.mp4",
+          "seconds": null
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "video",
+      "character": "pip",
+      "model": "kling-2.5-turbo",
+      "source_image": "docs/brand/characters/pip.png",
+      "gesture": "one flipper flap",
+      "prompt": "see README, Animation template",
+      "takes": [
+        {
+          "file": "video/pip-idle.mp4",
+          "seconds": null
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "video",
+      "character": "lumi",
+      "model": "kling-2.5-turbo",
+      "source_image": "docs/brand/characters/lumi.png",
+      "gesture": "drifts up and back",
+      "prompt": "see README, Animation template",
+      "takes": [
+        {
+          "file": "video/lumi-idle.mp4",
+          "seconds": null
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "video",
+      "character": "tavi",
+      "model": "kling-2.5-turbo",
+      "source_image": "docs/brand/characters/tavi.png",
+      "gesture": "slow head turn",
+      "prompt": "see README, Animation template",
+      "takes": [
+        {
+          "file": "video/tavi-idle.mp4",
+          "seconds": null
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "video",
+      "character": "beni",
+      "model": "kling-2.5-turbo",
+      "source_image": "docs/brand/characters/beni.png",
+      "gesture": "ears lift",
+      "prompt": "see README, Animation template",
+      "takes": [
+        {
+          "file": "video/beni-idle.mp4",
+          "seconds": null
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "system sound",
+      "family": "glass",
+      "event": "new-email",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Glass marimba, two light quick notes, same pitch, soft, close-mic",
+      "takes": [
+        {
+          "file": "sounds/system/glass/new-email.mp3",
+          "seconds": 1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "system sound",
+      "family": "glass",
+      "event": "reminder",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Glass marimba, three gentle repeating notes, soft and patient, close-mic",
+      "takes": [
+        {
+          "file": "sounds/system/glass/reminder.mp3",
+          "seconds": 1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "system sound",
+      "family": "glass",
+      "event": "meeting-soon",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Glass marimba, rising four-note phrase, warm, brief ring, close-mic",
+      "takes": [
+        {
+          "file": "sounds/system/glass/meeting-soon.mp3",
+          "seconds": 1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "system sound",
+      "family": "glass",
+      "event": "scheduled-finished",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Glass marimba, soft low note then high note, settled and complete, close-mic",
+      "takes": [
+        {
+          "file": "sounds/system/glass/scheduled-finished.mp3",
+          "seconds": 1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "system sound",
+      "family": "santoor",
+      "event": "new-email",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Santoor, two light quick notes, same pitch, soft, close-mic",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/new-email.mp3",
+          "seconds": 2.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "system sound",
+      "family": "santoor",
+      "event": "reminder",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Santoor, three gentle repeating notes, soft and patient, close-mic",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/reminder.mp3",
+          "seconds": 2.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "system sound",
+      "family": "santoor",
+      "event": "meeting-soon",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Santoor, rising four-note phrase, warm, brief ring, close-mic",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/meeting-soon.mp3",
+          "seconds": 1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "system sound",
+      "family": "santoor",
+      "event": "scheduled-finished",
+      "model": "eleven_text_to_sound_v2",
+      "prompt": "Santoor, soft low note then high note, settled and complete, close-mic",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/scheduled-finished.mp3",
+          "seconds": 1.0
+        }
+      ],
+      "status": "downloaded"
+    },
+    {
+      "kind": "loop",
+      "character": "vak",
+      "made_by": "tools/make_loops.py",
+      "takes": [
+        {
+          "file": "loops/vak-idle-512.webp"
+        },
+        {
+          "file": "loops/vak-idle-256.webp"
+        },
+        {
+          "file": "loops/vak-idle-128.webp"
+        },
+        {
+          "file": "loops/vak-idle-64.webp"
+        }
+      ],
+      "status": "made"
+    },
+    {
+      "kind": "loop",
+      "character": "mira",
+      "made_by": "tools/make_loops.py",
+      "takes": [
+        {
+          "file": "loops/mira-idle-512.webp"
+        },
+        {
+          "file": "loops/mira-idle-256.webp"
+        },
+        {
+          "file": "loops/mira-idle-128.webp"
+        },
+        {
+          "file": "loops/mira-idle-64.webp"
+        }
+      ],
+      "status": "made"
+    },
+    {
+      "kind": "loop",
+      "character": "moss",
+      "made_by": "tools/make_loops.py",
+      "takes": [
+        {
+          "file": "loops/moss-idle-512.webp"
+        },
+        {
+          "file": "loops/moss-idle-256.webp"
+        },
+        {
+          "file": "loops/moss-idle-128.webp"
+        },
+        {
+          "file": "loops/moss-idle-64.webp"
+        }
+      ],
+      "status": "made"
+    },
+    {
+      "kind": "loop",
+      "character": "nori",
+      "made_by": "tools/make_loops.py",
+      "takes": [
+        {
+          "file": "loops/nori-idle-512.webp"
+        },
+        {
+          "file": "loops/nori-idle-256.webp"
+        },
+        {
+          "file": "loops/nori-idle-128.webp"
+        },
+        {
+          "file": "loops/nori-idle-64.webp"
+        }
+      ],
+      "status": "made"
+    },
+    {
+      "kind": "loop",
+      "character": "pip",
+      "made_by": "tools/make_loops.py",
+      "takes": [
+        {
+          "file": "loops/pip-idle-512.webp"
+        },
+        {
+          "file": "loops/pip-idle-256.webp"
+        },
+        {
+          "file": "loops/pip-idle-128.webp"
+        },
+        {
+          "file": "loops/pip-idle-64.webp"
+        }
+      ],
+      "status": "made"
+    },
+    {
+      "kind": "loop",
+      "character": "lumi",
+      "made_by": "tools/make_loops.py",
+      "takes": [
+        {
+          "file": "loops/lumi-idle-512.webp"
+        },
+        {
+          "file": "loops/lumi-idle-256.webp"
+        },
+        {
+          "file": "loops/lumi-idle-128.webp"
+        },
+        {
+          "file": "loops/lumi-idle-64.webp"
+        }
+      ],
+      "status": "made"
+    },
+    {
+      "kind": "loop",
+      "character": "tavi",
+      "made_by": "tools/make_loops.py",
+      "takes": [
+        {
+          "file": "loops/tavi-idle-512.webp"
+        },
+        {
+          "file": "loops/tavi-idle-256.webp"
+        },
+        {
+          "file": "loops/tavi-idle-128.webp"
+        },
+        {
+          "file": "loops/tavi-idle-64.webp"
+        }
+      ],
+      "status": "made"
+    },
+    {
+      "kind": "loop",
+      "character": "beni",
+      "made_by": "tools/make_loops.py",
+      "takes": [
+        {
+          "file": "loops/beni-idle-512.webp"
+        },
+        {
+          "file": "loops/beni-idle-256.webp"
+        },
+        {
+          "file": "loops/beni-idle-128.webp"
+        },
+        {
+          "file": "loops/beni-idle-64.webp"
+        }
+      ],
+      "status": "made"
     }
   ]
 }

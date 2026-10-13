@@ -20,6 +20,13 @@ F={"glass":"uXXwtSjTgGrYzaRakV2N zN8sriP4U8PxAi9qFNxO PfvbjP07iIsCJ4xaanii XJoTJ
 "pure":"tc7eYgeEzhqztmU6phTg u4dfFo4ry8i58RueChhd iPN3r16iKJvmzdnZ1gZ4 KFxfTTxHVByrYCWghTzT 0bKG0SzowI3PqgVxZ1RT TZqsr1MpoMfz2E1xE9TA"}
 for f,s in F.items():
     for e,sid in zip(E,s.split()): MAP[sid]=(f"sounds/system/{f}/{e}",1,1)
+for k,ids in {"greeting":"6Lq0aZf4EwY1JRgzdPvF tRICMu9htix1xGO30Bbg","approval-needed":"RmnQlFH8S7ykSHzRUrwv DmshRUJQ2hTl79Mp2TKO","done":"O5bGVhdbBAe8ekcFIaRn HgX8bAj20spd5hymuE7E","error":"T0X2bViwoP79nod6V38k 4ZP8kv5knNyFgHtqqLgQ","heres-what-changed":"uZ1kMjS3Tr6Dc4mxhRoN xLHYOApCtDH9FK1HzAQl","ready-when-you-are":"ghIFvZmJKWaST6gAqVvZ 3msbAJnFjY5CIVZeTUBP"}.items(): add(f"speech/en/{k}",ids.split())
+for lang,ids in {"en":"qIwOLnxUZ3mL1Eo0dRM3 0J6RQaRIpKD3zxCTH2e3 mOB5Ks8PyD1Vvqa1ddlY mGTPHWyRQj25Aivc6lLu RJ9d2JunalvJsnWtXpsl xiy6jHLjfA6MyNWPKHwh","hi":"TY6rHEgvabDFQr89iDue RKgWksZqe6jvAVE9SODN 2nAfxbBEqw0RiRusTa0L Nc0qSGky1RyAx0oQ91QM ZwnVVeK5LmPQz7WKqdnP MT837lZr6Ijq2NZs5D9E"}.items():
+    for e,sid in zip(["new-email","reminder","meeting-soon","task-done","scheduled-finished","good-morning"],ids.split()): MAP[sid]=(f"speech/{lang}/announce-{e}",1,1)
+add("music/theme-instrumental",["az7q43FuBGnPLCmnstqY","giLXk2FpdZzSPqC3WMOK"])
+for c,sid in {"mira":"czwMEFXV2d4QTkpzfeLQ","moss":"SOoIVPK19tQb6njgc9t8","nori":"9eZFPYcRPnlz1JjISoJP","pip":"JhrLxHcjEb80jQdQI5RK","lumi":"1nMzL27u6ILX626oFEom","tavi":"6mz3Ahr9LF5rOa8jOBR8","beni":"bJ8H9HhKuYpchFsqDcg5"}.items(): MAP[sid]=(f"video/{c}-idle",1,1)
+for f,ids in {"glass":"6MIKxltrVCJTrq3xCNLM 7EqXsv4TShuinMrfL5U7 xlsQYIyhRcj1uuWmSHRI aNvmHJ49LXI4UW5LS2gz","santoor":"x3JfXTeQq9Nba9OgU9Ur P2MHLyLzVx3Rsx9feGIk yNaTEdubiWRGhYJ6ysoO s6OvdLSma6o4clswzqnC"}.items():
+    for e,sid in zip(["new-email","reminder","meeting-soon","scheduled-finished"],ids.split()): MAP[sid]=(f"sounds/system/{f}/{e}",1,1)
 if sys.argv[1]=="ids":
     print(json.dumps([s for s in MAP if MAP[s][0].startswith(sys.argv[2])])); sys.exit()
 root=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
