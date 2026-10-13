@@ -2,14 +2,12 @@
 
 Status: proposal, 2026-10-13. Nothing here is built. The script language is
 decided (§4.1, the maintainer, 2026-10-13); the other decisions in §4 are
-open. Written at the maintainer's request after a design comparison with
-Nous Research's Hermes Agent (read from its source at `6e7b83a2`) found one
-capability Vak has no answer to: the model writing one program that makes
-many tool calls and returns only the answer. §2 surveys how eight other
-systems do it and where each failed; the design in §3 is built from those
-failures. Builds on doc 88 (the control plane), doc 89 (constrained tool
-arguments), doc 85 (the turn graph) and doc 68 (the context engine). No
-step starts until the maintainer says which stage to begin.
+open. The capability is the model writing one program that makes many
+tool calls and returns only the answer. §2 lists the ways such programs go
+wrong; the design in §3 is built to close each of them. Builds on doc 88
+(the control plane), doc 89 (constrained tool arguments), doc 85 (the turn
+graph) and doc 68 (the context engine). No step starts until the
+maintainer says which stage to begin.
 
 ## 1. The gap
 
@@ -18,67 +16,65 @@ costs Vak one model step per call today, and every result passes through
 the context on its way to the next step. The model reads 40 results it
 needs one field of, and the turn's input grows with each step.
 
-## 2. What the field does, and where it failed
+## 2. How programs that call tools go wrong
 
-| System | Language and runtime | Where the code runs | Recorded failure or stated limit |
-|---|---|---|---|
-| Hermes `execute_code` | Python; a generated stub module calls tools over a Unix socket | A host subprocess, outside Hermes' own terminal backend (its SECURITY.md §2.2) | Unconfined by design: its policy says only a whole-process wrapper confines it. |
-| Anthropic programmatic tool calling | Python in Anthropic's code-execution container; the call pauses and the client returns each result | Anthropic's container | `allowed_callers` "is not a hard API-level block"; strict tools are not supported with it; a pending call times out after about four minutes; MCP-connector tools cannot be called; tool results are strings and "may contain code" to be validated. |
-| Cloudflare Code Mode | TypeScript against a generated SDK, in a workerd V8 isolate; two tools, `search` and `execute` | An isolate inside one process | Check Point (2026) found five memory bugs in workerd's C++ glue (URLPattern, `node:zlib`, HTMLRewriter, SQL authorizer); a prompt injection became host code execution where the V8 cage was off. Node compatibility on by default widened the reachable native surface. |
-| Goose Code Mode | JavaScript via `pctx_code_mode` on a vendored V8, over MCP tools | Inside the Goose process | Text-only results (images and binary dropped). Goose's default permission mode is fully autonomous, and its adversary reviewer is an LLM that fails open. |
-| smolagents `CodeAgent` | Python, interpreted by an allow-listing AST evaluator | In the host process | CVE-2025-5120 (CVSS 9.9): an allowed builtin (`getattr`) returned unwrapped reached `sys` through an allowed module; the safety check judged only an expression's final value. |
-| Pydantic `mcp-run-python` | Python on Pyodide inside Deno | A Deno subprocess | CVE-2026-25904: the sandbox could reach the host's loopback (SSRF into local services); a second advisory: Python reached the JavaScript bridge (`js`) and escaped. Archived; replaced by Monty, a Python subset written in Rust with no file system, environment or network. |
-| TanStack AI Code Mode | TypeScript via `isolated-vm` (V8) or QuickJS compiled to WebAssembly | In process, or a Worker | A fresh isolate per run; memory, stack and wall limits are library defaults; no published threat model. |
-| CaMeL (Google DeepMind) and FIDES (Microsoft) | The planner model writes code; a custom interpreter runs it | Research systems | Values carry provenance and permission labels, and a policy checks them before each tool call, so untrusted data never decides control flow. CaMeL solved 67% of AgentDojo tasks with that guarantee: security costs completion. |
+Running model-written code that calls tools is a known pattern, and its
+failures are known too:
 
-What repeats:
-
-1. **One software layer between model-written code and the host.** Every
-   escape above broke the only boundary there was: an AST allow-list, a
-   language bridge, a C++ binding beneath an isolate. None had an OS
-   boundary underneath.
-2. **Host reach left on.** Loopback, Node compatibility, a JavaScript
-   bridge, inherited builtins: each was a convenience nobody needed for
-   calling tools.
+1. **One software layer between the code and the machine.** An
+   interpreter that allow-lists built-ins, a language running on a bridge
+   into its host runtime, an engine isolate inside the host process: each
+   has been escaped by a single bug in that one layer, because nothing lay
+   beneath it. Two recurring forms: an allowed built-in handed back
+   unwrapped reaches a forbidden module, and a memory bug in an engine's
+   native bindings becomes code execution in the host process.
+2. **Host reach left on.** Loopback networking (code reaching services on
+   the same machine), a compatibility layer of host APIs, a bridge object
+   into the embedding runtime, inherited built-ins. None is needed to call
+   tools, and each has been the way out.
 3. **Presentation mistaken for permission.** A flag that says a tool may
-   be called from code shapes what the model sees; it is not a check.
+   be called from code shapes what the model is shown; when nothing
+   enforces it at the call, it is not a check.
 4. **Results trusted as code or as clean data.** Tool output, especially
-   from the web or mail, is attacker-influenced and flows straight into the
-   next call's arguments.
+   from the web or mail, is written by whoever controls the source, and it
+   flows straight into the next call's arguments.
 5. **Data flow is invisible.** A program that reads private data and then
-   calls anything that reaches the network can carry the data out in an
-   argument (a URL, a search query). Only CaMeL and FIDES address it, and
-   they pay in completion.
-6. **Fail-open reviewers and fixed timeouts.** A reviewer that allows on
-   error, and limits hardcoded in the vendor's code.
+   calls anything that reaches the network can carry the data out inside an
+   argument (a URL, a search query). Tracking where every value came from
+   closes this, at a measurable cost in tasks completed.
+6. **Fail-open reviewers and fixed timeouts.** A reviewer that allows a
+   call when it cannot decide, and limits fixed in code where the operator
+   cannot see them.
+7. **Lossy results.** Results reduced to text, with images and binary
+   content dropped, so a program silently works on less than the tool
+   returned.
 
 ## 3. The shape
 
 - One loop-owned tool, `program`, with one argument, `code`. The loop
   defines it, as it defines `plan`, `recall` and `task`, so it is
   recognised by name (AGENTS.md, "No word lists, no tuned limits").
-- **Two layers, always** (answers failure 1). The code runs in a
-  JavaScript engine embedded in the broker worker, as a new
-  `WorkerTask::ProgramRun`, which moves the worker protocol
-  (`PROTOCOL_VERSION` in `crates/vak-tools/src/broker.rs`) from 5 to 6.
-  The worker runs under the OS sandbox read-only, network denied and
-  rooted at the workspace, whatever the session's mode, as `VerifyTargets`
-  and `OfficeReview` do (invariant 14). On Linux that is Landlock plus the
-  seccomp filter that refuses IPv4 and IPv6 sockets and io_uring
-  (`crates/vak-sandbox/src/landlock.rs`), so loopback is closed too
-  (answers the `mcp-run-python` SSRF); on macOS, Seatbelt's deny-default
-  profile. An engine bug then reaches a process that can read the
-  workspace and nothing else. The program never runs in the server,
-  desktop or gateway process.
-- **An empty world** (answers failure 2). The engine starts with the
-  language's own built-ins and nothing from the host: no file, network,
-  process, timer, clock, environment, module loader, `eval` of strings or
-  Node compatibility. Randomness is seeded from the call's id. Its only
+- **Two layers, always** (closes 1). The code runs in a JavaScript engine
+  embedded in the broker worker, as a new `WorkerTask::ProgramRun`, which
+  moves the worker protocol (`PROTOCOL_VERSION` in
+  `crates/vak-tools/src/broker.rs`) from 5 to 6. The worker runs under the
+  OS sandbox read-only, network denied and rooted at the workspace,
+  whatever the session's mode, as `VerifyTargets` and `OfficeReview` do
+  (invariant 14). On Linux that is Landlock plus the seccomp filter that
+  refuses IPv4 and IPv6 sockets and io_uring
+  (`crates/vak-sandbox/src/landlock.rs`), so loopback is closed too; on
+  macOS, Seatbelt's deny-default profile. An engine bug then reaches a
+  process that can read the workspace and nothing else. A program never
+  runs in the server, desktop or gateway process.
+- **An empty world** (closes 2). The engine starts with the language's own
+  built-ins and nothing from the host: no file, network, process, timer,
+  clock, environment, module loader, evaluation of strings, or host
+  compatibility layer. Randomness is seeded from the call's id. Its only
   way out is `await tools.<name>(args)`, a request on the worker's channel
   to the broker. Nothing is allow-listed out of a larger world, so there
-  is no `getattr` to forget.
-- **Every inner call is a call** (answers failure 3). The broker handles
-  it exactly as a call the model made: the one argument reader
+  is no built-in left to forget.
+- **Every inner call is a call** (closes 3). The broker handles it exactly
+  as a call the model made: the one argument reader
   (`vak_tools::read_arguments`), the tool's `fill_defaults`, the schema
   check, `authorize` through `PermissionEngine` and the approver,
   execution in resource-claim waves, a child trace key
@@ -87,27 +83,26 @@ What repeats:
   broker refuses an undeclared tool on every inner call, so the
   declaration is a check, not a hint. A program never reaches more than
   the model could by calling the same tools one by one.
-- **Results are data with a declared shape** (answers failure 4). A
-  programmable tool declares the shape of its result (`Tool::output_schema`),
-  and the script receives parsed JSON of that shape, never text to
-  interpret; nothing in the engine evaluates a string. A binary result
-  arrives as a tenant object reference, not as dropped content.
-- **Provenance travels with the program** (answers failure 5). Each inner
-  result carries the label its source already has in Vak: the
-  conversation's own, a connected account's (`ToolOutput::from_account`),
-  an intake item's disposition, or the open web. Vak tracks it per
-  program, not per value: once a program has received a result labelled
-  private (an account's data, a held item, a secret's file) or untrusted
-  (the web, an intake item, an MCP result), any later inner call whose
-  declared reach leaves the machine asks the approver, whatever the mode,
-  and an unwatched surface refuses it. This keeps CaMeL's property for
-  the case that matters (private or untrusted data cannot leave by an
-  argument without a person) without its interpreter, at a cost only to
-  programs that mix the two. Per-value labels inside the engine are a
-  later option (§6).
-- **No fail-open and no fixed timeouts** (answers failure 6). An Ask that
-  cannot reach an approver is a denial returned to the script. Wall time
-  is the operator's limit; see §3.1.
+- **Results are data with a declared shape** (closes 4 and 7). A
+  programmable tool declares the shape of its result
+  (`Tool::output_schema`), and the script receives parsed JSON of that
+  shape, never text to interpret; nothing in the engine evaluates a
+  string. A binary result arrives as a tenant object reference that the
+  script can pass on to another tool, never dropped.
+- **Provenance travels with the program** (closes 5). Each inner result
+  carries the label its source already has in Vak: the conversation's own,
+  a connected account's (`ToolOutput::from_account`), an intake item's
+  disposition, or the open web. Vak tracks it per program, not per value:
+  once a program has received a result labelled private (an account's
+  data, a held item, a secret's file) or untrusted (the web, an intake
+  item, an MCP result), any later inner call whose declared reach leaves
+  the machine asks the approver, whatever the mode, and an unwatched
+  surface refuses it. Private or untrusted data then cannot leave by an
+  argument without a person, at a cost only to programs that mix the two.
+  Per-value labels inside the engine are a later option (§6).
+- **No fail-open and no fixed timeouts** (closes 6). An Ask that cannot
+  reach an approver is a denial returned to the script. Wall time and
+  memory are the operator's limits (§3.1).
 - An inner call's error comes back to the script as a value carrying its
   `vak_control::Fault`, so the script can handle it. A program that fails
   is `ToolOutput::error(Fault::…)`, naming where the fault lies.
@@ -141,21 +136,18 @@ What repeats:
 1. **Script language: decided.** JavaScript, in an engine embedded in the
    isolated worker, never the machine's interpreter and never a language
    of Vak's own. The point is isolation: programs run at the level of an
-   isolated worker, not at the level of the machine. Every failure in §2
-   that reached a host went through a runtime that sat directly on it.
-2. **Which engine.** Open. The criteria, from §2: memory safety first
-   (the Code Mode escapes were use-after-free bugs in native glue), then
-   no JIT (less native surface and a deterministic replay), then enough of
-   the language that models' ordinary code runs (async functions,
-   `Promise.all`, JSON, destructuring), then size and start time.
-   Recommended: Boa (`boa_engine`), written in Rust with no JIT; the
-   alternative is QuickJS through `rquickjs` (C, smaller and more
-   complete, not memory-safe); V8 (`deno_core`) is rejected for its size
-   and JIT surface. P0 measures the candidates on captured programs before
-   P2 pins one exactly in the workspace manifest.
+   isolated worker, not at the level of the machine (§2.1 and §2.2).
+2. **Which engine.** Open. The criteria, in order: memory safety (the
+   worst escapes in §2.1 were memory bugs in native bindings), no JIT
+   (less native surface and a deterministic replay), enough of the
+   language that ordinary model-written code runs (async functions,
+   `Promise.all`, JSON, destructuring), then size and start time. P0
+   measures the candidate engines against these on programs models wrote
+   for the P0 tasks, and P2 pins the chosen one exactly in the workspace
+   manifest with its one-line justification.
 3. **First reach.** Recommended: only tools whose declared reach reads
    (`read`, `grep`, `glob`, `doc_read`, `session_search`, `webfetch`, and
-   MCP tools that declare it), with the provenance rule above governing
+   MCP tools that declare it), with the provenance rule governing
    `webfetch` after a private or untrusted result. Writes follow in P6,
    each a draft, so Review still decides what reaches the workspace.
 4. **How the model learns the bindings.** Recommended: a typed signature
@@ -165,11 +157,9 @@ What repeats:
    are.
 5. **Long code as one argument.** Doc 89 measured that long string
    arguments are the ones that break. Recommended: `program` is a strict
-   tool where the wire enforces a schema (it is Vak's own tool, so the
-   Anthropic restriction on strict tools in their container does not
-   apply), the regeneration path covers the rest, and the form is measured
-   with `scripts/measure_tool_form.py` on Vak's captured requests before
-   P4 ships.
+   tool where the wire enforces a schema, the regeneration path covers the
+   rest, and the form is measured with `scripts/measure_tool_form.py` on
+   Vak's captured requests before P4 ships.
 
 ## 5. Stages
 
@@ -178,9 +168,9 @@ leaves behind (invariant 30).
 
 | Stage | Work | Done when |
 |---|---|---|
-| P0 · Baseline | Capture real fan-out turns in a `/tmp` workspace on at least two routes; record steps, input tokens and wall time per task in `docs/audits/`. Run the candidate engines (§4.2) on programs models wrote for those tasks. | The baseline and the engine measurements are committed and §4 records the remaining decisions. |
+| P0 · Baseline | Capture real fan-out turns in a `/tmp` workspace on at least two routes; record steps, input tokens and wall time per task in `docs/audits/`. Measure the candidate engines (§4.2) on programs models wrote for those tasks. | The baseline and the engine measurements are committed and §4 records the remaining decisions. |
 | P1 · Declarations and ledger | `Tool::programmable` and `Tool::output_schema` (forwarded by every wrapper); `EntryPayload::ProgramCall` (traced, `at_turn`, parent call id, provenance label, a large result as a tenant object); a catalog source for it; `docs/reference/records.md` regenerated. | `derive_messages()` is byte-identical with and without inner entries; `every_ledger_row_type_is_traced` passes. |
-| P2 · Worker runtime | The pinned engine behind `WorkerTask::ProgramRun` with an empty world, the call channel, cancellation, the operator's deadline and memory ceiling, seeded randomness; protocol 6. | An escape corpus fails closed on macOS and Linux: every §2 failure restated as a test (host built-ins, bridges, loopback and Unix-socket connects, prototype and global tricks, string evaluation), plus endless loops, deep recursion and huge returns; a fuzz target runs in CI; replaying a recorded program reproduces its output. |
+| P2 · Worker runtime | The pinned engine behind `WorkerTask::ProgramRun` with an empty world, the call channel, cancellation, the operator's deadline and memory ceiling, seeded randomness; protocol 6. | An escape corpus fails closed on macOS and Linux: every failure in §2 restated as a test (host built-ins, bridges, loopback and Unix-socket connects, prototype and global tricks, string evaluation), plus endless loops, deep recursion and huge returns; a fuzz target runs in CI; replaying a recorded program reproduces its output. |
 | P3 · Broker dispatch | Inner calls through reader, `fill_defaults`, `authorize`, execution in waves, approvals, child trace keys, `Decision` entries, typed faults returned to the script; the broker's refusal of undeclared tools; the provenance rule. | Tests in every permission mode, an unattended channel included, show a program cannot call what its session could not, and that a program which read an account's data or a web page cannot reach the network without the approver. |
 | P4 · The loop tool | Register `program`; its result enters context, inner results stay out and are reachable by `recall`; the plan check (`vak_judge::plan`) reads inner receipts; workers spawned by `task` get it too. | The P0 tasks run live on two routes with fewer steps and fewer input tokens than the baseline, and no result lost. |
 | P5 · Surfaces | One call in the transcript that opens to its inner calls with their provenance; Workbench shows them live; the admin Run detail shows them in the span tree. Both client bundles rebuilt. | Checked in a browser at 1440 × 900 and 390 × 844, light and dark. |
@@ -189,12 +179,11 @@ leaves behind (invariant 30).
 ## 6. Risks
 
 - The engine is new native surface in the worker. It needs an exact pin,
-  a one-line justification, and fuzzing, as `vak-ooxml` and `vak-pdf`
-  have, and the OS sandbox stays beneath it however good it is.
+  a one-line justification and fuzzing, as `vak-ooxml` and `vak-pdf` have,
+  and the OS sandbox stays beneath it however good it is.
 - The provenance rule is per program, so a program that reads one web
   page and then searches will ask. If P4 shows that this asks too often,
-  the answer is per-value labels in the engine (CaMeL's design), not a
-  looser rule.
+  the answer is per-value labels in the engine, not a looser rule.
 - An approval in the middle of a script holds the program; the Ask must be
   plain to the person, and a surface nobody watches must end it at once.
 - A program hides steps from the person watching until P5 lands; P4
@@ -210,19 +199,3 @@ leaves behind (invariant 30).
   (invariant 33).
 - No program sends anything outside Vak: effects stay one per reviewed
   candidate (invariant 41).
-
-## Sources
-
-- Hermes Agent, `website/docs/user-guide/features/code-execution.md` and
-  `SECURITY.md`, at `6e7b83a2`.
-- Anthropic, "Programmatic tool calling" (platform.claude.com docs) and
-  "Code execution with MCP" (anthropic.com/engineering).
-- Check Point Research, "When agentic glue melts" (2026), on workerd.
-- Goose, `documentation/docs/guides/managing-tools/code-mode.md`,
-  `goose-permissions.md` and `security/adversary-mode.md`.
-- GHSA-6v92-r5mx-h5fx / CVE-2025-5120 (smolagents); CVE-2026-25904
-  (`mcp-run-python`).
-- TanStack AI, "Code Mode isolate drivers".
-- Debenedetti et al., "Defeating Prompt Injections by Design" (CaMeL);
-  Costa et al., "Securing AI Agents with Information-Flow Control"
-  (FIDES, arXiv 2505.23643).
