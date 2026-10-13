@@ -72,8 +72,15 @@ item "card claims a draft no call made" is left alone (no typed fact).
    `scripts/measure_tool_form.py` replaces the toy-schema
    `measure_answer_form.py` (verified live: 16 requests captured from one
    `/until-done` turn, one replayed 3 times, 2 of 3 valid as written).
-   Left: C7 (doc 88 §11), which finishes doc 88; its design needs the
-   maintainer's choices.
+   C7 done 2026-10-13 (maintainer: findings for review, CLI + admin):
+   `vak eval --ledgers`, `/eval/ledgers`, `/eval/proposals/review`, admin
+   System › How the models did (`#/measurements`), checked at 1440 × 900
+   and 390 × 844, light and dark. Doc 88's stages are done.
+   Seen live while verifying, not yet looked into: a `/until-done` turn
+   on the dev route ended with the model apologising for "declaring
+   completion prematurely" after a stop-gate correction, and wrote its
+   table as a list although the first replayed step called the table
+   card.
 3. Check whether a card-only answer (no response text) is evaluated
    `Unknown` by `evaluate_response_with_failures` and so marked unverified
    (the chat showed "The requested outcome is not verified" on such turns).

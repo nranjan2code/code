@@ -2857,3 +2857,95 @@ async fn assert_no_provider_effect(
         "{effects}"
     );
 }
+
+/// C7 (docs/design/88-control-plane.md): a refused call becomes a pattern
+/// offered for review, a person's answer to it is recorded and shown, and
+/// a key no measurement offers is refused. The tool's name is this test's
+/// own, so it reads only what it made from the shared home.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_measured_pattern_is_offered_and_its_review_recorded() {
+    let tool = format!("ghost_{}", uuid::Uuid::now_v7().simple());
+    let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
+        responses: Mutex::new(VecDeque::from(vec![
+            tool_call("t1", &tool, serde_json::json!({})),
+            text("done"),
+            text("done"),
+        ])),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::WorkspaceWrite).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let run = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "use the tool"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(run.status(), 202);
+
+    let suffix = format!("|tool_refused:{tool}:unknown");
+    let ours = |report: &serde_json::Value| {
+        report["proposals"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|p| p["key"].as_str().is_some_and(|key| key.ends_with(&suffix)))
+            .cloned()
+    };
+    let mut offered = None;
+    for _ in 0..200 {
+        let report: serde_json::Value = client
+            .get(format!("{base}/eval/ledgers"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if let Some(found) = ours(&report) {
+            offered = Some(found);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let offered = offered.expect("the refused call is offered as a pattern");
+    assert_eq!(offered["count"], 1);
+    assert!(offered["review"].is_null());
+
+    let key = offered["key"].as_str().unwrap().to_string();
+    let answered = client
+        .post(format!("{base}/eval/proposals/review"))
+        .json(&serde_json::json!({"key": key, "review": "dismissed"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(answered.status(), 200);
+    let report: serde_json::Value = client
+        .get(format!("{base}/eval/ledgers"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(ours(&report).unwrap()["review"]["review"], "dismissed");
+
+    let unknown = client
+        .post(format!("{base}/eval/proposals/review"))
+        .json(&serde_json::json!({"key": "nobody|step_limit", "review": "accepted"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), 404);
+}

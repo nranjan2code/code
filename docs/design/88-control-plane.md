@@ -533,8 +533,14 @@ from the ledger.
   that ran and failed, a correction, the step limit), most frequent
   first, with no threshold: a person decides. A person declining, a rule
   denying and a cancelled run are the system working, not patterns.
-  `vak eval --ledgers [--json]` prints it. C7b: the review record and the
-  admin screen.
+  `vak eval --ledgers [--json]` prints it. C7b is built: a person's
+  answer (accepted or dismissed) is a row of the `proposal-reviews/`
+  chain keyed by the proposal's stable key, the latest answer holds, and
+  only a proposal the current measurement offers can be answered
+  (`vak_core::measure::review`); `GET /eval/ledgers` and
+  `POST /eval/proposals/review` serve the admin console's System › How
+  the models did (`#/measurements`). With it C7 and doc 88's stages are
+  done.
 
 ## 12. Decisions (maintainer, 2026-10-11, at C0)
 

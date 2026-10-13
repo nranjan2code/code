@@ -161,11 +161,81 @@ pub fn report(core: &crate::Core) -> Result<serde_json::Value, crate::CoreError>
             })
         })
         .collect();
+    let reviews = reviews(core)?;
+    let proposals: Vec<serde_json::Value> = vak_judge::measure::promote(&gathered.turns)
+        .into_iter()
+        .map(|proposal| {
+            let mut value = serde_json::to_value(&proposal).unwrap_or_default();
+            value["review"] = serde_json::to_value(reviews.get(&proposal.key)).unwrap_or_default();
+            value
+        })
+        .collect();
     Ok(serde_json::json!({
         "sessions": gathered.sessions,
         "unreadable": gathered.unreadable,
         "turns": gathered.turns.len(),
         "models": models,
-        "proposals": vak_judge::measure::promote(&gathered.turns),
+        "proposals": proposals,
     }))
+}
+
+/// One row of the `proposal-reviews/` chain: a person's answer to a
+/// proposal, by its stable key. The latest answer to a key holds.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ReviewRow {
+    pub key: String,
+    pub review: vak_control::Review,
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub actor: vak_session::ids::PrincipalId,
+}
+
+/// The latest answer to each proposal. A row that does not decode is an
+/// error, never skipped: what a person decided is not guessed.
+pub fn reviews(core: &crate::Core) -> Result<HashMap<String, ReviewRow>, crate::CoreError> {
+    let chain = vak_session::chain::RecordChain::at(core.shared_scope().proposal_reviews());
+    let mut latest = HashMap::new();
+    for row in chain.read::<serde_json::Value>() {
+        let row: ReviewRow = serde_json::from_value(row).map_err(|error| {
+            crate::CoreError::Session(vak_session::SessionError::Corrupt {
+                line: 0,
+                message: format!("a proposal review does not decode: {error}"),
+            })
+        })?;
+        latest.insert(row.key.clone(), row);
+    }
+    Ok(latest)
+}
+
+/// Records a person's answer to a proposal the measurement offers now.
+/// Nothing in Vak changes: the answer is the record.
+pub fn review(
+    core: &crate::Core,
+    key: &str,
+    review: vak_control::Review,
+    actor: vak_session::ids::PrincipalId,
+) -> Result<ReviewRow, ReviewError> {
+    let turns = ledger_turns(core).map_err(ReviewError::Core)?;
+    if !vak_judge::measure::promote(&turns.turns)
+        .iter()
+        .any(|proposal| proposal.key == key)
+    {
+        return Err(ReviewError::NotOffered);
+    }
+    let row = ReviewRow {
+        key: key.to_string(),
+        review,
+        at: chrono::Utc::now(),
+        actor,
+    };
+    vak_session::chain::RecordChain::at(core.shared_scope().proposal_reviews())
+        .append(&row)
+        .map_err(|error| ReviewError::Core(crate::CoreError::Session(error)))?;
+    Ok(row)
+}
+
+#[derive(Debug)]
+pub enum ReviewError {
+    /// No proposal with that key is offered by the current measurement.
+    NotOffered,
+    Core(crate::CoreError),
 }

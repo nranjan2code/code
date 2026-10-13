@@ -252,6 +252,13 @@ and workspace-scope enforcement as desktop and gateway clients.
   draws the run's spans as a waterfall (run › turn › step › model call or
   tool use › the tool worker › sending), each with how long it took.
 
+- **How the models did** (System, `#/measurements`, doc 88 C7) — each
+  model's finished turns, answers, step-limit stops, refused and failed
+  calls, corrections and typical steps and time, measured from the
+  ledgers' decisions; below, every contract pattern seen, in plain words,
+  with how often, for the owner to accept or dismiss. Nothing changes by
+  itself; an answer is a recorded row.
+
 - **Home** — the operator's first screen, answering four questions in order
   and nothing else: is the system healthy, what is waiting on me, what is
   running, what is it costing.

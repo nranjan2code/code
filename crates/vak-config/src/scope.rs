@@ -360,6 +360,12 @@ impl SharedScope {
         self.root.join("key-rotations")
     }
 
+    /// A person's answers to the proposals measurement offered
+    /// (docs/design/88-control-plane.md, C7).
+    pub fn proposal_reviews(&self) -> PathBuf {
+        self.root.join("proposal-reviews")
+    }
+
     /// The Document that holds the install's own retention rules (plan
     /// M7b-a): the keep times the owner changed from the defaults.
     pub fn retention_rules(&self) -> PathBuf {

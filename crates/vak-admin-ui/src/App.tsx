@@ -4,6 +4,7 @@ import Projects from "./Projects";
 import Runs from "./Runs";
 import Data from "./Data";
 import Diagnostics from "./Diagnostics";
+import { Measurements } from "./Measurements";
 import Automations from "./Automations";
 import { api, AuthRequired } from "./api";
 import { headlessAuth } from "./headlessAuth";
@@ -7263,6 +7264,7 @@ const NAV: NavItem[] = [
   { group: "System", hash: "#/setup", label: "Setup", icon: ICONS.setup, scope: "project" },
   { group: "System", hash: "#/finops", label: "FinOps", icon: ICONS.finops, scope: "project" },
   { group: "System", hash: "#/diagnostics", label: "Traces & logs", icon: ICONS.diagnostics, scope: "global" },
+  { group: "System", hash: "#/measurements", label: "How the models did", icon: ICONS.diagnostics, scope: "global" },
 ];
 
 function routeScope(current: string): NavItem["scope"] {
@@ -7872,6 +7874,7 @@ export default function App() {
               </Match>
               <Match when={currentRoute() === "#/data"}><Data section={dataTab() === "#/data/storage" ? "storage" : dataTab() === "#/data/integrity" ? "integrity" : dataTab() === "#/data/keys" ? "keys" : dataTab() === "#/data/sync" ? "sync" : "retention"} /></Match>
               <Match when={currentRoute() === "#/diagnostics"}><Diagnostics /></Match>
+              <Match when={currentRoute() === "#/measurements"}><Measurements /></Match>
               <Match when={currentRoute() === "#/security"}><Security /></Match>
               <Match when={currentRoute() === "#/prompts"}><PromptsPage /></Match>
               <Match when={currentRoute() === "#/settings"}><Settings /></Match>

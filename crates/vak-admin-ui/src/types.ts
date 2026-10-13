@@ -1682,3 +1682,51 @@ export type StepOverride = { reasoning?: string; temperature?: number; top_p?: n
 /// The operator's time limits, in seconds (docs/design/88-control-plane.md §5a).
 export type TimeLimits = { probe_secs: number; reply_secs: number; command_secs: number; command_max_secs: number; script_secs: number; hook_secs: number; question_secs: number; approval_secs: number };
 export type ControlLayer = { steps?: Record<string, StepOverride>; routes?: Record<string, Record<string, StepOverride>>; limits?: Partial<TimeLimits> };
+
+/** One model's measured turns (GET /eval/ledgers). */
+export interface LedgerModelMeasure {
+  model: string;
+  turns: number;
+  answered: number;
+  failed: number;
+  aborted: number;
+  step_limit: number;
+  calls: number;
+  refused_calls: number;
+  failed_calls: number;
+  corrections: number;
+  median_steps: number | null;
+  median_seconds: number | null;
+}
+
+export type ProposalPattern =
+  | { kind: "tool_refused"; tool: string; refusal: "unknown" | "schema" | "tool" | "repeated" }
+  | { kind: "tool_failed"; tool: string; fault: "shape" | "target" | "tool" | "limit" }
+  | { kind: "corrected"; cause: string }
+  | { kind: "step_limit" };
+
+export interface ProposalReview {
+  key: string;
+  review: "accepted" | "dismissed";
+  at: string;
+  actor: string;
+}
+
+/** A pattern the measurements found that a person may accept or dismiss. */
+export interface Proposal {
+  key: string;
+  model: string;
+  pattern: ProposalPattern;
+  count: number;
+  of: number;
+  turns: string[];
+  review: ProposalReview | null;
+}
+
+export interface LedgerReport {
+  sessions: number;
+  unreadable: number;
+  turns: number;
+  models: LedgerModelMeasure[];
+  proposals: Proposal[];
+}

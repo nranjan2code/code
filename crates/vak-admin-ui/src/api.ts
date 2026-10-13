@@ -88,6 +88,8 @@ import type {
   ActiveWorker,
   SandboxRecordsResponse,
   SandboxExecutionsResponse,
+  LedgerReport,
+  ProposalReview,
 } from "./types";
 
 export class AuthRequired extends Error {
@@ -302,6 +304,14 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ outcome }),
+    }).then((r) => handle(r)),
+
+  ledgerReport: (): Promise<LedgerReport> => fetch("/eval/ledgers").then((r) => handle(r)),
+  reviewProposal: (key: string, review: "accepted" | "dismissed"): Promise<ProposalReview> =>
+    fetch("/eval/proposals/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, review }),
     }).then((r) => handle(r)),
 
   /** `total` counts every session matching the filter, not just the page

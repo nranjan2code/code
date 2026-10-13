@@ -1092,6 +1092,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sync/key/export", post(sync_key_export))
         .route("/sync/key/import", post(sync_key_import))
         .route("/data/keys", get(data_keys))
+        .route("/eval/ledgers", get(eval_ledgers))
+        .route("/eval/proposals/review", post(review_proposal))
         .route("/data/keys/rotate", post(rotate_data_keys))
         .route("/data/keys/retire", post(retire_data_keys))
         .route("/data/rules", get(data_rules).put(set_data_rules))
@@ -10901,6 +10903,46 @@ async fn data_keys(State(state): State<AppState>) -> axum::response::Response {
     let core = state.core.clone();
     match tokio::task::spawn_blocking(move || core.key_status()).await {
         Ok(Ok(status)) => Json(status).into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// What the decisions in this install's ledgers measure by model, and the
+/// patterns offered for review with each one's latest answer
+/// (docs/design/88-control-plane.md, C7).
+async fn eval_ledgers(State(state): State<AppState>) -> axum::response::Response {
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || vak_core::measure::report(&core)).await {
+        Ok(Ok(report)) => Json(report).into_response(),
+        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ProposalReviewBody {
+    key: String,
+    review: vak_control::Review,
+}
+
+/// A person's answer to a proposal the measurement offers now. Nothing in
+/// Vak changes; the answer is recorded.
+async fn review_proposal(
+    State(state): State<AppState>,
+    Json(body): Json<ProposalReviewBody>,
+) -> axum::response::Response {
+    let actor = request_actor(&state);
+    let core = state.core.clone();
+    match tokio::task::spawn_blocking(move || {
+        vak_core::measure::review(&core, &body.key, body.review, actor)
+    })
+    .await
+    {
+        Ok(Ok(row)) => Json(row).into_response(),
+        Ok(Err(vak_core::measure::ReviewError::NotOffered)) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no such proposal is offered now" })),
+        )
+            .into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
