@@ -734,7 +734,7 @@ impl Provider for AnthropicProvider {
             &request.model,
         );
         let mut response = self
-            .send_once(&request, dispatch.settings, fast_mode, &cancel)
+            .send_once(&request, &dispatch, fast_mode, &cancel)
             .await?;
 
         // One narrow, same-turn retry per failure class (docs/design/68
@@ -746,7 +746,7 @@ impl Provider for AnthropicProvider {
         // its optional settings (`DispatchSettings::retry_without_settings`).
         while response.status().as_u16() == 400 && dispatch.retry_without_settings() {
             response = self
-                .send_once(&request, dispatch.settings, fast_mode, &cancel)
+                .send_once(&request, &dispatch, fast_mode, &cancel)
                 .await?;
         }
         if !response.status().is_success() {
@@ -777,7 +777,7 @@ impl Provider for AnthropicProvider {
                     &request.model,
                 );
                 response = self
-                    .send_once(&request, dispatch.settings, fast_mode, &cancel)
+                    .send_once(&request, &dispatch, fast_mode, &cancel)
                     .await?;
             }
         }
@@ -835,7 +835,7 @@ impl AnthropicProvider {
     async fn send_once(
         &self,
         request: &ChatRequest,
-        settings: vak_control::StepSettings,
+        dispatch: &crate::models::DispatchSettings,
         fast_mode: bool,
         cancel: &CancellationToken,
     ) -> Result<reqwest::Response, LlmError> {
@@ -860,7 +860,8 @@ impl AnthropicProvider {
                     })?
             }
         };
-        let body = build_body(request, max_tokens, settings, fast_mode)?;
+        let mut body = build_body(request, max_tokens, dispatch.settings, fast_mode)?;
+        dispatch.shape_choice(&mut body, request.must_call.as_deref());
         let mut req = self
             .http
             .post(&url)

@@ -59,7 +59,7 @@ each provider's own tool choice (Anthropic `tool_choice`, OpenAI chat and
 Responses `tool_choice`, Google `toolConfig`), a wire with no such switch
 is offered only that tool (native Ollama; §12.3), and the receipt says
 which (`Applied::forced`); `ModelCapabilities::tool_choice` is each wire's
-reach. The answer document is built (docs/design/87-composed-answers.md
+reach, narrowed by what a refusal taught. The answer document is built (docs/design/87-composed-answers.md
 §2): the model answers with one loop-owned `answer` tool of blocks, made
 at run time from the admitted card tools (`Tool::card_kinds`); a card tool
 is no longer offered or callable by its own name (`Refusal::Unknown`), and
@@ -104,9 +104,13 @@ cards. The items carried below are not built.
   been sent to a hosted provider from this tree. Anthropic refuses a named
   tool choice while extended thinking is on, and this adapter leaves
   thinking to the model's default, so that pairing needs a live check.
-- A wire that refuses a named tool choice is not learned yet: the
-  capability is each adapter's fixed reach (`Unknown` for OpenAI-compatible
-  endpoints, which sends it).
+- Done 2026-10-13: a wire that refuses a named tool choice is learned
+  like strict tools. A refused request is sent again without strict tools
+  and schema output, then offering only the required tool with no choice
+  switch (`DispatchSettings::shape_choice`), then without its optional
+  settings; whatever the request that was taken last went without is
+  recorded (`ModelCapabilities::tool_choice = No` for the choice), and the
+  receipt's `Applied::forced` says `only_offered`.
 - Tool arguments that fail as broken JSON, on every tool and not only
   cards, are designed for in docs/design/89-constrained-tool-arguments.md
   (proposal): a wire that can enforce a tool's schema is asked to, and an
@@ -151,9 +155,12 @@ cards. The items carried below are not built.
 - C6 (done, maintainer's choice 2026-10-11): a commitment opens and work
   runs managed only when asked explicitly (`/until-done`, `/goal replace`);
   `Posture::managed`, `Posture::open_commitment` and
-  `Reading::may_open_commitment` are removed. The horizon reading still
-  sets the context profile (`derive_context`) and an unattended gate's
-  fallback (`Authority::gate_fallback`); both are readings to replace.
+  `Reading::may_open_commitment` are removed. Done 2026-10-13: the
+  commitment's context (`ContextProfile::Full`), an unattended gate's
+  `Defer` fallback and `HilMode::Defer` follow the fact that a strand works
+  on an open commitment (`vak_intent::apply_commitments`, applied by Core
+  once the episodes are planned and before envelopes), never the horizon
+  reading; `Horizon::opens_commitment` is removed.
 - C6 (done): the time constants in §5a (probe, channel wait, command,
   script, hook and person waits) are `[control.limits]`, edited in Settings
   and the admin console beside their shipped defaults; §5a lists the three

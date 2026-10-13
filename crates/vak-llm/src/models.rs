@@ -589,11 +589,21 @@ pub struct DispatchSettings {
     model: String,
     capabilities: vak_control::ModelCapabilities,
     pub settings: vak_control::StepSettings,
-    refused: Option<vak_control::StepSettings>,
-    /// The constraints this dispatch first sent, when a refusal made it send
-    /// the request again without them (strict tools, schema output).
-    dropped_constraints: Option<vak_control::StepSettings>,
+    /// What the last resend after a refusal went without: when that request
+    /// is taken, it is what the provider refused.
+    dropped: Option<Dropped>,
     forced: vak_control::Forced,
+}
+
+/// What one resend after a refusal left out, in the order they are dropped.
+#[derive(Debug, Clone, Copy)]
+enum Dropped {
+    /// Strict tools and schema output.
+    Constraints(vak_control::StepSettings),
+    /// The named tool choice: the resend offered only that tool.
+    Choice,
+    /// The optional settings (reasoning, sampling).
+    Settings(vak_control::StepSettings),
 }
 
 impl DispatchSettings {
@@ -609,8 +619,7 @@ impl DispatchSettings {
             model: model.to_string(),
             capabilities,
             settings: capabilities.honour(asked),
-            refused: None,
-            dropped_constraints: None,
+            dropped: None,
             forced: vak_control::Forced::NotAsked,
         }
     }
@@ -641,39 +650,65 @@ impl DispatchSettings {
     }
 
     /// After a request the provider refused as invalid: whether to send it
-    /// again, first without strict tools, then without the optional
-    /// settings. Each is dropped once.
+    /// again, first without strict tools and schema output, then without
+    /// the named tool choice (offering only that tool), then without the
+    /// optional settings. Each is dropped once.
     pub fn retry_without_settings(&mut self) -> bool {
         if self.settings.strict_tools || self.settings.schema_output {
-            self.dropped_constraints = Some(vak_control::StepSettings {
+            self.dropped = Some(Dropped::Constraints(vak_control::StepSettings {
                 strict_tools: self.settings.strict_tools,
                 schema_output: self.settings.schema_output,
                 ..Default::default()
-            });
+            }));
             self.settings.strict_tools = false;
             self.settings.schema_output = false;
             return true;
         }
-        if self.refused.is_some() || self.settings == vak_control::StepSettings::default() {
+        if self.forced == vak_control::Forced::Choice {
+            self.forced = vak_control::Forced::OnlyOffered;
+            self.dropped = Some(Dropped::Choice);
+            return true;
+        }
+        if self.settings == vak_control::StepSettings::default() {
             return false;
         }
-        self.refused = Some(self.settings);
+        self.dropped = Some(Dropped::Settings(self.settings));
         self.settings = vak_control::StepSettings::default();
         true
     }
 
-    /// After a request the provider took: records what a refusal before it
-    /// showed, and returns what this dispatch sent.
+    /// Puts the step's required tool the way this dispatch now sends it: a
+    /// wire that refused its named choice gets only that tool offered. The
+    /// body was built with the wire's own choice.
+    pub fn shape_choice(&self, body: &mut serde_json::Value, must_call: Option<&str>) {
+        if self.forced == vak_control::Forced::OnlyOffered
+            && let Some(name) = must_call
+        {
+            offer_only(body, name);
+        }
+    }
+
+    /// How this dispatch puts a required tool to the provider.
+    pub fn forced(&self) -> vak_control::Forced {
+        self.forced
+    }
+
+    /// After a request the provider took: records what the refusal before
+    /// it showed, and returns what this dispatch sent. Only the last thing
+    /// dropped is learned: the request without it was taken, and anything
+    /// dropped before it was never tried on its own.
     pub fn accepted(mut self) -> vak_control::Applied {
-        // Taken as soon as the constraints were dropped: they were what the
-        // provider refused. Taken only once the settings went too: the
-        // settings were, and the constraints were never tried without them.
-        let refused = match (self.dropped_constraints, self.refused) {
-            (Some(constraints), None) => Some(constraints),
-            (_, refused) => refused,
+        let refusing = match self.dropped {
+            Some(Dropped::Constraints(sent) | Dropped::Settings(sent)) => {
+                Some(vak_control::ModelCapabilities::default().refusing(sent))
+            }
+            Some(Dropped::Choice) => Some(vak_control::ModelCapabilities {
+                tool_choice: vak_control::Support::No,
+                ..Default::default()
+            }),
+            None => None,
         };
-        if let Some(sent) = refused {
-            let refusing = vak_control::ModelCapabilities::default().refusing(sent);
+        if let Some(refusing) = refusing {
             record_capabilities(&self.wire, &self.model, refusing);
             self.capabilities = self.capabilities.meet(refusing);
         }
@@ -718,12 +753,36 @@ pub fn require_tool(body: &mut serde_json::Value, must_call: Option<&str>, wire:
                 "functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": [name]}
             });
         }
-        ToolChoiceWire::OnlyOffered => {
-            if let Some(tools) = body["tools"].as_array_mut() {
-                tools.retain(|tool| tool["function"]["name"] == name);
-            }
+        ToolChoiceWire::OnlyOffered => offer_only(body, name),
+    }
+}
+
+/// Offers only the named tool and no choice switch, in whichever shape the
+/// wire lists its tools: `{name}`, `{function: {name}}`, or Gemini's
+/// `functionDeclarations`.
+fn offer_only(body: &mut serde_json::Value, name: &str) {
+    if let Some(object) = body.as_object_mut() {
+        object.remove("tool_choice");
+        object.remove("toolConfig");
+    }
+    let Some(tools) = body
+        .get_mut("tools")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for tool in tools.iter_mut() {
+        if let Some(declarations) = tool
+            .get_mut("functionDeclarations")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            declarations.retain(|declaration| declaration["name"] == name);
         }
     }
+    tools.retain(|tool| match tool["functionDeclarations"].as_array() {
+        Some(declarations) => !declarations.is_empty(),
+        None => tool["name"] == name || tool["function"]["name"] == name,
+    });
 }
 
 /// Whether the adapter should attempt `speed: "fast"` for `model`. Defaults
@@ -1000,6 +1059,74 @@ mod tests {
             DispatchSettings::new("wire-strict", reach, "test-model-strict-2", asked)
                 .offering_tools(false);
         assert!(!without_tools.settings.strict_tools);
+    }
+
+    #[test]
+    fn a_refused_named_tool_choice_is_resent_offering_only_that_tool_and_learned() {
+        use vak_control::{Forced, ModelCapabilities, StepSettings, Support};
+        let reach = ModelCapabilities {
+            tool_choice: Support::Unknown,
+            ..Default::default()
+        };
+        let mut dispatch = DispatchSettings::new(
+            "wire-choice",
+            reach,
+            "test-model-choice-1",
+            StepSettings::default(),
+        )
+        .requiring(true);
+        assert_eq!(dispatch.forced(), Forced::Choice);
+        let tools = serde_json::json!([
+            {"type": "function", "function": {"name": "show_table"}},
+            {"type": "function", "function": {"name": "read"}},
+        ]);
+        let mut body = serde_json::json!({"tools": tools});
+        require_tool(&mut body, Some("show_table"), ToolChoiceWire::OpenAiChat);
+        dispatch.shape_choice(&mut body, Some("show_table"));
+        assert!(body.get("tool_choice").is_some(), "first sent as a choice");
+
+        assert!(dispatch.retry_without_settings());
+        let mut body = serde_json::json!({"tools": tools});
+        require_tool(&mut body, Some("show_table"), ToolChoiceWire::OpenAiChat);
+        dispatch.shape_choice(&mut body, Some("show_table"));
+        assert!(body.get("tool_choice").is_none(), "{body}");
+        assert_eq!(body["tools"].as_array().map(Vec::len), Some(1), "{body}");
+        assert!(!dispatch.retry_without_settings(), "nothing else to drop");
+
+        let applied = dispatch.accepted();
+        assert_eq!(applied.forced, Forced::OnlyOffered);
+        assert_eq!(applied.capabilities.tool_choice, Support::No);
+        let next = DispatchSettings::new(
+            "wire-choice",
+            reach,
+            "test-model-choice-1",
+            StepSettings::default(),
+        )
+        .requiring(true);
+        assert_eq!(
+            next.forced(),
+            Forced::OnlyOffered,
+            "learned for this wire and model"
+        );
+    }
+
+    #[test]
+    fn offering_only_one_tool_reads_every_wire_shape() {
+        let mut gemini = serde_json::json!({
+            "tools": [{"functionDeclarations": [{"name": "a"}, {"name": "b"}]}],
+            "toolConfig": {"functionCallingConfig": {"mode": "ANY"}},
+        });
+        offer_only(&mut gemini, "b");
+        assert_eq!(
+            gemini,
+            serde_json::json!({"tools": [{"functionDeclarations": [{"name": "b"}]}]})
+        );
+        let mut messages = serde_json::json!({
+            "tools": [{"name": "a"}, {"name": "b"}],
+            "tool_choice": {"type": "tool", "name": "b"},
+        });
+        offer_only(&mut messages, "b");
+        assert_eq!(messages, serde_json::json!({"tools": [{"name": "b"}]}));
     }
 
     #[test]

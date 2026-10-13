@@ -566,7 +566,8 @@ impl Provider for OllamaProvider {
         .offering_tools(!request.tools.is_empty())
         .asking_output(request.output_schema.is_some());
         let response = loop {
-            let body = build_body(&self.config, &request, num_ctx, dispatch.settings)?;
+            let mut body = build_body(&self.config, &request, num_ctx, dispatch.settings)?;
+            dispatch.shape_choice(&mut body, request.must_call.as_deref());
             let mut req = self.http.post(&url).json(&body);
             if !self.config.api_key.is_empty() {
                 req = req.bearer_auth(&self.config.api_key);

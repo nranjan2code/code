@@ -698,7 +698,8 @@ impl Provider for OpenAiCompletionsProvider {
         // settings; if that is taken, the refusal is remembered
         // (docs/design/88-control-plane.md §4).
         let response = loop {
-            let body = build_body(&self.config, &request, dispatch.settings)?;
+            let mut body = build_body(&self.config, &request, dispatch.settings)?;
+            dispatch.shape_choice(&mut body, request.must_call.as_deref());
             let send_fut = self
                 .http
                 .post(&url)

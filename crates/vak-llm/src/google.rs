@@ -603,7 +603,8 @@ impl Provider for GoogleProvider {
         // A model that refuses the thinking setting is asked once more
         // without it and remembered (docs/design/01-llm.md).
         let response = loop {
-            let body = build_body(&request, dispatch.settings)?;
+            let mut body = build_body(&request, dispatch.settings)?;
+            dispatch.shape_choice(&mut body, request.must_call.as_deref());
             let send_fut = self
                 .http
                 .post(&url)
