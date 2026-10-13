@@ -166,6 +166,28 @@ trip is to Pune, Moss says *beta*, Pip's list starts with *sabzi* and the
 bill. A voice is chosen by listening at low volume on a phone speaker, and
 it must stay intelligible to someone who has never heard an Indian accent.
 
+**Saved voices (2026-10-13).** In the owner's ElevenLabs voice library,
+each labelled `brand=vakyartha`, `character`, `kind`, `accent=indian-english`,
+`age`, `gender`, `role` and `casting=2026-10-13`:
+
+| Character | Library name | Voice id | How it was chosen |
+|---|---|---|---|
+| Vakyartha | Vakyartha – Vakyartha (songbird) | `FQKmle1kREMgn23tqx5q` | pace (15.4 s) |
+| Mira | Vakyartha – Mira (fox) | `CwhHeaJVU9ZN4RMoaabk` | pace (14.6 s) |
+| Moss | Male Voice 1 (rename to "Vakyartha – Moss (forest friend)") | `sRPGZSnzBPol5Pjt6JFD` | the owner, by ear |
+| Nori | Vakyartha – Nori (seal) | `wUQmDsGn7RMvveESnUd8` | pace (13.2 s) |
+| Pip | Vakyartha – Pip (penguin) | `IORPyjxKm2m9lE40qnBG` | pace (10.7 s) |
+| Lumi | Vakyartha – Lumi (cloud friend) | `fyGNdOr9n4ggf2kF4hNa` | pace (21.7 s) |
+| Tavi | Vakyartha – Tavi (owl) | `BBfXBXyyyYUJQ4q3gTUP` | pace (21.6 s) |
+| Beni | Vakyartha – Beni (rabbit) | `w9t4Ig8oukL09KRjPaIW` | pace (14.4 s) |
+
+Only Moss was chosen by listening. The other seven were chosen by the one
+thing measurable without hearing them, the take's length against the
+brief's pacing (quick for Pip and Nori, middle for the steady ones,
+unhurried but not dragging for Tavi and Lumi). They are provisional until
+the owner has listened; a voice that fails the listening test is replaced
+by designing again, not by keeping it.
+
 Voice design returns three previews per character; choose one and save it
 to the ElevenLabs voice library (the preview links expire after two hours,
 the saved voice does not). Download a WAV of the chosen preview for the
