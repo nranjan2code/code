@@ -1,6 +1,6 @@
 # Vakyartha media: sound, image and film
 
-Status: in progress (2026-10-13). First assets generated in ElevenLabs;
+Status: in progress (2026-10-13). Batches 1 and 2 generated in ElevenLabs;
 choices and downloads pending.
 
 This folder records how Vakyartha's media is made, so anyone can make the
@@ -118,6 +118,83 @@ mark from the SVG master.
 | Turn finished | — | pending |
 | Approval needed | — | pending |
 | Hero illustration | — | pending |
+
+## Batch 2: the companions (2026-10-13)
+
+The eight built-in companions are defined in
+`crates/vak-client-ui/src/agentGlyph.ts`: each has a kind, a personality
+and a two-note `cue` (in Hz) that the app already plays. Every sound and
+voice below grows from those, so a character sounds the way it looks and
+behaves.
+
+**Direction.** Each companion is a *casting*, not a costume. They share
+Vakyartha's manners (they listen first, say what they did, never act
+without you), and differ in temperament. Each line is written to show that
+temperament *doing real work* (a contract, a trip, a budget, a list), never
+introducing itself. No catchphrases, no cartoon voices, no accents used as
+jokes.
+
+**Latest models used (checked 2026-10-13):** voice design `eleven_ttv_v3`,
+speech `eleven_v4`, music `eleven_music_v2_5`, sound effects
+`eleven_text_to_sound_v2` (the only one), video Kling 2.5 Turbo for the
+first test (Kling 3 Pro, the best available, costs about 5,100 credits per
+5 s clip versus about 2,100).
+
+### Casting sheet
+
+| Character | Cue | Signature sound | Voice brief | Line |
+|---|---|---|---|---|
+| **Vakyartha** (songbird) | G4→D5 | the brand chime (batch 1) | Warm, clear, gender-neutral adult, mid-range, close-mic. Calm and attentive, like someone who has really listened. Unhurried, gentle smile, precise, no salesy energy. | "I read the contract Priya sent. Three things changed, and I've marked each one so you can see exactly where. I've drafted a reply too, but nothing goes out until you say so. Ready when you are." |
+| **Mira** (fox) | G4→C5 | felt piano, faint brushed-tail swish | Warm, slightly low female, thirties, perceptive, quietly confident, a hint of wit. Smooth, relaxed; one step ahead but never shows off. | "You mentioned the trip twice this week, so I looked into it. The Thursday train is cheaper and gets you there before dinner. I've kept both options side by side, in case you'd rather sleep in." |
+| **Moss** (forest friend) | E4→G4 | wooden kalimba, leaf rustle | Deep, soft, earthy older male, slow with natural pauses, textured like bark; a gardener who never rushes anyone. | "There's no hurry. Let's take this one step at a time. First we'll gather what you already have, then we'll see what's missing. Good things grow slowly, and so do good plans." |
+| **Nori** (seal) | A4→D5 | round vibraphone, water plip | Bright young adult, gender-neutral leaning female, curious and practical, slightly bubbly; a teammate who loves figuring things out. | "Ooh, this is a good puzzle. Okay, here's what I found: the numbers don't add up in March, and I think I know why. Want me to fix it, or shall we look at it together first? Either way, you've got this." |
+| **Pip** (penguin) | C5→E5 | toy glockenspiel, waddle tap | Bright, quick, cheerful young voice, crisp, energetic but never shrill; neat short sentences with a spring in each. | "Got it! Your list is sorted. Groceries first, then the pharmacy, then the post office on the way home. I've put the busy hours in red so you can skip the queues. Anything else? I'm on it." |
+| **Lumi** (cloud friend) | B4→F♯5 | airy pad and celesta, a breath of wind | Soft, airy, dreamy female, light breathy texture, slow floating cadence; a calm bedtime storyteller full of quiet wonder. | "Close your eyes for a second and picture it: a little shop with blue shutters and the smell of fresh bread. That's your idea. Let's sketch it together, one cloud at a time, and see where it drifts." |
+| **Tavi** (owl) | F4→B♭4 | warm wooden flute, breathy hoot | Mature, measured older woman, low and resonant, deliberate pauses; a respected professor who chooses every word. | "Before we decide, consider this. Two of your sources agree, and one does not. The one that disagrees is the most recent. That is worth a closer look. I have laid out all three, so you can judge for yourself." |
+| **Beni** (rabbit) | D4→G4 | mellow marimba, soft-paw thump | Calm, steady, warm male, forties, mid-low, even rhythm, soft-spoken; someone you trust to handle things while you sleep. | "Everything's in order. The backup finished at two, your reminders are set for the morning, and the bill is paid. Nothing needs you tonight. If anything changes, I'll let you know first thing." |
+
+Voice design returns three previews per character; choose one and save it
+to the ElevenLabs voice library (the preview links expire after two hours,
+the saved voice does not). Download a WAV of the chosen preview for the
+repo either way.
+
+**Signature-sound prompt template** (`eleven_text_to_sound_v2`, 2
+variations each):
+
+> Character signature sound, 1 second: a {kind} {one-word mood}. Two notes
+> {cue note 1} then {cue note 2} on a {instrument}, with a {tiny foley
+> detail}. {Personality}. Dry, close, no voice.
+
+### Animation
+
+Idle loop for each companion, from its 512 px portrait
+(`docs/brand/characters/<id>.png`, attached by its public raw GitHub URL):
+
+> Seamless looping idle animation of this exact character, unchanged
+> design, flat style and colours preserved, plain background kept. The
+> {kind} breathes softly, tilts its head once as if listening, blinks,
+> {one signature gesture}, then settles back to the starting pose. Locked
+> camera, 5 seconds, gentle and calm.
+
+Signature gestures: Vakyartha lifts its three-feather crest; Mira flicks
+her tail; Moss's leaves stir; Nori's whiskers twitch; Pip flaps once;
+Lumi drifts up and back; Tavi turns its head slowly; Beni's ears lift.
+Batch 2 ran Vakyartha only (Kling 2.5 Turbo, about 2,100 credits).
+
+### Theme music
+
+`eleven_music_v2_5`, 2 variations, about 900 credits each:
+
+> 30-second instrumental brand theme for Vakyartha, a calm and trustworthy
+> AI companion. Opens with a solo glass marimba playing a rising three-note
+> songbird motif (G4, B4, D5), answered by soft felt piano. Warm strings
+> and a gentle celesta enter, light brushed percussion, a hopeful lift at
+> 20 seconds, then resolves back to the three-note motif and ends softly.
+> Mood: attentive, warm, quietly confident, morning light. Modern cinematic
+> minimal, 84 BPM, no vocals.
+
+The same three-note motif is the brand chime, so the film's end card, the
+app's launch sound and the theme are one idea at three lengths.
 
 ## The film: "Heard" (60 seconds, script)
 
