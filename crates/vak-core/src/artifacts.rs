@@ -262,9 +262,29 @@ pub struct Version {
 }
 
 impl Version {
-    /// A version nobody accepted or saved, whose bytes are kept.
+    /// A version nobody accepted or saved, whose bytes are kept. A copy the
+    /// workspace held is history, never a draft (doc 90): before, one went
+    /// to the trash with the drafts after their window.
     pub fn is_draft(&self) -> bool {
-        !self.promoted && !self.saved && !self.removed && !self.erased && self.object.is_some()
+        !self.promoted
+            && !self.saved
+            && !self.removed
+            && !self.erased
+            && !self.held_by_workspace()
+            && self.object.is_some()
+    }
+
+    /// The workspace's own copy when it was made: found there, or written
+    /// there by a call rather than drafted.
+    pub fn held_by_workspace(&self) -> bool {
+        matches!(
+            self.source,
+            VersionSource::Workspace
+                | VersionSource::Call {
+                    in_workspace: true,
+                    ..
+                }
+        )
     }
 
     /// Neither in the trash nor erased.

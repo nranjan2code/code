@@ -129,7 +129,7 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
             // A copy the workspace held (found there, or written there by a
             // call) was never proposed: once the workspace moves on it is
             // history, not a draft.
-            !in_workspace(version)
+            !version.held_by_workspace()
                 && (!version.removed || version.proposal().is_some())
                 && !version.promoted
                 && Some(version.id) != current
@@ -207,17 +207,118 @@ pub fn behind(artifact: &Artifact, state: &FileState, version: VersionId) -> boo
             .is_some_and(|known| !ancestors(artifact, known).contains(&current))
 }
 
-/// The version was the workspace's own copy when it was made: found there,
-/// or written there by a call rather than drafted.
-fn in_workspace(version: &Version) -> bool {
-    matches!(
-        version.source,
-        VersionSource::Workspace
-            | VersionSource::Call {
-                in_workspace: true,
-                ..
-            }
-    )
+/// What one version is now, as the person's view shows it (doc 90 §5): a
+/// word and a mark for each, read from the record and one observation of
+/// the workspace file.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "is", rename_all = "snake_case")]
+pub enum VersionIs {
+    /// The workspace file holds these bytes now.
+    InFolder,
+    /// Accepted into the workspace once; the folder has moved on since.
+    Accepted,
+    /// Written into the workspace by a call; the folder has moved on since.
+    Written,
+    /// An edit made outside Vak that Vak found; the folder has moved on.
+    FoundOutside,
+    /// Proposed and not accepted, with no newer version made from it.
+    /// `behind`: made before the workspace's current copy, which it does
+    /// not include.
+    Waiting {
+        behind: bool,
+    },
+    /// A newer version was made from it before anyone accepted it.
+    Revised,
+    /// Accepted, then put back by an undo.
+    Undone,
+    /// Kept by the person, not in the workspace.
+    Saved,
+    InTrash {
+        since: DateTime<Utc>,
+    },
+    Erased,
+}
+
+/// Each version of `artifact` with what it is now, in record order.
+pub fn version_states(artifact: &Artifact, state: &FileState) -> Vec<(VersionId, VersionIs)> {
+    let current = match state.workspace_is {
+        WorkspaceIs::Version(id) => Some(id),
+        _ => None,
+    };
+    artifact
+        .versions
+        .iter()
+        .map(|version| {
+            let has_child = artifact
+                .versions
+                .iter()
+                .any(|child| child.is_present() && child.parent == Some(version.id));
+            let is = if version.erased {
+                VersionIs::Erased
+            } else if let Some(since) = version.trashed_at {
+                VersionIs::InTrash { since }
+            } else if Some(version.id) == current {
+                VersionIs::InFolder
+            } else if version.undone {
+                VersionIs::Undone
+            } else if version.promoted {
+                VersionIs::Accepted
+            } else if matches!(version.source, VersionSource::Workspace) {
+                VersionIs::FoundOutside
+            } else if version.held_by_workspace() {
+                VersionIs::Written
+            } else if version.saved {
+                VersionIs::Saved
+            } else if has_child {
+                VersionIs::Revised
+            } else {
+                VersionIs::Waiting {
+                    behind: behind(artifact, state, version.id),
+                }
+            };
+            (version.id, is)
+        })
+        .collect()
+}
+
+/// What about one file waits on the person (doc 90 §5): the strip and the
+/// Library's filters read this.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Needs {
+    /// Drafts waiting for review.
+    pub waiting: usize,
+    /// Of those, made before the workspace's current copy.
+    pub behind: usize,
+    /// The workspace file is an edit made outside Vak, or differs from
+    /// every version.
+    pub changed_outside: bool,
+    /// The version the workspace last held is not there now.
+    pub missing: bool,
+}
+
+impl Needs {
+    pub fn any(&self) -> bool {
+        self.waiting > 0 || self.missing
+    }
+}
+
+/// What `artifact` needs of the person, from its version states.
+pub fn needs(state: &FileState, states: &[(VersionId, VersionIs)]) -> Needs {
+    let waiting = states
+        .iter()
+        .filter(|(_, is)| matches!(is, VersionIs::Waiting { .. }))
+        .count();
+    let behind = states
+        .iter()
+        .filter(|(_, is)| matches!(is, VersionIs::Waiting { behind: true }))
+        .count();
+    Needs {
+        waiting,
+        behind,
+        changed_outside: state.changed_outside
+            || matches!(state.workspace_is, WorkspaceIs::Changed { .. }),
+        missing: matches!(state.workspace_is, WorkspaceIs::Missing { .. }),
+    }
 }
 
 /// The newest version the workspace held as far as the record knows: one
@@ -227,7 +328,7 @@ pub fn last_held(artifact: &Artifact) -> Option<VersionId> {
     artifact
         .versions
         .iter()
-        .filter(|version| version.promoted || in_workspace(version))
+        .filter(|version| version.promoted || version.held_by_workspace())
         .max_by_key(|version| version.at)
         .map(|version| version.id)
 }
@@ -241,7 +342,7 @@ fn workspace_is(artifact: &Artifact, workspace: &Workspace) -> WorkspaceIs {
     let accepted = artifact
         .versions
         .iter()
-        .filter(|version| version.promoted || in_workspace(version))
+        .filter(|version| version.promoted || version.held_by_workspace())
         .max_by_key(|version| version.at);
     match workspace {
         Workspace::Present { digest } => {
@@ -996,6 +1097,61 @@ mod tests {
             workspace_path(&real, &outside.to_string_lossy()),
             outside.to_string_lossy()
         );
+    }
+
+    #[test]
+    fn a_copy_the_workspace_held_is_never_a_draft_to_trash() {
+        let mut record = Record::new("vak");
+        let written = record.version(
+            2,
+            None,
+            None,
+            b"one",
+            VersionSource::Call {
+                session: "ses".into(),
+                call: "call_a".into(),
+                in_workspace: true,
+            },
+        );
+        let found = record.version(3, None, Some(written), b"two", VersionSource::Workspace);
+        let drafted = record.version(4, None, Some(found), b"three", Record::call("call_b"));
+        let artifact = record.artifact().unwrap();
+        let held = |id| {
+            artifact
+                .versions
+                .iter()
+                .find(|v| v.id == id)
+                .unwrap()
+                .held_by_workspace()
+        };
+        assert!(held(written) && held(found) && !held(drafted));
+    }
+
+    #[test]
+    fn each_version_says_what_it_is_now() {
+        let mut record = Record::new("vak");
+        let first = record.version(2, None, None, b"one", Record::call("call_a"));
+        record.push(3, None, ArtifactStep::Promoted { version: first });
+        let revised = record.version(4, None, Some(first), b"two", Record::call("call_b"));
+        let waiting = record.version(5, None, Some(revised), b"three", Record::call("call_c"));
+        let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
+        let states = version_states(&record.artifact().unwrap(), &found);
+        assert_eq!(
+            states,
+            vec![
+                (first, VersionIs::InFolder),
+                (revised, VersionIs::Revised),
+                (waiting, VersionIs::Waiting { behind: false }),
+            ]
+        );
+        let need = needs(&found, &states);
+        assert_eq!(need.waiting, 1);
+        assert!(need.any() && !need.changed_outside);
+
+        let edited = file_state(record.artifact().as_ref(), PATH, present(b"mine"));
+        let states = version_states(&record.artifact().unwrap(), &edited);
+        assert_eq!(states[0].1, VersionIs::Accepted);
+        assert!(needs(&edited, &states).changed_outside);
     }
 
     #[test]

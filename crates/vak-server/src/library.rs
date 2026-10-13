@@ -849,6 +849,80 @@ fn summary(artifact: &vak_core::artifacts::Artifact) -> serde_json::Value {
     })
 }
 
+/// An artifact read again after its file was observed, with what the file
+/// and each version are now.
+struct Observed {
+    now: vak_core::file_state::FileState,
+    states: Vec<(vak_session::ids::VersionId, vak_core::file_state::VersionIs)>,
+    artifact: vak_core::artifacts::Artifact,
+}
+
+/// The artifact's file as the workspace holds it now and each version's
+/// state (doc 90 §5), for an artifact of this workspace; `None` for one of
+/// another workspace, whose folder this server does not observe.
+fn observed(
+    artifacts: &vak_core::artifacts::Artifacts,
+    cwd: &std::path::Path,
+    artifact: &vak_core::artifacts::Artifact,
+) -> Option<Observed> {
+    let space = vak_session::trace::local::space(cwd).to_string();
+    if artifact.space != space {
+        return None;
+    }
+    let now = vak_core::file_state::observe(artifacts, &space, cwd, &artifact.path)?;
+    // Observing records an edit made outside Vak as a version: read the
+    // artifact again so its history holds it.
+    let fresh = artifacts.get(&artifact.id.to_string())?;
+    let states = vak_core::file_state::version_states(&fresh, &now);
+    Some(Observed {
+        now,
+        states,
+        artifact: fresh,
+    })
+}
+
+/// `GET /library/made/{session}/{call}`: the version a tool call made, with
+/// what it is now (doc 90 §5), so a conversation's card shows the file's
+/// state today rather than when it was made. 404 when the call made none.
+async fn made_by_call(
+    State(state): State<AppState>,
+    Path((session, call)): Path<(String, String)>,
+) -> Response {
+    let artifacts = state.core.artifacts();
+    let cwd = state.core.cwd().to_path_buf();
+    let found = tokio::task::spawn_blocking(move || {
+        let made_by = |version: &vak_core::artifacts::Version| {
+            matches!(&version.source,
+                VersionSource::Call { session: from, call: by, .. } if *from == session && *by == call)
+        };
+        let artifact = artifacts
+            .list()
+            .into_iter()
+            .find(|artifact| artifact.versions.iter().any(made_by))?;
+        let (now, states, artifact) = match observed(&artifacts, &cwd, &artifact) {
+            Some(seen) => (Some(seen.now), seen.states, seen.artifact),
+            None => (None, Vec::new(), artifact),
+        };
+        let index = artifact.versions.iter().position(made_by)?;
+        let version = &artifact.versions[index];
+        Some(serde_json::json!({
+            "artifact": artifact.id,
+            "name": artifact.name(),
+            "version": version.id,
+            "number": index + 1,
+            "now": states.iter().find(|(id, _)| *id == version.id).map(|(_, is)| is),
+            "newer": artifact.versions.iter().filter(|later| later.at > version.at && later.is_present()).count(),
+            "needs": now.as_ref().map(|now| vak_core::file_state::needs(now, &states)),
+        }))
+    })
+    .await;
+    match found {
+        Ok(Some(value)) => Json(value).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 /// `GET /library/trash`: every draft in the trash, the one that leaves it
 /// soonest first, with the day it is erased.
 async fn trashed(State(state): State<AppState>) -> Response {
@@ -891,16 +965,26 @@ async fn trashed(State(state): State<AppState>) -> Response {
 /// `/library/trash`.
 async fn list(State(state): State<AppState>) -> Response {
     let artifacts = state.core.artifacts();
-    let listed = tokio::task::spawn_blocking(move || artifacts.list()).await;
+    let cwd = state.core.cwd().to_path_buf();
+    let listed = tokio::task::spawn_blocking(move || {
+        artifacts
+            .list()
+            .iter()
+            .filter(|artifact| !artifact.in_trash())
+            .map(|artifact| match observed(&artifacts, &cwd, artifact) {
+                Some(seen) => {
+                    let mut row = summary(&seen.artifact);
+                    row["needs"] =
+                        serde_json::json!(vak_core::file_state::needs(&seen.now, &seen.states));
+                    row
+                }
+                None => summary(artifact),
+            })
+            .collect::<Vec<_>>()
+    })
+    .await;
     match listed {
-        Ok(all) => Json(serde_json::json!({
-            "artifacts": all
-                .iter()
-                .filter(|artifact| !artifact.in_trash())
-                .map(summary)
-                .collect::<Vec<_>>(),
-        }))
-        .into_response(),
+        Ok(all) => Json(serde_json::json!({ "artifacts": all })).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -908,6 +992,7 @@ async fn list(State(state): State<AppState>) -> Response {
 /// `GET /library/{id}`: one artifact with every version.
 async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let artifacts = state.core.artifacts();
+    let cwd = state.core.cwd().to_path_buf();
     let grants = vak_core::grants::Grants::at(&state.core.shared_scope());
     let found = tokio::task::spawn_blocking(move || {
         let artifact = artifacts.get(&id)?;
@@ -919,11 +1004,13 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
                     held.status(chrono::Utc::now()) == vak_core::grants::GrantStatus::Active
                 })
             });
-        Some((artifact, shared))
+        let now = observed(&artifacts, &cwd, &artifact);
+        let artifact = now.as_ref().map_or(artifact, |seen| seen.artifact.clone());
+        Some((artifact, shared, now))
     })
     .await;
     match found {
-        Ok(Some((artifact, shared))) => {
+        Ok(Some((artifact, shared, now))) => {
             let mut value = summary(&artifact);
             value["held"] = serde_json::json!(state.core.artifact_held(&artifact.id.to_string()));
             // A draft nobody keeps says the day it goes to the trash.
@@ -934,6 +1021,14 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
                 .iter()
                 .map(|version| {
                     let mut row = serde_json::json!(version);
+                    if let Some(is) = now.as_ref().and_then(|seen| {
+                        seen.states
+                            .iter()
+                            .find(|(id, _)| *id == version.id)
+                            .map(|(_, is)| is)
+                    }) {
+                        row["now"] = serde_json::json!(is);
+                    }
                     if !kept && version.is_draft() && version.is_present() {
                         row["draft_until"] =
                             serde_json::json!(version.restored_at.unwrap_or(version.at) + window);
@@ -942,6 +1037,10 @@ async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Respo
                 })
                 .collect();
             value["history"] = serde_json::json!(history);
+            if let Some(seen) = &now {
+                value["needs"] =
+                    serde_json::json!(vak_core::file_state::needs(&seen.now, &seen.states));
+            }
             value["comments"] = serde_json::json!(artifact.comments);
             Json(value).into_response()
         }
@@ -1909,6 +2008,7 @@ pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/library", get(list))
         .route("/library/trash", get(trashed))
+        .route("/library/made/{session}/{call}", get(made_by_call))
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
         .route("/library/{id}/versions/{version}/save", post(save))

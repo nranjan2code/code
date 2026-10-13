@@ -222,3 +222,121 @@ async fn a_saved_workbook_previews_from_its_stored_bytes() {
         .unwrap_or(0);
     assert_eq!(left, 0, "the preview's file is removed once read");
 }
+
+/// Doc 90 §5: each version says what it is now, and the artifact what it
+/// needs of the person, from the workspace file as it is.
+#[tokio::test]
+async fn library_says_what_each_version_is_now_and_what_waits() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(dir.path()).unwrap();
+    let space = vak_session::trace::local::space(dir.path()).to_string();
+    std::fs::write(dir.path().join("plan.md"), b"one").unwrap();
+    let core = vak_core::Core::new(dir.path().to_path_buf()).unwrap();
+    let artifacts = core.artifacts();
+    let id = artifacts
+        .declare(
+            &space,
+            "vak",
+            "plan.md",
+            ArtifactKind::File,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let first = artifacts
+        .version(
+            id,
+            NewVersion {
+                parent: None,
+                bytes: b"one",
+                source: VersionSource::Person,
+            },
+            None,
+            None,
+        )
+        .unwrap();
+    artifacts
+        .record(
+            id,
+            vak_core::artifacts::ArtifactStep::Promoted { version: first },
+            None,
+            None,
+        )
+        .unwrap();
+    let draft = artifacts
+        .version(
+            id,
+            NewVersion {
+                parent: Some(first),
+                bytes: b"two",
+                source: VersionSource::Call {
+                    session: "ses".into(),
+                    call: "call_a".into(),
+                    in_workspace: false,
+                },
+            },
+            None,
+            None,
+        )
+        .unwrap();
+
+    let (router, token) = vak_server::secured_router(core);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = reqwest::Client::new();
+    let get = |path: String| {
+        client
+            .get(format!("http://{addr}{path}"))
+            .bearer_auth(&token)
+            .send()
+    };
+    let now = |one: &serde_json::Value, version: String| {
+        one["history"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == version)
+            .map(|row| row["now"]["is"].clone())
+            .unwrap()
+    };
+
+    let one: serde_json::Value = get(format!("/library/{id}"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(now(&one, first.to_string()), "in_folder");
+    assert_eq!(now(&one, draft.to_string()), "waiting");
+    assert_eq!(one["needs"]["waiting"], 1);
+    assert_eq!(one["needs"]["changed_outside"], false);
+    let listed: serde_json::Value = get("/library".into()).await.unwrap().json().await.unwrap();
+    let entry = listed["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == id.to_string())
+        .unwrap()
+        .clone();
+    assert_eq!(entry["needs"]["waiting"], 1);
+
+    // Edited outside Vak: the edit is found as a version in the folder,
+    // and the waiting draft was made before it.
+    std::fs::write(dir.path().join("plan.md"), b"mine").unwrap();
+    let one: serde_json::Value = get(format!("/library/{id}"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let history = one["history"].as_array().unwrap();
+    assert_eq!(history.len(), 3, "{one}");
+    assert_eq!(history[2]["now"]["is"], "in_folder");
+    assert_eq!(one["history"][1]["now"]["behind"], true, "{one}");
+    assert_eq!(one["needs"]["changed_outside"], true);
+    assert_eq!(one["needs"]["behind"], 1);
+}
