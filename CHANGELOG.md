@@ -1,5 +1,9 @@
 ## Unreleased
 
+- Security: a WebSocket upgrade (the web terminal, a voice session) is
+  refused unless it comes from the server's own page or carries the access
+  token. Before, a web page on another local port could open the terminal
+  with your session when `[server.web] terminal` was on.
 - Interface sounds are recorded, in five instrument families chosen in
   Settings › Voice and sound; the start sound plays once for a run. Each
   character has its own sound, played when you click it.

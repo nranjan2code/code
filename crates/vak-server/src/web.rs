@@ -709,7 +709,10 @@ mod tests {
 //   2. `terminal_requires_loopback` — on by default, so enabling the
 //      terminal for local convenience does not silently also expose it to
 //      whatever hostname the server answers to.
-//   3. The session cookie, checked at upgrade like any other route.
+//   3. The session cookie, checked at upgrade like any other route, and
+//      only with a first-party `Origin`: `require_bearer` holds every
+//      WebSocket upgrade to the mutation rule, so a page on another
+//      localhost port cannot ride the cookie into a shell.
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PtyQuery {

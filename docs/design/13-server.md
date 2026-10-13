@@ -138,11 +138,12 @@ console at `/admin`, from one asset-serving path (`embedded_ui.rs`).
 | GET | `/workspaces` | known workspaces, active first |
 | POST | `/workspaces/open` `{path, trust?}` | resolve through `CorePool` and make it active for NEW sessions (a session freezes its `Core` at creation, invariant 17) |
 | GET | `/fs/dirs?path=` | folder names only, rooted at `[server] workspace_roots` |
-| GET | `/pty` (WS) | a real shell. Off unless `[server.web] terminal`, loopback-pinned unless `terminal_requires_loopback = false`. The socket IS the shell's lifetime |
+| GET | `/pty` (WS) | a real shell. Off unless `[server.web] terminal`, loopback-pinned unless `terminal_requires_loopback = false`; like every upgrade, a cookie opens it only with the server's own `Origin`. The socket IS the shell's lifetime |
 
 Exposure is governed by `[server]` — privileged in full, so an untrusted
 project cannot widen it — and by invariant 34: `Host` pinned to loopback
-plus `trusted_hosts`, cross-origin mutations refused, `?token=` loopback-only.
+plus `trusted_hosts`, cross-origin mutations and WebSocket upgrades refused,
+`?token=` loopback-only.
 
 ## Desktop extensions (docs/design/20)
 

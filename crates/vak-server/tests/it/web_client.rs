@@ -13,8 +13,20 @@ use vak_core::Core;
 
 /// A real bound server with the full secured stack.
 async fn spawn() -> (SocketAddr, String) {
+    spawn_with_project_config(None).await
+}
+
+/// The same server, with a workspace config written before the Core reads
+/// it. `Core::new` trusts the project layer, so privileged `[server]` keys
+/// in it apply as an operator's would.
+async fn spawn_with_project_config(config: Option<&str>) -> (SocketAddr, String) {
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
+    if let Some(config) = config {
+        let path = vak_config::project_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, config).unwrap();
+    }
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
     // Outlives the test body; a removed directory would fail reads midway.
@@ -417,6 +429,92 @@ async fn the_terminal_is_refused_until_it_is_enabled() {
             .contains("terminal"),
         "the refusal must name what is disabled: {body}"
     );
+}
+
+/// A WebSocket upgrade as a browser makes it: the session cookie, and
+/// `Origin` when given. `Host` names the server as `localhost`, so a page
+/// on `localhost:3000` is same-site with it and its cookie would ride along.
+async fn upgrade(
+    addr: SocketAddr,
+    path: &str,
+    cookie: Option<&str>,
+    bearer: Option<&str>,
+    origin: Option<&str>,
+) -> u16 {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+
+    let mut request = format!("ws://{addr}{path}").into_client_request().unwrap();
+    let headers = request.headers_mut();
+    headers.insert(
+        "host",
+        HeaderValue::from_str(&format!("localhost:{}", addr.port())).unwrap(),
+    );
+    if let Some(cookie) = cookie {
+        headers.insert("cookie", HeaderValue::from_str(cookie).unwrap());
+    }
+    if let Some(token) = bearer {
+        headers.insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+    }
+    if let Some(origin) = origin {
+        headers.insert("origin", HeaderValue::from_str(origin).unwrap());
+    }
+    match tokio_tungstenite::connect_async(request).await {
+        Ok((_socket, response)) => response.status().as_u16(),
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => response.status().as_u16(),
+        Err(error) => panic!("upgrade failed without an HTTP answer: {error}"),
+    }
+}
+
+/// An upgrade is a GET, and WebSockets have no CORS, so a page on another
+/// localhost port could otherwise carry the session cookie into a shell.
+/// Every upgrade is held to the mutation rule: a cookie needs our own
+/// `Origin`, and an originless client needs a bearer header.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cross_origin_upgrade_cannot_open_a_shell() {
+    let (addr, token) = spawn_with_project_config(Some("[server.web]\nterminal = true\n")).await;
+    let client = reqwest::Client::new();
+    let cookie = login(&client, addr, &token).await;
+    let pair = cookie.split(';').next().unwrap().to_string();
+    let ours = format!("http://localhost:{}", addr.port());
+
+    let other_port = upgrade(
+        addr,
+        "/pty",
+        Some(&pair),
+        None,
+        Some("http://localhost:3000"),
+    )
+    .await;
+    assert_eq!(
+        other_port, 403,
+        "a page on another port must not open a shell"
+    );
+
+    let originless = upgrade(addr, "/pty", Some(&pair), None, None).await;
+    assert_eq!(
+        originless, 403,
+        "a bare cookie without Origin is not a browser of ours"
+    );
+
+    let voice = upgrade(
+        addr,
+        "/voice/session?session_id=any",
+        Some(&pair),
+        None,
+        Some("http://localhost:3000"),
+    )
+    .await;
+    assert_eq!(voice, 403, "the same rule holds for every upgrade");
+
+    let same_origin = upgrade(addr, "/pty", Some(&pair), None, Some(&ours)).await;
+    assert_eq!(same_origin, 101, "our own page opens the terminal");
+
+    let cli = upgrade(addr, "/pty", None, Some(&token), None).await;
+    assert_eq!(cli, 101, "a header-token client needs no Origin");
 }
 
 /// `/host` stands in for the desktop shell's `backend_info`. It must NOT

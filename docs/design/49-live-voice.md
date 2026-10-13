@@ -124,9 +124,11 @@ has no valid provider, no credential for it, or no model pin.
 WebSocket upgrade against the real router with a scripted transcriber and
 model: flat noise is discarded without reaching the transcriber, speech
 becomes one Agent turn whose answer returns on the socket, playback is in
-the ledger, a forged client transcript is refused and never logged, a
-cross-origin upgrade is refused, and a session with no provider route is
-refused at connect. `crates/vak-server/tests/voice_channels.rs` posts a voice
+the ledger, a forged client transcript is refused and never logged, and a
+session with no provider route is refused at connect. A cross-origin
+upgrade is refused by the secured router's mutation rule, which holds every
+WebSocket upgrade (`a_cross_origin_upgrade_cannot_open_a_shell` in
+`crates/vak-server/tests/it/web_client.rs`). `crates/vak-server/tests/voice_channels.rs` posts a voice
 note through the gateway: a pending chat's note never reaches the
 transcriber, and an admitted chat's note reaches the model as its words.
 

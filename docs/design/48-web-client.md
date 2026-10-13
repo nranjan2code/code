@@ -349,6 +349,11 @@ Cookie only. No token in a query string, on any surface, after this lands.
   same-origin nor in `trusted_hosts` is rejected before routing. Requests
   with no `Origin` at all (curl, the CLI, bridges) must carry the bearer
   header — a cookie alone is never sufficient for a header-less request.
+  A WebSocket upgrade is a GET but counts as state-changing here
+  (`require_bearer` reads its `Upgrade: websocket` header): WebSockets
+  have no CORS, and a page on another `localhost` port is same-site, so
+  its `SameSite=Strict` cookie rides along. This one check covers `/pty`
+  and `/voice/session`; no handler repeats it.
 - **Rate limiting** already covers POSTs including login
   (`rate_limit.rs`); `/auth/login` inherits it unchanged.
 - Failures append to the security-events log and emit to the hub, as
@@ -526,7 +531,11 @@ terminal_requires_loopback = true   # even when enabled, refuse remote hosts
   axum, currently `["json"]` only). Binary frames both ways; the same
   `portable-pty` machinery `crates/vak-desktop/src/pty.rs` already uses,
   lifted into `vak-server` so both hosts share one implementation.
-- Auth: the cookie, checked at upgrade. Origin checked at upgrade.
+- Auth: the cookie, checked at upgrade, and only with the server's own
+  `Origin` (the mutation rule in §5, which holds every upgrade): without
+  it, any page on `localhost:<another port>` (a compromised dev server)
+  could carry the cookie into a shell. An upgrade with no `Origin` must
+  carry the bearer header; browsers always send `Origin` on an upgrade.
 - **Lifecycle is part of the protocol, not an afterthought.** Socket
   close kills the PTY, reaps the child, and removes the map entry. The
   desktop's current leak (§11.4) is fixed by the shared implementation
@@ -826,6 +835,7 @@ nothing about it:
 | `?token=` still works where it must (loopback) | `the_query_token_channel_works_on_loopback` |
 | Picker cannot be walked out of its roots | `the_directory_browser_stays_inside_its_roots` |
 | Terminal refused until enabled, and says which setting | `the_terminal_is_refused_until_it_is_enabled` |
+| An upgrade from another origin, or a bare cookie with none, opens no shell or voice session | `a_cross_origin_upgrade_cannot_open_a_shell` |
 | `/host` hands out no credentials | `the_host_descriptor_hands_out_no_credentials` |
 
 Plus, in unit tests: the replay ring's three distinct answers
@@ -850,6 +860,13 @@ them:
    body runs. Real clients always upgrade, so the behaviour is correct;
    the *test* had to be written the way a client actually asks, which is
    the more honest test anyway.
+3. **The terminal's Origin check never ran** (found 2026-10-13). §6
+   said the Origin was checked at upgrade, but the router decided whether
+   to check it from the HTTP method, and an upgrade is a GET, so any page
+   on another `localhost` port could open the shell with the session
+   cookie once the terminal was on. Voice had patched its own handler;
+   the router now holds every upgrade to the mutation rule, and the
+   handler's copy is gone.
 
 ---
 

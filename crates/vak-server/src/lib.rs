@@ -3968,10 +3968,21 @@ pub(crate) async fn require_bearer(
     // Cross-origin mutations are refused before routing, whatever
     // credential they carry. See `origin_is_trusted` for why a *missing*
     // Origin is not treated as a failure.
-    let mutating = !matches!(
-        *req.method(),
-        axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
-    );
+    //
+    // A WebSocket upgrade is a GET, but what it opens (a shell, a
+    // microphone relay) acts, and WebSockets have no CORS: a page on
+    // another localhost port is same-site, so a `SameSite=Strict` cookie
+    // rides along. So an upgrade is held to the mutation rule.
+    let upgrade = req
+        .headers()
+        .get(axum::http::header::UPGRADE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
+    let mutating = upgrade
+        || !matches!(
+            *req.method(),
+            axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
+        );
     let origin = req
         .headers()
         .get(axum::http::header::ORIGIN)

@@ -1162,7 +1162,9 @@ in progress, and the rest of V4 follows it.
     entries containing one are dropped with a warning. `[server]` is
     privileged in full: an untrusted project cannot choose an interface,
     relax the host check, or open a shell. A cookie alone never authorizes a
-    mutation — a state-changing request carrying one must also carry an
+    mutation — a state-changing request carrying one, and every WebSocket
+    upgrade (a GET with no CORS, which a page on another localhost port
+    could otherwise make with the cookie), must also carry an
     `Origin` we recognise, while a request with no `Origin` at all (curl, the
     CLI, a bridge) must carry a real header token. `?token=` is
     loopback-only: it exists for the one client that cannot set a header on

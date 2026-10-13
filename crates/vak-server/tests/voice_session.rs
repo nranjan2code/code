@@ -283,25 +283,6 @@ async fn a_spoken_request_becomes_one_governed_turn_and_noise_never_reaches_a_pr
     );
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_cross_origin_upgrade_is_refused() {
-    let (addr, _, _) = spawn(false, Some("local")).await;
-    let response = reqwest::Client::new()
-        .get(format!("http://{addr}/voice/session?session_id=any"))
-        .header(reqwest::header::ORIGIN, "https://attacker.example")
-        .header(reqwest::header::CONNECTION, "Upgrade")
-        .header(reqwest::header::UPGRADE, "websocket")
-        .header(reqwest::header::SEC_WEBSOCKET_VERSION, "13")
-        .header(
-            reqwest::header::SEC_WEBSOCKET_KEY,
-            "dGhlIHNhbXBsZSBub25jZQ==",
-        )
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
-}
-
 /// Voice on but no provider: the session is refused before the client asks
 /// for the microphone, and the refusal says what to set.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
