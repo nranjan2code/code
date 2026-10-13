@@ -302,6 +302,11 @@ POST /agents/{id}/resume
 
 `stop_running: false` is today's behaviour: set the lifecycle, refuse the next
 turn. `stop_running: true` does the same, then cancels the Agent's live work.
+A turn is running once it is past admission (`Core::run`'s lifecycle check),
+not when the server takes its session a moment earlier: a pause landing in
+between refuses that turn, as it should. A gate that turn opens gives way to
+its cancel token in the loop itself, so a stop or a mode change that lands
+before the gate is listed still ends the wait (invariants 5 and 11).
 
 Order matters, to leave no window:
 

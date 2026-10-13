@@ -2547,6 +2547,10 @@ impl vak_agent::Approver for GatewayApprover {
         }
         let id = uuid::Uuid::now_v7().to_string();
         let rx = self.state.register_gate(&id, &self.session_id);
+        let _gate = ForwardedGate {
+            state: &self.state,
+            id: &id,
+        };
         let _ = self.events_tx.send(AgentEvent::ApprovalRequested {
             id: id.clone(),
             tool: tool.to_string(),
@@ -2591,13 +2595,6 @@ impl vak_agent::Approver for GatewayApprover {
             Ok(Ok(v)) => v,
             Ok(Err(_)) => false, // gate dropped (run cancelled)
             Err(_) => {
-                // Timed out: remove our own entry so a late reply resolves
-                // nothing.
-                self.state
-                    .pending_approvals
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .remove(&id);
                 tracing::info!(
                     kind = "approval",
                     outcome = "timed_out",
@@ -2606,6 +2603,24 @@ impl vak_agent::Approver for GatewayApprover {
                 false
             }
         }
+    }
+}
+
+/// A forwarded gate's entry, removed however the wait ends: answered,
+/// timed out (a late reply then resolves nothing), or dropped because the
+/// agent loop stopped awaiting it when its run was cancelled.
+struct ForwardedGate<'a> {
+    state: &'a GatewayState,
+    id: &'a str,
+}
+
+impl Drop for ForwardedGate<'_> {
+    fn drop(&mut self) {
+        self.state
+            .pending_approvals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(self.id);
     }
 }
 

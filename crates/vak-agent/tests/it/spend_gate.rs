@@ -301,3 +301,53 @@ async fn budget_approval_raises_cap_for_rest_of_run() {
     assert!(matches!(outcome, TurnOutcome::Completed { .. }));
     assert_eq!(gate.denials.load(Ordering::SeqCst), 1, "exactly one denial");
 }
+
+/// Never answers; says when it was asked.
+struct Silent(Arc<tokio::sync::Notify>);
+
+#[async_trait::async_trait]
+impl Approver for Silent {
+    async fn approve(
+        &self,
+        _tool: &str,
+        _args_json: &str,
+        _reason: &str,
+        _call_id: Option<&str>,
+    ) -> bool {
+        self.0.notify_one();
+        std::future::pending().await
+    }
+}
+
+/// A run cancelled while a gate is open ends without an answer: a stop or a
+/// mode change that lands before the gate is listed cannot deny it, so the
+/// gate itself gives way to the run's cancel token (invariants 5 and 11).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_cancelled_run_stops_waiting_on_an_open_gate() {
+    let asked = Arc::new(tokio::sync::Notify::new());
+    let (mut agent, _dir) = setup(
+        Some(Arc::new(Silent(asked.clone()))),
+        Arc::new(FlakyGate {
+            remaining_denials: AtomicU8::new(9),
+        }),
+    );
+    let (ev_tx, mut ev_rx) = mpsc::channel(256);
+    tokio::spawn(async move { while ev_rx.recv().await.is_some() {} });
+    let cancel = CancellationToken::new();
+    let steering = SteeringQueues::new();
+    let stop = cancel.clone();
+    tokio::spawn(async move {
+        asked.notified().await;
+        stop.cancel();
+    });
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        agent.run("hello", &steering, cancel, ev_tx),
+    )
+    .await
+    .expect("the run must not wait on a gate after it was cancelled");
+    assert!(
+        !matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+}

@@ -4173,6 +4173,7 @@ impl Agent {
             &self.seen_calls,
             &self.config.tools,
             &[],
+            cancel,
         )
         .await
         .map_err(|(_, message)| message)?;
@@ -4937,14 +4938,17 @@ impl Agent {
                         Err(reason) => {
                             let approved = match &self.config.approver {
                                 Some(a) => {
-                                    a.approve(
-                                        "finops-budget",
-                                        &args_preview(&serde_json::json!({
-                                            "model": model,
-                                            "reason": reason,
-                                        })),
-                                        &reason,
-                                        None,
+                                    ask_unless_cancelled(
+                                        cancel,
+                                        a.approve(
+                                            "finops-budget",
+                                            &args_preview(&serde_json::json!({
+                                                "model": model,
+                                                "reason": reason,
+                                            })),
+                                            &reason,
+                                            None,
+                                        ),
                                     )
                                     .await
                                 }
@@ -6159,6 +6163,7 @@ impl Agent {
                 &self.seen_calls,
                 &self.config.tools,
                 &skill_names,
+                cancel,
             )
             .await;
             verdicts.push(
@@ -8016,6 +8021,20 @@ impl RepairState {
 
 /// Gathers what is known of a proposed call and has the judge settle it
 /// (`vak_judge::call`). A refusal carries what the model is told.
+/// A gate put to a person, answered no once the run is cancelled: a mode
+/// change or a stop that lands before the gate is listed cannot deny it
+/// (invariant 11), and the run must not wait out the approval window.
+async fn ask_unless_cancelled(
+    cancel: &CancellationToken,
+    answer: impl std::future::Future<Output = bool>,
+) -> bool {
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => false,
+        approved = answer => approved,
+    }
+}
+
 async fn authorize(
     config: &AgentConfig,
     call: &PendingToolCall,
@@ -8023,6 +8042,7 @@ async fn authorize(
     seen_calls: &std::sync::Mutex<HashMap<String, SeenCall>>,
     tools: &[Arc<dyn Tool>],
     skill_names: &[String],
+    cancel: &CancellationToken,
 ) -> Result<(), (vak_control::Refusal, String)> {
     use vak_control::{CallVerdict, Refusal};
     use vak_judge::call::{Asked, CallFacts, Permission, admit, asked};
@@ -8141,14 +8161,16 @@ async fn authorize(
                         Asked::Unanswerable
                     }
                     Some(approver) => {
-                        if approver
-                            .approve(
+                        if ask_unless_cancelled(
+                            cancel,
+                            approver.approve(
                                 &call.name,
                                 &args_preview(&call.input),
                                 &reason,
                                 Some(&call.id),
-                            )
-                            .await
+                            ),
+                        )
+                        .await
                         {
                             Asked::Approved
                         } else {

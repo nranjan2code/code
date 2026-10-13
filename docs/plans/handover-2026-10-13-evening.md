@@ -59,10 +59,13 @@ item "card claims a draft no call made" is left alone (no typed fact).
 
 ## Next, in order
 
-1. Flaky tests, cause not found: `agent_pause::pause_without_stop_running_…`
-   (2 in 18 runs; it prints the session list and transcript when it fails,
-   read that first) and `http_e2e::mode_change_revokes_run_waiting_for_approval`
-   (one hang). Run each in a loop in its own binary to reproduce.
+1. Done 2026-10-13: both flaky tests had causes. The pause tests treated
+   "session busy" as "turn admitted"; a pause in that gap refuses the turn
+   at admission, so they now wait for the model to be called. A gate opened
+   after a mode change or stop had already swept the pending list waited
+   its whole approval window: the loop now races every gate against the
+   run's cancel token (`ask_unless_cancelled`), and both server approvers
+   settle a dropped gate (`OpenGate`, `ForwardedGate`).
 2. Control plane leftovers (docs/plans/handover-2026-10-11-control-plane.md
    'Next, in order' 6): the horizon reading in `derive_context` and
    `Authority::gate_fallback`; a wire refusing a named tool choice is not

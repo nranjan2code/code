@@ -97,6 +97,17 @@ async fn wait_until(app: &Router, sid: &str, want_running: bool) -> bool {
     false
 }
 
+/// Whether the model was sent more than `before` requests within the wait.
+async fn reached_model(provider: &Hung, before: usize) -> bool {
+    for _ in 0..200 {
+        if provider.0.load(Ordering::SeqCst) > before {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    false
+}
+
 async fn start(app: &Router, sid: &str) {
     let (status, body) = call(
         app,
@@ -136,15 +147,17 @@ async fn setup() -> (Router, Arc<Hung>, tempfile::TempDir) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pause_with_stop_running_cancels_only_that_agents_runs() {
-    let (app, _provider, _temp) = setup().await;
+    let (app, provider, _temp) = setup().await;
     let (_, newsy) = call(&app, "POST", "/agents/newsy/open", json!({})).await;
     let (_, other) = call(&app, "POST", "/agents/other/open", json!({})).await;
     let newsy = newsy["session_id"].as_str().unwrap().to_owned();
     let other = other["session_id"].as_str().unwrap().to_owned();
     start(&app, &newsy).await;
     start(&app, &other).await;
-    assert!(wait_until(&app, &newsy, true).await);
-    assert!(wait_until(&app, &other, true).await);
+    assert!(
+        reached_model(&provider, 1).await,
+        "both turns are past admission"
+    );
 
     let (status, body) = call(
         &app,
@@ -173,7 +186,10 @@ async fn pause_without_stop_running_lets_a_running_turn_finish_and_refuses_the_n
     let (_, newsy) = call(&app, "POST", "/agents/newsy/open", json!({})).await;
     let newsy = newsy["session_id"].as_str().unwrap().to_owned();
     start(&app, &newsy).await;
-    assert!(wait_until(&app, &newsy, true).await);
+    // A turn is running once it is past admission, which is where a paused
+    // Agent is refused: the session is busy a moment before that, and a
+    // pause landing in between correctly refuses the turn itself.
+    assert!(reached_model(&provider, 0).await);
 
     let (status, body) = call(&app, "POST", "/agents/newsy/pause", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -213,16 +229,10 @@ async fn pause_without_stop_running_lets_a_running_turn_finish_and_refuses_the_n
     let (status, body) = call(&app, "POST", "/agents/newsy/resume", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     start(&app, &newsy).await;
-    assert!(wait_until(&app, &newsy, true).await);
-    let mut resumed = false;
-    for _ in 0..200 {
-        if provider.0.load(Ordering::SeqCst) > sent {
-            resumed = true;
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    assert!(resumed, "a resumed Agent's turn reaches the model again");
+    assert!(
+        reached_model(&provider, sent).await,
+        "a resumed Agent's turn reaches the model again"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -281,8 +291,10 @@ async fn revoke_cuts_endpoints_within_one_tick() {
     let other = other["session_id"].as_str().unwrap().to_owned();
     start(&app, &newsy).await;
     start(&app, &other).await;
-    assert!(wait_until(&app, &newsy, true).await);
-    assert!(wait_until(&app, &other, true).await);
+    assert!(
+        reached_model(&provider, 1).await,
+        "both turns are past admission"
+    );
 
     let (status, life) = call(&app, "GET", "/agents/newsy/lifecycle", json!({})).await;
     assert_eq!(status, StatusCode::OK, "{life}");

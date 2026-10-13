@@ -747,9 +747,21 @@ impl Approver for HttpApprover {
             });
         }
         // Bounded, and failing closed on expiry — the same contract
-        // `GatewayApprover` already had. Dropping the entry before returning
-        // means a reply that arrives after the deadline resolves nothing
-        // rather than answering a gate the run has already moved past.
+        // `GatewayApprover` already had. Settling removes the entry, so a
+        // reply that arrives after the deadline resolves nothing rather than
+        // answering a gate the run has already moved past; a gate the loop
+        // stops awaiting because its run was cancelled settles as denied
+        // when it is dropped.
+        let mut gate = OpenGate {
+            approver: self,
+            id,
+            tool: tool.to_string(),
+            args_json: args_json.to_string(),
+            reason: reason.to_string(),
+            call_id: call_id.map(str::to_owned),
+            answered_by,
+            settled: false,
+        };
         let approved = match tokio::time::timeout(self.wait, rx).await {
             Ok(answer) => answer.unwrap_or(false),
             Err(_) => {
@@ -763,15 +775,44 @@ impl Approver for HttpApprover {
                 false
             }
         };
-        self.pending
+        gate.settle(approved);
+        approved
+    }
+}
+
+/// A gate put to a person, open until it is settled: answered, expired, or
+/// dropped unanswered because the agent loop stopped awaiting it when its
+/// run was cancelled. Settling removes it from the session's pending gates
+/// and records the outcome, so nothing lists a gate nobody can resolve.
+struct OpenGate<'a> {
+    approver: &'a HttpApprover,
+    id: String,
+    tool: String,
+    args_json: String,
+    reason: String,
+    call_id: Option<String>,
+    answered_by: Arc<Mutex<Option<(String, String)>>>,
+    settled: bool,
+}
+
+impl OpenGate<'_> {
+    fn settle(&mut self, approved: bool) {
+        if std::mem::replace(&mut self.settled, true) {
+            return;
+        }
+        let (id, tool) = (self.id.clone(), self.tool.clone());
+        self.approver
+            .pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id);
-        let answered_by = answered_by
+        let answered_by = self
+            .answered_by
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        self.activity_buffer
+        self.approver
+            .activity_buffer
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(vak_session::ActivityRecord {
@@ -786,14 +827,18 @@ impl Approver for HttpApprover {
                     "Approval {} for {tool}",
                     if approved { "granted" } else { "denied" }
                 ),
-                detail: Some(reason.to_string()),
+                detail: Some(self.reason.clone()),
                 data: [
                     ("request_id".into(), id.clone()),
-                    ("tool".into(), tool.to_string()),
-                    ("args_json".into(), args_json.to_string()),
+                    ("tool".into(), tool.clone()),
+                    ("args_json".into(), self.args_json.clone()),
                 ]
                 .into_iter()
-                .chain(call_id.map(|call| ("tool_use_id".into(), call.to_string())))
+                .chain(
+                    self.call_id
+                        .clone()
+                        .map(|call| ("tool_use_id".into(), call)),
+                )
                 .chain(answered_by.into_iter().flat_map(|(actor_id, actor_name)| {
                     [
                         ("actor_id".into(), actor_id),
@@ -804,18 +849,17 @@ impl Approver for HttpApprover {
             });
         if let Some(hub) = events::global() {
             hub.emit(if approved {
-                events::SystemEvent::ApprovalGranted {
-                    id: id.clone(),
-                    tool: tool.to_string(),
-                }
+                events::SystemEvent::ApprovalGranted { id, tool }
             } else {
-                events::SystemEvent::ApprovalDenied {
-                    id,
-                    tool: tool.to_string(),
-                }
+                events::SystemEvent::ApprovalDenied { id, tool }
             });
         }
-        approved
+    }
+}
+
+impl Drop for OpenGate<'_> {
+    fn drop(&mut self) {
+        self.settle(false);
     }
 }
 
