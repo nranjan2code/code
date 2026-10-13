@@ -2351,8 +2351,10 @@ for every provider and model:
   go strict where the wire enforces them (`vak_llm::strict`, card tools
   first within a wire's limits), and a step whose output is data sets
   `ChatRequest::output_schema` rather than parsing JSON out of prose.
-- A call whose arguments cannot be read (`vak_tools::unreadable`), or that
-  fails its schema again from a tool that already failed this turn, is
+- A call whose arguments cannot be read (`vak_tools::unreadable`), that
+  fails the schema of a tool its request did not carry (a deferred tool
+  called by name, written blind), or that fails its schema again from a
+  tool that already failed this turn, is
   written again under the tool's own schema (`Tool::call_schema`, which an
   integration broker narrows to the discovered tool) before it is ledgered;
   the ledger keeps what the model first wrote. Never add a repair that

@@ -146,7 +146,14 @@ Tools report a typed fault; the ladder answers by class, once each:
 |---|---|---|
 | syntax: the arguments are not JSON | regenerate under the schema (§4.3) | tell, with the place it breaks |
 | shape: valid JSON, wrong or missing fields | tell, naming the fields and the schema | regenerate under the schema |
+| shape, from a tool whose schema the request did not carry (deferred, called by name from the catalogue) | regenerate under the schema: there is no schema to tell it about | tell |
 | refusal: the tool's own rule | tell, with the rule | the answer stands without it |
+
+Measured 2026-10-13 (admin › How the models did): `office_apply`, deferred
+on the dev route and known to the model only from the "More tools" line,
+was refused by its schema in 5 of 15 calls, each a first call written as
+`{operation, content, title}` before any schema was sent. The next call,
+with the schema loaded, was right every time.
 
 A tool is withdrawn only when a regenerated call fails again: the frame has
 changed and still failed, and asking a third time would be the loop that

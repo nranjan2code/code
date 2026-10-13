@@ -5724,9 +5724,10 @@ impl Agent {
 
     /// Writes again, under each tool's own schema, the arguments of every
     /// call in `response` that could not be read: text written as a JSON
-    /// list or record that does not parse (`vak_tools::unreadable`), or
-    /// arguments that fail the schema from a tool that already failed this
-    /// turn. The
+    /// list or record that does not parse (`vak_tools::unreadable`),
+    /// arguments that fail the schema of a tool the request did not carry
+    /// (deferred, so the model wrote them blind), or arguments that fail the
+    /// schema from a tool that already failed this turn. The
     /// call keeps its tool and the model's intent; only the encoding
     /// changes, in a step of purpose `repair` whose output the wire
     /// enforces where it can (docs/design/89-constrained-tool-arguments.md
@@ -5751,10 +5752,17 @@ impl Agent {
             // A syntax fault is rewritten at once: telling the model where
             // its text breaks has not stopped the next slip. A shape fault
             // (valid JSON, wrong fields) is told first, and rewritten when
-            // the same tool fails again this turn (doc 89 §4.4).
+            // the same tool fails again this turn (doc 89 §4.4), or at once
+            // when the model was never sent the schema: it called a tool
+            // it knew only by name (measured: `office_apply` written as
+            // `{operation, content, title}`, 5 of 15 calls).
+            let blind = !request
+                .tools
+                .iter()
+                .any(|sent| sent.name == *name && !sent.defer);
             let fault = match vak_tools::unreadable(&schema, input) {
                 Some(fault) => fault,
-                None if self.repair.failing.contains(name.as_str()) => {
+                None if blind || self.repair.failing.contains(name.as_str()) => {
                     match vak_tools::validate_input(&schema, input) {
                         Err(fault) => fault,
                         Ok(()) => continue,

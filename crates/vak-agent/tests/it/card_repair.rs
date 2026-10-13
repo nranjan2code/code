@@ -495,3 +495,115 @@ async fn a_second_call_of_the_wrong_shape_is_regenerated_under_its_schema() {
     let text = SessionLog::text(&ledger);
     assert!(text.contains("arguments-regenerated"), "{text}");
 }
+
+/// A call of the wrong shape to a tool the request did not carry (deferred,
+/// known to the model by name only) is written again under its schema at
+/// once: the model never saw the schema it would be told it broke.
+#[tokio::test]
+async fn a_blind_call_to_a_deferred_tool_is_regenerated_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
+        agent: None,
+        session_id: "card-blind-regenerated".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "scripted".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "full-access".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let ledger = SessionPath::new_session_file(&home, dir.path(), "card-blind-regenerated");
+    let log = SessionLog::create(ledger.clone(), header).unwrap();
+    let seen: Seen = Arc::new(Mutex::new(Vec::new()));
+    let rewritten = json!({"semantic_type": "table", "deliverable": "comparison",
+        "columns": ["App", "Sync"], "rows": ["Obsidian | Local", "Notion | Cloud"]});
+    let mut agent = Agent::new(
+        Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
+            responses: Mutex::new(VecDeque::from(vec![
+                call(
+                    "a1",
+                    "emit_table_card",
+                    json!({"semantic_type": "table", "rows": ["A | B"]}),
+                ),
+                text(&rewritten.to_string()),
+                text("Obsidian keeps notes local; Notion syncs."),
+            ])),
+            seen: seen.clone(),
+        }),
+        log,
+        {
+            let mut cfg = AgentConfig::new("sys");
+            cfg.model = "test-model".into();
+            cfg.tools = vec![Arc::new(TableCard)];
+            cfg.tool_definitions = Some(
+                vak_tools::definitions(&cfg.tools)
+                    .into_iter()
+                    .map(|definition| definition.deferred())
+                    .collect(),
+            );
+            cfg.mode = vak_permission::Mode::FullAccess;
+            cfg.permission = Some(Arc::new(PermissionEngine::default()));
+            cfg.stop_policy = None;
+            cfg
+        },
+    );
+    let outcome = agent
+        .run(
+            "compare two note apps",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert_eq!(
+            seen[1].2.as_deref(),
+            Some("emit_table_card"),
+            "rewritten at once, never refused first: {seen:?}"
+        );
+    }
+    let session = agent.session.lock().await;
+    let ran = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .find_map(|block| match block {
+            ContentBlock::ToolUse { id, input, .. } if id == "a1" => Some(input),
+            _ => None,
+        })
+        .expect("the call is ledgered");
+    assert_eq!(ran["rows"], json!(["Obsidian | Local", "Notion | Cloud"]));
+    let refused = session
+        .derive_messages()
+        .iter()
+        .flat_map(|message| message.content.clone())
+        .any(|block| matches!(block, ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "a1"));
+    assert!(!refused, "the rewritten call ran");
+    drop(session);
+    let text = SessionLog::text(&ledger);
+    assert!(text.contains("arguments-regenerated"), "{text}");
+}
