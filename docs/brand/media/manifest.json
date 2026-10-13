@@ -7,7 +7,6 @@
   "generated": "2026-10-13",
   "assets": [
     {
-      "file": "voices/vakyartha.mp3",
       "kind": "voice",
       "character": "vakyartha",
       "library_name": "Vakyartha – Vakyartha (songbird)",
@@ -17,10 +16,15 @@
       "voice_description": "Warm, clear Indian English voice, gender-neutral leaning female, early thirties, educated pan-Indian accent that is easy for global listeners to follow. Close to the microphone, calm and attentive, unhurried, a gentle smile in the voice, precise diction, quietly reassuring and capable. Not a call-centre or newsreader tone.",
       "text": "I read the contract Priya sent. Three things changed, and I've marked each one so you can see exactly where. I've drafted a reply as well, but nothing goes out until you say so. Ready when you are.",
       "chosen_by": "pace",
-      "status": "downloaded"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "voices/vakyartha.mp3",
+          "seconds": 15.4
+        }
+      ]
     },
     {
-      "file": "voices/mira.mp3",
       "kind": "voice",
       "character": "mira",
       "library_name": "Vakyartha – Mira (fox)",
@@ -30,10 +34,15 @@
       "voice_description": "Warm, slightly low Indian English female voice in her thirties, urban pan-Indian accent clear to global listeners, perceptive and quietly confident with a hint of playful wit. Smooth relaxed pacing, like a trusted friend who is always one step ahead.",
       "text": "You mentioned the Pune trip twice this week, so I looked into it. The Thursday morning train is cheaper and gets you there before lunch. I've kept both options side by side, in case you'd rather sleep in.",
       "chosen_by": "pace",
-      "status": "downloaded"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "voices/mira.mp3",
+          "seconds": 14.6
+        }
+      ]
     },
     {
-      "file": "voices/moss.mp3",
       "kind": "voice",
       "character": "moss",
       "library_name": "Vakyartha – Moss (forest friend)",
@@ -43,10 +52,15 @@
       "voice_description": "Deep, soft, kind Indian English male voice in his sixties, gentle pan-Indian accent clear to global listeners, slow unhurried pacing with natural pauses, grounded and patient like a beloved grandfather who gardens every morning.",
       "text": "There's no hurry. Let's take this one step at a time. First we'll gather what you already have, then we'll see what's missing. Good things grow slowly, beta, and so do good plans.",
       "chosen_by": "owner, by ear",
-      "status": "downloaded"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "voices/moss.mp3",
+          "seconds": 20.8
+        }
+      ]
     },
     {
-      "file": "voices/nori.mp3",
       "kind": "voice",
       "character": "nori",
       "library_name": "Vakyartha – Nori (seal)",
@@ -56,10 +70,15 @@
       "voice_description": "Friendly, bright Indian English voice of a young woman in her twenties, modern pan-Indian accent clear to global listeners, curious and practical, upbeat but grounded, slightly bubbly rhythm, an encouraging teammate who loves solving puzzles.",
       "text": "Ooh, this is a good puzzle. Okay, here's what I found: the numbers don't add up in March, and I think I know why. Should I fix it, or shall we look at it together first? Either way, you've got this.",
       "chosen_by": "pace",
-      "status": "downloaded"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "voices/nori.mp3",
+          "seconds": 13.2
+        }
+      ]
     },
     {
-      "file": "voices/pip.mp3",
       "kind": "voice",
       "character": "pip",
       "library_name": "Vakyartha – Pip (penguin)",
@@ -69,10 +88,15 @@
       "voice_description": "Bright, quick, cheerful Indian English voice of a young man in his early twenties, crisp modern pan-Indian accent clear to global listeners, energetic but never shrill, attentive and resourceful, neat short sentences with a spring in each.",
       "text": "Done! Your list is sorted. Sabzi first, then the chemist, then the post office on the way home. I've marked the busy hours in red so you can skip the queues. Anything else? I'm on it.",
       "chosen_by": "pace",
-      "status": "downloaded"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "voices/pip.mp3",
+          "seconds": 10.7
+        }
+      ]
     },
     {
-      "file": "voices/lumi.mp3",
       "kind": "voice",
       "character": "lumi",
       "library_name": "Vakyartha – Lumi (cloud friend)",
@@ -82,10 +106,15 @@
       "voice_description": "Soft, airy, dreamy Indian English female voice, gentle pan-Indian accent clear to global listeners, light breathy texture, slow floating cadence, reassuring like a loving storyteller at bedtime, full of quiet wonder.",
       "text": "Close your eyes for a second and picture it: a little café with blue shutters, chai on the stove, rain on the window. That's your idea. Let's sketch it together, one cloud at a time, and see where it drifts.",
       "chosen_by": "pace",
-      "status": "downloaded"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "voices/lumi.mp3",
+          "seconds": 21.7
+        }
+      ]
     },
     {
-      "file": "voices/tavi.mp3",
       "kind": "voice",
       "character": "tavi",
       "library_name": "Vakyartha – Tavi (owl)",
@@ -95,10 +124,15 @@
       "voice_description": "Mature, measured Indian English voice of a woman in her late fifties, refined pan-Indian accent clear to global listeners, low and resonant, precise and thoughtful, deliberate pauses, the calm authority of a respected professor who chooses every word.",
       "text": "Before we decide, consider this. Two of your sources agree, and one does not. The one that disagrees is the most recent. That is worth a closer look. I have laid out all three, so you can judge for yourself.",
       "chosen_by": "pace",
-      "status": "downloaded"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "voices/tavi.mp3",
+          "seconds": 21.6
+        }
+      ]
     },
     {
-      "file": "voices/beni.mp3",
       "kind": "voice",
       "character": "beni",
       "library_name": "Vakyartha – Beni (rabbit)",
@@ -108,129 +142,275 @@
       "voice_description": "Calm, steady, warm Indian English male voice in his forties, mid-low pitch, pan-Indian accent clear to global listeners, even dependable rhythm, soft-spoken and kind, someone you trust to handle things while you sleep.",
       "text": "Everything's in order. The backup finished at two, your reminders are set for the morning, and the electricity bill is paid. Nothing needs you tonight. If anything changes, I'll tell you first thing.",
       "chosen_by": "pace",
-      "status": "downloaded"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "voices/beni.mp3",
+          "seconds": 14.4
+        }
+      ]
     },
     {
-      "file": "sounds/ui/brand-chime.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "4AGYCTnEpbK6d2elIdnQ",
       "variations": 4,
       "prompt": "Premium software brand sonic logo, 2 seconds. A warm, bright three-note rising songbird-like chirp played on soft glass marimba and celesta, followed by a gentle sustained shimmer that fades out. Calm, confident, intelligent, friendly. Clean studio mix, no reverb wash, no drums, no voice, ends in silence.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/ui/brand-chime-1.mp3",
+          "seconds": 1.0
+        },
+        {
+          "file": "sounds/ui/brand-chime-2.mp3",
+          "seconds": 1.0
+        },
+        {
+          "file": "sounds/ui/brand-chime-3.mp3",
+          "seconds": 2.0
+        },
+        {
+          "file": "sounds/ui/brand-chime-4.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/ui/turn-finished.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "kfk6eg1iU7EKNd3bALUD",
       "variations": 4,
       "prompt": "Subtle app notification sound, under 1 second: task complete. Two soft ascending glass marimba notes, warm and reassuring, very short decay. Minimal, modern, quiet enough for repeated use in a desktop app. No reverb tail, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/ui/turn-finished-1.mp3",
+          "seconds": 2.0
+        },
+        {
+          "file": "sounds/ui/turn-finished-2.mp3",
+          "seconds": 1.0
+        },
+        {
+          "file": "sounds/ui/turn-finished-3.mp3",
+          "seconds": 2.0
+        },
+        {
+          "file": "sounds/ui/turn-finished-4.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/ui/approval-needed.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "qYoFs1ounnRHOFiLweMj",
       "variations": 4,
       "prompt": "Gentle attention sound for a desktop app, under 1 second: your approval is needed. A soft two-note questioning chime, second note slightly higher and held briefly, soft bell and marimba timbre. Polite, noticeable but never alarming. Clean, dry, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/ui/approval-needed-1.mp3",
+          "seconds": 1.0
+        },
+        {
+          "file": "sounds/ui/approval-needed-2.mp3",
+          "seconds": 1.0
+        },
+        {
+          "file": "sounds/ui/approval-needed-3.mp3",
+          "seconds": 2.0
+        },
+        {
+          "file": "sounds/ui/approval-needed-4.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/companions/mira.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "GYLrXGDExsgP43AulDyp",
       "variations": 2,
       "prompt": "Character signature sound, 1 second: a fox's warm greeting. Two notes G4 then C5 on a soft felt piano with a faint brushed-tail swish underneath. Warm, perceptive, quietly confident. Dry, close, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/companions/mira-1.mp3",
+          "seconds": 2.0
+        },
+        {
+          "file": "sounds/companions/mira-2.mp3",
+          "seconds": 3.0
+        }
+      ]
     },
     {
-      "file": "sounds/companions/moss.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "izMIOUHM6bRvmA1XcvZw",
       "variations": 2,
       "prompt": "Character signature sound, 1 second: a mossy forest friend. Two low wooden notes E4 then G4 on a soft kalimba, with a faint rustle of leaves. Patient, grounded, thoughtful. Dry, close, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/companions/moss-1.mp3",
+          "seconds": 3.0
+        },
+        {
+          "file": "sounds/companions/moss-2.mp3",
+          "seconds": 5.0
+        }
+      ]
     },
     {
-      "file": "sounds/companions/nori.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "QgedT4yYYg5Plh50co6B",
       "variations": 2,
       "prompt": "Character signature sound, 1 second: a curious seal. Two bubbly notes A4 then D5 on a round vibraphone, with a tiny water droplet plip. Curious, practical, encouraging. Dry, close, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/companions/nori-1.mp3",
+          "seconds": 0.5
+        },
+        {
+          "file": "sounds/companions/nori-2.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/companions/pip.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "tUnsds9aLHepPZwG9fgk",
       "variations": 2,
       "prompt": "Character signature sound, under 1 second: a bright little penguin. Two quick high notes C5 then E5 on a toy glockenspiel, with a tiny happy waddle tap. Bright, attentive, resourceful. Dry, close, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/companions/pip-1.mp3",
+          "seconds": 5.0
+        },
+        {
+          "file": "sounds/companions/pip-2.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/companions/lumi.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "4sNgovshYZwEcCAr6qFL",
       "variations": 2,
       "prompt": "Character signature sound, 1.5 seconds: a gentle cloud friend. Two airy notes B4 then F#5 on a soft synth pad and celesta, drifting like a breath of wind. Gentle, imaginative, reassuring. Short fade, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/companions/lumi-1.mp3",
+          "seconds": 3.0
+        },
+        {
+          "file": "sounds/companions/lumi-2.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/companions/tavi.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "o49bGN5m2ONvnNTucWzz",
       "variations": 2,
       "prompt": "Character signature sound, 1 second: a wise owl. Two measured notes F4 then B-flat 4 on a warm wooden flute, soft and breathy, like a thoughtful hoot. Observant, measured, wise. Dry, close, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/companions/tavi-1.mp3",
+          "seconds": 7.0
+        },
+        {
+          "file": "sounds/companions/tavi-2.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/companions/beni.mp3",
       "kind": "sound",
       "model": "eleven_text_to_sound_v2",
       "flow_node": "cdp32njV7wF5jeOec4R0",
       "variations": 2,
       "prompt": "Character signature sound, 1 second: a steady rabbit. Two low soft notes D4 then G4 on a mellow marimba, with a gentle soft-paw thump. Steady, calm, dependable. Dry, close, no voice.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/companions/beni-1.mp3",
+          "seconds": 2.0
+        },
+        {
+          "file": "sounds/companions/beni-2.mp3",
+          "seconds": 3.0
+        }
+      ]
     },
     {
-      "file": "music/theme.mp3",
       "kind": "music",
       "model": "eleven_music_v2_5",
       "flow_node": "GESAfkvBVuI7rkN8vyzv",
       "variations": 2,
       "prompt": "30-second instrumental brand theme for Vakyartha, a calm and trustworthy AI companion. Opens with a solo glass marimba playing a rising three-note songbird motif (G4, B4, D5), answered by soft felt piano. Warm strings and a gentle celesta enter, light brushed percussion, a hopeful lift at 20 seconds, then resolves back to the three-note motif and ends softly. Mood: attentive, warm, quietly confident, morning light. Modern cinematic minimal, 84 BPM, no vocals.",
       "note": "node ran with instrumental=false and lyrics_type=auto; check for vocals, regenerate with instrumental=true if any",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "music/theme-1.mp3",
+          "seconds": 30.0
+        },
+        {
+          "file": "music/theme-2.mp3",
+          "seconds": 30.0
+        }
+      ]
     },
     {
-      "file": "images/hero.png",
       "kind": "image",
       "model": "gpt-image-2.5-sunburst",
       "flow_node": "pEGnd3S6PQbdr6JX78tN",
       "variations": 4,
       "aspect": "16:9",
       "prompt": "Website hero illustration for an AI agent product called Vakyartha. Flat geometric editorial illustration: a stylised crested songbird in deep indigo (#101D3D) with a saffron (#F5A400) throat, perched calmly on a thin line that flows into abstract shapes of documents, calendar cards, chat bubbles and a small shield, suggesting safe, transparent help with everyday work. Generous negative space, warm off-white background, indigo and saffron only with soft neutral greys. Calm, premium, modern, minimal, wide 16:9 composition with empty space on the left for a headline. No text, no letters, no logos, no gradients mesh, no 3D.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "images/hero-1.webp"
+        },
+        {
+          "file": "images/hero-2.webp"
+        },
+        {
+          "file": "images/hero-3.webp"
+        },
+        {
+          "file": "images/hero-4.webp"
+        }
+      ]
     },
     {
-      "file": "video/vakyartha-idle.mp4",
       "kind": "video",
       "model": "kling-2.5-turbo",
       "flow_node": "LDQ0C9ihq5rHwKY7NjVy",
       "source_image": "docs/brand/characters/vak.png",
       "prompt": "Seamless looping idle animation of this exact character, unchanged design, flat style and colours preserved, plain background kept. The songbird breathes softly, tilts its head once as if listening, blinks, its three-feather crest lifts slightly, then settles back to the starting pose. Locked camera, 5 seconds, gentle and calm.",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "video/vakyartha-idle.mp4",
+          "seconds": null
+        }
+      ]
     },
     {
-      "file": "sounds/system/glass/notification.mp3",
       "kind": "system sound",
       "family": "glass",
       "event": "notification",
@@ -238,10 +418,15 @@
       "flow_node": "S3bffBU3UVQYJIHPLkm4",
       "variations": 1,
       "prompt": "Glass marimba, single soft bright note, short clean decay, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/glass/notification.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/glass/turn-finished.mp3",
       "kind": "system sound",
       "family": "glass",
       "event": "turn-finished",
@@ -249,10 +434,15 @@
       "flow_node": "YxChDA1qmZOSgZ97jHBb",
       "variations": 1,
       "prompt": "Glass marimba, two quick rising notes, soft, short decay, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/glass/turn-finished.mp3",
+          "seconds": 0.5
+        }
+      ]
     },
     {
-      "file": "sounds/system/glass/approval-needed.mp3",
       "kind": "system sound",
       "family": "glass",
       "event": "approval-needed",
@@ -260,10 +450,15 @@
       "flow_node": "E7NlcLqGMnqaNqAMj4oT",
       "variations": 1,
       "prompt": "Glass marimba, two gentle notes, second higher and held briefly, questioning, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/glass/approval-needed.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/glass/error.mp3",
       "kind": "system sound",
       "family": "glass",
       "event": "error",
@@ -271,10 +466,15 @@
       "flow_node": "Y3DC3AXKPE5YfyUDmEjZ",
       "variations": 1,
       "prompt": "Glass marimba, two soft falling notes, low and muted, short, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/glass/error.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/glass/success.mp3",
       "kind": "system sound",
       "family": "glass",
       "event": "success",
@@ -282,10 +482,15 @@
       "flow_node": "mBNf0TPP1wYPlrtRB8lj",
       "variations": 1,
       "prompt": "Glass marimba, three quick rising notes, warm and light, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/glass/success.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/glass/listening.mp3",
       "kind": "system sound",
       "family": "glass",
       "event": "listening",
@@ -293,10 +498,15 @@
       "flow_node": "J9iUw5zOH4zV4Omr0uqQ",
       "variations": 1,
       "prompt": "Glass marimba, single soft rising tap, very short, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/glass/listening.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/santoor/notification.mp3",
       "kind": "system sound",
       "family": "santoor",
       "event": "notification",
@@ -304,10 +514,15 @@
       "flow_node": "1Ki5vygcBqAAqA5fGEOf",
       "variations": 1,
       "prompt": "Santoor, single soft struck string, bright shimmer, short decay, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/notification.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/santoor/turn-finished.mp3",
       "kind": "system sound",
       "family": "santoor",
       "event": "turn-finished",
@@ -315,10 +530,15 @@
       "flow_node": "jEok8nhkQupMkYUNOVgu",
       "variations": 1,
       "prompt": "Santoor, two quick rising struck notes, soft, short decay, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/turn-finished.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/santoor/approval-needed.mp3",
       "kind": "system sound",
       "family": "santoor",
       "event": "approval-needed",
@@ -326,10 +546,15 @@
       "flow_node": "bHYjrDAaaZP8Qmf0UypN",
       "variations": 1,
       "prompt": "Santoor, two gentle struck notes, second higher and left ringing briefly, questioning, close-mic",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/approval-needed.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/santoor/error.mp3",
       "kind": "system sound",
       "family": "santoor",
       "event": "error",
@@ -337,10 +562,15 @@
       "flow_node": "qPO14YvWPT3on4ule24C",
       "variations": 1,
       "prompt": "Santoor, two soft falling low notes, muted strings, short, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/error.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/santoor/success.mp3",
       "kind": "system sound",
       "family": "santoor",
       "event": "success",
@@ -348,10 +578,15 @@
       "flow_node": "ldks0epbByyhPHGX3vgT",
       "variations": 1,
       "prompt": "Santoor, three quick rising struck notes, warm and light, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/success.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/santoor/listening.mp3",
       "kind": "system sound",
       "family": "santoor",
       "event": "listening",
@@ -359,10 +594,15 @@
       "flow_node": "wMaLjwG2hj953q3r18iT",
       "variations": 1,
       "prompt": "Santoor, single very short soft high tap, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/santoor/listening.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/brass/notification.mp3",
       "kind": "system sound",
       "family": "brass",
       "event": "notification",
@@ -370,10 +610,15 @@
       "flow_node": "pZ9WheXBvul8SFqPu24N",
       "variations": 1,
       "prompt": "Small brass temple bell, single soft strike, warm ring, short decay, close-mic",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/brass/notification.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/brass/turn-finished.mp3",
       "kind": "system sound",
       "family": "brass",
       "event": "turn-finished",
@@ -381,10 +626,15 @@
       "flow_node": "kqIqHKeYXqnjUdkuwNYK",
       "variations": 1,
       "prompt": "Two small brass bells, quick rising pair of soft strikes, short decay, close-mic",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/brass/turn-finished.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/brass/approval-needed.mp3",
       "kind": "system sound",
       "family": "brass",
       "event": "approval-needed",
@@ -392,10 +642,15 @@
       "flow_node": "vgIXElydvPbj1ZNvKvsk",
       "variations": 1,
       "prompt": "Small brass bell, two gentle strikes, second higher and left ringing briefly, questioning, close-mic",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/brass/approval-needed.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/brass/error.mp3",
       "kind": "system sound",
       "family": "brass",
       "event": "error",
@@ -403,10 +658,15 @@
       "flow_node": "W58esMhiV57dBsFdJCxi",
       "variations": 1,
       "prompt": "Low brass bowl, two soft falling muted strikes, damped quickly, close-mic",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/brass/error.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/brass/success.mp3",
       "kind": "system sound",
       "family": "brass",
       "event": "success",
@@ -414,10 +674,15 @@
       "flow_node": "wuLlMXtjx8BFrjYQFJZq",
       "variations": 1,
       "prompt": "Small brass manjira cymbals, light bright clink, warm shimmer, short, close-mic",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/brass/success.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/brass/listening.mp3",
       "kind": "system sound",
       "family": "brass",
       "event": "listening",
@@ -425,10 +690,15 @@
       "flow_node": "fxpMyZsj8NbAugEqRzFr",
       "variations": 1,
       "prompt": "Tiny brass bell, single very short soft tap, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/brass/listening.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/wood/notification.mp3",
       "kind": "system sound",
       "family": "wood",
       "event": "notification",
@@ -436,10 +706,15 @@
       "flow_node": "OBdud1SRXCeOyKkpC6MU",
       "variations": 1,
       "prompt": "Kalimba, single soft plucked tine, warm wooden body, short decay, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/wood/notification.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/wood/turn-finished.mp3",
       "kind": "system sound",
       "family": "wood",
       "event": "turn-finished",
@@ -447,10 +722,15 @@
       "flow_node": "Hnb9NJvbyhdCCknofFoR",
       "variations": 1,
       "prompt": "Kalimba, two quick rising plucked notes, soft, short decay, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/wood/turn-finished.mp3",
+          "seconds": 2.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/wood/approval-needed.mp3",
       "kind": "system sound",
       "family": "wood",
       "event": "approval-needed",
@@ -458,10 +738,15 @@
       "flow_node": "0BpqM8hUy1IZucITXXwC",
       "variations": 1,
       "prompt": "Kalimba, two gentle plucked notes, second higher and held briefly, questioning, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/wood/approval-needed.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/wood/error.mp3",
       "kind": "system sound",
       "family": "wood",
       "event": "error",
@@ -469,10 +754,15 @@
       "flow_node": "pWTmbceDicVrZ6i81JBS",
       "variations": 1,
       "prompt": "Low wooden slit drum, two soft falling muted knocks, short, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/wood/error.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/wood/success.mp3",
       "kind": "system sound",
       "family": "wood",
       "event": "success",
@@ -480,10 +770,15 @@
       "flow_node": "52AvNtocS2NYCvjenUDq",
       "variations": 1,
       "prompt": "Kalimba, three quick rising plucked notes, warm and light, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/wood/success.mp3",
+          "seconds": 0.5
+        }
+      ]
     },
     {
-      "file": "sounds/system/wood/listening.mp3",
       "kind": "system sound",
       "family": "wood",
       "event": "listening",
@@ -491,10 +786,15 @@
       "flow_node": "oiSH875Nt2YUCVZLGRl7",
       "variations": 1,
       "prompt": "Soft wooden tap, single very short high click, close-mic, dry",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/wood/listening.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/pure/notification.mp3",
       "kind": "system sound",
       "family": "pure",
       "event": "notification",
@@ -502,10 +802,15 @@
       "flow_node": "zWLW9Iq9kI3nQGaiiC4u",
       "variations": 1,
       "prompt": "Soft pure sine tone ping, single note, rounded attack, short smooth decay, clean digital",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/pure/notification.mp3",
+          "seconds": 3.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/pure/turn-finished.mp3",
       "kind": "system sound",
       "family": "pure",
       "event": "turn-finished",
@@ -513,10 +818,15 @@
       "flow_node": "mLsJr5XzLoUlzvBLbVMh",
       "variations": 1,
       "prompt": "Two soft sine tones rising, quick and gentle, rounded attack, short decay, clean digital",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/pure/turn-finished.mp3",
+          "seconds": 14.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/pure/approval-needed.mp3",
       "kind": "system sound",
       "family": "pure",
       "event": "approval-needed",
@@ -524,10 +834,15 @@
       "flow_node": "NSxTHTYq2Qzcyi1kDF7j",
       "variations": 1,
       "prompt": "Two soft sine tones, second higher and held briefly, questioning, rounded, clean digital",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/pure/approval-needed.mp3",
+          "seconds": 14.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/pure/error.mp3",
       "kind": "system sound",
       "family": "pure",
       "event": "error",
@@ -535,10 +850,15 @@
       "flow_node": "kESIoYX2gsCqE7qSzMc5",
       "variations": 1,
       "prompt": "Two low soft sine tones falling, muted and brief, rounded, clean digital",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/pure/error.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/pure/success.mp3",
       "kind": "system sound",
       "family": "pure",
       "event": "success",
@@ -546,10 +866,15 @@
       "flow_node": "dKmgsxcKOanSZfEQPqFj",
       "variations": 1,
       "prompt": "Three quick soft sine tones rising, bright and light, rounded, clean digital",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/pure/success.mp3",
+          "seconds": 1.0
+        }
+      ]
     },
     {
-      "file": "sounds/system/pure/listening.mp3",
       "kind": "system sound",
       "family": "pure",
       "event": "listening",
@@ -557,7 +882,13 @@
       "flow_node": "tVZxSQcJDyCET61IX1eN",
       "variations": 1,
       "prompt": "Very short soft sine blip, rising pitch, rounded, clean digital",
-      "status": "pending download"
+      "status": "downloaded",
+      "takes": [
+        {
+          "file": "sounds/system/pure/listening.mp3",
+          "seconds": 2.0
+        }
+      ]
     }
   ]
 }

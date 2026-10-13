@@ -267,12 +267,31 @@ in the app: the right family is the one you stop noticing by the third day.
 - `manifest.json`: every asset, its prompt (or voice description and line),
   model, ElevenLabs flow node, expected file and status. It is the record;
   when a file is added, set its `status` to `downloaded`.
-- `voices/`: the eight saved companion voice samples (downloaded).
-- `sounds/ui/`, `sounds/companions/`, `sounds/system/<family>/`, `music/`,
-  `images/`, `video/`: download each chosen take from the flow (open the
-  node, pick the take, Download) and save it under the name the manifest
-  gives. The connector returns no download links for these, so this step
-  is by hand.
+- `voices/<character>.mp3`: the eight saved companion voices' samples.
+- `sounds/ui/<moment>-<take>.mp3`: brand chime, turn finished, approval
+  needed, four takes each.
+- `sounds/companions/<character>-<take>.mp3`: two takes per companion.
+- `sounds/system/<family>/<moment>.mp3`: the five families, six moments.
+- `music/theme-<take>.mp3`: two 30 s takes of the theme.
+- `images/hero-<take>.webp`: four 1024 × 576 hero illustrations.
+- `video/vakyartha-idle.mp4`: the 5 s idle loop.
+- `tools/fetch_flow_results.py`: how every file above was fetched.
+
+Every file is listed under its asset's `takes` in `manifest.json`, with its
+length in seconds. All 71 were downloaded on 2026-10-13. These are raw
+generations, not finished assets: before one ships, trim it (a few came
+back long: `sounds/system/pure/turn-finished.mp3` and
+`approval-needed.mp3` run 14 s, some companion sounds 5 to 7 s), normalise
+it as the workflow says, and record the choice in the "Chosen" table.
+
+**Fetching a flow's results in one go.** The ElevenLabs connector's
+`creative_get_flow_run_status`, given up to 20 `session_ids` from the
+generation calls, returns each take's signed `content_url`, valid for two
+hours. A result that large is saved to a file rather than shown, and
+`tools/fetch_flow_results.py dl <file>…` maps each URL's session id to its
+path here and downloads it. Voice-design previews are the exception: their
+`audio_url` comes back from `creative_design_voice` itself, so save a
+voice's sample within two hours of designing it.
 
 ## The film: "Heard" (60 seconds, script)
 
