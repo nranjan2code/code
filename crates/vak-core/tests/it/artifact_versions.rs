@@ -131,6 +131,7 @@ fn saved_version_survives_origin_erasure() {
         summary: Some("What we will do".into()),
         drafted: false,
         based_on: None,
+        ..Default::default()
     };
     sink.declared(
         &claim,
@@ -162,6 +163,7 @@ fn saved_version_survives_origin_erasure() {
         summary: None,
         drafted: false,
         based_on: None,
+        ..Default::default()
     };
     sink.declared(&helper, None, "toolu_2", None);
     assert!(artifacts.list().iter().all(|a| a.path != "helper.py"));
@@ -173,6 +175,7 @@ fn saved_version_survives_origin_erasure() {
         summary: None,
         drafted: false,
         based_on: None,
+        ..Default::default()
     };
     sink.declared(&revision, None, "toolu_3", None);
     let revised = artifacts.get(&artifact.id.to_string()).unwrap();
@@ -408,6 +411,7 @@ fn a_draft_is_a_version_and_its_revision_is_its_child() {
         summary: None,
         drafted: true,
         based_on: based_on.map(str::to_string),
+        ..Default::default()
     };
     let space = vak_session::trace::local::space(cwd.path()).to_string();
     let notes = |artifacts: &Artifacts| {
@@ -467,6 +471,7 @@ fn a_listing_is_told_of_matching_drafts_not_in_the_workspace() {
         summary: None,
         drafted: true,
         based_on: None,
+        ..Default::default()
     };
     sink.declared(&claim, Some("ses"), "call_m", None);
     let space = vak_session::trace::local::space(cwd.path()).to_string();
@@ -523,6 +528,7 @@ fn a_search_hit_names_its_file_and_state() {
             summary: None,
             drafted: true,
             based_on: None,
+            ..Default::default()
         },
         Some("ses"),
         "call_r",
@@ -669,6 +675,7 @@ fn a_draft_of_a_file_vak_never_recorded_is_made_from_that_file() {
             summary: None,
             drafted: true,
             based_on: None,
+            ..Default::default()
         },
         Some("ses"),
         "call_p",
@@ -703,4 +710,60 @@ fn a_draft_of_a_file_vak_never_recorded_is_made_from_that_file() {
     let artifact = artifacts.get(&artifact.id.to_string()).unwrap();
     assert!(state.changed_outside, "{state:?}");
     assert!(vak_core::file_state::behind(&artifact, &state, draft.id));
+}
+
+/// A version keeps the few words its call named it with and what its turn
+/// read first (doc 90 §5, §5.1): sealed in the chain like a path, read back
+/// on the version, and told in the note.
+#[test]
+fn a_version_keeps_its_name_and_what_its_turn_read_first() {
+    let (shared, tenant) = home();
+    let cwd = tempfile::tempdir().unwrap();
+    vak_config::spaces::bind(cwd.path()).unwrap();
+    std::fs::write(cwd.path().join("lisbon.md"), "Tram 28 rides the hills.").unwrap();
+    let artifacts = Artifacts::at(&shared, &tenant);
+    let sink = CallSink {
+        artifacts: artifacts.clone(),
+        cwd: cwd.path().to_path_buf(),
+        executions: vak_config::scope::executions_root(cwd.path()),
+        agent: "vak".into(),
+    };
+    let read_first = vec![
+        vak_tools::ReadInput::File {
+            path: "notes/belem-sources.md".into(),
+            digest: Some("abc".into()),
+        },
+        vak_tools::ReadInput::Page {
+            url: "https://example.com/tram-28".into(),
+        },
+    ];
+    let claim = vak_tools::ArtifactClaim {
+        path: "lisbon.md".into(),
+        declared: true,
+        title: Some("Lisbon".into()),
+        change: Some("Added tram 28".into()),
+        read_first: read_first.clone(),
+        ..Default::default()
+    };
+    sink.declared(
+        &claim,
+        Some("01920000-0000-7000-8000-000000000002"),
+        "toolu_tram",
+        None,
+    );
+    let space = vak_session::trace::local::space(cwd.path()).to_string();
+    // Read back by a fresh reader, from the chain alone.
+    let artifact = Artifacts::at(&shared, &tenant)
+        .list()
+        .into_iter()
+        .find(|a| a.space == space && a.path == "lisbon.md")
+        .unwrap();
+    let version = artifact.head().unwrap();
+    assert_eq!(version.title.as_deref(), Some("Added tram 28"));
+    assert_eq!(version.derived_from, read_first);
+
+    let stored = vak_session::chain::RecordChain::at(shared.artifacts()).text();
+    for content in ["Added tram 28", "belem-sources", "example.com/tram-28"] {
+        assert!(!stored.contains(content), "{content} is in the chain");
+    }
 }

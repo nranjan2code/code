@@ -990,6 +990,121 @@ async fn list(State(state): State<AppState>) -> Response {
 }
 
 /// `GET /library/{id}`: one artifact with every version.
+/// Where a version came from that the record names by reference only
+/// (docs/design/90-file-state.md §5.1): the words of the request whose turn
+/// made it, read from its conversation now, so a conversation in the trash
+/// or erased says nothing. Owner-only: a guest of the artifact is not a
+/// guest of the conversation.
+async fn version_origin(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+) -> Response {
+    let Some(artifact) = state.core.artifacts().get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(found) = artifact
+        .versions
+        .iter()
+        .find(|known| known.id.to_string() == version)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let session = match &found.source {
+        VersionSource::Call { session, .. } | VersionSource::Candidate { session, .. }
+            if !session.is_empty() =>
+        {
+            Some(session.clone())
+        }
+        _ => None,
+    };
+    let turn = found.turn.clone();
+    let asked = match (session.clone(), turn.clone()) {
+        (Some(session), Some(turn)) => {
+            let state = state.clone();
+            tokio::task::spawn_blocking(move || {
+                let log = crate::open_historical_session(&state, &session)?;
+                log.chain_to_root().iter().find_map(|entry| {
+                    if entry.id != turn {
+                        return None;
+                    }
+                    match &entry.payload {
+                        vak_session::EntryPayload::Message(record)
+                            if record.message.role == vak_llm::Role::User =>
+                        {
+                            let text = vak_intent::control::clean_scaffolding(
+                                &record.message.text_content(),
+                            );
+                            (!text.trim().is_empty()).then(|| text.trim().to_string())
+                        }
+                        _ => None,
+                    }
+                })
+            })
+            .await
+            .ok()
+            .flatten()
+        }
+        _ => None,
+    };
+    Json(serde_json::json!({
+        "conversation": session,
+        "turn": turn,
+        "asked": asked,
+    }))
+    .into_response()
+}
+
+/// `GET /library/{id}/versions/{version}/compare`: a version beside what
+/// the folder holds now (docs/design/90-file-state.md §5). The folder is
+/// read first, so an edit made outside Vak is recorded as a version and
+/// named: `folder` is `same`, `different` or `absent`, `folder_version` the
+/// recorded version the folder holds, and for text both texts. Owner-only,
+/// like every read of the workspace.
+async fn version_compare(
+    State(state): State<AppState>,
+    Path((id, version)): Path<(String, String)>,
+) -> Response {
+    let artifacts = state.core.artifacts();
+    let cwd = state.core.cwd().to_path_buf();
+    let compared = tokio::task::spawn_blocking(move || {
+        let artifact = artifacts.get(&id)?;
+        let chosen = version_of(&artifact, &version)?.clone();
+        let seen = observed(&artifacts, &cwd, &artifact)?;
+        let folder_version = match seen.now.workspace_is {
+            vak_core::file_state::WorkspaceIs::Version(id) => Some(id),
+            _ => None,
+        };
+        let folder_bytes = std::fs::read(cwd.join(&seen.artifact.path)).ok();
+        let folder = match (&folder_bytes, folder_version) {
+            (None, _) => "absent",
+            (Some(_), Some(id)) if id == chosen.id => "same",
+            (Some(_), _) => "different",
+        };
+        let version_bytes = artifacts.bytes(&seen.artifact, &chosen.id).ok();
+        let text = |bytes: Option<Vec<u8>>| bytes.and_then(|bytes| String::from_utf8(bytes).ok());
+        let (version_text, folder_text) = (text(version_bytes), text(folder_bytes));
+        let kind = if version_text.is_some() && (folder == "absent" || folder_text.is_some()) {
+            "text"
+        } else {
+            "binary"
+        };
+        Some(serde_json::json!({
+            "path": seen.artifact.path,
+            "folder": folder,
+            "folder_version": folder_version,
+            "kind": kind,
+            "version_text": if kind == "text" { version_text } else { None },
+            "folder_text": if kind == "text" { folder_text } else { None },
+        }))
+    })
+    .await;
+    match compared {
+        Ok(Some(value)) => Json(value).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
 async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let artifacts = state.core.artifacts();
     let cwd = state.core.cwd().to_path_buf();
@@ -2011,6 +2126,14 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/library/made/{session}/{call}", get(made_by_call))
         .route("/library/{id}", get(get_one))
         .route("/library/{id}/versions/{version}", get(version_bytes))
+        .route(
+            "/library/{id}/versions/{version}/origin",
+            get(version_origin),
+        )
+        .route(
+            "/library/{id}/versions/{version}/compare",
+            get(version_compare),
+        )
         .route("/library/{id}/versions/{version}/save", post(save))
         .route(
             "/library/{id}/versions/{version}/trash",

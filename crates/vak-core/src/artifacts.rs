@@ -107,6 +107,12 @@ pub enum ArtifactStep {
         size: u64,
         #[serde(flatten)]
         source: VersionSource,
+        /// What its call named it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        /// What its turn read before the call.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        derived_from: Vec<vak_tools::ReadInput>,
     },
     /// A version in which the file is gone: what a draft that deletes the
     /// file proposes, so a deletion is reviewed and accepted like any other
@@ -259,6 +265,13 @@ pub struct Version {
     /// later promotion accepts it again (doc 90 §3.5).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub undone: bool,
+    /// The few words its call gave to name it, shown as its title; absent,
+    /// it is "Version N" (doc 90 §5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// What its turn read before the call that made it (doc 90 §5.1).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_from: Vec<vak_tools::ReadInput>,
 }
 
 impl Version {
@@ -421,7 +434,14 @@ struct State {
 /// What an artifact row says, as against what it is: kept as an object of
 /// the artifact's own scope (plan M7a-b), so it goes when the artifact is
 /// erased and stays while a saved artifact outlives its conversation.
-const ROW_CONTENT: &[&str] = &["path", "title", "summary", "author_name", "text"];
+const ROW_CONTENT: &[&str] = &[
+    "path",
+    "title",
+    "summary",
+    "author_name",
+    "text",
+    "derived_from",
+];
 
 fn fold(state: &mut State, bytes: &[u8]) {
     let Ok(mut row) = serde_json::from_slice::<serde_json::Value>(bytes) else {
@@ -489,6 +509,8 @@ fn fold(state: &mut State, bytes: &[u8]) {
             digest,
             size,
             source,
+            title,
+            derived_from,
         } => {
             if !artifact.versions.iter().any(|known| known.id == version) {
                 artifact.versions.push(Version {
@@ -509,6 +531,8 @@ fn fold(state: &mut State, bytes: &[u8]) {
                     erased: false,
                     turn: turn.clone(),
                     undone: false,
+                    title,
+                    derived_from,
                 });
             }
         }
@@ -536,6 +560,8 @@ fn fold(state: &mut State, bytes: &[u8]) {
                     erased: false,
                     turn: turn.clone(),
                     undone: false,
+                    title: None,
+                    derived_from: Vec::new(),
                 });
             }
         }
@@ -640,6 +666,23 @@ pub struct Artifacts {
 }
 
 /// What a new version is.
+/// Held while deciding whether bytes are already a version and recording
+/// one: a call's version and an observation of the folder never interleave
+/// within this process (docs/design/90-file-state.md).
+pub fn recording() -> std::sync::MutexGuard<'static, ()> {
+    static RECORDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    RECORDING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// What a call said about a version, and what its turn read first.
+#[derive(Debug, Clone, Default)]
+pub struct About {
+    pub title: Option<String>,
+    pub derived_from: Vec<vak_tools::ReadInput>,
+}
+
 pub struct NewVersion<'a> {
     /// The version it was made from; `None` makes it from the current head.
     pub parent: Option<VersionId>,
@@ -761,6 +804,19 @@ impl Artifacts {
         trace: Option<&TraceKey>,
         actor: Option<PrincipalId>,
     ) -> Result<VersionId, ArtifactError> {
+        self.version_with(artifact, new, About::default(), trace, actor)
+    }
+
+    /// As [`Artifacts::version`], with what the call said about the version
+    /// and what its turn read first (doc 90 §5).
+    pub fn version_with(
+        &self,
+        artifact: ArtifactId,
+        new: NewVersion<'_>,
+        about: About,
+        trace: Option<&TraceKey>,
+        actor: Option<PrincipalId>,
+    ) -> Result<VersionId, ArtifactError> {
         let current = self
             .get(&artifact.to_string())
             .ok_or_else(|| ArtifactError::NotFound(artifact.to_string()))?;
@@ -775,7 +831,14 @@ impl Artifacts {
         {
             return Ok(parent);
         }
-        self.add_version(artifact, parent, digest, new, trace, actor)
+        self.add_version(
+            artifact,
+            digest,
+            NewVersion { parent, ..new },
+            about,
+            trace,
+            actor,
+        )
     }
 
     /// Records what the workspace holds at the artifact's path as a
@@ -794,24 +857,25 @@ impl Artifacts {
         };
         self.add_version(
             artifact,
-            parent,
             digest,
             NewVersion {
                 parent,
                 bytes,
                 source: VersionSource::Workspace,
             },
+            About::default(),
             None,
             None,
         )
     }
 
+    /// Appends a version made from exactly `new.parent`.
     fn add_version(
         &self,
         artifact: ArtifactId,
-        parent: Option<VersionId>,
         digest: String,
         new: NewVersion<'_>,
+        about: About,
         trace: Option<&TraceKey>,
         actor: Option<PrincipalId>,
     ) -> Result<VersionId, ArtifactError> {
@@ -834,11 +898,13 @@ impl Artifacts {
             actor: actor.or_else(|| trace.and_then(|trace| trace.actor)),
             step: ArtifactStep::Versioned {
                 version,
-                parent,
+                parent: new.parent,
                 object,
                 digest,
                 size: new.bytes.len() as u64,
                 source: new.source,
+                title: about.title,
+                derived_from: about.derived_from,
             },
         })?;
         Ok(version)
@@ -1104,6 +1170,10 @@ impl vak_tools::ArtifactSink for CallSink {
         } else {
             self.file(&declaration.path)
         };
+        // Declaring, choosing the parent and adding the version are one
+        // decision: an observation of the folder in between would record
+        // these bytes as an edit made outside Vak.
+        let _recording = recording();
         let recorded = bytes_at
             .ok_or_else(|| ArtifactError::Invalid("the declared file was not found".into()))
             .and_then(|file| {
@@ -1160,14 +1230,19 @@ impl vak_tools::ArtifactSink for CallSink {
                         if !declaration.drafted {
                             return None;
                         }
-                        match crate::file_state::observe(&self.artifacts, &space, &self.cwd, &path)?
-                            .workspace_is
+                        match crate::file_state::observe_recording(
+                            &self.artifacts,
+                            &space,
+                            &self.cwd,
+                            &path,
+                        )?
+                        .workspace_is
                         {
                             crate::file_state::WorkspaceIs::Version(id) => Some(id),
                             _ => None,
                         }
                     });
-                self.artifacts.version(
+                self.artifacts.version_with(
                     artifact,
                     NewVersion {
                         parent,
@@ -1177,6 +1252,10 @@ impl vak_tools::ArtifactSink for CallSink {
                             call: call.to_string(),
                             in_workspace: !declaration.drafted,
                         },
+                    },
+                    About {
+                        title: declaration.change.clone(),
+                        derived_from: declaration.read_first.clone(),
                     },
                     trace,
                     None,
@@ -1268,6 +1347,8 @@ mod fold_tests {
                     digest: "d".into(),
                     size: 1,
                     source: VersionSource::Person,
+                    title: None,
+                    derived_from: Vec::new(),
                 },
             ),
             event(artifact, 3, None, ArtifactStep::Promoted { version }),

@@ -2565,6 +2565,39 @@ export interface ArtifactVersion {
   trashed_at?: string | null;
   /** Deleted for good: only the record that it existed is left. */
   erased?: boolean;
+  /** The few words its call named it with; absent, it is "Version N". */
+  title?: string | null;
+  /** What its turn read before the call that made it. */
+  derived_from?: ReadInput[];
+}
+
+/** A file, draft or page a turn read before making a version (doc 90 §5.1). */
+export type ReadInput = { kind: "file"; path: string; digest?: string | null } | { kind: "page"; url: string };
+
+/** Where a version came from that the record names by reference: the words
+ *  of the request whose turn made it, read from its conversation now. */
+export interface VersionOrigin {
+  conversation?: string | null;
+  turn?: string | null;
+  asked?: string | null;
+}
+
+/** A version beside what the folder holds now. */
+export interface VersionCompare {
+  path: string;
+  folder: "same" | "different" | "absent";
+  folder_version?: string | null;
+  kind: "text" | "binary";
+  version_text?: string | null;
+  folder_text?: string | null;
+}
+
+export function libraryVersionOrigin(id: string, version: string): Promise<VersionOrigin> {
+  return req(`/library/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}/origin`);
+}
+
+export function libraryVersionCompare(id: string, version: string): Promise<VersionCompare> {
+  return req(`/library/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}/compare`);
 }
 
 export interface ArtifactComment {

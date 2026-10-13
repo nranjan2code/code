@@ -92,11 +92,13 @@ item "card claims a draft no call made" is left alone (no typed fact).
    workspace (`confined_destination`) and Review's promotion makes the
    rest. Verified live: `reports/q3/summary.docx` drafted with both
    folders missing, the workspace untouched until Review.
-5. Doc 90 leftovers that need record fields first: a version's own title,
-   the request that asked for it and what its turn read
-   (`derived_from`), shown as "You asked" / "It read first" on the page and
-   in the note; Compare with your folder. Also: the Library list page is
-   820px wide while the artifact page is 1180px.
+5. Done 2026-10-13: a version's title (`change`), "You asked" (origin
+   route), "It read first" (`Version::derived_from`, with
+   `CallEffect::Fetched`), Compare with your folder (marked word diff), and
+   the Library list as wide as the artifact page. A race found on the way:
+   a Library read beside a write recorded the call's bytes again as an
+   outside edit; fixed with `artifacts::recording()`. Verified live and at
+   1440 x 900 and 390 x 844, light and dark.
 6. Model choice, recorded (do not tune without a new contract cause): a
    model sometimes invents a folder (`private/tmp/vak-work/…`, `ws13/…`)
    or writes after the work is done; a card can claim a change no call

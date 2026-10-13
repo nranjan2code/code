@@ -26094,6 +26094,8 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/candidates/candidate-1/files",
             "/sessions/session-1/sandbox/candidates/candidate-1/office",
             "/library/art-1/versions/ver-1/save",
+            "/library/art-1/versions/ver-1/origin",
+            "/library/art-1/versions/ver-1/compare",
             "/library",
             "/library/art-1",
             "/library/art-1/versions/ver-1",

@@ -2949,3 +2949,119 @@ async fn a_measured_pattern_is_offered_and_its_review_recorded() {
         .unwrap();
     assert_eq!(unknown.status(), 404);
 }
+
+/// A version names itself with its call's `change`, and its origin says
+/// what the person asked in the turn that made it (doc 90 §5, §5.1). The
+/// file's name is this test's own, since the binary shares one home.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_versions_title_and_the_request_that_made_it_are_shown() {
+    let name = format!("lisbon-{}.md", uuid::Uuid::now_v7().simple());
+    let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
+        responses: Mutex::new(VecDeque::from(vec![
+            tool_call(
+                "w1",
+                "write",
+                serde_json::json!({
+                    "path": name,
+                    "content": "Tram 28 climbs the hills.",
+                    "title": "Lisbon",
+                    "change": "Added tram 28"
+                }),
+            ),
+            text("done"),
+            text("done"),
+        ])),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::WorkspaceWrite).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let prompt = "Write the Lisbon notes with a line about tram 28";
+    let run = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": prompt}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(run.status(), 202);
+
+    let mut artifact = None;
+    for _ in 0..200 {
+        let listed: serde_json::Value = client
+            .get(format!("{base}/library"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        artifact = listed["artifacts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|a| a["path"] == name.as_str())
+            .and_then(|a| a["id"].as_str().map(str::to_string));
+        if artifact.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let artifact = artifact.expect("the written file is in the Library");
+    let detail: serde_json::Value = client
+        .get(format!("{base}/library/{artifact}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let version = detail["history"]
+        .as_array()
+        .and_then(|versions| versions.last())
+        .cloned()
+        .expect("a version");
+    assert_eq!(version["title"], "Added tram 28", "{version}");
+    let origin: serde_json::Value = client
+        .get(format!(
+            "{base}/library/{artifact}/versions/{}/origin",
+            version["id"].as_str().unwrap()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(origin["asked"], prompt, "{origin}");
+    assert_eq!(origin["conversation"], session_id.as_str());
+
+    // The folder holds what the call wrote: comparing says so.
+    let compared: serde_json::Value = client
+        .get(format!(
+            "{base}/library/{artifact}/versions/{}/compare",
+            version["id"].as_str().unwrap()
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        compared["folder"], "same",
+        "{compared}\n{}",
+        detail["history"]
+    );
+    assert_eq!(compared["kind"], "text");
+    assert_eq!(compared["version_text"], "Tram 28 climbs the hills.");
+}

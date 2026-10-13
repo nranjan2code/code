@@ -1064,6 +1064,10 @@ pub enum CallEffect {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         bytes: Option<u64>,
     },
+    /// A web page the call fetched, by the address it asked for: what a
+    /// version made later in the turn names as read first
+    /// (docs/design/90-file-state.md §5.1).
+    Fetched { url: String },
     /// The MCP server and tool that answered the call.
     Mcp(McpSource),
     /// What the call returned came from a connected provider account

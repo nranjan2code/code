@@ -340,3 +340,156 @@ async fn a_listing_is_told_of_matching_files_the_folder_lacks() {
         "no files matched\n[file] Matching `**/*lisbon*` and not in the workspace yet:"
     );
 }
+
+/// A tool that reads the workspace file it names.
+struct ReadFile;
+
+#[async_trait]
+impl Tool for ReadFile {
+    fn name(&self) -> &str {
+        "load_notes"
+    }
+    fn description(&self) -> &str {
+        "load notes"
+    }
+    fn schema(&self) -> Value {
+        json!({"type": "object", "properties": {"path": {"type": "string"}}})
+    }
+    fn file_access(&self, args: &Value) -> Option<(FileAccess, String)> {
+        args.get("path")
+            .and_then(Value::as_str)
+            .map(|path| (FileAccess::Read, path.to_string()))
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("the sources")
+    }
+}
+
+/// A tool that fetches the page it names.
+struct FetchPage;
+
+#[async_trait]
+impl Tool for FetchPage {
+    fn name(&self) -> &str {
+        "fetch_page"
+    }
+    fn description(&self) -> &str {
+        "fetch a page"
+    }
+    fn schema(&self) -> Value {
+        json!({"type": "object", "properties": {"url": {"type": "string"}}})
+    }
+    fn fetched(&self, args: &Value) -> Option<String> {
+        args.get("url").and_then(Value::as_str).map(str::to_string)
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("the page")
+    }
+}
+
+#[derive(Default)]
+struct Claims(Mutex<Vec<vak_tools::ArtifactClaim>>);
+
+impl vak_tools::ArtifactSink for Claims {
+    fn declared(
+        &self,
+        claim: &vak_tools::ArtifactClaim,
+        _session: Option<&str>,
+        _call: &str,
+        _trace: Option<&vak_session::trace::TraceKey>,
+    ) {
+        self.0.lock().unwrap().push(claim.clone());
+    }
+}
+
+/// A version made after the turn read a file and fetched a page names both,
+/// first read first (doc 90 §5.1): the loop takes them from the turn's
+/// recorded reads, never from the tools' names.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_version_names_what_its_turn_read_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let log = SessionLog::create(
+        SessionPath::new_session_file(&home, dir.path(), "read-first"),
+        header(dir.path(), "read-first"),
+    )
+    .unwrap();
+    let claims = Arc::new(Claims::default());
+    let mut cfg = AgentConfig::new("sys");
+    cfg.model = "test-model".into();
+    cfg.mode = Mode::WorkspaceWrite;
+    cfg.retry_base_backoff_ms = 1;
+    cfg.run_retry_base_backoff_ms = 1;
+    cfg.tools = vec![
+        Arc::new(ReadFile),
+        Arc::new(FetchPage),
+        Arc::new(StoreFile { fail: false }),
+    ];
+    cfg.artifacts = Some(claims.clone());
+    let call = |id: &str, name: &str, input: Value| ContentBlock::ToolUse {
+        id: id.into(),
+        name: name.into(),
+        input,
+    };
+    let mut script = VecDeque::from([
+        msg(
+            vec![
+                call("r1", "load_notes", json!({"path": "sources.md"})),
+                call(
+                    "f1",
+                    "fetch_page",
+                    json!({"url": "https://example.com/tram"}),
+                ),
+            ],
+            StopReason::ToolUse,
+        ),
+        msg(
+            vec![call("w1", "store_file", json!({"path": "lisbon.md"}))],
+            StopReason::ToolUse,
+        ),
+    ]);
+    for _ in 0..4 {
+        script.push_back(msg(vec![ContentBlock::text("done")], StopReason::EndTurn));
+    }
+    let mut agent = Agent::new(
+        Arc::new(Scripted(
+            Mutex::new(script),
+            Arc::new(Mutex::new(Vec::new())),
+            crate::support::capacity_key(),
+        )),
+        log,
+        cfg,
+    );
+    let (tx, _rx) = mpsc::channel(256);
+    let outcome = agent
+        .run(
+            "write it",
+            &Default::default(),
+            CancellationToken::new(),
+            tx,
+        )
+        .await;
+
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let claims = claims.0.lock().unwrap();
+    let written = claims
+        .iter()
+        .find(|claim| claim.path == "lisbon.md")
+        .expect("the write is claimed");
+    assert_eq!(
+        written.read_first,
+        vec![
+            vak_tools::ReadInput::File {
+                path: "sources.md".into(),
+                digest: None,
+            },
+            vak_tools::ReadInput::Page {
+                url: "https://example.com/tram".into(),
+            },
+        ]
+    );
+}

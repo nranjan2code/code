@@ -141,9 +141,25 @@ impl ToolOutput {
 /// invariant 10 (docs/design/72, "File in").
 pub const INBOX_DIR: &str = "inbox";
 
+/// What a turn read before a call made a version (docs/design/90-file-state.md
+/// §5.1): a workspace file or draft by the path the call gave, with its
+/// digest when it was in the workspace, or a page by its address.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReadInput {
+    File {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        digest: Option<String>,
+    },
+    Page {
+        url: String,
+    },
+}
+
 /// A file a call produces (docs/design/82-library.md §3): every claim is
 /// completion evidence, and a declared one is a Library entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ArtifactClaim {
     pub path: String,
     pub declared: bool,
@@ -156,6 +172,12 @@ pub struct ArtifactClaim {
     /// The draft the call started from, by its name, when it revised one:
     /// the new version's parent.
     pub based_on: Option<String>,
+    /// The few words the call gave to name this version (its `change`
+    /// argument), shown as its title in the file's history.
+    pub change: Option<String>,
+    /// What the turn read before this call, filled by the loop from the
+    /// turn's recorded reads; a tool leaves it empty.
+    pub read_first: Vec<ReadInput>,
 }
 
 /// Where the agent loop reports every successful call's claim (plan M8):
@@ -266,6 +288,13 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// The web address a call with `args` fetches. The calling loop records
+    /// it after a successful call, so a version made later in the turn
+    /// names the page it read (docs/design/90-file-state.md §5.1).
+    fn fetched(&self, _args: &Value) -> Option<String> {
+        None
+    }
+
     /// The pattern of workspace paths a call with these arguments lists
     /// (a glob), relative to the workspace: the loop also lists recorded
     /// files matching it that are not in the folder yet
@@ -283,10 +312,8 @@ pub trait Tool: Send + Sync {
         self.delivered_file(args).map(|path| ArtifactClaim {
             path,
             declared: true,
-            title: None,
-            summary: None,
             drafted: true,
-            based_on: None,
+            ..Default::default()
         })
     }
 

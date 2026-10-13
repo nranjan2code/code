@@ -1,11 +1,12 @@
 import { createMemo, createResource, createSignal, For, Show } from "solid-js";
 import * as api from "../api";
-import type { ArtifactDetail, ArtifactShare, ArtifactSummary, ArtifactVersion, FileNeeds, ShareRole } from "../api";
+import type { ArtifactDetail, ArtifactShare, ArtifactSummary, ArtifactVersion, FileNeeds, ReadInput, ShareRole, VersionCompare } from "../api";
 import { host } from "../host";
 import { libraryFocus, setLibraryFocus, setLibraryOpen, technicalDetails } from "../store";
 import { relAgo } from "../time";
 import { activate, openAgentChat } from "../App";
 import { attachArtifact } from "../attachFiles";
+import { compareTexts, type Run } from "../wordDiff";
 import Icon, { type IconName } from "./Icon";
 import OfficeView from "./OfficeView";
 import { Pill, stateOf } from "./fileState";
@@ -184,6 +185,24 @@ function FileStates(props: { needs?: FileNeeds }) {
   );
 }
 
+/** What a turn read first, in the words a person uses: a file by its name,
+ *  an earlier draft as one, a page by its site. The path itself only with
+ *  technical details on (doc 75). */
+function readWords(input: ReadInput): { text: string; href?: string; detail: string } {
+  if (input.kind === "page") {
+    let site = input.url;
+    try {
+      site = new URL(input.url).hostname.replace(/^www\./, "");
+    } catch {
+      // An address that does not parse is shown as it was fetched.
+    }
+    return { text: site, href: input.url, detail: input.url };
+  }
+  const name = input.path.split("/").pop() || input.path;
+  const draft = input.path.includes(".vak/scratch/");
+  return { text: draft ? `an earlier draft of ${name}` : name, detail: input.path };
+}
+
 /** The version graph, newest first, and where the chosen version came from
  *  (doc 90 §5, §5.1). */
 function History(props: {
@@ -194,7 +213,37 @@ function History(props: {
   onOpenConversation: (session: string) => void;
 }) {
   const number = (id?: string | null) => props.found.history.findIndex((v) => v.id === id) + 1;
+  /** A version's name in a sentence: its own title, else its place. */
+  const label = (id?: string | null) => {
+    const found = props.found.history.find((v) => v.id === id);
+    return found?.title ? `“${found.title}”` : `version ${number(id)}`;
+  };
   const picked = () => props.found.history.find((v) => v.id === props.chosen) ?? null;
+  const [origin] = createResource(
+    () => {
+      const v = picked();
+      return v?.session && v.turn ? ([props.found.id, v.id] as const) : null;
+    },
+    ([id, version]) => api.libraryVersionOrigin(id, version).catch(() => null),
+  );
+  const [compared, setCompared] = createSignal<{ of: string; result: VersionCompare } | null>(null);
+  const [comparing, setComparing] = createSignal(false);
+  const [compareError, setCompareError] = createSignal<string | null>(null);
+  const compare = async (version: string) => {
+    setComparing(true);
+    setCompareError(null);
+    try {
+      setCompared({ of: version, result: await api.libraryVersionCompare(props.found.id, version) });
+    } catch {
+      setCompareError("Your folder could not be read just now.");
+    } finally {
+      setComparing(false);
+    }
+  };
+  const comparison = () => {
+    const shown = compared();
+    return shown && shown.of === picked()?.id ? shown.result : null;
+  };
   return (
     <aside class="library-history" aria-label="History">
       <h3>History</h3>
@@ -207,10 +256,10 @@ function History(props: {
               <li classList={{ chosen: props.chosen === v.id, branch: !onFolderLine(v) }}>
                 <span class="rail" aria-hidden="true"><span class={`pin st-${state?.mark ?? "accepted"}`} /></span>
                 <button type="button" class="file-node" onClick={() => props.onChoose(v.id)}>
-                  <span class="t"><strong>Version {number(v.id)}</strong><Show when={state}>{(st) => <Pill mark={st().mark}>{st().word}</Pill>}</Show></span>
+                  <span class="t"><strong>{v.title ?? `Version ${number(v.id)}`}</strong><Show when={state}>{(st) => <Pill mark={st().mark}>{st().word}</Pill>}</Show></span>
                   <span class="d">
                     {maker(v)} · {relAgo(v.at)}
-                    <Show when={v.parent}> · from version {number(v.parent)}</Show>
+                    <Show when={v.parent}> · from {label(v.parent)}</Show>
                     <Show when={v.removed}> · removes the file</Show>
                   </span>
                   <Show when={behind}><span class="warn">Made before the copy in your folder</span></Show>
@@ -223,8 +272,8 @@ function History(props: {
       </ol>
       <Show when={picked()}>
         {(v) => (
-          <section class="file-origin" aria-label={`Where version ${number(v().id)} came from`}>
-            <h4>Where version {number(v().id)} came from</h4>
+          <section class="file-origin" aria-label={`Where ${label(v().id)} came from`}>
+            <h4>Where {label(v().id)} came from</h4>
             <dl>
               <dt>Made by</dt>
               <dd>{maker(v())} · {relAgo(v().at)}</dd>
@@ -236,15 +285,45 @@ function History(props: {
                   </>
                 )}
               </Show>
+              <Show when={origin()?.asked}>
+                {(asked) => (
+                  <>
+                    <dt>You asked</dt>
+                    <dd class="file-asked">“{asked()}”</dd>
+                  </>
+                )}
+              </Show>
+              <Show when={(v().derived_from ?? []).length > 0}>
+                <dt>It read first</dt>
+                <dd>
+                  <For each={v().derived_from}>
+                    {(input, index) => {
+                      const words = readWords(input);
+                      return (
+                        <>
+                          <Show when={index() > 0}> · </Show>
+                          <Show when={words.href} fallback={<span title={technicalDetails() ? words.detail : undefined}>{words.text}</span>}>
+                            {(href) => <a class="file-link" href={href()} target="_blank" rel="noopener noreferrer">{words.text}</a>}
+                          </Show>
+                          <Show when={technicalDetails() && !words.href}> <span class="file-detail">({words.detail})</span></Show>
+                        </>
+                      );
+                    }}
+                  </For>
+                </dd>
+              </Show>
               <Show when={v().parent}>
                 <dt>Made from</dt>
                 <dd>
-                  <button type="button" class="file-link" onClick={() => props.onChoose(v().parent!)}>Version {number(v().parent)}</button>
+                  <button type="button" class="file-link" onClick={() => props.onChoose(v().parent!)}>{label(v().parent)}</button>
                   <Show when={v().now?.is === "waiting" && (v().now as { behind: boolean }).behind}>, not the copy in your folder</Show>
                 </dd>
               </Show>
             </dl>
             <div class="library-actions">
+              <Show when={!v().erased && !v().removed}>
+                <button class="btn sm" disabled={comparing()} onClick={() => void compare(v().id)}>{comparing() ? "Comparing…" : "Compare with your folder"}</button>
+              </Show>
               <Show when={v().trashed_at && !v().erased}>
                 <button class="btn sm" onClick={() => void props.act(() => api.setDraftTrashed(props.found.id, v().id, false))}>Restore</button>
               </Show>
@@ -255,6 +334,38 @@ function History(props: {
                 <button class="btn sm danger" onClick={() => void props.act(() => api.setDraftTrashed(props.found.id, v().id, true))}>Move to trash</button>
               </Show>
             </div>
+            <Show when={compareError()}>{(message) => <p class="file-compare-note" role="status">{message()}</p>}</Show>
+            <Show when={comparison()}>
+              {(result) => (
+                <div class="file-compare" role="region" aria-label="Compared with your folder">
+                  <p class="file-compare-note" role="status">
+                    <Show when={result().folder === "absent"}>This file is not in your folder now.</Show>
+                    <Show when={result().folder === "same"}>Your folder holds this version.</Show>
+                    <Show when={result().folder === "different"}>
+                      Your folder holds{" "}
+                      <Show when={result().folder_version} fallback={<>a copy no version matches.</>}>
+                        {(other) => <button type="button" class="file-link" onClick={() => props.onChoose(other())}>{label(other())}</button>}
+                      </Show>
+                      <Show when={result().folder_version}>.</Show>
+                    </Show>
+                  </p>
+                  <Show when={result().kind === "text" && result().folder === "different"}>
+                    {(() => {
+                      const sides = compareTexts(result().version_text ?? "", result().folder_text ?? "");
+                      const side = (runs: Run[], mark: string) => (
+                        <pre><For each={runs}>{(run) => (run.changed ? <mark class={mark}>{run.text}</mark> : run.text)}</For></pre>
+                      );
+                      return (
+                        <div class="file-compare-columns">
+                          <div><strong>This version</strong>{side(sides.before, "file-diff-only-here")}</div>
+                          <div><strong>Your folder</strong>{side(sides.after, "file-diff-only-there")}</div>
+                        </div>
+                      );
+                    })()}
+                  </Show>
+                </div>
+              )}
+            </Show>
           </section>
         )}
       </Show>

@@ -82,6 +82,10 @@ pub struct Draft {
     /// The workspace's current version is not among the draft's ancestors:
     /// the draft was made before it and does not include it (doc 90 §3.2).
     pub behind: bool,
+    /// The few words its call named it with.
+    pub title: Option<String>,
+    /// What its turn read before the call that made it (doc 90 §5.1).
+    pub read_first: Vec<vak_tools::ReadInput>,
 }
 
 /// The state of one workspace path (doc 90 §3.1).
@@ -158,6 +162,8 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
             state: draft_state(version),
             source: version.source.clone(),
             removes: version.removed,
+            title: version.title.clone(),
+            read_first: version.derived_from.clone(),
         })
         .collect();
 
@@ -429,6 +435,22 @@ pub fn workspace_path(cwd: &Path, path: &str) -> String {
 /// the digest of the workspace file's bytes (doc 90 §3.1). Reads the file;
 /// hashing is not parsing. `None` when the file cannot be read.
 pub fn observe(artifacts: &Artifacts, space: &str, cwd: &Path, path: &str) -> Option<FileState> {
+    let _recording = crate::artifacts::recording();
+    observe_recording(artifacts, space, cwd, path)
+}
+
+/// [`observe`] for a caller that already holds
+/// [`crate::artifacts::recording`]: what the folder holds is compared with
+/// the record and a found version appended under the one lock, so a call's
+/// own write recorded at the same moment is never also found as an edit
+/// made outside Vak (found by a test, 2026-10-13: a Library read beside a
+/// write recorded the call's bytes twice).
+pub(crate) fn observe_recording(
+    artifacts: &Artifacts,
+    space: &str,
+    cwd: &Path,
+    path: &str,
+) -> Option<FileState> {
     let normal = workspace_path(cwd, path);
     // A path Vak never recorded has nothing to say beyond the folder: the
     // file is not read, so a model reading large files pays nothing.
@@ -615,6 +637,9 @@ fn draft_line(draft: &Draft, session: Option<&str>) -> String {
             .to_string()
         }
     };
+    if let Some(title) = &draft.title {
+        parts.push(format!("named \"{title}\""));
+    }
     if draft.removes {
         parts.push("deletes the file".to_string());
     }
@@ -625,6 +650,17 @@ fn draft_line(draft: &Draft, session: Option<&str>) -> String {
     }
     if let Some(origin) = origin(draft, session) {
         parts.push(origin);
+    }
+    if !draft.read_first.is_empty() {
+        let read: Vec<String> = draft
+            .read_first
+            .iter()
+            .map(|input| match input {
+                vak_tools::ReadInput::File { path, .. } => format!("`{path}`"),
+                vak_tools::ReadInput::Page { url } => url.clone(),
+            })
+            .collect();
+        parts.push(format!("after reading {}", read.join(", ")));
     }
     if let Some(parent) = draft.parent {
         parts.push(format!("made from version {parent}"));
@@ -735,6 +771,8 @@ mod tests {
                     digest: digest(bytes),
                     size: bytes.len() as u64,
                     source,
+                    title: None,
+                    derived_from: Vec::new(),
                 },
             );
             version
@@ -1030,6 +1068,51 @@ mod tests {
                 }
             ),
             None
+        );
+    }
+
+    /// A draft's name and what its turn read first are in the note
+    /// (doc 90 §5.1), from the record alone.
+    #[test]
+    fn a_drafts_name_and_what_its_turn_read_are_told() {
+        let mut record = Record::new("vak");
+        let turn = TurnId::new();
+        record.push(
+            2,
+            Some(turn),
+            ArtifactStep::Versioned {
+                version: VersionId::new(),
+                parent: None,
+                object: None,
+                digest: digest(b"one"),
+                size: 3,
+                source: Record::call("call_a"),
+                title: Some("Shorter version".into()),
+                derived_from: vec![
+                    vak_tools::ReadInput::File {
+                        path: "budget.xlsx".into(),
+                        digest: None,
+                    },
+                    vak_tools::ReadInput::Page {
+                        url: "https://example.com/rates".into(),
+                    },
+                ],
+            },
+        );
+        let found = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
+        let here = record.reader();
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: Some(&here),
+            },
+        )
+        .expect("a note");
+        assert!(text.contains("named \"Shorter version\""), "{text}");
+        assert!(
+            text.contains("after reading `budget.xlsx`, https://example.com/rates"),
+            "{text}"
         );
     }
 

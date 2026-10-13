@@ -4290,7 +4290,7 @@ body.is-resizing .split-divider {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  width: min(820px, calc(100% - 64px));
+  width: min(1180px, calc(100% - 64px));
   margin: 0 auto;
   padding: var(--space-5) 0 18px;
   overflow-y: auto;
@@ -4366,7 +4366,6 @@ body.is-resizing .split-divider {
 .artifact-summary { margin: 0 0 14px; color: var(--text-soft); }
 /* File history (doc 90 §5): the version graph beside the document, the
    state of each version as a word and a mark, and where it came from. */
-.library-page:has(.library-artifact) { width: min(1180px, calc(100% - 64px)); }
 .library-artifact { display: flex; flex-direction: column; }
 .library-artifact > .library-history, .library-artifact > .library-note { order: 1; }
 .library-artifact > .library-preview, .library-artifact > .library-edit, .library-artifact > .library-comments-block { order: 2; }
@@ -4412,6 +4411,17 @@ body.is-resizing .split-divider {
 .file-origin dd { margin: 0; overflow-wrap: anywhere; }
 .file-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .file-origin .library-actions { margin: 10px 0 0; }
+.file-origin .file-asked { color: var(--text); font-style: italic; }
+.file-origin .file-detail { color: var(--faint); font-size: var(--fs-caption); }
+.file-compare { margin-top: 10px; }
+.file-compare-note { margin: 10px 0 0; color: var(--text-soft); font-size: var(--fs-control); }
+.file-compare-columns { display: grid; gap: 8px; margin-top: 8px; }
+.file-compare-columns > div { min-width: 0; }
+.file-compare-columns strong { display: block; margin-bottom: 4px; color: var(--text-soft); font-size: var(--fs-caption); font-weight: 600; }
+.file-compare-columns mark { border-radius: 3px; color: inherit; }
+.file-compare-columns .file-diff-only-here { background: color-mix(in srgb, var(--red) 18%, transparent); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--red) 60%, transparent); }
+.file-compare-columns .file-diff-only-there { background: color-mix(in srgb, var(--green) 20%, transparent); }
+.file-compare-columns pre { max-height: 220px; margin: 0; padding: 8px 10px; overflow: auto; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-raised); font-size: var(--fs-caption); white-space: pre-wrap; overflow-wrap: anywhere; }
 .inbox-back { flex: none; }
 .inbox-head h2 { flex: none; margin: 0; font-size: var(--fs-section); font-weight: 600; letter-spacing: -.02em; }
 .inbox-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }

@@ -186,7 +186,7 @@ Read before changing behaviour in these areas:
   both before changing how a tool's arguments are asked for, read or
   repaired. See "Tool arguments are written, then read" below.
 - **Files across turns** — `90-file-state.md` (in progress, decisions taken
-  2026-10-12; stages 1 to 4 built: what a turn is told about a path from the
+  2026-10-12; stages 1 to 5 built: what a turn is told about a path from the
   artifact record, whatever happened to it since, any number of turns later:
   waiting, sibling, undone, saved, trashed and erased drafts, and edits made
   outside Vak, recorded as versions found in the workspace
@@ -563,6 +563,10 @@ unasked.
   `Tool::artifact` claim with `declared`, or a person's save), never a
   list of files of your own; a new version names its parent, and nothing
   overwrites a version.
+  Decide whether bytes are already a version and record one only while
+  holding `vak_core::artifacts::recording()` (`file_state::observe` and
+  the call sink do): an observation of the folder beside a call's write
+  otherwise records the same bytes as an edit made outside Vak.
 - Address reviewed work by artifact id and version
   (`/library/{id}/versions/{version}/…`, `Version::proposed`); add no new
   route or client call keyed by a session's candidate id, and note every

@@ -378,6 +378,7 @@ impl TurnLink {
             crate::types::CallEffect::FileRead { path, .. } => (path, LinkKind::ReadFile),
             crate::types::CallEffect::FileWrite { path, .. } => (path, LinkKind::WroteFile),
             crate::types::CallEffect::Mcp(_)
+            | crate::types::CallEffect::Fetched { .. }
             | crate::types::CallEffect::Account { .. }
             | crate::types::CallEffect::Failed { .. } => {
                 return None;

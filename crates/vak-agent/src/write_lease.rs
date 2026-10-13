@@ -212,6 +212,10 @@ impl Tool for ScopedWriteTool {
         self.inner.file_access(args)
     }
 
+    fn fetched(&self, args: &Value) -> Option<String> {
+        self.inner.fetched(args)
+    }
+
     fn artifact(&self, args: &Value) -> Option<vak_tools::ArtifactClaim> {
         self.inner.artifact(args)
     }

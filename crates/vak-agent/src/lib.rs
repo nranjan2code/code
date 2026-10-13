@@ -4148,6 +4148,42 @@ impl Agent {
     }
 
     /// Runs one brokered bash command for auditing; Err = failure text.
+    /// Each workspace file, draft and page the turn's calls recorded reading
+    /// so far, first read first, once each.
+    async fn turn_reads(&self) -> Vec<vak_tools::ReadInput> {
+        let session = self.session.lock().await;
+        let Some(turn) = session.current_turn().map(str::to_string) else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::new();
+        let mut reads = Vec::new();
+        for entry in session.chain_to_root() {
+            if entry.at_turn.as_deref() != Some(turn.as_str()) {
+                continue;
+            }
+            let vak_session::EntryPayload::CallEffect(record) = &entry.payload else {
+                continue;
+            };
+            let (key, input) = match &record.effect {
+                vak_session::types::CallEffect::FileRead { path, digest, .. } => (
+                    path.clone(),
+                    vak_tools::ReadInput::File {
+                        path: path.clone(),
+                        digest: digest.clone(),
+                    },
+                ),
+                vak_session::types::CallEffect::Fetched { url } => {
+                    (url.clone(), vak_tools::ReadInput::Page { url: url.clone() })
+                }
+                _ => continue,
+            };
+            if seen.insert(key) {
+                reads.push(input);
+            }
+        }
+        reads
+    }
+
     async fn run_audit_command(&self, cmd: &str, cancel: &CancellationToken) -> Result<(), String> {
         let tool = self
             .config
@@ -6153,6 +6189,9 @@ impl Agent {
             })
             .unwrap_or_default();
 
+        // What this turn read before these calls: a version one of them
+        // makes names it (docs/design/90-file-state.md §5.1).
+        let read_first = Arc::new(self.turn_reads().await);
         let mut authz: Vec<Result<(), (Fault, String)>> = Vec::with_capacity(n);
         let mut verdicts = Vec::with_capacity(n);
         for call in &calls {
@@ -6290,6 +6329,7 @@ impl Agent {
                                     self.config.time_limits,
                                     self.config.file_note.as_ref(),
                                     self.config.artifacts.as_ref(),
+                                    &read_first,
                                     cancel,
                                     events,
                                 ),
@@ -6382,6 +6422,7 @@ impl Agent {
                 let limits = self.config.time_limits;
                 let file_note = self.config.file_note.clone();
                 let artifacts = self.config.artifacts.clone();
+                let read_first = read_first.clone();
                 let call_span = tool_call_span(&self.step_span, &call);
                 join.spawn(tracing::Instrument::instrument(
                     async move {
@@ -6401,6 +6442,7 @@ impl Agent {
                             limits,
                             file_note.as_ref(),
                             artifacts.as_ref(),
+                            &read_first,
                             &cancel,
                             &events,
                         )
@@ -7219,6 +7261,7 @@ async fn execute_one(
     limits: vak_control::TimeLimits,
     file_note: Option<&FileNote>,
     artifacts: Option<&Arc<dyn vak_tools::ArtifactSink>>,
+    read_first: &[vak_tools::ReadInput],
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
 ) -> (String, ToolRunOutput) {
@@ -7322,6 +7365,7 @@ async fn execute_one(
                 executions: None,
             };
             let file_access = tool.file_access(&call.input);
+            let fetched = tool.fetched(&call.input);
             let declared = file_access
                 .as_ref()
                 .map(|(_, path)| path.trim_start_matches("./").to_string());
@@ -7346,6 +7390,9 @@ async fn execute_one(
                         }
                         if let Some((access, path)) = file_access {
                             effects.push(file_effect(cwd, access, path).await);
+                        }
+                        if let Some(url) = fetched {
+                            effects.push(vak_session::types::CallEffect::Fetched { url });
                         }
                     }
                     if !effects.is_empty() {
@@ -7489,10 +7536,7 @@ async fn execute_one(
                         (vak_tools::FileAccess::Write, path) => Some(vak_tools::ArtifactClaim {
                             path,
                             declared: false,
-                            title: None,
-                            summary: None,
-                            drafted: false,
-                            based_on: None,
+                            ..Default::default()
                         }),
                         _ => None,
                     }
@@ -7502,12 +7546,10 @@ async fn execute_one(
             .chain(wrote.into_iter().map(|path| vak_tools::ArtifactClaim {
                 path,
                 declared: false,
-                title: None,
-                summary: None,
-                drafted: false,
-                based_on: None,
+                ..Default::default()
             }));
-        for claim in claims {
+        for mut claim in claims {
+            claim.read_first = read_first.to_vec();
             sink.declared(
                 &claim,
                 (!session_id.is_empty()).then_some(session_id),
@@ -9509,7 +9551,10 @@ mod file_effect_tests {
             CallEffect::FileRead { digest, .. } | CallEffect::FileWrite { digest, .. } => {
                 digest.clone()
             }
-            CallEffect::Mcp(_) | CallEffect::Account { .. } | CallEffect::Failed { .. } => None,
+            CallEffect::Mcp(_)
+            | CallEffect::Fetched { .. }
+            | CallEffect::Account { .. }
+            | CallEffect::Failed { .. } => None,
         }
     }
 

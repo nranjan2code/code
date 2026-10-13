@@ -100,10 +100,15 @@ impl Tool for OfficeApplyTool {
         Some(crate::ArtifactClaim {
             path,
             declared: true,
-            title: None,
-            summary: None,
             drafted: true,
             based_on,
+            change: args
+                .get("change")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|change| !change.is_empty())
+                .map(str::to_string),
+            ..Default::default()
         })
     }
 
@@ -141,6 +146,10 @@ impl Tool for OfficeApplyTool {
                 "source": {
                     "type": "string",
                     "description": "File to start from, with the same document format as path: the file being edited, a template, or an earlier draft. Defaults to path. Leave out, with base_digest, to create path from scratch."
+                },
+                "change": {
+                    "type": "string",
+                    "description": "A few words naming this version, shown as its title in the file's history (for example \"Shorter version\" or \"Added the tram 28 paragraph\"). Leave out when there is nothing to say beyond the file's name."
                 },
                 "base_digest": {
                     "type": "string",

@@ -54,6 +54,8 @@ impl Tool for WriteTool {
             summary: text("summary"),
             drafted: false,
             based_on: None,
+            change: text("change"),
+            read_first: Vec::new(),
         })
     }
 
@@ -73,7 +75,8 @@ impl Tool for WriteTool {
                 "path": {"type": "string", "description": "File path (relative to cwd or absolute)"},
                 "content": {"type": "string", "description": "Full file content to write"},
                 "title": {"type": "string", "description": "A name for the file when it is a deliverable the user asked for; it then appears in their Library. Leave out for supporting or scratch files."},
-                "summary": {"type": "string", "description": "One sentence on what the deliverable is"}
+                "summary": {"type": "string", "description": "One sentence on what the deliverable is"},
+                "change": {"type": "string", "description": "A few words naming this version, shown as its title in the file's history (for example \"Shorter version\" or \"Added the tram 28 paragraph\"). Leave out when there is nothing to say beyond the file's name."}
             },
             "required": ["path", "content"]
         })

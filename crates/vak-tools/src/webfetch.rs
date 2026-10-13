@@ -225,6 +225,10 @@ impl Tool for WebFetchTool {
         vak_permission::Declared::reach(vak_permission::Reach::Network)
     }
 
+    fn fetched(&self, args: &Value) -> Option<String> {
+        args.get("url").and_then(Value::as_str).map(str::to_string)
+    }
+
     fn name(&self) -> &str {
         "webfetch"
     }
