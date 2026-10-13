@@ -790,31 +790,41 @@ fn build_recipe(args: &Map<String, Value>) -> Result<Value, String> {
     Ok(Value::Object(payload))
 }
 
+// A preview shows a file or markup, and each is its own card with the one
+// field it needs required: "give this or that" is prose no schema keyword
+// every provider carries can enforce, and a call that gave neither was
+// refused twice live (2026-10-13).
 fn ui_preview_fields() -> Value {
     fields(
         serde_json::json!({
             "status": string("Optional. The state of the work, in a word."),
             "title": string(""),
-            "artifact_path": string("The workspace path of the file to preview. Give this or html."),
-            "html": string("The markup to preview, when there is no file. Give this or artifact_path.")
+            "artifact_path": string("The workspace path of the HTML or UI file to preview.")
         }),
-        &[],
+        &["artifact_path"],
     )
 }
 
 fn build_ui_preview(args: &Map<String, Value>) -> Result<Value, String> {
-    let given = |key: &str| {
-        args.get(key)
-            .and_then(Value::as_str)
-            .is_some_and(|text| !text.trim().is_empty())
-    };
-    if !given("artifact_path") && !given("html") {
-        return Err("nothing to preview; give artifact_path or html".into());
-    }
     Ok(Value::Object(copy(
         args,
-        &["status", "title", "artifact_path", "html"],
+        &["status", "title", "artifact_path"],
     )))
+}
+
+fn markup_preview_fields() -> Value {
+    fields(
+        serde_json::json!({
+            "status": string("Optional. The state of the work, in a word."),
+            "title": string(""),
+            "html": string("The HTML markup to preview, written in full.")
+        }),
+        &["html"],
+    )
+}
+
+fn build_markup_preview(args: &Map<String, Value>) -> Result<Value, String> {
+    Ok(Value::Object(copy(args, &["status", "title", "html"])))
 }
 
 fn chart_fields() -> Value {
@@ -1641,12 +1651,22 @@ const SHAPES: &[CardShape] = &[
         eyebrow: Eyebrow::Label,
     },
     CardShape {
-        name: "emit_ui_preview_card",
-        description: "A preview of an HTML or UI file you wrote to the workspace.",
+        name: "emit_file_preview_card",
+        description: "A preview of an HTML or UI file in the workspace, by its path. For markup with no file, use emit_markup_preview_card.",
         semantic_types: &["ui.preview"],
         default_type: Some("ui.preview"),
         fields: ui_preview_fields,
         build: build_ui_preview,
+        fill: fill_nothing,
+        eyebrow: Eyebrow::Label,
+    },
+    CardShape {
+        name: "emit_markup_preview_card",
+        description: "A preview of HTML markup written in the call itself, with no file. For a file in the workspace, use emit_file_preview_card.",
+        semantic_types: &["ui.markup"],
+        default_type: Some("ui.markup"),
+        fields: markup_preview_fields,
+        build: build_markup_preview,
         fill: fill_nothing,
         eyebrow: Eyebrow::Label,
     },
@@ -1731,7 +1751,7 @@ fn normalize_payload(semantic_type: &str, mut payload: Value) -> Value {
         // A preview's isolation is the client's decision, never the card's:
         // a model-supplied `sandbox` or `connect_src` would widen the frame
         // that runs its own markup.
-        "ui.preview" => {
+        "ui.preview" | "ui.markup" => {
             if let Some(map) = payload.as_object_mut() {
                 map.remove("sandbox");
                 map.remove("connect_src");
@@ -1798,7 +1818,10 @@ fn fixture_for(shape_name: &str) -> Value {
             "ingredients": ["1 cup water"],
             "method": ["Boil"]
         }),
-        "emit_ui_preview_card" => {
+        "emit_file_preview_card" => {
+            serde_json::json!({"title": "Preview", "artifact_path": "index.html"})
+        }
+        "emit_markup_preview_card" => {
             serde_json::json!({"title": "Preview", "html": "<p>Hello</p>"})
         }
         "emit_chart_card" => serde_json::json!({
@@ -1904,7 +1927,7 @@ impl Tool for EmitCardTool {
             ),
         );
         properties.insert(
-            "answers".into(),
+            "deliverable".into(),
             string("The deliverable from your plan this card delivers, by the name you gave it there. A planned card counts as shown only when a card names it here; leave it out for a card your plan does not list."),
         );
         if default.is_none() {
@@ -1927,10 +1950,22 @@ impl Tool for EmitCardTool {
 
     fn fill_defaults(&self, args: &mut Value) {
         if let Some(fields) = args.as_object_mut() {
-            // A block with one type takes no `semantic_type`; a model that
-            // sends one anyway (a topic name from habit) gets the block's own.
-            if let [only] = self.shape.semantic_types {
-                fields.insert("semantic_type".into(), Value::String((*only).into()));
+            // A block with one type takes no `semantic_type`. One sent anyway
+            // is dropped, so a refusal never reports it as the mistake (found
+            // live 2026-10-13), unless it names a kind another block owns:
+            // then the refusal names that block.
+            if let [_] = self.shape.semantic_types {
+                let elsewhere = fields
+                    .get("semantic_type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|kind| {
+                        SHAPES.iter().any(|other| {
+                            other.name != self.shape.name && other.semantic_types.contains(&kind)
+                        })
+                    });
+                if !elsewhere {
+                    fields.remove("semantic_type");
+                }
             } else if let Some(default) = self.shape.default_type
                 && !fields.contains_key("semantic_type")
             {
@@ -1979,10 +2014,10 @@ fn validate_call(
     }
     let mut own = args.clone();
     own.remove("semantic_type");
-    // Every block takes these two beside its own fields: `answers` names
+    // Every block takes these two beside its own fields: `deliverable` names
     // the plan deliverable it delivers (read by the loop, never stored),
     // and `label` is the model's own words for the block, its eyebrow.
-    own.remove("answers");
+    own.remove("deliverable");
     let label = own
         .remove("label")
         .and_then(|label| label.as_str().map(str::trim).map(str::to_string))
@@ -2474,7 +2509,7 @@ mod tests {
                 .unwrap()
                 .keys()
                 .cloned()
-                .chain(["semantic_type".to_string(), "answers".to_string()])
+                .chain(["semantic_type".to_string(), "deliverable".to_string()])
                 .collect();
             let mut calls = vec![serde_json::json!({}), fixture.clone()];
             for key in &keys {
@@ -3706,10 +3741,34 @@ mod tests {
         }
     }
 
+    /// Found live 2026-10-13: a preview call missing `artifact_path` was
+    /// also told `semantic_type` was unexpected, though the block had put
+    /// it there itself. A kind another block owns stays, for the refusal
+    /// to name that block.
+    #[test]
+    fn a_one_kind_block_never_blames_the_kind_it_was_sent() {
+        let preview = EmitCardTool::all()
+            .into_iter()
+            .find(|tool| tool.name() == "emit_file_preview_card")
+            .unwrap();
+        let mut args = serde_json::json!({"semantic_type": "ui.preview", "title": "page"});
+        preview.fill_defaults(&mut args);
+        let refused = vak_tools::validate_input(&preview.schema(), &args).unwrap_err();
+        assert!(
+            refused.contains("missing required `artifact_path`"),
+            "{refused}"
+        );
+        assert!(!refused.contains("semantic_type"), "{refused}");
+
+        let mut args = serde_json::json!({"semantic_type": "ui.markup", "html": "<p>x</p>"});
+        preview.fill_defaults(&mut args);
+        assert_eq!(args["semantic_type"], "ui.markup");
+    }
+
     #[test]
     fn ui_preview_never_carries_isolation_settings_from_the_model() {
         let payload = normalize_payload(
-            "ui.preview",
+            "ui.markup",
             serde_json::json!({
                 "title": "T",
                 "html": "<p>x</p>",
@@ -3721,9 +3780,10 @@ mod tests {
             payload,
             serde_json::json!({"title": "T", "html": "<p>x</p>"})
         );
-        let schema = ui_preview_fields();
-        assert!(schema["properties"].get("sandbox").is_none());
-        assert!(schema["properties"].get("connect_src").is_none());
+        for schema in [ui_preview_fields(), markup_preview_fields()] {
+            assert!(schema["properties"].get("sandbox").is_none());
+            assert!(schema["properties"].get("connect_src").is_none());
+        }
     }
 
     #[test]

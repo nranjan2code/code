@@ -1239,7 +1239,8 @@ in progress, and the rest of V4 follows it.
     request's or an answer's words: the freshness, grounding and
     topic-mismatch gates are removed (docs/design/88-control-plane.md §5),
     and a card is refused only for a fact, such as a source URL nothing in
-    the conversation retrieved. Every correction goes through the one ladder
+    the conversation retrieved, or a file a preview names that is neither
+    in the workspace nor among the Agent's drafts. Every correction goes through the one ladder
     (`vak_control::Ladder`: told once with the evidence, then the frame
     changes or the answer stands);
     a thinking-only step is one `[empty-step]` redo unless a card
@@ -1487,15 +1488,17 @@ in progress, and the rest of V4 follows it.
   each card by calling the card tool that owns its kind, by its own name
   and precise schema (`vak-core/src/presentation_tools.rs`, one per block
   shape: summary, steps, checklist, comparison, table, stats, chart,
-  callout, details, research, recipe, media, UI preview, diff, test report
-  and terminal); one nested call of every block, tried as the `answer` tool,
+  callout, details, research, recipe, media, UI preview (a file),
+  markup preview (inline HTML), diff, test report and terminal; a shape
+  that could be given one of two fields is two cards, each with that
+  field required, so the wire can enforce it); one nested call of every block, tried as the `answer` tool,
   came back as broken JSON on 7 of 16 captured steps against none for
   separate calls (docs/audits/cards-in-answers-2026-10-11.md). A card call
   is the loop's own display channel (`show_card` in `vak-agent`), in every
   permission mode: checked against its schema, the plan, the sources the
   conversation retrieved and its tool's rules, then recorded as a
   `PresentationSource::ToolCall` presentation with the plan deliverable its
-  `answers` names, and the runtime lays the answer out from those names
+  `deliverable` names, and the runtime lays the answer out from those names
   (docs/design/87-composed-answers.md §2). A block's kinds are its own
   first, then every registry type whose renderer and pack read the payload
   it builds (`itinerary` and `meal_plan` are `steps`, `budget` is `table`,
@@ -1506,7 +1509,7 @@ in progress, and the rest of V4 follows it.
   (`the_card_kinds_are_exactly_the_types_the_client_draws`), and one
   argument name is one shape on every block
   (`one_argument_name_is_one_shape_on_every_block`). A card that names in
-  `answers` a deliverable the plan does not have is refused with the plan's
+  `deliverable` a deliverable the plan does not have is refused with the plan's
   names, and one that names none while planned cards are still unnamed is
   refused with those names; a planned card counts as shown only when a card
   names it. Text written in reply to a plan check that followed an answer
@@ -1596,7 +1599,7 @@ in progress, and the rest of V4 follows it.
   (docs/design/86-model-plans-runtime-checks.md): the model declares its
   deliverables with the loop-owned `plan` tool (each a name and a form:
   card, text, file, change or check) and names the one a card delivers in
-  its `answers` field; when the turn ends, `vak_judge::plan` compares the plan
+  its `deliverable` field; when the turn ends, `vak_judge::plan` compares the plan
   with receipts (cards recorded, final text, files delivered, commands and
   changes) and a `[plan-check]` control names only what is missing, once,
   without discarding anything already produced; a planned card still

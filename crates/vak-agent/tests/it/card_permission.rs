@@ -98,7 +98,16 @@ fn msg(content: Vec<ContentBlock>, stop_reason: StopReason) -> AssistantMessage 
 /// Runs one turn whose answer is one metric card; returns (executions,
 /// approvals asked).
 async fn answer_with_a_card(mode: Mode) -> (usize, usize) {
+    card_call(mode, serde_json::json!({}), &[]).await
+}
+
+/// Runs one turn whose answer is one card call with `input`, in a workspace
+/// holding `files`; returns (executions, approvals asked).
+async fn card_call(mode: Mode, input: serde_json::Value, files: &[&str]) -> (usize, usize) {
     let dir = tempfile::tempdir().unwrap();
+    for file in files {
+        std::fs::write(dir.path().join(file), "<p>x</p>").unwrap();
+    }
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let header = SessionHeader {
@@ -147,7 +156,7 @@ async fn answer_with_a_card(mode: Mode) -> (usize, usize) {
                     vec![ContentBlock::ToolUse {
                         id: "a0".into(),
                         name: "emit_metric_card".into(),
-                        input: serde_json::json!({}),
+                        input,
                     }],
                     StopReason::ToolUse,
                 ),
@@ -183,6 +192,24 @@ async fn card_tools_run_without_approval_in_every_mode() {
     for mode in [Mode::WorkspaceWrite, Mode::ReadOnly, Mode::FullAccess] {
         assert_eq!(answer_with_a_card(mode).await, (1, 0), "{mode:?}");
     }
+}
+
+/// Found live 2026-10-13: asked to preview markup with no file, a model
+/// gave a file preview a path to nothing. A card naming a file that exists
+/// neither in the workspace nor among the Agent's drafts is not shown.
+#[tokio::test]
+async fn a_card_that_previews_a_missing_file_is_not_shown() {
+    let missing = serde_json::json!({"artifact_path": "save-button.html"});
+    assert_eq!(card_call(Mode::WorkspaceWrite, missing, &[]).await.0, 0);
+    let folder = serde_json::json!({"artifact_path": "."});
+    assert_eq!(card_call(Mode::WorkspaceWrite, folder, &[]).await.0, 0);
+    let present = serde_json::json!({"artifact_path": "page.html"});
+    assert_eq!(
+        card_call(Mode::WorkspaceWrite, present, &["page.html"])
+            .await
+            .0,
+        1
+    );
 }
 
 #[test]

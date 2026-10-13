@@ -1139,7 +1139,7 @@ pub struct Agent {
     /// This run's correction ladder (docs/design/88-control-plane.md §5).
     ladder: vak_control::Ladder,
     /// Each card a call of this step showed, with the plan deliverable
-    /// its `answers` named, until the loop adds them to the plan's receipts.
+    /// its `deliverable` named, until the loop adds them to the plan's receipts.
     shown_cards: std::sync::Mutex<Vec<Option<String>>>,
     /// The tool the next step must call: the frame change a correction
     /// asked for (`OutputForm::Tool`). Taken when that step is framed.
@@ -1152,7 +1152,7 @@ pub struct Agent {
     /// The latest plan the model declared this run (docs/design/
     /// 86-model-plans-runtime-checks.md), checked when the turn ends.
     declared_plan: std::sync::Mutex<Option<Vec<vak_intent::Deliverable>>>,
-    /// The plan deliverables this run's shown cards named in `answers`.
+    /// The plan deliverables this run's shown cards named in `deliverable`.
     named_cards: std::sync::Mutex<Vec<String>>,
     deliveries: std::sync::Mutex<RunDeliveries>,
     /// What each call in flight produced beyond its result text, drained
@@ -1715,7 +1715,7 @@ impl Agent {
         // A call succeeded this run: an empty step is told its result stands.
         let mut call_succeeded_this_run = false;
         // Each card recorded this run, in emit order, with the plan
-        // deliverable its `answers` field named.
+        // deliverable its `deliverable` field named.
         let mut card_answers: Vec<Option<String>> = Vec::new();
         // The deliverables the last plan check named, so the same gap is
         // named once.
@@ -5796,7 +5796,7 @@ impl Agent {
     /// Shows one card: the call is checked against its tool's schema, the
     /// plan, the sources this conversation retrieved and the tool's own
     /// rules, then recorded as a presentation of the call with the plan
-    /// deliverable its `answers` names (docs/design/87-composed-answers.md
+    /// deliverable its `deliverable` names (docs/design/87-composed-answers.md
     /// §2). A card identical to one already shown this turn is not shown
     /// twice.
     async fn show_card(&self, call: &PendingToolCall) -> (ToolRunOutput, vak_control::CallVerdict) {
@@ -5832,7 +5832,7 @@ impl Agent {
         }
         let answers = call
             .input
-            .get("answers")
+            .get("deliverable")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|name| !name.is_empty())
@@ -5894,6 +5894,31 @@ impl Agent {
                     .iter()
                     .any(|delivered| same_workspace_path(delivered, path))
             });
+        // A file preview shows a file that exists: in the workspace, or
+        // among this Agent's own drafts.
+        let missing = match call.input.get("artifact_path").and_then(Value::as_str) {
+            Some(path) => {
+                let header = self.session.lock().await.header().cloned();
+                let mut ctx = ToolContext::new(
+                    header
+                        .as_ref()
+                        .map(|header| header.contract_cwd())
+                        .unwrap_or_default(),
+                );
+                ctx.agent_id = header
+                    .as_ref()
+                    .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()));
+                (!vak_tools::drafts::existing(&ctx, path).is_ok_and(|file| file.is_file()))
+                    .then(|| path.to_string())
+            }
+            None => None,
+        };
+        if let Some(path) = missing {
+            return (
+                ToolRunOutput::Err(Fault::Target, vak_control::card_file_missing(&path)),
+                CallVerdict::Refused(Refusal::Tool),
+            );
+        }
         if previews_delivered {
             return (
                 ToolRunOutput::Ok(

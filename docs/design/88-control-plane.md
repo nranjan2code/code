@@ -91,7 +91,7 @@ docs/audits/cards-in-answers-2026-10-11.md): on the same captured requests
 it came back as broken JSON in 7 of 16 steps, separate card calls in at
 most one. Each card is again its own call of the card tool that owns its
 kind, the loop's own display channel (`show_card`), recorded as
-`PresentationSource::ToolCall` with the deliverable its `answers` names;
+`PresentationSource::ToolCall` with the deliverable its `deliverable` names;
 the outline and layout stay. The reframe rung requires the card tool of
 the kind the plan named (`Finding::CardRequired`, `Deliverable::kind`), and
 a card naming no planned deliverable is refused while the plan lists

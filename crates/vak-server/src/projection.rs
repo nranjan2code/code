@@ -1771,7 +1771,7 @@ fn answer_outlines(session: &SessionLog, items: &[OutputItem]) -> Vec<vak_delive
     let mut blocks_named: HashMap<(String, usize), Option<String>> = HashMap::new();
     let named = |input: &serde_json::Value| {
         input
-            .get("answers")
+            .get("deliverable")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|name| !name.is_empty())
@@ -5208,8 +5208,8 @@ mod tests {
         ]});
         let blocks = serde_json::json!({"blocks": [
             {"type": "text", "text": "Here it is."},
-            {"type": "checklist", "items": ["Charger"], "answers": "packing list"},
-            {"type": "checklist", "items": ["Train", "Car"], "answers": "Comparison"}
+            {"type": "checklist", "items": ["Charger"], "deliverable": "packing list"},
+            {"type": "checklist", "items": ["Train", "Car"], "deliverable": "Comparison"}
         ]});
         for (id, name, input) in [("p1", "plan", &plan), ("a1", "answer", &blocks)] {
             log.append_message(MessageRecord {
@@ -5311,7 +5311,7 @@ mod tests {
             &mut log,
             "c1",
             "emit_checklist_card",
-            serde_json::json!({"items": ["Charger"], "answers": "Packing list"}),
+            serde_json::json!({"items": ["Charger"], "deliverable": "Packing list"}),
         );
         call(
             &mut log,
@@ -5323,7 +5323,7 @@ mod tests {
             &mut log,
             "c3",
             "emit_checklist_card",
-            serde_json::json!({"items": ["Train", "Car"], "answers": "comparison"}),
+            serde_json::json!({"items": ["Train", "Car"], "deliverable": "comparison"}),
         );
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::text("Take the train.")]),

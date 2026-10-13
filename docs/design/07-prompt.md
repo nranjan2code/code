@@ -390,6 +390,12 @@ presentation update does not restore stale-context behavior.
   names no example file: with "(`notes.md`, `src/app.py`)" in it, a model
   asked for `log-k.md` wrote `notes.md`.
 
+- 2026-10-13, the card argument `answers` is `deliverable`. The seed's
+  presentation bullet names it. Live, three card calls put their content
+  in `answers` (an HTML snippet, a sentence of the answer): read as "what
+  this card answers with", not as the plan deliverable it names. Word
+  count unchanged.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

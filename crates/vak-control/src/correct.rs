@@ -34,7 +34,7 @@ pub enum Finding {
     Fence { error: String },
     /// The declared plan has deliverables with no receipt.
     Plan {
-        /// Planned cards no card's `answers` names.
+        /// Planned cards no card's `deliverable` names.
         cards_unnamed: Vec<String>,
         /// Cards shown that name no planned card.
         cards_unattributed: usize,
@@ -192,7 +192,18 @@ pub fn card_kind_elsewhere(kind: &str, owner: &str) -> String {
     )
 }
 
-/// What a card is told when its `answers` names a deliverable the plan
+/// What a card that previews a file is told when no such file exists: in
+/// the workspace, or among this Agent's drafts. Found live 2026-10-13: a
+/// preview was asked for markup no file held, and a path was supplied anyway.
+pub fn card_file_missing(path: &str) -> String {
+    format!(
+        "Not shown: `{path}` is not a file in the workspace or among your drafts. \
+         A file preview shows a file that exists; write it first, or show the content \
+         another way."
+    )
+}
+
+/// What a card is told when its `deliverable` names a deliverable the plan
 /// does not list: the card is not shown, and the plan's cards are given.
 pub fn card_unplanned(answers: &str, planned: &[String]) -> String {
     let names = planned
@@ -201,9 +212,9 @@ pub fn card_unplanned(answers: &str, planned: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "[card-plan]: not shown — `answers` is \"{answers}\", which is not a card in your \
-         plan. The cards it lists are {names}. Call it again with `answers` set to the one \
-         this card delivers, with the content that deliverable asks for, or leave `answers` \
+        "[card-plan]: not shown — `deliverable` is \"{answers}\", which is not a card in your \
+         plan. The cards it lists are {names}. Call it again with `deliverable` set to the one \
+         this card delivers, with the content that deliverable asks for, or leave `deliverable` \
          out for a card the plan does not list."
     )
 }
@@ -234,8 +245,8 @@ pub fn card_unnamed(open: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "[card-plan]: not shown — this card sets no `answers`, and your plan's cards \
-         not shown yet are {names}. Call it again with `answers` set to the one this card \
+        "[card-plan]: not shown — this card sets no `deliverable`, and your plan's cards \
+         not shown yet are {names}. Call it again with `deliverable` set to the one this card \
          delivers. A card your plan does not list goes after them."
     )
 }
@@ -276,8 +287,8 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                 ""
             };
             format!(
-                "{marker}: {next}{stands} This is still the request in the person's \
-                 message that opened this turn, not a new one."
+                "{marker}: {next}{stands} This message is from Vak; it is not a new \
+                 request."
             )
         }
         Finding::Fence { error } => format!(
@@ -303,8 +314,8 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                     .collect::<Vec<_>>()
                     .join(", ");
                 parts.push(format!(
-                    "Planned as cards and named by no card's `answers`: {named}. Cards shown without \
-                     a planned name in `answers`: {cards_unattributed}. So {cards_short} planned card(s) are not shown yet."
+                    "Planned as cards and named by no card's `deliverable`: {named}. Cards shown without \
+                     a planned name in `deliverable`: {cards_unattributed}. So {cards_short} planned card(s) are not shown yet."
                 ));
             }
             if !others.is_empty() {
@@ -316,7 +327,7 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                 parts.push(format!("Nothing produced yet for: {listed}."));
             }
             parts.push(
-                "Show each missing card with its card tool, `answers` set to its planned name, \
+                "Show each missing card with its card tool, `deliverable` set to its planned name, \
                  or finish and say plainly why it is not needed. Keep everything already shown \
                  and do not plan again."
                     .to_string(),
@@ -325,7 +336,7 @@ pub fn render(finding: &Finding, marker: &str) -> String {
         }
         Finding::CardRequired { name, tool } => format!(
             "{marker}: Your plan lists \"{name}\" as a card and no card shows it. This step \
-             can only call `{tool}`: show it now with `answers` set to \"{name}\". This is not \
+             can only call `{tool}`: show it now with `deliverable` set to \"{name}\". This is not \
              a message from the person."
         ),
         Finding::StopHook { reason } => format!(
@@ -437,7 +448,7 @@ mod tests {
         assert!(told.contains("not a message from the person"), "{told}");
         assert!(told.contains("\"comparison\", \"plan\""), "{told}");
         assert!(
-            told.contains("without a planned name in `answers`: 1"),
+            told.contains("without a planned name in `deliverable`: 1"),
             "{told}"
         );
         assert!(told.contains("\"fix\" (change)"), "{told}");

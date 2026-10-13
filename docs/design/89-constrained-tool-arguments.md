@@ -64,7 +64,7 @@ lossless, and choose per model from measurement.
 
 Every source stresses the same limit: a grammar guarantees structure, never
 content. In the constrained measurement the table's rows came back as
-sentences rather than `A | B` cells, and `answers` held the plan's JSON
+sentences rather than `A | B` cells, and `deliverable` held the plan's JSON
 instead of a deliverable's name. Content stays the builders' and the
 runtime's checks.
 
@@ -155,7 +155,7 @@ withdrawal exists to end. Every step is a recorded decision (doc 88).
 ### 4.5 What a constraint makes possible
 
 Measured on 2026-10-12: a broken table call regenerated under its schema
-came back valid every time, with the call's `answers`, label and type kept,
+came back valid every time, with the call's `deliverable`, label and type kept,
 but each cell as a row of its own: "cells separated by `|`" is a convention
 inside a string, which no grammar enforces. Under a constraint the cells
 belong in the schema itself.
@@ -167,7 +167,7 @@ contract's `max_tokens`), as every step is.
 Rules that exist only to keep unconstrained JSON writable can be relaxed on
 a wire that enforces the schema, per capability: a table's rows as lists of
 cells rather than `A | B` strings, and enums built for the turn (a card's
-`answers` limited to the plan's deliverable names, its `semantic_type` to
+`deliverable` limited to the plan's deliverable names, its `semantic_type` to
 the admitted kinds). The canonical schema stays the portable one; a wire
 that enforces gets the richer form, measured before it is switched on.
 

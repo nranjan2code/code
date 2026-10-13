@@ -100,7 +100,10 @@ Five bounded, system-authored checks run inside the loop, each with its own
   Ollama adapter never replays it): told to act on thinking it could no
   longer see, a model redid the request from its start and rewrote a file
   it had already written, to the step limit, in 2 of 3 live runs on
-  2026-10-13; with the quote, 5 of 6 answered.
+  2026-10-13; with the quote, 5 of 6 answered. It ends by saying the message is from Vak and is
+  not a new request; it no longer points back at "the request in the
+  person's message that opened this turn", after which a model redid that
+  request's write before answering.
 - **`[steering-drift]`**: a step ends with no tool call and its final text
   repeats a prior turn's `TurnCard` narration verbatim instead of addressing
   the current directive — domain no longer enters the check. The nudge

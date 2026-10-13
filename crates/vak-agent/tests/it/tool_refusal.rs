@@ -389,7 +389,7 @@ struct PreviewCard {
 #[async_trait]
 impl vak_tools::Tool for PreviewCard {
     fn name(&self) -> &str {
-        "emit_ui_preview_card"
+        "emit_file_preview_card"
     }
     fn description(&self) -> &str {
         "test stand-in"
@@ -595,7 +595,7 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
         tool_call("c3", "make_draft", slide),
         tool_call(
             "c2",
-            "emit_ui_preview_card",
+            "emit_file_preview_card",
             serde_json::json!({"artifact_path": "./deck.pptx", "html": "<h1>Next steps</h1>"}),
         ),
         msg(

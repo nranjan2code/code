@@ -81,7 +81,7 @@ latest is the one checked. Each declared deliverable is an
 `OutcomeRequirement` of kind `Deliverable`, origin `Declared`, with its
 `DeliverableForm`.
 
-A card tool takes an optional `answers` field naming the deliverable it
+A card tool takes an optional `deliverable` field naming the deliverable it
 delivers, by the name the plan gave it.
 
 ### 2.2 The runtime checks receipts
@@ -89,7 +89,7 @@ delivers, by the name the plan gave it.
 When the model ends the turn, the runtime reads the latest plan revision and
 the turn's receipts:
 
-- `card`: a card recorded this turn whose `answers` names it, and only
+- `card`: a card recorded this turn whose `deliverable` names it, and only
   that. A card naming a deliverable the plan does not have is refused when
   it is called, and so is a card that names none while the plan has cards
   no card has named yet: the refusal lists them, so the model links a card
@@ -166,7 +166,7 @@ card is one line naming its presentation id; it instructs nothing.
 
 ## 4. Phases
 
-1. **Plan and check.** `plan` tool, `answers` on cards, the receipt check,
+1. **Plan and check.** `plan` tool, `deliverable` on cards, the receipt check,
    removal of the self-audit, guessed-act stop gates, the 80-character rule
    and the part notes. Already landed beside it: an array field sent as one
    string (JSON text or one item per line) is read as its items for every

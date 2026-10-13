@@ -1224,6 +1224,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
 
   // 7. Interactive Previews
   "ui.preview": ({ data }) => <GenericSpecRenderer node={buildUiPreviewSpec(data)} />,
+  "ui.markup": ({ data }) => <GenericSpecRenderer node={buildUiPreviewSpec(data)} />,
 
   // 8. Timelines, Plans, Checklists, Schedules & Notes
   "plan.timeline": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Plan Timeline", "Plan")} />,

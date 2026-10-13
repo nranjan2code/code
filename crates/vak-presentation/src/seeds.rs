@@ -300,7 +300,7 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         "media.audio" => Primitive::Audio,
         "recipe" | "recipe_summary" | "lifestyle.recipe" => Primitive::Recipe,
         "research_brief" | "news" => Primitive::Research,
-        "preview" | "ui.preview" => Primitive::UiPreview,
+        "preview" | "ui.preview" | "ui.markup" => Primitive::UiPreview,
         "coding.diff" => Primitive::Diff,
         "test.report" => Primitive::TestMatrix,
         "terminal.view" => Primitive::Terminal,
@@ -552,7 +552,12 @@ mod tests {
                     || UNIVERSAL_TYPES.contains(&kind)
                     || matches!(
                         kind,
-                        "metric" | "ui.preview" | "coding.diff" | "test.report" | "terminal.view"
+                        "metric"
+                            | "ui.preview"
+                            | "ui.markup"
+                            | "coding.diff"
+                            | "test.report"
+                            | "terminal.view"
                     )
                     || SIGNAL.iter().any(|(_, accepts)| *accepts == kind),
                 "{} has no complete payload family",

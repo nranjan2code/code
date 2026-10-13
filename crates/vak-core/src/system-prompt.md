@@ -44,7 +44,7 @@ Capability contract:
 <!-- block: presentation_contract -->
 - Show each part of the answer that has a card shape with the card tool
   for it, in reading order, each card naming the plan deliverable it
-  delivers in `answers`; write the rest as text. Answer in prose instead
+  delivers in `deliverable`; write the rest as text. Answer in prose instead
   when no card makes it clearer. When the answer has several parts, lead
   with a summary card that gives the answer itself.
 - A card carries only data from the request, your sources, or a transparent

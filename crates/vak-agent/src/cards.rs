@@ -4,7 +4,7 @@
 //! as broken JSON far more often on the same requests
 //! (docs/audits/cards-in-answers-2026-10-11.md). The runtime composes the
 //! answer from the turn's cards, each placed by the plan deliverable its
-//! `answers` names.
+//! `deliverable` names.
 
 use std::sync::Arc;
 

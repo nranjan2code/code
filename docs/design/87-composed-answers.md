@@ -56,7 +56,7 @@ A turn's answer is composed by the runtime, not left to emit order:
   fails is refused with what to fix and goes through the repair stages like
   any tool (docs/design/15-reliability.md): its schema is shown, then it is
   withdrawn, and the part is given as text.
-  A card names its section with `answers`. A card that names a deliverable
+  A card names its section with `deliverable`. A card that names a deliverable
   the plan does not have is refused with the plan's names; a card that
   names none (a tip beside the answer) is in no section and is shown after
   the sections in emit order. A planned card counts as shown only when a
@@ -66,7 +66,7 @@ A turn's answer is composed by the runtime, not left to emit order:
   can be required to call that kind's tool when the card is still missing.
   The reply's text is in the one text section when the plan has exactly
   one. The projection publishes this as the answer's outline
-  (`OutputTimeline.answers`), reading each card call's own `answers`, and
+  (`OutputTimeline.answers`), reading each card call's own `deliverable`, and
   the client lays the answer out from it. Ledgers written while the answer
   was one nested call keep their `PresentationSource::Answer` records,
   which the projection still reads.

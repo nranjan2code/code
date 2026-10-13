@@ -286,7 +286,7 @@ impl Tool for StepsBlock {
     fn schema(&self) -> Value {
         serde_json::json!({"type": "object", "properties": {
             "semantic_type": {"type": "string"},
-            "answers": {"type": "string"},
+            "deliverable": {"type": "string"},
             "steps": {"type": "array", "items": {"type": "string"}}
         }, "required": ["steps"]})
     }
@@ -323,12 +323,12 @@ async fn each_planned_card_is_named_by_the_card_that_delivers_it() {
             call(
                 "a2",
                 "steps_block",
-                serde_json::json!({"answers": "morning routine", "steps": ["Wake"]}),
+                serde_json::json!({"deliverable": "morning routine", "steps": ["Wake"]}),
             ),
             call(
                 "a3",
                 "steps_block",
-                serde_json::json!({"answers": "Watering", "steps": ["Water Monday"]}),
+                serde_json::json!({"deliverable": "Watering", "steps": ["Water Monday"]}),
             ),
             call(
                 "a4",

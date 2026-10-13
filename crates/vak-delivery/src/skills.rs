@@ -551,6 +551,12 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["desktop", "terminal", "telegram"],
         ),
         (
+            "ui.markup",
+            vec![],
+            vec!["ui.markup"],
+            vec!["desktop", "terminal", "telegram"],
+        ),
+        (
             "plan.timeline",
             vec!["timeline"],
             vec!["plan.timeline"],
@@ -647,10 +653,12 @@ pub fn built_in_recipes() -> RecipeCatalog {
             vec!["desktop", "terminal"],
         ),
     ] {
-        let requires_typed_output = matches!(recipe.0, "coding.test_report" | "ui.preview");
+        let requires_typed_output =
+            matches!(recipe.0, "coding.test_report" | "ui.preview" | "ui.markup");
         let typed_output_types: Vec<String> = match recipe.0 {
             "coding.test_report" => vec!["test.report".into()],
             "ui.preview" => vec!["ui.preview".into()],
+            "ui.markup" => vec!["ui.markup".into()],
             _ => Vec::new(),
         };
         let _ = catalog.register(PresentationRecipe {
@@ -768,6 +776,7 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             "data.grid",
             "recipe.card",
             "ui.preview",
+            "ui.markup",
             "plan.timeline",
             "overview",
             "checklist",
@@ -1575,6 +1584,7 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
             title,
             p["artifact_path"].as_str().unwrap_or_default()
         )),
+        "ui.markup" => lines.push(format!("Preview: {title}")),
         _ => append_readable_fields(p, "", &mut lines, 0),
     }
     let json = serde_json::to_string_pretty(p).unwrap_or_else(|_| p.to_string());
