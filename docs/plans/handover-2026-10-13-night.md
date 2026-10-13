@@ -73,14 +73,12 @@ the browser:
 
 ## Next, in order
 
-1. Investigate the `/until-done` turn seen live: after a stop-gate
-   correction the model's answer apologised for "declaring completion
-   prematurely" and continued; it also wrote the table as a list while a
-   replay of its first step called the table card. Read its decisions
-   (`/runs/{id}/decisions`) and the correction it was told, and find the
-   contract cause (a correction's wording, `vak_control::render`, or what
-   the managed loop asks) before anything else. Use
-   `scripts/measure_tool_form.py` to replay the captured steps.
+1. Done 2026-10-13: the `/until-done` turn. The hold has its own kind
+   (`[keep-working]`): its answer stands live and on reload, the next
+   step acts, its wording states facts, and an answer with no successful
+   call since the hold was told stands and ends the turn with the
+   commitment open (maintainer's choice). Live: run_01a135c2 (36 steps
+   before the ending), run_01a135df (4 steps, told once, then stood).
 2. Work the measured patterns: open admin › How the models did on the dev
    data (32 waiting). Take the biggest that are Vak's own contract
    (`office_apply` refused by its schema 4 of 13, `emit_table_card`

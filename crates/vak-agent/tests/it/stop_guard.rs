@@ -448,29 +448,24 @@ async fn universal_task_with_verify_completes_without_bash_guard() {
 
 /// The person's `/until-done` hold judges nothing: the answer before it
 /// stands (no live draft discard, as the projection keeps it), the step
-/// after it acts rather than repairs, and the ledger tags it as the hold.
+/// after it acts rather than repairs, and an answer with no call since the
+/// hold was told stands and ends the turn with the request still open.
 #[tokio::test]
-async fn until_done_keeps_each_answer_and_the_next_step_acts() {
+async fn until_done_keeps_each_answer_and_waits_once_nothing_is_added() {
     let mut h = harness(
         Some(StopPolicy::default()),
         vec![
             ScriptedResponse::Message(text_msg("Three plants: ZZ, pothos, snake plant.")),
-            ScriptedResponse::Message(text_msg("Care notes for each.")),
+            ScriptedResponse::Message(text_msg("Nothing more to add.")),
         ],
     );
-    h.agent.as_mut().expect("agent").config.max_turns = 2;
-    let outcome = h
-        .agent
-        .as_mut()
-        .expect("agent")
-        .run(
-            "/until-done list three low-light plants",
-            &Default::default(),
-            CancellationToken::new(),
-            h.events_tx.clone(),
-        )
-        .await;
-    assert!(matches!(outcome, TurnOutcome::MaxTurnsReached));
+    let outcome = run_until_done(&mut h).await;
+    match outcome {
+        TurnOutcome::Completed { response } => {
+            assert_eq!(response.text_content(), "Nothing more to add.")
+        }
+        other => panic!("expected the answer to stand, got {other:?}"),
+    }
     let events = drain_events(&mut h);
     assert!(
         !events
@@ -487,8 +482,95 @@ async fn until_done_keeps_each_answer_and_the_next_step_acts() {
         );
     }
     let users = guard_messages(&mut h).await;
-    assert!(
-        users.iter().any(|u| u.starts_with("[keep-working]:")),
-        "ledger must contain the hold: {users:?}"
+    assert_eq!(
+        users
+            .iter()
+            .filter(|u| u.starts_with("[keep-working]:"))
+            .count(),
+        1,
+        "told once: {users:?}"
     );
+}
+
+/// Work done after the hold was told renews it: the next answer is told
+/// again, and only an answer with nothing new since then stands.
+#[tokio::test]
+async fn until_done_work_after_the_hold_renews_it() {
+    let mut h = harness(
+        Some(StopPolicy::default()),
+        vec![
+            ScriptedResponse::Message(text_msg("Three plants.")),
+            ScriptedResponse::Message(tool_call_msg("c1", "note", serde_json::json!({}))),
+            ScriptedResponse::Message(text_msg("Added care notes.")),
+            ScriptedResponse::Message(text_msg("Nothing more to add.")),
+        ],
+    );
+    h.agent
+        .as_mut()
+        .expect("agent")
+        .config
+        .tools
+        .push(Arc::new(Note));
+    let outcome = run_until_done(&mut h).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(h.requests.lock().unwrap().len(), 4);
+    let users = guard_messages(&mut h).await;
+    assert_eq!(
+        users
+            .iter()
+            .filter(|u| u.starts_with("[keep-working]:"))
+            .count(),
+        2,
+        "{users:?}"
+    );
+}
+
+async fn run_until_done(h: &mut Harness) -> TurnOutcome {
+    h.agent
+        .as_mut()
+        .expect("agent")
+        .run(
+            "/until-done list three low-light plants",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await
+}
+
+struct Note;
+
+#[async_trait::async_trait]
+impl vak_tools::Tool for Note {
+    fn name(&self) -> &str {
+        "note"
+    }
+    fn description(&self) -> &str {
+        "test stand-in"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    async fn execute(
+        &self,
+        _args: &serde_json::Value,
+        _ctx: &vak_tools::context::ToolContext,
+    ) -> vak_tools::ToolOutput {
+        vak_tools::ToolOutput::ok("noted")
+    }
+}
+
+fn tool_call_msg(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
+    AssistantMessage {
+        content: vec![ContentBlock::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }],
+        stop_reason: StopReason::ToolUse,
+        ..text_msg("")
+    }
 }

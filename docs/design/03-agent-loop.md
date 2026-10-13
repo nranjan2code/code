@@ -171,8 +171,14 @@ uses a separate user-completion gate. It is the only way to hold completion
 for the person: control comes from commands, never from phrases in free
 text (invariant 32), so "keep working until the tests pass" names a
 condition and is not a hold. It continues across ordinary model
-completion claims, told each time, until
-an exact user steering message such as `done` or `stop` releases it.
+completion claims until an exact user steering message such as `done` or
+`stop` releases it. Within a turn it ends on observed state: an answer
+after new work (a call that succeeded since the hold was last told) is
+told again, and an answer with no call since then stands and ends the
+turn. The commitment stays open, so the person's next message continues
+it and `done` releases it. Before this the hold was told after every
+answer, and with nothing left to add a model wrote filler until
+`max_turns` (36 steps, run_01a135c2).
 The hold is no correction: its message has its own kind
 (`ControlKind::KeepWorking`, `[keep-working]`), the answer before it is
 shown to the person and stands (it is not a discarded draft, live or on

@@ -1515,6 +1515,9 @@ impl Agent {
         };
         let mut verification_stale = false;
         let mut user_completion_released = false;
+        // Successful calls when the person's hold was last told: an answer
+        // with none since then stands, and the request waits for them.
+        let mut calls_at_hold: Option<u32> = None;
         self.obligations.clear();
         self.handoff_used = false;
         self.seen_calls
@@ -2749,14 +2752,24 @@ impl Agent {
                     )
                     .await
                 {
-                    // A hold the person set by command lasts until they
-                    // release it; every other reason is told once.
+                    // The person's hold is told again after each answer that
+                    // followed new work; an answer with no call since the
+                    // last tell stands, and the turn ends with the request
+                    // still open for them. Every other reason is told once.
                     // A failed call nothing repaired is recorded and the
                     // answer stands: whether the answer owns up to it is not
                     // something its words can establish, and the turn's
                     // outcome already carries the failure as a typed fact.
                     let rung = match finding.cause() {
-                        Cause::KeepWorking => Rung::Tell,
+                        Cause::KeepWorking
+                            if calls_at_hold == Some(receipts.successful_tool_calls) =>
+                        {
+                            Rung::End
+                        }
+                        Cause::KeepWorking => {
+                            calls_at_hold = Some(receipts.successful_tool_calls);
+                            Rung::Tell
+                        }
                         Cause::UnresolvedFailure => Rung::End,
                         cause => self.ladder.step(cause, false),
                     };

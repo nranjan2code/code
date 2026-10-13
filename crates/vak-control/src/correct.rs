@@ -354,9 +354,10 @@ pub fn render(finding: &Finding, marker: &str) -> String {
         ),
         Finding::KeepWorking => format!(
             "{marker}: The person started this request with /until-done, so it stays open until \
-             they say done. Your answer above was shown to them and stands. Go on with the next \
-             useful part of the same request. Anything they send reaches you between steps. This \
-             is not a message from the person."
+             they send the message \"done\". Your answer above was shown to them and stands. Go on with the next \
+             useful part of the same request; if nothing useful is left, say so in one line \
+             without calling a tool, and the request waits for them, still open. Anything they \
+             send reaches you between steps. This is not a message from the person."
         ),
         Finding::UnresolvedFailure { tool, error } => format!(
             "{marker}: the `{tool}` call failed: {error}. Fix the cause and try again, or tell the \
