@@ -81,7 +81,7 @@ vak-pdf = { path = "crates/vak-pdf" }
 vak-mail-calendar = { path = "crates/vak-mail-calendar" }
 
 crossterm = { version = "0.28", features = ["event-stream"] }
-ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 # HTTP+SSE server for the headless agent (tokio-native standard)
 # "ws" powers the web client's terminal (docs/design/48-web-client.md §6).
 axum = { version = "0.8", features = ["json", "ws"] }

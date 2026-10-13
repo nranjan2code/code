@@ -7,6 +7,8 @@
   Reduce motion keeps it still.
 - The app's sounds and images are checked for a newer copy instead of being
   kept by the browser for a year, and sounds are sent as audio.
+- Dependencies updated for security advisories: solid-js (seroval),
+  source-map-js, katex, sharp, postcss-selector-parser and ratatui (lru).
 
 ## 7.1.0 — 2026-10-13
 
