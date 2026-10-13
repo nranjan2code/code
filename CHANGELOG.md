@@ -1,3 +1,13 @@
+## Unreleased
+
+- Interface sounds are recorded, in five instrument families chosen in
+  Settings › Voice and sound; the start sound plays once for a run. Each
+  character has its own sound, played when you click it.
+- In the Dimensional 3D visual pack the character that is working moves;
+  Reduce motion keeps it still.
+- The app's sounds and images are checked for a newer copy instead of being
+  kept by the browser for a year, and sounds are sent as audio.
+
 ## 7.1.0 — 2026-10-13
 
 - The model plans its own deliverables and the runtime checks them against

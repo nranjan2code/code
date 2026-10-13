@@ -732,6 +732,13 @@ single-operator assumption into route shapes.
   bundle against its sources by digest; the client bundle gets the same
   treatment. A stale embedded bundle is the failure mode that shipped
   three times.
+- Only a file the bundler named with a content hash (those directly in
+  `assets/`) is served as immutable. Everything else in a bundle,
+  `index.html` and the files copied from `public/` (sounds, brand images,
+  character art, whose names stay the same when their content changes), is
+  served `no-cache` with an `ETag` and answered `304` when unchanged
+  (`embedded_ui.rs`, shared with `/admin`). Marking all of `assets/`
+  immutable kept a replaced sound in browsers for a year.
 - A service worker caches the shell only (hashed assets are immutable,
   `index.html` always revalidates). No API caching — a cached transcript
   is a lie about an append-only ledger.

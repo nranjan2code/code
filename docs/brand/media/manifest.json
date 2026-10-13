@@ -786,7 +786,8 @@
       "flow_node": "oiSH875Nt2YUCVZLGRl7",
       "variations": 1,
       "prompt": "Soft wooden tap, single very short high click, close-mic, dry",
-      "status": "downloaded",
+      "status": "silent",
+      "note": "The one take is silence (peak -54.7 dB). The app plays wood/notification in its place until a new take is made.",
       "takes": [
         {
           "file": "sounds/system/wood/listening.mp3",

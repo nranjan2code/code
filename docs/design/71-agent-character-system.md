@@ -1,6 +1,6 @@
 # Agent character system
 
-Status: In progress — eight built-in expression atlases and runtime states shipped, with sized WebP copies since V4.2 of the visual refresh; an optional Dimensional pack adds alternate idle portraits and 3D face glyphs. Flat two-colour glyphs for 32 px and below and installed user packs are later slices.
+Status: In progress — eight built-in expression atlases and runtime states shipped, with sized WebP copies since V4.2 of the visual refresh; an optional Dimensional pack adds alternate idle portraits and 3D face glyphs, a moving loop for the character that is working, and a recorded signature sound for each character (2026-10-13). Flat two-colour glyphs for 32 px and below and installed user packs are later slices.
 
 ## Purpose
 
@@ -18,7 +18,7 @@ The product includes seven optional Agent companions: Mira (fox), Moss (forest f
 
 Each runtime character provides:
 
-- a stable id, display name, form, personality note, portrait, hue, and two-note interaction cue;
+- a stable id, display name, form, personality note, portrait, hue, and a signature sound: its two cue notes on its own instrument, a recorded file at `public/assets/sounds/companions/<id>.mp3` (`playCompanionSound` in `soundCues.ts`; how the files are made and tuned is in `docs/brand/media/README.md`);
 - a transparent 4×2 expression atlas with blink, attention, thought, work, wait, delight, and acknowledgement poses;
 - no autoplay sound; cues play only after direct interaction and obey the Sound cues setting;
 - a still presentation when either the OS or Vak requests reduced motion;
@@ -29,6 +29,8 @@ Source portraits and expression atlases live in `docs/brand/characters/`: transp
 ## Animation contract
 
 `AgentMark` selects atlas poses for `idle`, `listening`, `thinking`, `working`, `waiting`, `success`, `concern`, and `acknowledge`. Blink, work, and wait use brief pose changes; pointer interaction triggers a one-shot acknowledgement. Running work, voice capture, and approval waits supply their state from the relevant UI. An atlas load failure shows the still portrait. Motion is paused outside the viewport and disabled by OS or Vak reduced-motion settings. Motion never blocks interaction or carries information by itself. The individual poses are expression frames, not a full-body video sequence; a later rig may provide more natural gestures through this same state API.
+
+In the Dimensional pack a character that is listening, thinking, working or waiting, and on screen, plays a transparent animated WebP loop in place of its still (`public/assets/brand/dimensional/loops/<id>-<64|128>.webp`, `characterLoop` in `agentGlyph.ts`). Idle, off-screen and Classic-pack marks keep the still and the atlas, so a long conversation never decodes more than the active character's loops, and reduced motion (the system's or the app's) removes the loop element altogether. A loop that fails to load leaves the still in place. Checked in the running app on 2026-10-13 (`docs/brand/media/verification-2026-10-13/`).
 
 Animated GIF is not the package format: it cannot follow reduced motion, state, theme, or interaction reliably and consumes resources while hidden. A future vector rig belongs in a versioned character manifest and is driven by the same runtime state machine.
 

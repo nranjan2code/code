@@ -327,6 +327,26 @@ LUFS). In the client:
   choosing a family plays it. Quiet hours silence every sound except a
   request for approval. The synthesized start and finish tones it replaces
   are gone.
+- The start sound plays once for a run, not once for each step of it.
+- The server sends these files as `audio/mpeg` and `image/webp` with an
+  `ETag` and `no-cache`: their names do not change when their content does,
+  so only the bundler's hashed files directly in `assets/` are cached for
+  good (`crates/vak-server/src/embedded_ui.rs`).
+- The export refuses a silent take. `wood/listening.mp3` came back silent
+  (peak −54.7 dB), so the Wood family plays its `notification` tap for work
+  starting until a new take is made (`STAND_INS` in the export tool;
+  `status: silent` in the manifest).
+
+**Checked in the running app (2026-10-13)** in a browser at 1440 × 900 and
+390 × 844, light and dark, with the Dimensional 3D pack (screenshots in
+`verification-2026-10-13/`): the working companion's loop plays in the
+header, sidebar and the working line while earlier answers keep their
+stills; Reduce motion shows the still and turning it off mid-run brings the
+loop back; choosing a sound family plays it; one start sound, then finish,
+error (a run stopped at its step limit) and approval sounds each played from
+`/app/assets/sounds/glass/…`; and clicking each of the seven characters in
+the new-agent form played its own file. Not checked: the desktop shell, and
+how any of it sounds, which nobody has listened to yet.
 
 **The companion signatures are tuned (2026-10-13).** The first takes had
 each character's instrument but not its notes (the sound-effects model does

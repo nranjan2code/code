@@ -1,4 +1,5 @@
-import { isSoundFamily, playSound, type SoundFamily } from "./soundCues";
+import { playSound } from "./soundCues";
+import { isSoundFamily, type SoundFamily } from "./soundFamilies";
 import { isThemeChoice, type ThemeChoice } from "./theme";
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
@@ -1219,7 +1220,11 @@ export function applyEvent(
   }
   if ("TurnStart" in ev) {
     markRunning(id, true, b);
-    playSound("listening");
+    // `TurnStart` arrives once per step; the start sound is for the run.
+    if (!startSounded.has(K(b, id))) {
+      startSounded.add(K(b, id));
+      playSound("listening");
+    }
     noteRetry(id, false);
   } else if ("TextDelta" in ev) {
     noteRetry(id, false);
@@ -1493,8 +1498,11 @@ export function appendNeedsAiService(id: string, bucket: Bucket = "main") {
   pushItem(bucket, id, { kind: "system", text: "No AI service is connected yet, so this message wasn't sent.", needs: "ai-service" });
 }
 
+const startSounded = new Set<string>();
+
 export function markRunning(id: string, on: boolean, bucket: Bucket = "main") {
   setRunningMap(K(bucket, id), on);
+  if (!on) startSounded.delete(K(bucket, id));
   // A session that just stopped running (cancelled, or reconciled against
   // the server's own truth in refreshSessions) must not keep showing a
   // stale "Retrying" state from whatever it was last doing.

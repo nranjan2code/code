@@ -344,6 +344,18 @@ sheets, and full for avatars, pills and status dots.
   text.
 - Nothing moves under the pointer.
 - Reduced motion, from the system or the app setting, stills everything.
+- A character moves only while it is working, and only the one that is
+  (docs/design/71-agent-character-system.md).
+
+## Sound
+
+- One instrument family for every interface sound, chosen in Settings ›
+  Voice and sound (Glass by default): work starting (once for a run),
+  finishing, failing, a request for approval, a notification.
+- Quiet hours silence all of them except a request for approval.
+- A character's own sound plays only when a person clicks that character.
+- Sounds are recorded files, never synthesized in the client
+  (`soundCues.ts`; sources and records in `docs/brand/media/`).
 
 ## Components
 
