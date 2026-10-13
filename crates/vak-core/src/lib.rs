@@ -8015,8 +8015,10 @@ impl Core {
                     )
                 });
             let unresolved_failure = failures.has_unrecovered();
+            let cards_recorded = session.presentations_for_latest_turn().len();
             let mut status = vak_judge::outcome::evaluate_response_with_failures(
                 response_text.as_deref(),
+                cards_recorded,
                 matches!(
                     outcome,
                     TurnOutcome::Failed { .. } | TurnOutcome::MaxTurnsReached
@@ -8033,7 +8035,7 @@ impl Core {
                 planned_file,
                 delivered,
                 planned_cards,
-                cards_shown: session.presentations_for_latest_turn().len(),
+                cards_shown: cards_recorded,
             }
             .observed();
             if status == vak_intent::OutcomeStatus::Produced && !deliverable_observed {
@@ -8055,6 +8057,7 @@ impl Core {
                     evidence_state,
                     evidence_card,
                     deliverable_observed,
+                    cards_recorded,
                 },
             );
             let completion = vak_judge::outcome::evaluate_completion(

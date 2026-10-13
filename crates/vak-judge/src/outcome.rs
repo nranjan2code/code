@@ -85,7 +85,7 @@ pub fn evaluate_completion(
 }
 
 pub fn evaluate_response(response: Option<&str>, failed: bool, cancelled: bool) -> OutcomeStatus {
-    evaluate_response_with_failures(response, failed, cancelled, false)
+    evaluate_response_with_failures(response, 0, failed, cancelled, false)
 }
 
 /// What the turn's receipts show of the deliverables the model's own plan
@@ -114,9 +114,11 @@ impl PlannedReceipts {
 /// caller decides what counts as failed; the kind of error does not matter,
 /// because an answer written after an unrecovered failure, even one that
 /// reports it honestly, is not established evidence and must not be signed
-/// `Produced`.
+/// `Produced`. A card the runtime recorded this turn is content as much as
+/// text: an answer given only as cards is produced.
 pub fn evaluate_response_with_failures(
     response: Option<&str>,
+    cards_recorded: usize,
     failed: bool,
     cancelled: bool,
     unresolved_failure: bool,
@@ -132,6 +134,7 @@ pub fn evaluate_response_with_failures(
     }
     match response.map(str::trim) {
         Some(text) if !text.is_empty() => OutcomeStatus::Produced,
+        _ if cards_recorded > 0 => OutcomeStatus::Produced,
         _ => OutcomeStatus::Unknown,
     }
 }
@@ -345,6 +348,8 @@ pub struct TurnFacts<'a> {
     /// The turn's named deliverable was observed in a tool result. True when
     /// the request names none.
     pub deliverable_observed: bool,
+    /// Cards the runtime recorded this turn: content, like the reply.
+    pub cards_recorded: usize,
 }
 
 impl<'a> TurnFacts<'a> {
@@ -355,6 +360,7 @@ impl<'a> TurnFacts<'a> {
             evidence_state: EvidenceState::None,
             evidence_card: false,
             deliverable_observed: true,
+            cards_recorded: 0,
         }
     }
 }
@@ -390,6 +396,10 @@ pub fn evaluate_requirements(
                 RequirementKind::Deliverable if has_response => (
                     RequirementStatus::Met,
                     "response content exists".into(),
+                ),
+                RequirementKind::Deliverable if facts.cards_recorded > 0 => (
+                    RequirementStatus::Met,
+                    "the answer is the cards recorded this turn".into(),
                 ),
                 RequirementKind::Deliverable => (
                     RequirementStatus::Unmet,
@@ -470,6 +480,35 @@ mod tests {
         assert!(!receipts.observed());
         receipts.delivered = true;
         assert!(receipts.observed());
+    }
+
+    #[test]
+    fn an_answer_given_only_as_cards_is_produced() {
+        assert_eq!(
+            evaluate_response_with_failures(None, 1, false, false, false),
+            OutcomeStatus::Produced
+        );
+        assert_eq!(
+            evaluate_response_with_failures(Some("  "), 0, false, false, false),
+            OutcomeStatus::Unknown,
+            "nothing at all is still unknown"
+        );
+        assert_eq!(
+            evaluate_response_with_failures(None, 1, false, false, true),
+            OutcomeStatus::Unknown,
+            "an unrecovered failure still downgrades it"
+        );
+        let spec = OutcomeSpec::from_reading("show the plants", &Reading::general(), 1);
+        let facts = TurnFacts {
+            cards_recorded: 1,
+            ..TurnFacts::reply(None)
+        };
+        assert!(
+            evaluate_requirements(&spec, &facts)
+                .iter()
+                .all(|e| e.status != RequirementStatus::Unmet),
+            "cards are content: no requirement reads them as missing"
+        );
     }
 
     #[test]

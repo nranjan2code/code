@@ -81,9 +81,11 @@ item "card claims a draft no call made" is left alone (no typed fact).
    completion prematurely" after a stop-gate correction, and wrote its
    table as a list although the first replayed step called the table
    card.
-3. Check whether a card-only answer (no response text) is evaluated
-   `Unknown` by `evaluate_response_with_failures` and so marked unverified
-   (the chat showed "The requested outcome is not verified" on such turns).
+3. Done 2026-10-13: a card-only answer was `Unknown` (no response text),
+   so the chat said "not verified". A card the runtime recorded this turn
+   is content (`cards_recorded` in `evaluate_response_with_failures` and
+   `outcome::TurnFacts`); verified live: a table-card-only turn is
+   `Produced`, its items `succeeded`.
 4. `office_apply` refuses a new file whose folder is missing while `write`
    creates it (a model ran `mkdir` to get past it): decide one contract.
 5. Doc 90 leftovers that need record fields first: a version's own title,
