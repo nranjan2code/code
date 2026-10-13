@@ -173,9 +173,15 @@ that enforces gets the richer form, measured before it is switched on.
 
 ### 4.6 Measured per route, not assumed
 
-The method used for §1 becomes a script: capture a request on a route,
-replay it N times per form (free, strict tools, constrained output), and
-report validity and shape. A form is switched on for a route when it is
+The method used for §1 is a script, `scripts/measure_tool_form.py`
+(built 2026-10-13): `capture` is a logging proxy in front of the route
+(on the dev route, `VAK_OLLAMA_BASE_URL` pointed at it), and `replay`
+sends one captured request N times per form (`free` as captured,
+`schema` with the chosen tool's schema as the output format) and reports
+whether each call's arguments, as written, fit the tool's schema. It
+measures what the model writes, before Vak's argument reader; an error
+names the type that was sent, so a list written as its JSON text shows as
+such. Strict tools on a hosted wire are a form still to add. A form is switched on for a route when it is
 measured there, and the numbers go in this document. The dev route is one
 row; hosted routes are measured with one-off checks, as the maintainer
 allows.

@@ -2352,8 +2352,9 @@ for every provider and model:
   the ledger keeps what the model first wrote. Never add a repair that
   guesses at broken JSON: the regeneration is the repair.
 - Judge a change to how arguments are asked for by replaying Vak's own
-  captured requests on each route, never by a toy schema: the first
-  measurement used toy schemas and missed the fault entirely.
+  captured requests on each route (`scripts/measure_tool_form.py`), never
+  by a toy schema: the first measurement used toy schemas and missed the
+  fault entirely.
 - Keep one canonical schema per tool, precise and flat (doc 30 §30.1), and
   one name for one shape across tools (`one_argument_name_is_one_shape_on_every_block`).
   Never merge several tools' schemas into one, and never nest a whole

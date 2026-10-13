@@ -66,11 +66,14 @@ item "card claims a draft no call made" is left alone (no typed fact).
    its whole approval window: the loop now races every gate against the
    run's cancel token (`ask_unless_cancelled`), and both server approvers
    settle a dropped gate (`OpenGate`, `ForwardedGate`).
-2. Control plane leftovers (docs/plans/handover-2026-10-11-control-plane.md
-   'Next, in order' 6): the horizon reading in `derive_context` and
-   `Authority::gate_fallback`; a wire refusing a named tool choice is not
-   learned; `scripts/measure_answer_form.py`; then C7 (doc 88 §11), which
-   finishes doc 88.
+2. Control plane leftovers: done 2026-10-13 — the commitment posture
+   follows the commitment, not the horizon reading (`apply_commitments`);
+   a wire refusing a named tool choice is learned (`shape_choice`);
+   `scripts/measure_tool_form.py` replaces the toy-schema
+   `measure_answer_form.py` (verified live: 16 requests captured from one
+   `/until-done` turn, one replayed 3 times, 2 of 3 valid as written).
+   Left: C7 (doc 88 §11), which finishes doc 88; its design needs the
+   maintainer's choices.
 3. Check whether a card-only answer (no response text) is evaluated
    `Unknown` by `evaluate_response_with_failures` and so marked unverified
    (the chat showed "The requested outcome is not verified" on such turns).
