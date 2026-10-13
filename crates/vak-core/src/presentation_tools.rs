@@ -2193,16 +2193,19 @@ pub struct PresentationInfo {
 }
 
 /// Validates an `emit_*_card` call and returns everything needed to write
-/// its `Presentation` ledger entry. `None` when the call does not validate
-/// (the tool's own `execute()` already rejected it in that case, so this is
-/// only ever called for a call that already succeeded — see
-/// `AgentConfig::presentation_rebuild`'s call site in `Core`).
+/// its `Presentation` ledger entry. `name` is the card tool a call was made
+/// to, or a fence's `semantic_type`, which names the block that owns it. A
+/// call is the block it was made to: a stray `semantic_type` in its
+/// arguments never sends it to another block (found live 2026-10-13: a
+/// markup preview carrying `"semantic_type": "media.image"` was accepted as
+/// `ui.markup`, then rebuilt as a media card that failed, and was never
+/// recorded). `None` when the call does not validate.
 pub fn presentation_info(
     name: &str,
     input: &Value,
     skills: &vak_delivery::SkillRegistry,
 ) -> Option<PresentationInfo> {
-    let output = rebuild_call(name, input, skills)?;
+    let output = rebuild_call(emit_tool_for(name).unwrap_or(name), input, skills)?;
     let payload = vak_session::types::canonicalize_json(&output.payload);
     let title = title_for(&output.semantic_type, &payload);
     let identity_digest = identity_digest(&output.semantic_type, &payload);
@@ -3763,6 +3766,28 @@ mod tests {
         let mut args = serde_json::json!({"semantic_type": "ui.markup", "html": "<p>x</p>"});
         preview.fill_defaults(&mut args);
         assert_eq!(args["semantic_type"], "ui.markup");
+    }
+
+    #[test]
+    fn a_card_call_is_recorded_as_the_block_it_was_made_to() {
+        let skills = vak_delivery::built_in_skill_registry();
+        let markup = EmitCardTool::all()
+            .into_iter()
+            .find(|tool| tool.name() == "emit_markup_preview_card")
+            .unwrap();
+        let mut args = serde_json::json!({
+            "semantic_type": "media.image",
+            "title": "Login",
+            "html": "<form><input></form>"
+        });
+        markup.fill_defaults(&mut args);
+        vak_tools::validate_input(&markup.schema(), &args).unwrap();
+        let info = presentation_info("emit_markup_preview_card", &args, &skills).unwrap();
+        assert_eq!(info.semantic_type, "ui.markup");
+
+        let fence = serde_json::json!({"semantic_type": "ui.markup", "html": "<p>x</p>"});
+        let info = presentation_info("ui.markup", &fence, &skills).unwrap();
+        assert_eq!(info.semantic_type, "ui.markup");
     }
 
     #[test]

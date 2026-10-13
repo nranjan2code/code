@@ -6788,20 +6788,7 @@ impl Core {
             // as it does every other host-owned check.
             let skills = vak_delivery::built_in_skill_registry();
             cfg.presentation_rebuild = Some(Arc::new(move |name, input| {
-                // A tool call already passes its own tool name; a fence
-                // (docs/design/68-context-engine.md §10's inline-fence
-                // fallback) has no tool name at all — vak-agent has no
-                // card-shape knowledge (invariant 14) and cannot resolve
-                // `semantic_type` to the matching `emit_*_card` tool
-                // itself, so this hook does it here, preferring the
-                // payload's own declared type and falling back to
-                // whatever name the caller passed.
-                let resolved_name = input
-                    .get("semantic_type")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(presentation_tools::emit_tool_for)
-                    .unwrap_or(name);
-                presentation_tools::presentation_info(resolved_name, input, &skills).map(|info| {
+                presentation_tools::presentation_info(name, input, &skills).map(|info| {
                     vak_tools::PresentationCard {
                         semantic_type: info.semantic_type,
                         skill_id: info.skill_id,

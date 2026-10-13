@@ -87,10 +87,16 @@ has no route until one is set:
 
 ## Next, in order
 
-1. A markup preview call that put its HTML in `text` (no such field) was
-   refused and the turn spiralled to the step limit (webfetch, writes to
-   `/workspace`, card retries). Read that run's calls and what each refusal
-   said; find what in the contract left a reasonable next step unclear.
+1. Done 2026-10-13. The HTML-in-`text` spiral did not recur in 10 live
+   runs; its refusal already names the missing `html`, the unexpected
+   `text` and every field the card takes (the contract states the facts).
+   The runs found a real fault instead: a markup call carrying a stray
+   `"semantic_type": "media.image"` was accepted as `ui.markup` and acked
+   "Shown to the user", but Core's rebuild re-routed it by that field to
+   the media card, failed, and recorded nothing (2 of 3 runs). A call is
+   now recorded as the block it was made to (`presentation_info`), and a
+   card the host cannot record is a `Fault::Tool` error, never "shown".
+   Live after: 4 of 4 markup cards recorded with an id.
 2. Doc 90 stage 5, after the maintainer answers the mockup's three review
    questions (`docs/assets/file-history-2026/file-history.html`): the
    version graph on the Library artifact page, live states on draft cards,

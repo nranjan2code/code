@@ -469,3 +469,37 @@ async fn host_history_lookup_is_logged_without_in_memory_fallback() {
         matches!(block, ContentBlock::ToolResult { tool_use_id, content, is_error: true }
             if tool_use_id == "host-history" && content.contains("history_unavailable"))));
 }
+
+#[tokio::test]
+async fn a_card_the_host_cannot_record_is_never_reported_shown() {
+    let dir = tempdir().unwrap();
+    // The fake rebuild needs `semantic_type`; this call has none, so the
+    // tool accepts it and the host cannot record it.
+    let mut agent = build_agent(
+        &dir,
+        "card-unrecorded",
+        vec![
+            tool_call_msg(
+                "call_1",
+                "emit_chart_card",
+                serde_json::json!({"title": "Sales", "points": []}),
+            ),
+            text_msg("done"),
+        ],
+        vec![Arc::new(FakeEmitChartCard)],
+        true,
+    );
+    agent
+        .run(
+            "show me the sales chart",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    let session = agent.session.lock().await;
+    assert!(session.presentations().is_empty());
+    assert!(session.derive_messages().iter().flat_map(|m| &m.content).any(|block|
+        matches!(block, ContentBlock::ToolResult { tool_use_id, content, is_error: true }
+            if tool_use_id == "call_1" && content.contains("not recorded"))));
+}

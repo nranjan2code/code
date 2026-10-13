@@ -1562,7 +1562,11 @@ in progress, and the rest of V4 follows it.
   test runs the reader, `fill_defaults`, `validate_input` and then the real
   builder path.
   After validation, the call and its result are ledgered and a
-  `PresentationRecord` is appended; `vak-server` projects that record by
+  `PresentationRecord` is appended, built from the block the call was made
+  to (`presentation_info`; a stray `semantic_type` in a call's arguments
+  never sends it to another block, and only a fence resolves its block
+  from `semantic_type`); a card the host cannot record is a tool fault,
+  never acknowledged as shown; `vak-server` projects that record by
   `tool_use_id` (and an answer's by its block), and the client resolves `semantic_type` through the single
   renderer registry. Diagnose a missing or wrong card at each boundary in
   that order; a successful tool acknowledgement proves ledger admission, not

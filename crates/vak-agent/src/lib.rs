@@ -3302,11 +3302,8 @@ impl Agent {
             else {
                 continue;
             };
-            // `name` is a best-effort hint: the hook's own implementation
-            // (vak-core) knows how to map `semantic_type` to the matching
-            // `emit_*_card` tool via `presentation_tools::emit_tool_for`
-            // when that mapping is reachable; passing `semantic_type` here
-            // keeps this call meaningful even when it is not.
+            // A fence has no tool name; its `semantic_type` names the block
+            // that owns it, which the host resolves.
             let Some(info) = rebuild(semantic_type, &fence_json) else {
                 continue;
             };
@@ -5970,8 +5967,17 @@ impl Agent {
                 .push(answers);
             return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
         };
+        // The tool accepted the call, so a card that cannot be rebuilt from
+        // it is Vak's fault, and the person sees nothing: never say it was
+        // shown.
         let Some(info) = rebuild(call.name.as_str(), &call.input) else {
-            return (ToolRunOutput::Ok(checked.content), CallVerdict::Accepted);
+            return (
+                ToolRunOutput::Err(
+                    Fault::Tool,
+                    "the card was not recorded, so the person does not see it".into(),
+                ),
+                CallVerdict::Refused(Refusal::Tool),
+            );
         };
         let mut session = self.session.lock().await;
         let Some(turn_id) = session.latest_directive_entry_id() else {
