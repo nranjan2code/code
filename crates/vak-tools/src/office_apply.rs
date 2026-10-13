@@ -903,8 +903,11 @@ fn canonical_root(cwd: &Path) -> Result<PathBuf, String> {
         .map_err(|error| format!("cannot resolve workspace root: {error}"))
 }
 
-/// The workspace file a draft is for: its directory must exist inside the
-/// workspace, and it must not be a symlink.
+/// The workspace file a draft is for: inside the workspace, and not a
+/// symlink. Its folder may not exist yet, as with `write`: the nearest
+/// folder that does exist must resolve inside the workspace, and the
+/// missing ones below it are plain names, made when Review puts the file
+/// in place.
 fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
     let root = canonical_root(cwd)?;
     let candidate = if Path::new(path).is_absolute() {
@@ -920,11 +923,26 @@ fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
     if !crate::context::within(&candidate, &root) {
         return Err(crate::context::outside_refusal(path, cwd));
     }
-    let parent = candidate
+    let mut existing = candidate
         .parent()
-        .ok_or_else(|| format!("{path} has no directory"))?
-        .canonicalize()
-        .map_err(|error| format!("the directory for {path} does not exist: {error}"))?;
+        .ok_or_else(|| format!("{path} has no directory"))?;
+    let mut missing = Vec::new();
+    let resolved = loop {
+        match existing.canonicalize() {
+            Ok(resolved) => break resolved,
+            Err(_) => {
+                let (Some(name), Some(up)) = (existing.file_name(), existing.parent()) else {
+                    return Err(crate::context::outside_refusal(path, cwd));
+                };
+                missing.push(name.to_owned());
+                existing = up;
+            }
+        }
+    };
+    let parent = missing
+        .iter()
+        .rev()
+        .fold(resolved, |folder, name| folder.join(name));
     if !parent.starts_with(&root) {
         return Err(crate::context::outside_refusal(path, cwd));
     }
@@ -945,9 +963,9 @@ mod tests {
     use super::*;
 
     /// A path outside the workspace is refused as outside it, naming the
-    /// workspace, before any missing folder is reported.
+    /// workspace; a missing folder inside it is not a refusal.
     #[test]
-    fn outside_the_workspace_is_said_before_a_missing_folder() {
+    fn outside_the_workspace_is_refused_and_a_missing_folder_inside_is_made() {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("ws");
         std::fs::create_dir(&workspace).unwrap();
@@ -961,8 +979,18 @@ mod tests {
             refused.contains(&workspace.display().to_string()),
             "{refused}"
         );
-        let inside = confined_destination(&workspace, "notes/trip.docx").unwrap_err();
-        assert!(inside.contains("does not exist"), "{inside}");
+        // A folder that does not exist yet inside it is made when the file
+        // is put in place, as `write` makes it.
+        let inside = confined_destination(&workspace, "notes/2026/trip.docx").unwrap();
+        assert_eq!(
+            inside,
+            workspace
+                .canonicalize()
+                .unwrap()
+                .join("notes/2026/trip.docx")
+        );
+        let climbing = confined_destination(&workspace, "notes/../../trip.docx").unwrap_err();
+        assert!(climbing.contains("outside the workspace"), "{climbing}");
     }
 
     /// A draft named as `path` is a revision of its workspace file made from

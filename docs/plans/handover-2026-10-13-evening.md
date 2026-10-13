@@ -86,8 +86,12 @@ item "card claims a draft no call made" is left alone (no typed fact).
    is content (`cards_recorded` in `evaluate_response_with_failures` and
    `outcome::TurnFacts`); verified live: a table-card-only turn is
    `Produced`, its items `succeeded`.
-4. `office_apply` refuses a new file whose folder is missing while `write`
-   creates it (a model ran `mkdir` to get past it): decide one contract.
+4. Done 2026-10-13, one contract: a new file may name a folder that does
+   not exist yet inside the workspace. `write` makes it at once;
+   `office_apply` resolves the nearest existing folder inside the
+   workspace (`confined_destination`) and Review's promotion makes the
+   rest. Verified live: `reports/q3/summary.docx` drafted with both
+   folders missing, the workspace untouched until Review.
 5. Doc 90 leftovers that need record fields first: a version's own title,
    the request that asked for it and what its turn read
    (`derived_from`), shown as "You asked" / "It read first" on the page and

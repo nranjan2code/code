@@ -1657,6 +1657,20 @@ mod tests {
         assert!(second.is_ok(), "the dropped lock stayed with a duplicate");
     }
     #[test]
+    fn promotion_makes_the_folders_a_new_file_names() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        fs::create_dir_all(source.path().join("reports/q3")).unwrap();
+        fs::write(source.path().join("reports/q3/summary.docx"), "draft").unwrap();
+        let candidate = candidate_manifest("c-nested", source.path(), target.path()).unwrap();
+        promote(&candidate).unwrap();
+        assert_eq!(
+            fs::read_to_string(target.path().join("reports/q3/summary.docx")).unwrap(),
+            "draft"
+        );
+    }
+
+    #[test]
     fn promotion_is_compare_before_write() {
         let source = tempfile::tempdir().unwrap();
         let target = tempfile::tempdir().unwrap();

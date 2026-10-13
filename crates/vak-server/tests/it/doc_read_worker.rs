@@ -506,3 +506,45 @@ async fn the_worker_writes_a_new_document_clean_when_the_runtime_says_so() {
     );
     assert!(clean.contains(">Up</w:t>"), "{clean}");
 }
+
+/// A new file may name a folder that does not exist yet, as `write` may:
+/// the draft is made, and the folder is made when Review puts the file in
+/// place (item 4 of the 2026-10-13 evening handover).
+#[tokio::test]
+async fn a_new_document_may_name_a_folder_that_does_not_exist_yet() {
+    vak_config::paths::isolate_home_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let worker = PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker"));
+    let tool = vak_tools::brokered_default_tools(worker)
+        .into_iter()
+        .find(|tool| tool.name() == "office_apply")
+        .expect("office_apply is a built-in tool");
+    let output = tool
+        .execute(
+            &json!({
+                "path": "reports/q3/summary.docx",
+                "ops": [{"op": "add_paragraph", "text": "Q3 summary", "style": "Title"}]
+            }),
+            &ToolContext::new(dir.path().to_path_buf()).with_agent_id("mira"),
+        )
+        .await;
+    assert!(!output.is_error(), "{}", output.content);
+    let draft = output
+        .content
+        .split("written to ")
+        .nth(1)
+        .and_then(|rest| rest.split(". ").next())
+        .unwrap()
+        .to_string();
+    let mut package = vak_ooxml::Package::open(
+        std::io::Cursor::new(std::fs::read(on_disk(dir.path(), &draft)).unwrap()),
+        vak_ooxml::Limits::default(),
+    )
+    .unwrap();
+    let body = String::from_utf8(package.read_part("word/document.xml").unwrap()).unwrap();
+    assert!(body.contains("Q3 summary"), "{body}");
+    assert!(
+        !dir.path().join("reports").exists(),
+        "the workspace is untouched until Review"
+    );
+}
