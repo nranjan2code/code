@@ -83,7 +83,7 @@ impl ToolContext {
     pub fn outside_note(&self, p: &Path) -> String {
         if p.is_absolute() && !within(p, &self.cwd) {
             format!(
-                ". This is an absolute path outside the workspace, which is {}; a file in the workspace is named by its path relative to the workspace, with no leading slash",
+                ". This path is outside the workspace, which is {}: a relative path names a file in the workspace, and a full path must start with the workspace's",
                 self.cwd.display()
             )
         } else {
@@ -147,7 +147,7 @@ mod outside_tests {
         let ctx = ToolContext::new(PathBuf::from("/work/space"));
         assert!(
             ctx.outside_note(Path::new("/notes.md"))
-                .contains("outside the workspace, which is /work/space;")
+                .contains("outside the workspace, which is /work/space:")
         );
         assert_eq!(ctx.outside_note(Path::new("notes.md")), "");
         assert_eq!(ctx.outside_note(Path::new("/work/space/notes.md")), "");

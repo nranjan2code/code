@@ -381,10 +381,14 @@ presentation update does not restore stale-context behavior.
 
 - 2026-10-13, the `Workspace:` line (code-owned, `vak_core::workspace_section`,
   in the stable prefix after `Surface:`; the seed is unchanged). It names the
-  workspace folder and says a file in it is named by its path relative to
-  the workspace, with no leading slash. Found live in a workspace-write
+  workspace folder, resolved as `pwd` names it, and says a relative path
+  names a file in it and a full path must start with it. ("With no leading
+  slash" was tried first: a model stripped the slash from the full path and
+  nested a copy of the workspace inside itself.) Found live in a workspace-write
   turn: nothing said where "the workspace" was, the model wrote every file
-  to `/workspace/…`, was refused each time, and ran to the step limit.
+  to `/workspace/…`, was refused each time, and ran to the step limit. The line
+  names no example file: with "(`notes.md`, `src/app.py`)" in it, a model
+  asked for `log-k.md` wrote `notes.md`.
 
 ## Successor
 

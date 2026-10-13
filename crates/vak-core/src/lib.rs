@@ -1137,12 +1137,17 @@ fn agent_identity_text(agent: &vak_session::types::AgentIdentity) -> String {
 
 /// The `Workspace:` line. Without it a model told only "in the workspace"
 /// has to guess where that is; found live 2026-10-13, one wrote every file
-/// to `/workspace/…` and looped on the refusals.
+/// to `/workspace/…` and looped on the refusals. It names no example file:
+/// one given as an example was written in place of the file asked for.
 pub fn workspace_section(cwd: &std::path::Path) -> String {
     format!(
-        "\nWorkspace: {}. Name a file in it by its path relative to the workspace \
-(`notes.md`, `src/app.py`), with no leading slash; commands start in it.\n",
-        cwd.display()
+        "\nWorkspace: {}. A relative path names a file in the workspace; a full \
+path must start with the workspace's. Commands start in it.\n",
+        // Resolved, as `pwd` and every tool's error name it: two spellings
+        // of one folder (`/tmp/…`, `/private/tmp/…`) read as two places.
+        cwd.canonicalize()
+            .unwrap_or_else(|_| cwd.to_path_buf())
+            .display()
     )
 }
 

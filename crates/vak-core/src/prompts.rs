@@ -877,7 +877,7 @@ mod tests {
                 .contains("cards are context, not new work")
         );
         assert!(seed.presentation_contract.contains("in reading order"));
-        assert!(seed.presentation_contract.contains("`answers`"));
+        assert!(seed.presentation_contract.contains("`deliverable`"));
         assert!(
             seed.presentation_contract
                 .contains("Do not create a workspace file")
@@ -1335,7 +1335,10 @@ mod tests {
         let surface = out.text.find("Surface: desktop app.").unwrap();
         let workspace = out.text.find("Workspace: /work/space.").unwrap();
         assert!(surface < workspace, "{}", out.text);
-        assert!(out.text.contains("relative to the workspace"));
+        assert!(
+            out.text
+                .contains("A relative path names a file in the workspace")
+        );
         assert!(!out.tail.contains("Workspace:"));
     }
 

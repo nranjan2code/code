@@ -214,7 +214,7 @@ impl PermissionEngine {
                     Some(path) => Decision::Ask {
                         reason: format!(
                             "'{path}' is outside the workspace, which is {}",
-                            cwd.display()
+                            shown(cwd)
                         ),
                         source: AskSource::Scope,
                     },
@@ -251,6 +251,14 @@ fn path_argument(subject: Subject, args: &Value) -> Option<&str> {
     }
 }
 
+/// The workspace as `pwd` and the tools name it: one spelling of one folder.
+fn shown(cwd: &Path) -> String {
+    cwd.canonicalize()
+        .unwrap_or_else(|_| cwd.to_path_buf())
+        .display()
+        .to_string()
+}
+
 fn scoped_read_decision(subject: Subject, args: &Value, cwd: &Path) -> Decision {
     let Subject::Path { argument, required } = subject else {
         return Decision::Allow;
@@ -264,8 +272,8 @@ fn scoped_read_decision(subject: Subject, args: &Value, cwd: &Path) -> Decision 
     match path {
         Some(path) if !path_in_workspace(Path::new(path), cwd) => Decision::Deny {
             reason: format!(
-                "'{path}' is outside the workspace, which is {}; a file in it is named by its path relative to the workspace. Reaching outside it needs full-access or an explicit scoped rule",
-                cwd.display()
+                "'{path}' is outside the workspace, which is {}: a relative path names a file in the workspace. Reaching outside it needs full-access or an explicit scoped rule",
+                shown(cwd)
             ),
         },
         _ => Decision::Allow,
