@@ -174,7 +174,7 @@ each labelled `brand=vakyartha`, `character`, `kind`, `accent=indian-english`,
 |---|---|---|---|
 | Vakyartha | Vakyartha – Vakyartha (songbird) | `FQKmle1kREMgn23tqx5q` | pace (15.4 s) |
 | Mira | Vakyartha – Mira (fox) | `CwhHeaJVU9ZN4RMoaabk` | pace (14.6 s) |
-| Moss | Male Voice 1 (rename to "Vakyartha – Moss (forest friend)") | `sRPGZSnzBPol5Pjt6JFD` | the owner, by ear |
+| Moss | Vakyartha – Moss (forest friend) | `sRPGZSnzBPol5Pjt6JFD` | the owner, by ear |
 | Nori | Vakyartha – Nori (seal) | `wUQmDsGn7RMvveESnUd8` | pace (13.2 s) |
 | Pip | Vakyartha – Pip (penguin) | `IORPyjxKm2m9lE40qnBG` | pace (10.7 s) |
 | Lumi | Vakyartha – Lumi (cloud friend) | `fyGNdOr9n4ggf2kF4hNa` | pace (21.7 s) |
@@ -230,6 +230,49 @@ Batch 2 ran Vakyartha only (Kling 2.5 Turbo, about 2,100 credits).
 
 The same three-note motif is the brand chime, so the film's end card, the
 app's launch sound and the theme are one idea at three lengths.
+
+## Batch 3: system sounds, five families (2026-10-13)
+
+A notification is judged next to its siblings, so the choice is between
+**families**, not single beeps: each family plays the same six moments in
+one instrument voice, and the app ships one family (or offers them as a
+setting). Prompts follow the model's own guidance: one concrete sound per
+prompt, short, texture and pitch named, no visual words.
+
+| Family | Voice | Character |
+|---|---|---|
+| `glass` | glass marimba | the brand chime's own instrument; calm, premium |
+| `santoor` | santoor (hammered dulcimer) | the most Indian; bright, shimmering |
+| `brass` | small brass temple bell, manjira | warm, devotional undertone; use with care for error |
+| `wood` | kalimba, slit drum | organic, soft, homely |
+| `pure` | soft sine tones | modern minimal, closest to OS defaults |
+
+Each family has the same six moments and the same shape for each:
+
+| Moment | Shape |
+|---|---|
+| `notification` | one soft note |
+| `turn-finished` | two quick rising notes |
+| `approval-needed` | two notes, the second higher and held: a question |
+| `error` | two soft falling, muted notes |
+| `success` | three quick rising notes |
+| `listening` | one very short rising tap |
+
+The exact prompt of each of the 30 sounds is in `manifest.json`. Choose by
+playing a family's six in a row at low volume on a laptop and a phone, then
+in the app: the right family is the one you stop noticing by the third day.
+
+## Files in this folder
+
+- `manifest.json`: every asset, its prompt (or voice description and line),
+  model, ElevenLabs flow node, expected file and status. It is the record;
+  when a file is added, set its `status` to `downloaded`.
+- `voices/`: the eight saved companion voice samples (downloaded).
+- `sounds/ui/`, `sounds/companions/`, `sounds/system/<family>/`, `music/`,
+  `images/`, `video/`: download each chosen take from the flow (open the
+  node, pick the take, Download) and save it under the name the manifest
+  gives. The connector returns no download links for these, so this step
+  is by hand.
 
 ## The film: "Heard" (60 seconds, script)
 
