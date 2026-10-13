@@ -2523,7 +2523,24 @@ export interface ArtifactSummary {
   siblings: number;
   head?: string | null;
   size?: number | null;
+  /** What waits on the person, for a file of this workspace (doc 90 §5). */
+  needs?: FileNeeds;
 }
+
+/** What one file waits on the person for (doc 90 §5). */
+export interface FileNeeds {
+  waiting: number;
+  /** Waiting drafts made before the copy in the folder now. */
+  behind: number;
+  changed_outside: boolean;
+  missing: boolean;
+}
+
+/** What one version is now (doc 90 §5). */
+export type VersionNow =
+  | { is: "in_folder" | "accepted" | "written" | "found_outside" | "revised" | "undone" | "saved" | "erased" }
+  | { is: "waiting"; behind: boolean }
+  | { is: "in_trash"; since: string };
 
 export interface ArtifactVersion {
   id: string;
@@ -2531,8 +2548,12 @@ export interface ArtifactVersion {
   digest: string;
   size: number;
   /** Where it came from: a call, a Review candidate, or a person. */
-  from: "call" | "candidate" | "person";
+  from: "call" | "candidate" | "person" | "workspace";
   session?: string;
+  /** The turn it was made in, the id `recall` takes. */
+  turn?: string;
+  /** What it is now, for a file of this workspace. */
+  now?: VersionNow;
   at: string;
   promoted: boolean;
   saved: boolean;
@@ -2569,6 +2590,22 @@ export interface ArtifactShare {
   expires_at?: string | null;
   history_from?: string | null;
   status: "active" | "expired" | "revoked";
+}
+
+/** The version a tool call made and what it is now (doc 90 §5). */
+export interface MadeVersion {
+  artifact: string;
+  name: string;
+  version: string;
+  number: number;
+  now?: VersionNow | null;
+  /** Versions of the file made after this one. */
+  newer: number;
+  needs?: FileNeeds | null;
+}
+
+export function madeByCall(session: string, call: string): Promise<MadeVersion> {
+  return req(`/library/made/${encodeURIComponent(session)}/${encodeURIComponent(call)}`);
 }
 
 export function libraryShares(id: string): Promise<{ shares: ArtifactShare[] }> {

@@ -32,6 +32,7 @@ import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import { approve, sendPrompt } from "../App";
 import Icon from "./Icon";
+import { Pill, stateOf } from "./fileState";
 import { safeUrl, isLocalArtifactPath, sandboxedSrcdoc } from "../safeUrl";
 import { parseMailCalendarCitation } from "../mailCalendarCitation";
 import { fileSubject, inlineTitle, runOrigin } from "../canvasSubject";
@@ -814,6 +815,15 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
   const artifact = props.item.content.artifact;
   const file = useFileActions(artifact, props.item, props.sessionId);
   const words = () => statusWords(artifact.status);
+  // What the version this card shows is today, from the Library's record
+  // (doc 90 §5); the words above are only what the turn knew.
+  const call = () => props.item.provenance?.tool_call_id ?? undefined;
+  const [live] = createResource(
+    () => (props.sessionId && call() ? [props.sessionId, call()!] as const : null),
+    ([session, made]) => api.madeByCall(session, made).catch(() => null),
+  );
+  const liveState = () => stateOf(live()?.now, "call");
+  const behind = () => live()?.now?.is === "waiting" && (live()!.now as { behind: boolean }).behind;
   const review = () => (props.showReview === false ? undefined : props.item.actions.find((action) => action.verb === "review_draft"));
   const primary = () => {
     if (!review() || artifact.status?.state !== "draft") return false;
@@ -843,7 +853,18 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
         </div>
       </Show>
       <div class="result-card-text">
-        <Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>
+        <Show
+          when={liveState()}
+          fallback={<Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>}
+        >
+          {(state) => (
+            <p class="result-card-states">
+              <Pill mark={state().mark}>{state().word}</Pill>
+              <Show when={behind()}><Pill mark="changed">Made before your edit</Pill></Show>
+              <Show when={(live()?.newer ?? 0) > 0}><span class="result-card-since">since then: {live()!.newer} more version{live()!.newer === 1 ? "" : "s"}</span></Show>
+            </p>
+          )}
+        </Show>
         <h3 class="result-card-name">{artifact.name}</h3>
         <p class="result-card-details"><span>{facts()}</span><Show when={made()}>{(value) => <span class="result-card-made"> · {value()}</span>}</Show><Show when={!words()?.waiting && words()?.folder}><span> · {words()?.folder}</span></Show></p>
         <Show when={file.flags()}>{(label) => <p class="result-card-flags" title={file.facts()!.flags.join("\n")}><Icon name="warning" size={12} />{label()}</p>}</Show>
@@ -859,7 +880,12 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
         <Show when={file.path()}><button type="button" class="btn" onClick={() => openFile(props.item, props.sessionId)}>Open</button></Show>
         <Show when={!words()?.waiting && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.download(value())}>Download</button>}</Show>
         <Show when={file.canOpenWith() && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.openWith(value())}>Open with…</button>}</Show>
-        <Show when={file.inLibrary}>{(open) => <button type="button" class="btn" onClick={open()}>Open in Library</button>}</Show>
+        <Show
+          when={live()}
+          fallback={<Show when={file.inLibrary}>{(open) => <button type="button" class="btn" onClick={open()}>Open in Library</button>}</Show>}
+        >
+          {(made) => <button type="button" class="btn" onClick={() => openInLibrary(made().artifact)}>Open history</button>}
+        </Show>
         <Show when={props.askForChanges && props.resultId}><button type="button" class="result-card-link" onClick={askForChanges}>Ask for changes</button></Show>
       </div>
     </article>

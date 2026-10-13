@@ -31,6 +31,7 @@ import { ATTACH_ARTIFACT_EVENT, ATTACH_FILES_EVENT, type ArtifactChip } from "..
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
 import StatusBar from "./StatusBar";
+import NeedsYou from "./NeedsYou";
 import VoiceControl from "./VoiceControl";
 import RunControls from "./RunControls";
 
@@ -647,6 +648,7 @@ export default function Composer(props: { cwd: string }) {
     <div class="composer-wrap">
       {/* Connection news sits just above the message box it is about. */}
       <StatusBar />
+      <NeedsYou />
       <Show when={replyTarget()}>
         {(target) => <div class="composer-target" role="status">
           <span>Replying to {target().label}</span>

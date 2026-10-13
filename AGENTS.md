@@ -572,6 +572,10 @@ unasked.
   reach is checked through the real layers in its test
   (`require_bearer` and `enforce_participant_audience`), never by
   calling the handler alone.
+- Say what a file or a version is now only from
+  `file_state::version_states` and `file_state::needs` (served as `now`
+  and `needs` by the Library routes), never from a client's own reading
+  of the record.
 - Decide what a client shows from where a file is or what a record
   says, never from a directory's name in a path: a test for
   `.vak/scratch` hid Review and Undo once drafts left the project tree.

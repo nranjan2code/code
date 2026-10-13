@@ -97,13 +97,11 @@ has no route until one is set:
    now recorded as the block it was made to (`presentation_info`), and a
    card the host cannot record is a `Fault::Tool` error, never "shown".
    Live after: 4 of 4 markup cards recorded with an id.
-2. Doc 90 stage 5: the maintainer approved the mockup as it stands
-   (2026-10-13; its three review questions were never written down). Build
-   it in steps: 5a the server's per-version state and "needs you" summary
-   from `file_state`; 5b the version graph and origin on the artifact
-   page; 5c live states on draft cards; 5d the "Needs you" strip; 5e the
-   Library's state filters. Version names are "Version N" with their
-   origin: the record holds no title per version.
+2. Doc 90 stage 5: done 2026-10-13 (doc 90's status line), to the mockup
+   the maintainer approved as it stands, with the Library's look reworked
+   (one primary action, the rest under More; state chips; file-type icons).
+   Open: version titles, "You asked" and "It read first" need record
+   fields first; Compare with your folder.
 3. Doc 90 §5.1, Agent half: done 2026-10-13 (see doc 90's status line).
    Live: a new conversation's `doc_read` of a draft was told "made in turn
    T of conversation C, made from version V" and read the draft. Found on
