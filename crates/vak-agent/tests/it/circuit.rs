@@ -185,9 +185,12 @@ async fn second_run_fails_fast_when_circuit_is_open() {
         // Blind network loss: the only class that trips the breaker.
         fail_with: LlmError::Network("provider unreachable".into()),
     });
+    // Long enough that run 3 starts inside it under a loaded test run: at
+    // 200ms the circuit half-closed first and the probe reached the
+    // provider (seen in a full gate, 2026-10-13).
     let breaker = Arc::new(CircuitBreaker::new(CircuitBreakerConfig {
         threshold: 4,
-        cooldown: std::time::Duration::from_millis(200),
+        cooldown: std::time::Duration::from_secs(2),
     }));
 
     // Run 1: 2 attempts (1 + 1 retry) => 2 calls, breaker counts 2 failures.
@@ -261,7 +264,7 @@ async fn second_run_fails_fast_when_circuit_is_open() {
     }
     // After the cooldown the circuit half-closes: one probe gets through,
     // and a healthy provider heals it on success.
-    std::thread::sleep(std::time::Duration::from_millis(250));
+    std::thread::sleep(std::time::Duration::from_millis(2100));
     let mut a4 = build_agent(Arc::new(Healthy), breaker.clone(), "run-4");
     let outcome = a4
         .run(
