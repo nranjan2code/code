@@ -4016,8 +4016,17 @@ impl Core {
                         .agent_identity()
                         .map(|agent| agent.id.clone())
                         .unwrap_or_else(|| "vak".into());
+                    let session = scope.session_id.clone();
                     Some(Arc::new(move |id: &str| {
-                        file_state::describe(&artifacts, &cwd, id, &agent)
+                        file_state::describe(
+                            &artifacts,
+                            &cwd,
+                            id,
+                            file_state::Reader {
+                                agent: &agent,
+                                session: Some(&session),
+                            },
+                        )
                     }))
                 },
             }));
@@ -6890,6 +6899,7 @@ impl Core {
         let file_artifacts = self.artifacts();
         let file_space = vak_session::trace::local::space(&self.inner.cwd).to_string();
         let file_cwd = self.inner.cwd.clone();
+        let file_session = session.header().map(|header| header.session_id.clone());
         let file_agent = self
             .agent_identity()
             .map(|agent| agent.id.clone())
@@ -6898,11 +6908,21 @@ impl Core {
             move |query: vak_agent::FileQuery<'_>| match query {
                 vak_agent::FileQuery::Path(path) => {
                     let state = file_state::observe(&file_artifacts, &file_space, &file_cwd, path)?;
-                    file_state::note(&state, &file_agent)
+                    file_state::note(
+                        &state,
+                        file_state::Reader {
+                            agent: &file_agent,
+                            session: file_session.as_deref(),
+                        },
+                    )
                 }
-                vak_agent::FileQuery::Pattern(pattern) => {
-                    file_state::matching_note(&file_artifacts, &file_space, &file_cwd, pattern)
-                }
+                vak_agent::FileQuery::Pattern(pattern) => file_state::matching_note(
+                    &file_artifacts,
+                    &file_space,
+                    &file_cwd,
+                    pattern,
+                    file_session.as_deref(),
+                ),
             },
         ));
         cfg.request_timeout = self.request_timeout();

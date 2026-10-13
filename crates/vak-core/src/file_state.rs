@@ -69,6 +69,8 @@ pub struct Draft {
     pub draft_name: Option<String>,
     /// The turn the version was made in.
     pub turn: Option<String>,
+    /// The conversation the version was made in, from its source.
+    pub session: Option<String>,
     /// The version it was made from.
     pub parent: Option<VersionId>,
     pub state: DraftState,
@@ -146,6 +148,12 @@ pub fn file_state(artifact: Option<&Artifact>, path: &str, workspace: Workspace)
             version: version.id,
             draft_name: draft_name(artifact, version),
             turn: version.turn.clone(),
+            session: match &version.source {
+                VersionSource::Call { session, .. } | VersionSource::Candidate { session, .. } => {
+                    Some(session.clone())
+                }
+                VersionSource::Person | VersionSource::Workspace => None,
+            },
             parent: version.parent,
             state: draft_state(version),
             source: version.source.clone(),
@@ -296,13 +304,19 @@ pub fn workspace_path(cwd: &Path, path: &str) -> String {
     let relative = if named.is_absolute() {
         match named.strip_prefix(cwd) {
             Ok(rest) => rest.to_string_lossy().into_owned(),
-            Err(_) => match (cwd.canonicalize(), named.canonicalize()) {
-                (Ok(root), Ok(file)) => file.strip_prefix(&root).map_or_else(
-                    |_| path.to_string(),
+            Err(_) => cwd
+                .canonicalize()
+                .ok()
+                .and_then(|root| {
+                    vak_tools::context::resolved(named)
+                        .strip_prefix(&root)
+                        .ok()
+                        .map(Path::to_path_buf)
+                })
+                .map_or_else(
+                    || path.to_string(),
                     |rest| rest.to_string_lossy().into_owned(),
                 ),
-                _ => path.to_string(),
-            },
         }
     } else {
         path.to_string()
@@ -355,10 +369,10 @@ pub fn observe(artifacts: &Artifacts, space: &str, cwd: &Path, path: &str) -> Op
 /// What a search hit on the artifact `id` says of its file (doc 90 §3.3):
 /// its workspace path, then the note about its state, or that it is in the
 /// workspace as recorded.
-pub fn describe(artifacts: &Artifacts, cwd: &Path, id: &str, agent: &str) -> Option<String> {
+pub fn describe(artifacts: &Artifacts, cwd: &Path, id: &str, reader: Reader<'_>) -> Option<String> {
     let artifact = artifacts.get(id)?;
     let state = observe(artifacts, &artifact.space, cwd, &artifact.path)?;
-    Some(match note(&state, agent) {
+    Some(match note(&state, reader) {
         Some(note) => format!("file `{}`\n{note}", artifact.path),
         None => format!("file `{}`, in the workspace as recorded", artifact.path),
     })
@@ -372,6 +386,7 @@ pub fn matching_note(
     space: &str,
     cwd: &Path,
     pattern: &str,
+    session: Option<&str>,
 ) -> Option<String> {
     let matcher = globset::Glob::new(pattern).ok()?.compile_matcher();
     let lines: Vec<String> = artifacts
@@ -382,7 +397,11 @@ pub fn matching_note(
         .filter_map(|artifact| {
             let state = file_state(Some(&artifact), &artifact.path, Workspace::Absent);
             let newest = state.drafts.first()?;
-            Some(format!("- `{}`: {}", artifact.path, draft_line(newest)))
+            Some(format!(
+                "- `{}`: {}",
+                artifact.path,
+                draft_line(newest, session)
+            ))
         })
         .collect();
     (!lines.is_empty()).then(|| {
@@ -393,11 +412,37 @@ pub fn matching_note(
     })
 }
 
+/// Who the note is for: the Agent reading and the conversation it reads
+/// in, so a version's origin is named from where the reader stands
+/// (doc 90 §5.1).
+#[derive(Debug, Clone, Copy)]
+pub struct Reader<'a> {
+    pub agent: &'a str,
+    pub session: Option<&'a str>,
+}
+
+/// Where a version was made, by the ids `recall` takes: `turn_id` for a turn
+/// of this conversation, with `conversation` for another one (doc 90 §5.1).
+fn origin(draft: &Draft, session: Option<&str>) -> Option<String> {
+    let here = draft.session.is_some() && draft.session.as_deref() == session;
+    match (&draft.turn, &draft.session) {
+        (Some(turn), _) if here => Some(format!("made in turn {turn} of this conversation")),
+        (Some(turn), Some(other)) => Some(format!("made in turn {turn} of conversation {other}")),
+        (Some(turn), None) => Some(format!("made in turn {turn}")),
+        (None, Some(_)) if here => Some("made in this conversation".to_string()),
+        (None, Some(other)) => Some(format!("made in conversation {other}")),
+        (None, None) => None,
+    }
+}
+
 /// The note the loop attaches to a call that touched `state.path` (doc 90
 /// §3.2), or `None` when the folder alone already says everything. Facts
 /// only: it never chooses between a draft and the workspace copy (D1).
-pub fn note(state: &FileState, agent: &str) -> Option<String> {
-    let other_owner = state.owner.as_deref().is_some_and(|owner| owner != agent);
+pub fn note(state: &FileState, reader: Reader<'_>) -> Option<String> {
+    let other_owner = state
+        .owner
+        .as_deref()
+        .is_some_and(|owner| owner != reader.agent);
     let status = match (&state.workspace_is, &state.workspace) {
         (WorkspaceIs::Changed { since }, _) => Some(format!(
             "`{}` changed in the workspace outside Vak since version {since}.",
@@ -431,7 +476,7 @@ pub fn note(state: &FileState, agent: &str) -> Option<String> {
         state
             .drafts
             .iter()
-            .map(|draft| format!("- {}", draft_line(draft))),
+            .map(|draft| format!("- {}", draft_line(draft, reader.session))),
     );
     if let Some(newest) = state
         .drafts
@@ -451,7 +496,7 @@ pub fn note(state: &FileState, agent: &str) -> Option<String> {
     Some(format!("[file] {}", lines.join("\n")))
 }
 
-fn draft_line(draft: &Draft) -> String {
+fn draft_line(draft: &Draft, session: Option<&str>) -> String {
     let mut parts = Vec::new();
     let name = match (&draft.draft_name, &draft.state) {
         (Some(name), _) => {
@@ -477,8 +522,11 @@ fn draft_line(draft: &Draft) -> String {
             "made before the workspace's current copy, which it does not include".to_string(),
         );
     }
-    if let Some(turn) = &draft.turn {
-        parts.push(format!("made in turn {turn}"));
+    if let Some(origin) = origin(draft, session) {
+        parts.push(origin);
+    }
+    if let Some(parent) = draft.parent {
+        parts.push(format!("made from version {parent}"));
     }
     if parts.is_empty() {
         name
@@ -539,6 +587,11 @@ mod tests {
                 },
             }];
             Self { artifact, events }
+        }
+
+        /// The conversation `Record::call` versions are made in.
+        fn reader(&self) -> String {
+            "ses".to_string()
         }
 
         fn push(&mut self, secs: i64, turn: Option<TurnId>, step: ArtifactStep) {
@@ -646,7 +699,15 @@ mod tests {
         let found = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
         assert!(found.drafts.is_empty(), "{:?}", found.drafts);
         assert!(
-            !note(&found, "vak").unwrap_or_default().contains("made by"),
+            !note(
+                &found,
+                Reader {
+                    agent: "vak",
+                    session: None
+                }
+            )
+            .unwrap_or_default()
+            .contains("made by"),
             "{found:?}"
         );
     }
@@ -664,7 +725,7 @@ mod tests {
         assert_eq!(draft.version, second);
         assert_eq!(draft.state, DraftState::Waiting);
         assert_eq!(draft.parent, Some(first));
-        assert_eq!(draft.turn, Some(turn.to_string()));
+        assert_eq!(draft.turn, Some(turn.uuid().to_string()));
         assert_eq!(
             draft.draft_name.as_deref(),
             Some(".vak/scratch/vak/call_b/porto-notes.docx")
@@ -828,8 +889,8 @@ mod tests {
         let found = file_state(record.artifact().as_ref(), PATH, present(b"base"));
         let ids: Vec<VersionId> = found.drafts.iter().map(|draft| draft.version).collect();
         assert_eq!(ids, vec![newer, older]);
-        assert_eq!(found.drafts[0].turn, Some(newer_turn.to_string()));
-        assert_eq!(found.drafts[1].turn, Some(older_turn.to_string()));
+        assert_eq!(found.drafts[0].turn, Some(newer_turn.uuid().to_string()));
+        assert_eq!(found.drafts[1].turn, Some(older_turn.uuid().to_string()));
     }
 
     #[test]
@@ -845,12 +906,30 @@ mod tests {
     #[test]
     fn nothing_is_noted_for_an_unrecorded_path_or_the_workspace_version() {
         let found = file_state(None, PATH, Workspace::Absent);
-        assert_eq!(note(&found, "vak"), None);
+        assert_eq!(
+            note(
+                &found,
+                Reader {
+                    agent: "vak",
+                    session: None
+                }
+            ),
+            None
+        );
         let mut record = Record::new("vak");
         let only = record.version(2, None, None, b"one", Record::call("call_a"));
         record.push(3, None, ArtifactStep::Promoted { version: only });
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
-        assert_eq!(note(&found, "vak"), None);
+        assert_eq!(
+            note(
+                &found,
+                Reader {
+                    agent: "vak",
+                    session: None
+                }
+            ),
+            None
+        );
     }
 
     #[test]
@@ -862,7 +941,15 @@ mod tests {
         let found = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
         assert_eq!(found.drafts[0].version, newer);
         assert_eq!(found.drafts[1].version, older);
-        let text = note(&found, "vak").expect("a note");
+        let here = record.reader();
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: Some(&here),
+            },
+        )
+        .expect("a note");
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 4, "{text}");
         assert_eq!(
@@ -872,7 +959,8 @@ mod tests {
         assert_eq!(
             lines[1],
             format!(
-                "- `.vak/scratch/vak/call_b/porto-notes.docx`: waiting for review, made in turn {newer_turn}"
+                "- `.vak/scratch/vak/call_b/porto-notes.docx`: waiting for review, made in turn {} of this conversation",
+                newer_turn.uuid()
             )
         );
         assert!(lines[2].starts_with(
@@ -885,6 +973,71 @@ mod tests {
         assert!(!text.contains("workspace copy"), "{text}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_new_file_named_through_a_link_is_the_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let named = real.canonicalize().unwrap().join("notes/trip.docx");
+        assert_eq!(
+            workspace_path(&link, &named.to_string_lossy()),
+            "notes/trip.docx"
+        );
+        let through_link = link.join("trip.docx");
+        assert_eq!(
+            workspace_path(&real, &through_link.to_string_lossy()),
+            "trip.docx"
+        );
+        let outside = dir.path().join("elsewhere/trip.docx");
+        assert_eq!(
+            workspace_path(&real, &outside.to_string_lossy()),
+            outside.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn a_draft_names_its_conversation_turn_and_parent_by_the_ids_recall_takes() {
+        let mut record = Record::new("vak");
+        let first = record.version(2, None, None, b"one", Record::call("call_a"));
+        let turn = TurnId::new();
+        record.version(3, Some(turn), Some(first), b"two", Record::call("call_b"));
+        let found = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
+        let conversation = record.reader();
+        let here = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: Some(&conversation),
+            },
+        )
+        .expect("a note");
+        assert!(
+            here.contains(&format!(
+                "made in turn {} of this conversation, made from version {first}",
+                turn.uuid()
+            )),
+            "{here}"
+        );
+        let elsewhere = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: Some("another"),
+            },
+        )
+        .expect("a note");
+        assert!(
+            elsewhere.contains(&format!(
+                "made in turn {} of conversation {conversation}",
+                turn.uuid()
+            )),
+            "{elsewhere}"
+        );
+    }
+
     #[test]
     fn present_file_with_a_newer_draft_names_the_version_it_matches() {
         let mut record = Record::new("vak");
@@ -892,7 +1045,14 @@ mod tests {
         record.push(3, None, ArtifactStep::Promoted { version: accepted });
         let draft = record.version(4, None, Some(accepted), b"two", Record::call("call_b"));
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert!(
             text.starts_with(&format!(
                 "[file] `porto-notes.docx` matches version {accepted}.\n"
@@ -912,7 +1072,14 @@ mod tests {
         let accepted = record.version(2, None, None, b"one", Record::call("call_a"));
         record.push(3, None, ArtifactStep::Promoted { version: accepted });
         let found = file_state(record.artifact().as_ref(), PATH, present(b"edited"));
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert_eq!(
             text,
             format!(
@@ -928,7 +1095,14 @@ mod tests {
         record.push(3, None, ArtifactStep::Promoted { version: accepted });
         let found = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
         assert_eq!(
-            note(&found, "vak").expect("a note"),
+            note(
+                &found,
+                Reader {
+                    agent: "vak",
+                    session: None
+                }
+            )
+            .expect("a note"),
             format!(
                 "[file] `porto-notes.docx` was in the workspace as version {accepted} and is not there now."
             )
@@ -944,7 +1118,14 @@ mod tests {
         record.push(5, None, ArtifactStep::Promoted { version: second });
         record.push(6, None, ArtifactStep::PromotionUndone { version: second });
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert!(
             text.contains("`.vak/scratch/vak/call_b/porto-notes.docx`: undone by the person"),
             "{text}"
@@ -965,7 +1146,14 @@ mod tests {
         );
         record.push(5, None, ArtifactStep::Saved { version: candidate });
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert!(
             text.contains("- no name: a Review candidate: saved by the person"),
             "{text}"
@@ -988,7 +1176,14 @@ mod tests {
             },
         );
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert!(text.contains("in the trash since 1970-01-01"), "{text}");
 
         let mut record = Record::new("vak");
@@ -997,7 +1192,14 @@ mod tests {
         let draft = record.version(4, None, Some(accepted), b"two", Record::call("call_b"));
         record.push(5, None, ArtifactStep::Erased { version: draft });
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert!(text.contains("- erased, contents gone"), "{text}");
         assert!(!text.contains("pass that draft"), "{text}");
 
@@ -1027,7 +1229,14 @@ mod tests {
             },
         );
         let found = file_state(record.artifact().as_ref(), PATH, present(b"one"));
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert!(
             text.contains("- no name: a Review candidate: waiting for review, deletes the file"),
             "{text}"
@@ -1039,7 +1248,14 @@ mod tests {
         let mut record = Record::new("ops");
         record.version(2, None, None, b"one", Record::call("call_a"));
         let found = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert!(
             text.ends_with(
                 "`porto-notes.docx` belongs to another Agent; this Agent cannot continue it."
@@ -1047,9 +1263,15 @@ mod tests {
             "{text}"
         );
         assert!(
-            !note(&found, "ops")
-                .unwrap_or_default()
-                .contains("another Agent")
+            !note(
+                &found,
+                Reader {
+                    agent: "ops",
+                    session: None
+                }
+            )
+            .unwrap_or_default()
+            .contains("another Agent")
         );
     }
 
@@ -1060,7 +1282,14 @@ mod tests {
         record.push(3, None, ArtifactStep::Promoted { version: first });
         record.version(4, None, Some(first), b"two", Record::call("call_b"));
         let found = file_state(record.artifact().as_ref(), PATH, Workspace::Absent);
-        let text = note(&found, "vak").expect("a note");
+        let text = note(
+            &found,
+            Reader {
+                agent: "vak",
+                session: None,
+            },
+        )
+        .expect("a note");
         assert!(!text.to_lowercase().contains("prefer"), "{text}");
         assert!(!text.contains("instead"), "{text}");
     }

@@ -471,22 +471,29 @@ fn a_listing_is_told_of_matching_drafts_not_in_the_workspace() {
     sink.declared(&claim, Some("ses"), "call_m", None);
     let space = vak_session::trace::local::space(cwd.path()).to_string();
 
-    let told =
-        vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "**/*madrid*.docx")
-            .expect("the draft is listed");
+    let told = vak_core::file_state::matching_note(
+        &artifacts,
+        &space,
+        cwd.path(),
+        "**/*madrid*.docx",
+        None,
+    )
+    .expect("the draft is listed");
     assert!(told.contains("`madrid-notes.docx`"), "{told}");
     assert!(
         told.contains(".vak/scratch/vak/call_m/madrid-notes.docx"),
         "{told}"
     );
     assert!(
-        vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "*.xlsx").is_none()
+        vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "*.xlsx", None)
+            .is_none()
     );
 
     // Accepted into the folder, the listing sees it itself.
     std::fs::write(cwd.path().join("madrid-notes.docx"), b"draft").unwrap();
     assert!(
-        vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "*.docx").is_none()
+        vak_core::file_state::matching_note(&artifacts, &space, cwd.path(), "*.docx", None)
+            .is_none()
     );
 }
 
@@ -530,7 +537,16 @@ fn a_search_hit_names_its_file_and_state() {
         .id
         .to_string();
 
-    let told = vak_core::file_state::describe(&artifacts, cwd.path(), &id, "vak").unwrap();
+    let told = vak_core::file_state::describe(
+        &artifacts,
+        cwd.path(),
+        &id,
+        vak_core::file_state::Reader {
+            agent: "vak",
+            session: None,
+        },
+    )
+    .unwrap();
     assert!(told.starts_with("file `rome-notes.docx`"), "{told}");
     assert!(
         told.contains(".vak/scratch/vak/call_r/rome-notes.docx"),
@@ -538,7 +554,16 @@ fn a_search_hit_names_its_file_and_state() {
     );
 
     std::fs::write(cwd.path().join("rome-notes.docx"), b"draft").unwrap();
-    let told = vak_core::file_state::describe(&artifacts, cwd.path(), &id, "vak").unwrap();
+    let told = vak_core::file_state::describe(
+        &artifacts,
+        cwd.path(),
+        &id,
+        vak_core::file_state::Reader {
+            agent: "vak",
+            session: None,
+        },
+    )
+    .unwrap();
     assert!(told.contains("in the workspace"), "{told}");
 }
 
@@ -598,7 +623,14 @@ fn an_outside_edit_is_recorded_and_a_draft_made_before_it_is_behind() {
     assert_eq!(observed.parent, Some(accepted));
     let waiting = after.drafts.iter().find(|d| d.version == draft).unwrap();
     assert!(waiting.behind, "{after:?}");
-    let told = vak_core::file_state::note(&after, "vak").unwrap();
+    let told = vak_core::file_state::note(
+        &after,
+        vak_core::file_state::Reader {
+            agent: "vak",
+            session: None,
+        },
+    )
+    .unwrap();
     assert!(told.contains("edit made outside Vak"), "{told}");
     assert!(told.contains("which it does not include"), "{told}");
 

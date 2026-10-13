@@ -97,18 +97,27 @@ has no route until one is set:
    now recorded as the block it was made to (`presentation_info`), and a
    card the host cannot record is a `Fault::Tool` error, never "shown".
    Live after: 4 of 4 markup cards recorded with an id.
-2. Doc 90 stage 5, after the maintainer answers the mockup's three review
-   questions (`docs/assets/file-history-2026/file-history.html`): the
-   version graph on the Library artifact page, live states on draft cards,
-   the "Needs you" strip, state filters. Another session may work on
-   `crates/vak-client-ui`: pull first, rebuild `dist-web` rather than merge.
-3. Doc 90 §5.1: where each version came from, on the page and by `recall`.
-4. The evaluation item's second half: a turn that produced no draft but
-   whose card says it did. No typed fact carries that claim unless the plan
-   lists a file deliverable; decide with the maintainer before building,
-   and read no words. Also check whether a card-only answer (no response
-   text) is evaluated `Unknown` by `evaluate_response_with_failures` and so
-   marked unverified.
+2. Doc 90 stage 5: the maintainer approved the mockup as it stands
+   (2026-10-13; its three review questions were never written down). Build
+   it in steps: 5a the server's per-version state and "needs you" summary
+   from `file_state`; 5b the version graph and origin on the artifact
+   page; 5c live states on draft cards; 5d the "Needs you" strip; 5e the
+   Library's state filters. Version names are "Version N" with their
+   origin: the record holds no title per version.
+3. Doc 90 §5.1, Agent half: done 2026-10-13 (see doc 90's status line).
+   Live: a new conversation's `doc_read` of a draft was told "made in turn
+   T of conversation C, made from version V" and read the draft. Found on
+   the way and fixed: a new file named by an absolute path through `/tmp`
+   was never recorded; `office_apply` said "the directory does not exist"
+   for a path outside the workspace and did not name the workspace. Still
+   open: `write` creates a missing folder but `office_apply` refuses a new
+   file whose folder is missing (a model ran `mkdir` to get past it); the
+   note does not list the inputs a turn read.
+4. The evaluation item's second half: the maintainer decided (2026-10-13)
+   to leave a card that claims a draft no call made: with no file
+   deliverable in the plan no typed fact carries the claim, and reading the
+   card's words is not allowed. Still to check: whether a card-only answer
+   is evaluated `Unknown` by `evaluate_response_with_failures`.
 5. Model choice, recorded with the contract now stating the facts (do not
    tune wording further without a new contract cause): after the work is
    done a turn sometimes makes a few more reads or writes first; a model

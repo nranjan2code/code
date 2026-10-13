@@ -82,10 +82,7 @@ impl ToolContext {
     /// workspace's, and the caller was told only that nothing is there.
     pub fn outside_note(&self, p: &Path) -> String {
         if p.is_absolute() && !within(p, &self.cwd) {
-            format!(
-                ". This path is outside the workspace, which is {}: a relative path names a file in the workspace, and a full path must start with the workspace's",
-                self.cwd.display()
-            )
+            outside_facts(&self.cwd)
         } else {
             String::new()
         }
@@ -110,27 +107,44 @@ pub fn shared_ctx(dir: &Path) -> Arc<ToolContext> {
     Arc::new(ToolContext::new(dir.to_path_buf()))
 }
 
-/// Whether `p` is inside `root`, both resolved through their nearest
-/// existing ancestor, so `/tmp/x` and `/private/tmp/x` are one place and a
-/// file that does not exist yet still has an answer.
-fn within(p: &Path, root: &Path) -> bool {
-    fn resolved(p: &Path) -> PathBuf {
-        let mut rest = Vec::new();
-        let mut at = p;
-        loop {
-            if let Ok(real) = at.canonicalize() {
-                return rest.iter().rev().fold(real, |path, part| path.join(part));
+/// `p` with its links resolved through its nearest existing ancestor, so
+/// `/tmp/x` and `/private/tmp/x` are one place and a file that does not
+/// exist yet still has an answer. The one resolver every workspace check
+/// uses.
+pub fn resolved(p: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut at = p;
+    loop {
+        if let Ok(real) = at.canonicalize() {
+            return rest.iter().rev().fold(real, |path, part| path.join(part));
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                at = parent;
             }
-            match (at.parent(), at.file_name()) {
-                (Some(parent), Some(name)) => {
-                    rest.push(name.to_os_string());
-                    at = parent;
-                }
-                _ => return p.to_path_buf(),
-            }
+            _ => return p.to_path_buf(),
         }
     }
+}
+
+/// Whether `p` is inside `root`, both `resolved`.
+pub fn within(p: &Path, root: &Path) -> bool {
     p.starts_with(root) || resolved(p).starts_with(resolved(root))
+}
+
+/// The refusal for `name`, a path outside the workspace `cwd`: the same
+/// facts `ToolContext::outside_note` adds, so every tool names the
+/// workspace one way.
+pub fn outside_refusal(name: &str, cwd: &Path) -> String {
+    format!("access denied: {name}{}", outside_facts(cwd))
+}
+
+fn outside_facts(cwd: &Path) -> String {
+    format!(
+        ". This path is outside the workspace, which is {}: a relative path names a file in the workspace, and a full path must start with the workspace's",
+        cwd.display()
+    )
 }
 
 #[cfg(test)]

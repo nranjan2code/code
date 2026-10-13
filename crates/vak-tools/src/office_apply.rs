@@ -318,7 +318,7 @@ impl Tool for OfficeApplyTool {
         let Ok(relative) = destination.strip_prefix(&root).map(Path::to_path_buf) else {
             return ToolOutput::error(
                 Fault::Refused,
-                format!("access denied: {path} is outside the workspace"),
+                crate::context::outside_refusal(path, &ctx.cwd),
             );
         };
         if relative.starts_with(vak_config::scope::PROJECT_DIR) {
@@ -915,13 +915,18 @@ fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
     let Some(name) = candidate.file_name() else {
         return Err(format!("{path} names no file"));
     };
+    // Outside the workspace is the fact to give first: a missing folder
+    // outside it is not one to create (found live 2026-10-13).
+    if !crate::context::within(&candidate, &root) {
+        return Err(crate::context::outside_refusal(path, cwd));
+    }
     let parent = candidate
         .parent()
         .ok_or_else(|| format!("{path} has no directory"))?
         .canonicalize()
         .map_err(|error| format!("the directory for {path} does not exist: {error}"))?;
     if !parent.starts_with(&root) {
-        return Err(format!("access denied: {path} is outside the workspace"));
+        return Err(crate::context::outside_refusal(path, cwd));
     }
     let destination = parent.join(name);
     if std::fs::symlink_metadata(&destination)
@@ -938,6 +943,27 @@ fn confined_destination(cwd: &Path, path: &str) -> Result<PathBuf, String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+
+    /// A path outside the workspace is refused as outside it, naming the
+    /// workspace, before any missing folder is reported.
+    #[test]
+    fn outside_the_workspace_is_said_before_a_missing_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("ws");
+        std::fs::create_dir(&workspace).unwrap();
+        let outside = dir.path().join("vak/ws/trip.docx");
+        let refused = confined_destination(&workspace, &outside.to_string_lossy()).unwrap_err();
+        assert!(
+            refused.contains("outside the workspace, which is"),
+            "{refused}"
+        );
+        assert!(
+            refused.contains(&workspace.display().to_string()),
+            "{refused}"
+        );
+        let inside = confined_destination(&workspace, "notes/trip.docx").unwrap_err();
+        assert!(inside.contains("does not exist"), "{inside}");
+    }
 
     /// A draft named as `path` is a revision of its workspace file made from
     /// it; a `source` the call names is kept.

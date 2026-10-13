@@ -422,7 +422,7 @@ fn fold(state: &mut State, bytes: &[u8]) {
         .trace
         .as_ref()
         .and_then(|trace| trace.turn)
-        .map(|turn| turn.to_string());
+        .map(|turn| turn.uuid().to_string());
     if let ArtifactStep::Declared {
         space,
         agent,
@@ -1064,22 +1064,7 @@ impl vak_tools::ArtifactSink for CallSink {
         let kind = kind_of(&declaration.path);
         // An absolute path inside the workspace names the same artifact as
         // its relative form.
-        let named = Path::new(&declaration.path);
-        let path = if named.is_absolute() {
-            match self.cwd.canonicalize().ok().and_then(|root| {
-                named
-                    .canonicalize()
-                    .ok()?
-                    .strip_prefix(&root)
-                    .ok()
-                    .map(|rest| rest.to_string_lossy().into_owned())
-            }) {
-                Some(relative) => relative,
-                None => declaration.path.clone(),
-            }
-        } else {
-            declaration.path.clone()
-        };
+        let path = crate::file_state::workspace_path(&self.cwd, &declaration.path);
         // An undeclared claim versions only a file that is already an
         // artifact: continuing one is a new version of it (doc 82 §6), and
         // a supporting file never becomes an entry (§3).
@@ -1271,7 +1256,7 @@ mod fold_tests {
         let found = replay(&events);
         let found = found.first().expect("the artifact folds");
         let made = found.versions.first().expect("the version folds");
-        assert_eq!(made.turn, Some(turn.to_string()));
+        assert_eq!(made.turn, Some(turn.uuid().to_string()));
         assert!(made.undone && !made.promoted);
 
         let mut again = events.clone();

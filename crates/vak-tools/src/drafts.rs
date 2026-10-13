@@ -102,7 +102,7 @@ pub fn existing(ctx: &ToolContext, name: &str) -> Result<PathBuf, String> {
     if canonical.starts_with(&own) {
         return Ok(canonical);
     }
-    Err(format!("access denied: {name} is outside the workspace"))
+    Err(crate::context::outside_refusal(name, &ctx.cwd))
 }
 
 fn confined(path: &Path, root: &Path, name: &str) -> Result<PathBuf, String> {
