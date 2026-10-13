@@ -1,3 +1,30 @@
+## 7.1.0 — 2026-10-13
+
+- The model plans its own deliverables and the runtime checks them against
+  what was produced (cards, text, files, changes, checks); a missing part is
+  named once. Nothing decides from a request's words or a tuned threshold
+  any more.
+- Cards are shown by calling the card for each part, in reading order; a
+  card names the plan item it delivers in `deliverable`. Tool arguments are
+  enforced by the provider where it can, and a call that cannot be read is
+  written again under its schema.
+- A preview is two cards: a file in the workspace, or markup written in the
+  call. A preview of a file that does not exist is not shown.
+- Files across turns: Vak tells each turn what happened to a file since
+  (a draft waiting, accepted, undone, changed outside Vak, deleted).
+  Accepting a draft made before an outside edit asks first. Vak's own
+  writes, edits and shell changes are recorded as its own, never as an edit
+  made outside it.
+- The prompt names the workspace folder; errors on a path outside it say
+  which folder the workspace is.
+- A step that answered only in its thinking is shown that thinking and asked
+  for the answer; on providers that do not replay thinking, turns no longer
+  loop rewriting finished work.
+- Time limits (commands, waits) are operator settings with their defaults
+  shown in Settings; a call stopped at its limit is told so.
+- Frosted light and Frosted dark themes; Inter and a calmer type scale.
+- Linux: deleting a bot removes its service.
+
 ## 7.0.1 — 2026-10-10
 
 - Linux: commands, document previews, Review and `doc_read` run again.
