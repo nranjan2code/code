@@ -70,6 +70,16 @@ the browser:
   (`…/compare`, marked word diff), the Library list as wide as the
   artifact page; and a race fixed: version recording and folder
   observation share `artifacts::recording()`.
+- `52a06bf02` security: a WebSocket upgrade needs the server's own
+  `Origin`, like a mutation. The router chose whether to check `Origin`
+  from the method, and an upgrade is a GET, so with `[server.web]
+  terminal` on, a page on another localhost port could open `/pty` with
+  the session cookie (proven: 101 before the fix). `require_bearer` now
+  holds every `Upgrade: websocket` request to the mutation rule (cookie
+  needs a first-party `Origin`; no `Origin` needs a bearer header), which
+  covers `/pty` and `/voice/session`; voice's own handler check is gone.
+  Test: `a_cross_origin_upgrade_cannot_open_a_shell` (web_client.rs).
+  Invariant 34, docs 13, 48 (§5, §6, defect 3) and 49 updated.
 
 ## Next, in order
 
@@ -122,6 +132,10 @@ the browser:
 - A version-recording race shows as two versions with one digest, one
   `from: "workspace"`: suspect an observation without
   `artifacts::recording()`.
+- A new WebSocket route needs no `Origin` check of its own: the router
+  does it. A test of one goes through the secured router
+  (`secured_router_with_port`); `vak_server::router` has no auth layer,
+  so a refusal test against it proves nothing.
 - Clippy's argument limit is 7: fold a duplicate argument into its struct
   (`NewVersion { parent, ..new }`) rather than allowing the lint.
 - `cargo test` prints nothing for a binary until it finishes; a gate takes
