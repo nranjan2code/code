@@ -172,7 +172,16 @@ for the person: control comes from commands, never from phrases in free
 text (invariant 32), so "keep working until the tests pass" names a
 condition and is not a hold. It continues across ordinary model
 completion claims, told each time, until
-an exact user steering message such as `done` or `stop` releases it. The
+an exact user steering message such as `done` or `stop` releases it.
+The hold is no correction: its message has its own kind
+(`ControlKind::KeepWorking`, `[keep-working]`), the answer before it is
+shown to the person and stands (it is not a discarded draft, live or on
+reload), the step after it is framed to act, not to repair
+(`ControlKind::repairs`), and its wording states the facts (the request
+is open until the person says done, the answer was shown, their messages
+arrive between steps) and judges nothing. Told "do not declare completion
+yet", a model read its own answer as a mistake and apologised for it
+(2026-10-13, run_01a134d3). The
 configured `max_turns` remains a hard safety ceiling; reaching it returns
 `MaxTurnsReached`, never `Completed`.
 

@@ -364,7 +364,7 @@ export function reconstructTurns(
         ts: entry.ts,
       });
       if (entry.is_error) currentTurn.status = "failed";
-    } else if (entry.content.startsWith("[stop-guard]")) {
+    } else if (entry.content.startsWith("[stop-guard]") || entry.content.startsWith("[keep-working]")) {
       currentTurn.stop_guard = entry.content;
     }
   }

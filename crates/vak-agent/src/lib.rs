@@ -185,14 +185,12 @@ pub enum AgentEvent {
         turn: usize,
     },
     /// A text-only draft answer was sent back for a redo instead of being
-    /// accepted as the turn's final answer — every gate that appends a
-    /// control nudge (`[stop-guard]`, `[presentation-check]`,
-    /// `[grounding-check]`, `[freshness-check]`, `[fence-check]`,
-    /// `[duplicate-card-check]`, `[empty-step]`, `[steering-drift]`,
-    /// `[stop-hook]`) plus `guard_continue`/stop policy, the goal gate, and
-    /// the managed-work gate all emit this exactly once per discarded
-    /// draft. `turn` is the loop step index of the discarded draft, the
-    /// same numbering `TurnStart` uses.
+    /// accepted as the turn's final answer. Emitted once per discarded
+    /// draft, and only after a correction whose kind the projection also
+    /// hides the draft for (`ControlKind::discards_assistant_draft`); an
+    /// answer before a stop guard, a stop hook or the person's
+    /// `/until-done` hold stands. `turn` is the loop step index of the
+    /// discarded draft, the same numbering `TurnStart` uses.
     DraftDiscarded {
         turn: usize,
     },
@@ -1363,14 +1361,16 @@ impl Agent {
     }
 
     /// What the next step is for (docs/design/88 §3): a step that follows
-    /// a runtime correction repairs; every other step acts.
+    /// a runtime correction repairs; every other step acts, the step after
+    /// the person's `/until-done` hold included.
     async fn step_purpose(&self) -> vak_control::Purpose {
         let follows_correction = self
             .session
             .lock()
             .await
             .latest_message_record()
-            .is_some_and(|record| record.control_kind().is_some());
+            .and_then(|record| record.control_kind())
+            .is_some_and(|kind| kind.repairs());
         if follows_correction {
             vak_control::Purpose::Repair
         } else {
@@ -2735,7 +2735,6 @@ impl Agent {
                         {
                             return nudge_write_failed(error);
                         }
-                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
                     }
@@ -4496,8 +4495,13 @@ impl Agent {
                     .to_string(),
             })
             .await;
+        // The live stream drops the answer only where the projection does,
+        // so a reload shows what the person saw.
+        let discards = kind_of(finding.cause()).discards_assistant_draft();
         self.correct(finding, rung).await?;
-        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
+        if discards {
+            let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
+        }
         Ok(Held::Redo)
     }
 
@@ -7892,6 +7896,7 @@ fn cause_of(kind: vak_intent::control::ControlKind) -> vak_control::Cause {
     match kind {
         ControlKind::StopHook => Cause::StopHook,
         ControlKind::StopGuard => Cause::StopGuard,
+        ControlKind::KeepWorking => Cause::KeepWorking,
         ControlKind::GroundingCheck => Cause::Grounding,
         ControlKind::FenceCheck => Cause::Fence,
         ControlKind::DuplicateCardCheck => Cause::DuplicateCard,
@@ -7913,10 +7918,10 @@ fn kind_of(cause: Cause) -> vak_intent::control::ControlKind {
     use vak_intent::control::ControlKind;
     match cause {
         Cause::StopHook => ControlKind::StopHook,
+        Cause::KeepWorking => ControlKind::KeepWorking,
         Cause::StopGuard
         | Cause::Truncated
         | Cause::VerificationStale
-        | Cause::KeepWorking
         | Cause::UnresolvedFailure
         | Cause::WorkersRunning => ControlKind::StopGuard,
         Cause::Grounding => ControlKind::GroundingCheck,

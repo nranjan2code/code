@@ -445,3 +445,50 @@ async fn universal_task_with_verify_completes_without_bash_guard() {
             .all(|e| !matches!(e, AgentEvent::StopHookContinuation { .. }))
     );
 }
+
+/// The person's `/until-done` hold judges nothing: the answer before it
+/// stands (no live draft discard, as the projection keeps it), the step
+/// after it acts rather than repairs, and the ledger tags it as the hold.
+#[tokio::test]
+async fn until_done_keeps_each_answer_and_the_next_step_acts() {
+    let mut h = harness(
+        Some(StopPolicy::default()),
+        vec![
+            ScriptedResponse::Message(text_msg("Three plants: ZZ, pothos, snake plant.")),
+            ScriptedResponse::Message(text_msg("Care notes for each.")),
+        ],
+    );
+    h.agent.as_mut().expect("agent").config.max_turns = 2;
+    let outcome = h
+        .agent
+        .as_mut()
+        .expect("agent")
+        .run(
+            "/until-done list three low-light plants",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::MaxTurnsReached));
+    let events = drain_events(&mut h);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::DraftDiscarded { .. })),
+        "an answer under the hold is shown, never discarded"
+    );
+    {
+        let requests = h.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[1].settings, requests[0].settings,
+            "the step after the hold is framed to act, as the first was"
+        );
+    }
+    let users = guard_messages(&mut h).await;
+    assert!(
+        users.iter().any(|u| u.starts_with("[keep-working]:")),
+        "ledger must contain the hold: {users:?}"
+    );
+}

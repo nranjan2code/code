@@ -31,6 +31,10 @@ pub enum ControlKind {
     StopHook,
     /// The stop gate (verification, goal, managed work) blocked completion.
     StopGuard,
+    /// The person holds the request open by command (`/until-done`): the
+    /// answer before it stands and the work goes on. Not a correction of
+    /// anything the model produced.
+    KeepWorking,
     /// Recorded history only: no longer written (control-plane C5). It
     /// judged from words whether an answer used what a retrieval returned.
     GroundingCheck,
@@ -72,9 +76,10 @@ pub enum ControlKind {
 }
 
 impl ControlKind {
-    pub const ALL: [ControlKind; 15] = [
+    pub const ALL: [ControlKind; 16] = [
         ControlKind::StopHook,
         ControlKind::StopGuard,
+        ControlKind::KeepWorking,
         ControlKind::GroundingCheck,
         ControlKind::FenceCheck,
         ControlKind::DuplicateCardCheck,
@@ -96,6 +101,7 @@ impl ControlKind {
         match self {
             ControlKind::StopHook => "[stop-hook]",
             ControlKind::StopGuard => "[stop-guard]",
+            ControlKind::KeepWorking => "[keep-working]",
             ControlKind::GroundingCheck => "[grounding-check]",
             ControlKind::FenceCheck => "[fence-check]",
             ControlKind::DuplicateCardCheck => "[duplicate-card-check]",
@@ -127,6 +133,13 @@ impl ControlKind {
                 | ControlKind::EmptyStep
                 | ControlKind::TopicMismatchCheck
         )
+    }
+
+    /// Whether the step that answers this repairs something the model
+    /// produced (docs/design/88-control-plane.md §3). The person's hold is
+    /// no fault: the step after it goes on with the work.
+    pub const fn repairs(self) -> bool {
+        !matches!(self, ControlKind::KeepWorking)
     }
 
     /// Whether the preceding assistant text is an internal draft that should

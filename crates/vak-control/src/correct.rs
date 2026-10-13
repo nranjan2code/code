@@ -353,8 +353,10 @@ pub fn render(finding: &Finding, marker: &str) -> String {
              finishing, or say plainly why it cannot be run."
         ),
         Finding::KeepWorking => format!(
-            "{marker}: the user asked you to keep working until they say done. Continue making \
-             useful progress; do not declare completion yet."
+            "{marker}: The person started this request with /until-done, so it stays open until \
+             they say done. Your answer above was shown to them and stands. Go on with the next \
+             useful part of the same request. Anything they send reaches you between steps. This \
+             is not a message from the person."
         ),
         Finding::UnresolvedFailure { tool, error } => format!(
             "{marker}: the `{tool}` call failed: {error}. Fix the cause and try again, or tell the \
