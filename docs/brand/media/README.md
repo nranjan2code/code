@@ -153,6 +153,19 @@ first test (Kling 3 Pro, the best available, costs about 5,100 credits per
 | **Tavi** (owl) | F4→B♭4 | warm wooden flute, breathy hoot | Mature, measured older woman, low and resonant, deliberate pauses; a respected professor who chooses every word. | "Before we decide, consider this. Two of your sources agree, and one does not. The one that disagrees is the most recent. That is worth a closer look. I have laid out all three, so you can judge for yourself." |
 | **Beni** (rabbit) | D4→G4 | mellow marimba, soft-paw thump | Calm, steady, warm male, forties, mid-low, even rhythm, soft-spoken; someone you trust to handle things while you sleep. | "Everything's in order. The backup finished at two, your reminders are set for the morning, and the bill is paid. Nothing needs you tonight. If anything changes, I'll let you know first thing." |
 
+**Audience: India first, then the world (decided 2026-10-13).** The first
+round above was cast neutral-American and is superseded. Every companion is
+recast in Indian English: an educated, pan-Indian accent, never a regional
+caricature, a call-centre script or a newsreader's delivery, and clear to a
+listener abroad. Each brief above keeps its age, pitch and temperament and
+adds that accent; ages are made explicit (Moss sixties, Tavi late fifties,
+Beni forties, Mira thirties, Vakyartha early thirties, Nori and Pip
+twenties). Lines are lightly localised, never translated for flavour: Mira's
+trip is to Pune, Moss says *beta*, Pip's list starts with *sabzi* and the
+*chemist*, Lumi's café has chai on the stove, Beni pays the *electricity*
+bill. A voice is chosen by listening at low volume on a phone speaker, and
+it must stay intelligible to someone who has never heard an Indian accent.
+
 Voice design returns three previews per character; choose one and save it
 to the ElevenLabs voice library (the preview links expire after two hours,
 the saved voice does not). Download a WAV of the chosen preview for the
