@@ -557,7 +557,7 @@ async fn mcp_notes_lookup_informs_planning_answer() {
             command: "python3".into(),
             args: vec![script.display().to_string()],
             env: Vec::new(),
-            network: false,
+            hosts: Vec::new(),
         },
     );
     let manager = Arc::new(McpManager::new(servers, dir_safe_cwd()));
@@ -633,7 +633,7 @@ async fn mcp_call_omitting_server_auto_resolves_and_completes() {
             command: "python3".into(),
             args: vec![script.display().to_string()],
             env: Vec::new(),
-            network: false,
+            hosts: Vec::new(),
         },
     );
     let manager = Arc::new(McpManager::new(servers, dir_safe_cwd()));

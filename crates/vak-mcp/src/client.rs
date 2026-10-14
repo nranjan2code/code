@@ -69,10 +69,10 @@ pub struct ServerConfig {
     pub command: String,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
-    /// Allow outbound network for this server (e.g. remote-API MCP tools
-    /// like web search). Opt-in per server via privileged config; when
-    /// false the platform sandbox applies as usual.
-    pub network: bool,
+    /// The hosts this server may reach, through its egress proxy
+    /// (`crate::egress`). Empty: no network at all. Declared in privileged
+    /// config; the server still runs inside the platform sandbox.
+    pub hosts: Vec<String>,
 }
 
 use std::path::PathBuf;
@@ -97,6 +97,9 @@ pub struct McpClient {
     /// The `serverInfo` the server reported at `initialize` (its name and
     /// version), recorded with every call it answers.
     server_info: Value,
+    /// The proxy a networked server reaches its hosts through, kept for as
+    /// long as the connection: dropping it closes the server's way out.
+    _egress: Option<crate::egress::Egress>,
 }
 
 impl McpClient {
@@ -116,11 +119,32 @@ impl McpClient {
         sandbox: Option<&Arc<dyn Sandbox>>,
         notifications: Option<NotificationSink>,
     ) -> Result<Self, McpError> {
-        // A network-egress server is a deliberate trust decision from
-        // privileged config; the OS command wrapper would deny its sockets,
-        // so it spawns directly (env still scrubbed to the explicit set).
+        // A networked server reaches the network only through its own
+        // egress proxy, and runs inside the sandbox with the proxy's port as
+        // its one way out (docs/design/09-extensibility.md "Network"). A
+        // sandbox that cannot confine a process to that port refuses the
+        // server rather than run it unconfined.
+        let egress = if config.hosts.is_empty() {
+            None
+        } else {
+            Some(
+                crate::egress::Egress::start(config.hosts.clone())
+                    .await
+                    .map_err(|e| McpError::Spawn(format!("egress proxy: {e}")))?,
+            )
+        };
+        let confined: Option<Arc<dyn Sandbox>> = match (sandbox, &egress) {
+            (Some(sandbox), Some(egress)) => Some(sandbox.proxied_variant(egress.port()).ok_or_else(|| {
+                McpError::Spawn(format!(
+                    "the {} sandbox cannot limit a networked integration to its declared hosts, so it was not started",
+                    sandbox.name()
+                ))
+            })?),
+            (Some(sandbox), None) => Some(sandbox.clone()),
+            (None, _) => None,
+        };
         let command_path = resolve_command(&config.command);
-        let mut cmd = if let (Some(sandbox), false) = (sandbox, config.network) {
+        let mut cmd = if let Some(sandbox) = confined.as_ref() {
             let command = std::iter::once(command_path.to_string_lossy().to_string())
                 .chain(config.args.iter().cloned())
                 .map(|part| shell_quote(&part))
@@ -141,6 +165,9 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         for (k, v) in &config.env {
+            cmd.env(k, v);
+        }
+        for (k, v) in egress.iter().flat_map(crate::egress::Egress::environment) {
             cmd.env(k, v);
         }
         // Operational basics every runtime needs (PATH for interpreters,
@@ -267,6 +294,7 @@ impl McpClient {
             closed,
             server_capabilities: Value::Null,
             server_info: Value::Null,
+            _egress: egress,
         };
 
         let initialized = client

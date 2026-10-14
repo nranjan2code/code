@@ -803,7 +803,8 @@ export interface McpServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
-  network?: boolean;
+  /** Sites the app may reach, through its own proxy; none, no internet. */
+  hosts?: string[];
 }
 
 export interface McpListResponse {
@@ -905,7 +906,7 @@ export interface IntegrationStatus {
   description: string;
   command: string;
   args: string[];
-  network: boolean;
+  hosts: string[];
   env_var?: string | null;
   key_required: boolean;
   documentation_url: string;
@@ -916,13 +917,6 @@ export interface IntegrationStatus {
   key_here: boolean;
   key_inherited: boolean;
   key_effective: boolean;
-}
-
-export interface TavilyStatus {
-  enabled: boolean;
-  key_present: boolean;
-  network: boolean;
-  env_var: string;
 }
 
 export interface HookConfig {

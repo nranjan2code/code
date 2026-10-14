@@ -107,7 +107,33 @@ the browser:
 - Follow-up commit: `authorize` reads the tools from its config rather
   than taking them as an argument (the 7-argument limit).
 
+- Security: an MCP server reaches the network only through its own
+  egress proxy and only its declared `hosts`, inside the sandbox
+  (docs/design/09-extensibility.md "Network"). `hosts` replaces `network`
+  in the config, the `/config/mcp` API, the integration catalog (each entry
+  ships its API host and `registry.npmjs.org`), plugin `mcp.json`, the
+  admin console and the app's Settings ("Sites it may reach"), and the
+  approval card's network note. `vak_mcp::egress` is the proxy
+  (CONNECT only, declared hosts only); `Sandbox::proxied_variant` confines
+  the server to its port: Seatbelt `remote ip "localhost:<port>"`, Landlock
+  ABI v4 `NetPort` plus a seccomp filter that keeps only TCP streams.
+  Docker refuses a networked server. Tests: `vak_mcp::egress` units,
+  `seatbelt_proxied_variant_reaches_its_proxy_port_and_nothing_else`,
+  `a_networked_server_reaches_only_its_declared_hosts_through_its_proxy`
+  (macOS, end to end) and
+  `a_proxied_command_reaches_its_proxy_port_and_nothing_else` (Linux, run
+  in `rust:1-bookworm` on Docker's 7.0 kernel). Not done: swapping a
+  placeholder for the real key at the proxy (needs TLS termination); live
+  checks of the four catalog integrations with real keys.
+
 ## Next, in order
+
+0. This session's chain is closed (provenance gate, declined tools,
+   egress proxy). Its open edges: the key swap at the egress proxy (needs
+   TLS termination and a local CA per runtime); live checks of the four
+   catalog integrations with real keys through the proxy; a client that
+   ignores proxy variables fails closed (firecrawl ships its own
+   `undici`), so watch that integration first.
 
 1. Done 2026-10-13: the `/until-done` turn. The hold has its own kind
    (`[keep-working]`): its answer stands live and on reload, the next
@@ -157,6 +183,16 @@ the browser:
    card can claim a change no call made.
 
 ## Traps learned this session
+
+- A sandbox test that redirects to `/dev/null` fails in a read-only grant
+  (Seatbelt and Landlock both refuse the write): it proves nothing about
+  the network. Leave the redirect out of a network probe.
+- Linux tests run in Docker as root: `vak-sandbox`'s
+  `server_owned_cleanup_removes_a_protected_candidate_tree` and
+  `revision_copy_uses_only_verified_saved_version` fail there because root
+  ignores permission bits, not because of the code. Run Linux checks as
+  `sh scripts/sync-lab/build.sh` does (`rust:1-bookworm`, the `vk-target`
+  and `vk-cargo` volumes).
 
 - Port 8902 can be held by another chat's dev server; `preview_stop`
   cannot stop it. `vak-tmp-live-8903` exists in `.claude/launch.json`.

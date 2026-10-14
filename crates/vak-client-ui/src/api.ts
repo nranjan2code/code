@@ -1381,7 +1381,8 @@ export interface McpServerDef {
   command: string;
   args: string[];
   env: Record<string, string>;
-  network: boolean;
+  /** Sites the server may reach, through its own proxy; none, no internet. */
+  hosts?: string[];
 }
 
 export function getMcpServers(agent?: string): Promise<{ servers: Record<string, McpServerDef> }> {

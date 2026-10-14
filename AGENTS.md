@@ -795,10 +795,15 @@ in progress, and the rest of V4 follows it.
     design and must never be selected automatically after a denial, tool
     failure, retry, prompt request, or model recommendation. Restricted-mode
     network denial and approval prompts are independent layers; an approval
-    never silently disables the OS sandbox. The one network allowance in a
-    restricted mode is a dev-server preview the user configured
+    never silently disables the OS sandbox. A restricted mode has two
+    network allowances. A dev-server preview the user configured
     (`.vak/launch.toml`): its worker may listen on a port
     (`Sandbox::listening_variant`), and outbound connections stay denied.
+    And an MCP server with declared `hosts`: it may connect to its own
+    egress proxy's loopback port alone (`Sandbox::proxied_variant`), and
+    the proxy tunnels only to those hosts (docs/design/09-extensibility.md
+    "Network"); a backend that cannot confine a process to a port refuses
+    the server rather than run it unconfined.
     Seatbelt cannot limit listening to loopback, so a preview server that
     binds every interface is reachable from the LAN, as it would be run by
     hand; agent commands never get the allowance. Landlock keeps previews
@@ -2000,7 +2005,9 @@ crates/vak-commit    durable commitments (docs/design/47): lifecycle, the
 crates/vak-hooks     lifecycle hooks: pre/post-tool-use, stop, session-start
 crates/vak-mcp       MCP stdio client behind a lazy meta-tool; the on-demand
                      connection pool (no warm-up, idle eviction, failure
-                     backoff) and its observations
+                     backoff) and its observations; the per-server egress
+                     proxy a networked server reaches its declared hosts
+                     through (egress.rs, docs/design/09-extensibility.md)
 crates/vak-bus       distributed event + message fabric for agent swarms:
                      CloudEvents envelopes, W3C trace context + Merkle
                      causal lineage, AES-256-GCM payload encryption,

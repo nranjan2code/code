@@ -8,7 +8,7 @@ export async function mcpServerNetwork(server: string, agent?: string): Promise<
   try {
     const [project, shared] = await Promise.all([api.getMcpServers(agent), api.getGlobalMcpServers()]);
     const def = project.servers?.[server] ?? shared.servers?.[server];
-    return def ? def.network === true : undefined;
+    return def ? (def.hosts ?? []).length > 0 : undefined;
   } catch {
     return undefined;
   }

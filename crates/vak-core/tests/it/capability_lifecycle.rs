@@ -140,7 +140,7 @@ async fn an_mcp_server_starts_on_demand_and_its_catalog_reaches_the_next_turn() 
                 ),
             ],
             env: Default::default(),
-            network: false,
+            hosts: Vec::new(),
             serves: Vec::new(),
         },
     );

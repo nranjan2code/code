@@ -2345,6 +2345,20 @@ impl Core {
                                     .collect()
                             })
                             .unwrap_or_default();
+                        // The hosts the plugin declares its server reaches
+                        // (`"hosts": [..]` in its mcp.json), granted only
+                        // while the plugin is allowed the network.
+                        let declared_hosts: Vec<String> = raw
+                            .get("hosts")
+                            .and_then(serde_json::Value::as_array)
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .filter_map(serde_json::Value::as_str)
+                                    .map(str::to_string)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
                         let key = format!("plugin.{}.{}", plugin.name, name);
                         // Same effective-policy seam the runtime tools read:
                         // the persisted `network_allow`/`network_deny` override
@@ -2366,7 +2380,11 @@ impl Core {
                                 command: command.to_string(),
                                 args,
                                 env,
-                                network: net_allowed,
+                                hosts: if net_allowed {
+                                    declared_hosts
+                                } else {
+                                    Vec::new()
+                                },
                                 // Plugin-contributed servers declare nothing
                                 // by default, which keeps them reachable:
                                 // undeclared is never sliced away.
@@ -2533,8 +2551,10 @@ impl Core {
         // Same pattern shape as mcp_allow/mcp_deny above (`name/*`).
         for (name, server) in config.servers.iter_mut() {
             let server_pattern = format!("{name}/*");
-            if server.network && Self::policy_matches(&policy.mcp_network_deny, &server_pattern) {
-                server.network = false;
+            if !server.hosts.is_empty()
+                && Self::policy_matches(&policy.mcp_network_deny, &server_pattern)
+            {
+                server.hosts.clear();
             }
         }
         config
@@ -2570,7 +2590,7 @@ impl Core {
                         command: s.command,
                         args: s.args,
                         env,
-                        network: s.network,
+                        hosts: s.hosts,
                     },
                 ))
             })
@@ -8737,7 +8757,12 @@ mod channel_mcp_network_tests {
         let mut servers_toml = String::new();
         for (name, network) in servers {
             servers_toml.push_str(&format!(
-                "[mcp.servers.{name}]\ncommand = \"echo\"\nnetwork = {network}\n"
+                "[mcp.servers.{name}]\ncommand = \"echo\"\nhosts = {hosts}\n",
+                hosts = if *network {
+                    "[\"api.example.com\"]"
+                } else {
+                    "[]"
+                }
             ));
         }
         let vak = dir.join(".vak");
@@ -8750,7 +8775,7 @@ mod channel_mcp_network_tests {
         core.effective_mcp()
             .servers
             .into_iter()
-            .map(|(name, server)| (name, server.network))
+            .map(|(name, server)| (name, !server.hosts.is_empty()))
             .collect()
     }
 
@@ -10218,7 +10243,7 @@ fn mcp_fingerprint(servers: &[(String, vak_mcp::ServerConfig)]) -> u64 {
         name.hash(&mut hasher);
         cfg.command.hash(&mut hasher);
         cfg.args.hash(&mut hasher);
-        cfg.network.hash(&mut hasher);
+        cfg.hosts.hash(&mut hasher);
         for (k, v) in &cfg.env {
             k.hash(&mut hasher);
             v.hash(&mut hasher);
@@ -10426,7 +10451,7 @@ mod plugin_runtime_tests {
         .unwrap();
         std::fs::write(
             package.join("mcp.json"),
-            r#"{"mcpServers":{"lookup":{"command":"lookup-bin","args":["--safe"]}}}"#,
+            r#"{"mcpServers":{"lookup":{"command":"lookup-bin","args":["--safe"],"hosts":["api.example.com"]}}}"#,
         )
         .unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
@@ -10446,7 +10471,7 @@ mod plugin_runtime_tests {
         let server = servers.get("plugin.tools-pack.lookup").unwrap();
         assert_eq!(server.command, "lookup-bin");
         assert_eq!(server.args, ["--safe"]);
-        assert!(!server.network);
+        assert!(server.hosts.is_empty());
     }
 
     /// The whole point of caching `McpManager` on `Core` (see
@@ -10467,7 +10492,7 @@ mod plugin_runtime_tests {
         .unwrap();
         std::fs::write(
             package.join("mcp.json"),
-            r#"{"mcpServers":{"lookup":{"command":"lookup-bin","args":["--safe"]}}}"#,
+            r#"{"mcpServers":{"lookup":{"command":"lookup-bin","args":["--safe"],"hosts":["api.example.com"]}}}"#,
         )
         .unwrap();
         isolate_global_config();
@@ -10492,7 +10517,9 @@ mod plugin_runtime_tests {
         // restart. (Regression for a base-config read that left the server
         // stale for the whole process once an override landed.)
         assert!(
-            !core.effective_mcp().servers["plugin.tools-pack.lookup"].network,
+            core.effective_mcp().servers["plugin.tools-pack.lookup"]
+                .hosts
+                .is_empty(),
             "plugin-contributed MCP server must deny egress by default"
         );
         core.apply_persisted_plugins(vak_config::PluginResolved {
@@ -10500,7 +10527,9 @@ mod plugin_runtime_tests {
             ..core.effective_plugins()
         });
         assert!(
-            core.effective_mcp().servers["plugin.tools-pack.lookup"].network,
+            !core.effective_mcp().servers["plugin.tools-pack.lookup"]
+                .hosts
+                .is_empty(),
             "persisted grant must reach the contributed MCP server live"
         );
         core.apply_persisted_plugins(vak_config::PluginResolved {
@@ -10508,7 +10537,9 @@ mod plugin_runtime_tests {
             ..core.effective_plugins()
         });
         assert!(
-            !core.effective_mcp().servers["plugin.tools-pack.lookup"].network,
+            core.effective_mcp().servers["plugin.tools-pack.lookup"]
+                .hosts
+                .is_empty(),
             "persisted revoke must take the contributed server's egress away"
         );
 
@@ -10838,7 +10869,7 @@ mod capability_reach_tests {
                  [mcp.servers.tavily]\n\
                  command = \"npx\"\n\
                  args = [\"-y\", \"tavily-mcp@latest\"]\n\
-                 network = true\n"
+                 hosts = [\"api.tavily.com\"]\n"
             ),
         )
         .unwrap();

@@ -31,7 +31,7 @@ fn counted(marker: &Path, then: &str) -> ServerConfig {
             format!("echo started >> '{}'; {then}", marker.display()),
         ],
         env: Vec::new(),
-        network: false,
+        hosts: Vec::new(),
     }
 }
 

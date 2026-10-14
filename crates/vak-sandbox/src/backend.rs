@@ -34,6 +34,15 @@ pub trait Sandbox: Send + Sync {
         None
     }
 
+    /// This sandbox, plus TCP connections to one loopback port: the egress
+    /// proxy a networked integration reaches the network through
+    /// (docs/design/09-extensibility.md "Network"). Every other connection
+    /// stays denied. `None` when the backend cannot confine a process to
+    /// that port, and the caller refuses to start the integration.
+    fn proxied_variant(&self, _port: u16) -> Option<Arc<dyn Sandbox>> {
+        None
+    }
+
     /// Run backend cleanup after a tool command exits or is cancelled.
     /// Command-scoped remote backends use this to stop daemon-side work that
     /// outlives the local client process.
@@ -86,6 +95,9 @@ pub struct Seatbelt {
     /// interface is reachable from the LAN, as it would be run by hand.
     /// Outbound connections stay denied.
     pub allow_listen: bool,
+    /// May connect to this loopback port and nowhere else: the egress proxy
+    /// of a networked integration (`Sandbox::proxied_variant`).
+    pub connect_port: Option<u16>,
 }
 
 impl Seatbelt {
@@ -154,6 +166,7 @@ impl Seatbelt {
             write_paths,
             allow_host_temp,
             allow_listen: false,
+            connect_port: None,
         }
     }
 
@@ -201,6 +214,11 @@ impl Seatbelt {
         if self.allow_listen {
             p.push_str("(allow network-bind (local ip \"localhost:*\"))\n");
             p.push_str("(allow network-inbound (local ip \"localhost:*\"))\n");
+        }
+        if let Some(port) = self.connect_port {
+            p.push_str(&format!(
+                "(allow network-outbound (remote ip \"localhost:{port}\"))\n"
+            ));
         }
         p
     }
@@ -259,6 +277,7 @@ impl Sandbox for Seatbelt {
             write_paths: Vec::new(),
             allow_host_temp: self.allow_host_temp,
             allow_listen: self.allow_listen,
+            connect_port: self.connect_port,
         }))
     }
 
@@ -267,6 +286,13 @@ impl Sandbox for Seatbelt {
     fn listening_variant(&self) -> Option<Arc<dyn Sandbox>> {
         Some(Arc::new(Seatbelt {
             allow_listen: true,
+            ..self.clone()
+        }))
+    }
+
+    fn proxied_variant(&self, port: u16) -> Option<Arc<dyn Sandbox>> {
+        Some(Arc::new(Seatbelt {
+            connect_port: Some(port),
             ..self.clone()
         }))
     }

@@ -87,7 +87,7 @@ export function approvalNetworkNote(
     return "It runs in a protected area with no internet access, so a command that downloads or contacts another computer will fail. Allowing it does not change that.";
   }
   if (tool === "mcp" && mcpNetwork === false) {
-    return "This tool's server runs in a protected area with no internet access, so a call that contacts another computer will fail. Allowing it does not change that; a server can be allowed network access in Settings.";
+    return "This tool's server runs in a protected area with no internet access, so a call that contacts another computer will fail. Allowing it does not change that; a connection can be given sites it may reach in Settings.";
   }
   return null;
 }

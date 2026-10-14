@@ -1216,7 +1216,7 @@ export default function Settings() {
   }
 
   function updateServer(name: string, patch: Partial<api.McpServerDef>) {
-    setMcpServers((cur) => ({ ...cur, [name]: { ...(cur?.[name] ?? { command: "", args: [], env: {}, network: false }), ...patch } }));
+    setMcpServers((cur) => ({ ...cur, [name]: { ...(cur?.[name] ?? { command: "", args: [], env: {} }), ...patch } }));
     setMcpDirty(true);
   }
 
@@ -1224,7 +1224,7 @@ export default function Settings() {
     let n = "new-server";
     let i = 2;
     while (mcpServers()?.[n]) n = `new-server-${i++}`;
-    setMcpServers((cur) => ({ ...(cur ?? {}), [n]: { command: "", args: [], env: {}, network: false } }));
+    setMcpServers((cur) => ({ ...(cur ?? {}), [n]: { command: "", args: [], env: {} } }));
     setMcpDirty(true);
   }
 
@@ -2673,11 +2673,11 @@ export default function Settings() {
                       <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
                         <div class="mcp-row-head"><div><CapabilityIcon name={name} /><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
                         <div class="mcp-fields"><label>Server name<input value={name} aria-label="Server name" onChange={(e) => renameServer(name, e.currentTarget.value.trim())} /></label><label>Command<input placeholder="/path/to/command" value={def.command} aria-label="Command" onInput={(e) => updateServer(name, { command: e.currentTarget.value })} /></label><label>Arguments<input placeholder="Space-separated arguments" value={def.args.join(" ")} aria-label="Arguments" onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })} /></label></div>
-                        <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow internet access</span></label></div>
+                        <div class="mcp-fields"><label>Sites it may reach<input placeholder="api.example.com (none: no internet)" value={(def.hosts ?? []).join(" ")} aria-label={`Sites ${name} may reach`} onInput={(e) => updateServer(name, { hosts: e.currentTarget.value.split(/[\s,]+/).filter(Boolean) })} /></label></div>
                       </div>}</For>
                     </Show>
                     <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add connection</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
-                    <p class="settings-hint">{scope() === "user" ? "Every agent can use these. Saved keys are never shown here." : "These apply only to this agent. Internet access stays off until you turn it on."}</p>
+                    <p class="settings-hint">{scope() === "user" ? "Every agent can use these. Saved keys are never shown here." : "These apply only to this agent. A connection reaches no site until you list it under Sites it may reach."}</p>
 
                     <Show when={scope() === "workspace" && Object.keys(inheritedMcpServers()).length > 0}>
                       <div class="inherited-capabilities-group">
@@ -2699,7 +2699,7 @@ export default function Settings() {
                                     <div>
                                       <strong>{name}</strong>
                                       <Show when={technicalDetails()}><code>{def.command} {def.args.join(" ")}</code></Show>
-                                      <small>{def.network ? "Can use the internet" : "This computer only"}</small>
+                                      <small>{(def.hosts ?? []).length > 0 ? `Reaches ${(def.hosts ?? []).join(", ")}` : "This computer only"}</small>
                                     </div>
                                   </div>
                                   <div class="inherited-actions">
@@ -2707,7 +2707,7 @@ export default function Settings() {
                                       <>
                                         <span class="capability-state inherited">{inherits("mcp") ? "Inherited" : "Not inherited"}</span>
                                         <button class="settings-button" onClick={() => {
-                                          updateServer(name, { command: def.command, args: [...def.args], env: { ...def.env }, network: def.network });
+                                          updateServer(name, { command: def.command, args: [...def.args], env: { ...def.env }, hosts: [...(def.hosts ?? [])] });
                                           setNotice({ kind: "info", text: `Copied ${name} to this agent's connections. You can now change it.` });
                                         }}>Change for this agent</button>
                                       </>

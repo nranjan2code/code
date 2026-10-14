@@ -21,6 +21,7 @@ pub fn runner_main(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
     let mut read = Vec::new();
     let mut write = Vec::new();
     let mut read_only = false;
+    let mut connect_port = None;
     let mut command = Vec::new();
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -36,6 +37,15 @@ pub fn runner_main(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
                 return 125;
             };
             read.push(PathBuf::from(path));
+        } else if arg == "--connect-port" {
+            let Some(port) = args
+                .next()
+                .and_then(|port| port.to_string_lossy().parse::<u16>().ok())
+            else {
+                eprintln!("sandbox: --connect-port requires a port");
+                return 125;
+            };
+            connect_port = Some(port);
         } else if arg == "--rw" {
             let Some(path) = args.next() else {
                 eprintln!("sandbox: --rw requires a path");
@@ -53,7 +63,7 @@ pub fn runner_main(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
     }
     #[cfg(target_os = "linux")]
     {
-        if let Err(error) = apply(&read, &write, read_only) {
+        if let Err(error) = apply(&read, &write, read_only, connect_port) {
             eprintln!("sandbox: {error}");
             return 126;
         }
@@ -71,7 +81,7 @@ pub fn runner_main(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (read, write, read_only, command);
+        let _ = (read, write, read_only, connect_port, command);
         eprintln!("sandbox: not supported on this platform");
         126
     }
@@ -82,6 +92,9 @@ pub struct Landlock {
     pub mode: SandboxMode,
     pub read_paths: Vec<PathBuf>,
     pub write_paths: Vec<PathBuf>,
+    /// May connect to this loopback port and nowhere else: the egress proxy
+    /// of a networked integration (`Sandbox::proxied_variant`).
+    pub connect_port: Option<u16>,
 }
 
 impl Landlock {
@@ -140,6 +153,7 @@ impl Landlock {
             mode,
             read_paths,
             write_paths,
+            connect_port: None,
         }
     }
 }
@@ -195,6 +209,9 @@ impl Sandbox for Landlock {
         for p in &self.write_paths {
             parts.push(format!("--rw {}", shell_quote(&p.display().to_string())));
         }
+        if let Some(port) = self.connect_port {
+            parts.push(format!("--connect-port {port}"));
+        }
         parts.push("--".to_string());
         parts.push(shell_quote(command));
         parts.join(" ")
@@ -205,6 +222,14 @@ impl Sandbox for Landlock {
             mode: SandboxMode::ReadOnly,
             read_paths: self.read_paths.clone(),
             write_paths: Vec::new(),
+            connect_port: self.connect_port,
+        }))
+    }
+
+    fn proxied_variant(&self, port: u16) -> Option<Arc<dyn Sandbox>> {
+        Some(Arc::new(Landlock {
+            connect_port: Some(port),
+            ..self.clone()
         }))
     }
 }
@@ -225,17 +250,32 @@ pub fn apply(
     read_paths: &[PathBuf],
     write_paths: &[PathBuf],
     read_only: bool,
+    connect_port: Option<u16>,
 ) -> Result<(), String> {
     use landlock::{
-        Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
-        path_beneath_rules,
+        Access, AccessFs, AccessNet, NetPort, Ruleset, RulesetAttr, RulesetCreatedAttr,
+        RulesetStatus, path_beneath_rules,
     };
 
     let fs_abi = ABI::V3;
-    let created = Ruleset::default()
-        .handle_access(AccessFs::from_all(fs_abi))
+    // A proxied process may connect over TCP to its proxy's port alone;
+    // that needs Landlock's network rules (ABI v4, Linux 6.7+).
+    let ruleset = Ruleset::default().handle_access(AccessFs::from_all(fs_abi));
+    let ruleset = match connect_port {
+        Some(_) => {
+            ruleset.and_then(|r| r.handle_access(AccessNet::BindTcp | AccessNet::ConnectTcp))
+        }
+        None => ruleset,
+    };
+    let created = ruleset
         .and_then(|r| r.create())
         .map_err(|e| format!("landlock: {e}"))?;
+    let created = match connect_port {
+        Some(port) => created
+            .add_rule(NetPort::new(port, AccessNet::ConnectTcp))
+            .map_err(|e| format!("landlock: {e}"))?,
+        None => created,
+    };
     let created = created
         .add_rules(path_beneath_rules(read_paths, AccessFs::from_read(fs_abi)))
         .map_err(|e| format!("landlock: {e}"))?;
@@ -248,17 +288,23 @@ pub fn apply(
     }
     .map_err(|e| format!("landlock: {e}"))?;
     if restricted.ruleset != RulesetStatus::FullyEnforced {
-        return Err(
-            "landlock: full enforcement unavailable (the kernel needs Landlock ABI v3, Linux 6.2+)"
+        return Err(match connect_port {
+            Some(_) => "landlock: full enforcement unavailable (a networked integration needs \
+                        Landlock ABI v4, Linux 6.7+)"
                 .to_string(),
-        );
+            None => "landlock: full enforcement unavailable (the kernel needs Landlock ABI v3, \
+                     Linux 6.2+)"
+                .to_string(),
+        });
     }
-    deny_network()
+    deny_network(connect_port.is_some())
 }
 
 /// The seccomp half of [`apply`]: no IPv4 or IPv6 socket and no io_uring
-/// for this process and everything it executes.
-fn deny_network() -> Result<(), String> {
+/// for this process and everything it executes. A proxied process keeps
+/// TCP stream sockets, which Landlock confines to its proxy's port; every
+/// other kind (UDP, raw) stays refused.
+fn deny_network(tcp_streams: bool) -> Result<(), String> {
     use seccompiler::{
         BpfProgram, SeccompAction, SeccompCmpArgLen, SeccompCmpOp, SeccompCondition, SeccompFilter,
         SeccompRule, TargetArch,
@@ -268,10 +314,35 @@ fn deny_network() -> Result<(), String> {
         SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, family as u64)
             .and_then(|condition| SeccompRule::new(vec![condition]))
     };
-    let socket_rules = vec![
-        domain(libc::AF_INET).map_err(|e| fail(&e))?,
-        domain(libc::AF_INET6).map_err(|e| fail(&e))?,
-    ];
+    // The socket type's low bits name its kind; the high bits are flags
+    // (SOCK_NONBLOCK, SOCK_CLOEXEC).
+    let kind_of = |family: libc::c_int, kind: libc::c_int| {
+        let family =
+            SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, family as u64);
+        let kind = SeccompCondition::new(
+            1,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::MaskedEq(0xf),
+            kind as u64,
+        );
+        family
+            .and_then(|family| kind.map(|kind| vec![family, kind]))
+            .and_then(SeccompRule::new)
+    };
+    let socket_rules = if tcp_streams {
+        let mut rules = Vec::new();
+        for family in [libc::AF_INET, libc::AF_INET6] {
+            for kind in [libc::SOCK_DGRAM, libc::SOCK_RAW, libc::SOCK_SEQPACKET] {
+                rules.push(kind_of(family, kind).map_err(|e| fail(&e))?);
+            }
+        }
+        rules
+    } else {
+        vec![
+            domain(libc::AF_INET).map_err(|e| fail(&e))?,
+            domain(libc::AF_INET6).map_err(|e| fail(&e))?,
+        ]
+    };
     let rules = [
         (libc::SYS_socket, socket_rules),
         (libc::SYS_io_uring_setup, Vec::new()),

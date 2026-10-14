@@ -249,3 +249,39 @@ fn read_only_variant_strips_all_write_entitlements() {
         "read-only variant must not grant writes: {profile}"
     );
 }
+
+/// A networked integration's sandbox: TCP to its egress proxy's port only
+/// (docs/design/09-extensibility.md "Network").
+#[cfg(target_os = "macos")]
+#[test]
+fn seatbelt_proxied_variant_reaches_its_proxy_port_and_nothing_else() {
+    let dir = tempdir().unwrap();
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_port = proxy.local_addr().unwrap().port();
+    let other_port = other.local_addr().unwrap().port();
+    let sb = Seatbelt::new(SandboxMode::ReadOnly, dir.path())
+        .proxied_variant(proxy_port)
+        .expect("seatbelt confines to a port");
+    let reach = |port: u16| {
+        let command = format!("/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/{port}' && echo reached");
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(sb.wrap(&command))
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).contains("reached")
+    };
+    assert!(reach(proxy_port), "the proxy's port is reachable");
+    assert!(!reach(other_port), "another port is refused");
+    // The closed sandbox reaches neither.
+    let closed = Seatbelt::new(SandboxMode::ReadOnly, dir.path());
+    let output = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(closed.wrap(&format!(
+            "/bin/bash -c 'exec 3<>/dev/tcp/127.0.0.1/{proxy_port}' && echo reached"
+        )))
+        .output()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("reached"));
+}

@@ -931,10 +931,14 @@ pub struct McpServerConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: std::collections::BTreeMap<String, String>,
-    /// Allow outbound network for this MCP server. Privileged (mcp.servers
-    /// is stripped from untrusted projects).
-    #[serde(default)]
-    pub network: bool,
+    /// The hosts this server may reach: `hosts = ["api.example.com"]`
+    /// allows HTTPS and HTTP to that name, `"name:port"` that port. The
+    /// server reaches them only through its own egress proxy, inside the
+    /// OS sandbox (docs/design/09-extensibility.md "Network"). Names match
+    /// exactly: a wildcard or a URL matches nothing. Empty means no network
+    /// at all. Privileged (mcp.servers is stripped from untrusted projects).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
     /// What this server is for, in its own words: `serves = ["live-data"]`.
     ///
     /// Optional, and deliberately so. It decides whether a call to this
@@ -1052,7 +1056,7 @@ pub struct ChannelPolicy {
     pub hooks_deny: Vec<String>,
     /// Server-name patterns (matched the same way as `mcp_allow`/`mcp_deny`)
     /// for which this channel forces outbound network off, even when the
-    /// server's own `McpServerConfig.network` is `true`. Restrictive only —
+    /// server's own `McpServerConfig.hosts` declares some. Restrictive only —
     /// there is deliberately no matching "network_allow": a channel can
     /// only take network access away from a server it can already reach,
     /// never grant it to one the server config itself denies.
@@ -1993,10 +1997,10 @@ fn write_mcp_server(entry: &mut toml::Table, server: &McpServerConfig) {
             ),
         );
     }
-    if server.network {
-        entry.insert("network".into(), toml::Value::Boolean(true));
+    if server.hosts.is_empty() {
+        entry.remove("hosts");
     } else {
-        entry.remove("network");
+        entry.insert("hosts".into(), strings(&server.hosts));
     }
     if !server.serves.is_empty() {
         entry.insert("serves".into(), strings(&server.serves));
@@ -5639,7 +5643,7 @@ mod tests {
                         command: format!("mcp-{round}"),
                         args: Vec::new(),
                         env: BTreeMap::new(),
-                        network: false,
+                        hosts: Vec::new(),
                         serves: Vec::new(),
                     };
                     persist_mcp_servers(
@@ -5924,7 +5928,7 @@ mod tests {
         std::fs::write(
             &path,
             "[mcp]\nfuture_mcp_key = true\n\n\
-             [mcp.servers.search]\ncommand = \"old\"\nnetwork = true\n\
+             [mcp.servers.search]\ncommand = \"old\"\nhosts = [\"api.example.com\"]\n\
              serves = [\"web\"]\nfuture_server_key = 3\n\
              [mcp.servers.search.env]\nOLD = \"1\"\n\n\
              [mcp.servers.gone]\ncommand = \"gone\"\n",
@@ -5934,7 +5938,7 @@ mod tests {
             command: command.into(),
             args: vec!["--stdio".into()],
             env: BTreeMap::new(),
-            network: false,
+            hosts: Vec::new(),
             serves: Vec::new(),
         };
         let read =
@@ -5957,7 +5961,10 @@ mod tests {
         assert_eq!(search["command"].as_str(), Some("new"));
         assert_eq!(search["args"].as_array().unwrap().len(), 1);
         assert!(!search.contains_key("env"), "an emptied env is cleared");
-        assert!(!search.contains_key("network"), "network off is cleared");
+        assert!(
+            !search.contains_key("hosts"),
+            "an emptied hosts list is cleared"
+        );
         assert_eq!(search["serves"].as_array().unwrap().len(), 1);
         assert_eq!(search["future_server_key"].as_integer(), Some(3));
 

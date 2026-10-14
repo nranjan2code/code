@@ -24,7 +24,41 @@ TOOLS = [
         "description": "Returns a diagnostic result",
         "inputSchema": {"type": "object"},
     },
+    {
+        "name": "net_probe",
+        "description": "Tries host:port directly, then through HTTPS_PROXY",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"target": {"type": "string"}},
+            "required": ["target"],
+        },
+    },
 ]
+
+
+def net_probe(target):
+    import socket
+
+    host, port = target.rsplit(":", 1)
+    said = []
+    try:
+        socket.create_connection((host, int(port)), timeout=2).close()
+        said.append("direct:open")
+    except OSError:
+        said.append("direct:denied")
+    proxy = os.getenv("HTTPS_PROXY", "")
+    if not proxy:
+        said.append("proxy:none")
+        return " ".join(said)
+    proxy_host, proxy_port = proxy.split("//")[-1].rsplit(":", 1)
+    try:
+        conn = socket.create_connection((proxy_host, int(proxy_port)), timeout=2)
+        conn.sendall(f"CONNECT {target} HTTP/1.1\r\n\r\n".encode())
+        said.append("proxy:" + conn.recv(64).decode().split("\r\n")[0])
+        conn.close()
+    except OSError:
+        said.append("proxy:failed")
+    return " ".join(said)
 
 
 def send(msg):
@@ -60,6 +94,13 @@ for line in sys.stdin:
                 "jsonrpc": "2.0",
                 "id": rid,
                 "result": {"content": [{"type": "text", "text": f"echo: {text}"}]},
+            })
+        elif name == "net_probe":
+            target = params.get("arguments", {}).get("target", "")
+            send({
+                "jsonrpc": "2.0",
+                "id": rid,
+                "result": {"content": [{"type": "text", "text": net_probe(target)}]},
             })
         elif name == "secret_result":
             send({

@@ -35,8 +35,10 @@ sandboxed broker execution.
    server is discovered from the workspace's MCP manifest (`[mcp.servers]`).
 3. The MCP server is spawned as a sandboxed subprocess (`npx tavily-mcp`),
    inheriting only the operational environment allowlist (PATH, HOME, etc.).
-4. The server's outbound HTTPS requests are not directly mediated by vak, but
-   the MCP server itself is scoped to the `tavily/*` capability namespace.
+4. The server's outbound HTTPS requests go through its own egress proxy,
+   which allows only the hosts its catalog entry declares (`api.tavily.com`
+   and `registry.npmjs.org`), and the server runs inside the sandbox with that
+   proxy as its one way out (docs/design/09-extensibility.md "Network").
 5. Results are returned through the MCP protocol, wrapped in the model-visible
    session ledger (invariant 1: model-visible means logged).
 

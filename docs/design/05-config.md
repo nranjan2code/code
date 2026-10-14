@@ -161,7 +161,7 @@ none is privileged in ordering, presentation, or capability.
 The application owns each definition, so an operator only supplies a key and
 chooses whether the entry is enabled. That removes the configuration choices
 that used to cause failures: no user-entered command, package, or arguments;
-no user-controlled `network` flag; no key in `.vak/config.toml`, transcripts,
+no user-chosen network reach (each entry ships the hosts it needs); no key in `.vak/config.toml`, transcripts,
 logs, or responses; no literal `${…_API_KEY}` reaching a child process when
 the key is absent; and no stale running process after an enable, disable, or
 key rotation.

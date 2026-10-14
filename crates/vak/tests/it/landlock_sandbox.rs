@@ -86,3 +86,32 @@ fn a_sandboxed_command_runs_within_its_grants_and_has_no_network() {
     );
     assert_ne!(code, 0);
 }
+
+/// A networked integration's sandbox: TCP to its egress proxy's port only.
+/// Another port is refused, and so is UDP (docs/design/09-extensibility.md
+/// "Network").
+#[test]
+fn a_proxied_command_reaches_its_proxy_port_and_nothing_else() {
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_port = proxy.local_addr().unwrap().port().to_string();
+    let other_port = other.local_addr().unwrap().port();
+    let reach = |port: &str| format!("bash -c 'exec 3<>/dev/tcp/127.0.0.1/{port}' && echo reached");
+    let (code, said) = sandboxed(
+        &["--read", "/", "--connect-port", &proxy_port],
+        &reach(&proxy_port),
+    );
+    assert_eq!(code, 0, "{said}");
+    assert!(said.contains("reached"), "{said}");
+    let (code, said) = sandboxed(
+        &["--read", "/", "--connect-port", &proxy_port],
+        &reach(&other_port.to_string()),
+    );
+    assert_ne!(code, 0, "{said}");
+    assert!(!said.contains("reached"), "{said}");
+    let (code, _) = sandboxed(
+        &["--read", "/", "--connect-port", &proxy_port],
+        "bash -c 'exec 3<>/dev/udp/127.0.0.1/53' && echo reached",
+    );
+    assert_ne!(code, 0);
+}

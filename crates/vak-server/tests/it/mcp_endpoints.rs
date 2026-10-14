@@ -103,13 +103,13 @@ async fn mcp_servers_get_put_roundtrip_and_persist() {
     // PUT replaces the whole RUNNING table (global + project) and persists
     // the project-layer file.
 
-    // PUT two servers (one with env + network).
+    // PUT two servers (one with env + hosts).
     let res = client
         .put(format!("{base}/config/mcp"))
         .json(&serde_json::json!({
             "servers": {
                 "context7": {"command": "npx", "args": ["-y", "@context7/mcp"]},
-                "fs": {"command": "./bin/fsd", "env": {"TOKEN": "${FS_TOKEN}"}, "network": true}
+                "fs": {"command": "./bin/fsd", "env": {"TOKEN": "${FS_TOKEN}"}, "hosts": ["api.example.com"]}
             }
         }))
         .send()
@@ -128,8 +128,8 @@ async fn mcp_servers_get_put_roundtrip_and_persist() {
     assert_eq!(
         body["servers"],
         serde_json::json!({
-            "context7": {"command": "npx", "args": ["-y", "@context7/mcp"], "env": {}, "network": false},
-            "fs": {"command": "./bin/fsd", "args": [], "env": {"TOKEN": "${FS_TOKEN}"}, "network": true},
+            "context7": {"command": "npx", "args": ["-y", "@context7/mcp"], "env": {}},
+            "fs": {"command": "./bin/fsd", "args": [], "env": {"TOKEN": "${FS_TOKEN}"}, "hosts": ["api.example.com"]},
         })
     );
 

@@ -1,5 +1,5 @@
 # 09 — Extensibility (skills · workers · hooks · MCP · custom commands)
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; MCP network through a per-server egress proxy (2026-10-14)
 
 ## Skills (shipped)
 
@@ -130,6 +130,8 @@ dependencies). Config:
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-github"]
 env = { GITHUB_TOKEN = "…" }
+# The hosts it may reach, through its own egress proxy (see "Network").
+hosts = ["api.github.com"]
 # Optional. What this server is for, so the per-turn capability slice can
 # match it (docs/design/41-capability-registry.md). Omitting it leaves the
 # server *undeclared*, which is never narrowed away — declaring domains only
@@ -165,6 +167,42 @@ Design choices:
 - v1 limits: no sampling/roots/elicitation; server-initiated *requests* are
   ignored (notifications are not); 60s request timeout for calls, 10s for
   discovery probes.
+
+### Network (2026-10-14)
+
+An MCP server reaches the network only through an egress proxy of its own,
+and only the hosts declared for it: `hosts = ["api.github.com"]` allows
+HTTPS and HTTP to that name, `"name:port"` that port. Names match exactly;
+a wildcard or a URL matches nothing. No `hosts` means no network at all.
+`hosts` replaces the old `network = true`, which ran the server outside the
+sandbox entirely.
+
+- **The proxy** (`vak_mcp::egress`) listens on a free loopback port for as
+  long as the connection lasts. It answers HTTP `CONNECT` for a declared
+  host and refuses everything else (another host 403, a plain request 405);
+  it tunnels the bytes and never reads them. The server is told where it is
+  through the usual proxy variables (`HTTPS_PROXY`, `HTTP_PROXY`,
+  `ALL_PROXY`, lower-case too, and `NODE_USE_ENV_PROXY=1` for Node's own
+  `fetch`).
+- **The sandbox** confines the server to that port
+  (`Sandbox::proxied_variant`): on macOS, Seatbelt allows outbound
+  connections to `localhost:<port>` alone; on Linux, Landlock's network
+  rules (ABI v4, Linux 6.7+) allow TCP connections to that port alone and
+  the seccomp filter keeps refusing UDP and raw sockets. A backend that
+  cannot confine a process to a port (Docker) refuses to start a networked
+  server rather than run it unconfined. In full-access, where nothing is
+  sandboxed, the proxy variables are still set but nothing enforces them.
+- **Who declares hosts:** the operator in `[mcp.servers.x]`, and "Sites it
+  may reach" in the admin console and in the app's Settings › Capabilities
+  (the approval card's network note reads the same list); a curated integration ships its own (its
+  API host and `registry.npmjs.org`, where `npx` installs it from); a plugin
+  declares them in its `mcp.json` beside `command`, granted only while the
+  plugin is allowed the network. A channel's `mcp_network_deny` clears them.
+- **Known limits:** a client that ignores the proxy variables cannot reach
+  the network at all (it fails closed). On Linux, Landlock confines by port,
+  not address, so a server could connect to a remote host listening on its
+  proxy's port number. Keys still reach the server in its environment;
+  swapping a placeholder for the real key at the proxy is the next step.
 
 ## Custom commands (shipped)
 

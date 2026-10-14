@@ -31,7 +31,7 @@ fn manager_with_env(env: Vec<(String, String)>) -> Arc<McpManager> {
             command: "python3".into(),
             args: vec![server_script().display().to_string()],
             env,
-            network: false,
+            hosts: Vec::new(),
         },
     );
     Arc::new(McpManager::new(servers, std::env::temp_dir()))
@@ -236,4 +236,63 @@ async fn missing_action_parameter_is_rejected() {
     let out = tool.execute(&json!({}), &ctx()).await;
     assert!(out.is_error());
     assert!(out.content.contains("action"));
+}
+
+/// A networked server runs inside the sandbox and reaches only its declared
+/// hosts, through its own egress proxy (docs/design/09-extensibility.md
+/// "Network"). Local listeners stand in for the hosts.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn a_networked_server_reaches_only_its_declared_hosts_through_its_proxy() {
+    use vak_tools::sandbox::{SandboxMode, Seatbelt};
+    let declared = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let other = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let declared = format!("127.0.0.1:{}", declared.local_addr().unwrap().port());
+    let other = format!("127.0.0.1:{}", other.local_addr().unwrap().port());
+    // The script's own folder is the sandbox's workspace, so it can read it.
+    let scripts = server_script().parent().unwrap().to_path_buf();
+    let mut servers = HashMap::new();
+    servers.insert(
+        "fake".to_string(),
+        vak_mcp::ServerConfig {
+            command: "python3".into(),
+            args: vec![server_script().display().to_string()],
+            env: Vec::new(),
+            hosts: vec![declared.clone()],
+        },
+    );
+    let sandbox: Arc<dyn vak_tools::sandbox::Sandbox> =
+        Arc::new(Seatbelt::new(SandboxMode::ReadOnly, &scripts));
+    let tool = McpTool::new(Arc::new(McpManager::new_sandboxed(
+        servers,
+        scripts,
+        Some(sandbox),
+    )));
+    let probe = |target: &str| {
+        json!({"action": "call", "server": "fake", "tool": "net_probe",
+               "arguments": {"target": target}})
+    };
+    let allowed = tool.execute(&probe(&declared), &ctx()).await;
+    assert!(!allowed.is_error(), "{}", allowed.content);
+    assert!(
+        allowed.content.contains("direct:denied"),
+        "{}",
+        allowed.content
+    );
+    assert!(
+        allowed.content.contains("proxy:HTTP/1.1 200"),
+        "{}",
+        allowed.content
+    );
+    let refused = tool.execute(&probe(&other), &ctx()).await;
+    assert!(
+        refused.content.contains("direct:denied"),
+        "{}",
+        refused.content
+    );
+    assert!(
+        refused.content.contains("proxy:HTTP/1.1 403"),
+        "{}",
+        refused.content
+    );
 }

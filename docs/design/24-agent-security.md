@@ -167,7 +167,10 @@ plugin trust, and deep policy-drift audits.
   limits, and separate read/write HTTP methods.
 - Route all worker egress through an enforcing proxy or network namespace.
   Seatbelt's all-or-nothing network rule is useful but cannot express a safe
-  browser.
+  browser. Done for MCP servers 2026-10-14: each reaches only its declared
+  hosts through its own egress proxy, inside the sandbox
+  (docs/design/09-extensibility.md "Network"); before, a networked server
+  ran outside the sandbox.
 - Keep model-provider inference on a separate trusted channel. Network denial
   inside Bash does not prevent data placed in model-visible tool output from
   reaching the configured provider.

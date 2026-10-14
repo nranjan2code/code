@@ -575,6 +575,11 @@ function parseEnvLines(text: string): Record<string, string> {
   }
   return out;
 }
+/** Sites typed into a field, one per space or comma. */
+function splitHosts(text: string): string[] {
+  return text.split(/[\s,]+/).map((host) => host.trim()).filter((host) => host.length > 0);
+}
+
 function envToLines(env: Record<string, string> | undefined): string {
   return Object.entries(env ?? {})
     .map(([k, v]) => `${k}=${v}`)
@@ -586,12 +591,12 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
   const [editing, setEditing] = createSignal("");
   const [editCmd, setEditCmd] = createSignal("");
   const [editArgs, setEditArgs] = createSignal("");
-  const [editNetwork, setEditNetwork] = createSignal(false);
+  const [editHosts, setEditHosts] = createSignal("");
   const [editEnv, setEditEnv] = createSignal("");
   const [newName, setNewName] = createSignal("");
   const [newCmd, setNewCmd] = createSignal("");
   const [newArgs, setNewArgs] = createSignal("");
-  const [newNetwork, setNewNetwork] = createSignal(false);
+  const [newHosts, setNewHosts] = createSignal("");
   const [newEnv, setNewEnv] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [integrationKeys, setIntegrationKeys] = createSignal<Record<string, string>>({});
@@ -615,7 +620,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
         [name]: {
           command: cmd,
           args: newArgs().trim() ? newArgs().trim().split(/\s+/) : [],
-          network: newNetwork(),
+          ...(splitHosts(newHosts()).length > 0 ? { hosts: splitHosts(newHosts()) } : {}),
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
       }, props.ctx.scope(), selectedAgentIdOrUndefined());
@@ -624,7 +629,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
       setNewName("");
       setNewCmd("");
       setNewArgs("");
-      setNewNetwork(false);
+      setNewHosts("");
       setNewEnv("");
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
@@ -652,7 +657,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
     setEditing(name);
     setEditCmd(server.command);
     setEditArgs((server.args ?? []).join(" "));
-    setEditNetwork(!!server.network);
+    setEditHosts((server.hosts ?? []).join(" "));
     setEditEnv(envToLines(server.env));
   };
 
@@ -666,7 +671,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
         [name]: {
           command: editCmd().trim(),
           args: editArgs().trim() ? editArgs().trim().split(/\s+/) : [],
-          network: editNetwork(),
+          ...(splitHosts(editHosts()).length > 0 ? { hosts: splitHosts(editHosts()) } : {}),
           ...(Object.keys(env).length > 0 ? { env } : {}),
         },
       }, props.ctx.scope(), selectedAgentIdOrUndefined());
@@ -842,8 +847,13 @@ A connected app hands Vakyartha extra tools — a GitHub client, a database, a b
                             </span>
                           </td>
                           <td>
-                            <span class={`chip chip-tone-${server.network ? "warning" : "success"}`}>
-                              {server.network ? "can reach the internet" : "no internet"}
+                            <span
+                              class={`chip chip-tone-${(server.hosts ?? []).length > 0 ? "warning" : "success"}`}
+                              title={(server.hosts ?? []).join(", ")}
+                            >
+                              {(server.hosts ?? []).length > 0
+                                ? `reaches ${(server.hosts ?? []).length} site${(server.hosts ?? []).length === 1 ? "" : "s"}`
+                                : "no internet"}
                             </span>
                           </td>
                           <td class="dim">
@@ -933,10 +943,7 @@ When several rules match the same call, the strictest one wins — blocked beats
                                 <div class="edit-form compact-edit">
                                   <div class="form-row"><label>Program to run</label><input class="mono" value={editCmd()} onInput={(e) => setEditCmd(e.currentTarget.value)} /></div>
                                   <div class="form-row"><label>Arguments</label><input class="mono" value={editArgs()} onInput={(e) => setEditArgs(e.currentTarget.value)} /></div>
-                                  <label class="inherit-toggle">
-                                    <input type="checkbox" checked={editNetwork()} onChange={(e) => setEditNetwork(e.currentTarget.checked)} />
-                                    This app needs internet access
-                                  </label>
+                                  <div class="form-row"><label>Sites it may reach</label><input class="mono" placeholder="api.github.com" value={editHosts()} onInput={(e) => setEditHosts(e.currentTarget.value)} /></div>
                                   <div class="form-row">
                                     <label>Secrets it needs</label>
                                     <textarea class="mono" rows={3} placeholder={"KEY=value, one per line"} value={editEnv()} onInput={(e) => setEditEnv(e.currentTarget.value)} />
@@ -974,10 +981,10 @@ When several rules match the same call, the strictest one wins — blocked beats
             <label>Arguments</label>
             <input class="mono" placeholder="-y @modelcontextprotocol/server-github" value={newArgs()} onInput={(e) => setNewArgs(e.currentTarget.value)} />
           </div>
-          <label class="inherit-toggle">
-            <input type="checkbox" checked={newNetwork()} onChange={(e) => setNewNetwork(e.currentTarget.checked)} />
-            This app needs internet access
-          </label>
+          <div class="form-row">
+            <label>Sites it may reach</label>
+            <input class="mono" placeholder="api.github.com (leave empty for no internet)" value={newHosts()} onInput={(e) => setNewHosts(e.currentTarget.value)} />
+          </div>
           <div class="form-row">
             <label>Secrets it needs</label>
             <textarea class="mono" rows={3} placeholder={"GITHUB_TOKEN=${GITHUB_TOKEN}, one per line"} value={newEnv()} onInput={(e) => setNewEnv(e.currentTarget.value)} />
@@ -3579,7 +3586,7 @@ function ChannelCapabilityPolicy(props: {
                   <input type="checkbox" checked={netOff(name)} onChange={() => toggleNet(name)} />
                   <span>
                     <strong>{name}</strong>
-                    <em>{server.network ? "has internet — uncheck to keep it" : "already offline"}</em>
+                    <em>{(server.hosts ?? []).length > 0 ? "has internet — uncheck to keep it" : "already offline"}</em>
                   </span>
                 </label>
               )}

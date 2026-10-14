@@ -19234,8 +19234,9 @@ struct McpServerInput {
     args: Vec<String>,
     #[serde(default)]
     env: std::collections::BTreeMap<String, String>,
+    /// The hosts the server may reach through its egress proxy; empty, none.
     #[serde(default)]
-    network: bool,
+    hosts: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -19276,7 +19277,7 @@ fn mcp_config_from_input(
                         command: server.command.trim().to_string(),
                         args: server.args.clone(),
                         env: server.env.clone(),
-                        network: server.network,
+                        hosts: server.hosts.clone(),
                         // Undeclared: the per-turn slice never narrows a
                         // capability that has not classified itself, so a
                         // server configured through the API stays reachable
@@ -19370,6 +19371,9 @@ struct IntegrationCatalogEntry {
     command: &'static str,
     args: &'static [&'static str],
     env_var: Option<&'static str>,
+    /// The hosts the server reaches: its own API, and the npm registry that
+    /// `npx` installs it from.
+    hosts: &'static [&'static str],
     key_required: bool,
     documentation_url: &'static str,
 }
@@ -19388,6 +19392,7 @@ const INTEGRATION_CATALOG: &[IntegrationCatalogEntry] = &[
         command: "npx",
         args: &["-y", "@upstash/context7-mcp@latest"],
         env_var: Some("CONTEXT7_API_KEY"),
+        hosts: &["context7.com", "registry.npmjs.org"],
         key_required: false,
         documentation_url: "https://github.com/upstash/context7",
     },
@@ -19398,6 +19403,7 @@ const INTEGRATION_CATALOG: &[IntegrationCatalogEntry] = &[
         command: "npx",
         args: &["-y", "exa-mcp-server"],
         env_var: Some("EXA_API_KEY"),
+        hosts: &["api.exa.ai", "registry.npmjs.org"],
         key_required: true,
         documentation_url: "https://github.com/exa-labs/exa-mcp-server",
     },
@@ -19408,6 +19414,7 @@ const INTEGRATION_CATALOG: &[IntegrationCatalogEntry] = &[
         command: "npx",
         args: &["-y", "firecrawl-mcp"],
         env_var: Some("FIRECRAWL_API_KEY"),
+        hosts: &["api.firecrawl.dev", "registry.npmjs.org"],
         key_required: true,
         documentation_url: "https://github.com/firecrawl/firecrawl-mcp-server",
     },
@@ -19418,6 +19425,7 @@ const INTEGRATION_CATALOG: &[IntegrationCatalogEntry] = &[
         command: "npx",
         args: &["-y", "tavily-mcp@latest"],
         env_var: Some("TAVILY_API_KEY"),
+        hosts: &["api.tavily.com", "registry.npmjs.org"],
         key_required: true,
         documentation_url: "https://github.com/tavily-ai/tavily-mcp",
     },
@@ -19442,7 +19450,7 @@ fn catalog_server(entry: IntegrationCatalogEntry) -> vak_config::McpServerConfig
                     .collect()
             })
             .unwrap_or_default(),
-        network: true,
+        hosts: entry.hosts.iter().map(|host| (*host).to_string()).collect(),
         // Catalog entries stay undeclared for the same reason: a server the
         // operator just installed must be reachable immediately, and
         // declaring domains only ever narrows.
@@ -19477,7 +19485,7 @@ fn integration_status(
         "description": entry.description,
         "command": entry.command,
         "args": entry.args,
-        "network": true,
+        "hosts": entry.hosts,
         "env_var": entry.env_var,
         "key_required": entry.key_required,
         "documentation_url": entry.documentation_url,

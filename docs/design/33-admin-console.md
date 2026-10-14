@@ -466,8 +466,9 @@ Nothing here is inferred where it could be read.
   is neither a read nor a write tool, so an uncovered call is `allow` under
   full-access, `deny` under read-only, `ask` under workspace-write. The UI
   names that decision rather than leaving the cell blank.
-- **MCP network and environment** are on `McpServerConfig` (`network`,
-  `env`), both editable from the console (register/edit form). `env` values
+- **MCP network and environment** are on `McpServerConfig` (`hosts`,
+  `env`), both editable from the console (register/edit form; "Sites it
+  may reach" is `hosts`, docs/design/09-extensibility.md "Network"). `env` values
   round-trip verbatim through `GET`/`PUT /config/mcp` — usually a `${VAR}`
   reference resolved from the credential store at process launch rather
   than a literal secret, since that is how config.toml already stores them,
