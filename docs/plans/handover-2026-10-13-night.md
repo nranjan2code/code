@@ -81,6 +81,32 @@ the browser:
   Test: `a_cross_origin_upgrade_cannot_open_a_shell` (web_client.rs).
   Invariant 34, docs 13, 48 (§5, §6, defect 3) and 49 updated.
 
+- `6f79b166a` security: the provenance gate (invariant 43,
+  docs/design/08-permissions.md "Provenance"). Every tool result is
+  labelled private, untrusted, both or neither from what its tool
+  declares (`Tool::provenance`, read from its reach) and where it came
+  from (an account's result is both, a worker's is what the worker held,
+  `recall` is what the reopened turn or call held), recorded as
+  `CallEffect::Provenance` and kept on the turn's card. A request holds
+  what its open turn received and what every turn its plan carries held
+  (`SessionLog::carried_provenance`); a `task` worker starts with what its
+  parent held. Once a request holds both, a call that can leave the
+  machine (`Tool::leaves_machine`; `bash` only with no sandbox or in
+  full-access) is an `AskSource::Provenance` ask that nothing
+  pre-authorizes and an unanswered surface refuses. Maintainer's choices:
+  private is everything Vak holds for the owner; untrusted is declared per
+  tool; labels follow what the request carries; the person is asked.
+  Declared beyond reach: `session_search`, `agent_network`, `flow` and a
+  background worker's result or wait hold both; `entity_*` and
+  `automations` hold private; MCP results are untrusted only. Tests:
+  `vak-agent` `tests/it/provenance.rs` (seven cases). Live: session
+  `01a13639-afec-79b0-b9ec-d23f63e05ef7` on ws13 (`doc_read`, then
+  `webfetch` ran, the next `webfetch` was asked "this turn holds your data
+  (from doc_read) and words someone else wrote (from webfetch)…",
+  declined, and the turn answered from what it had).
+- Follow-up commit: `authorize` reads the tools from its config rather
+  than taking them as an argument (the 7-argument limit).
+
 ## Next, in order
 
 1. Done 2026-10-13: the `/until-done` turn. The hold has its own kind
@@ -112,7 +138,21 @@ the browser:
    be combined"); a card claimed a command printed "ready" when its
    receipt said it stopped at its limit (run_01a12edd); doc 88 §5a's
    three remaining waits.
-7. Model choice, recorded (do not tune without a new contract cause): a
+7. Investigated 2026-10-14: after a declined provenance ask the model
+   made the same `webfetch` again (session `01a13639…`). Vak's part: the
+   identical call went back to the person, and the decline the model read
+   carried the mode's "'webfetch' needs approval" inside it and the
+   person-facing "your data". Fixed: a person's no stands for the
+   identical call for the rest of the turn (`SeenCall::declined`), the
+   gate's reason replaces the mode default's, and it reads "private data
+   … words written by others". Live again (session `01a137a4…`): asked
+   once; the model still retried once, called the decline "some
+   privacy/turn context issue", was refused without asking, then
+   answered. Then, at the maintainer's word: a tool the person declined
+   is withdrawn for the rest of the turn (`Withdrawal::Declined`,
+   `Finding::Declined`), replacing the per-call refusal; it is back next
+   turn.
+8. Model choice, recorded (do not tune without a new contract cause): a
    model sometimes invents a folder or writes after the work is done; a
    card can claim a change no call made.
 
@@ -136,6 +176,13 @@ the browser:
   does it. A test of one goes through the secured router
   (`secured_router_with_port`); `vak_server::router` has no auth layer,
   so a refusal test against it proves nothing.
+- A `CallEffect` is a commit point unless it touched nothing outside:
+  `Failed` and `Provenance` are not, or `turn_budget`'s record-sync budget
+  fails (`commits()` in `vak-session/src/log.rs`).
+- Turn cards written before `6f79b166a` carry no labels and read as
+  holding nothing; that is only the dev data home.
+- `ToolContext` is built literally in many tests and helpers: a new field
+  needs every literal updated (`git grep -l 'ToolContext {'`).
 - Clippy's argument limit is 7: fold a duplicate argument into its struct
   (`NewVersion { parent, ..new }`) rather than allowing the lint.
 - `cargo test` prints nothing for a binary until it finishes; a gate takes

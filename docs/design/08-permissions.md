@@ -161,7 +161,17 @@ can leave only where the sandbox leaves it the network: with no sandbox or in
 full-access. The gate only adds a requirement: a denial stands; an ask a
 rule raised is asked once, with both reasons. Nothing pre-authorizes it: not
 `approve-safe` or `auto-approve`, not an envelope, not a remembered
-approval. On a surface nobody answers it is refused (invariant 15).
+approval. On a surface nobody answers it is refused (invariant 15). The
+gate's reason replaces the mode's default ask, and sits beside a rule's
+own reason when a rule raised the ask.
+
+**A person's no stands for the turn.** Once the person declines a call,
+its tool is withdrawn for the rest of the turn, as a tool whose calls keep
+failing is (`withdraw_tools` with `Withdrawal::Declined`), and the model is
+told so through the one ladder (`Finding::Declined`): answer with what it
+has, or say what it could not do without it. The tool is back at the next
+turn. Found live: after a declined fetch the model made the same call
+again and the person was asked twice.
 
 **What it does not do.** It reads no content and guesses nothing from
 words. It does not stop the model from writing the owner's data into its

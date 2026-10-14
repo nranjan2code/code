@@ -1160,6 +1160,9 @@ pub struct Agent {
     /// (docs/design/08-permissions.md "Provenance"). Only ever joins within
     /// a turn; a new turn starts from what the run inherited.
     held: std::sync::Mutex<vak_control::Held>,
+    /// Tools a call of which the person declined in the batch just run:
+    /// each is withdrawn for the rest of the turn once the batch ends.
+    declined: std::sync::Mutex<Vec<String>>,
     /// This run's correction ladder (docs/design/88-control-plane.md §5).
     ladder: vak_control::Ladder,
     /// Each card a call of this step showed, with the plan deliverable
@@ -1218,6 +1221,7 @@ impl Agent {
             config,
             seen_calls: std::sync::Mutex::new(HashMap::new()),
             held: std::sync::Mutex::new(vak_control::Held::starting_with(inherited)),
+            declined: std::sync::Mutex::new(Vec::new()),
             ladder: vak_control::Ladder::default(),
             shown_cards: std::sync::Mutex::new(Vec::new()),
             must_call: None,
@@ -3245,6 +3249,17 @@ impl Agent {
             {
                 return outcome;
             }
+            let declined = std::mem::take(
+                &mut *self
+                    .declined
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            if !declined.is_empty()
+                && let Err(error) = withdraw_tools(self, &declined, Withdrawal::Declined).await
+            {
+                return nudge_write_failed(error);
+            }
             turn += 1;
         }
     }
@@ -4296,7 +4311,6 @@ impl Agent {
             },
             &cwd,
             &self.seen_calls,
-            &self.config.tools,
             &[],
             &self.held_now(),
             cancel,
@@ -6351,7 +6365,6 @@ impl Agent {
                 call,
                 &cwd,
                 &self.seen_calls,
-                &self.config.tools,
                 &skill_names,
                 &held,
                 cancel,
@@ -6366,6 +6379,12 @@ impl Agent {
                 ))
                 .with(vak_control::Evidence::Call(call.id.clone())),
             );
+            if matches!(verdict, Err((vak_control::Refusal::Person, _))) {
+                self.declined
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(call.name.clone());
+            }
             authz.push(verdict.map_err(|(by, message)| (vak_judge::call::fault_of(by), message)));
         }
         self.record_decisions(verdicts).await;
@@ -7876,19 +7895,30 @@ async fn reconcile_repair(
         return Some(nudge_write_failed(error));
     }
     if !withdraw.is_empty()
-        && let Err(error) = withdraw_tools(agent, &withdraw).await
+        && let Err(error) = withdraw_tools(agent, &withdraw, Withdrawal::Failing).await
     {
         return Some(nudge_write_failed(error));
     }
     None
 }
 
-/// Takes tools whose calls failed again after their schema was shown out of
-/// this turn's admitted set, and says so. A name that is not an admitted
-/// tool has nothing to withdraw: its own error already lists what is.
+/// Why a tool leaves the turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Withdrawal {
+    /// Its calls failed again after its schema was shown.
+    Failing,
+    /// The person declined a call of it: asked again, the person would be
+    /// asked the same question they already answered.
+    Declined,
+}
+
+/// Takes tools out of this turn's admitted set, and says so and why. A
+/// name that is not an admitted tool has nothing to withdraw: its own error
+/// already lists what is.
 async fn withdraw_tools(
     agent: &mut Agent,
     names: &[String],
+    why: Withdrawal,
 ) -> Result<(), vak_session::SessionError> {
     let mut gone = Vec::new();
     let mut withdrawn = Vec::new();
@@ -7919,20 +7949,25 @@ async fn withdraw_tools(
             vak_session::ActivityKind::Diagnostic,
             vak_session::ActivityStatus::Failed,
             "Tool withdrawn".into(),
-            Some(match agent.repair.last_error.as_deref() {
-                Some(error) => format!(
+            Some(match (why, agent.repair.last_error.as_deref()) {
+                (Withdrawal::Declined, _) => format!("{gone}: the person declined a call."),
+                (Withdrawal::Failing, Some(error)) => format!(
                     "{gone}: calls kept failing after the schema was shown. Last error: {}",
                     bounded_error_summary(error)
                 ),
-                None => format!("{gone}: calls kept failing after the schema was shown."),
+                (Withdrawal::Failing, None) => {
+                    format!("{gone}: calls kept failing after the schema was shown.")
+                }
             }),
             std::collections::BTreeMap::new(),
         )
         .await;
     if !withdrawn.is_empty() {
-        agent
-            .correct(Finding::Withdrawn { tools: withdrawn }, Rung::Reframe)
-            .await?;
+        let finding = match why {
+            Withdrawal::Failing => Finding::Withdrawn { tools: withdrawn },
+            Withdrawal::Declined => Finding::Declined { tools: withdrawn },
+        };
+        agent.correct(finding, Rung::Reframe).await?;
     }
     Ok(())
 }
@@ -8287,26 +8322,34 @@ fn provenance_gate(
             reason: held.gate_reason(),
             source: AskSource::Provenance,
         },
-        Decision::Ask { reason, .. } => Decision::Ask {
+        // A rule the operator wrote keeps its own reason beside the gate's;
+        // the mode's default ask adds nothing the gate does not say.
+        Decision::Ask {
+            reason,
+            source: AskSource::Rule,
+        } => Decision::Ask {
             reason: format!("{reason}; {}", held.gate_reason()),
+            source: AskSource::Provenance,
+        },
+        Decision::Ask { .. } => Decision::Ask {
+            reason: held.gate_reason(),
             source: AskSource::Provenance,
         },
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn authorize(
     config: &AgentConfig,
     call: &PendingToolCall,
     cwd: &std::path::Path,
     seen_calls: &std::sync::Mutex<HashMap<String, SeenCall>>,
-    tools: &[Arc<dyn Tool>],
     skill_names: &[String],
     held: &vak_control::Held,
     cancel: &CancellationToken,
 ) -> Result<(), (vak_control::Refusal, String)> {
     use vak_control::{CallVerdict, Refusal};
     use vak_judge::call::{Asked, CallFacts, Permission, admit, asked};
+    let tools = config.tools.as_slice();
     let revoked = || {
         config
             .revocation_check

@@ -382,3 +382,40 @@ async fn a_delegated_worker_starts_with_what_its_parent_held() {
     assert_eq!(asked.len(), 1);
     assert!(asked[0].1.contains(vak_control::provenance::DELEGATED_FROM));
 }
+
+#[tokio::test]
+async fn a_declined_tool_leaves_the_turn() {
+    let approver = recording(false, true);
+    let mut s = setup(
+        vec![
+            call("c1", "readfile"),
+            call("c2", "fetch"),
+            call("c3", "fetch"),
+            call("c4", "fetch"),
+            text("done"),
+            call("c5", "fetch"),
+            text("done again"),
+        ],
+        approver.clone(),
+        |_| {},
+    );
+    run(&mut s.agent, "go").await;
+    // The person declined c3, so `fetch` is out of the turn: c4 never
+    // reaches the person and never runs.
+    assert_eq!(approver.asked.lock().unwrap().len(), 1);
+    assert_eq!(s.fetches.load(Ordering::SeqCst), 1);
+    let session = s.agent.session.lock().await;
+    let blocks: Vec<ContentBlock> = session
+        .message_chain()
+        .iter()
+        .flat_map(|(_, m)| m.content.clone())
+        .collect();
+    assert!(blocks.iter().any(|block| matches!(block,
+        ContentBlock::Text { text } if text.contains("`fetch` is withdrawn for the rest of this turn"))));
+    assert!(blocks.iter().any(|block| matches!(block,
+        ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "c4")));
+    drop(session);
+    // The next turn offers it again, and its call reaches the person.
+    run(&mut s.agent, "again").await;
+    assert_eq!(approver.asked.lock().unwrap().len(), 2);
+}

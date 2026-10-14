@@ -2397,7 +2397,8 @@ removed, and the change is verified with real turns.
   runtime checks receipts (docs/design/86-model-plans-runtime-checks.md).
 - A loop that must end does so by a sequence of observed states, never a
   count: a failing tool is hinted, then shown its schema, then withdrawn for
-  the turn; a repeated answer or a repeated card is told once, and the next
+  the turn; a tool the person declined is withdrawn for the turn at once;
+  a repeated answer or a repeated card is told once, and the next
   one stands as the model's answer. The operator's configured turn limit is
   the only number that bounds a run.
 - No runtime ending replaces the model's answer with words it did not write,

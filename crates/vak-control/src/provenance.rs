@@ -107,7 +107,7 @@ impl Held {
         let list =
             |sources: &BTreeSet<String>| sources.iter().cloned().collect::<Vec<_>>().join(", ");
         format!(
-            "this turn holds your data (from {}) and words someone else wrote (from {}), \
+            "this turn holds private data (from {}) and words written by others (from {}), \
              and this call can send them off this machine",
             list(&self.private_from),
             list(&self.untrusted_from),

@@ -70,6 +70,9 @@ pub enum Finding {
     /// Calls of these tools failed again after their schema was shown, and
     /// the tools are out of the turn.
     Withdrawn { tools: Vec<String> },
+    /// The person declined a call of each of these tools, and the tools
+    /// are out of the turn.
+    Declined { tools: Vec<String> },
 }
 
 impl Finding {
@@ -87,7 +90,9 @@ impl Finding {
             Self::KeepWorking => Cause::KeepWorking,
             Self::UnresolvedFailure { .. } => Cause::UnresolvedFailure,
             Self::WorkersRunning { .. } => Cause::WorkersRunning,
-            Self::SchemaShown { .. } | Self::Withdrawn { .. } => Cause::Repair,
+            Self::SchemaShown { .. } | Self::Withdrawn { .. } | Self::Declined { .. } => {
+                Cause::Repair
+            }
         }
     }
 }
@@ -407,6 +412,19 @@ pub fn render(finding: &Finding, marker: &str) -> String {
                  you have already produced."
             )
         }
+        Finding::Declined { tools } => {
+            let gone = tools
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "{marker} {gone} is withdrawn for the rest of this turn: the person declined a \
+                 call of it. Do not try it again. Answer with what you already have, or say \
+                 what you could not do without it, and keep everything you have already \
+                 produced."
+            )
+        }
     }
 }
 
@@ -520,6 +538,9 @@ mod tests {
                 offered: vec!["read".into()],
             },
             Finding::Withdrawn {
+                tools: vec!["x".into()],
+            },
+            Finding::Declined {
                 tools: vec!["x".into()],
             },
         ];
