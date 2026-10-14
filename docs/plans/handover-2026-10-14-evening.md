@@ -92,6 +92,23 @@ After the maintainer's critical review:
 - Decided (maintainer): `recall` opens another conversation only through
   an attached artifact, as now; recorded in doc 90's status line.
 
+Later the same day (record and audit round), each with the gate green:
+
+- `6157e60dd` the record system (`docs/README.md`, status words, the
+  generated `docs/design/INDEX.md`, `docs/decisions.md`, the one tracker
+  and one handover, enforced by `scripts/check_records.py`); `8069f09ef`
+  plans carry a status word too.
+- The design-doc audit is done: every `implemented` doc was read against
+  the code and corrected, past sections marked `> **Historical record**`
+  (`ed998818e`, `1c70d6ae9`, `e45f4e047`, `debb3efb6`).
+- Bugs it found, fixed: `da4285997` `vak term`'s approval box offered to
+  edit the command and discarded the edit (removed); `c7006bc34` a
+  promoted skill was installed where discovery never looked (now the
+  Shared layer's skills, `Core::shared_skills_dir`); `35baa512e` the
+  unreachable `vak-tray` binary removed.
+- Contract gaps it found, not fixed (each needs the maintainer's call):
+  listed in `docs/plans/open-items.md` under "Not audited".
+
 ## The record
 
 Start at `docs/README.md`: one place for each kind of fact, the six status
@@ -106,8 +123,8 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 Everything open is in `docs/plans/open-items.md`, the one tracker: the
 release checklist, what was seen only in tests, what has not been run,
 what needs the maintainer, known limits and decisions not to build. Ask
-the maintainer which item to take first. The design-doc audit is partly
-done; the tracker says what is left of it.
+the maintainer which item to take first: the release checklist for 7.2.0,
+or one of the contract gaps the audit listed.
 
 ## Working notes
 
