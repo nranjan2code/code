@@ -60,7 +60,11 @@ and resumes inheritance.
   (`composer` → emacs, `theme` → dark unless defined under `[ui.themes]`);
   a non-string entry in a theme colour table warns rather than failing the
   whole config. `osc52` defaults false. Accessibility flags are render-only
-  and never alter protocol behavior or session content.
+  and never alter protocol behavior or session content. Checked
+  2026-10-14: `theme` and `bell` are read; `composer`, `keymap`, `osc52`
+  and `accessibility` were read by the withdrawn inline TUI and by nothing
+  now, and still parse so a file that sets them reads the same
+  (invariant 29).
 
 The supported surface is discoverable through `vak config dump`:
 `profiles.*`, `[route]`, retry/watchdog/circuit-breaker controls,

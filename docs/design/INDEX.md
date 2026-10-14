@@ -56,7 +56,7 @@ Counts: 3 proposal, 17 in progress, 52 implemented, 3 reference, 7 superseded, 4
 | [51-feed-system.md](51-feed-system.md) | Feed system | superseded | (retired) |
 | [51-retired-tools.md](51-retired-tools.md) | 51 — Retired Tool and Plugin Lifecycle | implemented |  |
 | [52-outcome-directed-runtime.md](52-outcome-directed-runtime.md) | 52 — Outcome-directed runtime | implemented | for the repository-verifiable runtime slices |
-| [53-distributed-bus.md](53-distributed-bus.md) | 53 — Distributed Event & Message Fabric (`crates/vak-bus`) | implemented | in 3.0.22 (`crates/vak-bus`) |
+| [53-distributed-bus.md](53-distributed-bus.md) | 53 — Distributed Event & Message Fabric (`crates/vak-bus`) | implemented | in 3.0.22 (`crates/vak-bus`) as a library: the subject algebra, envelopes, encryption, ACLs, causal chaining, the in-memory and NATS backends and the dead-letter queue below are built and tested in the crate |
 | [54-task-environments-and-promotion.md](54-task-environments-and-promotion.md) | 54 — Universal task environments, review, and controlled acceptance | in progress | slices 1 to 3 have code in the tree (drafts in the execution root, readiness and setup, candidates with promotion and undo, copy environments for a folder that is not a git repository) |
 | [55-rich-terminal-surface.md](55-rich-terminal-surface.md) | 55 — Rich Terminal Surface (`vak term`) | implemented | (API-connected since v3.0.32) |
 | [56-personal-multi-machine-system.md](56-personal-multi-machine-system.md) | 56 — Personal multi-machine vak | superseded | (2026-10-09) by the data architecture's remote (`docs/plans/data-architecture-plan.md` §M9, "M9 design" |

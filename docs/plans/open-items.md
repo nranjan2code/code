@@ -90,6 +90,15 @@ across them. Nothing here is started unless it says so.
   quotes by guessing, with `output_schema: None`. AGENTS.md asks a step
   whose output is data to set `ChatRequest::output_schema` and never to
   guess at broken syntax; doc 11 describes the repair as designed.
+- A request carries a tool result verbatim only up to
+  `RESULT_WINDOW_CHARS` (30,000) and lines up to 2,000 characters
+  (`crates/vak-tools/src/window.rs`), with the rest one `recall` away.
+  Nothing is lost, but the numbers are picked in code, against invariant
+  36's "no character-count truncation" and "No tuned limits"; the measured
+  budget (`CapacityProfile`) is the candidate to decide it.
+- `[ui] composer`, `keymap`, `osc52` and `accessibility` parse and are read
+  by nothing since the inline TUI was withdrawn; like `accept_confidence`,
+  decide whether anything should show or use them.
 - `vak_delivery::skills::signals_from_text` reads words and is now called
   only by the delivery audit tests; decide whether it and those audits
   should go.

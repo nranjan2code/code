@@ -167,5 +167,6 @@ once and cached forever.
   UIs connected to it. A multi-gateway/distributed deployment where two
   separate `vak-server` processes must agree is a different problem —
   `vak-bus`'s NATS backend is the natural fit for that (a `ConfigChanged`
-  `Subject`), but is not implemented; today `vak-bus` is used only for
-  intra-server session-event streaming and has no config-related subject.
+  `Subject`), but is not implemented; today the server only publishes its own
+  events to `vak-bus` when `[server.bus]` is set, and nothing subscribes
+  (docs/design/53-distributed-bus.md).

@@ -1,6 +1,16 @@
 # 53 — Distributed Event & Message Fabric (`crates/vak-bus`)
 
-Status: **implemented in 3.0.22** (`crates/vak-bus`).
+Status: **implemented in 3.0.22** (`crates/vak-bus`) as a library: the
+subject algebra, envelopes, encryption, ACLs, causal chaining, the
+in-memory and NATS backends and the dead-letter queue below are built and
+tested in the crate. What Vak itself uses (checked 2026-10-14): when
+`[server.bus]` is set, the server publishes its own `SystemEvent`s
+(sessions, entries, config changes, gateway inbound, approvals) as
+references only (`crates/vak-server/src/bus.rs`), and nothing in Vak
+subscribes. The work queues, Agent inboxes, token, terminal and telemetry
+streams in the subject table have no producer or consumer in Vak yet, and
+the scale described under "Mission" is the library's aim, not a measured
+deployment.
 
 ## Mission
 

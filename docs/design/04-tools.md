@@ -1,5 +1,5 @@
 # 04 — Tools (vak-tools)
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 ## Contract
 
@@ -43,7 +43,7 @@ provider reads it; what the provider cannot read arrives as that text.
 The refusal says where it breaks (`vak_tools::json_fault`): the parser's
 own complaint, the value it was inside as a path (`blocks[1].rows`), and
 the text just before and after the fault. `validate_input` uses it for
-every tool, and the `answer` reader for `blocks`. Told only "must be
+every tool. Told only "must be
 array", or a column number in a long line, a model sent the same text
 again (found live 2026-10-11, docs/design/15-reliability.md).
 
@@ -97,6 +97,6 @@ Everything else is safe Rust.
 
 ## Later
 
-- permission checks before execute (Phase 3)
-- LSP diagnostics tool (Phase 4+)
-- resource claims metadata per tool for fan-out scheduling (Phase 6)
+Permission checks before execute and resource claims for fan-out
+scheduling are built (docs/design/08-permissions.md,
+docs/design/09-extensibility.md). An LSP diagnostics tool is not.
