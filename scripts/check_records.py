@@ -131,9 +131,16 @@ def changelog_problems():
     path = os.path.join(ROOT, "CHANGELOG.md")
     text = open(path, encoding="utf-8").read()
     headings = re.findall(r"^## (.*)$", text, re.MULTILINE)
-    if not headings or headings[0].strip() != "Unreleased":
-        return ["CHANGELOG.md: the first section must be `## Unreleased`"]
-    body = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
+    cargo = open(os.path.join(ROOT, "Cargo.toml"), encoding="utf-8").read()
+    version = re.search(r'^version = "([^"]+)"', cargo, re.MULTILINE).group(1)
+    first = headings[0].strip() if headings else ""
+    # A release commit names its own section (scripts/release.sh requires it).
+    if first != "Unreleased" and first.split(" ", 1)[0] != version:
+        return [
+            "CHANGELOG.md: the first section must be `## Unreleased`, "
+            f"or `## {version} — <date>` in the commit that releases it"
+        ]
+    body = text.split(f"## {first}", 1)[1].split("\n## ", 1)[0]
     entries = [line for line in body.splitlines() if line.startswith("- ")]
     try:
         tag = subprocess.run(
@@ -151,7 +158,7 @@ def changelog_problems():
         return []
     if changed and not entries:
         return [
-            f"CHANGELOG.md: code changed since {tag} and `## Unreleased` has no entry"
+            f"CHANGELOG.md: code changed since {tag} and `## {first}` has no entry"
         ]
     return []
 
