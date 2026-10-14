@@ -30,6 +30,14 @@ fresh on this Mac after a purge; services running, `self verify` clean.
 The maintainer still runs `vak setup` with the provider key. The data
 baseline is still 7.0: bumping it to 8.0 is the first open item.
 
+**AWS on 8.0.0, fresh** (`fe131988f`: 8.0.0 plus the web sign-in fix):
+the 7.1.0 install was purged, setup run (openai-responses, gpt-6-luna,
+workspace-write), `[server]` trusted host and public URL added again to
+the host's Shared config, owner passkey enrolled; the temporary SSH rule is
+revoked (80 and 443 only). The fix: a web client that was not signed in
+counted the 401 from `GET /host` as no answer and never showed sign-in
+(`host/web.ts`); it ships in the next release.
+
 **Card forms (doc 92) are done, F1 to F6.** This session, each step with
 the full gate green and checked live:
 
@@ -248,6 +256,13 @@ Git and release:
   profile; running remote `setup` over SSH is the owner's to do.
 
 ## Traps learned this session
+
+- A purge on the Mac deletes `~/Library/Application Support/Vakyartha`,
+  which held the private AWS inventory; keep a copy elsewhere. A purge on
+  the host drops the Shared `[server]` section (421 behind the proxy until
+  it is added again), and the gateway unit exits 209 if
+  `~/.local/state/vak/logs` is missing. Run setup in a real terminal: a
+  command with no stdin skips every question.
 
 - A test that fails only in the full gate with `NotFound` on a path from
   `env!("CARGO_MANIFEST_DIR")` is a stale binary: another session built in
