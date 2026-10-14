@@ -976,6 +976,7 @@ fn snapshot_inner(
     let mut answered_in_turn = false;
     let mut replying_to_runtime = false;
     let mut runtime_replies: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let written = written_files(&chain);
     for entry in chain {
         match &entry.payload {
             EntryPayload::Message(record) => {
@@ -1391,7 +1392,7 @@ fn snapshot_inner(
                                 });
                             }
                         }
-                        ContentBlock::ToolUse { id, name, input } => {
+                        ContentBlock::ToolUse { id, name, .. } => {
                             let result = tool_results.get(id);
                             let failed = result.is_some_and(|(_, failed)| *failed);
                             let recovered = failed && successful_runs.contains(&current_turn);
@@ -1603,13 +1604,24 @@ fn snapshot_inner(
                                     });
                                 }
                             }
-                            if !failed && let Some(artifact) = artifact_from_tool(name, input) {
+                            for (n, artifact) in written
+                                .get(id.as_str())
+                                .into_iter()
+                                .flatten()
+                                .filter(|_| !failed)
+                                .map(|path| artifact_at(path))
+                                .enumerate()
+                            {
                                 let mut data = BTreeMap::new();
                                 if let Some(path) = &artifact.path {
                                     data.insert("path".into(), path.clone());
                                 }
                                 timeline.items.push(OutputItem {
-                                    id: format!("{id}-artifact"),
+                                    id: if n == 0 {
+                                        format!("{id}-artifact")
+                                    } else {
+                                        format!("{id}-artifact-{n}")
+                                    },
                                     timestamp: entry.ts.to_rfc3339(),
                                     turn_id: turn_id.clone(),
                                     role: OutputRole::Tool,
@@ -1987,28 +1999,39 @@ fn chain_cursor(session: &SessionLog) -> Option<String> {
     session.chain_to_root().last().map(|entry| entry.id.clone())
 }
 
-fn artifact_from_tool(name: &str, input: &serde_json::Value) -> Option<ArtifactRef> {
-    let name = vak_tools::canonical_tool_name(name);
-    if !matches!(name, "write" | "edit" | "apply_patch" | "imagegen") {
-        return None;
+/// The workspace files each call wrote, as the loop recorded them
+/// (`CallEffect::FileWrite`), by call id: what a call's tool declared it
+/// writes, never read from its name or argument keys.
+fn written_files(chain: &[&vak_session::types::Entry]) -> HashMap<String, Vec<String>> {
+    let mut written: HashMap<String, Vec<String>> = HashMap::new();
+    for entry in chain {
+        if let EntryPayload::CallEffect(record) = &entry.payload
+            && let vak_session::types::CallEffect::FileWrite { path, .. } = &record.effect
+        {
+            let paths = written.entry(record.tool_use_id.clone()).or_default();
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
     }
-    let path = ["path", "file_path", "filename", "output_path"]
-        .iter()
-        .find_map(|key| input.get(*key).and_then(serde_json::Value::as_str))?
-        .to_string();
+    written
+}
+
+fn artifact_at(path: &str) -> ArtifactRef {
+    let path = path.to_string();
     let filename = std::path::Path::new(&path)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(&path)
         .to_string();
-    Some(ArtifactRef {
+    ArtifactRef {
         name: filename,
         media_type: media_type_for_path(&path),
         path: Some(path),
         description: None,
         size_bytes: None,
         status: Some(ArtifactStatus::InFolder),
-    })
+    }
 }
 
 fn media_type_for_path(path: &str) -> Option<String> {
@@ -2752,7 +2775,7 @@ fn live_item(
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::activity_item;
-    use super::{artifact_from_tool, snapshot};
+    use super::snapshot;
     use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
     use vak_delivery::{
@@ -3047,22 +3070,121 @@ mod tests {
         }
     }
 
+    /// A call's artifact is the file the loop recorded it writing, whatever
+    /// the tool is named; a read records no write and claims nothing.
     #[test]
-    fn write_tools_project_artifacts() {
-        let artifact = artifact_from_tool(
-            "write",
-            &serde_json::json!({ "path": "/tmp/report.md", "content": "x" }),
+    fn a_recorded_write_projects_an_artifact_and_a_read_does_not() {
+        use vak_session::types::{CallEffect, CallEffectRecord, Entry, EntryPayload};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut log = SessionLog::create(
+            dir.path().join("written.jsonl"),
+            SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
+                agent: None,
+                session_id: "written".into(),
+                created_at: chrono::Utc::now(),
+                cwd: PathBuf::from("/tmp/project"),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: None,
+                contract: FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "read-only".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
         )
-        .expect("write should produce an artifact");
-        assert_eq!(artifact.name, "report.md");
-        assert_eq!(artifact.media_type.as_deref(), Some("text/markdown"));
-
-        let html = artifact_from_tool(
-            "write_file",
-            &serde_json::json!({ "path": "welcome.html", "content": "<h1>Hello</h1>" }),
-        )
-        .expect("write alias should produce an artifact");
-        assert_eq!(html.media_type.as_deref(), Some("text/html"));
+        .expect("create session");
+        log.append_message(MessageRecord {
+            message: Message::user_text("save a note"),
+            meta: None,
+        })
+        .expect("directive");
+        log.append_message(MessageRecord {
+            message: Message::assistant(vec![
+                ContentBlock::ToolUse {
+                    id: "w1".into(),
+                    name: "keep_note".into(),
+                    input: serde_json::json!({ "where": "report.md" }),
+                },
+                ContentBlock::ToolUse {
+                    id: "r1".into(),
+                    name: "look".into(),
+                    input: serde_json::json!({ "path": "a.md" }),
+                },
+            ]),
+            meta: None,
+        })
+        .expect("calls");
+        log.append_message(MessageRecord {
+            message: Message {
+                role: Role::User,
+                content: vec![
+                    ContentBlock::ToolResult {
+                        tool_use_id: "w1".into(),
+                        content: "saved".into(),
+                        is_error: false,
+                    },
+                    ContentBlock::ToolResult {
+                        tool_use_id: "r1".into(),
+                        content: "text".into(),
+                        is_error: false,
+                    },
+                ],
+            },
+            meta: None,
+        })
+        .expect("results");
+        for (call, effect) in [
+            (
+                "w1",
+                CallEffect::FileWrite {
+                    path: "notes/report.md".into(),
+                    digest: None,
+                    bytes: Some(4),
+                },
+            ),
+            (
+                "r1",
+                CallEffect::FileRead {
+                    path: "a.md".into(),
+                    digest: None,
+                    bytes: Some(4),
+                },
+            ),
+        ] {
+            log.append(Entry::new(
+                log.tail_id().cloned(),
+                EntryPayload::CallEffect(CallEffectRecord {
+                    tool_use_id: call.into(),
+                    effect,
+                }),
+            ))
+            .expect("effect");
+        }
+        let timeline = snapshot("written", &log);
+        let artifacts: Vec<_> = timeline
+            .items
+            .iter()
+            .filter_map(|item| match &item.content {
+                OutputContent::Artifact { artifact } => Some(artifact.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(artifacts.len(), 1, "{artifacts:?}");
+        assert_eq!(artifacts[0].name, "report.md");
+        assert_eq!(artifacts[0].path.as_deref(), Some("notes/report.md"));
+        assert_eq!(artifacts[0].media_type.as_deref(), Some("text/markdown"));
     }
 
     #[test]
@@ -3415,11 +3537,6 @@ mod tests {
     }
 
     #[test]
-    fn read_tools_do_not_claim_artifacts() {
-        assert!(artifact_from_tool("read", &serde_json::json!({ "path": "a" })).is_none());
-    }
-
-    #[test]
     fn repeated_writes_keep_one_latest_artifact_per_turn_and_path() {
         let artifact = |id: &str, turn: &str, path: &str| OutputItem {
             id: id.into(),
@@ -3579,6 +3696,19 @@ mod tests {
             meta: None,
         })
         .expect("append assistant");
+        // What the loop records for a call that wrote a file.
+        log.append(vak_session::types::Entry::new(
+            log.tail_id().cloned(),
+            vak_session::types::EntryPayload::CallEffect(vak_session::types::CallEffectRecord {
+                tool_use_id: "tool-1".into(),
+                effect: vak_session::types::CallEffect::FileWrite {
+                    path: "/tmp/report.md".into(),
+                    digest: None,
+                    bytes: None,
+                },
+            }),
+        ))
+        .expect("append write effect");
         for status in [ActivityStatus::Pending, ActivityStatus::Succeeded] {
             log.append_activity(ActivityRecord {
                 activity_id: "approval-1".into(),

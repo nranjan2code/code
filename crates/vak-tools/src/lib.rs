@@ -508,9 +508,8 @@ pub fn brokered_default_tools(worker_exe: std::path::PathBuf) -> Vec<std::sync::
     brokered_tools(worker_exe, &[])
 }
 
-/// The tool in `tools` that a recorded call named `name` ran. The name is
-/// matched the way the agent loop matches a call (`canonical_tool_name`), so
-/// a ledger record reads back to the same tool it was made with. Readers of
+/// The tool in `tools` that a recorded call named `name` ran, by its exact
+/// name, as the agent loop matches a call. Readers of
 /// A call of `tool` that runs `command` within `limit_ms`, in the argument
 /// names the tool declares (its command subject and its time-limit
 /// argument), or `None` when the tool runs no command.
@@ -541,7 +540,6 @@ pub fn tool_for_call<'a>(
     tools: &'a [std::sync::Arc<dyn Tool>],
     name: &str,
 ) -> Option<&'a dyn Tool> {
-    let name = canonical_tool_name(name);
     tools
         .iter()
         .find(|tool| tool.name() == name)
@@ -585,71 +583,4 @@ pub fn definitions(tools: &[std::sync::Arc<dyn Tool>]) -> Vec<vak_llm::ToolDefin
         .iter()
         .map(|t| vak_llm::ToolDefinition::new(t.name(), t.description(), t.schema()))
         .collect()
-}
-
-/// Canonical tool name resolution for aliases and common model hallucinations.
-/// Also remaps retired tool names (e.g. `python_eval`) to their replacement
-/// (`bash`), so a model that still reaches for a retired name is guided to
-/// the correct tool rather than producing an `unknown_capability` failure.
-pub fn canonical_tool_name(name: &str) -> &str {
-    let trimmed = name.trim();
-    if trimmed.eq_ignore_ascii_case("session-search") {
-        return "session_search";
-    }
-    if trimmed.eq_ignore_ascii_case("propose-skill") {
-        return "propose_skill";
-    }
-    if trimmed.eq_ignore_ascii_case("read-file") || trimmed.eq_ignore_ascii_case("read_file") {
-        return "read";
-    }
-    if trimmed.eq_ignore_ascii_case("write-file") || trimmed.eq_ignore_ascii_case("write_file") {
-        return "write";
-    }
-    if trimmed.eq_ignore_ascii_case("edit-file") || trimmed.eq_ignore_ascii_case("edit_file") {
-        return "edit";
-    }
-    if trimmed.eq_ignore_ascii_case("shell")
-        || trimmed.eq_ignore_ascii_case("sh")
-        || trimmed.eq_ignore_ascii_case("sandbox")
-        || trimmed.eq_ignore_ascii_case("sandbox_exec")
-        || trimmed.eq_ignore_ascii_case("terminal")
-        || trimmed.eq_ignore_ascii_case("exec")
-    {
-        return "bash";
-    }
-    // Retired tool names: redirect to their replacement (currently `bash`).
-    for tool in retired::RETIRED_TOOLS {
-        if tool.name.eq_ignore_ascii_case(trimmed) {
-            return tool
-                .replacement
-                .split(" — ")
-                .next()
-                .unwrap_or("bash")
-                .trim();
-        }
-    }
-    name
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn canonical_tool_name_resolves_common_hallucinations_and_aliases() {
-        assert_eq!(canonical_tool_name("read_file"), "read");
-        assert_eq!(canonical_tool_name("write_file"), "write");
-        assert_eq!(canonical_tool_name("edit_file"), "edit");
-        assert_eq!(canonical_tool_name("session-search"), "session_search");
-        assert_eq!(canonical_tool_name("unknown_tool"), "unknown_tool");
-    }
-
-    #[test]
-    fn canonical_tool_name_redirects_retired_tools_to_bash() {
-        // python_eval and react_preview were retired in 3.0.21; the model
-        // may still reach for them. They must resolve to `bash`.
-        assert_eq!(canonical_tool_name("python_eval"), "bash");
-        assert_eq!(canonical_tool_name("react_preview"), "bash");
-        assert_eq!(canonical_tool_name("PYTHON_EVAL"), "bash");
-    }
 }

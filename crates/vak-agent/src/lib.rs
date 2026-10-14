@@ -2441,7 +2441,6 @@ impl Agent {
             // (docs/design/68-context-engine.md §5/§7).
             let calls: Vec<PendingToolCall> = extract_tool_calls(&mut response, &self.config.tools)
                 .into_iter()
-                .map(normalize_tool_call)
                 .collect();
             let mut calls = calls;
             {
@@ -5526,15 +5525,13 @@ impl Agent {
         // no side effects to execute, only session state to read, and
         // `ToolContext` carries no session handle for `RecallTool::execute`
         // to use (AGENTS.md invariant 14).
-        let (recall_calls, calls): (Vec<_>, Vec<_>) = calls
-            .into_iter()
-            .partition(|call| vak_tools::canonical_tool_name(&call.name) == "recall");
+        let (recall_calls, calls): (Vec<_>, Vec<_>) =
+            calls.into_iter().partition(|call| call.name == "recall");
         // `plan` is the model's declaration of what this turn delivers; the
         // loop keeps it to check against what the turn produced
         // (docs/design/86-model-plans-runtime-checks.md §2).
-        let (plan_calls, calls): (Vec<_>, Vec<_>) = calls
-            .into_iter()
-            .partition(|call| vak_tools::canonical_tool_name(&call.name) == "plan");
+        let (plan_calls, calls): (Vec<_>, Vec<_>) =
+            calls.into_iter().partition(|call| call.name == "plan");
         // A card is the loop's own display channel (docs/design/
         // 87-composed-answers.md §2): each call is checked by its tool and
         // recorded as a card of the answer, in every permission mode.
@@ -5833,7 +5830,7 @@ impl Agent {
                 continue;
             }
             if let Some(command) = self
-                .tool_named(vak_tools::canonical_tool_name(&call.name))
+                .tool_named(&call.name)
                 .and_then(|tool| tool.command(&call.input))
                 && let Some(delivered) =
                     copies_delivered_draft(&command, &deliveries.paths).cloned()
@@ -6353,7 +6350,6 @@ impl Agent {
             .clone();
         let calls = calls
             .into_iter()
-            .map(normalize_tool_call)
             .map(|call| normalize_mcp_call(call, &index))
             .map(|call| normalize_schema_wrapper(call, &self.config.tools))
             .map(|call| cards::plan_forms(call, &self.config.tools))
@@ -7146,14 +7142,6 @@ mod file_batch_dependency_tests {
             &tools()
         ));
     }
-}
-
-fn normalize_tool_call(mut call: PendingToolCall) -> PendingToolCall {
-    let canonical = vak_tools::canonical_tool_name(&call.name);
-    if canonical != call.name {
-        call.name = canonical.to_string();
-    }
-    call
 }
 
 fn normalize_mcp_call(
@@ -8683,11 +8671,11 @@ fn normalize_response_tool_uses(
         let call = cards::plan_forms(
             normalize_schema_wrapper(
                 normalize_mcp_call(
-                    normalize_tool_call(PendingToolCall {
+                    PendingToolCall {
                         id: id.clone(),
                         name: name.clone(),
                         input: input.clone(),
-                    }),
+                    },
                     mcp_index,
                 ),
                 tools,
@@ -9063,32 +9051,6 @@ mod tool_recovery_tests {
             &tools,
         );
         assert_eq!(call.input["command"], "ls");
-    }
-
-    #[test]
-    fn test_normalize_tool_call_aliases() {
-        use super::{PendingToolCall, normalize_tool_call};
-
-        // Read file alias normalization
-        let read_call = PendingToolCall {
-            id: "call_3".into(),
-            name: "read_file".into(),
-            input: serde_json::json!({
-                "file_path": "src/main.rs"
-            }),
-        };
-        let mut normalized_read = normalize_tool_call(read_call);
-        assert_eq!(normalized_read.name, "read");
-        // The alias is the read tool's own (`fill_defaults`), not the loop's.
-        vak_tools::brokered_tools(std::path::PathBuf::new(), &[])
-            .iter()
-            .find(|tool| tool.name() == "read")
-            .expect("read")
-            .fill_defaults(&mut normalized_read.input);
-        assert_eq!(
-            normalized_read.input.get("path").and_then(|v| v.as_str()),
-            Some("src/main.rs")
-        );
     }
 
     #[test]

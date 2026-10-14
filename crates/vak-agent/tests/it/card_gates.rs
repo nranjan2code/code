@@ -91,13 +91,14 @@ impl Tool for FailingFetch {
 }
 
 /// A shell that ran a command and stopped at its limit, as a dev server
-/// does.
+/// does. Named `shell`, it is called as itself: no name stands for another
+/// tool.
 struct FakeShell;
 
 #[async_trait::async_trait]
 impl Tool for FakeShell {
     fn name(&self) -> &str {
-        "run_command"
+        "shell"
     }
     fn description(&self) -> &str {
         "run a command"
@@ -310,7 +311,7 @@ async fn build_agent(
                     serde_json::json!({"type": "object"}),
                 ),
                 vak_llm::ToolDefinition::new(
-                    "run_command",
+                    "shell",
                     "test stand-in",
                     serde_json::json!({"type": "object"}),
                 ),
@@ -383,11 +384,7 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
         &dir,
         "pc-terminal",
         vec![
-            tool_call_msg(
-                "s1",
-                "run_command",
-                serde_json::json!({"command": "npm start"}),
-            ),
+            tool_call_msg("s1", "shell", serde_json::json!({"command": "npm start"})),
             tool_call_msg(
                 "t1",
                 "emit_terminal_card",

@@ -19,7 +19,7 @@ pub(crate) fn plan_forms(
     mut call: crate::PendingToolCall,
     tools: &[Arc<dyn Tool>],
 ) -> crate::PendingToolCall {
-    if vak_tools::canonical_tool_name(&call.name) != "plan" {
+    if call.name != "plan" {
         return call;
     }
     let is_kind = |form: &str| {

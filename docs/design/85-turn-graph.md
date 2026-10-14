@@ -382,7 +382,7 @@ ledger (invariant 1); a card records its skill version and schema version.
 
 | Change | What happens to existing links | Needed |
 |---|---|---|
-| Tool renamed or removed | The edge keeps the name the tool had when it ran, with its canonical name (`canonical_tool_name`). The result is on the ledger, so `recall` works without the tool. | `renamed_to` and `retired_at` written by the capability registry when the change happens. |
+| Tool renamed or removed | The edge keeps the name the tool had when it ran. The result is on the ledger, so `recall` works without the tool. | `renamed_to` and `retired_at` written by the capability registry when the change happens. |
 | MCP server changed or removed | The edge names server, tool and a digest of the schema recorded that turn. A past call is evidence, never re-run. | The schema digest on `produced`. |
 | Plugin or command removed | A card whose renderer is gone falls back to its exact Markdown; its edges point at the presentation record, not the renderer. | Nothing new. |
 | Prompt changed | Past turns are not re-run or relabelled. The graph can say which prompt produced which turn. | Nothing new. |

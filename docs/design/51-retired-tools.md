@@ -90,16 +90,16 @@ detected. `vak doctor --repair` runs the cleanup pass automatically.
 - `DELETE /plugins/retired` — remove all retired plugins and prune
   their config entries.
 
-### 8. Tool Name Aliasing (`vak-tools::canonical_tool_name`)
+### 8. A call by a retired or unknown name
 
-The existing `canonical_tool_name()` function (which already remaps
-common model hallucinations like `read_file` → `read`) now also
-redirects retired tool names to their replacement. When the model
-calls `python_eval`, the name is normalized to `bash` by
-`normalize_tool_call()` in the agent loop. The resulting error
-(`missing required parameter: command`) is a fault of shape
-(`Fault::Shape`), enabling model self-repair rather than a hard `unknown_capability`
-failure.
+A call is matched to a tool by its exact name. A call naming a retired
+tool, or any name no admitted tool has, is answered with
+`unknown_capability` and the tools that are available, and the model
+calls one of those. No name stands for another tool: the alias table
+that rewrote `python_eval`, `read_file`, `shell` and the like to a
+built-in tool (`canonical_tool_name`) was removed on 2026-10-14, because
+it rewrote a call to an admitted tool of that very name (a tool named
+`shell` was called as `bash` and refused).
 
 ## Lifecycle Summary
 
@@ -112,7 +112,7 @@ failure.
 | Setup/Update | Auto-removed | `vak-core::seed` |
 | Doctor | Health check + repair | `vak-core::health` / `vak::doctor` |
 | Admin | List + delete | `vak-server` |
-| Model calls retired name | Redirected to `bash` | `vak-tools::canonical_tool_name` |
+| Model calls retired name | `unknown_capability` with the available tools | the agent loop |
 
 ## AGNS Invariants Satisfied
 

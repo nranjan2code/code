@@ -7953,15 +7953,14 @@ impl Core {
                     for block in &record.message.content {
                         match block {
                             vak_llm::ContentBlock::ToolUse { id, name, input } => {
-                                let canonical = vak_tools::canonical_tool_name(name);
-                                let delivers = delivering.get(canonical).is_some_and(|tool| {
+                                let called = name.as_str();
+                                let delivers = delivering.get(called).is_some_and(|tool| {
                                     tool.delivered_file(input).is_some()
                                         || tool.artifact(input).is_some()
                                         || tool.changes_workspace(input)
                                 });
-                                if let Some(plan) = delivering
-                                    .get(canonical)
-                                    .and_then(|tool| tool.planned(input))
+                                if let Some(plan) =
+                                    delivering.get(called).and_then(|tool| tool.planned(input))
                                 {
                                     planned_file |= plan.iter().any(|deliverable| {
                                         deliverable.form == vak_intent::DeliverableForm::File
@@ -7978,12 +7977,12 @@ impl Core {
                                 // and may be delivered another way; whether
                                 // a planned card is missing is the plan
                                 // check's to say, from receipts.
-                                if !card_tools.contains(canonical) {
+                                if !card_tools.contains(called) {
                                     // The file it reaches, by the name the
                                     // record keeps: a draft and the file it
                                     // becomes are one file.
                                     let reached = delivering
-                                        .get(canonical)
+                                        .get(called)
                                         .and_then(|tool| tool.file_access(input))
                                         .map(|(access, path)| vak_judge::call::Reached {
                                             file: crate::file_state::workspace_path(
@@ -7992,7 +7991,7 @@ impl Core {
                                             ),
                                             writes: access == vak_tools::FileAccess::Write,
                                         });
-                                    failures.call(id, canonical, reached);
+                                    failures.call(id, called, reached);
                                 }
                             }
                             vak_llm::ContentBlock::ToolResult {
