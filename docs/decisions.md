@@ -18,6 +18,14 @@ listed here unless the maintainer reopens it.
   opt-in review of failures proposes fixes; a compact index in the prompt
   plus `find_tools`. Doc 43 is superseded. Screens that get in the way are
   rewritten, not patched: there are no users yet.
+- On the maintainer's delegation ("make the best decisions"), doc 93 §2
+  R1 to R7: a capability is a skill with a program (one kind); promotion
+  and withdrawal by observed states, no counts; dependencies pinned with
+  hashes and installed once by their own run (Review the first time);
+  a capability shows only through cards, draft previews and declarative
+  packs, and a card may take its data from the call; Office files and
+  PDFs only through `office_apply`; a proposed automation is always
+  Review.
 - Keep one handover and one tracker: superseded handovers are deleted (git
   keeps them); open work lives in `docs/plans/open-items.md`. Every design
   doc's Status starts with one word from a closed set, and

@@ -18,9 +18,8 @@ Run `git status` and `git log --oneline -8`. Stage only your own paths;
 keep only `main`. We are on a Claude Code Pro plan: read lean (grep and
 line ranges, not whole files), commit each verified step, keep the
 tracker ticked, and rewrite this handover's prompt and 'Where things
-stand' before the session's limit. Next: ask the maintainer to confirm
-R1 and R2 in doc 93 §2 and how dependencies install (§12), then build
-stage E1 (doc 93 §11) as a design, never spot fixes or tuned numbers;
+stand' before the session's limit. Next: build stage E1 (doc 93 §11;
+decisions D1 to D8 and R1 to R7 are settled) as a design, never spot fixes or tuned numbers;
 UI that gets in the way is rewritten, not patched (no users yet). Live
 runs use launch entry `vak-forms-live` (port 8904, /tmp/vak-live/forms,
 token in /tmp/vak-live/test-gateway-token; route gpt-6-luna, check GET
@@ -37,11 +36,14 @@ drafts, and the turn that wrote it held no untrusted content, otherwise
 Review; evolution stays above the Rust runtime; near matches are
 extended as new versions and the answer says so; Agent-owned first,
 Shared on evidence; an opt-in review of failures; a compact prompt
-index plus `find_tools`. Doc 93 also settles R1 (a capability is a
-skill with a program, one kind) and R2 (promotion and withdrawal by
-observed states, no counts); the maintainer has not confirmed those
-two yet. Doc 43 is superseded. Stages E1 to E8 with "done when" are in
-§11 and tracked in `docs/plans/open-items.md`. The experience is §9:
+index plus `find_tools`. On the maintainer's delegation the doc
+also settles R1 to R7: one kind (a skill with a program); promotion by
+observed states; dependencies pinned with hashes, installed once by
+their own run; a capability shows only through card forms, draft
+previews (Canvas) and declarative presentation packs (§3.1), and a card
+may take its data from the call (E9); Office files and PDFs only through
+`office_apply`; a proposed automation is always Review. Doc 43 is superseded. Stages E1 to E8 with "done when" are in
+§11 (E1 to E9) and tracked in `docs/plans/open-items.md`. The experience is §9:
 a typed activity line in the conversation, a capability sheet, Review,
 an Abilities view in the Library, Settings → Capabilities rewritten,
 inbox kinds, admin `#/capabilities`, CLI verbs.
@@ -89,12 +91,10 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Ask the maintainer to confirm R1 and R2 (doc 93 §2) and the
-   dependency install (§12).
-2. Build E1, then E2 and E3, each step with the full gate and a live
+1. Build E1, then E2 and E3, each step with the full gate and a live
    turn; tick `docs/plans/open-items.md` and doc 93's Status as stages
    land.
-3. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
+2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are
    the maintainer's; ask before cutting.
 
 ## Working notes

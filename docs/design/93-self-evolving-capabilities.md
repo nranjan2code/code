@@ -76,7 +76,8 @@ Made by the maintainer on 2026-10-14 (`docs/decisions.md`):
 - **D8 A compact index plus search.** The prompt carries one line per
   capability the Agent can use; full schemas come through `find_tools`.
 
-Settled in this doc. The maintainer may reopen either one:
+Decided on the maintainer's delegation (2026-10-14, "make the best
+decisions"); the maintainer may reopen any of them:
 
 - **R1 One kind.** A capability is a skill with an optional executable
   part, not a second kind beside skills (invariant 30). `propose_skill`
@@ -90,6 +91,33 @@ Settled in this doc. The maintainer may reopen either one:
   the mirror: a version whose calls fail is shown its failures, a fix is
   proposed, and a version that fails again after the fix is withdrawn
   for that Agent. No count anywhere; the ladder is `vak_control::Ladder`.
+- **R3 Dependencies install once, as their own run.** A capability names
+  its packages with exact versions and hashes (`requirements.txt` with
+  `--require-hashes`, or a `package-lock.json`). Installing is a separate
+  install run in the broker worker whose one reachable host is the
+  package index, through the egress proxy; it fills the space's execution
+  cache. A capability that needs an install is Review the first time (it
+  reaches the network); every later call runs offline from the cache,
+  with the network denied. A changed lock is a new version and a new
+  install.
+- **R4 A capability shows through the existing surfaces; it draws
+  nothing itself** (§3.1). Its result is data that the model shows with
+  the card forms; files it writes to drafts are previewed like any draft;
+  a skill may carry declarative presentation packs.
+- **R5 Card data may come from the call.** A big table or chart that the
+  model has to copy from a result into a card argument is where calls
+  break (doc 89). A card may name the capability call whose result holds
+  its data, and the loop fills the card from that call, the way
+  `Tool::output_of_command` fills a terminal card. The model still
+  decides whether and where a card is shown (stage E9).
+- **R6 Office files and PDFs only through `office_apply`.** A capability
+  never delivers an Office file or a PDF (detected by content, invariant
+  39): such a file in its drafts is refused with "return the data and
+  write the document with office_apply". It may read them through
+  `doc_read`'s projection passed as an argument, never parse them itself.
+- **R7 Unattended work is always Review.** A capability may propose an
+  automation (a `Trigger`) that calls it; the trigger is Review whatever
+  the capability's tier, because nobody watches it run.
 
 ## 3. A capability
 
@@ -138,6 +166,31 @@ Rules:
   (`Tool::provenance`): a capability with `hosts` returns untrusted
   content, and one that reads the workspace returns private content.
   Invariant 43 applies unchanged.
+
+### 3.1 What a capability can show
+
+Everything already on screen stays the one way to show it (invariant 30).
+A capability adds no renderer and mounts no HTML of its own.
+
+| To show | How | Exists today |
+|---|---|---|
+| Figures, tables, charts, steps, comparisons, sources… | its JSON result; the model shows it with the card forms (`vak_delivery::FORMS`, doc 92), filling a card's data from the call when it names one (R5) | the card tools, yes; filling from a call, E9 |
+| A page, a dashboard, an interactive UI | an HTML file (with its assets) written to drafts; shown by a `file_preview` card on the preview origin (invariant 35, doc 66), opened in the Canvas | yes |
+| An image, a chart image, audio, video | a file in drafts; a `media` card names it | yes |
+| A document, a sheet, slides, a PDF | the data in its result; the model writes the file with `office_apply`, which goes through Review (R6, invariant 39) | yes |
+| A new look for a card kind | a presentation pack in the skill's `presentation/` directory: declarative, compiled into the closed primitives, runs no code (doc 91) | packs, yes; packs in an Agent-made skill, E3 |
+| A scheduled result | a proposed `Trigger` that calls the capability, always Review (R7) | triggers, yes; proposing one, E8 |
+
+A skill directory may therefore carry, beside its program:
+
+```
+  presentation/<pack>.json   declarative packs (doc 91), versioned with the skill
+```
+
+A pack in an Agent-made skill follows doc 91's rules (scope, channel
+allow and deny, inventory) and becomes active with the version that
+carries it; disabling or retiring the version removes its kinds at the
+next turn, and cards already drawn fall back to their block's renderer.
 
 ## 4. The loop
 
@@ -197,7 +250,8 @@ that proposed it, never from words:
 |---|---|---|
 | **Live** | `hosts` empty, `writes` drafts or none, `reach` within read and command, tests passed, and the proposing turn held no untrusted content | live for the Agent at the next turn boundary |
 | **Review** | anything else: a host, a secret, an outside effect, a write outside drafts, a failed or missing test, or a turn that held untrusted content | a candidate in Review; the inbox says so |
-| **Refused** | a declaration the session itself could not use (wider than its mode), a schema that fails the portability checks, a program with no tests | refused with what to fix |
+| **Live (packs)** | a presentation pack, which runs no code and reaches nothing | live with its version, whatever the program's tier |
+| **Refused** | a declaration the session itself could not use (wider than its mode), a schema that fails the portability checks, a program with no tests, an Office file or PDF in its drafts (R6) | refused with what to fix |
 
 - **Untrusted content pushes to Review.** A turn that read a web page, a
   mail or another person's words can be steered into writing a
@@ -424,21 +478,18 @@ both sizes and themes). The tracker is `docs/plans/open-items.md`
 | **E7** | Admin and CLI: §9.6, §9.7 | revoke from #/capabilities stops the next call; CLI verbs over the same routes |
 | **E8** | Idle review automation (§8) | a failing capability gets a fix proposed in Review overnight, with a run record and an inbox entry; a review that cannot run says why |
 
+| **E9** | Card data from a call (R5): a card names a capability call; the loop fills its rows, points or figures from that call's result, generalising `Tool::output_of_command` | a table card of a few hundred rows from a capability call is shown with every value equal to the result, and a card naming a call that did not run is refused |
+
 E1 to E3 are the core; E6 can start after E3 against real records.
 
 ## 12. Open questions
 
-- **Dependencies need the network to install.** A pinned `pandas` must
-  be fetched once. Proposed: installing is a separate, declared step
-  (`requirements` → an install run with the package index as its one
-  host), which makes such a capability Review the first time, after
-  which the cached environment runs offline. To be decided in E1.
 - **Which interpreters.** Python, shell and Node are what the
   development machines have; a box without Node refuses `run.mjs`
   capabilities with a clear reason (never a silent skip).
 - **Sharing a capability between owners.** Out of scope for a single-
-  owner install (`docs/decisions.md`, single-owner app); a capability leaves only as
-  a plugin package (doc 39).
-- **Flows and packs.** D2 includes flows, automations and presentation
-  packs. They already have their own proposal paths (packs in doc 91);
-  whether they ride the same tier gate is decided after E5.
+  owner install (`docs/decisions.md`, single-owner app); a capability
+  leaves only as a plugin package (doc 39).
+- **Flows.** A static flow (`vak-flow`) is the remaining kind D2 names
+  without a proposal path here; decided after E5, from whether real
+  capabilities need composing beyond one turn's calls.
