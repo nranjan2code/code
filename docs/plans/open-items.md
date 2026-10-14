@@ -58,6 +58,21 @@ across them. Nothing here is started unless it says so.
   §4.4). Open: the same turn again on both local models; the answer seen
   in the browser at 1440 × 900 and 390 × 844, light and dark.
 
+## Installed 7.2.0 run (docs/audits/installed-7.2.0-run-2026-10-14.md)
+
+- The details card offers itself for "a set of readings" and accepts
+  `readings`, competing with the stats card: figures were written as
+  sentences in a details box.
+- `office_apply` `add_image` takes only inline base64 and Word has no
+  chart op, so a chart passes through the model's output: one copy broke,
+  then the chart was shrunk to fit. Take an image from a workspace or
+  draft file, read in the worker.
+- Thirteen `recall` calls in one turn, eight repeats: not yet explained.
+- The prompt does not name the host platform; the model tried Linux-only
+  commands on macOS.
+- An accepted document is shown twice (draft card and file card).
+- The first request appears twice in the export.
+
 ## Approvals
 
 - The approval card offers "Create rule…" on every ask, including a
