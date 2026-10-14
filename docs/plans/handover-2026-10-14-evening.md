@@ -34,19 +34,52 @@ dark. Token budget is tight: lean reads, commit each verified step."
 
 ## Where things stand
 
-**Card forms (docs/design/92-card-forms.md), 2026-10-14 late.** Cards were
-rebuilt as eighteen forms with one list in four places (card tools,
-delivery validators, host primitives, client `cards/`), drawn by
-`StructuredOutput.block`. Removed: the 100-name client registry and
-`GenericSpecRenderer`, the field-list card, the recipe and checklist tools,
-the 85 seed packs, the social add-ons' research layouts, the delivery
-planner/recipes/word signals and result adapters, and the JSON sniffing on
-host and client. Stages F1–F5 are built with the full gate; F6 (live turns
-of every form in the browser at both sizes and themes) is open, and the
-next release must be a major version or set the data homes up again,
-because presentation libraries saved before it no longer parse (open
-items, "Card forms"). The maintainer asked for a fresh release installed
-on the Mac once this lands.
+**Card forms (docs/design/92-card-forms.md), 2026-10-14 late.** Pushed as
+`3abc37045` with the full gate green: cards are eighteen forms, one list in
+four places (card tools, delivery validators, host primitives, client
+`crates/vak-client-ui/src/components/cards/`), drawn by
+`StructuredOutput.block`; the old registry, seeds, planner/word signals,
+adapters and JSON sniffing are gone. Stages F1–F5 done; F6 (live) is
+partly done, below.
+
+**Uncommitted in the checkout (targeted tests pass, full gate NOT run):**
+stats figures kept as written and grouped on display; only the first
+summary leads an answer (a later one stays in place); comparison points
+hang-indent; chart series 2 is green; the "Latest" pill sits bottom-right;
+the prompt seed asks for ready cards in one step (doc 07 note). Run
+`scripts/gate.sh`, rebuild both client bundles first, then commit.
+
+**Live runs (dev route gpt-6-luna on port 8904, workspace /tmp/vak-live/forms,
+launch entry `vak-forms-live`; session ids in the maintainer's chat):**
+trip, calendar, coding, loan and research all drew the right forms with no
+errors (calendar+list; summary+diff+test report; summary+table+chart+
+details+file preview; summary+table+sources). Open findings, each to be
+fixed in Vak's contract, never by a word list:
+1. Every card costs one model step (a five-card answer = five round trips,
+   ~5 s each); the one-step prompt sentence did not change it in one
+   rerun. Next: find what in the card tools or loop makes the model call
+   one at a time (tool results? plan check?), and add an agent test that
+   several card calls in one step are recorded and projected in order
+   (none exists; `parallel_tools_preserve_source_order` is for other tools).
+2. Duplicated cards: in the loan rerun a file-preview card named a
+   `deliverable` not in the plan, was refused with `[card-plan]`, and the
+   model then re-sent summary, details and chart. Read the `[card-plan]`
+   wording (vak_control::render) and the plan check: the refusal lists the
+   plan's cards, which may invite re-sending them.
+3. Format-free requests are not yet measured: run live requests that name
+   no format (a simple question must stay prose; hidden numbers; a hidden
+   plan; two asks in one message) and judge by receipts. The maintainer
+   wants no hard-coding: no classifier, no keyword rules; strands stay for
+   authority, the model plans its own deliverables.
+4. The "Today" mail-calendar pill overlaps a card's top-right button in a
+   narrow pane (open items).
+
+**Release:** the maintainer chose 8.0.0 with a purge: after F6 and the
+fixes above, cut 8.0.0 (docs/design/32-release-engineering.md,
+`scripts/release.sh`), purge this Mac's data home (`vak self uninstall
+--purge`), install from `dist/8.0.0` (`vak self install`, `self
+services-sync`), and the maintainer runs setup (provider key). Record in
+open items that the data baseline needs bumping to 8.0.
 
 Pushed this session, each with the full gate green and checked live:
 

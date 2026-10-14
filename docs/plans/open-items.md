@@ -66,6 +66,8 @@ Carried over from 7.2.0:
 - `isFleetingNarration` (vak-client-ui `structured.ts`) folds a short
   message by a length of 180 characters, a tuned number; replace it with a
   typed marker from the host.
+- The "Today" mail-calendar button floats over the top-right of the first
+  card in a narrow pane; give it a place of its own.
 - The next release reads no presentation library saved before this change
   (old primitive names): it is a major version under invariant 29, and the
   dev and installed data homes are set up again.
