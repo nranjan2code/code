@@ -60,6 +60,10 @@ BUILD_OUTPUTS = {
 }
 
 
+HISTORICAL = re.compile(r"^>\s*\*\*Historical record")
+HEADING = re.compile(r"^(#{2,6}) ")
+
+
 def documents():
     """Every doc to check, without visiting a directory twice."""
     seen = set()
@@ -92,12 +96,29 @@ for rel, path in documents():
         continue
     # A dated report describes the tree as it was. Renaming a file does not
     # make the record wrong, and rewriting the record to match today would.
-    if re.search(r"^>\s*\*\*Historical record", body, re.MULTILINE):
+    # The marker before a document's first `## ` heading covers the whole
+    # document; inside a section it covers that section, up to the next
+    # heading of the same or a higher level.
+    lines = body.splitlines()
+    first_heading = next(
+        (i for i, line in enumerate(lines) if line.startswith("## ")), len(lines)
+    )
+    if any(HISTORICAL.match(line) for line in lines[:first_heading]):
         continue
     in_fence = False
-    for line_no, line in enumerate(body.splitlines(), 1):
+    historical_level = None
+    heading_level = 0
+    for line_no, line in enumerate(lines, 1):
         if FENCE.match(line):
             in_fence = not in_fence
+            continue
+        if not in_fence and (heading := HEADING.match(line)):
+            heading_level = len(heading.group(1))
+            if historical_level is not None and heading_level <= historical_level:
+                historical_level = None
+        if not in_fence and HISTORICAL.match(line):
+            historical_level = heading_level
+        if historical_level is not None:
             continue
         cites = [(c, c) for c in PAT.findall(line)]
         cites += [(c, f"crates/{c}") for c in SHORTHAND.findall(line)]

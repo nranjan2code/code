@@ -1,10 +1,17 @@
 # 74 — Lifecycle management and data administration
 
-Status: **proposal, revision 2 (2026-10-01).** Nothing here is shipped
-except M0's trash. This is the companion to
+Status: **implemented as cut for one owner** (revision 2; M7a, M7b and M9
+of the data-architecture plan, complete 2026-10-09, with acceptance runs in
+`docs/audits/acceptance-m7a-lifecycle-2026-10-08.md`,
+`docs/audits/acceptance-m7b-governance-2026-10-09.md` and
+`docs/audits/acceptance-m9-remote-2026-10-09.md`). The screens, routes and
+commands it names for one owner are built; data roles, per-person
+approvals, retention labels on single items, an erasure-request queue and
+audit export are not, by the maintainer's decisions (the app has one
+owner). This is the companion to
 `docs/design/73-data-architecture-and-lifecycle.md` (the data model) and to
-`docs/plans/data-architecture-plan.md` (milestones, revision 3), and it
-answers review findings R2, R8, R26, R28, R33 and R34 in
+`docs/plans/data-architecture-plan.md` (milestones), and it answers review
+findings R2, R8, R26, R28, R33 and R34 in
 `docs/plans/data-architecture-review.md`, and R55, R57 and R60–R63 in
 `docs/plans/data-architecture-review-2.md`. It defines how every kind of Vak
 data is born, changes state, and ends, which policies govern that, how
@@ -111,9 +118,9 @@ tombstone.
 | trashed → erased | window end, or "Delete permanently" | erasure (§4) | no |
 | → expired | `last_activity + delete_after` with no hold | erasure (§4) with cause *policy* | no |
 
-This replaces today's `archive.json`/`deleted.json` sidecars
-(`crates/vak-server/src/lib.rs:9056-9210`), whose "delete" only hides from
-two lists (review R8).
+This replaced the `archive.json`/`deleted.json` sidecars, whose "delete"
+only hid a conversation from two lists (review R8); the state is now one
+ref per conversation (`vak_session::conversation_state`, M7a-e).
 
 ### 2.5 Run, trigger, effect and cursor
 
@@ -463,7 +470,7 @@ loop every tick (default 10 min; hints wake it early; one pass at boot):
 
 ### 6.1 Navigation
 
-The existing groups stay (`crates/vak-admin-ui/src/App.tsx:6862-6945`).
+The existing groups stay (`crates/vak-admin-ui/src/App.tsx`).
 Changes:
 
 | Group | Today | Proposed |

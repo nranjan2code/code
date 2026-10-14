@@ -1,14 +1,16 @@
 # 73 — Data architecture: information model, lifecycle, tracing, index and cloud
 
-Status: **proposal, revision 3 (2026-10-01); decisions locked (§13); plan in
-`docs/plans/data-architecture-plan.md`; review fixes applied from
-`docs/plans/data-architecture-review.md` (revision 2) and
-`docs/plans/data-architecture-review-2.md` (revision 3).** Nothing here is
-shipped except M0's fixes. §2 is an audit of what the tree does, taken from
-the source and from sizes (never contents) of a real development data home;
-each defect names the file that causes it and says whether it was
-reproduced or read from code. "The data baseline" means the version plan §1
-(L3) names; this document never writes the number.
+Status: **implemented as cut for one owner** (revision 3, decisions locked
+in §13; the data-architecture plan is complete, 2026-10-09, with acceptance
+runs in `docs/audits/acceptance-m*`). Not built, by the maintainer's
+decisions: an S3 or Postgres remote (`vak_storage::Remote` is declared
+only; the remote is a folder), hosted key escrow, data roles, retention
+labels on single items, an erasure-request queue, audit export, and merging
+two machines that both wrote. §2 is the audit of the tree on 2026-09-25,
+kept as the reason for the design; each defect was fixed by the milestone
+the plan assigned it (checked 2026-10-14 against the milestones' exit
+tests, not defect by defect). "The data baseline" means the version plan
+§1 (L3) names; this document never writes the number.
 
 `79-private-headless-fleet.md` is the proposal for one dedicated 24/7 VM per
 customer, operator-blind management and disaster recovery. It adds a hosted
@@ -85,6 +87,9 @@ store underneath both.**
 | changes to a code repository | real git at promotion time |
 
 ## 2. Today (audit, 2026-09-25)
+
+> **Historical record** of the tree on 2026-09-25: the paths and line
+> numbers below are as they were then, and each defect is fixed (see Status).
 
 ### 2.1 Roots
 
@@ -470,7 +475,7 @@ Five rules follow:
     chained to the previous one, and compressed as a whole only when its
     frames are plaintext.
   - The per-entry `prev_hash` chain that ledgers already carry
-    (`vak-session/src/log.rs:306-319`, today a digest of the plaintext line)
+    (before M7a-a, a digest of the plaintext line)
     covers each frame **as stored**, and continues across segments. Integrity
     therefore verifies without keys and after a crypto-shred, which is what
     lets a fleet restore drill return a content-free result (doc 79 §8).
@@ -962,6 +967,9 @@ Also in the plan's history:
 - Lifecycles, policies, screens and API: doc 74.
 
 ## Appendix A — every writer today and its target class
+
+> **Historical record** of the writers on 2026-09-25, the inventory the
+> milestones moved onto their target classes.
 
 | Today (root / path) | Owner | Target class |
 |---|---|---|
