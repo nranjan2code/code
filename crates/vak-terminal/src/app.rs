@@ -528,39 +528,15 @@ impl TerminalApp {
 
         // 1. If HIL modal is open, it captures inputs
         if let Some(ref mut hil) = self.hil_state {
-            if hil.is_editing {
-                match key.code {
-                    KeyCode::Enter => {
-                        hil.is_editing = false;
-                    }
-                    KeyCode::Esc => {
-                        hil.cancel_editing();
-                    }
-                    KeyCode::Backspace => {
-                        hil.delete_backspace();
-                    }
-                    KeyCode::Char(c) => {
-                        hil.insert_char(c);
-                    }
-                    _ => {}
-                }
-                return;
-            }
-
             match key.code {
                 KeyCode::Char('y') | KeyCode::Enter => {
-                    self.dispatch_approval(HilOutcome::ApproveOnce {
-                        modified_command: None,
-                    });
+                    self.dispatch_approval(HilOutcome::ApproveOnce);
                 }
                 KeyCode::Char('a') => {
                     self.dispatch_approval(HilOutcome::AlwaysForSession);
                 }
                 KeyCode::Char('d') => {
                     self.dispatch_approval(HilOutcome::Deny);
-                }
-                KeyCode::Char('e') => {
-                    hil.start_editing();
                 }
                 KeyCode::Char('r') => {
                     hil.toggle_remember();
@@ -869,7 +845,7 @@ impl TerminalApp {
             let req_id = hil.request_id.clone();
             let approve = matches!(
                 outcome,
-                HilOutcome::ApproveOnce { .. } | HilOutcome::AlwaysForSession
+                HilOutcome::ApproveOnce | HilOutcome::AlwaysForSession
             );
             let remember = matches!(outcome, HilOutcome::AlwaysForSession);
 
@@ -981,17 +957,10 @@ impl TerminalApp {
                 if let Some(ref _hil) = self.hil_state {
                     if (10..=16).contains(&y) {
                         if (15..=32).contains(&x) {
-                            self.dispatch_approval(HilOutcome::ApproveOnce {
-                                modified_command: None,
-                            });
+                            self.dispatch_approval(HilOutcome::ApproveOnce);
                             return;
                         } else if (33..=56).contains(&x) {
                             self.hil_state = None;
-                            return;
-                        } else if (57..=70).contains(&x) {
-                            if let Some(hil) = &mut self.hil_state {
-                                hil.start_editing();
-                            }
                             return;
                         }
                     }
@@ -1028,9 +997,7 @@ impl TerminalApp {
                                 // FullAccess: explicit human trust decision —
                                 // do NOT auto-escalate from a click. Send to
                                 // approval gate instead.
-                                self.dispatch_approval(HilOutcome::ApproveOnce {
-                                    modified_command: None,
-                                });
+                                self.dispatch_approval(HilOutcome::ApproveOnce);
                             }
                         }
                         if (17..=19).contains(&y) {

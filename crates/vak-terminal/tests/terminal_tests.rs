@@ -186,48 +186,19 @@ fn test_hil_approval_flow_and_editing() {
         hil.original_command,
         "npm run build && vite preview --port 5173"
     );
-    assert!(!hil.is_editing);
     assert_eq!(hil.remember, RememberMode::No);
 
-    // Unmodified approval
-    let outcome = hil.finish_approval();
-    assert_eq!(
-        outcome,
-        HilOutcome::ApproveOnce {
-            modified_command: None
-        }
+    // What is shown is read from the arguments, whatever the tool is named.
+    let other = HilApprovalState::from_approval_event(
+        "test-session",
+        "req-2",
+        "run_command",
+        r#"{"command":"ls"}"#,
+        "",
+        "/workspace/web-app",
+        None,
     );
-
-    // Start in-place edit
-    hil.start_editing();
-    assert!(hil.is_editing);
-
-    // Backspace 11 times to remove "--port 5173"
-    for _ in 0..11 {
-        hil.delete_backspace();
-    }
-    // Type replacement
-    for c in "--port 3000".chars() {
-        hil.insert_char(c);
-    }
-
-    assert_eq!(
-        hil.edited_command,
-        "npm run build && vite preview --port 3000"
-    );
-
-    let outcome_edited = hil.finish_approval();
-    assert_eq!(
-        outcome_edited,
-        HilOutcome::ApproveOnce {
-            modified_command: Some("npm run build && vite preview --port 3000".into())
-        }
-    );
-
-    // Cancel edit restores original
-    hil.cancel_editing();
-    assert_eq!(hil.edited_command, hil.original_command);
-    assert!(!hil.is_editing);
+    assert_eq!(other.original_command, "ls");
 
     // Toggle remember mode
     hil.toggle_remember();
@@ -451,9 +422,7 @@ async fn test_app_key_and_mouse_dispatch() {
     assert_eq!(hil.tool_name, "bash");
 
     // Approve the request
-    app.dispatch_approval(HilOutcome::ApproveOnce {
-        modified_command: None,
-    });
+    app.dispatch_approval(HilOutcome::ApproveOnce);
     // The HIL state should be cleared after dispatch
     assert!(app.hil_state.is_none());
 

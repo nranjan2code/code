@@ -1,4 +1,4 @@
-//! Floating Human-In-The-Loop (HIL) modal dialog with in-place command editor.
+//! Floating Human-In-The-Loop (HIL) modal dialog.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -43,7 +43,7 @@ impl<'a> Widget for HilModalView<'a> {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(4), // Metadata fields
-                Constraint::Length(5), // Command box (or in-place editor)
+                Constraint::Length(5), // Command box
                 Constraint::Min(3),    // Action key pills
             ])
             .split(inner);
@@ -83,41 +83,15 @@ impl<'a> Widget for HilModalView<'a> {
         Paragraph::new(meta_lines).render(chunks[0], buf);
 
         // 2. Command Box
-        let cmd_text = if self.state.is_editing {
-            &self.state.edited_command
-        } else {
-            &self.state.original_command
-        };
-
-        let cmd_title = if self.state.is_editing {
-            " Edit Command In-Place [Enter to finish, Esc to cancel] "
-        } else {
-            " Proposed Shell Command "
-        };
-
-        let cmd_border_style = if self.state.is_editing {
-            self.theme.style_border_focus()
-        } else {
-            self.theme.style_border()
-        };
+        let cmd_text = &self.state.original_command;
 
         let cmd_block = Block::default()
             .borders(Borders::ALL)
-            .border_style(cmd_border_style)
-            .title(cmd_title)
+            .border_style(self.theme.style_border())
+            .title(" What it will run ")
             .title_style(self.theme.style_card().add_modifier(Modifier::BOLD));
 
-        let cmd_line = if self.state.is_editing {
-            Line::from(vec![
-                Span::styled(
-                    cmd_text,
-                    self.theme.style_card().add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("█", self.theme.style_accent()),
-            ])
-        } else {
-            Line::from(vec![Span::styled(cmd_text, self.theme.style_card())])
-        };
+        let cmd_line = Line::from(vec![Span::styled(cmd_text, self.theme.style_card())]);
 
         Paragraph::new(cmd_line)
             .block(cmd_block)
@@ -139,11 +113,6 @@ impl<'a> Widget for HilModalView<'a> {
             Span::styled(
                 " [d] Deny ",
                 self.theme.style_danger().add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("   "),
-            Span::styled(
-                " [e] Edit In-Place ",
-                self.theme.style_info().add_modifier(Modifier::BOLD),
             ),
             Span::raw("   "),
             Span::styled(

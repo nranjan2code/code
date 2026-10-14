@@ -1,6 +1,6 @@
 # 55 — Rich Terminal Surface (`vak term`)
 
-Status: **implemented** (API-connected since v3.0.32). Greenfield interactive console surface implemented in `crates/vak-terminal`, invoked via `vak term` / `Surface::Terminal`. Connects to a live vak server over HTTP/SSE — every rendered value (health, sessions, models, MCP inventory, approval state, telemetry, incidents) is fetched from real API endpoints or derived from real SSE event streams. Replaces the previous offline prototype that hardcoded all session names, model names, URLs, and mock data.
+Status: **implemented** (API-connected since v3.0.32). Greenfield interactive console surface implemented in `crates/vak-terminal`, invoked via `vak term` / `Surface::Terminal`. Connects to a live vak server over HTTP/SSE — every rendered value (health, sessions, models, MCP inventory, approval state, telemetry, incidents) is fetched from real API endpoints or derived from real SSE event streams. Replaces the previous offline prototype that hardcoded all session names, model names, URLs, and mock data. Checked against the code on 2026-10-14: the in-place command editor described there was removed, because the server approves only the call as asked and an edit was silently discarded; the five themes keep the pre-refresh palette, not the client's Ink and Saffron (docs/design/75-visual-refresh.md).
 
 ---
 
@@ -30,7 +30,7 @@ Status: **implemented** (API-connected since v3.0.32). Greenfield interactive co
 
 ## 2. Frozen Color Palette (24-bit TrueColor)
 
-Directly derived from the canonical Vak Web Client palette (`crates/vak-client-ui/src/styles.css`), cyclable via `F2` or `/theme`:
+Derived from the web client's palette before the visual refresh (doc 75), as `Theme` values in `crates/vak-terminal/src/theme.rs`, cyclable via `F2` or `/theme`:
 
 ```rust
 // Canonical Vak Warm Palette (Default)
@@ -143,14 +143,14 @@ Supported Theme Suites:
 
 ---
 
-## 4. Human-In-The-Loop (HIL) Protocol & In-Place Editing
+## 4. Human-In-The-Loop (HIL) Protocol
 
-![Human-In-The-Loop Approval Modal with In-Place Command Editing](../assets/terminal/hil_modal.jpg)
+![Human-In-The-Loop approval modal, as first drawn (the editor shown there was removed)](../assets/terminal/hil_modal.jpg)
 
 When an effectful tool execution is requested, a floating modal overlay dims the active background:
 - Displays tool name, directory path, risk assessment, and estimated financial cost.
-- **In-Place Command Editor (`[e]`)**: Pressing `[e]` transforms the command box into an inline editor, permitting the operator to modify shell arguments directly before granting approval.
-- Fast key decisions: `[y] Approve Once`, `[a] Always for Session`, `[d] Deny`, `[Esc] Cancel`.
+- The command box shows the call exactly as asked: its `command` argument when it has one, else its arguments. There is no editor: the server approves only the call as asked, so a changed command would have to be a new call.
+- Fast key decisions: `[y] Approve Once`, `[a] Always for Session`, `[d] Deny`, `[r] Remember`, `[Esc] Cancel`.
 
 ---
 

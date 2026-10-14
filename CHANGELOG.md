@@ -12,6 +12,8 @@
   test-report card says how its run ended the same way, and can no longer
   list every test as passed when the run failed.
 - A tool you decline is not offered again for the rest of that request.
+- `vak term`: the approval box no longer offers to edit the command. An
+  edit was never sent: approving after one approved the original command.
 - Library: Compare with your folder lists what an Office file or a PDF
   version changes, the file's history shows each version's state, cards
   show their live state, and Needs you lists files waiting for you.
