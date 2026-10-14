@@ -12,11 +12,16 @@ across them. Nothing here is started unless it says so.
 
 - [x] CHANGELOG: the `## 7.3.0` section.
 - [x] Version: 7.3.0 (additive within 7.x); `scripts/bump-version.sh`.
-- [ ] `scripts/release.sh` (isolated target, clean tree, 15 GB free).
-- [ ] Install over 7.2.0 on the Mac (`vak self update` from the local
-  feed): the starters move to their package folders, `answer-layouts` is
-  installed enabled, and the social add-ons carry their packs with
-  `block: research`.
+- [x] `scripts/release.sh`: every gate passed, tagged `v7.3.0`.
+- [x] Installed over 7.2.0 on the Mac: `self update` refuses an app
+  bundle (the feed carries executables only), so `dist/7.3.0/vak self
+  install` placed the bundle with the release's frontend, then `self
+  services-sync` restarted both services and seeded. The starters moved to
+  1.1.0 and `answer-layouts` is recorded as shipped. The social add-ons,
+  which the earlier seeding never recorded, were updated once with `vak
+  plugins update packages/social-*` (still disabled); every installed
+  package and the six standard skills now match the seed manifest. `self
+  verify` clean, `doctor` all checks passed in `~/vak-home`.
 
 Carried over from 7.2.0:
 
