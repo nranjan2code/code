@@ -45,6 +45,19 @@ across them. Nothing here is started unless it says so.
   the 53 docs marked `implemented` were not each checked against the code
   (only their status word was set), and the in-progress docs not listed
   above keep the open parts their own Status lines name.
+  A sweep on 2026-10-14 for code names these docs cite that no longer
+  exist found claims of current state to correct (look up what replaced
+  each first): 03 `card_repeat_outcome`; 07 `find_duplicate_card_fence`;
+  13 `set_sessions_home`; 22 `last_summary` (nothing is written back onto
+  a trigger) and a test name; 23 `ExternalDoc`, `search_all`, the memory
+  path; 28 `prc_`, `recent_projects`; 33 and 34 `chat_surfaces`,
+  `GatewayView`, `chat_rejected`, `deliver_record`; 41
+  `CapabilityEpochChanged` (now `TurnCapabilitiesBound`?); 47 the
+  tier 2/3 classifier and `DomainSet` (removed at C3b); 48 and 66 client
+  function names; 64 the memory tier names; 65 `TaskDef`/`fire_task`
+  (scheduled work is a trigger, `vak-server/src/automations.rs`); and
+  AGENTS.md invariant 32's `DomainSet::All`. Docs 73, 74, 76, 82, 88 and
+  68 hits were in historical or removed-item text.
 
 ## Needs the maintainer
 
