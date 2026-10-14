@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, useContext } from "solid-js";
 import { safeUrl } from "../../safeUrl";
-import { Card, PresentationInteractionContext, downloadCsv, exportName, num, record, records, text, texts, type Payload } from "./shared";
+import { Card, PresentationInteractionContext, Prose, downloadCsv, exportName, num, record, records, text, texts, type Payload } from "./shared";
 
 /** The answer itself: prose on the page, not a card (DESIGN.md "Cards and results"). */
 export function SummaryForm(props: { payload: Payload }) {
@@ -9,7 +9,7 @@ export function SummaryForm(props: { payload: Payload }) {
     <section class="answer-summary" aria-label="Answer">
       <Show when={text(p().label)}>{(label) => <span class="card-eyebrow">{label()}</span>}</Show>
       <h2 class="answer-headline">{text(p().headline)}</h2>
-      <Show when={text(p().text)}>{(body) => <p class="answer-text">{body()}</p>}</Show>
+      <Show when={text(p().text)}>{(body) => <Prose class="answer-text" text={body()} />}</Show>
       <Show when={texts(p().points).length > 0}>
         <ul class="answer-points"><For each={texts(p().points)}>{(point) => <li>{point}</li>}</For></ul>
       </Show>
@@ -39,7 +39,7 @@ export function StepsForm(props: { payload: Payload }) {
                 <Show when={text(step.time)}>{(time) => <span class="step-time">{time()}</span>}</Show>
                 <span class="step-label">{text(step.label)}</span>
               </div>
-              <Show when={text(step.detail)}>{(detail) => <p class="step-detail">{detail()}</p>}</Show>
+              <Show when={text(step.detail)}>{(detail) => <Prose class="step-detail" text={detail()} />}</Show>
               <Show when={records(step.choices).length > 0}>
                 <ul class="step-choices" aria-label="Choices">
                   <For each={records(step.choices)}>{(choice) => (
@@ -75,7 +75,7 @@ export function ListForm(props: { payload: Payload }) {
           const body = (
             <span class="list-body">
               <span class="list-label"><Linked label={text(item.label) ?? ""} url={text(item.url)} /></span>
-              <Show when={text(item.detail)}>{(detail) => <span class="list-detail">{detail()}</span>}</Show>
+              <Show when={text(item.detail)}>{(detail) => <Prose class="list-detail" text={detail()} />}</Show>
             </span>
           );
           return <li><Show when={checkable()} fallback={body}><label class="list-check"><input type="checkbox" />{body}</label></Show></li>;
@@ -90,10 +90,10 @@ export function DetailsForm(props: { payload: Payload }) {
   const p = () => props.payload;
   return (
     <Card form="details" label={p().label} title={p().title}>
-      <Show when={text(p().text)}>{(body) => <p class="card-lede">{body()}</p>}</Show>
+      <Show when={text(p().text)}>{(body) => <Prose class="card-lede" text={body()} />}</Show>
       <dl class="details">
         <For each={records(p().fields)}>{(field) => (
-          <div class="details-row"><dt>{text(field.label)}</dt><dd>{text(field.detail)}</dd></div>
+          <div class="details-row"><dt>{text(field.label)}</dt><dd><Prose class="details-value" text={text(field.detail) ?? ""} /></dd></div>
         )}</For>
       </dl>
     </Card>
@@ -173,7 +173,7 @@ export function ComparisonForm(props: { payload: Payload }) {
           </article>
         )}</For>
       </div>
-      <Show when={text(p().recommendation)}>{(recommendation) => <p class="option-recommendation">{recommendation()}</p>}</Show>
+      <Show when={text(p().recommendation)}>{(recommendation) => <Prose class="option-recommendation" text={recommendation()} />}</Show>
     </Card>
   );
 }
@@ -209,7 +209,7 @@ export function CalloutForm(props: { payload: Payload }) {
     <aside class={`callout tone-${tone()}`} role={tone() === "warning" || tone() === "important" ? "alert" : "note"}>
       <span class="callout-tone">{text(p().label) ?? names[tone()] ?? "Note"}</span>
       <Show when={text(p().title)}>{(title) => <strong class="callout-title">{title()}</strong>}</Show>
-      <p class="callout-text">{text(p().text)}</p>
+      <Prose class="callout-text" text={text(p().text) ?? ""} />
     </aside>
   );
 }
@@ -235,7 +235,7 @@ export function SourcesForm(props: { payload: Payload }) {
           const url = text(source.url) ?? "";
           return (
             <li class="source">
-              <p class="source-finding">{text(source.finding)}</p>
+              <Prose class="source-finding" text={text(source.finding) ?? ""} />
               <div class="source-from">
                 <Linked label={text(source.title) ?? hostOf(url)} url={url} />
                 <span class="card-meta">{[text(source.source_name) ?? hostOf(url), readableDate(text(source.published_at))].filter(Boolean).join(" · ")}</span>

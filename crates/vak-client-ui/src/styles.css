@@ -695,9 +695,6 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .action-separator { width: 1px; height: 18px; background: var(--border); margin: 0 5px; }
 .main-stack { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .chat-shell { position: relative; flex: 1; min-height: 0; }
-.chat-daily-canvas-link { position: absolute; z-index: 3; top: 8px; right: 16px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-raised); color: var(--text-soft); font-size: var(--fs-control); cursor: pointer; backdrop-filter: var(--surface-filter); -webkit-backdrop-filter: var(--surface-filter); }
-.chat-daily-canvas-link:hover { border-color: var(--border-strong); color: var(--text); }
-.chat-daily-canvas-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .run-control { border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: var(--text); padding: var(--space-1) 10px; cursor: pointer; }
 .run-control:disabled { opacity: .55; cursor: wait; }
 .inline-error { margin: var(--space-2) var(--space-4); padding: var(--space-2) 10px; border: 1px solid var(--red); border-radius: 7px; color: var(--red); font-size: var(--fs-meta); }
@@ -5659,7 +5656,7 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 .mail-calendar-inbox-pagination > span { color: var(--muted); font-size: var(--fs-control); font-variant-numeric: tabular-nums; }
 .artifact-canvas-refreshing { position: sticky; top: 0; z-index: 1; display: block; width: fit-content; margin: 0 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-raised); color: var(--muted); font-size: var(--fs-meta); backdrop-filter: var(--surface-filter); -webkit-backdrop-filter: var(--surface-filter); }
 .daily-mail-calendar-privacy { padding-top: var(--space-3); border-top: 1px solid var(--border); color: var(--muted); font-size: var(--fs-meta); }
-@media (max-width: 600px) { .daily-mail-calendar-body { padding: var(--space-3); } .daily-mail-calendar-message { align-items: flex-start; flex-direction: column; } .daily-mail-calendar-routine { align-items: flex-start; flex-direction: column; } .chat-daily-canvas-link { top: 6px; right: 8px; } }
+@media (max-width: 600px) { .daily-mail-calendar-body { padding: var(--space-3); } .daily-mail-calendar-message { align-items: flex-start; flex-direction: column; } .daily-mail-calendar-routine { align-items: flex-start; flex-direction: column; } }
 .artifact-canvas-tabs {
   display: flex;
   gap: var(--space-1);
@@ -6584,8 +6581,11 @@ code.ic[data-previewable="true"]:hover {
 .answer-block {
   font-family: var(--content);
   margin: var(--space-3) 0;
+  overflow-wrap: break-word;
   animation: block-in var(--dur) var(--ease) both;
 }
+.card-prose > :first-child { margin-top: 0; }
+.card-prose > :last-child { margin-bottom: 0; }
 @keyframes block-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .answer-block { animation: none; } }
 .semantic-paragraph, .md-ul, .md-ol { max-width: var(--measure); }

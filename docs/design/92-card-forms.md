@@ -1,6 +1,6 @@
 # 92 — Card forms
 
-Status: in progress: F1 to F5 built 2026-10-14, F6 (live) open; direction from the maintainer on 2026-10-14 ("rebuild
+Status: implemented: F1 to F6 built and checked live 2026-10-14; direction from the maintainer on 2026-10-14 ("rebuild
 correctly to be maintainable but yet effective for anything … completely
 remove what's not wanted"; no users, so nothing is kept for compatibility).
 Builds on docs/design/87-composed-answers.md (cards in answers),
@@ -135,3 +135,11 @@ Progress:
   the card CSS rewritten on DESIGN.md tokens.
 - F5, 2026-10-14: the prompt seed says an answer uses as many cards as it
   has parts; AGENTS.md and docs 30, 67 and 68 point here.
+- F6, 2026-10-14 (dev route): every form drawn live; checked at 1440×900
+  and 390×844, light and dark. Fixed from what the runs showed: a plan is
+  recorded before the cards in its step; a `[card-plan]` refusal lists the
+  cards still to show apart from those shown (a model had re-sent shown
+  ones); card prose renders as the conversation's markdown and wraps long
+  words; Today moved into the top bar. Format-free requests (a fact, hidden
+  numbers, two small asks, a bill split) stayed prose; a hidden plan drew
+  summary, steps, callout and sources. Open: card revision (open items).

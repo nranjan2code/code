@@ -27,6 +27,7 @@ import {
   splitId,
   itemsOf,
   agentForSession,
+  openArtifactCanvas,
   setAgentPickerOpen,
   setAgentPickerTab,
   backend,
@@ -256,6 +257,7 @@ export default function WorkspaceHeader() {
       </Show>
       <div class="workspace-actions" aria-label="Workspace tools">
         <Show when={activeId()}>
+          <button type="button" class="workspace-details-button" aria-label="Today" title="Today's mail and calendar" onClick={() => openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: agentForSession(activeId()).id })}><Icon name="grid" size={14} /><span>Today</span></button>
           <button type="button" class="workspace-details-button" aria-label="Share" title="Share" onClick={() => setSharing(true)}><Icon name="chat" size={14} /><span>Share</span></button>
           <button
             type="button"

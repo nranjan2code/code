@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 18 in progress, 53 implemented, 3 reference, 7 superseded, 4 historical.
+Counts: 3 proposal, 17 in progress, 54 implemented, 3 reference, 7 superseded, 4 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -96,4 +96,4 @@ Counts: 3 proposal, 18 in progress, 53 implemented, 3 reference, 7 superseded, 4
 | [89-constrained-tool-arguments.md](89-constrained-tool-arguments.md) | 89 — Constrained tool arguments | in progress | stages 1 to 4 built 2026-10-12 (the capability, strict tools, schema-bound output on every wire, regeneration of unreadable calls, the ladder by fault class) |
 | [90-file-state.md](90-file-state.md) | 90 — What a turn knows about a file | in progress | Decisions taken 2026-10-12 (D1–D4, §4) |
 | [91-presentation-capabilities.md](91-presentation-capabilities.md) | 91 — Presentations are capabilities | implemented | stages 1 to 5 built 2026-10-14 |
-| [92-card-forms.md](92-card-forms.md) | 92 — Card forms | in progress | F1 to F5 built 2026-10-14, F6 (live) open |
+| [92-card-forms.md](92-card-forms.md) | 92 — Card forms | implemented | F1 to F6 built and checked live 2026-10-14 |

@@ -1,4 +1,5 @@
 import { Show, createContext, type JSX } from "solid-js";
+import { renderMarkdown } from "../../md";
 
 /** A stored card payload: the form's fields, as the host built them. */
 export type Payload = Record<string, unknown>;
@@ -76,4 +77,10 @@ export function downloadCsv(filename: string, rows: unknown[][]): void {
 export function exportName(title: string | undefined, fallback: string): string {
   const base = (title ?? fallback).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return `${base || fallback}.csv`;
+}
+
+/** A card's prose field, read as the conversation's own text is: a link or
+ *  emphasis the model wrote shows as one, never as its markup. */
+export function Prose(props: { class: string; text: string }): JSX.Element {
+  return <div class={`card-prose ${props.class}`} innerHTML={renderMarkdown(props.text)} />;
 }

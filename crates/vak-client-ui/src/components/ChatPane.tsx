@@ -1085,7 +1085,6 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         attachFiles(Array.from(event.dataTransfer.files));
       }}
     >
-      <button type="button" class="chat-daily-canvas-link" onClick={() => openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: agentForSession(sid()).id })}>Today</button>
       <Show when={navigableTurnCount() > 1}>
         <nav class="turn-rail" aria-label="Conversation turns">
           <div
