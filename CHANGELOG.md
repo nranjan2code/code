@@ -1,4 +1,4 @@
-## Unreleased
+## 7.2.0 — 2026-10-14
 
 - Security: when a turn holds both your own data and words from someone
   else (a fetched page, a connected service), anything that could send data
