@@ -37,7 +37,10 @@ fn link_weight(kind: LinkKind) -> f64 {
         LinkKind::OwnThread | LinkKind::WroteFile | LinkKind::ThisTurn | LinkKind::RecalledTurn => {
             1.0
         }
-        LinkKind::ReadFile | LinkKind::ServesCommitment | LinkKind::NamedFile => 0.8,
+        LinkKind::ReadFile
+        | LinkKind::FetchedPage
+        | LinkKind::ServesCommitment
+        | LinkKind::NamedFile => 0.8,
         LinkKind::ContinuesThread => 0.7,
     }
 }
@@ -879,6 +882,7 @@ mod tests {
         assert_eq!(link_weight(LinkKind::OwnThread), 1.0);
         assert_eq!(link_weight(LinkKind::WroteFile), 1.0);
         assert_eq!(link_weight(LinkKind::ReadFile), 0.8);
+        assert_eq!(link_weight(LinkKind::FetchedPage), 0.8);
         assert_eq!(link_weight(LinkKind::ServesCommitment), 0.8);
         assert_eq!(link_weight(LinkKind::ContinuesThread), 0.7);
         assert_eq!(link_weight(LinkKind::ThisTurn), 1.0);

@@ -14,6 +14,7 @@ const KIND_LABEL: Record<string, string> = {
   turn: "Turn",
   call: "Tool call",
   file: "File",
+  page: "Web page",
   run: "Run",
   effect: "Sent message",
   trigger: "Automation",

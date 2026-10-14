@@ -144,6 +144,16 @@ fn turn(
         }),
     ))
     .unwrap();
+    log.append(Entry::new(
+        log.tail_id().cloned(),
+        EntryPayload::CallEffect(CallEffectRecord {
+            tool_use_id: "toolu_1".into(),
+            effect: CallEffect::Fetched {
+                url: "https://example.org/source".into(),
+            },
+        }),
+    ))
+    .unwrap();
     log.append_message(message(
         Role::Assistant,
         vec![ContentBlock::text("The report is written.")],
@@ -324,9 +334,11 @@ fn lineage_from_any_artifact_to_cause() {
     catalog.catch_up().unwrap();
     let space = local::space(&folder).to_string();
     let file = format!("file:{space}:report.md");
+    let page = format!("page:{space}:https://example.org/source");
     let call = format!("call:ses_{session}:toolu_1");
     for start in [
         file.as_str(),
+        page.as_str(),
         call.as_str(),
         &format!("trn_{turn}"),
         &format!("ses_{session}"),
@@ -372,6 +384,9 @@ fn lineage_from_any_artifact_to_cause() {
             .collect();
         assert!(held.contains(&call), "{held:?}");
         assert!(held.contains(&format!("trn_{turn}")), "{held:?}");
+        // And the file its call wrote and the page it fetched.
+        assert!(held.contains(&file), "{held:?}");
+        assert!(held.contains(&page), "{held:?}");
         assert!(!held.contains(&format!("ses_{session}")), "{held:?}");
     }
     // Where the session's bytes are is one lookup, never a directory walk.

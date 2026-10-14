@@ -322,6 +322,8 @@ pub enum LinkKind {
     ReadFile,
     /// A call wrote this workspace file.
     WroteFile,
+    /// A call fetched this web page (`page:<url>`).
+    FetchedPage,
     /// The turn served this commitment.
     ServesCommitment,
     /// The turn's own node (`turn:<its id>`), which a recall reaches.
@@ -381,6 +383,12 @@ impl TurnLink {
     }
 
     fn from_effect(effect: &crate::types::CallEffect) -> Option<TurnLink> {
+        if let crate::types::CallEffect::Fetched { url } = effect {
+            return Some(TurnLink {
+                node: format!("page:{url}"),
+                kind: LinkKind::FetchedPage,
+            });
+        }
         let (path, kind) = match effect {
             crate::types::CallEffect::FileRead { path, .. } => (path, LinkKind::ReadFile),
             crate::types::CallEffect::FileWrite { path, .. } => (path, LinkKind::WroteFile),

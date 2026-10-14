@@ -720,7 +720,9 @@ derived copies, and erasure removes their rows explicitly (§7.3).
   class, lifecycle state, policy, `expires_at`, size, audience and ACL
   digest, created/sealed timestamps.
 - **`edges`**: lineage (`produced_by`, `derived_from`, `version_of`,
-  `promoted_to`, `delivered_as`, `caused`, `references`, `shared_with`). It
+  `promoted_to`, `delivered_as`, `caused`, `references`, `shared_with`,
+  and `fetched_by` from a web page, a `page:<space>:<url>` node, to the
+  call that fetched it; built 2026-10-14). It
   answers "everything this run touched" and "where did this file come from"
   with one query.
 - **`text`**: FTS5 over text projections (messages, tool digests, artifact

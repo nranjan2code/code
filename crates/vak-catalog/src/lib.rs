@@ -45,9 +45,10 @@ pub const DIR_NAME: &str = "catalog";
 /// The catalog's file name in that directory.
 pub const FILE_NAME: &str = "catalog.db";
 
-/// The schema this build writes. A catalog stamped with another is dropped
-/// and rebuilt, never adapted: it is derived.
-const SCHEMA_VERSION: u32 = 3;
+/// The schema this build writes, and what it derives from the records (4:
+/// fetched pages). A catalog stamped with another is dropped and rebuilt,
+/// never adapted: it is derived.
+const SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {
@@ -379,7 +380,14 @@ impl Catalog {
     pub fn in_session(&self, session: &str, limit: usize) -> Result<Vec<Node>, CatalogError> {
         let conn = self.conn();
         let sql = format!(
-            "SELECT {NODE_COLUMNS} FROM nodes n WHERE n.session = ?1 AND n.id != ?1
+            "SELECT {NODE_COLUMNS} FROM nodes n
+             WHERE (n.session = ?1 OR n.id IN (
+                 SELECT e.src FROM edges e JOIN nodes c ON c.id = e.dst
+                  WHERE c.session = ?1 AND e.kind IN ('produced_by', 'fetched_by')
+                 UNION
+                 SELECT e.dst FROM edges e JOIN nodes c ON c.id = e.src
+                  WHERE c.session = ?1 AND e.kind = 'references'))
+               AND n.id != ?1
              ORDER BY n.created_at, n.id LIMIT {}",
             limit.clamp(1, 10_000)
         );
@@ -457,7 +465,7 @@ impl Catalog {
         let mut frontier = vec![start];
         let mut up = conn.prepare(
             "SELECT dst FROM edges WHERE src = ?1
-             AND kind IN ('produced_by', 'part_of', 'caused_by', 'derived_from') ORDER BY kind, dst",
+             AND kind IN ('produced_by', 'fetched_by', 'part_of', 'caused_by', 'derived_from') ORDER BY kind, dst",
         )?;
         while let Some(current) = frontier.first().cloned() {
             frontier.remove(0);

@@ -437,6 +437,29 @@ fn session_entry(
         }
         EntryPayload::CallEffect(record) => {
             let node = call(tx, &record.tool_use_id, None)?;
+            // A page is named by its address within the space, as a file
+            // is by its path, so a person traces what a call fetched to
+            // its turn and run.
+            if let CallEffect::Fetched { url } = &record.effect {
+                let page = format!(
+                    "page:{}:{url}",
+                    session.space.as_deref().unwrap_or("unbound")
+                );
+                upsert(
+                    tx,
+                    Upsert {
+                        id: &page,
+                        kind: "page",
+                        space: session.space.clone(),
+                        agent: session.agent.clone(),
+                        audience: session.audience.clone(),
+                        title: Some(url.clone()),
+                        created_at: Some(created),
+                        ..Default::default()
+                    },
+                )?;
+                return edge(tx, &page, "fetched_by", &node);
+            }
             let (path, kind) = match &record.effect {
                 CallEffect::FileWrite { path, .. } => (path, "produced_by"),
                 CallEffect::FileRead { path, .. } => (path, "references"),
