@@ -999,10 +999,11 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
     <div class="canvas-card test-matrix-wrap" classList={{ "test-matrix-wrap-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <Show when={str(node.props, "suite_name") || num(node.props, "duration_ms") !== undefined}><span class="card-subtitle">
-            <Show when={str(node.props, "suite_name") && str(node.props, "suite_name") !== "Test Execution"}>{str(node.props, "suite_name")}</Show>
-            <Show when={num(node.props, "duration_ms") !== undefined}>({num(node.props, "duration_ms")}ms)</Show>
-          </span></Show>
+          <span class="card-subtitle">
+            {[str(node.props, "suite_name") ?? str(node.props, "command"), terminalStatus(num(node.props, "exit_code"), num(node.props, "duration_ms"))]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
         </div>
         <div class="test-tab-filter">
           <button class="filter-chip" classList={{ active: filter() === "all" }} onClick={() => setFilter("all")}>

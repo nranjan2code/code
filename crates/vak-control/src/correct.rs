@@ -215,11 +215,19 @@ pub fn card_file_missing(path: &str) -> String {
 
 /// What a card is told when it shows the output of a command no call in
 /// the conversation ran.
-pub fn card_command_not_run(command: &str) -> String {
+pub fn card_command_not_run(command: &str, ran: &[String]) -> String {
+    let named = if ran.is_empty() {
+        "No command has run in this turn yet: run it first.".to_string()
+    } else {
+        let list: Vec<String> = ran.iter().map(|command| format!("`{command}`")).collect();
+        format!(
+            "The commands that ran in this turn are {}: name one of them exactly, or run this one first.",
+            list.join(", ")
+        )
+    };
     format!(
-        "Not shown: no call in this conversation ran `{command}`. This card shows what a \
-         command really printed, taken from the call that ran it: name the command exactly \
-         as that call ran it, or run it first."
+        "Not shown: no call in this conversation ran `{command}`. This card takes what a \
+         command printed and how it ended from the call that ran it. {named}"
     )
 }
 

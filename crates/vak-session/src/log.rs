@@ -1403,6 +1403,49 @@ impl SessionLog {
         found
     }
 
+    /// The commands calls in the open turn ran (a process ran,
+    /// `CallEffect::Ran`), oldest first, each once: what a card refused for
+    /// naming a command no call ran is told it may name.
+    pub fn commands_ran_this_turn(
+        &self,
+        command_argument: impl Fn(&str) -> Option<&'static str>,
+    ) -> Vec<String> {
+        let chain = self.chain_to_root();
+        let start = self
+            .latest_directive_entry_id()
+            .and_then(|turn| chain.iter().position(|entry| entry.id == turn))
+            .unwrap_or(0);
+        let ran: std::collections::HashSet<&str> = chain[start..]
+            .iter()
+            .filter_map(|entry| match &entry.payload {
+                EntryPayload::CallEffect(record)
+                    if matches!(record.effect, crate::types::CallEffect::Ran { .. }) =>
+                {
+                    Some(record.tool_use_id.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        let mut commands: Vec<String> = Vec::new();
+        for entry in &chain[start..] {
+            let EntryPayload::Message(record) = &entry.payload else {
+                continue;
+            };
+            for block in &record.message.content {
+                if let vak_llm::ContentBlock::ToolUse { id, name, input } = block
+                    && ran.contains(id.as_str())
+                    && let Some(command) = command_argument(name)
+                        .and_then(|argument| input.get(argument))
+                        .and_then(serde_json::Value::as_str)
+                    && !commands.iter().any(|seen| seen == command)
+                {
+                    commands.push(command.to_string());
+                }
+            }
+        }
+        commands
+    }
+
     /// Everything this conversation holds that a card may cite: the
     /// person's own messages, every non-card tool call's arguments and
     /// result, and the whole body behind a windowed result. A card that

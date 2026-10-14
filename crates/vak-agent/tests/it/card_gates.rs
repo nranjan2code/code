@@ -145,7 +145,7 @@ impl Tool for FakeTerminalCard {
     fn output_of_command(&self) -> Option<vak_tools::CommandOutput> {
         Some(vak_tools::CommandOutput {
             command: "command",
-            output: "output",
+            output: Some("output"),
             exit_code: "exit_code",
             duration_ms: "duration_ms",
         })
@@ -456,6 +456,10 @@ async fn a_terminal_card_shows_what_its_command_really_printed() {
     assert!(
         refused.contains("no call in this conversation ran `npm run dev`"),
         "{refused}"
+    );
+    assert!(
+        refused.contains("The commands that ran in this turn are `npm start`"),
+        "the refusal names what did run: {refused}"
     );
     // A call refused before anything ran printed nothing.
     let (refused, failed) = result("t3");

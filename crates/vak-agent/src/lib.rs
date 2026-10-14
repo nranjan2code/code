@@ -6020,21 +6020,25 @@ impl Agent {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let ran = self.session.lock().await.command_result(
-            |name| match self.tool_named(name)?.permission().subject {
-                vak_permission::Subject::Command(argument) => Some(argument),
-                _ => None,
-            },
-            &command,
-        );
-        let ran = ran.ok_or_else(|| vak_control::card_command_not_run(&command))?;
+        let command_argument = |name: &str| match self.tool_named(name)?.permission().subject {
+            vak_permission::Subject::Command(argument) => Some(argument),
+            _ => None,
+        };
+        let session = self.session.lock().await;
+        let Some(ran) = session.command_result(command_argument, &command) else {
+            let ran = session.commands_ran_this_turn(command_argument);
+            return Err(vak_control::card_command_not_run(&command, &ran));
+        };
+        drop(session);
         if let Some(fields) = input.as_object_mut() {
             // What the call printed, without the notes the runtime added
             // for the model, and how the process ended.
-            fields.insert(
-                spec.output.to_string(),
-                Value::String(vak_intent::control::clean_scaffolding(&ran.output)),
-            );
+            if let Some(output) = spec.output {
+                fields.insert(
+                    output.to_string(),
+                    Value::String(vak_intent::control::clean_scaffolding(&ran.output)),
+                );
+            }
             match ran.exit_code {
                 Some(code) => fields.insert(spec.exit_code.to_string(), Value::from(code)),
                 None => fields.remove(spec.exit_code),

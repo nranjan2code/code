@@ -279,7 +279,8 @@ fn build_diff(args: &Map<String, Value>) -> Result<Value, String> {
 fn test_report_fields() -> Value {
     fields(
         serde_json::json!({
-            "suite_name": string("Optional. The suite or command that ran."),
+            "command": string("The command that ran the tests, exactly as a call in this conversation ran it. Its exit code and duration are taken from that call."),
+            "suite_name": string("Optional. The suite's name."),
             "tests": list_of(
                 "One entry per test that ran.",
                 serde_json::json!({
@@ -295,7 +296,7 @@ fn test_report_fields() -> Value {
                 &["name", "status"],
             )
         }),
-        &["tests"],
+        &["command", "tests"],
     )
 }
 
@@ -306,7 +307,34 @@ fn build_test_report(args: &Map<String, Value>) -> Result<Value, String> {
     }) {
         return Err("`duration_ms` must be a whole number, 0 or more".into());
     }
-    Ok(Value::Object(copy(args, &["suite_name", "tests"])))
+    // How the run ended is the loop's, from the call that ran `command`.
+    if !args.get("duration_ms").is_some_and(Value::is_u64) {
+        return Err("no call in this conversation ran this command".into());
+    }
+    let tests = records(args, "tests");
+    let all_passed = !tests.is_empty()
+        && tests
+            .iter()
+            .all(|test| test.get("status").and_then(Value::as_str) == Some("passed"));
+    match args.get("exit_code").and_then(Value::as_i64) {
+        Some(0) => {}
+        Some(code) if all_passed => {
+            return Err(format!(
+                "the command exited {code}, so its tests did not all pass: report the ones that failed"
+            ));
+        }
+        None if all_passed => {
+            return Err(
+                "the command was stopped before it finished, so its tests did not all pass: report what ran"
+                    .into(),
+            );
+        }
+        _ => {}
+    }
+    Ok(Value::Object(copy(
+        args,
+        &["suite_name", "command", "tests", "exit_code", "duration_ms"],
+    )))
 }
 
 fn terminal_fields() -> Value {
@@ -1701,13 +1729,18 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_test_report_card",
-        description: "The results of a test run you actually executed.",
+        description: "The results of a test run a call in this conversation executed; how the run ended is taken from that call.",
         semantic_types: &["test.report"],
         default_type: Some("test.report"),
         fields: test_report_fields,
         build: build_test_report,
         fill: fill_nothing,
-        output_of_command: None,
+        output_of_command: Some(vak_tools::CommandOutput {
+            command: "command",
+            output: None,
+            exit_code: "exit_code",
+            duration_ms: "duration_ms",
+        }),
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1720,7 +1753,7 @@ const SHAPES: &[CardShape] = &[
         fill: fill_nothing,
         output_of_command: Some(vak_tools::CommandOutput {
             command: "command",
-            output: "output",
+            output: Some("output"),
             exit_code: "exit_code",
             duration_ms: "duration_ms",
         }),
@@ -1831,6 +1864,9 @@ fn fixture_for(shape_name: &str) -> Value {
             "files": [{"filename": "a.rs", "hunks": "@@ -1 +1 @@", "additions": 1, "deletions": 0}]
         }),
         "emit_test_report_card" => serde_json::json!({
+            "command": "cargo test",
+            "exit_code": 0,
+            "duration_ms": 1200,
             "tests": [{"name": "it_works", "status": "passed"}]
         }),
         "emit_terminal_card" => serde_json::json!({"command": "ls", "output": "a.rs"}),
@@ -2450,6 +2486,37 @@ pub fn identity_digest(semantic_type: &str, payload: &Value) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    /// A test report's outcome is the run's: a run that exited non-zero or
+    /// was stopped cannot report every test passed, and one no call ran is
+    /// refused.
+    #[test]
+    fn a_test_report_agrees_with_how_its_run_ended() {
+        let report = |exit: Value, status: &str| {
+            let mut args = serde_json::json!({
+                "command": "cargo test",
+                "duration_ms": 900,
+                "tests": [{"name": "a", "status": "passed"}, {"name": "b", "status": status}]
+            });
+            if !exit.is_null() {
+                args["exit_code"] = exit;
+            }
+            build_test_report(args.as_object().unwrap())
+        };
+        assert!(report(Value::from(0), "passed").is_ok());
+        assert!(report(Value::from(101), "failed").is_ok());
+        let claimed = report(Value::from(101), "passed").unwrap_err();
+        assert!(claimed.contains("exited 101"), "{claimed}");
+        let stopped = report(Value::Null, "passed").unwrap_err();
+        assert!(stopped.contains("stopped"), "{stopped}");
+        let never = build_test_report(
+            serde_json::json!({"command": "cargo test", "tests": []})
+                .as_object()
+                .unwrap(),
+        )
+        .unwrap_err();
+        assert!(never.contains("no call"), "{never}");
+    }
 
     /// A call's arguments as they reach the builder: read by the one
     /// argument reader, then given the tool's own defaults.

@@ -233,8 +233,9 @@ pub trait ArtifactSink: Send + Sync {
 pub struct CommandOutput {
     /// The argument holding the command exactly as a call ran it.
     pub command: &'static str,
-    /// The argument the loop fills with that call's result.
-    pub output: &'static str,
+    /// The argument the loop fills with that call's result, for a card
+    /// that shows it (a test report shows only how the run ended).
+    pub output: Option<&'static str>,
     /// The arguments the loop fills with how the process ended: its exit
     /// code (left out when it was stopped) and how long it ran.
     pub exit_code: &'static str,
@@ -243,8 +244,11 @@ pub struct CommandOutput {
 
 impl CommandOutput {
     /// Every argument the loop fills.
-    pub fn filled(&self) -> [&'static str; 3] {
-        [self.output, self.exit_code, self.duration_ms]
+    pub fn filled(&self) -> Vec<&'static str> {
+        self.output
+            .into_iter()
+            .chain([self.exit_code, self.duration_ms])
+            .collect()
     }
 }
 

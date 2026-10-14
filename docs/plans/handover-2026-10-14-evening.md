@@ -89,15 +89,13 @@ exist") is never shown as output; the card reads "Stopped · 5.0 s" or
    called an unknown name live (it went straight to `read`/`bash`), so this
    path is covered by tests only; if a live run shows a model stuck there,
    look at that answer's contract, never restore an alias.
-2. A card or prose can claim what no call did (seen again live: a
-   test-report card saying "1 passed" and prose saying a command finished
-   in time, beside a terminal card showing it stopped at its limit; session
-   `01a13867-c776-7381-ada4-b80021969a28` in the /tmp live home). The
-   terminal card's fix (fill from the receipt) is the pattern; whether the
-   test-report card should take its results from a call too is a design
-   question for the maintainer.
-3. Still open from doc 90: whether `recall` can open another conversation,
-   which its refusal states.
+2. Done (maintainer chose "test report only"): the test-report card names
+   the `command` that ran the tests; its exit code and duration come from
+   that call, a card naming a command no call ran is refused with the
+   commands that did run this turn, and a run that exited non-zero or was
+   stopped cannot report every test passed. Other cards stay model-written.
+3. Decided (maintainer): `recall` opens another conversation only through
+   an attached artifact, as now; recorded in doc 90.
 4. Recorded model choices, no work unless the maintainer asks: a model
    sometimes invents a folder or writes after the work is done; a table's
    header and row joined by a newline in one string, or a one-row table
