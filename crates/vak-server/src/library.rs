@@ -1058,7 +1058,10 @@ async fn version_origin(
 /// the folder holds now (docs/design/90-file-state.md §5). The folder is
 /// read first, so an edit made outside Vak is recorded as a version and
 /// named: `folder` is `same`, `different` or `absent`, `folder_version` the
-/// recorded version the folder holds, and for text both texts. Owner-only,
+/// recorded version the folder holds, for text both texts, and for an
+/// Office file or PDF the folder holds differently, `review`: what this
+/// version changes from the folder's copy, computed in a worker as Review
+/// computes a draft's (invariants 14, 39), or `review_error`. Owner-only,
 /// like every read of the workspace.
 async fn version_compare(
     State(state): State<AppState>,
@@ -1081,6 +1084,10 @@ async fn version_compare(
             (Some(_), _) => "different",
         };
         let version_bytes = artifacts.bytes(&seen.artifact, &chosen.id).ok();
+        let document = (folder == "different" && crate::is_document_path(&seen.artifact.path))
+            .then(|| version_bytes.clone())
+            .flatten()
+            .map(|bytes| (cwd.join(&seen.artifact.path), bytes));
         let text = |bytes: Option<Vec<u8>>| bytes.and_then(|bytes| String::from_utf8(bytes).ok());
         let (version_text, folder_text) = (text(version_bytes), text(folder_bytes));
         let kind = if version_text.is_some() && (folder == "absent" || folder_text.is_some()) {
@@ -1088,21 +1095,72 @@ async fn version_compare(
         } else {
             "binary"
         };
-        Some(serde_json::json!({
-            "path": seen.artifact.path,
-            "folder": folder,
-            "folder_version": folder_version,
-            "kind": kind,
-            "version_text": if kind == "text" { version_text } else { None },
-            "folder_text": if kind == "text" { folder_text } else { None },
-        }))
+        Some((
+            serde_json::json!({
+                "path": seen.artifact.path,
+                "folder": folder,
+                "folder_version": folder_version,
+                "kind": kind,
+                "version_text": if kind == "text" { version_text } else { None },
+                "folder_text": if kind == "text" { folder_text } else { None },
+            }),
+            document,
+        ))
     })
     .await;
     match compared {
-        Ok(Some(value)) => Json(value).into_response(),
+        Ok(Some((mut value, Some((folder_path, bytes))))) => {
+            match document_review(&state, &folder_path, &bytes).await {
+                Ok(review) => value["review"] = review,
+                Err(error) => value["review_error"] = serde_json::Value::String(error),
+            }
+            Json(value).into_response()
+        }
+        Ok(Some((value, None))) => Json(value).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+/// What `version` (its bytes) changes from the folder's copy at
+/// `folder_path`: the worker reads both under a read-only sandbox. The
+/// version is written for it to a private directory in the runtime
+/// directory, removed when the worker has answered.
+async fn document_review(
+    state: &AppState,
+    folder_path: &std::path::Path,
+    version: &[u8],
+) -> Result<serde_json::Value, String> {
+    let name = folder_path
+        .file_name()
+        .ok_or_else(|| "the file has no name".to_string())?;
+    let dir = vak_config::paths::runtime_dir()
+        .join("compare")
+        .join(uuid::Uuid::now_v7().to_string());
+    let copy = dir.join(name);
+    let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&copy, version));
+    let review = match written {
+        Ok(()) => {
+            vak_tools::broker::office_review(
+                &state.core.tool_worker_exe(),
+                Some(folder_path),
+                &copy,
+                None,
+            )
+            .await
+        }
+        Err(_) => Err("this version could not be prepared for comparing".to_string()),
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    review.map(|mut review| {
+        // Nothing here is accepted, so a draft's choices mean nothing.
+        if let Some(fields) = review.as_object_mut() {
+            fields.remove("choices");
+            fields.remove("choices_unavailable");
+        }
+        review["compared_with"] = serde_json::Value::String("folder".into());
+        review
+    })
 }
 
 async fn get_one(State(state): State<AppState>, Path(id): Path<String>) -> Response {

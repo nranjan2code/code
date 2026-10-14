@@ -158,8 +158,18 @@ async fn spawn_server(
     provider: Arc<dyn Provider>,
     mode: vak_config::PermissionMode,
 ) -> (String, tokio::task::JoinHandle<()>) {
+    let (base, handle, _) = spawn_server_in(provider, mode).await;
+    (base, handle)
+}
+
+/// `spawn_server`, also naming the workspace folder it serves.
+async fn spawn_server_in(
+    provider: Arc<dyn Provider>,
+    mode: vak_config::PermissionMode,
+) -> (String, tokio::task::JoinHandle<()>, std::path::PathBuf) {
     isolate_global_config();
     let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().to_path_buf();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
     core.set_shared_scope(vak_config::scope::SharedScope::new(dir.path().join("home")));
@@ -182,7 +192,7 @@ async fn spawn_server(
         .await
         .unwrap();
     });
-    (format!("http://{addr}"), handle)
+    (format!("http://{addr}"), handle, folder)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -3064,4 +3074,109 @@ async fn a_versions_title_and_the_request_that_made_it_are_shown() {
     );
     assert_eq!(compared["kind"], "text");
     assert_eq!(compared["version_text"], "Tram 28 climbs the hills.");
+}
+
+/// Compare with your folder for a Word file says what the version changes
+/// from the folder's copy, worked out in the worker as Review does, and
+/// offers no choices: nothing is accepted there (doc 90 §5).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn comparing_a_word_version_with_the_folder_lists_its_changes() {
+    let name = format!("notes-{}.docx", uuid::Uuid::now_v7().simple());
+    let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
+        responses: Mutex::new(VecDeque::from(vec![
+            tool_call(
+                "o1",
+                "office_apply",
+                serde_json::json!({
+                    "path": name,
+                    "ops": [{"op": "add_paragraph", "text": "Tram 28 climbs the hills."}]
+                }),
+            ),
+            text("done"),
+            text("done"),
+        ])),
+    });
+    let (base, _server, folder) =
+        spawn_server_in(provider, vak_config::PermissionMode::WorkspaceWrite).await;
+    let client = reqwest::Client::new();
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let run = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "Write the Lisbon notes as a Word file"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(run.status(), 202);
+    let mut artifact = None;
+    for _ in 0..400 {
+        let listed: serde_json::Value = client
+            .get(format!("{base}/library"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        artifact = listed["artifacts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|a| a["path"] == name.as_str())
+            .and_then(|a| a["id"].as_str().map(str::to_string));
+        if artifact.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let artifact = artifact.expect("the draft is in the Library");
+    std::fs::write(folder.join(&name), vak_ooxml::fixtures::docx()).unwrap();
+    let detail: serde_json::Value = client
+        .get(format!("{base}/library/{artifact}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let drafted = detail["history"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|v| v["from"] == "call")
+        .and_then(|v| v["id"].as_str())
+        .expect("the call's version")
+        .to_string();
+    let compared: serde_json::Value = client
+        .get(format!(
+            "{base}/library/{artifact}/versions/{drafted}/compare"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(compared["folder"], "different", "{compared}");
+    assert_eq!(compared["kind"], "binary", "{compared}");
+    let review = &compared["review"];
+    assert_eq!(review["compared_with"], "folder", "{compared}");
+    assert!(
+        review["changes"]
+            .as_array()
+            .is_some_and(|changes| !changes.is_empty()),
+        "{compared}"
+    );
+    assert!(review.get("choices").is_none(), "{compared}");
+    assert!(review.get("choices_unavailable").is_none(), "{compared}");
 }

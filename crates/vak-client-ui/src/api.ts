@@ -1748,7 +1748,7 @@ export type OfficeImpact = { kind: "signature" | "label" | "recalculation" | "re
 
 export type OfficeReview = {
   path: string;
-  compared_with: "workspace" | "nothing (new file)";
+  compared_with: "workspace" | "folder" | "nothing (new file)";
   summary: string[];
   changes: OfficeChange[];
   flags: string[];
@@ -2591,6 +2591,10 @@ export interface VersionCompare {
   kind: "text" | "binary";
   version_text?: string | null;
   folder_text?: string | null;
+  /** For an Office file or PDF the folder holds differently: what this
+   *  version changes from the folder's copy, as Review computes it. */
+  review?: OfficeReview;
+  review_error?: string;
 }
 
 export function libraryVersionOrigin(id: string, version: string): Promise<VersionOrigin> {

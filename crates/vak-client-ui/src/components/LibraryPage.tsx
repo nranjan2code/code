@@ -9,6 +9,7 @@ import { attachArtifact } from "../attachFiles";
 import { compareTexts, type Run } from "../wordDiff";
 import Icon, { type IconName } from "./Icon";
 import OfficeView from "./OfficeView";
+import OfficeChangeList from "./OfficeChangeList";
 import { Pill, stateOf } from "./fileState";
 
 /** Plain words for an artifact's kind (doc 75 §7). */
@@ -362,6 +363,12 @@ function History(props: {
                         </div>
                       );
                     })()}
+                  </Show>
+                  <Show when={result().review}>
+                    {(review) => <OfficeChangeList review={review()} />}
+                  </Show>
+                  <Show when={result().review_error}>
+                    <p class="file-compare-note" role="status">The changes could not be worked out just now.</p>
                   </Show>
                 </div>
               )}

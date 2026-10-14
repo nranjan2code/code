@@ -2,6 +2,7 @@ import { For, Show } from "solid-js";
 import type { OfficeChange, OfficeChoice, OfficeImpact, OfficeReview } from "../api";
 import Redline from "./OfficeRedline";
 import { kept } from "../officeChoices";
+import { technicalDetails } from "../store";
 
 const IMPACT_NAMES: Record<OfficeImpact["kind"], string> = {
   signature: "Signature",
@@ -30,7 +31,7 @@ function ChangeItem(props: { change: OfficeChange; showSection?: boolean; onComm
       <div class="office-change-head">
         <span class="office-change-kind">{KIND_LABEL[change().kind]}</span>
         <Show when={props.showSection && change().section}><span class="office-change-where">{change().section}</span></Show>
-        <Show when={change().anchor}><code>{change().anchor}</code></Show>
+        <Show when={technicalDetails() && change().anchor}><code>{change().anchor}</code></Show>
         <Show when={props.onComment && change().anchor}>
           <button type="button" class="office-change-comment" aria-label={`Comment on ${change().anchor}`} onClick={() => props.onComment?.(change().anchor)}>Comment</button>
         </Show>
@@ -134,7 +135,11 @@ export default function OfficeChangeList(props: {
   return (
     <div class="office-change-list" aria-label="Changes in this draft">
       <p class="office-change-compared">
-        {props.review.compared_with === "workspace" ? "Compared with the current workspace file." : "A new file; nothing to compare with."}
+        {props.review.compared_with === "folder"
+          ? "What this version changes from the copy in your folder."
+          : props.review.compared_with === "workspace"
+            ? "Compared with the current workspace file."
+            : "A new file; nothing to compare with."}
       </p>
       <Show when={(props.review.impact?.length ?? 0) > 0}>
         <ul class="office-impact" aria-label="What accepting also does">
