@@ -824,8 +824,12 @@ fn build_stats(args: &Map<String, Value>) -> Result<Value, String> {
                 "two readings are labelled `{label}`; give each its own"
             ));
         }
-        let mut built = record_copy(reading, &["label", "unit", "change"]);
-        built["value"] = scalar(&reading["value"]);
+        // A figure is shown as written ("13,400", "light rain"); a number
+        // sent as a number stays one.
+        let built = record_copy(reading, &["label", "value", "unit", "change"]);
+        if built.get("value").is_none() {
+            return Err(format!("readings[{at}].value is empty"));
+        }
         readings.push(built);
     }
     if readings.is_empty() {
@@ -2519,7 +2523,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             stats["readings"],
-            json!([{"label": "Uptime", "value": 99.9}, {"label": "Users", "value": 4}])
+            json!([{"label": "Uptime", "value": "99.9"}, {"label": "Users", "value": "4"}])
         );
         assert!(
             built(

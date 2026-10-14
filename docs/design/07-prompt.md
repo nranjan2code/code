@@ -417,6 +417,13 @@ presentation update does not restore stale-context behavior.
   (docs/design/92-card-forms.md): the card tools are now forms, one per shape
   of information, so the seed names the rule and the tools name the forms.
 
+- 2026-10-14, the presentation block asks for cards whose content is ready
+  to go together in one step, in reading order. Measured live on the dev
+  route: every card had taken its own model step (a five-card loan answer
+  spent four consecutive round trips on its cards, about 5 s each), and
+  calls in one step keep their order, so "in reading order" never needed
+  them apart.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

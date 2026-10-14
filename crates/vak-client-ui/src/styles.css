@@ -807,7 +807,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .turn-rail-preview span { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
 .chat-turn { display: flow-root; }
 @media (max-width: 600px) { .turn-rail { left: 3px; width: 18px; } .turn-rail-preview { left: 22px; } }
-.scroll-latest { position: absolute; z-index: 5; left: 50%; bottom: 12px; display: flex; align-items: center; gap: 5px; min-height: 28px; padding: var(--space-1) 10px; border: 1px solid var(--border-strong); border-radius: 99px; color: var(--text-soft); background: color-mix(in srgb, var(--surface-raised) 95%, transparent); box-shadow: var(--shadow-md); font-size: var(--fs-caption); transform: translateX(-50%); backdrop-filter: blur(8px); }
+.scroll-latest { position: absolute; z-index: 5; right: 16px; bottom: 12px; display: flex; align-items: center; gap: 5px; min-height: 28px; padding: var(--space-1) 10px; border: 1px solid var(--border-strong); border-radius: 99px; color: var(--text-soft); background: color-mix(in srgb, var(--surface-raised) 95%, transparent); box-shadow: var(--shadow-md); font-size: var(--fs-caption); backdrop-filter: blur(8px); }
 .scroll-latest:hover { color: var(--text); background: var(--surface-active); }
 .scroll-latest .icon { transform: rotate(90deg); }
 .transcript-skeleton { max-width: 820px; margin: var(--space-3) auto; }
@@ -6580,7 +6580,7 @@ code.ic[data-previewable="true"]:hover {
    One shell for every form: surface, 12px radius, 1px line, 16px padding,
    no shadow, no hover (DESIGN.md "Cards and results"). Card text is the
    conversation's reading size; prose keeps a ~70ch measure. */
-:root { --measure: 70ch; --chart-1: var(--accent); --chart-2: var(--blue); --chart-3: var(--green); --chart-4: var(--yellow); }
+:root { --measure: 70ch; --chart-1: var(--accent); --chart-2: var(--green); --chart-3: var(--blue); --chart-4: var(--red); }
 .answer-block {
   font-family: var(--content);
   margin: var(--space-3) 0;
@@ -6651,7 +6651,8 @@ code.ic[data-previewable="true"]:hover {
 .option-name { margin: 0; font-size: var(--fs-reading); font-weight: 600; }
 .option-verdict { margin: 0; color: var(--text-soft); }
 .option-points { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: var(--fs-control); }
-.option-points li::before { display: inline-block; width: 1.2em; font-weight: 600; }
+.option-points li { padding-left: 1.2em; text-indent: -1.2em; }
+.option-points li::before { display: inline-block; width: 1.2em; text-indent: 0; font-weight: 600; }
 .option-points.is-strength li::before { content: "+"; color: var(--green); }
 .option-points.is-weakness li::before { content: "−"; color: var(--red); }
 .option-recommendation { margin: 0; max-width: var(--measure); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--accent-wash); }

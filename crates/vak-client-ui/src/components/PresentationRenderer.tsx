@@ -1167,8 +1167,11 @@ function composeAnswer(
       {entry.node}
     </div>
   );
-  const lead = entries.filter((entry) => blockOf(entry.item) === "summary");
-  const body = entries.filter((entry) => blockOf(entry.item) !== "summary");
+  // The first summary leads; a later one (a correction, a closing word)
+  // stays where the model put it.
+  const first = entries.find((entry) => blockOf(entry.item) === "summary");
+  const lead = first ? [first] : [];
+  const body = entries.filter((entry) => entry !== first);
   const sections = (outline?.sections ?? [])
     .map((section) => ({ name: section.name, entries: body.filter((entry) => section.items.includes(entry.item.id)) }))
     .filter((section) => section.entries.length > 0);

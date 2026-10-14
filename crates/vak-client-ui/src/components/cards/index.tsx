@@ -4,7 +4,7 @@ import ChartCard from "./Chart";
 import { DiffForm, LinkForm, MediaForm, PreviewForm, TerminalForm, TestReportForm } from "./code";
 import {
   CalendarForm, CalloutForm, ComparisonForm, DetailsForm, ListForm, SourcesForm, StatsForm, StepsForm,
-  SummaryForm, TableForm,
+  SummaryForm, TableForm, figure,
 } from "./forms";
 import { record, text, type Payload } from "./shared";
 
@@ -73,7 +73,7 @@ export function PackTree(props: { node: AdaptiveRenderNode }): JSX.Element {
     case "metric":
       return (
         <div class="stat">
-          <div class="stat-value">{text(p().value) ?? "—"}<Show when={text(p().unit)}>{(unit) => <span class="stat-unit">{unit()}</span>}</Show></div>
+          <div class="stat-value">{figure(p().value)}<Show when={text(p().unit)}>{(unit) => <span class="stat-unit">{unit()}</span>}</Show></div>
           <div class="stat-label">{text(p().label)}</div>
           <Show when={text(p().change)}>{(change) => <div class="stat-change">{change()}</div>}</Show>
         </div>

@@ -178,6 +178,10 @@ export function ComparisonForm(props: { payload: Payload }) {
   );
 }
 
+/** A figure as written; a bare number gets the reader's digit grouping. */
+export const figure = (value: unknown) =>
+  typeof value === "number" ? new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value) : text(value) ?? "—";
+
 /** A few key figures shown large. */
 export function StatsForm(props: { payload: Payload }) {
   const p = () => props.payload;
@@ -186,7 +190,7 @@ export function StatsForm(props: { payload: Payload }) {
       <div class="stats">
         <For each={records(p().readings)}>{(reading) => (
           <div class="stat">
-            <div class="stat-value">{text(reading.value) ?? "—"}<Show when={text(reading.unit)}>{(unit) => <span class="stat-unit">{unit()}</span>}</Show></div>
+            <div class="stat-value">{figure(reading.value)}<Show when={text(reading.unit)}>{(unit) => <span class="stat-unit">{unit()}</span>}</Show></div>
             <div class="stat-label">{text(reading.label)}</div>
             <Show when={text(reading.change)}>{(change) => <div class="stat-change">{change()}</div>}</Show>
           </div>

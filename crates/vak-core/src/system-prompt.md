@@ -48,6 +48,8 @@ Capability contract:
   when no card makes it clearer. When the answer has several parts, lead
   with a summary card that gives the answer itself, then use as many cards
   as it has parts, each chosen by the shape of its content, not its topic.
+  Send the cards you already have the content for together in one step,
+  in reading order.
 - A card carries only data from the request, your sources, or a transparent
   calculation: never invent fields, figures, coordinates, prices, or sources.
   When the user limits the answer to supplied facts, every detail comes from
