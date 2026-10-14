@@ -1,47 +1,44 @@
-## Unreleased
+## 7.3.0 — 2026-10-14
 
-- A summary, figures, callout, checklist or comparison card no longer
-  gets two frames' spacing and a doubled entrance in an answer.
-
-- Full access no longer asks before shell commands in a conversation that
-  read the web or a connected service. The check that a turn holding both
-  your data and someone else's words asks before anything leaves the
-  machine now applies only in the sandboxed modes; Full access asks only
-  what your own rules ask.
-
-- A card call with a missing or wrong field is now rewritten under its
-  schema at once, so a card is no longer lost when the model does not try
-  again after being told what was wrong.
-- The chart card no longer offers a `bar_chart` kind beside its `bar`
-  style, a pair models confused; a bar chart is `chart_type: "bar"`.
+Card layouts become extensions, like skills and MCP servers, and answers
+are laid out better.
 
 - Vakyartha ships "answer-layouts", enabled: skills for laying out a plan
   in time, a choice between options and a how-to guide from cards, and a
-  layout that shows key figures in a row. Every package Vakyartha ships now
-  comes from one place, so the starters, the social add-ons and this one
-  install and update the same way.
-- A project's choice of card layout now wins over your Shared one.
-- A channel can allow or deny card layouts, like skills, in the admin
-  console's channel settings.
-- Searching for a tool (`find_tools`) no longer asks for approval; it only
-  reads the tools the turn already has.
-
-- `vak plugins … --scope user` and `vak skills validate` now use the Shared
-  layer every workspace reads (`~/vak-home/.vak`). Before, the CLI put
-  user-scope plugins in the data home, where nothing read them.
-
+  layout that shows key figures in a row.
 - An installed presentation pack can add its own kinds of card: while it is
-  active, the card tool it names offers them, and the pack draws them. The
-  social add-ons' cards now come from their own packs rather than being
-  built into Vakyartha. A card whose pack is later turned off is drawn by
-  the card it was built from.
-- Presentation packs appear in the capability inventory beside tools,
-  skills, MCP servers, hooks and commands.
+  active, the card tool it names offers them, and the pack draws them. A
+  card whose pack is later turned off is drawn by the card it was built
+  from. The social add-ons' cards now come from their own packs rather than
+  being built into Vakyartha.
 - A plugin's presentation packs are on while the plugin is enabled and off
   when it is disabled, like its skills. The social add-ons' separate "Add
   layouts" step is gone: enabling the add-on brings its layouts.
+- Presentation packs appear in the capability inventory beside tools,
+  skills, MCP servers, hooks and commands. A project's choice of card
+  layout wins over your Shared one, and a channel can allow or deny card
+  layouts, like skills, in the admin console's channel settings.
 - A pack that lays things out in rows, stacks or titled sections is drawn
   that way; before, every part stood in one column.
+- A summary, figures, callout, checklist or comparison card no longer gets
+  two frames' spacing and a doubled entrance in an answer.
+- A card call with a missing or wrong field is rewritten under its schema
+  at once, so a card is no longer lost when the model does not try again
+  after being told what was wrong.
+- The chart card no longer offers a `bar_chart` kind beside its `bar`
+  style, a pair models confused; a bar chart is `chart_type: "bar"`.
+- Full access no longer asks before shell commands in a conversation that
+  read the web or a connected service. The check that a turn holding both
+  your data and someone else's words asks before anything leaves the
+  machine applies only in the sandboxed modes; Full access asks only what
+  your own rules ask.
+- Searching for a tool (`find_tools`) no longer asks for approval; it only
+  reads the tools the turn already has.
+- Every package Vakyartha ships comes from one place, so the starters, the
+  social add-ons and answer-layouts install and update the same way.
+- `vak plugins … --scope user` and `vak skills validate` use the Shared
+  layer every workspace reads (`~/vak-home/.vak`). Before, the CLI put
+  user-scope plugins in the data home, where nothing read them.
 
 ## 7.2.0 — 2026-10-14
 

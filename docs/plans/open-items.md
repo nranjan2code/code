@@ -8,18 +8,22 @@ across them. Nothing here is started unless it says so.
 
 ## Before the next release
 
-- [x] CHANGELOG: entries under `## Unreleased` for the work since `v7.1.0`
-  (2026-10-14).
-- [ ] Version: 7.2.0 (additive within 7.x); `scripts/bump-version.sh`.
-- [ ] Upgrade from a real 7.1.0 data home: the catalog rebuilds once
-  (stamp 4) and new artifact writes go through `Artifacts::transaction`
-  on an existing chain. Install over 7.1.0 and open the app, Library and
-  Lineage.
+7.3.0 (2026-10-14):
+
+- [x] CHANGELOG: the `## 7.3.0` section.
+- [x] Version: 7.3.0 (additive within 7.x); `scripts/bump-version.sh`.
+- [ ] `scripts/release.sh` (isolated target, clean tree, 15 GB free).
+- [ ] Install over 7.2.0 on the Mac (`vak self update` from the local
+  feed): the starters move to their package folders, `answer-layouts` is
+  installed enabled, and the social add-ons carry their packs with
+  `block: research`.
+
+Carried over from 7.2.0:
+
 - [ ] One hosted route (a wire that enforces tool schemas): one turn each
   for the terminal card and the test-report card, whose schemas changed.
 - [ ] Linux: a command stopped at its limit, on the AWS box or the Docker
   lab (the Seatbelt fix is macOS-only; Landlock does not restrict signals).
-- [ ] `scripts/release.sh` (isolated target, clean tree, 15 GB free).
 
 ## Seen only in tests
 
