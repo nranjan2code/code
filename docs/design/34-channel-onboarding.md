@@ -1,6 +1,6 @@
 # 34 — Channel onboarding: lifecycle, governance, admin/desktop UX
 
-Status: **Phases 1–6 implemented, including multi-bot-per-channel and
+Status: **implemented: Phases 1–6, including multi-bot-per-channel and
 bot-scoped channel identity** — allowlist store, gateway pending lifecycle,
 admin API
 routes, Admin UI panels, the multi-tenant `CorePool`, the Discord and

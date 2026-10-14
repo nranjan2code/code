@@ -1,6 +1,6 @@
 # 67 — Adding or editing a presentation renderer
 
-Status: **contributor guide for shipped code.** Every file, function, and test
+Status: **reference**: the contributor guide for shipped code. Every file, function, and test
 named here exists today. The architecture it describes is
 `docs/design/57-adaptive-presentation-runtime.md`; this document is the
 how-to that sits beside it.

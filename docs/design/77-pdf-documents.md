@@ -1,6 +1,7 @@
 # 77 — PDF documents: reader, writer, review and shared drafts
 
-Status: **shipped 2026-09-29; everyday authoring and extraction improvements continue.** The reader, writer, Review with choices, shared drafts, verifier, inbox, citations, CLI, vector charts and bounded PNG/JPEG authoring are shipped. Multi-page authored tables now repeat their header on continuation pages, and `doc_read(view="table")` exposes conservatively recognized aligned text tables.
+Status: **implemented** (shipped 2026-09-29); everyday authoring and
+extraction improvements continue. The reader, writer, Review with choices, shared drafts, verifier, inbox, citations, CLI, vector charts and bounded PNG/JPEG authoring are shipped. Multi-page authored tables now repeat their header on continuation pages, and `doc_read(view="table")` exposes conservatively recognized aligned text tables.
 
 ## Owner direction
 

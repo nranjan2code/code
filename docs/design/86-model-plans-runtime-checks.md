@@ -1,7 +1,10 @@
 # 86 — The model plans, the runtime checks
 
-Status: direction approved by the maintainer on 2026-10-11; implementation
-in progress (phase 1). Supersedes the parts of doc 47 that let a word-list
+Status: in progress: direction approved by the maintainer on 2026-10-11.
+Phases 1 (plan and check) and 2 (a commitment opens only from an explicit
+ask; `a_request_with_no_explicit_ask_opens_no_commitment`) are built;
+phase 3 (the card surface) has not been checked against the code
+(2026-10-14). Supersedes the parts of doc 47 that let a word-list
 reading drive behaviour (stop gates, model-visible part notes, commitments
 opened from a guessed horizon) and the card-completeness self-audit in doc
 30-render-architecture §30.1. Doc 47's safety floor (intent narrows, never

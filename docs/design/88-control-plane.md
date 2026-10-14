@@ -1,101 +1,9 @@
 # 88 — The control plane
 
-Status: proposal, requested by the maintainer on 2026-10-11, being built.
-C0 done (2026-10-11: blast radius re-scanned, §12 decided). C1 done
-(2026-10-11): `crates/vak-control` holds the decision types and the loop
-records, as `EntryPayload::Decision`, the decisions it already makes:
-admission, each step's frame as asked, every call's verdict (a refusal
-names what refused it), each correction, the accepted answer and the
-ending. C2 done (2026-10-11): `ChatRequest.settings` (reasoning and
-sampling) replaces `temperature`, `think` and `effort`; each adapter
-declares its reach, a model's own report (Ollama `/api/show`
-capabilities, Anthropic's model capabilities) narrows it, and a request
-the provider refuses as invalid is sent once more without its optional
-settings, the refusal learned only when that is taken (the wording-based
-`rejects_effort` is removed). Every answered dispatch records what was
-applied and whether the response reasoned (`DispatchAttempt.applied`,
-`reasoned`), and the receipt what was asked (`WorkReceipt.asked`).
-`GET /runs/{id}/decisions` and the admin Run detail's "How it went" show a
-turn's decisions; the doctor reports the latest dispatch's settings.
-C3a done (2026-10-11): `FrameStep` (`vak_control::frame`) frames every
-step from its purpose and `StepDefaults` (shipped, then `[control.steps]`,
-then `[control.routes."provider/model"]`), for the turn's own steps and
-every side dispatch (plan, judge, classify, compact, summarise); the
-"direct reply" reading and `DemandHint::direct_reply` are removed;
-`/config/control` (user or project layer), Settings › "How the model
-thinks" and the admin's Models panel edit it live. C3b done
-(2026-10-11): tools are loaded by their own declaration
-(`Tool::always_loaded`, cards, no declared domain, or loaded earlier in
-the session), never the reading; `Limits.required_domains`, `DomainSet`,
-the act-to-domain table, the misread ledger and the tier-2/3 model reading
-(`[intent] escalate`, `classify_model`, `max_classify_usd`) are removed.
-C4 done (2026-10-11): `crates/vak-judge` turns receipts into verdicts
-(the verdict on a proposed call from gathered facts, a turn's unrecovered
-failures, the plan check, and the outcome, requirement and completion
-evaluation moved out of `vak-intent` and the agent crate). A tool error is
-typed at its source: `ToolOutput::error` takes a `vak_control::Fault`
-(shape, target, tool, refused, cancelled), the worker protocol carries it,
-the loop records each failed call's fault as `CallEffect::Failed`, and
-`ToolErrorKind::classify` and `never_ran` are removed. A name that is no
-tool this turn offers is `Refusal::Unknown` at `AcceptCall`. The workspace
-is checkpointed when the first call that declares it may change the
-workspace is accepted (`Tool::changes_workspace`, `AgentConfig::before_effect`),
-not from a reading of the request. C5 done (2026-10-11):
-`vak_control::correct` holds the typed `Finding`s, the one `Ladder` (told
-once, then the frame changes or the answer stands; a check that passes can
-fail anew) and `render`, the one place a correction's wording is written;
-every correction in the loop goes through `Agent::correct`. Removed: the
-freshness, grounding and topic-mismatch checks with their word lists and
-the three endings that replaced the model's answer; the stop gate's
-`max_blocks` budget, its "does the answer quote the error" reading and the
-worker gate's count; `DOOM_LOOP_THRESHOLD` and `READ_REPEAT_LIMIT`, replaced
-by an observed state (a call that returned the same result again is
-refused, `Refusal::Repeated`); `AgentConfig::retrieval_check` and
-`observation_check`. A model step's `request_timeout` bounds silence between
-stream events, never the whole step (§5a). C6 is in progress
-(2026-10-11). Its first slice is built: a step's required tool
-(`OutputForm::Tool`) reaches the wire. `ChatRequest::must_call` is named in
-each provider's own tool choice (Anthropic `tool_choice`, OpenAI chat and
-Responses `tool_choice`, Google `toolConfig`), a wire with no such switch
-is offered only that tool (native Ollama; §12.3), and the receipt says
-which (`Applied::forced`); `ModelCapabilities::tool_choice` is each wire's
-reach, narrowed by what a refusal taught. The answer document is built (docs/design/87-composed-answers.md
-§2): the model answers with one loop-owned `answer` tool of blocks, made
-at run time from the admitted card tools (`Tool::card_kinds`); a card tool
-is no longer offered or callable by its own name (`Refusal::Unknown`), and
-the per-card loop paths it made unreachable are removed (routing a card
-call to its owner, the repeated-card acknowledgement, the duplicate-card
-fence check). A valid `answer` call is recorded as `AcceptCall`, its cards
-as `PresentationSource::Answer`, and ends the turn with no further model
-step. The plan check runs on that path and its reframe rung requires
-`answer` of one step (`Finding::AnswerRequired`), once, after which what
-is left stands; a `text` block answering a deliverable the plan lists as a
-card is refused. Seen live 2026-10-11 through the web app on the local
-route (`qwen3.5:4b-mlx`): a three-part request shown as four cards from one
-`answer` call in three steps (`run_01a12ae9-3cb3-7cf2-8db2-8644b6c96212`),
-a plain question answered as prose (`run_01a12aea-9061-7b01-b24a-b56ec1a0ef32`),
-and a document request whose draft was delivered for Review
-(`run_01a12aeb-8eb3-7fb1-821f-3352e65e8945`); and once on the hosted
-Responses route (`gpt-6-luna`): a plan of three cards, each placed in its
-section (`run_01a12aed-56a0-7f00-bfc5-ddea72daa7c5`), and a one-sentence
-answer as prose (`run_01a12aed-c2ce-76a2-abfc-ceac50b4bed8`). The faults
-those runs found in Vak's contract are fixed: the `answer` block schema
-had untyped union fields, a `blocks` sent as text skipped the one argument
-reader and its refusal did not say why, a field of another kind was not
-named, the repair directive and the unknown-tool message listed the card
-tools as callable, a plan form naming a card's kind was refused, and the
-plan check's correction after an answer added a second copy of its cards
-(a later `answer` now replaces the turn's earlier one). On 2026-10-12 the
-nested `answer` call was retired (maintainer's choice, after measurement,
-docs/audits/cards-in-answers-2026-10-11.md): on the same captured requests
-it came back as broken JSON in 7 of 16 steps, separate card calls in at
-most one. Each card is again its own call of the card tool that owns its
-kind, the loop's own display channel (`show_card`), recorded as
-`PresentationSource::ToolCall` with the deliverable its `deliverable` names;
-the outline and layout stay. The reframe rung requires the card tool of
-the kind the plan named (`Finding::CardRequired`, `Deliverable::kind`), and
-a card naming no planned deliverable is refused while the plan lists
-cards. The items carried below are not built.
+Status: **implemented**: requested by the maintainer on 2026-10-11; stages
+C0 to C7 are built (§11 lists each, the last ending "with it C7 and doc 88's
+stages are done"). "Open in C6" (just below) lists what has not been checked
+against a hosted provider. The decisions the maintainer took at C0 are §12.
 
 ### Open in C6 (found while building its first slice)
 
@@ -481,7 +389,7 @@ set at `vak-core/src/lib.rs` (`cfg.effort`) from the engagement.
   effort setting; `crates/vak-core/src/intent.rs`.
 - `crates/vak-intent`: the reader, `control.rs` (the control vocabulary,
   mirrored in the client and checked by
-  `vak-server/tests/control_vocabulary_sync.rs`).
+  `vak-server/tests/it/control_vocabulary_sync.rs`).
 - `crates/vak-llm`: every adapter, `ChatRequest`, `WorkReceipt`.
 - `crates/vak-tools`: `ToolOutput` and its `Fault`.
 - `crates/vak-server/src/projection.rs` (9 control sites) and the client's

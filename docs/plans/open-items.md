@@ -8,11 +8,8 @@ across them. Nothing here is started unless it says so.
 
 ## Before the next release
 
-- [ ] CHANGELOG: the work since `v7.1.0` (Compare for Office files, one
-  decision per artifact write, fetched pages in Lineage, terminal and
-  test-report cards from the call that ran, a command stopped at its
-  limit under Seatbelt, exact tool names, the retired-name answer) has no
-  entries; "Unreleased" has five, from other work.
+- [x] CHANGELOG: entries under `## Unreleased` for the work since `v7.1.0`
+  (2026-10-14).
 - [ ] Version: 7.2.0 (additive within 7.x); `scripts/bump-version.sh`.
 - [ ] Upgrade from a real 7.1.0 data home: the catalog rebuilds once
   (stamp 4) and new artifact writes go through `Artifacts::transaction`
@@ -42,8 +39,12 @@ across them. Nothing here is started unless it says so.
   2026-10-10. Run: `sh scripts/mail-soak/build.sh`, `sh up.sh`,
   `caffeinate -i python3 soak.py --hours 24`, record the report in the
   mail and calendar plan and AGENTS.md's mail paragraph, `sh down.sh`.
-- The design-doc audit begun 2026-10-14: each doc marked in progress or
-  proposal checked against the code and its Status line made true.
+- The rest of the design-doc audit. Done 2026-10-14: every Status line
+  starts with a status word (`docs/design/INDEX.md`), and 73, 74, 76, 80,
+  82, 86, 88 and 54 were checked against the code and corrected. Not done:
+  the 53 docs marked `implemented` were not each checked against the code
+  (only their status word was set), and the in-progress docs not listed
+  above keep the open parts their own Status lines name.
 
 ## Needs the maintainer
 

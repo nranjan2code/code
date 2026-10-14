@@ -25,18 +25,21 @@ release record; this section does not restate it.
 
 ### Reading the design docs
 
-`docs/design/` is the architecture record, and **every document carries its own
-`Status:` line — read it before assuming a document describes shipped behaviour
-rather than a proposal.** A few numbers are used twice (`30-output-engineering`
-and `30-render-architecture`, `51-feed-system` and `51-retired-tools`, the two
+Start every session at `docs/README.md`: it says which one place answers
+each kind of question. `docs/design/` is the architecture record, and
+`docs/design/INDEX.md` lists every design doc with its status word
+(`proposal`, `in progress`, `implemented`, `reference`, `superseded`,
+`historical`), generated from each doc's `Status:` line, which is the truth
+for that doc. Read a doc's Status before assuming it describes shipped
+behaviour. A few numbers are used twice (`30-output-engineering` and
+`30-render-architecture`, `51-feed-system` and `51-retired-tools`, the two
 `62-universal-delegation-*` files); cite the full filename, never the number
 alone.
 
 Core layers, one document each: 01 LLM · 02 sessions · 03 agent loop ·
 04 tools · 05 config · 07 prompt · 08 permissions · 09 extensibility ·
 10 flows · 11 planner · 12 evals · 13 server · 14 checkpoints · 68 context
-(17 is superseded by it).
-00-roadmap.md holds the phase history.
+(17 is superseded by it). 00-roadmap.md holds the phase history.
 
 Read before changing behaviour in these areas:
 
@@ -48,199 +51,75 @@ Read before changing behaviour in these areas:
   (recall), `25-docker-sandbox.md` and `54-task-environments-and-promotion.md`
   (execution backends, candidate promotion), `26-learning.md` (learning loop),
   `28-operations.md` with `docs/hosting.md` (durable services),
-  `31-network-resilience.md` (the four-plane network contract, with the sync plane of M9: loopback-only
-  local, crash-only channels, ladder+endurance inference, store-and-forward
-  delivery), `53-distributed-bus.md` (`crates/vak-bus`).
+  `31-network-resilience.md` (the four-plane network contract and the sync
+  plane), `53-distributed-bus.md` (`crates/vak-bus`).
 - **Surfaces** — `33-admin-console.md` (admin), `48-web-client.md` (browser and
-  the `[server]` exposure rules), `78-headless-identity.md` (portable owner
-  passkeys, recovery, and browser sessions),
-  `55-rich-terminal-surface.md` (`vak term`), `34-channel-onboarding.md`
-  (channels, multi-bot identity), `38-voice-personality.md` and
-  `49-live-voice.md` (voice), `29-personal-os.md` (the personal-use surface).
+  the `[server]` exposure rules), `78-headless-identity.md` (owner passkeys,
+  recovery, browser sessions), `55-rich-terminal-surface.md` (`vak term`),
+  `34-channel-onboarding.md` (channels, multi-bot identity),
+  `38-voice-personality.md` and `49-live-voice.md` (voice),
+  `29-personal-os.md` (the personal-use surface).
 - **Output and presentation** — `30-output-engineering.md` (the delivery
   contract), `30-render-architecture.md` (cross-surface rendering),
   `57-adaptive-presentation-runtime.md` (packs),
-  `67-presentation-renderer-guide.md` (the step-by-step contributor guide, and
-  the one to start from when adding a renderer).
+  `67-presentation-renderer-guide.md` (start here when adding a renderer).
 - **Decision and capability layers** — `86-model-plans-runtime-checks.md`
-  (the model's declared plan and the runtime's receipt check; read first),
-  `87-composed-answers.md` (answer blocks; stage 1 shipped, stage 2's
-  outline and layout built, the rest waits on doc 88),
-  `41-capability-registry.md`,
-  `42-managed-work-contracts.md`, `45-prompt-layers.md`,
-  `47-commitment-kernel.md` (the intent kernel — strands, resolver tiers,
-  authority, the control plane; it subsumes skill intent-discovery),
-  `50-call-and-evidence-contract.md`,
-  `52-outcome-directed-runtime.md`, `43-governed-self-evolution.md`,
-  `44-shared-config.md`, `39-plugin-ecosystem.md`, `40-harness-engineering.md`.
+  (the model's plan and the runtime's receipt check; read first),
+  `87-composed-answers.md` (answer blocks), `88-control-plane.md` (decision
+  points, step contracts, the correction ladder; `vak-control`,
+  `vak-judge`), `41-capability-registry.md`, `42-managed-work-contracts.md`,
+  `45-prompt-layers.md`, `47-commitment-kernel.md` (the intent kernel),
+  `50-call-and-evidence-contract.md`, `52-outcome-directed-runtime.md`,
+  `43-governed-self-evolution.md`, `44-shared-config.md`,
+  `39-plugin-ecosystem.md`, `40-harness-engineering.md`.
+- **Tool arguments and structured output** — `89-constrained-tool-arguments.md`
+  with `docs/audits/cards-in-answers-2026-10-11.md`; see "Tool arguments are
+  written, then read" below.
+- **Files across turns** — `90-file-state.md`. Decide whether a version is
+  behind the workspace only from `file_state::behind`, and give every new
+  version the parent it was really made from, never the newest head by
+  default.
+- **Data** — `73-data-architecture-and-lifecycle.md` (the model) and
+  `74-lifecycle-and-data-administration.md` (lifecycles, erasure, screens);
+  see "Data architecture" and "The data rules" below.
+- **Intake** — `76-intake-and-knowledge.md` (sources, connectors parsed in
+  the worker, detection that labels and never drops).
+- **Library** — `82-library.md` (artifacts, versions, sharing).
+- **Office documents and PDF** — `72-openxml-documents.md` and
+  `77-pdf-documents.md` (the file-in, cite, redline, review, file-out loop).
+- **Mail and calendar** — `80-mail-and-calendar.md`, with the provider
+  matrix and stages in `docs/plans/mail-calendar-implementation-plan.md`.
+- **Workers** — `84-worker-questions-and-control.md` (questions, the
+  `workers` tool, pause and stop now).
+- **Turn graph** — `85-turn-graph.md` (turn ids, turn and recall links).
+- **Experience** — `64-agent-owned-platform.md` (the product model; see
+  below), `61-adaptive-assistant-experience.md`,
+  `65-universal-adaptive-platform.md`, `66-immersive-artifact-canvas.md`,
+  `70-calm-agent-experience-implementation.md` (the four-screen visual
+  reference), `75-visual-refresh.md` (see "Visual refresh" below),
+  `58-admin-ia-and-ui-goal.md`, `59-reference-ui-acceptance.md`.
 - **Install and onboarding** — `46-stabilization-install-and-onboarding.md`,
   `36-first-run-onboarding.md`, `37-distribution.md`, `35-tavily.md`.
-- **Experience direction** — `61-adaptive-assistant-experience.md` (Phase 1
-  shipped, later journeys phased), `65-universal-adaptive-platform.md` and
-  `66-immersive-artifact-canvas.md` (both implemented and audited),
-  `70-calm-agent-experience-implementation.md` (the current four-screen visual
-  reference and implementation ledger; in progress),
-  `58-admin-ia-and-ui-goal.md` (goal and guidance),
-  `59-reference-ui-acceptance.md` (an acceptance backlog, not a description of
-  the build), `51-retired-tools.md`.
-- **Intake** — `76-intake-and-knowledge.md` (sources, Rust connectors parsed
-  in the worker, detection that labels and never drops, retrieval through
-  `session_search`, alerts and push intake; shipped at data-architecture
-  M6.5).
-- **Superseded — read only for history** — `60-modern-presentation-system-2026.md`
-  (by 61), `62-universal-delegation-experience.md` and
-  `62-universal-delegation-prototype.md` (by 64),
-  `63-agent-first-conversations.md` (by 64), `51-feed-system.md` (by 76;
-  its pipeline is deleted).
-- **Office documents** — `72-openxml-documents.md` (the file-in, cite,
-  redline, review, file-out loop is shipped; its ledger lists what is
-  deferred and why).
-- **PDF documents** — `77-pdf-documents.md` (the reader and writer in
-  `crates/vak-pdf`, carried by the Office loop's own surfaces: `doc_read`,
-  `office_apply`, Review with choices and shared drafts; its deferred list
-  says what is not built and why).
-- **Mail and calendar** — `80-mail-and-calendar.md` (Agent account linking,
-  owner-only bounded Google/Microsoft previews, and a broker-owned read tool
-  on the local owner surface are implemented on `codex/mail-calendar` against
-  current 4.x storage. Channel reads fail closed. The
-  bounded Agent-vault working area with local email/event drafts is
-  implemented. Owner-reviewed plain-text send and a constrained timed event
-  create are available for Google and Microsoft through separate opt-in grants,
-  Core permission checks, and one effect per reviewed candidate (plan M4.6,
-  invariant 41). Event create has no
-  attendees, recurrence, or reminders. Google also has an exact-reviewed,
-  conditional ETag update for standalone timed events with no attendees;
-  Microsoft update, cancel/RSVP and reconciliation,
-  standing grants, and reliable
-  continuous routines remain in progress. Scheduled read-only routines now
-  support an explicitly best-effort email watch with bounded encrypted
-  deduplication IDs. The first scheduled read-only routine slice
-  uses the trigger scheduler (`vak_core::triggers`), pins an Agent revision/account/read
-  allowlist, restricts its unattended child to the brokered mail/calendar
-  tool, and pauses when its account is disconnected. The watch polls only
-  provider IDs and skips model dispatch when unchanged. The trigger's claim
-  (plan M4.4) prevents duplicate runs of one routine across server
-  processes through child completion. Apple UID, Gmail history, and Microsoft Graph
-  per-folder delta cursors now advance atomically with the encrypted backlog
-  in one cursor ref per Agent (data-architecture plan M4.7b);
-  multi-host fencing remains outstanding. Startup catch-up now evaluates cron slots in the task's
-  configured IANA timezone and compares absolute instants across DST changes.
-  Disconnect removes credentials and unsent
-  drafts for that account and fences future reads. What the account
-  returned stays in conversations until the owner erases it
-  (`Core::erase_account`, Delete saved copies; data-architecture plan
-  M7a-f); what an Agent wrote from it stays with each conversation. A first Stage 3 increment enables explicitly
-  opted-in Google/Microsoft plain-text email sending through an owner-confirmed
-  exact-candidate Review, Agent Core permission evaluation, and the
-  candidate's one effect. Provider acceptance is not delivery; unknown
-  outcomes cannot be retried. Apple MailRead-only links verify sign-in against
-  fixed-host IMAP and allow bounded inbox metadata reads through a read-only
-  session with a 512 KiB transport budget. A selected Apple message is fetched
-  by UID with `BODY.PEEK[]`, checked against UIDVALIDITY, capped at 128 KiB,
-  and parsed in the network-denied worker; only bounded plain text is returned.
-  Apple event changes remain unavailable. Selected Apple MailRead,
-  CalendarRead, and CalendarFreeBusy capabilities can now be combined only
-  after each selected IMAP/CalDAV protocol check succeeds. CalendarRead-only
-  links verify fixed-host CalDAV and expose bounded previews after
-  worker-isolated discovery and parsing, followed by a local time-range
-  overlap check; Apple free/busy,
-  Apple Mail HTML bodies and Apple event changes are unavailable. Inbox
-  metadata and selected plain-text message reads are implemented; messages
-  without plain text are labelled. Combined capabilities never bypass their
-  separate provider protocol verification.
-  Microsoft event update/cancel/RSVP, attachments, aliases, reply
-  semantics, and model-initiated effects remain unavailable. Google supports
-  OAuth plus an explicitly warned, local-only App Password fallback for
-  MailRead. Microsoft supports OAuth plus a warned, local-only App Password
-  fallback for personal Outlook.com/Live/Hotmail/MSN MailRead; Microsoft 365
-  and work/school Exchange stay OAuth-only. Apple uses a warned app-specific
-  password for explicitly selected MailRead, CalendarRead, and/or
-  CalendarFreeBusy capabilities after separate protocol verification; Apple's
-  newer account authorization is not yet a verified integration path for
-  Vakyartha. The owner preview projects bounded From, To,
-  and Cc fields for all three providers and never exposes Bcc. Synthetic load
-  tests cover 5,000 listed Gmail messages and 1,000 calendar events while
-  enforcing the preview limits. Google RSVP is additionally available for
-  complete standalone invitations through conditional ETag updates and exact
-  Review. The synthetic connected-account Canvas fixture covers source-to-
-  Review for a reply, a Google event update, and RSVP, with provider effects
-  blocked. Apple conversation workspaces, live provider checks, and the 24-hour
-  service recovery test remain open. What a disconnected account returned can be erased from every
-  conversation (plan M7a-f). Calendar event-relative
-  routines use a trigger's cadence, a bounded provider poll, opaque
-  encrypted Agent-vault occurrence keys, and brokered reads of matching events;
-  Google and Graph calendar reads follow bounded continuation pages with
-  same-origin Graph validation. Event-trigger scans detect incomplete pages,
-  retain queued occurrences beyond each run's output batch, and fail closed at
-  the 100-event queue ceiling; live-provider, browser, and 24-hour recovery
-  acceptance remain open);
-  implementation stages and provider support matrix are in
-  `docs/plans/mail-calendar-implementation-plan.md`.
-- **Tool arguments and structured output** — `89-constrained-tool-arguments.md`
-  (built 2026-10-12, stages 1–4: why tool calls and cards fail as broken
-  JSON, how every provider family Vak supports can enforce a schema, a
-  constraint capability per wire and model, strict tools, schema-bound
-  output, regenerating unreadable arguments under the tool's schema, a
-  ladder by fault class, and where it applies beyond cards)
-  with docs/audits/cards-in-answers-2026-10-11.md (the measurements). Read
-  both before changing how a tool's arguments are asked for, read or
-  repaired. See "Tool arguments are written, then read" below.
-- **Files across turns** — `90-file-state.md` (in progress, decisions taken
-  2026-10-12; stages 1 to 5 built: what a turn is told about a path from the
-  artifact record, whatever happened to it since, any number of turns later:
-  waiting, sibling, undone, saved, trashed and erased drafts, and edits made
-  outside Vak, recorded as versions found in the workspace
-  (`VersionSource::Workspace`). Accepting a version that is behind the
-  workspace's current copy is refused until the person says to replace it:
-  decide that only from `file_state::behind`, and give every new version
-  the parent it was really made from, never the newest head by default).
-  Read it before changing how a tool
-  reads or changes a file across turns.
-- **Proposals, not behaviour** — `88-control-plane.md` (the proposed
-  control plane: the model proposes, the runtime decides at a closed set of
-  decision points and records each decision; a step contract sets
-  reasoning, sampling, tools and output form from discovered model
-  capabilities; one correction ladder; `vak-control` and `vak-judge` as
-  their own crates. Being built in stages C0–C7: C0 to C5 are done and C6 is in progress
-  (`crates/vak-control`, the `Decision` ledger entry, step settings with
-  model capabilities and what was applied on the receipt, the step
-  contract per purpose from `[control]`, tools loaded by declaration, the
-  model-made reading and the misread ledger removed; `crates/vak-judge`,
-  typed tool faults, the checkpoint at the first accepted workspace change;
-  the correction ladder with typed findings and one renderer, the
-  word-reading checks and count thresholds removed, silence-based model
-  waits; what is open is in `docs/plans/open-items.md`),
-  `56-personal-multi-machine-system.md`,
-  `73-data-architecture-and-lifecycle.md` and
-  `74-lifecycle-and-data-administration.md` (the data architecture, done; see
-  "Data architecture" below),
-  `75-visual-refresh.md` (the visual refresh: readable type, plain
-  words, technical detail on request and the Ink and Saffron brand; see
-  "Visual refresh" below),
-  `79-private-headless-fleet.md` (the proposed dedicated 24/7 customer VM
-  fleet, operator-blind boundary, provisioning and disaster recovery; it
-  extends 73/74 without starting a data milestone),
-  `81-pieces-and-home.md` (the proposed platform for kept, live and hosted
-  work: pieces that run as code without a model, their gateways, storage and
-  operations, and Home; it depends on data-architecture M6 and M8),
-  `84-worker-questions-and-control.md` (a worker asking a question, a
-  model-facing `workers` tool with background tasks, and pause-and-stop-now;
-  pause-and-stop-now is built, the rest is proposed),
-  `82-library.md` (the proposed Library: one place for everything Vak makes,
-  artifacts with their versions, parts and the conversations that made
-  them; Continue working attaches an artifact to its Agent's own
-  conversation (doc 64), never a new one. It is the product spec for doc
-  74's C4 and A6. Its L1 and L2 are a prototype before the data
-  architecture, whose data M3b discards; later phases ride M4, M6 and M8),
-  `85-turn-graph.md` (the turn graph: an identity audit and fix so every
-  turn, call and record names its turn and call by id, of which one turn id
-  and `Entry::at_turn` are built; proposed: typed edges
-  between turns, threads, evidence, cards, files and commitments, a link
-  signal in the context planner, and cross-session recall over the
-  data-architecture catalog at M6).
-  Docs 79, 80, 81 and 82, like the shipped 76, use the data architecture's shared primitives
-  (triggers, cursors, effects, fencing, connections, principals) from plan
-  revision 3 rather than building their own.
+- **Proposals** — `56-personal-multi-machine-system.md`,
+  `79-private-headless-fleet.md`, `81-pieces-and-home.md`: designs not
+  built; they use the data architecture's shared primitives (triggers,
+  cursors, effects, fencing, connections, principals) rather than their own.
+
+### Keeping the record current
+
+Every change keeps the record true in the same commit, for people and
+agents alike; `docs/README.md` ("Keeping it current") says what to update
+for each kind of change. In short: a design doc's `Status:` line when its
+built state changes (then `python3 scripts/check_records.py --write`), the
+CHANGELOG's `## Unreleased` for anything a person can notice,
+`docs/plans/open-items.md` for work left undone or closed,
+`docs/decisions.md` for a maintainer's decision, and the one handover at the
+end of a session. `scripts/check_records.py`, run by `scripts/gate.sh` and
+`scripts/release.sh`, fails when a status word is missing, the index is
+stale, there is not exactly one handover, the tracker or decision log is
+missing, or code changed since the last release with no CHANGELOG entry.
+Docs are kept, never deleted: a finished or replaced doc changes its status
+word, and a past section is marked `> **Historical record**`.
 
 ### What is authoritative
 
@@ -2239,7 +2118,7 @@ loop fills it; nothing fills a limit by a tool's name.
 
 ```
 cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
-scripts/check-version.sh && python3 scripts/check_doc_paths.py
+scripts/check-version.sh && python3 scripts/check_doc_paths.py && python3 scripts/check_records.py
 ```
 
 `scripts/gate.sh` runs exactly that and times each step. While working,

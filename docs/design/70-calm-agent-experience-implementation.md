@@ -1,6 +1,7 @@
 # 70 — Calm Agent experience: visual reference and implementation ledger
 
-Status: **approved direction; implementation in progress, not shipped as a unified experience**. Updated 2026-09-30. This is the durable work list for the four screens created with the user in this task. The images are design references, not evidence that the UI or example data exists. Do not substitute the older `docs/assets/presentation-2026/` mockups for these screens.
+Status: **in progress** (approved direction; not shipped as a unified
+experience; four items open). Updated 2026-09-30. This is the durable work list for the four screens created with the user in this task. The images are design references, not evidence that the UI or example data exists. Do not substitute the older `docs/assets/presentation-2026/` mockups for these screens.
 
 ## User decision and product aim
 

@@ -1,6 +1,6 @@
 # Feed system
 
-Status: **retired.** The Python pipeline this describes was deleted at
+Status: **superseded** (retired). The Python pipeline this describes was deleted at
 data-architecture M6.5c (2026-10-06) and replaced by intake
 (`docs/design/76-intake-and-knowledge.md`, `crates/vak-intake`,
 `vak_core::intake`). Read for history only; what follows was the

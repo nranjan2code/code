@@ -1,22 +1,15 @@
 # 82 — Library: one place for everything Vak makes
 
-Status: **in progress. Proposal 2026-10-01, revision 3 after a second
-review the same day; data-architecture M8.1 shipped 2026-10-06:
-`Tool::artifact` and `ArtifactClaim` (§3), artifacts and versions as
-records, and the read-only `/library` API (§9). M8.3 shipped the Library
-page, the artifact page and Continue working with Make another (§4–§6,
-L2); editing, Put back and sharing follow at M8.4.** Its product decisions (§1) are
-taken: the maintainer delegated them, and in the second review chose
-decision 3 (work on an artifact continues in its Agent's own conversation).
-This document is the product specification for the Library: doc 74's client
-Library (C4) and admin Library (A6), and the plan's M8 screens, build to it.
-Phase L1 may start before the data architecture because it adds no durable
-store (§9), and it is a **discovery prototype**: everything it derives or
-links to is discarded by M3b's data-baseline reset (§9.2). Later phases ride
-data-architecture milestones M4 (runs), M6 (catalog) and M8 (artifacts) in
-`73-data-architecture-and-lifecycle.md`. Companion to
-`81-pieces-and-home.md`: Home is the desk for live things, the Library is
-the cabinet for everything.
+Status: **implemented** (data-architecture M8, 2026-10-06 to 2026-10-08,
+acceptance in `docs/audits/acceptance-m8-library-2026-10-08.md`): artifacts
+and their versions as records (`Tool::artifact`, `ArtifactClaim`), the
+`/library` API, the Library page and artifact page, Continue working and
+Make another, edits and Put back as versions, sharing by link and through
+a conversation's grant, and Review, Canvas and Workbench on artifact
+versions. Search by content and lineage (L3) rides the catalog (M6);
+"Keep live" (L5) waits on `docs/design/81-pieces-and-home.md`, a proposal.
+Its product decisions (§1) were taken in the second review; §9.2's
+prototype note describes the L1 and L2 prototype that M3b replaced.
 
 ## 0. The problem
 

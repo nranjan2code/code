@@ -1,6 +1,6 @@
 # 52 — Outcome-directed runtime
 
-Status: implementation complete for the repository-verifiable runtime slices;
+Status: implemented for the repository-verifiable runtime slices;
 live workload measurement remains operational validation.
 
 ## Decision

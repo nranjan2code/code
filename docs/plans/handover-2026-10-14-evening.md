@@ -92,13 +92,22 @@ After the maintainer's critical review:
 - Decided (maintainer): `recall` opens another conversation only through
   an attached artifact, as now; recorded in doc 90's status line.
 
+## The record
+
+Start at `docs/README.md`: one place for each kind of fact, the six status
+words, and what to update for each kind of change. `docs/design/INDEX.md`
+is generated from every design doc's Status (`python3
+scripts/check_records.py --write`), `docs/decisions.md` logs the
+maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
+`release.sh`) enforces it. Built 2026-10-14.
+
 ## Next
 
 Everything open is in `docs/plans/open-items.md`, the one tracker: the
 release checklist, what was seen only in tests, what has not been run,
 what needs the maintainer, known limits and decisions not to build. Ask
-the maintainer which item to take first. Being done now: the design-doc
-audit (each doc marked in progress or proposal checked against the code).
+the maintainer which item to take first. The design-doc audit is partly
+done; the tracker says what is left of it.
 
 ## Working notes
 

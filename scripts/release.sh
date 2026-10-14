@@ -147,6 +147,8 @@ printf 'release staging: %s (removed on exit)\n' "$RELEASE_TARGET_DIR"
 # is never assembled from a tree that would not pass review.
 printf '== gates ==\n'
 "$ROOT_DIR/scripts/check-version.sh"
+python3 "$ROOT_DIR/scripts/check_records.py"
+python3 "$ROOT_DIR/scripts/check_doc_paths.py"
 
 # Bound the test gate. A deadlocked test (crates/vak-server/tests/gateway.rs
 # once blocked every test on one mutex) makes an unbounded

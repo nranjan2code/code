@@ -1,6 +1,6 @@
 # Reference UI implementation contract
 
-Status: implementation backlog — not shipped until every acceptance item passes on the installed desktop build.
+Status: in progress: an acceptance backlog, not shipped until every acceptance item passes on the installed desktop build.
 
 The supplied Everyday/Advanced reference is the product contract for the desktop chat surface. It is not a marketing mockup. Existing backend capabilities remain available; this work changes presentation and navigation only.
 

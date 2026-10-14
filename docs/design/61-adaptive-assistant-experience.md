@@ -1,6 +1,6 @@
 # 61 — Adaptive assistant experience
 
-Status: Phase 1 implemented in the desktop and web client; capability-specific journeys remain phased below.
+Status: in progress: Phase 1 implemented in the desktop and web client; capability-specific journeys remain phased below.
 
 ## Product decision
 

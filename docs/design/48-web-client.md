@@ -8,7 +8,7 @@ same bundle must keep serving the Tauri desktop shell, and must extend to a
 single-tenant cloud deployment without a second codebase or a second
 security model.
 
-Status: **Phases 0–4 shipped.** What follows describes what exists, with
+Status: **implemented: Phases 0–4.** What follows describes what exists, with
 the places implementation corrected the plan called out in place. Phase E
 (multi-user cloud) remains explicitly out of scope.
 

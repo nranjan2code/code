@@ -7,8 +7,8 @@ a provider abstraction that treats Gemini Live, OpenAI Realtime, and a
 fully local stack (whisper.cpp + Piper/Kokoro) as peers, across desktop,
 web, and Telegram.
 
-Status: shipped foundation, redesigned 2026-09-23; realtime streaming and a
-physical-microphone acceptance run remain open. The **Shipped contract**
+Status: in progress: the foundation is shipped (redesigned 2026-09-23);
+realtime streaming and a physical-microphone acceptance run remain open. The **Shipped contract**
 section directly below is authoritative. The Architecture, Transport and
 Phasing sections after it are the original proposal, kept for its reasoning;
 where they disagree with the shipped contract (streaming `Listener` traits, a

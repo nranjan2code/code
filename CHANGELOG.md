@@ -1,5 +1,35 @@
 ## Unreleased
 
+- Security: when a turn holds both your own data and words from someone
+  else (a fetched page, a connected service), anything that could send data
+  off this machine asks you first, and nothing can pre-approve it.
+- Security: an MCP server reaches only the hosts it declares, through an
+  egress proxy of its own.
+- A command stopped at its time limit on macOS now really stops there.
+  Before, the sandbox refused the stop and the command ran on to the end.
+- A terminal card shows what the command really printed and how it ended
+  ("Stopped · 5.0 s", "Exit 1 · 4 ms"), taken from the run itself. A
+  test-report card says how its run ended the same way, and can no longer
+  list every test as passed when the run failed.
+- A tool you decline is not offered again for the rest of that request.
+- Library: Compare with your folder lists what an Office file or a PDF
+  version changes, the file's history shows each version's state, cards
+  show their live state, and Needs you lists files waiting for you.
+- Lineage lists the web pages a conversation fetched and the files it
+  touched, each traced to the request that caused it. Search and lineage
+  are rebuilt once after updating.
+- Two Vakyartha processes on one data home (the app and the command line)
+  no longer record the same file change twice.
+- A request held with `/until-done` ends when an answer adds nothing new,
+  and the work stays open to continue.
+- Admin console: System › How the models did shows how each model did on
+  real requests and lets you accept or dismiss the patterns it found.
+- A new Office file can be saved into a folder that does not exist yet,
+  and an answer given only as cards counts as an answer.
+- A tool is called only by its exact name; a name that is not a tool is
+  answered with the tools that exist (and, for a retired one, what
+  replaced it).
+
 - Security: a WebSocket upgrade (the web terminal, a voice session) is
   refused unless it comes from the server's own page or carries the access
   token. Before, a web page on another local port could open the terminal

@@ -1,6 +1,11 @@
 # 54 — Universal task environments, review, and controlled acceptance
 
-Status: **implementation in progress**, greenfield contract researched 2026-09-08. This replaces the stale sandbox/workbench contract; no migration or compatibility path is planned. Builds on the existing outcome, evidence, permission, and managed-work contracts.
+Status: **in progress**: slices 1 to 3 have code in the tree (drafts in the
+execution root, readiness and setup, candidates with promotion and undo,
+copy environments for a folder that is not a git repository); slice 4's
+reusable profiles are not built, and none of the twelve acceptance
+scenarios in §10 has a recorded run (checked 2026-10-14). Greenfield
+contract researched 2026-09-08. This replaces the stale sandbox/workbench contract; no migration or compatibility path is planned. Builds on the existing outcome, evidence, permission, and managed-work contracts.
 
 ## Product decision
 

@@ -1,6 +1,6 @@
 # 42 — Managed work contracts
 
-Status: implementation complete for shipped managed-work paths. Managed agent turns dispatch contract-owned static flows through the production flow executor; standalone CLI flows remain deliberately unlinked unless a future explicit linkage option is added. Outcome revisions and collaborative goal updates are recorded by the shared outcome-directed runtime (`docs/design/52-outcome-directed-runtime.md`), while this document remains the durable work-item contract.
+Status: implemented for the shipped managed-work paths. Managed agent turns dispatch contract-owned static flows through the production flow executor; standalone CLI flows remain deliberately unlinked unless a future explicit linkage option is added. Outcome revisions and collaborative goal updates are recorded by the shared outcome-directed runtime (`docs/design/52-outcome-directed-runtime.md`), while this document remains the durable work-item contract.
 
 ## Mission
 

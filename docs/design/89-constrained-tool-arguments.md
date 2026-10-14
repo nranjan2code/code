@@ -1,6 +1,6 @@
 # 89 — Constrained tool arguments
 
-Status: stages 1 to 4 built 2026-10-12 (the capability, strict tools,
+Status: in progress: stages 1 to 4 built 2026-10-12 (the capability, strict tools,
 schema-bound output on every wire, regeneration of unreadable calls, the
 ladder by fault class); stage 5 (richer schemas under a constraint) in
 progress. Written at the maintainer's request after cards stopped reaching

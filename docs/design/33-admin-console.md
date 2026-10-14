@@ -5,7 +5,7 @@ secured server) is the canonical management surface for vak:
 observation, operation, and interaction against the same audited core the
 TUI and desktop use.
 
-Status: **shipped**. All endpoints live behind the standard
+Status: **implemented**. All endpoints live behind the standard
 auth stack; nothing here bypasses permission checks or brokered tools.
 
 ## Goals

@@ -1,6 +1,6 @@
 # 58 — Admin information architecture and UI system goal
 
-Status: **goal and implementation guidance**. This document is the source of
+Status: **reference**: goal and implementation guidance. This document is the source of
 truth for the next admin-console UX pass. It describes the desired behavior
 and structure; it does not change API contracts by itself.
 

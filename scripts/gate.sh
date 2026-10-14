@@ -50,6 +50,7 @@ EOF
         exit 0
     fi
     echo "gate: checking $crates"
+    step records python3 scripts/check_records.py
     step fmt cargo fmt --all --check
     # shellcheck disable=SC2086
     step clippy cargo clippy $crates --all-targets -- -D warnings
@@ -63,3 +64,4 @@ step clippy cargo clippy --workspace --all-targets -- -D warnings
 step test cargo test --workspace
 step version scripts/check-version.sh
 step doc-paths python3 scripts/check_doc_paths.py
+step records python3 scripts/check_records.py

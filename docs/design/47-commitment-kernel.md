@@ -1,6 +1,6 @@
 # 47 — The commitment kernel
 
-Status: **shipped**. The current deterministic reader is
+Status: **implemented**. The current deterministic reader is
 `vak_intent::RESOLVER_VERSION = 22` (its history is on the constant; 11 reads "show" as a delivery verb, an answer, not a search; 14 distinguishes a schedule plan from the act of scheduling; 15 keeps same-message pronouns attached to their own request; 16 requires two shared content words for inferred continuation; 17 ignores local deixis in long self-contained requests and filters generic presentation words from topic overlap; 18 resolves dependent and sequential parts against their same-message parent before considering any older thread; 19 keeps a sentence that only shapes the preceding answer's presentation in that same part; 20 requires shared words to cover at least half of the older thread's topic words; 21 reads comma-separated timed schedule labels as data rather than commands; 22 recognizes comma-separated timed phases after a context phrase as schedule labels without requiring a colon). The historical reviews below explain why
 it changed; this document describes the current implementation. One known
 boundary remains: `full-access` bypasses the permission engine's approval

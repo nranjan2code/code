@@ -1,8 +1,9 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **in progress on `codex/mail-calendar` (2026-10-02).** Google,
+Status: **in progress** (on main; the `codex/mail-calendar` branch was
+merged and removed). Google,
 Microsoft, and Apple account linking and bounded owner previews are implemented
-using the current 4.x storage model. Google and Microsoft support OAuth and an
+on the 7.x storage model. Google and Microsoft support OAuth and an
 optional, warned local App Password path; Apple supports separately verified
 Mail, Calendar, and free/busy capabilities, including combinations when each
 selected protocol verifies. Owners can search all three providers,
@@ -733,8 +734,10 @@ secrets, stops and fences schedules/watchers, cancels undispatched work, and
 leaves only a content-free revocation tombstone needed to reject stale work.
 No second durable mailbox/event cache is added. Content that reaches a model is
 recorded in the owning Agent's append-only session history to preserve model
-reconstruction. Under current 4.x storage, disconnect does not remove that
-history, and deleting an account does not erase copies already in sessions.
+reconstruction. Disconnecting does not remove that history; erasing the account
+(`Core::erase_account`, Settings › Delete saved copies, data-architecture
+M7a-f) removes what it returned from every conversation and leaves a
+signed receipt.
 
 The UI and tool description state this before enabling connected-content features and must
 distinguish account disconnection (credential removal and future-read fencing)

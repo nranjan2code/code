@@ -1,6 +1,6 @@
 # 75 — Visual refresh: readable type, plain words and the Ink and Saffron brand
 
-Status: **implementation record, updated 2026-09-27.** V1, V2 and V3 are
+Status: **in progress**: the implementation record, updated 2026-09-27. V1, V2 and V3 are
 complete; V4.4 records the approved Vakyartha Songbird rollout. Desktop
 runtime proof and character glyph work remain in the
 [tracker](../plans/visual-refresh-plan.md). The interactive

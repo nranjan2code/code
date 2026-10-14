@@ -1,26 +1,20 @@
 # 76 — Intake and knowledge: one path for data in, one place to use it
 
-Status: **in progress. Proposal 2026-09-27; §9 shipped 2026-09-27
-(`5426018f`); M6.5a shipped 2026-10-06: sources, Rust connectors, the
-worker parse, the `intake/` chain, detection labels and the catalog's
-item nodes (§1–§5); M6.5b shipped 2026-10-06: `session_search` over
-items with held items closed to every Agent read, alerts into the
-Inbox, and push intake (§1, §6, §7); M6.5c shipped 2026-10-06: the
-admin console's Sources and the client's Sources panel read `/intake`,
-and the Python pipeline, `feeds.rs`, `[feeds]` config and the DuckDB
-store are deleted (§8). Intake is shipped; retention waits for M7a's
-reconciler.** It is milestone M6.5 of the data
-architecture plan (revision 3), and its Sources poll through that plan's
-Trigger model (`source_poll`) with cursors (doc 73 §8). It supersedes the
-feed system's target model in `docs/design/51-feed-system.md` (which stays the
-accurate description of the shipped 5.x Python pipeline until this lands) and
-is the intake-and-retrieval facet of the data architecture in
+Status: **implemented** (data-architecture M6.5a to M6.5c, 2026-10-06; §9's
+security fix shipped 2026-09-27, `5426018f`): sources as Documents polled by
+their own trigger, Rust connectors parsed in the worker, the `intake/`
+chain with detection labels that never drop an item, the catalog's item
+nodes, `session_search` over items with held items closed to every Agent
+read, alerts into the Inbox, push intake, and the admin console's Sources
+and the client's Sources panel; the Python pipeline and `[feeds]` are
+deleted. It is the intake-and-retrieval facet of
 `docs/design/73-data-architecture-and-lifecycle.md` and
-`docs/design/74-lifecycle-and-data-administration.md`. It depends on that
-work: M1 (trace key), M2 (object store), M6 (catalog). §8 places it in the
-plan. §9 is a security fix that lands independently and now.
+`docs/design/74-lifecycle-and-data-administration.md`.
 
 ## 0. The thesis, and why today misses it
+
+> **Historical record** of the tree before M6.5 (2026-09-27): "today"
+> below means then.
 
 The intended model: **one place any data comes in, and once in, it is usable
 for everything** — the agent answering a question, a person searching, an
@@ -54,7 +48,7 @@ lifecycle is the shared reconciler — not a subsystem beside the platform.
 
 - **Source** — a durable declaration that produces items over time by
   *pulling* (an RSS feed, a channel, a mailbox, a drive folder). Desired-class
-  state owned by an Agent (`docs/design/73` §5), with a `src_` id.
+  state owned by an Agent (`docs/design/73-data-architecture-and-lifecycle.md` §5), with a `src_` id.
 - **Intake** — the one pipeline every item travels, whatever its origin.
 - **Item** — one observation from a source or a push. It is an **Object**
   (content-addressed body) plus a **catalog node** with a `TraceKey`,
@@ -94,7 +88,7 @@ Push (attach,  ├─▶ Run (cause: Schedule|Channel|User)  docs/design/73 §4,
               max-items, seal, erase — the shared one, not a feed cron
 ```
 
-Every stage is a Run record (`docs/design/73` §8): a poll that fetched
+Every stage is a Run record (`docs/design/73-data-architecture-and-lifecycle.md` §8): a poll that fetched
 nothing, a fetch that failed, a source not due, a blocked SSRF target — each is
 a typed decision, never `eprintln!` + `return`. This fixes today's "a failed
 fetch is recorded as empty" and "a source that never succeeds has no row"
@@ -102,7 +96,7 @@ directly, because the record exists whatever the outcome.
 
 ## 3. Identity and classes
 
-An item maps onto the existing data classes (`docs/design/73` §5); intake
+An item maps onto the existing data classes (`docs/design/73-data-architecture-and-lifecycle.md` §5); intake
 introduces no new storage model.
 
 | Part | Class | Notes |
@@ -117,7 +111,7 @@ introduces no new storage model.
 Consequences that fix today's leaks by construction:
 
 - **Scope is the space/audience, not a cwd hash.** An item is visible through
-  the catalog's ACL filter (`docs/design/73` §9, invariant 37), so the
+  the catalog's ACL filter (`docs/design/73-data-architecture-and-lifecycle.md` §9, invariant 37), so the
   cross-workspace leak in the current reader cannot recur — there is one
   filtered query, not a scoped path and an unscoped one.
 - **Quarantine and removal are node state**, applied before ranking in the one
@@ -127,11 +121,11 @@ Consequences that fix today's leaks by construction:
 
 ## 4. Security — the boundary is the worker, not the server
 
-Today the feed scripts run *in the server process*: `feeds.rs` spawns
-`python3` with `.envs(...)` **added to** the inherited environment (no
-`env_clear`), and `feeds_dir()` prefers the **workspace's own**
-`scripts/feeds/feed_ingest.py`. That is arbitrary code execution with the
-server's secrets — see §9, reproduced live.
+Before M6.5 the feed scripts ran *in the server process*: the server
+spawned `python3` with its environment **added to** the inherited one (no
+`env_clear`) and preferred the **workspace's own** feed script. That was
+arbitrary code execution with the server's secrets (§9, reproduced live);
+the pipeline is deleted.
 
 The redesign closes it structurally:
 
@@ -145,7 +139,7 @@ The redesign closes it structurally:
   are external content exactly like an Office file (invariant 39).
 - **Enabling intake is privileged.** `feeds.enabled` / intake config is
   stripped from untrusted project layers, like `hooks`/`mcp`/`gateway`
-  (`docs/design/73` and the demotion block in `crates/vak-config/src/lib.rs`).
+  (`docs/design/73-data-architecture-and-lifecycle.md` and the demotion block in `crates/vak-config/src/lib.rs`).
 - **SSRF and redirect policy are the host's**, applied to every source URL and
   every redirect target, once, in the worker — not re-implemented per driver.
 
@@ -157,7 +151,7 @@ headlines ("a tiny eval() sandbox", "system: notes", "pretend you are a
 compiler", "Assistant: we shipped it", "`<s>`old`</s>`") are dropped, and the
 recorded evidence is an empty string.
 
-The contract (already stated in `docs/design/51` and 73/74, now enforced):
+The contract (already stated in `docs/design/51-feed-system.md` and 73/74, now enforced):
 
 - Detection **labels**, it does not drop. An item gets a disposition
   (`accepted`, `quarantined`, `blocked`) and retained evidence; quarantined
@@ -172,7 +166,7 @@ The contract (already stated in `docs/design/51` and 73/74, now enforced):
 
 ## 6. Retrieval — one query, and the agent can finally use it
 
-- **One catalog search** (`docs/design/73` §9: FTS5 + optional vector) replaces
+- **One catalog search** (`docs/design/73-data-architecture-and-lifecycle.md` §9: FTS5 + optional vector) replaces
   the feed's unread `search_index`, `store.db`, and the ad-hoc scans. It ranks
   by relevance first (freshness/trust only re-rank a match, never create one),
   filters by the caller's audience and grants before ranking, and returns only
@@ -193,7 +187,7 @@ The contract (already stated in `docs/design/51` and 73/74, now enforced):
 An alert match becomes a durable **Inbox** entry (a new
 `vak_core::inbox::Kind`, e.g. `FeedMatch`), so nothing is silently dropped when
 no channel is configured — every other signal already lands there
-(`docs/design/29`). Channel delivery stays optional and goes through the
+(`docs/design/29-personal-os.md`). Channel delivery stays optional and goes through the
 one host delivery runtime (`vak-delivery`), as a delivery effect
 (`vak_session::effects`, data-architecture plan M4.5); intake code never
 writes an effect record itself. Evaluation is idempotent per `(alert, item)` with a real
@@ -201,14 +195,14 @@ cooldown, fixing today's re-fire-every-tick and unbounded `alert_log`.
 
 ## 8. Lifecycle and sequencing
 
-- **Retention is the shared reconciler** (`docs/design/74` §5), not a feed
+- **Retention is the shared reconciler** (`docs/design/74-lifecycle-and-data-administration.md` §5), not a feed
   cron. Intake objects and records carry retention labels; the reconciler
   seals, tiers, prunes and erases them with everything else. `max_items` per
   source and the dedup window are enforced there, and a run row is written only
   when work happened (not once per idle 20-second tick, as today).
 - **Erasure reaches intake** because items are objects with `derived_from`;
   erasing a conversation or a source erases its derived catalog rows and
-  embeddings and GCs orphaned objects (`docs/design/74` §4).
+  embeddings and GCs orphaned objects (`docs/design/74-lifecycle-and-data-administration.md` §4).
 - **Sequencing.** Intake is a *consumer* of the catalog, so it builds on:
   - **M1** TraceKey — every item carries one;
   - **M2** object store — item bodies are objects;
@@ -225,6 +219,9 @@ cooldown, fixing today's re-fire-every-tick and unbounded `alert_log`.
   state, invariant 29).
 
 ## 9. The one fix that lands now, independently (shipped 2026-09-27)
+
+> **Historical record** of the 2026-09-27 fix to the Python feed pipeline,
+> which M6.5c later deleted: the paths below were real then.
 
 The code-execution hole (§4) is live in 5.x and must not wait for M6. Verified
 on a running server against an **untrusted** `/tmp` workspace

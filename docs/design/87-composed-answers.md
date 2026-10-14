@@ -1,6 +1,7 @@
 # 87 — Composed answers
 
-Status: direction approved by the maintainer on 2026-10-11; stage 1 done,
+Status: in progress: direction approved by the maintainer on 2026-10-11;
+stage 1 done,
 stage 2 built: the outline and its layout, with each card its own call of
 the card tool that owns its kind (§2; the maintainer's choice on
 2026-10-12, after one nested `answer` call of every block was measured as
