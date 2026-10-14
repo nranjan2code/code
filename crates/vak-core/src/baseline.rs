@@ -39,7 +39,7 @@ pub fn check_data_home(data: &std::path::Path) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             if holds_records(data) {
-                Err(refusal(&what, "7.x or earlier"))
+                Err(refusal(&what, ""))
             } else {
                 Ok(())
             }
@@ -49,11 +49,11 @@ pub fn check_data_home(data: &std::path::Path) -> Result<(), String> {
 }
 
 /// Whether `data` holds records: a tenant's object store, or the session
-/// and Agent trees a home before the tenant layout kept at its top.
+/// tree a home before the tenant layout kept at its top. An Agent's folder
+/// (`agents/<id>`) is not a record: current paths make it before any Core
+/// has stamped the home, and counting it refused a new home for good.
 fn holds_records(data: &std::path::Path) -> bool {
-    let top = ["sessions", "agents"]
-        .iter()
-        .any(|dir| data.join(dir).exists());
+    let top = data.join("sessions").exists();
     let stores = std::fs::read_dir(data.join(vak_config::paths::TENANTS_DIR))
         .map(|tenants| {
             tenants.flatten().any(|tenant| {
@@ -103,12 +103,12 @@ pub fn stamp_data_home(data: &std::path::Path) -> std::io::Result<()> {
 pub fn refusal(what: &str, found_version: &str) -> String {
     let found = found_version.trim();
     let found = if found.is_empty() {
-        "an unknown version"
+        "a version of vak that did not record itself".to_string()
     } else {
-        found
+        format!("vak {found}")
     };
     format!(
-        "{what} was written by vak {found}, which predates the {BASELINE} baseline.\n\
+        "{what} was written by {found}, which predates the {BASELINE} baseline.\n\
          Versions before {BASELINE} are not supported and cannot be upgraded in place.\n\
          \n  \
          vak self uninstall --purge     then install {BASELINE} and run setup\n\
@@ -168,7 +168,7 @@ mod tests {
             vak_config::paths::TENANTS_DIR,
             vak_config::paths::TENANT_STORE_DIR
         );
-        for state in ["sessions", "agents", store.as_str()] {
+        for state in ["sessions", store.as_str()] {
             let home = tempfile::tempdir().unwrap();
             std::fs::create_dir_all(home.path().join(state)).unwrap();
             let refused = check_data_home(home.path()).unwrap_err();
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn a_home_with_only_caches_and_logs_is_not_pre_baseline() {
         let dir = tempfile::tempdir().unwrap();
-        for sub in ["cache", "logs", "vak-home", "runtime"] {
+        for sub in ["cache", "logs", "vak-home", "runtime", "agents/vak"] {
             std::fs::create_dir_all(dir.path().join(sub)).unwrap();
         }
         assert!(check_data_home(dir.path()).is_ok());
