@@ -4,8 +4,9 @@
 docs/README.md says what each file is for. This script enforces the parts a
 machine can check, for people and agents alike:
 
-1. Every design doc (docs/design/*.md) has a `Status:` line whose first word
-   is one of STATUS_WORDS, so "is this built?" is answered the same way
+1. Every design doc (docs/design/*.md) and every plan (docs/plans/*.md but
+   the handover and the tracker) has a `Status:` line whose first word is
+   one of STATUS_WORDS, so "is this built?" is answered the same way
    everywhere.
 2. docs/design/INDEX.md is exactly what this script generates from those
    lines. Regenerate it with `python3 scripts/check_records.py --write`;
@@ -81,6 +82,14 @@ def design_docs():
         yield path
 
 
+def plan_docs():
+    for path in sorted(glob.glob(os.path.join(ROOT, "docs", "plans", "*.md"))):
+        name = os.path.basename(path)
+        if name.startswith("handover-") or name == "open-items.md":
+            continue
+        yield path
+
+
 def build_index():
     rows = []
     for path in design_docs():
@@ -150,7 +159,7 @@ def changelog_problems():
 def main():
     write = "--write" in sys.argv[1:]
     problems = []
-    for path in design_docs():
+    for path in [*design_docs(), *plan_docs()]:
         text = open(path, encoding="utf-8").read()
         if status_word(text) is None:
             problems.append(

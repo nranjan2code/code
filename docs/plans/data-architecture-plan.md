@@ -1,6 +1,6 @@
 # Plan — data architecture, lifecycle, tracing and cloud
 
-Status: **complete as cut for one owner (2026-10-09), plan revision 4.**
+Status: **implemented: complete as cut for one owner (2026-10-09), plan revision 4.**
 Every milestone, M0 to M9, is done, each with its exit tests and, from M7a
 on, an acceptance run in `docs/audits/acceptance-m*`. M0 to M6.5 and M8
 shipped in 7.0.0 (2026-10-10), the 7.0 data baseline; M7a, M7b and M9 shipped

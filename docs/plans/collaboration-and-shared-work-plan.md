@@ -1,6 +1,6 @@
 # Plan — collaboration, handover, Canvas and Review
 
-Status: **planning proposal, 2026-09-29. No implementation authorized or started.**
+Status: **proposal, planning only, 2026-09-29. No implementation authorized or started.**
 Consolidates the maintainer's discussion of human–human, human–Agent,
 Agent–human and Agent–Agent collaboration, including another person's own
 Agent, the typing interaction, Canvas, Review, and headless use. Source and

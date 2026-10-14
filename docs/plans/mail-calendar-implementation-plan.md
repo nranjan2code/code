@@ -1,6 +1,6 @@
 # Plan — secure mail and calendar package
 
-Status: **Agent-scoped account linking and bounded reads for Google,
+Status: **in progress** (on main; the branch named below was merged and removed, and erasure now follows the data architecture, `docs/design/80-mail-and-calendar.md`). What follows is this plan's status as written on the branch: **Agent-scoped account linking and bounded reads for Google,
 Microsoft, and Apple; owner and Agent previews; local revisioned drafts and
 threaded replies; scheduled and event-relative read-only routines; and
 synthetic regression coverage are implemented on `codex/mail-calendar`.

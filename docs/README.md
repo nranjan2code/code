@@ -38,8 +38,9 @@ one home; nothing else restates it.
 | How was a plan built, step by step? | Its plan in [plans](plans/) (the data architecture, the visual refresh, mail and calendar) |
 | What did a check or review find on a date? | [audits](audits/), [reviews](reviews/), [research](research/): dated records |
 
-Every design doc's `Status:` line starts with one of six words, then says
-what is built, what is not, and why:
+Every design doc's and every plan's `Status:` line (the handover and the
+tracker aside) starts with one of six words, then says what is built, what
+is not, and why:
 
 | Word | Meaning |
 |---|---|

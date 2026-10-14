@@ -1,6 +1,6 @@
 # Reliable work execution — design review
 
-Status: review complete; proposed changes are not implemented.
+Status: historical. A review completed 2026-09-30; what it proposed is carried by `reliable-work-execution-plan.md` (in progress).
 Date: 2026-09-30.
 Source reviewed: `0bfcaa39e341cef46360513e9d6f037c0f5f2493`.
 

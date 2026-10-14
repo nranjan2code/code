@@ -1,6 +1,6 @@
 # Context selection and lifelong conversations
 
-Status: in progress. Immediate defects repaired in the working branch;
+Status: in progress. The immediate defects are repaired (on main);
 live verification and the lifetime-scale design remain open.
 
 ## Evidence
@@ -350,7 +350,7 @@ projection replay. No “million-turn ready” claim until the live runtime path
 not just a synthetic ranker, meets these gates.
 
 
-### Implementation ledger (working branch)
+### Implementation ledger
 
 - Immediate irrelevant-Full admission and actual-wire costing repaired; the
   installed desktop comparison is recorded above.

@@ -1,6 +1,6 @@
 # Plan — social platform connectors
 
-Status: **implementation in progress; see shipped slice and remaining gates below.** This
+Status: **in progress; see shipped slice and remaining gates below.** This
 plan covers independent, user-controlled add-ons for Reddit, YouTube, X, and
 LinkedIn. TikTok is explicitly out of scope. Instagram and Facebook are also
 out of scope for this slice; reconsider them only for a specific supported API

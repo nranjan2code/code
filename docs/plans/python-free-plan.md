@@ -1,6 +1,6 @@
 # Python-free Vakyartha
 
-Status: **plan, 2026-10-02.** The feed runtime part is done another way:
+Status: **proposal, 2026-10-02.** The feed runtime part is done another way:
 data-architecture M6.5 (2026-10-06) deleted `scripts/feeds/` and replaced it
 with Rust connectors in `crates/vak-intake` feeding the catalog, not the
 `crates/vak-feeds` and SQLite store sketched below. Nothing else below is

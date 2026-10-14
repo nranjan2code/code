@@ -1,6 +1,6 @@
 # Plan — visual refresh (Ink and Saffron)
 
-Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V1, V2
+Status: **in progress: plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V1, V2
 and V3 complete. V4.1's previous woven-V identity has been superseded by the
 Vakyartha Songbird at the maintainer's request (2026-09-26); platform exports
 and all four-color/one-color lockups are regenerated from its SVG master. V4.2
