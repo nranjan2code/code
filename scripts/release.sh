@@ -63,6 +63,11 @@ if [[ "$CHANGELOG_HEAD" != "$VERSION" ]]; then
 fi
 printf '  ✓ %-44s %s\n' "CHANGELOG section" "$VERSION"
 
+# Doc paths are checked before the clean room: it deletes the committed
+# bundles (vak-admin-ui/dist, dist-web, site/dist) that docs cite, and
+# they come back only when the frontends are rebuilt below.
+python3 "$ROOT_DIR/scripts/check_doc_paths.py"
+
 # Release assembly is a clean-room operation. Never let a previous release,
 # frontend bundle, or developer Cargo tree participate in this run. These are
 # the only generated trees this script owns; keep the list explicit so a
@@ -148,7 +153,6 @@ printf 'release staging: %s (removed on exit)\n' "$RELEASE_TARGET_DIR"
 printf '== gates ==\n'
 "$ROOT_DIR/scripts/check-version.sh"
 python3 "$ROOT_DIR/scripts/check_records.py"
-python3 "$ROOT_DIR/scripts/check_doc_paths.py"
 
 # Bound the test gate. A deadlocked test (crates/vak-server/tests/gateway.rs
 # once blocked every test on one mutex) makes an unbounded
