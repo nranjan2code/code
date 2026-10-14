@@ -24,6 +24,14 @@ across them. Nothing here is started unless it says so.
   services running, the home names `8.1.0`, the plugins seeded.
 - [ ] The maintainer runs `vak setup` with the provider key; then `doctor`
   in `~/vak-home`. AWS stays on 8.0.0 until the maintainer asks.
+- [ ] Seen on 2026-10-15: `vak setup` run from the source checkout set the
+  route in that folder's project layer (`.vak/config.toml`, tracked in
+  git) and left the Shared layer with no provider, so `doctor` in
+  `~/vak-home` still reports none. Setup's route belongs in the Shared
+  layer whatever folder it was started from (invariant 27); to find
+  where the setup screen chooses the layer. Its terminal also showed
+  `WARN`/`INFO` log lines (the agent network broker stopping, a
+  lifecycle pass) among the words meant for the person.
 
 8.0.0 (2026-10-14), a major version with a purge (maintainer's choice):
 
