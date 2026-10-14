@@ -24,7 +24,7 @@ A user may ask a question, request a complex data extraction, initiate a multi-s
      - One-click CSV export (`downloadCsv`).
      - Seamless preservation of rich inline markdown nodes (bold, code, links).
 2. **Visual Aliases & Primitive Routing** (`STRUCTURED_RENDERERS` in `PresentationRenderer.tsx`):
-   - `trend`, `timeseries`, `metric_chart`, `bar_chart`, `comparison_chart` all route to the `chart` primitive via `buildChartSpec` (`bar_chart` passing the forced `"bar"` override).
+   - `trend`, `timeseries`, `metric_chart`, `comparison_chart` all route to the `chart` primitive via `buildChartSpec`. There is no `bar_chart` kind: a bar chart is the chart card's `chart_type: "bar"` (docs/design/91-presentation-capabilities.md).
    - `decision_matrix`, `criteria_matrix`, `tradeoff_analysis` route to the `table` primitive via `buildTableSpec`, each with its own default title.
    - Aliasing is a registry entry, not a component: several semantic types deliberately share one `buildXSpec`/`renderX` pair (`docs/design/67-presentation-renderer-guide.md`).
 

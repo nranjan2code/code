@@ -97,7 +97,6 @@ const SIGNAL: &[(&str, &str)] = &[
     ("chart", "chart"),
     ("trend", "trend"),
     ("timeseries", "timeseries"),
-    ("bar-chart", "bar_chart"),
     ("metric-chart", "metric_chart"),
     ("comparison-chart", "comparison_chart"),
     ("telemetry-chart", "telemetry.chart"),
@@ -292,7 +291,7 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         "steps" | "lesson" | "event_plan" | "care_plan" => Primitive::Steps,
         "progress" | "status" => Primitive::Progress,
         "metric" | "benchmark" | "telemetry.metric" => Primitive::Metric,
-        "chart" | "trend" | "timeseries" | "bar_chart" | "metric_chart" | "comparison_chart"
+        "chart" | "trend" | "timeseries" | "metric_chart" | "comparison_chart"
         | "telemetry.chart" => Primitive::Chart,
         "link.preview" => Primitive::LinkPreview,
         "media.image" => Primitive::Image,
@@ -478,7 +477,7 @@ mod tests {
     #[test]
     fn seed_pack_is_rich_disabled_and_validated_by_host_types() {
         let pack = built_in_seed_pack();
-        assert_eq!(pack.len(), 86);
+        assert_eq!(pack.len(), 85);
         assert!(pack.iter().all(|record| !record.enabled));
         assert!(
             pack.iter()

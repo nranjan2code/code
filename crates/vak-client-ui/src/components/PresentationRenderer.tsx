@@ -1295,7 +1295,6 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "trend": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
   "timeseries": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
   "metric_chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
-  "bar_chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data, "bar")} />,
   "comparison_chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
 
   // 10. Media & Links

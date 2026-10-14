@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "id": "answer-layouts.at-a-glance",
+  "revision": 1,
+  "accepts": [
+    "at_a_glance"
+  ],
+  "block": "stats",
+  "root": {
+    "primitive": "section",
+    "props": {
+      "title": {
+        "kind": "binding",
+        "path": "$.title",
+        "required": false,
+        "empty": "omit"
+      },
+      "label": {
+        "kind": "binding",
+        "path": "$.label",
+        "required": false,
+        "empty": "omit"
+      }
+    },
+    "children": [
+      {
+        "primitive": "row",
+        "props": {},
+        "children": [],
+        "each": {
+          "kind": "binding",
+          "path": "$.readings",
+          "required": true,
+          "empty": "omit"
+        },
+        "item": {
+          "primitive": "metric",
+          "props": {
+            "*": {
+              "kind": "binding",
+              "path": "$",
+              "required": true,
+              "empty": "omit"
+            }
+          },
+          "children": []
+        }
+      }
+    ]
+  },
+  "fallback": {
+    "kind": "document"
+  }
+}

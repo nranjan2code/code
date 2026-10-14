@@ -96,7 +96,7 @@ shown as the block's eyebrow.
 | `comparison` | options (2–6) each with a name, a short verdict and its strengths and weaknesses; aspects compared across options; an optional recommendation | |
 | `table` | header and rows, numeric columns detected | data.grid, dataframe, comparison_table, pros_cons, decision_matrix, criteria_matrix, tradeoff_analysis, scorecard, inventory, budget, finance_summary, invoice_summary, travel_options, coding.benchmark, coding.dependencies |
 | `stats` | one to six figures: label, value, unit, optional change | |
-| `chart` | series over a category or time axis | trend, timeseries, bar_chart, metric_chart, comparison_chart, telemetry.chart |
+| `chart` | series over a category or time axis | trend, timeseries, metric_chart, comparison_chart, telemetry.chart |
 | `callout` | tone (tip, note, warning, important) and text | |
 | `details` | labelled facts or question-and-answer pairs | overview, summary, detail, faq, metric, telemetry.metric, map, route_map, calendar, availability, board, entity, evidence, document, graph, form, action, transaction, alert, conversation, progress_dashboard, simulation, search_results, coding.search, coding.architecture |
 | `research.synthesis` | findings, each tied to a retrieved source | research_brief, news, the social briefs |
@@ -118,7 +118,7 @@ the table's business.
 
 ## 4. Packs
 
-A pack accepts the types a block is offered as (§3): the 86 built-in packs
+A pack accepts the types a block is offered as (§3): the 85 built-in packs
 keep their types, and each is reached through the block that builds its
 type's payload. The block kinds of their own (`lead`, `stats`, `callout`,
 `details`, the options `comparison`) have no pack yet and draw through

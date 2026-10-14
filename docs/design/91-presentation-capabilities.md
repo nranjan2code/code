@@ -1,6 +1,6 @@
 # 91 — Presentations are capabilities
 
-Status: in progress: stages 1 to 3 built 2026-10-14; direction from the maintainer on 2026-10-14 ("like the
+Status: implemented: stages 1 to 5 built 2026-10-14; direction from the maintainer on 2026-10-14 ("like the
 others we have: tools, MCP, skills; with the admin, inheritance, security,
 config and enable/disable"). Builds on docs/design/41-capability-registry.md,
 docs/design/39-plugin-ecosystem.md, docs/design/57-adaptive-presentation-runtime.md
@@ -84,6 +84,24 @@ saying how those blocks look. Nothing in the harness names one. The model
 decides from a skill's description whether to load it; nothing loads a
 skill by matching the request's words.
 
+### 3.1 Shipped
+
+`packages/answer-layouts` ships with Vakyartha, installed and enabled like
+the starters (docs/design/05-config.md, "Capability seeds"): three skills
+(`plan-in-time`, `decide-between`, `how-to-guide`) and one pack
+(`at_a_glance`, a kind of the stats block drawn as a row of figures).
+
+### 3.2 Scope and policy
+
+- Pack selection takes the workspace's activation before the user's
+  (`PresentationLibrary::select_preferred`), as invariant 27 orders layers.
+- A channel's `presentations_allow` and `presentations_deny` (pack ids,
+  matched like skills) admit or remove a pack: a denied pack is not in the
+  turn's capabilities and adds no kind to the card tools. The admin channel
+  editor offers the active packs.
+- The capability report lists packs beside every other kind; the model's
+  list of unusable capabilities leaves them out, since a pack is not called.
+
 ## 4. Stages
 
 1. **Kinds from packs.** `block` on the spec; card kinds from active packs;
@@ -93,9 +111,8 @@ skill by matching the request's words.
 2. **Composition drawn.** The client draws `Row`, `Stack`, `Group` and
    `Section` as layout.
 3. **Live skills.** The mid-turn message is corrected (done 2026-10-14).
-4. **Packages.** A few presentation packages as data, judged by real turns
-   on the installed home with the local route, at 1440 × 900 and 390 × 844,
-   light and dark.
+4. **Packages.** `answer-layouts` (§3.1). Its first live turn on the
+   home's local route is recorded in docs/plans/open-items.md.
 5. **Scope and policy.** Workspace before user in pack selection; channel
    allow and deny for presentations; the admin and desktop capability
    screens list presentations beside skills.

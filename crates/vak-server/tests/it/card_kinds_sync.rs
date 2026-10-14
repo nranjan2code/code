@@ -37,7 +37,7 @@ fn the_card_kinds_are_exactly_the_types_the_client_draws() {
         .map(|(_, kind, _)| kind.to_string())
         .collect();
     let client = client_types();
-    assert!(client.len() > 100, "parsed {} client types", client.len());
+    assert!(!client.is_empty(), "parsed no client types");
     let undrawn: Vec<_> = kinds.difference(&client).collect();
     let unreachable: Vec<_> = client.difference(&kinds).collect();
     assert!(

@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "everyday-starter",
+  "version": "1.1.0",
+  "description": "Plain-language writing, planning, research, and data help for everyday work.",
+  "license": "MIT",
+  "components": {
+    "skills": [
+      "skills"
+    ]
+  }
+}

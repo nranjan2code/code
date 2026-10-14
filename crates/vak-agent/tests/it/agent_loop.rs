@@ -521,6 +521,9 @@ async fn malformed_tool_input_is_rejected_by_the_admitted_schema() {
     let h = harness(
         vec![
             ScriptedResponse::Message(tool_call_msg("t-schema", "write", serde_json::json!({}))),
+            // The regeneration under the schema is refused too, so the
+            // call runs as written and the admitted schema rejects it.
+            ScriptedResponse::Message(assistant_text("{}")),
             ScriptedResponse::Message(assistant_text("recovered")),
         ],
         vec![Arc::new(WriteTool)],

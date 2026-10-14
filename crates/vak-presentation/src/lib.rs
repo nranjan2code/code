@@ -474,17 +474,18 @@ impl PresentationLibrary {
             .max_by_key(|stored| stored.spec.revision)
     }
 
-    /// Resolve the narrowest explicit user intent before workspace intent.
-    /// No effective values are copied between scopes; the returned definition
-    /// remains owned by the layer that activated it.
+    /// Resolve the workspace's choice before the user's: the Shared (user)
+    /// layer is the base and the project is narrower, so the project wins
+    /// (invariant 27). No effective values are copied between scopes; the
+    /// returned definition remains owned by the layer that activated it.
     pub fn select_preferred(
         &self,
         semantic_type: &str,
         user_owner: &str,
         workspace_owner: &str,
     ) -> Option<&StoredPresentation> {
-        self.select(semantic_type, LibraryScope::User, user_owner)
-            .or_else(|| self.select(semantic_type, LibraryScope::Workspace, workspace_owner))
+        self.select(semantic_type, LibraryScope::Workspace, workspace_owner)
+            .or_else(|| self.select(semantic_type, LibraryScope::User, user_owner))
     }
 
     pub fn activations(&self) -> &[PresentationActivation] {
@@ -1567,7 +1568,9 @@ mod tests {
     }
 
     #[test]
-    fn preferred_selection_uses_user_intent_before_workspace_intent() {
+    /// The project's choice wins over the Shared layer's (invariant 27); with
+    /// no workspace choice, the user's applies.
+    fn preferred_selection_uses_workspace_intent_before_user_intent() {
         let mut workspace_spec = spec();
         workspace_spec.id = "workspace.layout".into();
         let mut user_spec = spec();
@@ -1614,6 +1617,12 @@ mod tests {
         assert_eq!(
             library
                 .select_preferred("trip", "user", "ws")
+                .map(|s| s.spec.id.as_str()),
+            Some("workspace.layout")
+        );
+        assert_eq!(
+            library
+                .select_preferred("trip", "user", "another-workspace")
                 .map(|s| s.spec.id.as_str()),
             Some("user.layout")
         );

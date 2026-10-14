@@ -139,13 +139,21 @@ regeneration's job).
 
 ### 4.4 The ladder follows the fault's class
 
+> **Changed 2026-10-14.** A shape fault was told first and regenerated only
+> when the same tool failed again in the turn. Live, an `emit_steps_card`
+> call with no `steps` was told and the model never called the tool again,
+> so the plan's steps were lost without a decision. Every call its schema
+> refuses is now regenerated at once, as an unreadable one is, except a card
+> kind another card tool owns, whose rewrite under this tool's schema would
+> change what the call is.
+
 Tools report a typed fault; the ladder answers by class, once each:
 
 | Fault | First response | Then |
 |---|---|---|
 | syntax: the arguments are not JSON | regenerate under the schema (§4.3) | tell, with the place it breaks |
-| shape: valid JSON, wrong or missing fields | tell, naming the fields and the schema | regenerate under the schema |
-| shape, from a tool whose schema the request did not carry (deferred, called by name from the catalogue) | regenerate under the schema: there is no schema to tell it about | tell |
+| shape: valid JSON, wrong or missing fields | regenerate under the schema | tell, naming the fields and the schema |
+| shape: a card kind another card tool owns | tell, naming the tool that owns it | the answer stands without it |
 | refusal: the tool's own rule | tell, with the rule | the answer stands without it |
 
 Measured 2026-10-13 (admin › How the models did): `office_apply`, deferred

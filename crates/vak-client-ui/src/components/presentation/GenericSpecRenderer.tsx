@@ -2067,16 +2067,14 @@ export function buildTerminalSpec(data: unknown): AdaptiveRenderNode {
  * all. This adapter instead normalizes any shape to an empty series list, and
  * `renderChart` then shows the same "No data points supplied." placeholder the
  * component already had for an empty chart — never a blank node.
- *
- * `chartTypeOverride` preserves the `bar_chart` key's forced `chart_type: "bar"`.
  */
-export function buildChartSpec(data: unknown, chartTypeOverride?: "line" | "area" | "bar"): AdaptiveRenderNode {
+export function buildChartSpec(data: unknown): AdaptiveRenderNode {
   const d = data && typeof data === "object" && !Array.isArray(data) ? (data as any) : null;
   const series = normalizeSeries(d?.series);
 
   const rawType = d && typeof d.chart_type === "string" ? d.chart_type : undefined;
   const props: Record<string, unknown> = {
-    chart_type: chartTypeOverride ?? (rawType === "bar" || rawType === "area" || rawType === "line" ? rawType : "line"),
+    chart_type: rawType === "bar" || rawType === "area" || rawType === "line" ? rawType : "line",
     accessible_summary: d && typeof d.accessible_summary === "string" ? d.accessible_summary : "",
     series,
   };

@@ -48,10 +48,23 @@ across them. Nothing here is started unless it says so.
 
 ## Presentations as capabilities (docs/design/91)
 
-- Stages 1 to 3 are built; stage 4 (presentation packages judged by real
-  turns) and stage 5 (workspace before user in pack selection, channel
-  allow and deny for presentations, the capability screens listing them)
-  are open.
+- Built (stages 1 to 5). First live turn, 2026-10-14, home route
+  `qwen3.5:0.8b-mlx`, a Saturday plan in Pune: the model loaded
+  `how-to-guide` rather than `plan-in-time`, looked for transport it was
+  not asked about, sent `emit_steps_card` with no `steps` (the regeneration
+  did not recover it), and sent `chart_type: "bar_chart"` beside a chart
+  card whose kinds include `bar_chart`. Fixed: the `bar_chart` kind is
+  removed, and a call its schema refuses is regenerated at once (doc 89
+  §4.4). Open: the same turn again on both local models; the answer seen
+  in the browser at 1440 × 900 and 390 × 844, light and dark.
+
+## Approvals
+
+- The approval card offers "Create rule…" on every ask, including a
+  provenance ask (`AskSource::Provenance`), which no rule can answer, so a
+  rule made there does not stop the next one. The card needs the ask's
+  source as a typed field: `Approver::approve` carries only the reason's
+  text, across 16 implementations (`ChatPane.tsx` "Create rule…").
 
 ## Needs the maintainer
 

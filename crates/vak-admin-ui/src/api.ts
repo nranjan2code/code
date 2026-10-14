@@ -930,6 +930,11 @@ export const api = {
   skills: (agent?: string): Promise<{ skills: SkillItem[] }> =>
     fetch(withAgent("/skills", agent)).then((r) => handle(r)),
 
+  /** The presentation library as it applies here: saved, built-in and
+   * plugin packs, with their activations (docs/design/91). */
+  presentations: (agent?: string): Promise<{ definitions: { spec: { id: string; accepts: string[]; block?: string }; origin: { plugin_id?: string | null } }[]; activations: { spec_id: string }[] }> =>
+    fetch(withAgent("/presentations", agent)).then((r) => handle(r)),
+
   socialConnectors: (agent?: string): Promise<{ connectors: { id: string; platform: string; summary: string; readiness: "blocked" | "owner_preview" | "identity_link"; reason: string; official_api: string }[] }> =>
     fetch(withAgent("/social/connectors", agent)).then((r) => handle(r)),
   socialXUsage: (agent?: string): Promise<{ month: string; limit: number; used: number }> =>

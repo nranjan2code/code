@@ -197,9 +197,14 @@ fn setup(
             runs: fetches.clone(),
         }),
     ];
-    // Full access allows every call by itself, so any ask is the gate's.
-    cfg.mode = Mode::FullAccess;
-    cfg.permission = Some(Arc::new(PermissionEngine::default()));
+    // The gate holds in the sandboxed modes; Full access skips it
+    // (`full_access_never_raises_the_gate`). Rules allow both tools here,
+    // so any ask is the gate's.
+    cfg.mode = Mode::WorkspaceWrite;
+    cfg.permission = Some(Arc::new(PermissionEngine::new(vec![
+        vak_permission::Rule::parse("readfile").unwrap(),
+        vak_permission::Rule::parse("fetch").unwrap(),
+    ])));
     cfg.approver = Some(approver);
     cfg.stop_policy = None;
     tune(&mut cfg);
@@ -285,6 +290,30 @@ async fn owner_data_and_the_web_together_put_the_next_exit_to_a_person() {
     assert!(labels.contains(&("c2".into(), vak_control::Provenance::UNTRUSTED)));
     let card = session.turn_cards().pop().expect("the turn has its card").1;
     assert_eq!(card.provenance, vak_control::Provenance::BOTH);
+}
+
+/// Full access is the owner's explicit trust decision (invariant 13): the
+/// same turn that asks above runs without asking there (maintainer,
+/// 2026-10-14).
+#[tokio::test]
+async fn full_access_never_raises_the_gate() {
+    let approver = recording(false, true);
+    let mut s = setup(
+        vec![
+            call("c1", "readfile"),
+            call("c2", "fetch"),
+            call("c3", "fetch"),
+            text("done"),
+        ],
+        approver.clone(),
+        |cfg| cfg.mode = Mode::FullAccess,
+    );
+    assert!(matches!(
+        run(&mut s.agent, "go").await,
+        TurnOutcome::Completed { .. }
+    ));
+    assert_eq!(s.fetches.load(Ordering::SeqCst), 2);
+    assert!(approver.asked.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

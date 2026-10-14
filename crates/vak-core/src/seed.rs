@@ -65,62 +65,6 @@ const SKILLS: &[(&str, &str, &str, &[&str])] = &[
     ),
 ];
 
-const PLUGINS: &[(&str, &str, &str, &str)] = &[
-    (
-        "developer-starter",
-        "1.0.0",
-        "Core developer workflows for implementation, debugging, and code review.",
-        "software-development",
-    ),
-    (
-        "everyday-starter",
-        "1.0.0",
-        "Plain-language writing, planning, research, and data help for everyday work.",
-        "writing-and-editing",
-    ),
-];
-
-const PLUGIN_SKILLS: &[(&str, &str, &str, &[&str])] = &[
-    (
-        "software-development",
-        "Implement and explain software changes with focused verification and clear tradeoffs.",
-        "Inspect the existing conventions first. Make the smallest coherent change, preserve public contracts, add targeted tests for changed behavior, and report exactly what was verified.",
-        &["code-exec", "documents", "vcs", "filesystem"],
-    ),
-    (
-        "writing-and-editing",
-        "Draft, rewrite, summarize, and polish documents while preserving the requested voice.",
-        "First identify audience, purpose, and format. Preserve facts and explicit constraints, make the smallest useful edit, and call out material ambiguities instead of inventing details.",
-        &["documents"],
-    ),
-];
-
-/// Social packages contain instructions only and are installed disabled.
-/// Their package bytes are embedded so setup works from installed binaries,
-/// not only from a source checkout.
-const SOCIAL_PLUGINS: &[(&str, &str, &str)] = &[
-    (
-        "social-linkedin",
-        include_str!("../../../packages/social-linkedin/vak-plugin.json"),
-        include_str!("../../../packages/social-linkedin/skills/social-linkedin/SKILL.md"),
-    ),
-    (
-        "social-reddit",
-        include_str!("../../../packages/social-reddit/vak-plugin.json"),
-        include_str!("../../../packages/social-reddit/skills/social-reddit/SKILL.md"),
-    ),
-    (
-        "social-x",
-        include_str!("../../../packages/social-x/vak-plugin.json"),
-        include_str!("../../../packages/social-x/skills/social-x/SKILL.md"),
-    ),
-    (
-        "social-youtube",
-        include_str!("../../../packages/social-youtube/vak-plugin.json"),
-        include_str!("../../../packages/social-youtube/skills/social-youtube/SKILL.md"),
-    ),
-];
-
 const SEED_MANIFEST: &str = ".seed-manifest.json";
 
 pub fn seed_shared_capabilities() -> Result<(), String> {
@@ -129,7 +73,6 @@ pub fn seed_shared_capabilities() -> Result<(), String> {
     seed_skills(&workspace.skills())
         .map_err(|error| format!("Shared skill seed failed: {error}"))?;
     seed_plugins(&root).map_err(|error| format!("Shared plugin seed failed: {error}"))?;
-    seed_social_plugins(&root).map_err(|error| format!("Social add-on seed failed: {error}"))?;
     cleanup_retired_plugins(&root)
         .map_err(|error| format!("Retired plugin cleanup failed: {error}"))?;
     let hooks = [HookConfig {
@@ -200,16 +143,6 @@ fn seed_skills(root: &Path) -> std::io::Result<()> {
     let manifest_root = root.parent().unwrap_or(root);
     let mut shipped = load_seed_manifest(manifest_root);
     let previous = shipped.clone();
-    for (name, description, body, serves) in PLUGIN_SKILLS {
-        let path = root.join(name).join("SKILL.md");
-        let expected = skill_markdown(name, description, body, serves);
-        if path.is_file()
-            && matches!(std::fs::read_to_string(&path), Ok(content) if content == expected)
-        {
-            std::fs::remove_file(&path)?;
-            let _ = std::fs::remove_dir(path.parent().unwrap_or(root));
-        }
-    }
     for (name, description, body, serves) in SKILLS {
         let dir = root.join(name);
         std::fs::create_dir_all(&dir)?;
@@ -266,71 +199,53 @@ fn write_seed_manifest(root: &Path, shipped: &BTreeMap<String, String>) -> std::
     Ok(())
 }
 
+/// Installs every package Vakyartha ships (`crate::packages::SHIPPED`) into
+/// the Shared layer. A new one is installed in its shipped state. One
+/// already installed is replaced by the shipped bytes only while it is still
+/// exactly what was shipped last, keeping the owner's enabled state; a copy
+/// the owner changed is left alone.
 fn seed_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let store = PluginStore::new(root);
     let mut shipped = load_seed_manifest(root);
     // Stage inside the plugin root rather than the system temp dir: same
     // filesystem as the destination, so installing is a rename and never a
-    // cross-device copy — the same reason the installer stages inside its
-    // own prefix.
+    // cross-device copy.
     let staging = root.join(".seed-staging");
     let _ = std::fs::remove_dir_all(&staging);
-    for (name, version, description, skill_name) in PLUGINS {
-        let package = staging.join(name);
-        let skill_path = package.join(format!("skills/{skill_name}"));
-        std::fs::create_dir_all(&skill_path)?;
-        std::fs::write(
-            package.join("vak-plugin.json"),
-            format!(
-                r#"{{"schema":1,"name":"{name}","version":"{version}","description":"{description}","license":"MIT","components":{{"skills":["skills"]}}}}"#
-            ),
-        )?;
-        let (skill_description, body, serves) = PLUGIN_SKILLS
-            .iter()
-            .find(|(candidate, _, _, _)| candidate == skill_name)
-            .map(|(_, description, body, serves)| (*description, *body, *serves))
-            .ok_or_else(|| format!("missing seed skill {skill_name}"))?;
-        std::fs::write(
-            skill_path.join("SKILL.md"),
-            skill_markdown(skill_name, skill_description, body, serves),
-        )?;
-        if let Some(existing) = store
-            .list()?
-            .into_iter()
-            .find(|plugin| plugin.name == *name)
-        {
-            let staged_digest = digest_of_directory(&package)?;
-            let installed_digest = digest_of_directory(&existing.package_path).ok();
-            if existing.digest == staged_digest {
-                shipped.insert(format!("plugin:{name}"), existing.digest);
-            } else if installed_digest.as_deref() == Some(existing.digest.as_str())
-                && shipped.get(&format!("plugin:{name}")) == Some(&existing.digest)
-            {
-                let installed = store.update_local(
-                    &package,
-                    InstallOptions {
-                        scope: InstallScope::User,
-                        allow_unlicensed: false,
-                    },
-                )?;
-                if !installed.enabled {
+    let options = InstallOptions {
+        scope: InstallScope::User,
+        allow_unlicensed: false,
+    };
+    for package in crate::packages::SHIPPED {
+        let name = package.name;
+        let staged = staging.join(name);
+        crate::packages::stage(name, &staged)?;
+        let key = format!("plugin:{name}");
+        let staged_digest = digest_of_directory(&staged)?;
+        match store.list()?.into_iter().find(|plugin| plugin.name == name) {
+            Some(existing) if existing.digest == staged_digest => {
+                shipped.insert(key, existing.digest);
+            }
+            Some(existing) => {
+                let untouched = digest_of_directory(&existing.package_path).ok().as_deref()
+                    == Some(existing.digest.as_str())
+                    && shipped.get(&key) == Some(&existing.digest);
+                if untouched {
+                    let installed = store.update_local(&staged, options)?;
+                    if existing.enabled && !installed.enabled {
+                        let _ = store.enable(name)?;
+                    }
+                    shipped.insert(key, installed.digest);
+                }
+            }
+            None => {
+                let installed = store.install_local(&staged, options)?;
+                if package.enabled {
                     let _ = store.enable(name)?;
                 }
-                shipped.insert(format!("plugin:{name}"), installed.digest);
+                shipped.insert(key, installed.digest);
             }
-            continue;
         }
-        let installed = store.install_local(
-            &package,
-            InstallOptions {
-                scope: InstallScope::User,
-                allow_unlicensed: false,
-            },
-        )?;
-        if !installed.enabled {
-            let _ = store.enable(name)?;
-        }
-        shipped.insert(format!("plugin:{name}"), installed.digest);
     }
     let _ = std::fs::remove_dir_all(&staging);
     write_seed_manifest(root, &shipped)?;
@@ -340,34 +255,6 @@ fn seed_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
 fn digest_of_directory(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
     let inspection = vak_plugin::inspect_package(root)?;
     Ok(inspection.digest)
-}
-
-fn seed_social_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let store = PluginStore::new(root);
-    let staging = root.join(".social-seed-staging");
-    let _ = std::fs::remove_dir_all(&staging);
-    for (name, _, _) in SOCIAL_PLUGINS {
-        let package = staging.join(name);
-        crate::social::stage_package(name, &package)?;
-        // Never reset an operator's enabled state or replace an installed
-        // copy here: Settings offers a newer built-in as a reviewed update.
-        if store.list()?.iter().any(|plugin| plugin.name == *name) {
-            continue;
-        }
-        let installed = store.install_local(
-            &package,
-            InstallOptions {
-                scope: InstallScope::User,
-                allow_unlicensed: false,
-            },
-        )?;
-        // install_local is disabled by construction; do not call enable here.
-        if installed.enabled {
-            return Err(format!("social add-on {name} did not remain disabled").into());
-        }
-    }
-    let _ = std::fs::remove_dir_all(&staging);
-    Ok(())
 }
 
 #[cfg(test)]
@@ -385,7 +272,10 @@ mod tests {
             &std::fs::read(root.join(SEED_MANIFEST)).expect("seed manifest"),
         )
         .expect("valid seed manifest");
-        assert_eq!(manifest.len(), SKILLS.len() + PLUGINS.len());
+        assert_eq!(
+            manifest.len(),
+            SKILLS.len() + crate::packages::SHIPPED.len()
+        );
 
         let edited = root.join("skills/debugging/SKILL.md");
         let before = std::fs::read(&edited).expect("seed skill");
@@ -405,51 +295,38 @@ mod tests {
         std::fs::write(&package, "operator edit\n").expect("edit plugin package");
         let _ = seed_shared_capabilities();
         assert!(package.is_file(), "edited plugin package was overwritten");
-
-        for (name, _, _) in SOCIAL_PLUGINS {
-            let social = plugins
-                .iter()
-                .find(|plugin| plugin.name == *name)
-                .expect("social add-on is seeded");
-            assert!(
-                !social.enabled,
-                "{name} must remain disabled until opted in"
-            );
-            assert_eq!(social.scope, InstallScope::User);
-        }
     }
 
+    /// Every shipped package is installed in its shipped state, byte for
+    /// byte what `packages/<name>` holds.
     #[test]
-    fn installed_social_seed_matches_every_embedded_package_asset() {
+    fn every_shipped_package_is_installed_as_shipped() {
         let dir = tempfile::tempdir().expect("temporary plugin root");
-        seed_social_plugins(dir.path()).expect("seed social packages");
+        seed_plugins(dir.path()).expect("seed packages");
         let installed = PluginStore::new(dir.path()).list().expect("list packages");
-
-        for (name, manifest, skill) in SOCIAL_PLUGINS {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+        for shipped in crate::packages::SHIPPED {
             let plugin = installed
                 .iter()
-                .find(|plugin| plugin.name == *name)
-                .unwrap_or_else(|| panic!("{name} was not installed from the built-in seed"));
-            assert!(!plugin.enabled, "{name} must seed disabled");
+                .find(|plugin| plugin.name == shipped.name)
+                .unwrap_or_else(|| panic!("{} was not installed", shipped.name));
+            assert_eq!(plugin.enabled, shipped.enabled, "{}", shipped.name);
+            assert_eq!(plugin.scope, InstallScope::User);
             assert_eq!(
-                std::fs::read(plugin.package_path.join("vak-plugin.json")).expect("manifest"),
-                manifest.as_bytes(),
-                "{name} manifest drifted from its source package"
+                Some(plugin.digest.clone()),
+                crate::packages::digest(shipped.name),
+                "{} drifted from packages/{}",
+                shipped.name,
+                shipped.name
             );
             assert_eq!(
-                std::fs::read(plugin.package_path.join("skills/SKILL.md")).expect("skill"),
-                skill.as_bytes(),
-                "{name} prompt drifted from its source package"
+                vak_plugin::inspect_package(&source.join(shipped.name))
+                    .expect("source package")
+                    .digest,
+                plugin.digest,
+                "{}",
+                shipped.name
             );
-            for (relative, contents) in crate::social::presentations(name)
-                .unwrap_or_else(|| panic!("{name} presentation seed is missing"))
-            {
-                assert_eq!(
-                    std::fs::read(plugin.package_path.join(relative)).expect("presentation"),
-                    contents.as_bytes(),
-                    "{name} presentation {relative} drifted from its source package"
-                );
-            }
         }
     }
 }

@@ -43,6 +43,7 @@ pub mod lifecycle;
 pub mod measure;
 pub mod memory;
 pub mod onboarding;
+pub mod packages;
 pub mod presentation_tools;
 /// The three permission rule lists, in `vak_config::Config`'s own order:
 /// `(allow, ask, deny)`.
@@ -3971,10 +3972,24 @@ impl Core {
         let store = presentation_store::PresentationStore::new(self.scope().presentations());
         let owner = self.inner.cwd.to_string_lossy();
         match store.load() {
-            Ok(library) => presentation_tools::PackKinds::from_library(
-                &self.effective_presentations(&library, &owner),
-                &owner,
-            ),
+            Ok(library) => {
+                let mut kinds = presentation_tools::PackKinds::from_library(
+                    &self.effective_presentations(&library, &owner),
+                    &owner,
+                );
+                // A channel's deny reaches the card tools as well as the
+                // inventory, so a denied pack adds no kind there.
+                if let Some(policy) = self.channel_policy() {
+                    kinds.retain_packs(|id| {
+                        Self::allowed_by(
+                            &policy.presentations_allow,
+                            &policy.presentations_deny,
+                            id,
+                        )
+                    });
+                }
+                kinds
+            }
             Err(error) => {
                 tracing::warn!(error_kind = %vak_telemetry::error_kind(&error), "the presentation library could not be read");
                 presentation_tools::PackKinds::default()
@@ -10588,6 +10603,14 @@ mod plugin_runtime_tests {
                     "garden.brief",
                 )
         }));
+        // A channel that denies the pack takes its kinds off the card tools.
+        core.apply_channel_policy(vak_config::ChannelPolicy {
+            presentations_deny: vec!["garden.*".into()],
+            ..Default::default()
+        });
+        assert!(!research_kinds(&core).contains(&"garden.brief".to_string()));
+        core.apply_channel_policy(vak_config::ChannelPolicy::default());
+        assert!(research_kinds(&core).contains(&"garden.brief".to_string()));
         store.disable("garden-pack").unwrap();
         assert!(!research_kinds(&core).contains(&"garden.brief".to_string()));
     }

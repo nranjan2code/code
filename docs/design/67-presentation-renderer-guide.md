@@ -118,8 +118,7 @@ Several keys sharing one builder is the intended pattern, not duplication.
 `recipe.card`, `recipe`, `recipe_summary`, `lifestyle.recipe`, and
 `lifestyle.culinary_recipe` are five registry lines that all resolve to the
 same `buildRecipeSpec` / `renderRecipe` pair. Likewise `trend`, `timeseries`,
-`metric_chart`, and `comparison_chart` all resolve to `buildChartSpec`, with
-`bar_chart` differing only by the forced `"bar"` override argument, and
+`metric_chart`, and `comparison_chart` all resolve to `buildChartSpec`, and
 `decision_matrix` / `criteria_matrix` / `tradeoff_analysis` all resolving to
 `buildTableSpec` with different default titles.
 

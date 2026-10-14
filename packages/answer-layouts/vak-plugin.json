@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "answer-layouts",
+  "version": "1.0.0",
+  "description": "How to lay out everyday answers from cards: plans in time, choices between options, and how-to guides.",
+  "license": "MIT",
+  "components": {
+    "skills": [
+      "skills"
+    ],
+    "presentation": [
+      "presentation"
+    ]
+  }
+}

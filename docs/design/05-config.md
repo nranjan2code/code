@@ -188,10 +188,16 @@ The Shared capability stores are seeded idempotently, and the seed never
 overwrites an existing skill, plugin, or hook. It provides six
 instruction-only skills (`getting-started`, `research-and-sources`,
 `planning-and-organizing`, `debugging`, `code-review`,
-`data-and-spreadsheets`) plus two starter plugins (`developer-starter`,
-`everyday-starter`) carrying the `software-development` and
-`writing-and-editing` skills. The plugins are enabled because they contain
-instructions only — no tools, commands, credentials, or network access. A
+`data-and-spreadsheets`) plus every package Vakyartha ships: the folders
+in `packages/`, embedded in the binary and listed with their starting state
+in `vak_core::packages::SHIPPED`. The starters (`developer-starter`,
+`everyday-starter`) and `answer-layouts` (composition skills and a
+presentation pack, docs/design/91-presentation-capabilities.md) start
+enabled because they hold instructions and declarative layouts only — no
+tools, commands, credentials, or network access; the social add-ons start
+disabled. A shipped package already installed is replaced by the shipped
+bytes only while it is still exactly what was shipped last, and keeps the
+owner's enabled state. A
 single `session_start` automation template is stored **disabled**, so
 nothing an installer did can execute an operator command without an explicit
 enable.

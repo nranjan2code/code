@@ -5896,26 +5896,26 @@ impl Agent {
                 continue;
             };
             let schema = tool.call_schema(input);
-            // A syntax fault is rewritten at once: telling the model where
-            // its text breaks has not stopped the next slip. A shape fault
-            // (valid JSON, wrong fields) is told first, and rewritten when
-            // the same tool fails again this turn (doc 89 §4.4), or at once
-            // when the model was never sent the schema: it called a tool
-            // it knew only by name (measured: `office_apply` written as
-            // `{operation, content, title}`, 5 of 15 calls).
-            let blind = !request
-                .tools
-                .iter()
-                .any(|sent| sent.name == *name && !sent.defer);
+            // Any call its schema refuses is rewritten at once, syntax and
+            // shape alike (doc 89 §4.4). Telling the model first left the
+            // rewrite to its choosing to call the tool again: found live on
+            // 2026-10-14, an `emit_steps_card` call with no `steps` was told
+            // and never called again, and the plan lost its steps.
+            // A kind another card tool owns is not rewritten under this
+            // tool's schema, which would change what the call is: the
+            // refusal names its owner instead.
+            let owned_elsewhere = input
+                .get("semantic_type")
+                .and_then(Value::as_str)
+                .filter(|kind| !tool.card_kinds().iter().any(|own| own == kind))
+                .is_some_and(|kind| cards::owner(kind, &self.config.tools).is_some());
             let fault = match vak_tools::unreadable(&schema, input) {
                 Some(fault) => fault,
-                None if blind || self.repair.failing.contains(name.as_str()) => {
-                    match vak_tools::validate_input(&schema, input) {
-                        Err(fault) => fault,
-                        Ok(()) => continue,
-                    }
-                }
-                None => continue,
+                None if owned_elsewhere => continue,
+                None => match vak_tools::validate_input(&schema, input) {
+                    Err(fault) => fault,
+                    Ok(()) => continue,
+                },
             };
             let written = input.clone();
             let fresh = self
@@ -8376,7 +8376,13 @@ fn provenance_gate(
     held: &vak_control::Held,
     decision: Decision,
 ) -> Decision {
-    if !held.labels().gates_exits() || !leaves_machine(config, call, tool) {
+    // Full access is the owner's explicit trust decision (invariant 13):
+    // it runs unsandboxed and asks nothing beyond the owner's own rules, so
+    // this gate holds only in the sandboxed modes (maintainer, 2026-10-14).
+    if matches!(config.mode, Mode::FullAccess)
+        || !held.labels().gates_exits()
+        || !leaves_machine(config, call, tool)
+    {
         return decision;
     }
     match decision {

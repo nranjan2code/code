@@ -3256,6 +3256,8 @@ function defaultChannelPolicy(): ChannelPolicy {
     skills_deny: [],
     hooks_allow: null,
     hooks_deny: [],
+    presentations_allow: null,
+    presentations_deny: [],
     mcp_network_deny: [],
   };
 }
@@ -3456,7 +3458,21 @@ function ChannelCapabilityPolicy(props: {
   const [mcp] = createResource(() => api.mcpServers(undefined, selectedAgentIdOrUndefined()));
   const [skills] = createResource(() => api.skills(selectedAgentIdOrUndefined()));
   const [hooks] = createResource(() => api.hooks(undefined, selectedAgentIdOrUndefined()));
+  const [presentations] = createResource(() => api.presentations(selectedAgentIdOrUndefined()));
   const update = (patch: Partial<ChannelPolicy>) => props.onChange({ ...props.value, ...patch });
+  // A pack is matched by its id; only active packs are offered, since only
+  // they draw anything.
+  const presentationOptions = createMemo<AccessOption[]>(() => {
+    const library = presentations();
+    const active = new Set((library?.activations ?? []).map((activation) => activation.spec_id));
+    return (library?.definitions ?? [])
+      .filter((definition) => active.has(definition.spec.id))
+      .map((definition) => ({
+        value: definition.spec.id,
+        label: definition.spec.id,
+        hint: definition.spec.accepts.join(", ").slice(0, 60),
+      }));
+  });
 
   // A server is matched as `name/*` (see `Core::filter_mcp`), a skill by its
   // own name, a hook by `event/command`. The picker offers exactly those
@@ -3551,6 +3567,20 @@ function ChannelCapabilityPolicy(props: {
           deny={props.value.skills_deny}
           onChange={(next) => update({ skills_allow: next.allow, skills_deny: next.deny })}
           patternHint="e.g. research*"
+        />
+        <AccessPicker
+          title="Card layouts"
+          help="Which installed layouts can draw cards on this channel."
+          noun="layout"
+          inheritLabel="Every layout"
+          limitLabel="Only the layouts I pick"
+          noneLabel="No extra layouts"
+          options={presentationOptions()}
+          loading={presentations.loading}
+          allow={props.value.presentations_allow}
+          deny={props.value.presentations_deny}
+          onChange={(next) => update({ presentations_allow: next.allow, presentations_deny: next.deny })}
+          patternHint="e.g. answer-layouts.*"
         />
         <AccessPicker
           title="Automations"

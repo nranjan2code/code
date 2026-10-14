@@ -15,7 +15,7 @@ export interface SessionListItem {
 
 export interface CapabilityDescriptor {
   name: string;
-  kind: "tool" | "skill" | "mcp-server" | "hook" | "command" | string;
+  kind: "tool" | "skill" | "mcp-server" | "hook" | "command" | "presentation" | string;
   invocation: "model-tool" | "skill-loader" | "automatic" | "user-command" | string;
   description: string;
   source?: string | null;
@@ -369,6 +369,10 @@ export interface ChannelPolicy {
   skills_deny: string[];
   hooks_allow: string[] | null;
   hooks_deny: string[];
+  /** Presentation pack ids (docs/design/91): a denied pack adds no card
+   * kinds and draws nothing on this channel. */
+  presentations_allow: string[] | null;
+  presentations_deny: string[];
   /** Server-name patterns (`name/*`, same shape as mcp_allow/mcp_deny) for
    * which this channel forces outbound network off, even when the server's
    * own config has it on. Restrictive only — there is no "network_allow";

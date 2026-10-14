@@ -162,8 +162,11 @@ put to the person (`AskSource::Provenance`), with the reason naming where
 each kind came from. A tool declares that it can leave with
 `Tool::leaves_machine`: true for `Network` and `Integration` by default, and
 for `flow` and the tool-less `work`, which run other tools. A shell command
-can leave only where the sandbox leaves it the network: with no sandbox or in
-full-access. The gate only adds a requirement: a denial stands; an ask a
+can leave only where the sandbox leaves it the network: with no sandbox. The
+gate holds in the sandboxed modes only: full-access is the owner's explicit
+trust decision (invariant 13) and asks nothing beyond the owner's own rules
+(maintainer, 2026-10-14; before, a Full-access turn that had read the web
+asked before every shell command). The gate only adds a requirement: a denial stands; an ask a
 rule raised is asked once, with both reasons. Nothing pre-authorizes it: not
 `approve-safe` or `auto-approve`, not an envelope, not a remembered
 approval. On a surface nobody answers it is refused (invariant 15). The

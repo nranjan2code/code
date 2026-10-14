@@ -720,7 +720,6 @@ pub fn built_in_skill_registry() -> SkillRegistry {
             // text.
             "trend",
             "timeseries",
-            "bar_chart",
             // Same gap, same shape: the client (PresentationRenderer.tsx
             // STRUCTURED_RENDERERS) has had renderers for these ten since
             // commits 85408ebc and 1d34cd6b ("support all 62+ outcome

@@ -1578,7 +1578,6 @@ const SHAPES: &[CardShape] = &[
             "chart",
             "trend",
             "timeseries",
-            "bar_chart",
             "metric_chart",
             "comparison_chart",
             "telemetry.chart",
@@ -1975,6 +1974,24 @@ impl PackKinds {
         }
         kinds.retain(|_, listed| !listed.is_empty());
         Self { kinds, packs }
+    }
+
+    /// Keeps only the packs `keep` admits, with the kinds they add.
+    pub fn retain_packs(&mut self, mut keep: impl FnMut(&str) -> bool) {
+        let dropped: Vec<ActivePack> = self
+            .packs
+            .iter()
+            .filter(|pack| !keep(&pack.id))
+            .cloned()
+            .collect();
+        self.packs
+            .retain(|pack| !dropped.iter().any(|gone| gone.id == pack.id));
+        for pack in dropped {
+            if let Some(listed) = self.kinds.get_mut(&pack.block) {
+                listed.retain(|kind| !pack.kinds.contains(kind));
+            }
+        }
+        self.kinds.retain(|_, listed| !listed.is_empty());
     }
 
     /// The packs that add kinds, for the capability registry.
@@ -3799,6 +3816,62 @@ mod tests {
             failures.len(),
             failures.join("\n")
         );
+    }
+
+    /// Every pack a package in `packages/` ships names a real card block,
+    /// and compiles to a rich card from that block's own payload, under
+    /// each kind it adds (docs/design/91-presentation-capabilities.md §2).
+    #[test]
+    fn every_package_pack_compiles_from_its_block_payload() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages");
+        let skills = vak_delivery::built_in_skill_registry();
+        let mut checked = 0;
+        for package in std::fs::read_dir(&root).unwrap() {
+            let dir = package.unwrap().path().join("presentation");
+            let Ok(files) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for file in files {
+                let path = file.unwrap().path();
+                let spec = vak_presentation::parse_spec(&std::fs::read(&path).unwrap())
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                let block = spec
+                    .block
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{} names no block", path.display()));
+                let shape = shape_of_block(block)
+                    .unwrap_or_else(|| panic!("{}: no block {block}", path.display()));
+                for kind in &spec.accepts {
+                    assert!(
+                        emit_tool_for(kind).is_none(),
+                        "{kind} is already a built-in kind"
+                    );
+                    let mut args = fixture_for(shape.name);
+                    args["semantic_type"] = Value::String(kind.clone());
+                    let packs = PackKinds {
+                        kinds: [(block.to_string(), vec![kind.clone()])].into(),
+                        packs: Vec::new(),
+                    };
+                    let info = presentation_info_with(shape.name, &args, &skills, &packs)
+                        .unwrap_or_else(|| panic!("{kind}: the {block} block refused it"));
+                    let compiled = vak_presentation::compile(
+                        &spec,
+                        &vak_presentation::CompileInput {
+                            semantic_type: kind.clone(),
+                            payload: info.payload,
+                            fallback_text: info.title,
+                        },
+                    );
+                    assert!(
+                        matches!(compiled, vak_presentation::CompiledPresentation::Rich(_)),
+                        "{}: {kind} fell back: {compiled:?}",
+                        path.display()
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 0);
     }
 
     #[test]

@@ -318,6 +318,12 @@ async fn a_failed_card_does_not_hold_back_a_complete_answer() {
                     }],
                     StopReason::ToolUse,
                 ),
+                // Its regeneration under the schema is refused too, so the
+                // call runs as written and fails.
+                msg(
+                    vec![ContentBlock::text("{\"metric_data\": [1, 2]}")],
+                    StopReason::EndTurn,
+                ),
                 msg(vec![ContentBlock::text(answer)], StopReason::EndTurn),
             ])),
             crate::support::capacity_key(),

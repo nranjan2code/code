@@ -6736,6 +6736,7 @@ dependencies = [
  "globset",
  "hex",
  "iana-time-zone",
+ "include_dir",
  "semver",
  "serde",
  "serde_json",

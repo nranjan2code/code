@@ -1,5 +1,28 @@
 ## Unreleased
 
+- Full access no longer asks before shell commands in a conversation that
+  read the web or a connected service. The check that a turn holding both
+  your data and someone else's words asks before anything leaves the
+  machine now applies only in the sandboxed modes; Full access asks only
+  what your own rules ask.
+
+- A card call with a missing or wrong field is now rewritten under its
+  schema at once, so a card is no longer lost when the model does not try
+  again after being told what was wrong.
+- The chart card no longer offers a `bar_chart` kind beside its `bar`
+  style, a pair models confused; a bar chart is `chart_type: "bar"`.
+
+- Vakyartha ships "answer-layouts", enabled: skills for laying out a plan
+  in time, a choice between options and a how-to guide from cards, and a
+  layout that shows key figures in a row. Every package Vakyartha ships now
+  comes from one place, so the starters, the social add-ons and this one
+  install and update the same way.
+- A project's choice of card layout now wins over your Shared one.
+- A channel can allow or deny card layouts, like skills, in the admin
+  console's channel settings.
+- Searching for a tool (`find_tools`) no longer asks for approval; it only
+  reads the tools the turn already has.
+
 - `vak plugins … --scope user` and `vak skills validate` now use the Shared
   layer every workspace reads (`~/vak-home/.vak`). Before, the CLI put
   user-scope plugins in the data home, where nothing read them.

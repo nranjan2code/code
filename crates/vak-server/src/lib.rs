@@ -12284,8 +12284,7 @@ async fn list_social_connectors(
         .iter()
         .map(|connector| {
             let mut value = serde_json::to_value(connector).unwrap_or_default();
-            value["guidance_digest"] =
-                serde_json::json!(vak_core::social::package_digest(connector.id));
+            value["guidance_digest"] = serde_json::json!(vak_core::packages::digest(connector.id));
             value
         })
         .collect::<Vec<_>>();
@@ -12574,7 +12573,7 @@ async fn install_social_connector(
     if let Err(status) = operator_only(&principal) {
         return status.into_response();
     }
-    if vak_core::social::package(&id).is_none() {
+    if vak_core::social::find(&id).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
     let core = scoped_core!(&state, None, request.agent.as_deref());
@@ -12584,11 +12583,9 @@ async fn install_social_connector(
         .join("social-staging")
         .join(uuid::Uuid::now_v7().to_string());
     let result = (|| -> Result<_, vak_plugin::PluginError> {
-        vak_core::social::stage_package(&id, &staging).map_err(|source| {
-            vak_plugin::PluginError::Io {
-                path: staging.clone(),
-                source,
-            }
+        vak_core::packages::stage(&id, &staging).map_err(|source| vak_plugin::PluginError::Io {
+            path: staging.clone(),
+            source,
         })?;
         let options = InstallOptions {
             scope: request.scope,

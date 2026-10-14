@@ -386,10 +386,12 @@ async fn an_unreadable_call_is_regenerated_under_its_schema_and_runs() {
     );
 }
 
-/// A call that is valid JSON but the wrong shape is told first; the same
-/// tool's next such call is written again under its schema (doc 89 §4.4).
+/// A call that is valid JSON but the wrong shape is written again under its
+/// schema at once, as an unreadable one is (doc 89 §4.4): telling the model
+/// first left the rewrite to its calling the tool again, and on 2026-10-14
+/// a steps card told it was missing `steps` was never called again.
 #[tokio::test]
-async fn a_second_call_of_the_wrong_shape_is_regenerated_under_its_schema() {
+async fn a_call_of_the_wrong_shape_is_regenerated_under_its_schema_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let header = SessionHeader {
         space: None,
@@ -432,11 +434,6 @@ async fn a_second_call_of_the_wrong_shape_is_regenerated_under_its_schema() {
                     "emit_table_card",
                     json!({"semantic_type": "table", "rows": ["A | B"]}),
                 ),
-                call(
-                    "a1",
-                    "emit_table_card",
-                    json!({"semantic_type": "table", "rows": ["A | B"]}),
-                ),
                 text(&rewritten.to_string()),
                 text("Obsidian keeps notes local; Notion syncs."),
             ])),
@@ -467,12 +464,8 @@ async fn a_second_call_of_the_wrong_shape_is_regenerated_under_its_schema() {
     );
     {
         let seen = seen.lock().unwrap();
-        assert_eq!(seen.len(), 4, "{seen:?}");
-        assert!(
-            seen[1].2.is_none(),
-            "the first wrong shape is told: {seen:?}"
-        );
-        assert_eq!(seen[2].2.as_deref(), Some("emit_table_card"), "{seen:?}");
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert_eq!(seen[1].2.as_deref(), Some("emit_table_card"), "{seen:?}");
     }
     let session = agent.session.lock().await;
     let ran = session
@@ -480,7 +473,7 @@ async fn a_second_call_of_the_wrong_shape_is_regenerated_under_its_schema() {
         .iter()
         .flat_map(|message| message.content.clone())
         .find_map(|block| match block {
-            ContentBlock::ToolUse { id, input, .. } if id == "a1" => Some(input),
+            ContentBlock::ToolUse { id, input, .. } if id == "a0" => Some(input),
             _ => None,
         })
         .expect("the call is ledgered");
@@ -489,7 +482,7 @@ async fn a_second_call_of_the_wrong_shape_is_regenerated_under_its_schema() {
         .derive_messages()
         .iter()
         .flat_map(|message| message.content.clone())
-        .any(|block| matches!(block, ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "a1"));
+        .any(|block| matches!(block, ContentBlock::ToolResult { tool_use_id, is_error: true, .. } if tool_use_id == "a0"));
     assert!(!refused, "the rewritten call ran");
     drop(session);
     let text = SessionLog::text(&ledger);

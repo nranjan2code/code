@@ -1140,7 +1140,9 @@ commit (invariant 30).
     a request holds both, a call that can leave the machine
     (`Tool::leaves_machine`; a shell command only where the sandbox leaves
     it the network) is an `AskSource::Provenance` ask that nothing
-    pre-authorizes and an unanswered surface refuses. Labels only join
+    pre-authorizes and an unanswered surface refuses, in every mode but
+    FullAccess, which is the owner's explicit trust decision (invariant 13)
+    and asks only what the owner's own rules ask. Labels only join
     within a turn, and nothing reads a word of the content to set one.
 
 ## Code rules
@@ -1575,7 +1577,7 @@ crates/vak-presentation  the CLOSED primitive vocabulary (Primitive enum in
                      PACKS (StoredPresentation/PresentationSpec, PresentationOrigin,
                      LibraryScope) are runtime-pluggable and compose existing
                      primitives with ZERO code change; seeds.rs is the worked
-                     example (86 disabled built-in starter definitions).
+                     example (85 disabled built-in starter definitions).
                      Four independently installed social add-ons contribute
                      12 more package-owned presentation layouts (three each),
                      seeded disabled and outside the built-in catalog. Adding a
@@ -2038,14 +2040,14 @@ for every provider and model:
   go strict where the wire enforces them (`vak_llm::strict`, card tools
   first within a wire's limits), and a step whose output is data sets
   `ChatRequest::output_schema` rather than parsing JSON out of prose.
-- A call whose arguments cannot be read (`vak_tools::unreadable`), that
-  fails the schema of a tool its request did not carry (a deferred tool
-  called by name, written blind), or that fails its schema again from a
-  tool that already failed this turn, is
-  written again under the tool's own schema (`Tool::call_schema`, which an
+- A call whose arguments cannot be read (`vak_tools::unreadable`) or that
+  its tool's schema refuses is written again under the tool's own schema (`Tool::call_schema`, which an
   integration broker narrows to the discovered tool) before it is ledgered;
-  the ledger keeps what the model first wrote. Never add a repair that
-  guesses at broken JSON: the regeneration is the repair.
+  the ledger keeps what the model first wrote. A card call whose kind
+  another card tool owns is not rewritten: it is told that tool. Telling
+  the model first left the rewrite to its calling the tool again, which it
+  may not do (a steps card with no `steps`, 2026-10-14). Never add a repair
+  that guesses at broken JSON: the regeneration is the repair.
 - Judge a change to how arguments are asked for by replaying Vak's own
   captured requests on each route (`scripts/measure_tool_form.py`), never
   by a toy schema: the first measurement used toy schemas and missed the

@@ -1059,6 +1059,10 @@ pub struct ChannelPolicy {
     pub skills_deny: Vec<String>,
     pub hooks_allow: Option<Vec<String>>,
     pub hooks_deny: Vec<String>,
+    /// Presentation pack ids (docs/design/91-presentation-capabilities.md):
+    /// a denied pack adds no card kinds and draws nothing on this channel.
+    pub presentations_allow: Option<Vec<String>>,
+    pub presentations_deny: Vec<String>,
     /// Server-name patterns (matched the same way as `mcp_allow`/`mcp_deny`)
     /// for which this channel forces outbound network off, even when the
     /// server's own `McpServerConfig.hosts` declares some. Restrictive only —
@@ -1151,6 +1155,11 @@ impl ChannelPolicy {
             skills_deny: merge_deny(&lower.skills_deny, &higher.skills_deny),
             hooks_allow: merge_allow(&lower.hooks_allow, &higher.hooks_allow),
             hooks_deny: merge_deny(&lower.hooks_deny, &higher.hooks_deny),
+            presentations_allow: merge_allow(
+                &lower.presentations_allow,
+                &higher.presentations_allow,
+            ),
+            presentations_deny: merge_deny(&lower.presentations_deny, &higher.presentations_deny),
             mcp_network_deny: merge_deny(&lower.mcp_network_deny, &higher.mcp_network_deny),
             plugins_network_deny: merge_deny(
                 &lower.plugins_network_deny,
