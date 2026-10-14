@@ -8140,10 +8140,7 @@ impl Core {
                 .presentations_for_latest_turn()
                 .iter()
                 .any(|record| {
-                    matches!(
-                        record.semantic_type.as_str(),
-                        "research.synthesis" | "evidence"
-                    )
+                    record.block.as_deref().unwrap_or(&record.semantic_type) == "sources"
                 });
             let requirement_evaluations = vak_judge::outcome::evaluate_requirements(
                 &outcome_spec,
@@ -10577,7 +10574,7 @@ mod plugin_runtime_tests {
         .unwrap();
         std::fs::write(
             package.join("presentation/brief.json"),
-            r#"{"schema_version":1,"id":"garden.brief","revision":1,"accepts":["garden.brief"],"block":"research","root":{"primitive":"research","props":{"*":{"kind":"binding","path":"$"}}}}"#,
+            r#"{"schema_version":1,"id":"garden.brief","revision":1,"accepts":["garden.brief"],"block":"sources","root":{"primitive":"sources","props":{"*":{"kind":"binding","path":"$"}}}}"#,
         )
         .unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
@@ -10589,7 +10586,7 @@ mod plugin_runtime_tests {
         let research_kinds = |core: &Core| {
             presentation_tools::EmitCardTool::with_packs(&core.pack_kinds())
                 .into_iter()
-                .find(|tool| vak_tools::Tool::name(tool) == "emit_research_card")
+                .find(|tool| vak_tools::Tool::name(tool) == "emit_sources_card")
                 .map(|tool| vak_tools::Tool::card_kinds(&tool))
                 .unwrap_or_default()
         };

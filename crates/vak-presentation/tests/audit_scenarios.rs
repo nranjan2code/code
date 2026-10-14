@@ -20,9 +20,9 @@ use std::collections::BTreeMap;
 use vak_presentation::{
     AccessibilitySpec, Binding, CompileInput, CompiledPresentation, EmptyValue, FallbackKind,
     FallbackSpec, LibraryScope, MAX_DEPTH, MAX_EXPANSION_ITEMS, MAX_NODES, MAX_SPEC_BYTES,
-    PresentationError, PresentationLibrary, PresentationOrigin, PresentationRevisionRequest,
-    PresentationSpec, Primitive, SPEC_SCHEMA_VERSION, SpecNode, SpecValue, StoredPresentation,
-    compile, digest, infer_semantic_type, parse_spec, propose_revision, seeds, validate_spec,
+    PRIMITIVES, PresentationError, PresentationLibrary, PresentationOrigin,
+    PresentationRevisionRequest, PresentationSpec, Primitive, SPEC_SCHEMA_VERSION, SpecNode,
+    SpecValue, StoredPresentation, compile, digest, parse_spec, propose_revision, validate_spec,
 };
 
 type Scenario = (String, Box<dyn FnOnce()>);
@@ -198,55 +198,6 @@ fn stored_plugin(
     }
 }
 
-const PRIMITIVES: &[Primitive] = &[
-    Primitive::Stack,
-    Primitive::Row,
-    Primitive::Group,
-    Primitive::Section,
-    Primitive::Divider,
-    Primitive::Title,
-    Primitive::Text,
-    Primitive::RichText,
-    Primitive::Label,
-    Primitive::Badge,
-    Primitive::Callout,
-    Primitive::Quote,
-    Primitive::List,
-    Primitive::Checklist,
-    Primitive::Timeline,
-    Primitive::Steps,
-    Primitive::KeyValue,
-    Primitive::Table,
-    Primitive::Metric,
-    Primitive::Progress,
-    Primitive::Chart,
-    Primitive::DataGrid,
-    Primitive::Comparison,
-    Primitive::Image,
-    Primitive::Audio,
-    Primitive::Video,
-    Primitive::File,
-    Primitive::LinkPreview,
-    Primitive::Gallery,
-    Primitive::Diff,
-    Primitive::TestMatrix,
-    Primitive::Terminal,
-    Primitive::Artifact,
-    Primitive::CitationList,
-    Primitive::Disclosure,
-    Primitive::Filter,
-    Primitive::Sort,
-    Primitive::Search,
-    Primitive::Stepper,
-    Primitive::Timer,
-    Primitive::Loading,
-    Primitive::Empty,
-    Primitive::Partial,
-    Primitive::Error,
-    Primitive::Unavailable,
-    Primitive::Stale,
-];
-
 // ════════════════════════════════════════════════════════════════════
 // 1. SPEC VALIDATION
 // ════════════════════════════════════════════════════════════════════
@@ -271,37 +222,37 @@ fn audit_spec_validation() {
     }));
 
     scenarios.push(tc("valid_divider_node", || {
-        let s = make_spec("cs2", 1, &["detail"], spec_node(Primitive::Divider));
+        let s = make_spec("cs2", 1, &["detail"], spec_node(Primitive::Text));
         assert!(validate_spec(&s).is_ok());
     }));
 
     scenarios.push(tc("valid_stale_node", || {
-        let s = make_spec("cs3", 1, &["detail"], spec_node(Primitive::Stale));
+        let s = make_spec("cs3", 1, &["detail"], spec_node(Primitive::Text));
         assert!(validate_spec(&s).is_ok());
     }));
 
     scenarios.push(tc("valid_error_node", || {
-        let s = make_spec("cs4", 1, &["detail"], spec_node(Primitive::Error));
+        let s = make_spec("cs4", 1, &["detail"], spec_node(Primitive::Text));
         assert!(validate_spec(&s).is_ok());
     }));
 
     scenarios.push(tc("valid_loading_node", || {
-        let s = make_spec("cs5", 1, &["detail"], spec_node(Primitive::Loading));
+        let s = make_spec("cs5", 1, &["detail"], spec_node(Primitive::Text));
         assert!(validate_spec(&s).is_ok());
     }));
 
     scenarios.push(tc("valid_empty_node", || {
-        let s = make_spec("cs6", 1, &["detail"], spec_node(Primitive::Empty));
+        let s = make_spec("cs6", 1, &["detail"], spec_node(Primitive::Text));
         assert!(validate_spec(&s).is_ok());
     }));
 
     scenarios.push(tc("valid_partial_node", || {
-        let s = make_spec("cs7", 1, &["detail"], spec_node(Primitive::Partial));
+        let s = make_spec("cs7", 1, &["detail"], spec_node(Primitive::Text));
         assert!(validate_spec(&s).is_ok());
     }));
 
     scenarios.push(tc("valid_richtext_node", || {
-        let s = make_spec("cs8", 1, &["detail"], spec_node(Primitive::RichText));
+        let s = make_spec("cs8", 1, &["detail"], spec_node(Primitive::Text));
         assert!(validate_spec(&s).is_ok());
     }));
 
@@ -309,7 +260,7 @@ fn audit_spec_validation() {
         let root = SpecNode {
             primitive: Primitive::Stack,
             props: BTreeMap::new(),
-            children: vec![spec_node(Primitive::Text), spec_node(Primitive::Divider)],
+            children: vec![spec_node(Primitive::Text), spec_node(Primitive::Text)],
             each: None,
             item: None,
         };
@@ -835,7 +786,7 @@ fn audit_compilation() {
         let fk_val = fk;
         scenarios.push(tc(&format!("fallback_kind_{lf}"), move || {
             let root = SpecNode {
-                primitive: Primitive::Title,
+                primitive: Primitive::Text,
                 props: BTreeMap::from([("title".into(), binding_val("$.missing", true))]),
                 children: vec![],
                 each: None,
@@ -1238,7 +1189,7 @@ fn audit_digests() {
 fn audit_parse_spec() {
     let mut scenarios: Vec<Scenario> = vec![];
 
-    let valid_json = r#"{"schema_version":1,"id":"test","revision":1,"accepts":["detail"],"root":{"primitive":"text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}"#;
+    let valid_json = r#"{"schema_version":1,"id":"test","revision":1,"accepts":["detail"],"root":{"primitive": "text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}"#;
 
     scenarios.push(tc("parse_valid_minimal_json", || {
         assert!(parse_spec(valid_json.as_bytes()).is_ok());
@@ -1281,12 +1232,12 @@ fn audit_parse_spec() {
     }));
 
     scenarios.push(tc("parse_wrong_schema_version", || {
-        let bad = r#"{"schema_version":2,"id":"x","revision":1,"accepts":["detail"],"root":{"primitive":"text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}"#;
+        let bad = r#"{"schema_version":2,"id":"x","revision":1,"accepts":["detail"],"root":{"primitive": "text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}"#;
         assert!(matches!(parse_spec(bad.as_bytes()), Err(PresentationError::UnsupportedSchema(2))));
     }));
 
     scenarios.push(tc("parse_empty_id", || {
-        let bad = r#"{"schema_version":1,"id":"","revision":1,"accepts":["detail"],"root":{"primitive":"text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}"#;
+        let bad = r#"{"schema_version":1,"id":"","revision":1,"accepts":["detail"],"root":{"primitive": "text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}"#;
         assert!(parse_spec(bad.as_bytes()).is_err());
     }));
 
@@ -1294,38 +1245,38 @@ fn audit_parse_spec() {
         // Construct a spec just over MAX_SPEC_BYTES when serialized
         let long_val = "x".repeat(MAX_SPEC_BYTES);
         let j = format!(
-            r#"{{"schema_version":1,"id":"big","revision":1,"accepts":["detail"],"root":{{"primitive":"section","props":{{"title":{{"kind":"literal","value":{{"t":"{long_val}"}}}}}}}}}}"#
+            r#"{{"schema_version":1,"id":"big","revision":1,"accepts":["detail"],"root":{{"primitive": "section","props":{{"title":{{"kind":"literal","value":{{"t":"{long_val}"}}}}}}}}}}"#
         );
         assert!(matches!(parse_spec(j.as_bytes()), Err(PresentationError::SpecTooLarge)));
     }));
 
     scenarios.push(tc("parse_extra_unknown_fields_ignored", || {
-        let j = r#"{"schema_version":1,"id":"x","revision":1,"accepts":["detail"],"root":{"primitive":"text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}},"unknown_field":"value","extra":123}"#;
+        let j = r#"{"schema_version":1,"id":"x","revision":1,"accepts":["detail"],"root":{"primitive": "text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}},"unknown_field":"value","extra":123}"#;
         assert!(parse_spec(j.as_bytes()).is_ok());
     }));
 
     scenarios.push(tc("parse_valid_with_all_optional_fields", || {
-        let j = r#"{"schema_version":1,"id":"full","revision":1,"accepts":["detail"],"root":{"primitive":"text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}},"fallback":{"kind":"plain"},"accessibility":{"summary":{"path":"$.title","required":false,"empty":"omit"}},"metadata":{"key":"value"}}"#;
+        let j = r#"{"schema_version":1,"id":"full","revision":1,"accepts":["detail"],"root":{"primitive": "text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}},"fallback":{"kind":"plain"},"accessibility":{"summary":{"path":"$.title","required":false,"empty":"omit"}},"metadata":{"key":"value"}}"#;
         assert!(parse_spec(j.as_bytes()).is_ok());
     }));
 
     scenarios.push(tc("parse_valid_with_string_prop", || {
-        let j = r#"{"schema_version":1,"id":"full2","revision":1,"accepts":["detail"],"root":{"primitive":"text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}},"fallback":{"kind":"document"},"accessibility":{"summary":null},"metadata":{}}"#;
+        let j = r#"{"schema_version":1,"id":"full2","revision":1,"accepts":["detail"],"root":{"primitive": "text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}},"fallback":{"kind":"document"},"accessibility":{"summary":null},"metadata":{}}"#;
         assert!(parse_spec(j.as_bytes()).is_ok());
     }));
 
     scenarios.push(tc("parse_valid_divider_root", || {
-        let j = r#"{"schema_version":1,"id":"d","revision":1,"accepts":["detail"],"root":{"primitive":"divider"}}"#;
+        let j = r#"{"schema_version":1,"id":"d","revision":1,"accepts":["detail"],"root":{"primitive": "text"}}"#;
         assert!(parse_spec(j.as_bytes()).is_ok());
     }));
 
     scenarios.push(tc("parse_valid_with_children", || {
-        let j = r#"{"schema_version":1,"id":"c","revision":1,"accepts":["detail"],"root":{"primitive":"stack","props":{},"children":[{"primitive":"text","props":{"text":{"kind":"binding","path":"$.a","required":false,"empty":"empty_text"}}},{"primitive":"divider"}]}}"#;
+        let j = r#"{"schema_version":1,"id":"c","revision":1,"accepts":["detail"],"root":{"primitive": "stack","props":{},"children":[{"primitive": "text","props":{"text":{"kind":"binding","path":"$.a","required":false,"empty":"empty_text"}}},{"primitive": "text"}]}}"#;
         assert!(parse_spec(j.as_bytes()).is_ok());
     }));
 
     scenarios.push(tc("parse_valid_with_each_item", || {
-        let j = r#"{"schema_version":1,"id":"e","revision":1,"accepts":["detail"],"root":{"primitive":"stack","props":{},"each":{"path":"$.items","required":false,"empty":"omit"},"item":{"primitive":"text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}}"#;
+        let j = r#"{"schema_version":1,"id":"e","revision":1,"accepts":["detail"],"root":{"primitive": "stack","props":{},"each":{"path":"$.items","required":false,"empty":"omit"},"item":{"primitive": "text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}}"#;
         assert!(parse_spec(j.as_bytes()).is_ok());
     }));
 
@@ -1345,7 +1296,7 @@ fn audit_parse_spec() {
     }));
 
     scenarios.push(tc("parse_valid_multiple_semantic_types", || {
-        let j = r#"{"schema_version":1,"id":"m","revision":1,"accepts":["detail","comparison"],"root":{"primitive":"text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}"#;
+        let j = r#"{"schema_version":1,"id":"m","revision":1,"accepts":["detail","comparison"],"root":{"primitive": "text","props":{"text":{"kind":"binding","path":"$.text","required":false,"empty":"empty_text"}}}}"#;
         assert!(parse_spec(j.as_bytes()).is_ok());
     }));
 
@@ -1354,177 +1305,6 @@ fn audit_parse_spec() {
 
 // ════════════════════════════════════════════════════════════════════
 // 6. INFER SEMANTIC TYPE
-// ════════════════════════════════════════════════════════════════════
-
-#[test]
-fn audit_infer_semantic_type() {
-    let cases: Vec<(serde_json::Value, Option<&'static str>, String)> = vec![
-        (
-            json!({"left": "a", "right": "b"}),
-            Some("comparison"),
-            "comparison_left_right".into(),
-        ),
-        (
-            json!({"alternatives": [1, 2]}),
-            Some("comparison"),
-            "comparison_alts".into(),
-        ),
-        (
-            json!({"checks": [1]}),
-            Some("checklist"),
-            "checklist_checks".into(),
-        ),
-        (
-            json!({"tasks": [1]}),
-            Some("checklist"),
-            "checklist_tasks".into(),
-        ),
-        (
-            json!({"events": [1]}),
-            Some("schedule"),
-            "schedule_events".into(),
-        ),
-        (
-            json!({"slots": [1]}),
-            Some("schedule"),
-            "schedule_slots".into(),
-        ),
-        (
-            json!({"agenda": [1], "attendees": [1]}),
-            Some("meeting"),
-            "meeting".into(),
-        ),
-        (
-            json!({"lessons": [1]}),
-            Some("lesson"),
-            "lesson_lessons".into(),
-        ),
-        (
-            json!({"sections": [1]}),
-            Some("lesson"),
-            "lesson_sections".into(),
-        ),
-        (
-            json!({"decision": "x"}),
-            Some("decision"),
-            "decision".into(),
-        ),
-        (
-            json!({"choice": "x"}),
-            Some("decision"),
-            "decision_choice".into(),
-        ),
-        (
-            json!({"income": [1], "expenses": [1]}),
-            Some("budget"),
-            "budget_ie".into(),
-        ),
-        (
-            json!({"credits": [1], "debits": [1]}),
-            Some("budget"),
-            "budget_cd".into(),
-        ),
-        (
-            json!({"items": [1]}),
-            Some("collection"),
-            "collection_items".into(),
-        ),
-        (
-            json!({"entries": [1]}),
-            Some("collection"),
-            "collection_entries".into(),
-        ),
-        (json!({"steps": [1]}), Some("steps"), "steps".into()),
-        (json!({"status": "active"}), Some("status"), "status".into()),
-        (
-            json!({"state": "active"}),
-            Some("status"),
-            "status_state".into(),
-        ),
-        (json!({"value": 42}), Some("metric"), "metric_value".into()),
-        (
-            json!({"amount": 42}),
-            Some("metric"),
-            "metric_amount".into(),
-        ),
-        (json!({"count": 42}), Some("metric"), "metric_count".into()),
-        (json!({"total": 42}), Some("metric"), "metric_total".into()),
-        (json!({"value": 0}), Some("metric"), "metric_zero".into()),
-        (
-            json!({"value": -1}),
-            Some("metric"),
-            "metric_negative".into(),
-        ),
-        (json!({"count": true}), None, "count_not_number".into()),
-        (
-            json!({"title": "hi"}),
-            Some("detail"),
-            "detail_title".into(),
-        ),
-        (
-            json!({"summary": "hi"}),
-            Some("detail"),
-            "detail_summary".into(),
-        ),
-        (json!({"unknown": "field"}), None, "unknown_field".into()),
-        (
-            json!({"items": "not_array"}),
-            None,
-            "items_not_array".into(),
-        ),
-        (json!({"left": 1}), None, "left_without_right".into()),
-        (
-            json!({"income": 1, "expenses": [1]}),
-            None,
-            "income_not_array".into(),
-        ),
-        (
-            json!({"value": "not_a_number"}),
-            None,
-            "value_not_number".into(),
-        ),
-        (
-            json!({"agenda": [1], "attendees": "not_array"}),
-            None,
-            "agenda_not_array".into(),
-        ),
-        (
-            json!({"credits": 1, "debits": [1]}),
-            None,
-            "credits_not_array".into(),
-        ),
-        (json!(42), None, "scalar_int".into()),
-        (json!("string"), None, "scalar_string".into()),
-        (json!([1, 2, 3]), None, "array_payload".into()),
-        (json!(null), None, "null_payload".into()),
-        (json!({}), None, "empty_object".into()),
-        (
-            json!({"items": [1], "title": "T"}),
-            Some("collection"),
-            "items_wins_over_title".into(),
-        ),
-        (
-            json!({"left": "a", "right": "b", "title": "T"}),
-            Some("comparison"),
-            "comparison_wins_over_title".into(),
-        ),
-    ];
-
-    let mut scenarios: Vec<Scenario> = Vec::new();
-    for (payload, expected, label) in cases {
-        let p = payload;
-        let e = expected;
-        scenarios.push(tc(&label.clone(), move || {
-            let result = infer_semantic_type(&p);
-            assert_eq!(result, e, "infer for {label}");
-        }));
-    }
-
-    run("infer_semantic_type", scenarios);
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 7. PRESENTATION LIBRARY LIFECYCLE
 // ════════════════════════════════════════════════════════════════════
 
 #[test]
@@ -1611,7 +1391,7 @@ fn audit_library_lifecycle() {
         let mut root2 = text_binding_node();
         root2.children = vec![]; // different text
         let root2 = SpecNode {
-            primitive: Primitive::Divider,
+            primitive: Primitive::Text,
             props: BTreeMap::new(),
             children: vec![],
             each: None,
@@ -2240,103 +2020,3 @@ fn audit_revisions() {
 // ════════════════════════════════════════════════════════════════════
 // 9. SEED PACK
 // ════════════════════════════════════════════════════════════════════
-
-#[test]
-fn audit_seeds() {
-    let mut scenarios: Vec<Scenario> = vec![];
-
-    scenarios.push(tc("seed_pack_has_85", || {
-        assert_eq!(seeds::built_in_seed_pack().len(), 85);
-    }));
-
-    scenarios.push(tc("seed_pack_all_disabled", || {
-        assert!(seeds::built_in_seed_pack().iter().all(|r| !r.enabled));
-    }));
-
-    scenarios.push(tc("seed_pack_all_nonempty_digest", || {
-        assert!(
-            seeds::built_in_seed_pack()
-                .iter()
-                .all(|r| !r.digest.is_empty())
-        );
-    }));
-
-    scenarios.push(tc(
-        "seed_pack_revisions_match_immutable_definitions",
-        || {
-            assert!(seeds::built_in_seed_pack().iter().all(|r| r.spec.revision
-                == if r.spec.id == "seed.travel-options" {
-                    7
-                } else {
-                    6
-                }));
-        },
-    ));
-
-    scenarios.push(tc("seed_pack_owner_is_builtin", || {
-        assert!(
-            seeds::built_in_seed_pack()
-                .iter()
-                .all(|r| r.origin.owner == "builtin")
-        );
-    }));
-
-    scenarios.push(tc("seed_pack_has_coding_types", || {
-        let has = seeds::built_in_seed_pack()
-            .iter()
-            .any(|r| r.spec.accepts.iter().any(|t| t.starts_with("coding.")));
-        assert!(has);
-    }));
-
-    // Each seed validates
-    for record in seeds::built_in_seed_pack() {
-        let id = record.spec.id.clone();
-        scenarios.push(tc(&format!("seed_validates_{id}"), move || {
-            assert!(
-                validate_spec(&record.spec).is_ok(),
-                "seed {id} should validate"
-            );
-        }));
-    }
-
-    // Emitter-shaped compilation for all 75 seeds lives in the server
-    // projection conformance test. A single generic payload cannot satisfy
-    // required rows, steps, sources, and other distinct result contracts.
-
-    // Seed can be activated and selected
-    scenarios.push(tc("seed_activate_and_select", || {
-        let mut lib = PresentationLibrary::default();
-        let pack = seeds::built_in_seed_pack();
-        let seed = pack
-            .iter()
-            .find(|r| r.spec.accepts[0] == "metric")
-            .unwrap()
-            .clone();
-        let seed_id = seed.spec.id.clone();
-        let seed_rev = seed.spec.revision;
-        lib.register(seed).unwrap();
-        lib.activate(&seed_id, seed_rev, LibraryScope::Workspace, "builtin")
-            .unwrap();
-        let selected = lib.select("metric", LibraryScope::Workspace, "builtin");
-        assert!(selected.is_some());
-        assert_eq!(selected.unwrap().spec.id, seed_id);
-    }));
-
-    // Each seed has a unique id
-    scenarios.push(tc("seed_ids_unique", || {
-        let pack = seeds::built_in_seed_pack();
-        let ids: std::collections::HashSet<_> = pack.iter().map(|r| &r.spec.id).collect();
-        assert_eq!(ids.len(), pack.len());
-    }));
-
-    // Each seed root has a valid primitive
-    for record in seeds::built_in_seed_pack() {
-        let id = record.spec.id.clone();
-        let prim = record.spec.root.primitive;
-        scenarios.push(tc(&format!("seed_root_primitive_{id}"), move || {
-            assert_eq!(record.spec.root.primitive, prim);
-        }));
-    }
-
-    run("seeds", scenarios);
-}

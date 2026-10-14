@@ -1,7 +1,7 @@
 //! Durable channel delivery and the transport adapter boundary.
 
 use async_trait::async_trait;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use vak_core::Core;
@@ -17,55 +17,30 @@ use vak_session::ids::EffectId;
 const WORKER_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CHANNEL_CHARS: usize = 100_000;
 
-/// Build a plugin-merged `PresentationPlanner` (skills + recipes) from all
-/// enabled plugins across the Core's capability roots. Starts with built-in
-/// skills and recipes and layers in any `PresentationSkillManifest` and
-/// `PresentationRecipe` files that plugins declare in their
-/// `components.presentation` list.
-pub(crate) fn merged_presentation_planner(core: &Core) -> vak_delivery::PresentationPlanner {
+/// The built-in forms plus every skill manifest an enabled plugin declares
+/// in `components.presentation`, less the skills the owner revoked.
+pub(crate) fn merged_presentation_skills(core: &Core) -> vak_delivery::SkillRegistry {
     let mut skills = vak_delivery::built_in_skill_registry();
-    let mut recipes = vak_delivery::built_in_recipes();
-    let mut revoked_skills = BTreeSet::new();
     for root in core.capability_roots() {
         let Ok(plugins) = vak_plugin::PluginStore::new(&root.path).enabled() else {
             continue;
         };
         for plugin in plugins {
             for relative in &plugin.capabilities.presentation {
-                let path = plugin.package_path.join(relative);
-                let Ok(bytes) = std::fs::read(&path) else {
+                let Ok(bytes) = std::fs::read(plugin.package_path.join(relative)) else {
                     continue;
                 };
-                if let Ok(json) = std::str::from_utf8(&bytes) {
-                    if let Ok(manifest) =
-                        serde_json::from_str::<vak_delivery::PresentationSkillManifest>(json)
-                    {
-                        if !core.capability_revoked(
-                            vak_session::types::CapabilityKind::Skill,
-                            &manifest.id,
-                        ) {
-                            let _ = skills.register(manifest);
-                        } else {
-                            revoked_skills.insert(manifest.id);
-                        }
-                    } else if let Ok(recipe) =
-                        serde_json::from_str::<vak_delivery::PresentationRecipe>(json)
-                    {
-                        let _ = recipes.register(recipe);
-                    }
+                if let Ok(manifest) =
+                    serde_json::from_slice::<vak_delivery::PresentationSkillManifest>(&bytes)
+                    && !core
+                        .capability_revoked(vak_session::types::CapabilityKind::Skill, &manifest.id)
+                {
+                    let _ = skills.register(manifest);
                 }
             }
         }
     }
-    recipes.remove_revoked_skills(&revoked_skills);
-    vak_delivery::PresentationPlanner { skills, recipes }
-}
-
-/// Build a plugin-merged `SkillRegistry` for the worker's structured-fence
-/// projection. Equivalent to `merged_presentation_planner(core).skills`
-/// but avoids constructing a full planner.
-fn merged_presentation_skills(core: &Core) -> vak_delivery::SkillRegistry {
-    merged_presentation_planner(core).skills
+    skills
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]

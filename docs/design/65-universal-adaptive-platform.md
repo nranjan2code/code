@@ -2,6 +2,11 @@
 
 Status: **implemented and audited — September 14, 2026; universal document ingestion, domain templates, living interactive outcome canvas, semantic memory distillation, multi-agent collaboration evaluations, and proactive agent scheduling landed.**
 
+> The card vocabulary, the client registry and the signal and recipe
+> planning described here are replaced by docs/design/92-card-forms.md
+> (2026-10-14): eighteen forms, drawn by block, nothing decided by words.
+
+
 ## 1. Product Decision
 
 vak is a universal assistant operating with domain neutrality across engineering,

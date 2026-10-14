@@ -1,5 +1,30 @@
 ## Unreleased
 
+Cards are rebuilt as eighteen forms (docs/design/92-card-forms.md). This
+release cannot read presentation libraries saved by earlier versions: set
+the data home up again after installing.
+
+- Every card is one of eighteen forms, chosen by the shape of what it
+  shows: a summary, steps, a list, details, a table, a comparison, figures,
+  a chart, a callout, sources, a calendar, a link, media, a page preview,
+  markup, a diff, a test report or a terminal. An answer uses as many of
+  them as it has parts.
+- Every card has the same frame, text at the conversation's reading size,
+  and prose held to a comfortable line length.
+- Charts space their bars properly, label every category, use round axis
+  numbers, show each bar's value and a legend for several series, keep
+  their text at your text size, and lose the point slider.
+- Tables are never a scroll box inside the conversation, and sort by any
+  column.
+- A list is a list, not numbered steps; it can be ticked off when it is
+  things to bring, buy or do. Steps lead with their time.
+- A calendar card shows events by day.
+- Sources show who published each finding and when, beside the finding.
+- Removed: the recipe card (a recipe is details, a list and steps), the
+  starter layouts that only renamed a card, the social add-ons' alternative
+  research layouts, and the reading of an answer's words to decide how it
+  is shown.
+
 - A request for several files is held until each has a file of its own:
   two drafts of one workbook no longer count as the report and the
   workbook that were planned, so the turn is told what is missing.

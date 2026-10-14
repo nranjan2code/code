@@ -270,7 +270,7 @@ mod tests {
                             "spec_id": "fixture",
                             "revision": 1,
                             "digest": "digest",
-                            "root": {"primitive": "title", "props": {}, "children": []},
+                            "root": {"primitive": "text", "props": {}, "children": []},
                             "accessibility_summary": "A result",
                             "coverage": {"rendered_paths": [], "omitted_paths": []}
                         }, "fallback_text": "secret"},
@@ -320,7 +320,7 @@ mod tests {
                             "spec_id": "fixture",
                             "revision": 1,
                             "digest": "digest",
-                            "root": {"primitive": "title", "props": {}, "children": []},
+                            "root": {"primitive": "text", "props": {}, "children": []},
                             "accessibility_summary": "A result",
                             "coverage": {"rendered_paths": [], "omitted_paths": []}
                         }, "fallback_text": ""},
@@ -374,7 +374,7 @@ mod tests {
                                 "spec_id": "fixture.title",
                                 "revision": 1,
                                 "digest": "fixture-digest",
-                                "root": {"primitive": "title", "props": {"text": "A reusable result"}, "children": []},
+                                "root": {"primitive": "text", "props": {"text": "A reusable result"}, "children": []},
                                 "accessibility_summary": "A reusable result",
                                 "coverage": {"rendered_paths": [], "omitted_paths": []}
                             }, "fallback_text": "A reusable result"},

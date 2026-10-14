@@ -238,12 +238,9 @@ fall back visibly, links are scheme-checked, raw HTML is inert, and artifact
 and approval actions route through existing desktop commands.
 
 The client provides a universal presentation surface embedded in the continuous
-chat canvas. It is ONE component —
-`vak-client-ui/src/components/presentation/GenericSpecRenderer.tsx` — holding a
-`renderX()` function per primitive, not a suite of per-type cards. Each
-`semantic_type` in `STRUCTURED_RENDERERS` maps to a `buildXSpec()` adapter that
-lowers the raw payload into the same `primitive`/`props`/`children` node shape
-the host's `vak_presentation::compile()` emits. The behaviors are unchanged:
+chat canvas: one renderer per card form, drawn by the card's block in one
+shared card shell (`vak-client-ui/src/components/cards/`,
+docs/design/92-card-forms.md). The behaviors are unchanged:
 - **`research`**: Key takeaway rows with numbered badges, superscript
   citation tags (`[1]`, `[2]`), hover popovers displaying quoted snippets and
   source badges, and verified source link tiles with domain favicons.

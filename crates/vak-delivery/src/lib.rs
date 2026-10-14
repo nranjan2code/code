@@ -10,7 +10,6 @@ pub use vak_intent::control::clean_scaffolding;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub mod adapters;
 pub mod adaptive;
 pub mod client;
 pub mod discord;
@@ -20,10 +19,6 @@ pub mod slack;
 pub mod telegram;
 pub mod templates;
 
-pub use adapters::{
-    AdapterRegistry, ResultAdapter, built_in_adapters, structured_outputs_from_tool_result,
-    structured_outputs_from_tool_result_with,
-};
 pub use adaptive::markdown as adaptive_presentation_markdown;
 pub use adaptive::project as project_adaptive_presentation;
 pub use adaptive::project_preferred as project_preferred_adaptive_presentation;
@@ -36,14 +31,11 @@ pub use presentation::{
     safe_link,
 };
 pub use skills::{
-    ChartOutput, ChartPoint, ChartSeries, DecisionDisposition, IntendedPresentation, LinkPreview,
-    MediaOutput, Metric, PRESENTATION_SKILL_API, PlanDiagnostic, PresentationDecision,
-    PresentationPlan, PresentationPlanner, PresentationRecipe, PresentationSkillManifest,
-    RecipeCatalog, RendererBinding, RendererDecision, SignalContext, SkillError, SkillRegistry,
-    StructuredOutput, built_in_recipes, built_in_skill_registry, parse_fragment,
+    FORMS, PRESENTATION_SKILL_API, PresentationSkillManifest, SkillError, SkillRegistry,
+    StructuredOutput, built_in_semantic_types, built_in_skill_registry, is_form, parse_fragment,
     parse_fragment_with, project_structured_fences, project_structured_fences_with,
-    signals_from_context, signals_from_text, structured_markdown, structured_outputs_from_text,
-    structured_outputs_from_text_with,
+    structured_markdown, structured_output, structured_outputs_from_text,
+    structured_outputs_from_text_with, validate_form,
 };
 pub use vak_presentation as adaptive_presentation;
 
@@ -1535,6 +1527,7 @@ mod tests {
             render(&job(Markup::TelegramHtml, Some(3900))).expect("delivery job should render");
         let card = StructuredOutput {
             semantic_type: "metric".into(),
+            block: String::new(),
             schema_version: PRESENTATION_SCHEMA_VERSION,
             skill_id: "core".into(),
             skill_version: "1".into(),
@@ -1659,8 +1652,8 @@ mod tests {
         // source answer that replay/export/voice consumers depend on.
         let source = concat!(
             "# Weekly review\n\n",
-            "```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"items\",\"value\":12}}\n```\n\n",
-            "```vak\n{\"semantic_type\":\"collection\",\"payload\":{\"title\":\"Next\",\"items\":[{\"label\":\"One\"}]}}\n```\n\n",
+            "```vak\n{\"semantic_type\":\"stats\",\"payload\":{\"readings\":[{\"label\":\"items\",\"value\":12}]}}\n```\n\n",
+            "```vak\n{\"semantic_type\":\"list\",\"payload\":{\"title\":\"Next\",\"items\":[{\"label\":\"One\"}]}}\n```\n\n",
             "```vak\n{\"semantic_type\":\"steps\",\"payload\":{\"title\":\"Plan\",\"steps\":[{\"title\":\"Review\"}]}}\n```\n",
         );
         for (surface, markup) in [
@@ -2102,7 +2095,7 @@ mod tests {
 
     #[test]
     fn structured_fence_projected_on_telegram_html() {
-        let source = "# Result\n\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"tokens\",\"value\":128}}\n```\n\nSummary text here.\n";
+        let source = "# Result\n\n```vak\n{\"semantic_type\":\"stats\",\"payload\":{\"readings\":[{\"label\":\"tokens\",\"value\":128}]}}\n```\n\nSummary text here.\n";
         let input = DeliveryJob {
             job_id: "struct-1".into(),
             target: "test:one".into(),
@@ -2176,7 +2169,7 @@ mod tests {
 
     #[test]
     fn structured_fence_projected_on_discord_markdown() {
-        let source = "Done.\n\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"latency\",\"value\":42}}\n```\n";
+        let source = "Done.\n\n```vak\n{\"semantic_type\":\"stats\",\"payload\":{\"readings\":[{\"label\":\"latency\",\"value\":42}]}}\n```\n";
         let input = DeliveryJob {
             job_id: "struct-3".into(),
             target: "test:one".into(),
@@ -2205,7 +2198,7 @@ mod tests {
 
     #[test]
     fn structured_fence_passed_through_as_json_for_native_surface() {
-        let source = "Done.\n\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"tokens\",\"value\":128}}\n```\n";
+        let source = "Done.\n\n```vak\n{\"semantic_type\":\"stats\",\"payload\":{\"readings\":[{\"label\":\"tokens\",\"value\":128}]}}\n```\n";
         let input = DeliveryJob {
             job_id: "struct-4".into(),
             target: "test:one".into(),
@@ -2237,7 +2230,7 @@ mod tests {
 
     #[test]
     fn tool_result_with_vak_fence_is_projected() {
-        let tool_output = "Command completed.\n\n```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"exit_code\",\"value\":0}}\n```\n";
+        let tool_output = "Command completed.\n\n```vak\n{\"semantic_type\":\"stats\",\"payload\":{\"readings\":[{\"label\":\"exit_code\",\"value\":0}]}}\n```\n";
         let content = DeliveryContent::ToolResult(ToolResultPayload {
             tool: "bash".into(),
             output: tool_output.into(),
@@ -2304,25 +2297,13 @@ mod tests {
 
     #[test]
     fn plugin_contributed_skill_is_recognized() {
-        use std::collections::BTreeMap;
         let mut registry = built_in_skill_registry();
-        let mut renderers = BTreeMap::new();
-        renderers.insert(
-            "desktop".to_string(),
-            RendererBinding {
-                renderer: "metric".into(),
-                interactive: false,
-                requires: vec![],
-            },
-        );
         let plugin_manifest = PresentationSkillManifest {
             id: "custom_metric".into(),
             version: "1.0.0".into(),
             api: PRESENTATION_SKILL_API.into(),
             provides: vec!["custom.metric".into()],
-            renderers,
-            schema: None,
-            outcome_requirements: Vec::new(),
+            schema: Some(serde_json::json!({"type": "object", "required": ["label"]})),
         };
         let files = vec![(
             "custom_skill.json".to_string(),

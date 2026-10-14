@@ -460,6 +460,7 @@ mod tests {
     fn structured_card_blocks_always_make_progress() {
         let card = |summary: &str| crate::StructuredOutput {
             semantic_type: "note".into(),
+            block: String::new(),
             schema_version: crate::PRESENTATION_SCHEMA_VERSION,
             skill_id: "core".into(),
             skill_version: "1".into(),

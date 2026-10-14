@@ -9,319 +9,84 @@ use vak_presentation::{
     CompileInput, CompiledPresentation, LibraryScope, PresentationLibrary, Primitive, RenderNode,
 };
 
-/// Lower a compiled presentation to conservative Markdown for surfaces that
-/// cannot consume the native render tree. This is deliberately generic: it
-/// understands the host primitive vocabulary, never semantic/domain names,
-/// and returns the compiler's exact fallback when compilation degraded.
+/// Lower a compiled presentation to Markdown for surfaces that cannot draw
+/// the render tree: a form node by its form's own text form, layout by its
+/// parts, and the compiler's exact fallback when compilation degraded.
 pub fn markdown(compiled: &CompiledPresentation) -> String {
     match compiled {
         CompiledPresentation::Fallback { text, .. } => text.clone(),
-        CompiledPresentation::Rich(tree) => render_node(&tree.root, 0),
+        CompiledPresentation::Rich(tree) => {
+            let mut parts = Vec::new();
+            render_node(&tree.root, &mut parts);
+            parts.join("\n\n")
+        }
     }
 }
 
-fn render_node(node: &RenderNode, depth: usize) -> String {
-    let indent = "  ".repeat(depth.min(8));
-    let text = |key: &str| node.props.get(key).and_then(|v| v.as_str()).unwrap_or("");
-    let entries = |key: &str| entry_lines(node, key);
-    let mut out = String::new();
+fn render_node(node: &RenderNode, parts: &mut Vec<String>) {
+    let text = |key: &str| {
+        node.props
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string()
+    };
     match node.primitive {
-        Primitive::Title => out.push_str(&format!("{}# {}\n", indent, text("text"))),
-        Primitive::Section => out.push_str(&format!("{}## {}\n", indent, text("title"))),
-        Primitive::Label | Primitive::Badge => {
-            out.push_str(&format!("{}{}\n", indent, text("text")))
-        }
-        Primitive::Divider => out.push_str(&format!("{}---\n", indent)),
-        Primitive::Quote | Primitive::Callout => {
-            let value = text("text");
-            if !value.is_empty() {
-                out.push_str(&format!("> {}\n", value));
+        Primitive::Stack | Primitive::Row | Primitive::Group => {}
+        Primitive::Section => {
+            let heading = [text("label"), text("title")]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" · ");
+            if !heading.is_empty() {
+                parts.push(format!("**{heading}**"));
+            }
+            if !text("text").is_empty() {
+                parts.push(text("text"));
             }
         }
-        Primitive::List | Primitive::Checklist | Primitive::Timeline | Primitive::Steps => {
-            let value = text("text");
-            if !value.is_empty() {
-                out.push_str(&format!("{}- {}\n", indent, value));
-            }
-        }
-        Primitive::KeyValue | Primitive::Progress => {
-            let label = text("label");
-            let value = text("value");
-            if !label.is_empty() || !value.is_empty() {
-                out.push_str(&format!("{}**{}:** {}\n", indent, label, value));
+        Primitive::Text => {
+            if !text("text").is_empty() {
+                parts.push(text("text"));
             }
         }
         Primitive::Metric => {
-            let label = text("label");
-            if let Some(value) = node.props.get("value") {
-                let value = value
-                    .as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| value.to_string());
-                let unit = text("unit");
-                out.push_str(&format!(
-                    "{}**{}:** {}{}\n",
-                    indent,
-                    label,
-                    value,
-                    if unit.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" {unit}")
-                    }
-                ));
-            } else {
-                if !label.is_empty() {
-                    out.push_str(&format!("{}**{}**\n", indent, label));
-                }
-                for (key, value) in &node.props {
-                    if matches!(key.as_str(), "label" | "title" | "semantic_type") {
-                        continue;
-                    }
-                    let value = value
-                        .as_str()
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| value.to_string());
-                    out.push_str(&format!(
-                        "{}- {}: {}\n",
-                        indent,
-                        key.replace('_', " "),
-                        value
-                    ));
-                }
-            }
+            let value = node.props.get("value").map(|value| match value {
+                Value::String(text) => text.clone(),
+                other => other.to_string(),
+            });
+            let reading = [value.unwrap_or_default(), text("unit")]
+                .into_iter()
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            parts.push(format!("- {}: {reading}", text("label")));
         }
-        Primitive::Text
-        | Primitive::RichText
-        | Primitive::Group
-        | Primitive::Stack
-        | Primitive::Row
-        | Primitive::Disclosure
-        | Primitive::Comparison
-        | Primitive::Table
-        | Primitive::Chart
-        | Primitive::DataGrid
-        | Primitive::Image
-        | Primitive::Audio
-        | Primitive::Video
-        | Primitive::File
-        | Primitive::LinkPreview
-        | Primitive::Gallery
-        | Primitive::Diff
-        | Primitive::TestMatrix
-        | Primitive::Terminal
-        | Primitive::Artifact
-        | Primitive::CitationList
-        | Primitive::Filter
-        | Primitive::Sort
-        | Primitive::Search
-        | Primitive::Stepper
-        | Primitive::Timer
-        | Primitive::Loading
-        | Primitive::Empty
-        | Primitive::Partial
-        | Primitive::Error
-        | Primitive::Unavailable
-        | Primitive::Stale
-        | Primitive::Map
-        | Primitive::Calendar
-        | Primitive::Board
-        | Primitive::Graph
-        | Primitive::Entity
-        | Primitive::Evidence
-        | Primitive::Form
-        | Primitive::Transaction
-        | Primitive::Alert
-        | Primitive::Conversation
-        | Primitive::Simulation
-        | Primitive::IngredientList
-        | Primitive::StepList
-        | Primitive::TakeawayList
-        | Primitive::SourceList => {
-            let value = text("text");
-            if !value.is_empty() {
-                out.push_str(&format!("{}{}\n", indent, value));
-            }
-        }
-        Primitive::Recipe => {
-            let title = text("title");
-            if !title.is_empty() {
-                out.push_str(&format!("{}## {}\n", indent, title));
-            }
-            for (label, key) in [("Serves", "servings"), ("Time", "total_time")] {
-                let value = text(key);
-                if !value.is_empty() {
-                    out.push_str(&format!("{}**{}:** {}\n", indent, label, value));
-                }
-            }
-            let ingredients = entries("ingredients");
-            if !ingredients.is_empty() {
-                out.push_str(&format!("{}**Ingredients:**\n", indent));
-                for ingredient in ingredients {
-                    out.push_str(&format!("{}- {}\n", indent, ingredient));
-                }
-            }
-            let steps = entries("steps");
-            if !steps.is_empty() {
-                out.push_str(&format!("{}**Steps:**\n", indent));
-                for (index, step) in steps.iter().enumerate() {
-                    out.push_str(&format!(
-                        "{}{}. {}\n",
-                        indent,
-                        index.saturating_add(1),
-                        step
-                    ));
-                }
-            }
-        }
-        Primitive::Research => {
-            let title = text("title");
-            if !title.is_empty() {
-                out.push_str(&format!("{}## {}\n", indent, title));
-            }
-            let question = text("question");
-            if !question.is_empty() {
-                out.push_str(&format!("{}**Question:** {}\n", indent, question));
-            }
-            for (label, key) in [("Takeaways", "takeaways"), ("Sources", "sources")] {
-                let values = entries(key);
-                if !values.is_empty() {
-                    out.push_str(&format!("{}**{}:**\n", indent, label));
-                    for value in values {
-                        out.push_str(&format!("{}- {}\n", indent, value));
-                    }
-                }
-            }
-        }
-        Primitive::UiPreview => {
-            // The previewed document is untrusted authored markup; plain-text
-            // surfaces describe it rather than inlining it.
-            let title = text("title");
-            if !title.is_empty() {
-                out.push_str(&format!("{}## {}\n", indent, title));
-            }
-            let caption = text("caption");
-            if !caption.is_empty() {
-                out.push_str(&format!("{}{}\n", indent, caption));
-            }
-            out.push_str(&format!(
-                "{}_(interactive preview omitted on this surface)_\n",
-                indent
-            ));
+        form => {
+            let output = crate::skills::StructuredOutput {
+                semantic_type: form_name(form),
+                block: form_name(form),
+                schema_version: crate::PRESENTATION_SCHEMA_VERSION,
+                skill_id: String::new(),
+                skill_version: String::new(),
+                payload: Value::Object(node.props.clone().into_iter().collect()),
+            };
+            parts.push(crate::skills::structured_markdown(&output));
         }
     }
     for child in &node.children {
-        out.push_str(&render_node(child, depth.saturating_add(1)));
-    }
-    // Some valid packs bind the complete payload to a primitive whose text
-    // lowering has no specialized shape (for example a universal entity or a
-    // small comparison table). Never let a rich selection erase the result on
-    // a constrained surface. Keep this structural and preserve every field.
-    if out.trim().is_empty() {
-        out.push_str(&render_bound_props(node, &indent));
-    }
-    out
-}
-
-fn inline_value(value: &Value, depth: usize) -> String {
-    if depth >= 8 {
-        return value.to_string();
-    }
-    match value {
-        Value::Null => "Unavailable".into(),
-        Value::String(value) => value.clone(),
-        Value::Number(value) => value.to_string(),
-        Value::Bool(value) => {
-            if *value {
-                "Yes".into()
-            } else {
-                "No".into()
-            }
-        }
-        Value::Array(items) => items
-            .iter()
-            .map(|item| inline_value(item, depth + 1))
-            .collect::<Vec<_>>()
-            .join("; "),
-        Value::Object(fields) => fields
-            .iter()
-            .map(|(key, value)| {
-                format!(
-                    "{}: {}",
-                    key.replace('_', " "),
-                    inline_value(value, depth + 1)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" · "),
+        render_node(child, parts);
     }
 }
 
-fn render_bound_props(node: &RenderNode, indent: &str) -> String {
-    let mut out = String::new();
-    for key in ["title", "summary"] {
-        if let Some(value) = node.props.get(key).and_then(Value::as_str)
-            && !value.is_empty()
-        {
-            if key == "title" {
-                out.push_str(&format!("{indent}## {value}\n"));
-            } else {
-                out.push_str(&format!("{indent}{value}\n"));
-            }
-        }
-    }
-    for (key, value) in &node.props {
-        if matches!(key.as_str(), "title" | "summary" | "semantic_type") {
-            continue;
-        }
-        let label = key.replace('_', " ");
-        if let Value::Array(items) = value {
-            out.push_str(&format!("{indent}**{label}:**\n"));
-            for item in items {
-                out.push_str(&format!("{indent}- {}\n", inline_value(item, 0)));
-            }
-        } else {
-            out.push_str(&format!(
-                "{indent}**{label}:** {}\n",
-                inline_value(value, 0)
-            ));
-        }
-    }
-    out
-}
-
-/// Lower a list-shaped prop to plain lines. Stays structural: a string item is
-/// used as-is, an object item is reduced through the same generic label/value
-/// keys the rest of this lowering uses, never through domain field names.
-fn entry_lines(node: &RenderNode, key: &str) -> Vec<String> {
-    let Some(items) = node.props.get(key).and_then(|value| value.as_array()) else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .filter_map(|item| match item {
-            Value::String(value) => Some(value.clone()),
-            Value::Object(fields) => {
-                let pick = |name: &str| fields.get(name).and_then(|v| v.as_str()).unwrap_or("");
-                let label = [pick("label"), pick("name"), pick("title")]
-                    .into_iter()
-                    .find(|value| !value.is_empty())
-                    .unwrap_or_default();
-                let value = [pick("text"), pick("value"), pick("detail")]
-                    .into_iter()
-                    .find(|value| !value.is_empty())
-                    .unwrap_or_default();
-                match (label.is_empty(), value.is_empty()) {
-                    (true, true) => None,
-                    (true, false) => Some(value.to_owned()),
-                    (false, true) => Some(label.to_owned()),
-                    (false, false) => Some(format!("{label}: {value}")),
-                }
-            }
-            Value::Number(value) => Some(value.to_string()),
-            _ => None,
-        })
-        .collect()
+/// A form primitive's name, as `vak_delivery::FORMS` spells it.
+fn form_name(primitive: Primitive) -> String {
+    serde_json::to_value(primitive)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 pub fn project(
@@ -376,7 +141,7 @@ mod tests {
             "id": "demo.timeline",
             "revision": 1,
             "accepts": ["demo"],
-            "root": { "primitive": "title", "props": { "text": { "kind": "binding", "path": "$.title" } }, "children": [] }
+            "root": { "primitive": "text", "props": { "text": { "kind": "binding", "path": "$.title" } }, "children": [] }
         }))
         .expect("spec");
         let mut library = PresentationLibrary::default();

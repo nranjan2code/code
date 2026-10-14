@@ -105,8 +105,8 @@ impl PresentationStore {
     }
 }
 
-/// The library as it applies to `owner`'s workspace: what was saved, the
-/// built-in seeds, and `plugins` (the packs of every enabled plugin), each
+/// The library as it applies to `owner`'s workspace: what was saved and
+/// `plugins` (the packs of every enabled plugin), each
 /// active there unless suppressed or an explicit activation already draws
 /// one of its kinds (docs/design/91-presentation-capabilities.md §2).
 pub fn effective(
@@ -115,10 +115,7 @@ pub fn effective(
     plugins: Vec<vak_presentation::StoredPresentation>,
 ) -> PresentationLibrary {
     let mut effective = library.clone();
-    for record in vak_presentation::seeds::built_in_seed_pack()
-        .into_iter()
-        .chain(plugins)
-    {
+    for record in plugins {
         let id = record.spec.id.clone();
         let revision = record.spec.revision;
         let accepts = record.spec.accepts.clone();
@@ -134,10 +131,7 @@ pub fn effective(
         let chosen_elsewhere = accepts.iter().any(|kind| {
             effective
                 .select_preferred(kind, "user", owner)
-                .is_some_and(|selected| {
-                    selected.spec.id != id
-                        && selected.spec.metadata.get("seed").map(String::as_str) != Some("true")
-                })
+                .is_some_and(|selected| selected.spec.id != id)
         });
         if chosen_elsewhere {
             continue;
@@ -181,7 +175,7 @@ mod tests {
             "id": "demo.card",
             "revision": 1,
             "accepts": ["demo"],
-            "root": { "primitive": "title", "props": {}, "children": [] }
+            "root": { "primitive": "text", "props": {}, "children": [] }
         }))
         .expect("spec");
         let record = StoredPresentation {
@@ -219,7 +213,7 @@ mod tests {
             "id": "next.turn.card",
             "revision": 1,
             "accepts": ["demo"],
-            "root": { "primitive": "title", "props": {}, "children": [] }
+            "root": { "primitive": "text", "props": {}, "children": [] }
         }))
         .expect("spec");
         let record = StoredPresentation {
@@ -275,7 +269,7 @@ mod tests {
             accepts: vec!["live-pack-value".into()],
             block: None,
             root: vak_presentation::SpecNode {
-                primitive: vak_presentation::Primitive::Title,
+                primitive: vak_presentation::Primitive::Text,
                 props: std::collections::BTreeMap::new(),
                 children: Vec::new(),
                 each: None,

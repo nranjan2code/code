@@ -1,47 +1,61 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-//! Every card type the client draws is a kind some `answer` block produces,
-//! and every kind a block produces is drawn: the two sets are equal. Types
-//! the client could draw but no block produced were how 66 card types went
-//! out of the model's reach unnoticed
-//! (docs/audits/cards-in-answers-2026-10-11.md, F1).
+//! The forms are one list everywhere (docs/design/92-card-forms.md): the
+//! card tools, the delivery validators, the host's primitives and the forms
+//! the client draws are the same set. A form one side lacks is a card the
+//! model can make and nobody draws, or a drawing nothing can reach.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-/// The top-level keys of the client's `STRUCTURED_RENDERERS` registry.
-fn client_types() -> BTreeSet<String> {
+/// The keys of the client's `FORMS` table.
+fn client_forms() -> BTreeSet<String> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../vak-client-ui/src/components/PresentationRenderer.tsx");
+        .join("../vak-client-ui/src/components/cards/index.tsx");
     let source = std::fs::read_to_string(&path).unwrap();
-    let start = source.find("const STRUCTURED_RENDERERS").unwrap();
-    let end = source.find("export const structuredRendererTypes").unwrap();
+    let start = source.find("const FORMS").unwrap();
+    let end = start + source[start..].find("\n};").unwrap();
     source[start..end]
         .lines()
-        .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+        .skip(1)
         .filter_map(|line| {
-            let (key, _) = line.trim().split_once(':')?;
-            let key = key.trim_matches('"');
-            key.chars()
-                .all(|c| c.is_ascii_lowercase() || c == '_' || c == '.')
-                .then(|| key.to_string())
+            line.trim()
+                .split_once(':')
+                .map(|(key, _)| key.trim().to_string())
         })
-        .filter(|key| !key.is_empty())
         .collect()
 }
 
 #[test]
 fn the_card_kinds_are_exactly_the_types_the_client_draws() {
-    let kinds: BTreeSet<String> = vak_core::presentation_tools::conformance_cases()
+    let tools: BTreeSet<String> = vak_core::presentation_tools::conformance_cases()
         .into_iter()
-        .map(|(_, kind, _)| kind.to_string())
+        .map(|(_, form, _)| form.to_string())
         .collect();
-    let client = client_types();
-    assert!(!client.is_empty(), "parsed no client types");
-    let undrawn: Vec<_> = kinds.difference(&client).collect();
-    let unreachable: Vec<_> = client.difference(&kinds).collect();
-    assert!(
-        undrawn.is_empty() && unreachable.is_empty(),
-        "kinds the client does not draw: {undrawn:?}\ntypes no block produces: {unreachable:?}"
+    let delivery: BTreeSet<String> = vak_delivery::FORMS
+        .iter()
+        .map(|form| form.to_string())
+        .collect();
+    let primitives: BTreeSet<String> = vak_presentation::PRIMITIVES
+        .iter()
+        .filter_map(|primitive| {
+            serde_json::to_value(primitive)
+                .ok()?
+                .as_str()
+                .map(str::to_string)
+        })
+        .filter(|name| {
+            !matches!(
+                name.as_str(),
+                "stack" | "row" | "group" | "section" | "text" | "metric"
+            )
+        })
+        .collect();
+    let client = client_forms();
+    assert_eq!(tools, delivery, "card tools and delivery forms differ");
+    assert_eq!(primitives, delivery, "host primitives and forms differ");
+    assert_eq!(
+        client, delivery,
+        "the client draws a different set of forms"
     );
 }

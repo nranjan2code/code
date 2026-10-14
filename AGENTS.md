@@ -1166,28 +1166,25 @@ commit (invariant 30).
   never mounted. Presentation snapshot/SSE endpoints are reconnectable
   projections over the ledger and live events; legacy transcript, `AgentEvent`,
   webhook, and channel text paths remain compatibility surfaces.
-  Outcome cards follow a uniform contract and there are no per-type card
-  components. Every `semantic_type` key in the single `STRUCTURED_RENDERERS`
-  registry (`vak-client-ui/src/components/PresentationRenderer.tsx`) routes
-  through ONE declarative, surface-aware renderer,
-  `vak-client-ui/src/components/presentation/GenericSpecRenderer.tsx`, as a
-  `buildXSpec(payload) -> AdaptiveRenderNode` adapter plus a `renderX()`
-  primitive renderer. The node shape is the same `primitive`/`props`/
-  `children` tree the host emits (`vak_presentation::RenderNode`), so a
-  registry entry is a routing decision, never a new component. Adding a
-  `semantic_type` that reuses an existing primitive is a one-line registry
-  entry; only a genuinely new PRIMITIVE is a code change across host and
-  client. Recipes, research citations, charts, diffs, maps, calendars,
-  boards, entities, evidence, documents, graphs, forms, transactions, alerts,
-  conversations, and sandboxed previews are first-class primitives backed by
-  real validated payloads. Universal semantic shapes compose across domains;
-  they are not a coding-only card taxonomy. The step-by-step contributor
-  guide is `docs/design/67-presentation-renderer-guide.md`. A model shows
+  **A card is a form** (docs/design/92-card-forms.md): a shape of
+  information, never a topic. The forms are `vak_delivery::FORMS` (summary,
+  steps, list, details, table, comparison, stats, chart, callout, sources,
+  calendar, link, media, file preview, markup preview, diff, test report,
+  terminal), and the same list is the card tools, the delivery validators
+  (`validate_form`, one text form each in `structured_markdown`), the host's
+  form primitives (`vak_presentation::PRIMITIVES`, plus layout) and the
+  client's `FORMS` table (`vak-client-ui/src/components/cards/index.tsx`),
+  checked equal by `the_card_kinds_are_exactly_the_types_the_client_draws`.
+  Every card carries its form as `StructuredOutput.block`, and the client
+  draws by block in one shared card shell; a kind only selects a pack on
+  the host. A form's own kind is its name; a pack adds kinds to a form
+  (doc 91); nothing else does. An answer uses as many cards as it has
+  parts, laid out by doc 87. Nothing decides a card by words or counts:
+  no signals read from text, no title word lists, no row thresholds. The
+  contributor guide is `docs/design/67-presentation-renderer-guide.md`. A model shows
   each card by calling the card tool that owns its kind, by its own name
-  and precise schema (`vak-core/src/presentation_tools.rs`, one per block
-  shape: summary, steps, checklist, comparison, table, stats, chart,
-  callout, details, research, recipe, media, UI preview (a file),
-  markup preview (inline HTML), diff, test report and terminal; a shape
+  and precise schema (`vak-core/src/presentation_tools.rs`, one per form;
+  a shape
   that could be given one of two fields is two cards, each with that
   field required, so the wire can enforce it); one nested call of every block, tried as the `answer` tool,
   came back as broken JSON on 7 of 16 captured steps against none for
@@ -1197,14 +1194,7 @@ commit (invariant 30).
   conversation retrieved and its tool's rules, then recorded as a
   `PresentationSource::ToolCall` presentation with the plan deliverable its
   `deliverable` names, and the runtime lays the answer out from those names
-  (docs/design/87-composed-answers.md §2). A block's kinds are its own
-  first, then every registry type whose renderer and pack read the payload
-  it builds (`itinerary` and `meal_plan` are `steps`, `budget` is `table`,
-  `faq` and `map` are `details`), so every built-in pack draws a type some
-  block produces
-  (`every_starter_presentation_pack_compiles_with_its_emitter_payload`),
-  the client draws exactly the kinds the blocks produce
-  (`the_card_kinds_are_exactly_the_types_the_client_draws`), and one
+  (docs/design/87-composed-answers.md §2). One
   argument name is one shape on every block
   (`one_argument_name_is_one_shape_on_every_block`). A card that names in
   `deliverable` a deliverable the plan does not have is refused with the plan's
@@ -1385,9 +1375,8 @@ failed, cancelled, or unknown; a typed renderer cannot upgrade an unsupported
 claim into observed evidence. Evidence is scoped to the result and requirement,
 and its strength, freshness, identity, and applicability are evaluated
 separately. Missing or stale evidence must remain visible as partial/unknown.
-Specialised presentation recipes are eligible only when the required typed
-result and evidence are present; otherwise deterministic Markdown fallback is
-used with a diagnostic. No surface may independently classify a result.
+A card shows only what its validated payload holds; otherwise deterministic
+Markdown fallback is used. No surface may independently classify a result.
 
 A collaborative message adds to the active goal unless it is an explicit
 command: `/goal fix …` corrects (keeping the additions), `/goal replace …`
@@ -1576,11 +1565,9 @@ crates/vak-presentation  the CLOSED primitive vocabulary (Primitive enum in
                      digest, coverage accounting, and explicit fallback.
                      PACKS (StoredPresentation/PresentationSpec, PresentationOrigin,
                      LibraryScope) are runtime-pluggable and compose existing
-                     primitives with ZERO code change; seeds.rs is the worked
-                     example (85 disabled built-in starter definitions).
-                     Four independently installed social add-ons contribute
-                     12 more package-owned presentation layouts (three each),
-                     seeded disabled and outside the built-in catalog. Adding a
+                     primitives with ZERO code change; packages/answer-layouts
+                     is the worked example. The primitives are the card forms
+                     plus layout (docs/design/92-card-forms.md); adding a
                      primitive is the only part that needs a code change
                      (docs/design/57-adaptive-presentation-runtime.md,
                      docs/design/67-presentation-renderer-guide.md)

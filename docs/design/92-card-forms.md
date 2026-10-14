@@ -1,6 +1,6 @@
 # 92 — Card forms
 
-Status: in progress: direction from the maintainer on 2026-10-14 ("rebuild
+Status: in progress: F1 to F5 built 2026-10-14, F6 (live) open; direction from the maintainer on 2026-10-14 ("rebuild
 correctly to be maintainable but yet effective for anything … completely
 remove what's not wanted"; no users, so nothing is kept for compatibility).
 Builds on docs/design/87-composed-answers.md (cards in answers),
@@ -101,8 +101,14 @@ turns show a shape the forms above cannot carry (`docs/plans/open-items.md`).
   shape's four kinds (now `link` and `media`).
 - `PresentationRecipe`, `built_in_recipes`, `signals_from_text`,
   `signals_from_context` and the projection's planner over them.
-- The 85 alias starter packs; seeds are rebuilt for the forms, and the
-  dev data home is set up again (re-seeded) after the change.
+- The 85 alias starter packs and the seed module: every form draws
+  natively, so a built-in pack that redraws one adds nothing. Packs stay a
+  capability (plugins, the owner's own); `packages/answer-layouts` is the
+  one shipped. The social add-ons' twelve research layouts go with them.
+  The data home is set up again (re-seeded) after the change.
+- The delivery result adapters, the JSON sniffing of prose and of json
+  fences on host and client, and the HTML exporter's own vak-table fence
+  dialect: a vak fence is the one fallback.
 - Primitives no form or layout uses.
 - The compatibility branches for older saved pack trees in the client.
 
@@ -117,4 +123,15 @@ turns show a shape the forms above cannot carry (`docs/plans/open-items.md`).
 | F5 Prompt and docs | prompt seed and tool descriptions name the forms (diff note in doc 07); docs 30, 57, 67, 87 point here |
 | F6 Live | real turns on the dev route draw every form; checked at 1440×900 and 390×844, light and dark; data home re-seeded |
 
-Progress is recorded here as each stage lands.
+Progress:
+
+- F1–F3, 2026-10-14: `SHAPES` is the eighteen forms; `vak_delivery::skills`
+  is one validator and one text form per form, with `StructuredOutput.block`;
+  the planner, recipes and signals are gone from delivery and the server
+  projection; `Primitive` is the forms plus layout; seeds removed.
+- F4, 2026-10-14: `components/cards/` (one shell, one renderer per form,
+  the chart rebuilt with a band scale and round ticks); the registry,
+  `GenericSpecRenderer`, `blocks.tsx` and the client's fence repair removed;
+  the card CSS rewritten on DESIGN.md tokens.
+- F5, 2026-10-14: the prompt seed says an answer uses as many cards as it
+  has parts; AGENTS.md and docs 30, 67 and 68 point here.

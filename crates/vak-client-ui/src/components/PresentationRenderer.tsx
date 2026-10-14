@@ -48,14 +48,12 @@ import { isDocumentPath, parseOfficeCitation } from "../officeFiles";
 import { officeFactsLine, officeFlagsLabel } from "../officeFacts";
 import { highlight, languageForFence } from "../highlight";
 import DiffInspector from "./presentation/DiffInspector";
-import { downloadCsv } from "./presentation/data";
 import MermaidViewer from "./presentation/MermaidViewer";
 
 // Technical details are a disclosure preference only; they never change the
 // result, route, authority, or which safety states remain visible.
 const showOperatorChrome = () => technicalDetails();
-import GenericSpecRenderer, { PresentationInteractionContext, PresentationSessionContext, buildTimelineSpec, buildMetricSpec, buildTableSpec, buildOptionsTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
-import { buildCalloutSpec, buildChecklistSpec, buildComparisonSpec, buildLeadSpec, buildStatsSpec, isOptionsComparison } from "./presentation/blocks";
+import { FormView, PackTree, PresentationInteractionContext, PresentationSessionContext, downloadCsv, formNames } from "./cards";
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
@@ -471,31 +469,6 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string } & Presenta
           case "quote":
             return <blockquote class="semantic-quote"><Blocks blocks={block.blocks} recipeId={props.recipeId} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} /></blockquote>;
           case "code":
-            if (block.language === "vak" || block.language === "json" || block.content.includes('"semantic_type"')) {
-              const structured = parseVakFence(block.content);
-              if (structured) return <StructuredView output={structured} fallback={block.content} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />;
-              // If it has vak language or semantic_type, attempt recovery and never leak as a raw code block
-              if (block.language === "vak" || block.content.includes('"semantic_type"')) {
-                const match = block.content.match(/\{[\s\S]*"semantic_type"[\s\S]*\}/);
-                if (match) {
-                  const recovered = parseVakFence(match[0]);
-                  if (recovered) return <StructuredView output={recovered} fallback={block.content} sessionId={props.sessionId} resultId={props.resultId} presentationId={props.presentationId} />;
-                }
-                // A genuinely malformed vak/semantic-type fence (the model
-                // emitted invalid JSON, e.g. mismatched brackets) used to
-                // `return null` here whenever operator chrome was off. That
-                // produced a real answer that rendered as
-                // total silence: no card, no error, no raw JSON, nothing.
-                // Same fallback contract as assistantParts()'s equivalent
-                // fix (structured.ts) — never leave a parse failure with no
-                // trace at all.
-                return (
-                  <p class="semantic-paragraph" style={{ opacity: 0.7, "font-style": "italic" }}>
-                    This response could not be rendered — the result was malformed.
-                  </p>
-                );
-              }
-            }
             if (block.language === "mermaid") {
               return <MermaidViewer source={block.content} title={block.filename ?? undefined} />;
             }
@@ -1165,185 +1138,17 @@ export function StructuredView(props: { output: import("../types").StructuredOut
   </ErrorBoundary>;
 }
 
-type StructuredRendererComponent = (props: { data: any; output: import("../types").StructuredOutput }) => JSX.Element;
-
-// Every named semantic type resolves through this single registry. Tests derive
-// their coverage from this registry so newly registered types cannot bypass the
-// completed-turn rendering contract.
-const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
-  // Universal semantic shapes share a safe, lossless baseline renderer until
-  // a richer domain-neutral interaction is available.
-  "map": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Map")} />,
-  "route_map": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Route map")} />,
-  "calendar": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Calendar")} />,
-  "availability": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Availability")} />,
-  "board": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Board")} />,
-  "entity": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Entity")} />,
-  "search_results": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Search results")} />,
-  "evidence": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Evidence")} />,
-  "decision_analysis": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Decision")} />,
-  "document": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Document")} />,
-  "graph": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Graph")} />,
-  "form": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Form")} />,
-  "action": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Action")} />,
-  "transaction": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Transaction")} />,
-  "alert": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Alert")} />,
-  "conversation": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Conversation")} />,
-  "progress_dashboard": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Progress dashboard")} />,
-  "simulation": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Simulation")} />,
-  // 1. Research & Synthesis (research.synthesis, research_brief, research, news)
-  "research.synthesis": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
-  "research_brief": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
-  "news": ({ data }) => <GenericSpecRenderer node={buildResearchSpec(data)} />,
-
-  // 2. Code, Tests & Terminal (coding.diff, test.report, terminal.view, etc.)
-  "coding.diff": ({ data }) => <GenericSpecRenderer node={buildDiffSpec(data)} />,
-  "test.report": ({ data }) => <GenericSpecRenderer node={buildTestMatrixSpec(data)} />,
-  "terminal.view": ({ data }) => <GenericSpecRenderer node={buildTerminalSpec(data)} />,
-
-  // 3. Coding Specific Flows
-  "coding.benchmark": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Benchmark Results")} />,
-  "coding.dependencies": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Dependencies")} />,
-  "coding.deployment": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Deployment", "Deployment")} />,
-  "coding.incident": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Incident Summary", "Incident")} />,
-  "coding.architecture": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Architecture")} />,
-  "coding.release": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Release Notes", "Release")} />,
-  "coding.search": ({ data }) => (Array.isArray(data?.results) || Array.isArray(data?.rows)) ? <GenericSpecRenderer node={buildTableSpec(data, "Search Results")} /> : <GenericSpecRenderer node={buildResearchSpec(data)} />,
-
-  // 4. Data Grids, Tables & Comparisons
-  "data.grid": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Data Grid")} />,
-  "table": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Table")} />,
-  "dataframe": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Table")} />,
-  "comparison": ({ data }) => <GenericSpecRenderer node={isOptionsComparison(data) ? buildComparisonSpec(data) : buildTableSpec(data, "Comparison")} />,
-  "comparison_table": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Comparison Table")} />,
-  "pros_cons": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Pros & Cons")} />,
-  "inventory": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Inventory")} />,
-  "scorecard": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Scorecard")} />,
-  "decision_matrix": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Decision Matrix")} />,
-  "criteria_matrix": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Criteria Matrix")} />,
-  "tradeoff_analysis": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Tradeoff Analysis")} />,
-
-  // 5. Financial Summaries & Budgets
-  "budget": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Budget Breakdown")} />,
-  "finance_summary": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Financial Summary")} />,
-  "invoice_summary": ({ data }) => <GenericSpecRenderer node={buildTableSpec(data, "Invoice Summary")} />,
-
-  // 6. Culinary & Lifestyle
-  "recipe.card": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
-  "recipe": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
-  "lifestyle.recipe": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
-  "lifestyle.culinary_recipe": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
-  "recipe_summary": ({ data }) => <GenericSpecRenderer node={buildRecipeSpec(data)} />,
-  "meal_plan": ({ data }) => Array.isArray(data?.steps) || Array.isArray(data?.ingredients) ? <GenericSpecRenderer node={buildRecipeSpec(data)} /> : <GenericSpecRenderer node={buildTimelineSpec(data, "Meal Plan", "Meal Plan")} />,
-
-  // 7. Interactive Previews
-  "ui.preview": ({ data }) => <GenericSpecRenderer node={buildUiPreviewSpec(data)} />,
-  "ui.markup": ({ data }) => <GenericSpecRenderer node={buildUiPreviewSpec(data)} />,
-
-  // 8. Timelines, Plans, Checklists, Schedules & Notes
-  "plan.timeline": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Plan Timeline", "Plan")} />,
-  // Every timeline-shaped key below routes through the generic declarative
-  // renderer (see presentation/GenericSpecRenderer.tsx): `buildTimelineSpec`
-  // builds a node client-side from the same raw payload shapes the legacy
-  // `normalizeTimeline` handled, and the `timeline` primitive produces the
-  // exact same "adaptive-timeline" DOM/CSS TimelineCard did (including the
-  // per-key `kicker`). No registry key calls TimelineCard directly anymore.
-  "timeline": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Timeline", "Timeline")} />,
-  "itinerary": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Itinerary", "Itinerary")} />,
-  "checklist": ({ data }) => <GenericSpecRenderer node={buildChecklistSpec(data)} />,
-  "schedule": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Schedule", "Schedule")} />,
-  "agenda": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Agenda", "Agenda")} />,
-  "milestones": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Milestones", "Milestones")} />,
-  "progress": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Progress Tracking", "Progress")} />,
-  "status": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Status", "Status")} />,
-  "steps": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Steps", "Steps")} />,
-  "overview": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Overview")} />,
-  "summary": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Summary")} />,
-  "detail": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Detail")} />,
-  "notes": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Notes", "Notes")} />,
-  "follow_up": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Follow-Up Items", "Follow-Up")} />,
-  "reminder": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Reminders", "Reminder")} />,
-  "shopping_list": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Shopping List", "Shopping List")} />,
-  "lesson": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Lesson Plan", "Lesson")} />,
-  "reading_list": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Reading List", "Reading List")} />,
-  "habit_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Habit Plan", "Habit")} />,
-  "project_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Project Plan", "Project")} />,
-  "meeting_notes": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Meeting Notes", "Meeting")} />,
-  "contact_log": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Contact Log", "Contact")} />,
-  "travel_options": ({ data }) => {
-    const tableShape = !Array.isArray(data?.options) && (
-      Array.isArray(data?.rows) || Array.isArray(data?.columns) ||
-      Array.isArray(data?.pros) || Array.isArray(data?.cons) ||
-      (data?.left && data?.right)
-    );
-    return <GenericSpecRenderer node={tableShape ? buildOptionsTableSpec(data, "Travel Options") : buildTimelineSpec(data, "Travel Options", "Travel")} />;
-  },
-  "home_project": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Home Project", "Project")} />,
-  "care_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Care Plan", "Care Plan")} />,
-  "event_plan": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Event Plan", "Event")} />,
-  "media_list": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Media List", "Media")} />,
-  "collection": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Collection", "Collection")} />,
-  "faq": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "FAQ")} />,
-  "decision": ({ data }) => <GenericSpecRenderer node={buildTimelineSpec(data, "Decision Analysis", "Decision")} />,
-
-  // 9. Visualizations & Charts
-  // Malformed/missing `series` no longer renders blank: buildChartSpec
-  // normalizes it to an empty series list and the chart primitive shows its
-  // "No data points supplied." placeholder instead.
-  "chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
-  "telemetry.chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
-  "trend": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
-  "timeseries": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
-  "metric_chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
-  "comparison_chart": ({ data }) => <GenericSpecRenderer node={buildChartSpec(data)} />,
-
-  // 10. Media & Links
-  "link.preview": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "link")} />,
-  "media.image": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "image")} />,
-  "media.video": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "video")} />,
-  "media.audio": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "audio")} />,
-
-  // 11. Metrics & Weather
-  "telemetry.metric": (props) => STRUCTURED_RENDERERS.metric(props),
-  // Validated alongside "timeline" as the generic declarative renderer's
-  // second proving case (see presentation/GenericSpecRenderer.tsx). The
-  // "canvas-card" wrapper class (added independently on main) is preserved
-  // in GenericSpecRenderer's renderMetric so this migration didn't regress
-  // that chrome fix.
-  "metric": ({ data }) => <GenericSpecRenderer node={buildMetricSpec(data)} />,
-  // Composed-answer blocks (docs/design/87-composed-answers.md).
-  "lead": ({ data }) => <GenericSpecRenderer node={buildLeadSpec(data)} />,
-  "stats": ({ data }) => <GenericSpecRenderer node={buildStatsSpec(data)} />,
-  "callout": ({ data }) => <GenericSpecRenderer node={buildCalloutSpec(data)} />,
-  "details": ({ data }) => <GenericSpecRenderer node={buildUniversalCardSpec(data, "Details")} />,
-};
-
-export const structuredRendererTypes = Object.freeze(Object.keys(STRUCTURED_RENDERERS));
+/** The forms this client draws (docs/design/92-card-forms.md). */
+export const structuredRendererTypes = formNames;
 
 function StructuredRenderer(props: { output: import("../types").StructuredOutput }) {
-  const payload = props.output.payload as any;
-  const semanticType = props.output.semantic_type.toLowerCase();
-  const registered = STRUCTURED_RENDERERS[semanticType];
-  if (registered) {
-    return registered({ data: payload, output: props.output });
-  }
-  // Rich rendering is protocol-driven. An unknown semantic type must not be
-  // guessed from payload shape: that lets a new contract silently take over
-  // an older card and makes regressions invisible.
-  return (
-    <div class="rich-structured-card">
-      <div class="rich-structured-header"><strong>Presentation unavailable</strong><small>{props.output.semantic_type}</small></div>
-      <p class="rich-structured-summary">No renderer is registered for this semantic type. The original result is preserved below.</p>
-      <details class="tool-details"><summary>View original result</summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>
-    </div>
-  );
+  return <FormView block={props.output.block ?? ""} payload={props.output.payload} fallback={JSON.stringify(props.output.payload, null, 2)} />;
 }
 
 
-/** The block a card item is, from the tool that recorded it (`emit_stats_card` → `stats`). */
+/** The form a card item is drawn as, as the host recorded it. */
 function blockOf(item: OutputItem): string {
-  const source = item.provenance?.source ?? "";
-  return source.startsWith("emit_") && source.endsWith("_card") ? source.slice(5, -5) : "";
+  return item.content.type === "structured" ? item.content.output.block ?? "" : "";
 }
 
 /** Blocks narrow enough to sit beside a neighbour of the same kind on a wide screen. */
@@ -1678,21 +1483,11 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
 }
 
 export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRenderTree; fallback: string; sessionId?: string; resultId?: string }) {
-  const root = () => {
-    const node = props.tree.root;
-    // Earlier saved travel trees predate the declarative options variant.
-    if (props.tree.spec_id === "seed.travel-options" && props.tree.revision < 7 && node.primitive === "table") {
-      return { ...node, props: { ...node.props, variant: "options" } };
-    }
-    return props.tree.spec_id.startsWith("seed.") && node.primitive === "entity"
-      ? { ...node, props: { ...node.props, kind: props.tree.spec_id.slice(5).replaceAll("-", " ") } }
-      : node;
-  };
   return (
     <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
       <PresentationSessionContext.Provider value={props.sessionId}>
         <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
-          <GenericSpecRenderer node={root()} />
+          <PackTree node={props.tree.root} />
         </PresentationInteractionContext.Provider>
       </PresentationSessionContext.Provider>
     </section>

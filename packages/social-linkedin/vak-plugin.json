@@ -8,9 +8,6 @@
   "components": {
     "skills": [
       "skills"
-    ],
-    "presentation": [
-      "presentation"
     ]
   },
   "native_adapter": "linkedin-api-v2"

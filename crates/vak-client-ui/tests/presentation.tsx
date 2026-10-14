@@ -9,7 +9,7 @@ import { assistantParts } from "../src/structured";
 import "../src/styles.css";
 
 const sid = "render-fixture";
-const card = { semantic_type: "metric", schema_version: 2, skill_id: "core", skill_version: "1.0.0", payload: { label: "Files reviewed", value: 12, unit: "files" } };
+const card = { semantic_type: "stats", block: "stats", schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: { readings: [{ label: "Files reviewed", value: 12, unit: "files" }] } };
 const answer = `Here is the result.\n\n\`\`\`vak\n${JSON.stringify(card)}\n\`\`\`\n\nAll twelve files are ready for review.`;
 const originalFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
@@ -37,45 +37,26 @@ store.setActiveId(sid);
 store.hydrateFromTranscript(sid, messages() as any);
 render(() => <div style="display:flex;height:100vh;width:100%"><main style="flex:1;min-width:0;display:flex;flex-direction:column"><header style="padding:16px;border-bottom:1px solid var(--border)"><strong>Vak</strong></header><ChatPane /></main><Show when={store.dockTab() === "workbench"}><aside style="width:42%;min-width:280px"><WorkbenchPanel /></aside></Show></div>, document.getElementById("root")!);
 
-const rendererPayload = {
-  title: "Example result",
-  summary: "A concise outcome with supporting details.",
-  label: "Items completed",
-  value: 12,
-  unit: "items",
-  location: "Noida",
-  condition: "Clear",
-  temperature: "29 C",
-  items: [{ label: "First item", detail: "Ready to use", status: "complete" }],
-  steps: [{ text: "Complete the next step", timer_seconds: 60 }],
-  ingredients: [{ name: "Rice", amount: 1, unit: "cup" }],
-  servings: 2,
-  columns: [{ key: "name", label: "Name" }, { key: "status", label: "Status" }, { key: "value", label: "Value", isNumeric: true }],
-  rows: [{ name: "Alpha", status: "Ready", value: 42 }],
-  results: [{ name: "Alpha", status: "Ready", value: 42 }],
-  files: [{ filename: "src/app.ts", additions: 1, deletions: 1, hunks: "@@ -1 +1 @@\n-old\n+new" }],
-  tests: [{ name: "renders the result", status: "passed", duration_ms: 12 }],
-  passed: 1,
-  total: 1,
-  suite_name: "Presentation checks",
-  command: "printf ok",
-  output: "ok",
-  exit_code: 0,
-  duration_ms: 12,
-  takeaways: [{ text: "Verified finding", citation_indices: [1] }],
-  sources: [{ title: "Primary source", url: "https://example.com/source", source_name: "Example" }],
-  series: [{ name: "Series", points: [{ x: "Mon", y: 1 }, { x: "Tue", y: 2 }] }],
-  accessible_summary: "Values rose from one to two.",
-  chart_type: "line",
-  x_label: "Day",
-  y_label: "Value",
-  url: "https://example.com/result",
-  image_url: "https://example.com/image.png",
-  source: "https://example.com/media.png",
-  alt: "Example media",
-  description: "Open the supporting result.",
-  html: "<!doctype html><html><body><main><h1>Interactive preview</h1></main></body></html>",
-  preview_id: "gallery-preview",
+// One payload per form, in the shape the host's card tools store.
+const samples: Record<string, Record<string, unknown>> = {
+  summary: { headline: "All twelve files are ready", text: "Each file was reviewed and none needs changes.", points: ["No blocking issues"] },
+  steps: { title: "Release", steps: [{ label: "Build", time: "09:00 · 5 min", detail: "Run the full gate." }, { label: "Publish", choices: [{ label: "Now", facts: ["fast"] }] }] },
+  list: { title: "To bring", checkable: true, items: [{ label: "Charger" }, { label: "Passport", detail: "Valid until 2030" }] },
+  details: { title: "Pune", text: "A city in Maharashtra.", fields: [{ label: "Population", detail: "7.4 million" }, { label: "Best season", detail: "October to February" }] },
+  table: { title: "Lighthouses", columns: [{ label: "Name", numeric: false }, { label: "Height (m)", numeric: true }], rows: [["Tower of Hercules", 55], ["Bell Rock", 35.3]] },
+  comparison: { options: [{ name: "By shelf", verdict: "Simple", strengths: ["Easy"] }, { name: "By meal", weaknesses: ["Relabelling"] }], aspects: [{ label: "Effort", values: ["Low", "High"] }], recommendation: "Keep by shelf." },
+  stats: { readings: [{ label: "Organisations using AI", value: 88, unit: "%" }, { label: "Agent task success", value: 66, unit: "%", change: "+12 since 2025" }] },
+  chart: { title: "Share by measure", chart_type: "bar", y_label: "Share (%)", accessible_summary: "Adoption 88, success 66.", series: [{ name: "Share", points: [{ x: "Organisations using AI", y: 88 }, { x: "OSWorld task success", y: 66 }, { x: "Unsuccessful tasks", y: 34 }] }] },
+  callout: { tone: "warning", text: "The 2026 index reports data through 2025." },
+  sources: { sources: [{ title: "AI Index 2026", url: "https://example.com/index", finding: "Adoption reached 88%.", source_name: "Stanford HAI", published_at: "2026-04-01" }] },
+  calendar: { events: [{ title: "Standup", date: "2026-10-15", start: "09:00", end: "09:15" }, { title: "Review", date: "2026-10-16", location: "Room 2" }] },
+  link: { url: "https://example.com/result", title: "Result", description: "Open the supporting result." },
+  media: { format: "image", url: "https://example.com/media.png", alt: "Example media" },
+  file_preview: { artifact_path: "index.html", title: "Preview" },
+  markup_preview: { html: "<!doctype html><html><body><main><h1>Interactive preview</h1></main></body></html>", title: "Markup" },
+  diff: { files: [{ filename: "src/app.ts", additions: 1, deletions: 1, hunks: "@@ -1 +1 @@\n-old\n+new" }] },
+  test_report: { command: "npm test", suite_name: "Presentation checks", exit_code: 0, duration_ms: 12, tests: [{ name: "renders the result", status: "passed", duration_ms: 12 }] },
+  terminal: { command: "printf ok", output: "ok", exit_code: 0, duration_ms: 12 },
 };
 
 const gallery = document.createElement("section");
@@ -83,10 +64,10 @@ gallery.id = "renderer-gallery";
 gallery.setAttribute("aria-label", "Structured presentation gallery");
 gallery.style.cssText = "display:none;max-width:960px;margin:0 auto;padding:24px;";
 document.body.append(gallery);
-render(() => <For each={structuredRendererTypes}>{(semanticType) => (
-  <article data-renderer={semanticType} style="min-width:0;margin:0 0 24px">
-    <h2 style="font-size:14px">{semanticType}</h2>
-    <StructuredView output={{ semantic_type: semanticType, schema_version: 2, skill_id: "gallery", skill_version: "1.0.0", payload: rendererPayload }} />
+render(() => <For each={structuredRendererTypes}>{(form) => (
+  <article data-renderer={form} style="min-width:0;margin:0 0 24px">
+    <h2 style="font-size:14px">{form}</h2>
+    <StructuredView output={{ semantic_type: form, block: form, schema_version: 2, skill_id: "core", skill_version: "2.0.0", payload: samples[form] }} />
   </article>
 )}</For>, gallery);
 const tick = () => new Promise((resolve) => setTimeout(resolve, 80));

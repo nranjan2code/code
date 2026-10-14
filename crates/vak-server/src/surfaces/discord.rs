@@ -482,6 +482,7 @@ mod tests {
     fn sample_card() -> vak_delivery::StructuredOutput {
         vak_delivery::StructuredOutput {
             semantic_type: "metric".into(),
+            block: String::new(),
             schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
             skill_id: "core".into(),
             skill_version: "1".into(),

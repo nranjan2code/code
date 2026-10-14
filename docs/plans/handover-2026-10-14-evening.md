@@ -34,6 +34,20 @@ dark. Token budget is tight: lean reads, commit each verified step."
 
 ## Where things stand
 
+**Card forms (docs/design/92-card-forms.md), 2026-10-14 late.** Cards were
+rebuilt as eighteen forms with one list in four places (card tools,
+delivery validators, host primitives, client `cards/`), drawn by
+`StructuredOutput.block`. Removed: the 100-name client registry and
+`GenericSpecRenderer`, the field-list card, the recipe and checklist tools,
+the 85 seed packs, the social add-ons' research layouts, the delivery
+planner/recipes/word signals and result adapters, and the JSON sniffing on
+host and client. Stages F1–F5 are built with the full gate; F6 (live turns
+of every form in the browser at both sizes and themes) is open, and the
+next release must be a major version or set the data homes up again,
+because presentation libraries saved before it no longer parse (open
+items, "Card forms"). The maintainer asked for a fresh release installed
+on the Mac once this lands.
+
 Pushed this session, each with the full gate green and checked live:
 
 - `b5c0ab862` Compare with your folder lists what an Office or PDF version

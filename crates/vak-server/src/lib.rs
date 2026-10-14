@@ -3416,12 +3416,6 @@ pub async fn serve_with(
     addr: std::net::SocketAddr,
     force_gateway: bool,
 ) -> std::io::Result<()> {
-    // Presentation seeds are versioned, additive previews. Reconcile them at
-    // process startup so a newly installed binary reaches existing workspaces
-    // even when the admin presentation list is never opened. User revisions
-    // and activations remain untouched by register().
-    reconcile_builtin_presentations(&core)
-        .map_err(|error| std::io::Error::other(format!("presentation seed failed: {error}")))?;
     // Local-only does not mean safe-by-default: any local process could
     // reach an unauthenticated agent and drive arbitrary tool execution
     // plus self-approval. Every serve() instance gets a per-process
@@ -3503,93 +3497,6 @@ pub async fn serve_with(
         return Err(restart::exec_again());
     }
     ended
-}
-
-fn reconcile_builtin_presentations(core: &Core) -> Result<(), String> {
-    let store = vak_core::presentation_store::PresentationStore::new(core.scope().presentations());
-    let mut library = store.load().map_err(|error| error.to_string())?;
-    let before = library.definitions().count();
-    let mut changed = false;
-    for seed in vak_presentation::seeds::built_in_seed_pack() {
-        if let Some(existing) = library.get(&seed.spec.id, seed.spec.revision)
-            && existing.digest != seed.digest
-        {
-            changed = true;
-        }
-        library.register(seed).map_err(|error| error.to_string())?;
-    }
-    if changed || library.definitions().count() != before {
-        store.save(&library).map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-#[allow(clippy::expect_used)]
-mod built_in_presentation_tests {
-    #[test]
-    fn every_built_in_pack_is_selected_without_a_saved_activation() {
-        let library = vak_core::presentation_store::effective(
-            &vak_presentation::PresentationLibrary::default(),
-            "/tmp/presentation-selection",
-            Vec::new(),
-        );
-        for seed in vak_presentation::seeds::built_in_seed_pack() {
-            let selected = library
-                .select_preferred(&seed.spec.accepts[0], "user", "/tmp/presentation-selection")
-                .expect("built-in pack is selected");
-            assert_eq!(selected.spec.id, seed.spec.id, "{}", seed.spec.accepts[0]);
-        }
-    }
-
-    #[test]
-    fn deactivated_builtin_stays_off_until_explicitly_activated() {
-        let owner = "/tmp/presentation-selection";
-        let mut library = vak_presentation::PresentationLibrary::default();
-        library.deactivate(
-            "seed.timeline",
-            vak_presentation::LibraryScope::Workspace,
-            owner,
-        );
-        let effective = vak_core::presentation_store::effective(&library, owner, Vec::new());
-        assert!(
-            effective
-                .select_preferred("timeline", "user", owner)
-                .is_none()
-        );
-        assert!(effective.select_preferred("table", "user", owner).is_some());
-        let dir = tempfile::tempdir().expect("tempdir");
-        let store = vak_core::presentation_store::PresentationStore::new(
-            dir.path().join("presentations.json"),
-        );
-        store.save(&library).expect("save suppression");
-        library = store.load().expect("reload suppression");
-        assert!(
-            vak_core::presentation_store::effective(&library, owner, Vec::new())
-                .select_preferred("timeline", "user", owner)
-                .is_none()
-        );
-        let seed = vak_presentation::seeds::built_in_seed_pack()
-            .into_iter()
-            .find(|record| record.spec.id == "seed.timeline")
-            .expect("timeline seed");
-        library.register(seed).expect("register seed");
-        library
-            .activate(
-                "seed.timeline",
-                6,
-                vak_presentation::LibraryScope::Workspace,
-                owner,
-            )
-            .expect("activate seed");
-        let effective = vak_core::presentation_store::effective(&library, owner, Vec::new());
-        assert_eq!(
-            effective
-                .select_preferred("timeline", "user", owner)
-                .map(|record| record.spec.id.as_str()),
-            Some("seed.timeline")
-        );
-    }
 }
 
 /// Paths that must be reachable without a token: health probe, the SPA
@@ -4307,17 +4214,17 @@ fn live_presentation_snapshot(
     session_id: &str,
     session: &SessionLog,
 ) -> vak_delivery::OutputTimeline {
-    let planner = delivery::merged_presentation_planner(core);
+    let planner = delivery::merged_presentation_skills(core);
     let adaptive_store =
         vak_core::presentation_store::PresentationStore::new(core.scope().presentations());
     let mut timeline = match adaptive_store.load() {
         Ok(library) => {
             let effective = core.effective_presentations(&library, &core.cwd().to_string_lossy());
-            crate::projection::snapshot_with_planner_and_library(
+            crate::projection::snapshot_with_skills_and_library(
                 session_id, session, &planner, &effective,
             )
         }
-        Err(_) => crate::projection::snapshot_with_planner(session_id, session, &planner),
+        Err(_) => crate::projection::snapshot_with_skills(session_id, session, &planner),
     };
     crate::projection::append_sandbox_artifacts(
         &mut timeline,
@@ -7846,17 +7753,17 @@ async fn presentation_snapshot(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(session) = guard.as_ref() {
-            let planner = delivery::merged_presentation_planner(&handle.core);
+            let planner = delivery::merged_presentation_skills(&handle.core);
             let mut timeline = match presentation_store(&state).load() {
                 Ok(library) => {
                     let effective = handle
                         .core
                         .effective_presentations(&library, &handle.core.cwd().to_string_lossy());
-                    crate::projection::snapshot_with_planner_and_library(
+                    crate::projection::snapshot_with_skills_and_library(
                         &id, session, &planner, &effective,
                     )
                 }
-                Err(_) => crate::projection::snapshot_with_planner(&id, session, &planner),
+                Err(_) => crate::projection::snapshot_with_skills(&id, session, &planner),
             };
             crate::projection::append_sandbox_artifacts(
                 &mut timeline,
@@ -7883,8 +7790,8 @@ async fn presentation_snapshot(
                         .unwrap_or_default();
                     let core = state.active_core();
                     let effective = core.effective_presentations(&library, &owner);
-                    let planner = delivery::merged_presentation_planner(&core);
-                    crate::projection::snapshot_with_planner_and_library(
+                    let planner = delivery::merged_presentation_skills(&core);
+                    crate::projection::snapshot_with_skills_and_library(
                         &id, &session, &planner, &effective,
                     )
                 }
@@ -7919,17 +7826,17 @@ async fn session_result(
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(session) = guard.as_ref() {
-            let planner = delivery::merged_presentation_planner(&handle.core);
+            let planner = delivery::merged_presentation_skills(&handle.core);
             match presentation_store(&state).load() {
                 Ok(library) => {
                     let effective = handle
                         .core
                         .effective_presentations(&library, &handle.core.cwd().to_string_lossy());
-                    crate::projection::snapshot_with_planner_and_library(
+                    crate::projection::snapshot_with_skills_and_library(
                         &id, session, &planner, &effective,
                     )
                 }
-                Err(_) => crate::projection::snapshot_with_planner(&id, session, &planner),
+                Err(_) => crate::projection::snapshot_with_skills(&id, session, &planner),
             }
         } else {
             handle
@@ -7947,8 +7854,8 @@ async fn session_result(
                     .unwrap_or_default();
                 let core = state.active_core();
                 let effective = core.effective_presentations(&library, &owner);
-                let planner = delivery::merged_presentation_planner(&core);
-                crate::projection::snapshot_with_planner_and_library(
+                let planner = delivery::merged_presentation_skills(&core);
+                crate::projection::snapshot_with_skills_and_library(
                     &id, &session, &planner, &effective,
                 )
             }
@@ -11775,24 +11682,9 @@ struct PresentationExport {
 
 async fn list_presentations(State(state): State<AppState>) -> axum::response::Response {
     let store = presentation_store(&state);
-    match store.load().and_then(|mut library| {
-        let before = library.definitions().count();
-        let mut changed = false;
-        for seed in vak_presentation::seeds::built_in_seed_pack() {
-            if let Some(existing) = library.get(&seed.spec.id, seed.spec.revision)
-                && existing.digest != seed.digest
-            {
-                changed = true;
-            }
-            library.register(seed).map_err(|error| {
-                vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
-            })?;
-        }
-        if changed || library.definitions().count() != before {
-            store.save(&library)?;
-        }
+    match store.load().map(|library| {
         let core = state.active_core();
-        Ok(core.effective_presentations(&library, &core.cwd().to_string_lossy()))
+        core.effective_presentations(&library, &core.cwd().to_string_lossy())
     }) {
         Ok(library) => Json(serde_json::json!({
             "definitions": library.definitions().collect::<Vec<_>>(),
@@ -12094,11 +11986,6 @@ async fn activate_all_presentations(
 ) -> axum::response::Response {
     let store = presentation_store(&state);
     let result = store.load().and_then(|mut library| {
-        for seed in vak_presentation::seeds::built_in_seed_pack() {
-            library.register(seed).map_err(|error| {
-                vak_core::presentation_store::PresentationStoreError::Invalid(error.to_string())
-            })?;
-        }
         let mut latest_by_id: std::collections::BTreeMap<String, u64> =
             std::collections::BTreeMap::new();
         for def in library.definitions() {
@@ -12135,15 +12022,10 @@ async fn deactivate_all_presentations(
     let store = presentation_store(&state);
     match store.load() {
         Ok(mut library) => {
-            let mut spec_ids: std::collections::BTreeSet<String> = library
+            let spec_ids: std::collections::BTreeSet<String> = library
                 .definitions()
                 .map(|record| record.spec.id.clone())
                 .collect();
-            spec_ids.extend(
-                vak_presentation::seeds::built_in_seed_pack()
-                    .into_iter()
-                    .map(|record| record.spec.id),
-            );
             let mut removed = 0;
             for id in spec_ids {
                 if !library.is_suppressed(&id, body.scope, &body.owner) {
@@ -26991,87 +26873,6 @@ mod sandbox_promotion_tests {
                 .status(),
             StatusCode::UNAUTHORIZED
         );
-    }
-
-    #[tokio::test]
-    async fn development_library_activates_seed_recipes_without_persisting_them() {
-        let empty = vak_presentation::PresentationLibrary::default();
-        let effective =
-            vak_core::presentation_store::effective(&empty, "/tmp/vak-dev-workspace", Vec::new());
-        assert_eq!(empty.definitions().count(), 0);
-        assert!(empty.activations().is_empty());
-        assert_eq!(
-            effective.definitions().count(),
-            vak_presentation::seeds::built_in_seed_pack().len()
-        );
-        assert_eq!(
-            effective.activations().len(),
-            vak_presentation::seeds::built_in_seed_pack().len()
-        );
-        assert!(
-            effective
-                .select_preferred("metric", "user", "/tmp/vak-dev-workspace")
-                .is_some()
-        );
-        assert!(
-            effective
-                .select_preferred("coding.diff", "user", "/tmp/vak-dev-workspace")
-                .is_some()
-        );
-    }
-
-    #[tokio::test]
-    async fn activate_all_and_deactivate_all_presentations() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = vak_core::presentation_store::PresentationStore::new(
-            dir.path().join("presentations.json"),
-        );
-        let mut library = vak_presentation::PresentationLibrary::default();
-        for seed in vak_presentation::seeds::built_in_seed_pack() {
-            library.register(seed).unwrap();
-        }
-        store.save(&library).unwrap();
-
-        // Verify activate all
-        let mut latest_by_id: std::collections::BTreeMap<String, u64> =
-            std::collections::BTreeMap::new();
-        for def in library.definitions() {
-            let entry = latest_by_id
-                .entry(def.spec.id.clone())
-                .or_insert(def.spec.revision);
-            if def.spec.revision > *entry {
-                *entry = def.spec.revision;
-            }
-        }
-        let mut activated = 0;
-        for (id, rev) in latest_by_id {
-            if library
-                .activate(&id, rev, vak_presentation::LibraryScope::User, "user")
-                .is_ok()
-            {
-                activated += 1;
-            }
-        }
-        assert_eq!(
-            activated,
-            vak_presentation::seeds::built_in_seed_pack().len()
-        );
-        assert_eq!(
-            library.activations().len(),
-            vak_presentation::seeds::built_in_seed_pack().len()
-        );
-
-        // Verify deactivate all
-        let spec_ids: Vec<String> = library
-            .activations()
-            .iter()
-            .filter(|a| a.scope == vak_presentation::LibraryScope::User && a.owner == "user")
-            .map(|a| a.spec_id.clone())
-            .collect();
-        for id in spec_ids {
-            library.deactivate(&id, vak_presentation::LibraryScope::User, "user");
-        }
-        assert_eq!(library.activations().len(), 0);
     }
 }
 

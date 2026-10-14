@@ -4,8 +4,6 @@
 //! decision matrices), and cited claims into standalone, zero-dependency,
 //! responsive HTML documents suitable for distribution, archiving, or viewing.
 
-use serde_json::Value;
-
 /// Escape HTML special characters to prevent injection.
 pub fn html_escape(input: &str) -> String {
     let mut escaped = String::with_capacity(input.len());
@@ -245,37 +243,6 @@ fn transcode_body(content: &str) -> String {
     while let Some(line) = lines.next() {
         let trimmed = line.trim();
 
-        // 1. Check for structured vak code blocks
-        if trimmed.starts_with("```vak-table") || trimmed.starts_with("```vak-dataframe") {
-            let mut json_str = String::new();
-            for next in lines.by_ref() {
-                if next.trim() == "```" {
-                    break;
-                }
-                json_str.push_str(next);
-                json_str.push('\n');
-            }
-            if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
-                out.push_str(&render_vak_table(&v));
-            }
-            continue;
-        }
-
-        if trimmed.starts_with("```vak-decision") || trimmed.starts_with("```vak-comparison") {
-            let mut json_str = String::new();
-            for next in lines.by_ref() {
-                if next.trim() == "```" {
-                    break;
-                }
-                json_str.push_str(next);
-                json_str.push('\n');
-            }
-            if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
-                out.push_str(&render_vak_decision(&v));
-            }
-            continue;
-        }
-
         // Standard code blocks
         if trimmed.starts_with("```") {
             let lang = trimmed.trim_start_matches('`').trim();
@@ -364,99 +331,6 @@ fn render_inline(text: &str) -> String {
     }
     res.push_str(rest);
     res
-}
-
-fn render_vak_table(v: &Value) -> String {
-    let title = v
-        .get("title")
-        .and_then(Value::as_str)
-        .unwrap_or("Data Table");
-    let cols = v.get("columns").and_then(Value::as_array);
-    let rows = v.get("rows").and_then(Value::as_array);
-
-    let mut out = format!(
-        "<div class=\"card-table-container\">\n  <div class=\"table-header-bar\">\n    <span class=\"table-title\">{}</span>\n    <input type=\"text\" class=\"table-search\" placeholder=\"Search table...\">\n  </div>\n  <div class=\"table-scroll\">\n    <table>\n      <thead><tr>\n",
-        html_escape(title)
-    );
-
-    if let Some(cols) = cols {
-        for c in cols {
-            let col_name = c.as_str().unwrap_or("");
-            out.push_str(&format!(
-                "        <th>{} <span class=\"sort-icon\">▲▼</span></th>\n",
-                html_escape(col_name)
-            ));
-        }
-    }
-    out.push_str("      </tr></thead>\n      <tbody>\n");
-
-    if let Some(rows) = rows {
-        for row in rows {
-            out.push_str("        <tr>\n");
-            if let Some(cells) = row.as_array() {
-                for cell in cells {
-                    let text = match cell {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    out.push_str(&format!("          <td>{}</td>\n", html_escape(&text)));
-                }
-            }
-            out.push_str("        </tr>\n");
-        }
-    }
-
-    out.push_str("      </tbody>\n    </table>\n  </div>\n</div>\n");
-    out
-}
-
-fn render_vak_decision(v: &Value) -> String {
-    let mut out = String::from("<div class=\"decision-grid\">\n");
-    if let Some(options) = v.get("options").and_then(Value::as_array) {
-        for opt in options {
-            let label = opt
-                .get("label")
-                .or_else(|| opt.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("Option");
-            let summary = opt
-                .get("summary")
-                .or_else(|| opt.get("description"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            out.push_str(&format!(
-                "  <div class=\"decision-card\">\n    <div class=\"decision-title\">{}</div>\n    <div class=\"decision-summary\">{}</div>\n",
-                html_escape(label),
-                html_escape(summary)
-            ));
-
-            if let Some(pros) = opt.get("pros").and_then(Value::as_array) {
-                out.push_str("    <ul class=\"pro-list\">\n");
-                for p in pros {
-                    out.push_str(&format!(
-                        "      <li>+ {}</li>\n",
-                        html_escape(p.as_str().unwrap_or(""))
-                    ));
-                }
-                out.push_str("    </ul>\n");
-            }
-
-            if let Some(cons) = opt.get("cons").and_then(Value::as_array) {
-                out.push_str("    <ul class=\"con-list\">\n");
-                for c in cons {
-                    out.push_str(&format!(
-                        "      <li>- {}</li>\n",
-                        html_escape(c.as_str().unwrap_or(""))
-                    ));
-                }
-                out.push_str("    </ul>\n");
-            }
-
-            out.push_str("  </div>\n");
-        }
-    }
-    out.push_str("</div>\n");
-    out
 }
 
 #[cfg(test)]

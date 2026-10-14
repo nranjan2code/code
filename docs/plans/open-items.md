@@ -55,6 +55,21 @@ Carried over from 7.2.0:
   parts their own Status lines name. A later change keeps them true by the
   rule in `docs/README.md` ("Keeping it current").
 
+## Card forms (docs/design/92)
+
+- A map, a board, a graph and a form to fill in are not built; places go in
+  a list or details with a link. Build one only when real turns show a
+  shape the forms cannot carry.
+- The ledger still records each turn's tool domains
+  (`TurnCapabilitiesBound.tool_domains`); nothing reads them since the
+  word signals were removed. Drop the field at the next data baseline.
+- `isFleetingNarration` (vak-client-ui `structured.ts`) folds a short
+  message by a length of 180 characters, a tuned number; replace it with a
+  typed marker from the host.
+- The next release reads no presentation library saved before this change
+  (old primitive names): it is a major version under invariant 29, and the
+  dev and installed data homes are set up again.
+
 ## Presentations as capabilities (docs/design/91)
 
 - Built (stages 1 to 5). Live, 2026-10-14, the Pune Saturday plan:
@@ -150,14 +165,6 @@ Carried over from 7.2.0:
   (`vak_intent::parse_command`).
 - `OutcomeSpec.stop` (the reading's stop profile) is computed and narrowed
   for workers, and no gate reads it; decide whether it goes.
-- Presentation recipes are planned from words: the server's projection
-  calls `signals_from_context` (`crates/vak-server/src/projection.rs`),
-  which reads the answer's text for keyword signals, and
-  `PresentationPlanner::plan` picks a composition from them
-  (docs/design/30-render-architecture.md §30.4). It decides how a result is
-  laid out, not what runs, but it is a word list deciding behaviour; and
-  `signals_from_text` is otherwise called only by the delivery audit tests.
-  Decide whether layout should come from the cards and their types alone.
 
 ## Known limits in the product
 

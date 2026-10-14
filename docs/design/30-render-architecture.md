@@ -6,6 +6,11 @@ collaborative goal projection, deterministic fallback, and cross-surface
 delivery path are shipped in 3.0.10. The open questions at the end are not
 claims about missing core behavior.
 
+> The card vocabulary, the client registry and the signal and recipe
+> planning described here are replaced by docs/design/92-card-forms.md
+> (2026-10-14): eighteen forms, drawn by block, nothing decided by words.
+
+
 This document specifies the rendering architecture for vak's output. Result
 eligibility, evidence state, and collaborative goal state come from the shared
 outcome-directed runtime; this document owns only semantic projection and

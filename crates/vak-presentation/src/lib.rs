@@ -11,7 +11,6 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-pub mod seeds;
 pub mod transcoder;
 
 pub use transcoder::transcode_to_html;
@@ -115,90 +114,63 @@ pub struct AccessibilitySpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Primitive {
+    // Layout: only arrangement; its parts draw themselves.
     Stack,
     Row,
     Group,
     Section,
-    Divider,
-    Title,
     Text,
-    RichText,
-    Label,
-    Badge,
-    Callout,
-    Quote,
-    List,
-    Checklist,
-    Timeline,
-    Steps,
-    KeyValue,
-    Table,
+    /// One figure with its label, for a pack that lays readings out itself.
     Metric,
-    Progress,
-    Chart,
-    DataGrid,
+    // The forms (docs/design/92-card-forms.md): each draws its form's own
+    // stored payload, the same on every surface.
+    Summary,
+    Steps,
+    List,
+    Details,
+    Table,
     Comparison,
-    Image,
-    Audio,
-    Video,
-    File,
-    LinkPreview,
-    Gallery,
-    Diff,
-    TestMatrix,
-    Terminal,
-    Artifact,
-    CitationList,
-    Disclosure,
-    Filter,
-    Sort,
-    Search,
-    Stepper,
-    Timer,
-    Loading,
-    Empty,
-    Partial,
-    Error,
-    Unavailable,
-    Stale,
-    Map,
+    Stats,
+    Chart,
+    Callout,
+    Sources,
     Calendar,
-    Board,
-    Graph,
-    Entity,
-    Evidence,
-    Form,
-    Transaction,
-    Alert,
-    Conversation,
-    Simulation,
-    /// Ingredients, timed steps, yields and equipment. Table/KeyValue cannot
-    /// express the ingredient/step/timer triple without the surface guessing
-    /// which column means what, so this is a distinct concept, not a shortcut.
-    Recipe,
-    IngredientList,
-    StepList,
-    /// A question with takeaways, sources and citations bound together. The
-    /// citation-to-takeaway relationship is lost if this is flattened into a
-    /// Section plus a CitationList.
-    Research,
-    TakeawayList,
-    SourceList,
-    /// A sandboxed preview of authored UI. The isolation contract (no ambient
-    /// privileges for the previewed document) is part of the primitive, which
-    /// no composition of existing primitives carries.
-    UiPreview,
+    Link,
+    Media,
+    FilePreview,
+    MarkupPreview,
+    Diff,
+    TestReport,
+    Terminal,
 }
 
-// Deliberately absent: `MetricGrid`, `Media` and `UniversalCard`. Each is a
-// composition of primitives that already exist, and `SpecNode` lets any
-// primitive nest any other, so they are expressible today without growing the
-// vocabulary:
-//   metric_grid    = `Row`/`Section` whose children (or `each`/`item`) are `Metric`
-//   media          = `Image` / `Audio` / `Video` / `File` / `Gallery`
-//   universal_card = `Entity` or `Section` containing `KeyValue` rows
-// A client-side rendering shortcut is not a reason for a host primitive; only a
-// concept that no composition can express is (see `Recipe`/`Research`/`UiPreview`).
+/// Every primitive, in declaration order: what a client must draw.
+pub const PRIMITIVES: &[Primitive] = &[
+    Primitive::Stack,
+    Primitive::Row,
+    Primitive::Group,
+    Primitive::Section,
+    Primitive::Text,
+    Primitive::Metric,
+    Primitive::Summary,
+    Primitive::Steps,
+    Primitive::List,
+    Primitive::Details,
+    Primitive::Table,
+    Primitive::Comparison,
+    Primitive::Stats,
+    Primitive::Chart,
+    Primitive::Callout,
+    Primitive::Sources,
+    Primitive::Calendar,
+    Primitive::Link,
+    Primitive::Media,
+    Primitive::FilePreview,
+    Primitive::MarkupPreview,
+    Primitive::Diff,
+    Primitive::TestReport,
+    Primitive::Terminal,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenderTree {
@@ -770,76 +742,6 @@ pub fn compile(spec: &PresentationSpec, input: &CompileInput) -> CompiledPresent
     }
 }
 
-/// Infer a conservative presentation shape from an already-validated JSON
-/// payload. This is intentionally structural, not domain-aware: it never
-/// guesses "trip", "budget", or another scenario from prose or field names.
-/// Callers still validate the returned semantic type against their registry.
-pub fn infer_semantic_type(payload: &Value) -> Option<&'static str> {
-    let object = payload.as_object()?;
-    // These recognizers use payload shape rather than scenario vocabulary.  A
-    // caller can therefore reuse the same semantic contract for any domain or
-    // extension pack without teaching the core about that domain.
-    if object.get("left").is_some() && object.get("right").is_some()
-        || object.get("alternatives").is_some_and(Value::is_array)
-    {
-        return Some("comparison");
-    }
-    if object.get("checks").is_some_and(Value::is_array)
-        || object.get("tasks").is_some_and(Value::is_array)
-    {
-        return Some("checklist");
-    }
-    if object.get("events").is_some_and(Value::is_array)
-        || object.get("slots").is_some_and(Value::is_array)
-    {
-        return Some("schedule");
-    }
-    if object.get("agenda").is_some_and(Value::is_array)
-        && object.get("attendees").is_some_and(Value::is_array)
-    {
-        return Some("meeting");
-    }
-    if object.get("lessons").is_some_and(Value::is_array)
-        || object.get("sections").is_some_and(Value::is_array)
-    {
-        return Some("lesson");
-    }
-    if object.get("decision").is_some() || object.get("choice").is_some() {
-        return Some("decision");
-    }
-    if object.get("income").is_some_and(Value::is_array)
-        && object.get("expenses").is_some_and(Value::is_array)
-        || object.get("credits").is_some_and(Value::is_array)
-            && object.get("debits").is_some_and(Value::is_array)
-    {
-        return Some("budget");
-    }
-    if object.get("items").is_some_and(Value::is_array)
-        || object.get("entries").is_some_and(Value::is_array)
-    {
-        return Some("collection");
-    }
-    if object.get("steps").is_some_and(Value::is_array) {
-        return Some("steps");
-    }
-    if object.get("status").is_some() || object.get("state").is_some() {
-        return Some("status");
-    }
-    // Numeric measures are a deliberately structural shape.  The field names
-    // describe a value slot, not a business domain, so this remains reusable
-    // for budgets, scores, counts, readings, and any future extension pack.
-    if ["value", "amount", "count", "total"]
-        .iter()
-        .any(|key| object.get(*key).is_some_and(Value::is_number))
-    {
-        return Some("metric");
-    }
-    if object.get("title").is_some() || object.get("summary").is_some() {
-        return Some("detail");
-    }
-    None
-}
-
 fn compile_rich(
     spec: &PresentationSpec,
     input: &CompileInput,
@@ -1058,20 +960,20 @@ mod tests {
             (
                 "media.gallery",
                 serde_json::json!({
-                    "primitive": "gallery",
+                    "primitive": "row",
                     "children": [
-                        { "primitive": "image", "props": { "src": { "kind": "binding", "path": "$.src" } } },
-                        { "primitive": "video", "props": { "src": { "kind": "binding", "path": "$.clip" } } }
+                        { "primitive": "media", "props": { "src": { "kind": "binding", "path": "$.src" } } },
+                        { "primitive": "media", "props": { "src": { "kind": "binding", "path": "$.clip" } } }
                     ]
                 }),
             ),
             (
                 "card.universal",
                 serde_json::json!({
-                    "primitive": "entity",
+                    "primitive": "details",
                     "props": { "title": { "kind": "binding", "path": "$.title" } },
                     "children": [{
-                        "primitive": "key_value",
+                        "primitive": "details",
                         "props": {
                             "label": { "kind": "binding", "path": "$.label" },
                             "value": { "kind": "binding", "path": "$.value" }
@@ -1119,7 +1021,7 @@ mod tests {
             accepts: vec!["trip".into()],
             block: None,
             root: SpecNode {
-                primitive: Primitive::Timeline,
+                primitive: Primitive::Steps,
                 props: BTreeMap::from([(
                     String::from("title"),
                     SpecValue::Binding(Binding {
@@ -1285,58 +1187,6 @@ mod tests {
             },
         );
         assert!(matches!(result, CompiledPresentation::Fallback { .. }));
-    }
-
-    #[test]
-    fn shape_inference_is_bounded_and_domain_neutral() {
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"items": []})),
-            Some("collection")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"steps": []})),
-            Some("steps")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"status": "ready"})),
-            Some("status")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"label": "Score", "value": 42})),
-            Some("metric")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"title": "Anything"})),
-            Some("detail")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"trip": "Paris"})),
-            None
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"left": {}, "right": {}})),
-            Some("comparison")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"tasks": []})),
-            Some("checklist")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"events": []})),
-            Some("schedule")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"lessons": []})),
-            Some("lesson")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"income": [], "expenses": []})),
-            Some("budget")
-        );
-        assert_eq!(
-            infer_semantic_type(&serde_json::json!({"decision": "keep"})),
-            Some("decision")
-        );
     }
 
     #[test]
@@ -1625,48 +1475,6 @@ mod tests {
                 .select_preferred("trip", "user", "another-workspace")
                 .map(|s| s.spec.id.as_str()),
             Some("user.layout")
-        );
-    }
-
-    #[test]
-    fn built_in_seed_can_be_explicitly_activated_for_a_workspace() {
-        let seed = seeds::built_in_seed_pack()
-            .into_iter()
-            .next()
-            .expect("seed pack is non-empty");
-        let id = seed.spec.id.clone();
-        let revision = seed.spec.revision;
-        let accepts = seed.spec.accepts[0].clone();
-        let mut library = PresentationLibrary::default();
-        library.register(seed).expect("register seed");
-        library
-            .activate(&id, revision, LibraryScope::Workspace, "a-workspace")
-            .expect("activate built-in");
-        assert!(
-            library
-                .select(&accepts, LibraryScope::Workspace, "a-workspace")
-                .is_some()
-        );
-    }
-
-    #[test]
-    fn built_in_seed_can_be_explicitly_activated_for_user_scope() {
-        let seed = seeds::built_in_seed_pack()
-            .into_iter()
-            .next()
-            .expect("seed pack is non-empty");
-        let id = seed.spec.id.clone();
-        let revision = seed.spec.revision;
-        let accepts = seed.spec.accepts[0].clone();
-        let mut library = PresentationLibrary::default();
-        library.register(seed).expect("register seed");
-        library
-            .activate(&id, revision, LibraryScope::User, "user")
-            .expect("activate built-in for user");
-        assert!(
-            library
-                .select(&accepts, LibraryScope::User, "user")
-                .is_some()
         );
     }
 

@@ -412,6 +412,11 @@ presentation update does not restore stale-context behavior.
   active (docs/design/91-presentation-capabilities.md), and the add-on's own
   skill says how to use them; the core seed names no domain.
 
+- 2026-10-14, the presentation block says an answer uses as many cards as it
+  has parts, each chosen by the shape of its content, not its topic
+  (docs/design/92-card-forms.md): the card tools are now forms, one per shape
+  of information, so the seed names the rule and the tools name the forms.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

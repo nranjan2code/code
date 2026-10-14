@@ -2,6 +2,11 @@
 
 Status: **in progress; P1/P4 library, durable-store, session-audit, mode-toggle, bounded-revision, plugin-pack, pack-lifecycle, plugin-lifecycle-revocation, server-control, client-control, activation-control, revision-control, lifecycle-test, visible-management, delivery-integration, generic feedback-audit, visible-feedback, primitive-introspection, scoped-precedence, pack-portability, pack-management, result-scoped-proposal, original-fallback, declarative-seed-pack, everyday-theme-pack, semantic-selection, reset, cross-surface audit, generic constrained-surface lowering, live projection library-awareness, native adaptive output-contract, selected-tree emission, domain-neutral shape-inference, canonical renderer-envelope, cross-surface packet-validation, bounded proposal-chain, light-theme chrome polish, and fail-closed fallback regression slices landed**.
 
+> The card vocabulary, the client registry and the signal and recipe
+> planning described here are replaced by docs/design/92-card-forms.md
+> (2026-10-14): eighteen forms, drawn by block, nothing decided by words.
+
+
 Current implementation: `crates/vak-presentation` provides the bounded
 declarative spec, JSON-path binding validator, deterministic compiler,
 content digest, coverage accounting, semantic-type matching, and explicit

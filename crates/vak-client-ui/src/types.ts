@@ -90,6 +90,8 @@ export type ArtifactStatus =
 
 export interface StructuredOutput {
   semantic_type: string;
+  /** The form that draws it (docs/design/92-card-forms.md); empty when none does. */
+  block?: string;
   schema_version: number;
   skill_id: string;
   skill_version: string;

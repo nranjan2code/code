@@ -33,130 +33,30 @@ export function groupAssistantParts(parts: AssistantPart[]): RenderGroup[] {
   return groups;
 }
 
-/** Decode explicit transport fences without guessing a result from prose.
- * Unfinished vak fences wait for completion; invalid completed data remains inspectable. */
+/** Split assistant text into prose and its ```vak fences (docs/design/92-card-forms.md).
+ * Nothing outside a vak fence is a card. While streaming, an unclosed fence is held
+ * back; a completed fence that does not parse says so instead of vanishing. */
 export function assistantParts(text: string, streaming = false): AssistantPart[] {
   const parts: AssistantPart[] = [];
   const appendText = (value: string) => {
     const cleaned = cleanAssistantText(value);
     if (cleaned) parts.push({ type: "text", text: cleaned });
   };
-  const appendCard = (output: StructuredOutput, source: string) => {
-    parts.push({ type: "card", output, source });
-  };
-
-  const processSegment = (segment: string) => {
-    let idx = 0;
-    while (idx < segment.length) {
-      const openBrace = segment.indexOf("{", idx);
-      if (openBrace === -1) {
-        appendText(segment.slice(idx));
-        break;
-      }
-
-      if (!segment.slice(openBrace).includes('"semantic_type"')) {
-        appendText(segment.slice(idx));
-        break;
-      }
-
-      let depth = 0;
-      let inString = false;
-      let escape = false;
-      let closeBrace = -1;
-
-      for (let i = openBrace; i < segment.length; i++) {
-        const ch = segment[i];
-        if (escape) {
-          escape = false;
-          continue;
-        }
-        if (ch === "\\") {
-          escape = true;
-          continue;
-        }
-        if (ch === '"') {
-          inString = !inString;
-          continue;
-        }
-        if (!inString) {
-          if (ch === "{") depth++;
-          else if (ch === "}") {
-            depth--;
-            if (depth === 0) {
-              closeBrace = i;
-              break;
-            }
-          }
-        }
-      }
-
-      if (closeBrace === -1) {
-        if (streaming && segment.slice(openBrace).includes('"semantic_type"')) {
-          appendText(segment.slice(idx, openBrace));
-          return;
-        }
-        appendText(segment.slice(idx));
-        break;
-      }
-
-      const candidateJson = segment.slice(openBrace, closeBrace + 1);
-      if (candidateJson.includes('"semantic_type"')) {
-        const output = parseVakFence(candidateJson);
-        if (output) {
-          appendText(segment.slice(idx, openBrace));
-          appendCard(output, candidateJson);
-          idx = closeBrace + 1;
-          continue;
-        }
-      }
-
-      appendText(segment.slice(idx, openBrace + 1));
-      idx = openBrace + 1;
-    }
-  };
-
-  const fences = /^[ \t]*```(\w*)[^\n]*\r?\n([\s\S]*?)(^[ \t]*```[^\n]*(?:\r?\n|$)|(?![\s\S]))/gim;
+  const fences = /^[ \t]*```vak[^\n]*\r?\n([\s\S]*?)(^[ \t]*```[^\n]*(?:\r?\n|$)|(?![\s\S]))/gim;
   let cursor = 0;
   for (const match of text.matchAll(fences)) {
-    processSegment(text.slice(cursor, match.index));
-    const lang = (match[1] || "").toLowerCase().trim();
-    const explicit = lang === "vak" || ((lang === "json" || !lang) && match[2].includes('"semantic_type"'));
-    const output = explicit ? parseVakFence(match[2]) : null;
-    if (output) {
-      appendCard(output, match[2]);
-    } else if (explicit) {
-      // If it's an explicit vak/semantic transport fence:
-      // While streaming and not closed, suppress it so raw incomplete JSON doesn't flicker on screen.
-      // If completed, attempt a relaxed parse; never dump raw control fence JSON into user chat prose.
-      // But a fence that never parses (e.g. malformed/truncated JSON from the
-      // model) must still leave a trace — silently appending nothing here
-      // produced a turn with a real response that rendered as a blank div,
-      // no error, no explanation. Appending a plain note keeps the "no raw
-      // JSON in chat" rule while ending the total silence.
-      if (!streaming) {
-        const recovered = parseVakFence(match[2]);
-        if (recovered) {
-          appendCard(recovered, match[2]);
-        } else {
-          appendText("This response could not be rendered — the result was malformed.");
-        }
-      }
-    } else {
-      appendText(match[0]);
-    }
-    cursor = match.index! + match[0].length;
+    appendText(text.slice(cursor, match.index));
+    cursor = (match.index ?? 0) + match[0].length;
+    const closed = Boolean(match[2]);
+    if (!closed && streaming) continue;
+    const output = parseVakFence(match[1]);
+    if (output) parts.push({ type: "card", output, source: match[1] });
+    else appendText("This response could not be rendered — the result was malformed.");
   }
-  processSegment(text.slice(cursor));
+  appendText(text.slice(cursor));
   return parts;
 }
 
-/**
- * The inline runtime hints and context-block tags this file strips. These two
- * lists mirror `vak_intent::control::{inline_markers, CONTEXT_BLOCK_TAGS}`
- * exactly; `control_vocabulary_sync` in vak-server fails the build if they
- * differ. (Whole runtime-authored messages — nudges, stop guards — are tagged
- * structurally by the server and never reach the client at all.)
- */
 export const INLINE_HINT_MARKERS = ["[recovery]", "[post-tool-use hook]", "[limit]"] as const;
 export const CONTEXT_BLOCK_TAGS = [
   "conversation_thread",
@@ -238,86 +138,25 @@ export function spokenReplyText(text: string): string {
   return prose || "The result is ready to review on screen.";
 }
 
-/**
- * Attempts to parse a raw JSON fragment as a valid StructuredOutput card.
- * Handles leading/trailing whitespace, surrounding markdown, and nested JSON.
- */
+/** A ```vak fence's body as a card: `{"semantic_type", "payload"}`, strict JSON. */
 export function parseVakFence(rawContent: string): StructuredOutput | null {
   try {
-    let trimmed = rawContent.trim();
-    if (trimmed.startsWith("```")) {
-      trimmed = trimmed.replace(/^```[^\n]*\r?\n?/, "").replace(/\r?\n?```$/, "").trim();
-    }
-    const firstBrace = trimmed.indexOf("{");
-    if (firstBrace !== -1) {
-      const stack: string[] = [];
-      let normalized = "";
-      let inString = false;
-      let escape = false;
-      for (let index = firstBrace; index < trimmed.length; index++) {
-        let char = trimmed[index];
-        if (stack.length === 0 && normalized) break;
-        if (escape) {
-          escape = false;
-          normalized += char;
-          continue;
-        }
-        if (char === "\\" && inString) {
-          escape = true;
-          normalized += char;
-          continue;
-        }
-        if (char === '"') {
-          inString = !inString;
-          normalized += char;
-          continue;
-        }
-        if (inString) {
-          normalized += char;
-          continue;
-        }
-        if (char === "{") {
-          // A JSON object must place a colon after its first string key. Some
-          // local models emit positional table rows as {"a","b"}; when the
-          // comma proves this cannot be an object, preserve the values and
-          // normalize only the container delimiter to an array.
-          const remainder = trimmed.slice(index + 1);
-          const firstString = /^\s*"(?:\\.|[^"\\])*"\s*([,:}])/.exec(remainder);
-          if (stack[stack.length - 1] === "[" && firstString?.[1] === ",") char = "[";
-        }
-        if (char === "{" || char === "[") stack.push(char);
-        if (char === "}" || char === "]") {
-          const expected = stack[stack.length - 1] === "[" ? "]" : "}";
-          if (stack.length === 0) break;
-          stack.pop();
-          normalized += expected;
-          continue;
-        }
-        normalized += char;
-      }
-      if (stack.length === 0 && normalized.endsWith("}")) trimmed = normalized;
-    }
-    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
-    const parsed = JSON.parse(trimmed);
+    const parsed = JSON.parse(rawContent.trim());
     if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof parsed.semantic_type === "string" &&
-      (parsed.schema_version === undefined || Number(parsed.schema_version) >= 1) &&
-      parsed.payload &&
-      typeof parsed.payload === "object" &&
-      !Array.isArray(parsed.payload)
+      parsed && typeof parsed === "object" && typeof parsed.semantic_type === "string"
+      && parsed.payload && typeof parsed.payload === "object" && !Array.isArray(parsed.payload)
     ) {
       return {
         semantic_type: parsed.semantic_type,
+        block: parsed.semantic_type,
         schema_version: 2,
-        skill_id: typeof parsed.skill_id === "string" ? parsed.skill_id : "built-in",
-        skill_version: typeof parsed.skill_version === "string" ? parsed.skill_version : "1.0",
+        skill_id: "core",
+        skill_version: "2.0.0",
         payload: parsed.payload as Record<string, unknown>,
       };
     }
   } catch {
-    // Incomplete or invalid JSON
+    // Not a card.
   }
   return null;
 }

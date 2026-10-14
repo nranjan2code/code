@@ -7,9 +7,8 @@ use vak_agent::AgentEvent;
 use vak_delivery::{
     ArtifactRef, ArtifactStatus, DeliveryAction, OutputContent, OutputItem, OutputKind,
     OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline,
-    PresentationDocument, PresentationPlanner, ResultOutcome, SignalContext, built_in_adapters,
-    compile_markdown, signals_from_context, structured_markdown, structured_outputs_from_text,
-    structured_outputs_from_tool_result_with,
+    PresentationDocument, ResultOutcome, SkillRegistry, compile_markdown, structured_markdown,
+    structured_outputs_from_text_with,
 };
 
 fn status_for_completion(completion: Option<&str>) -> OutputStatus {
@@ -312,35 +311,33 @@ pub(crate) fn result_of_execution(
 }
 
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
-    let builtin = PresentationPlanner {
-        skills: vak_delivery::built_in_skill_registry(),
-        recipes: vak_delivery::built_in_recipes(),
-    };
-    snapshot_inner(session_id, session, &builtin, None)
+    snapshot_inner(
+        session_id,
+        session,
+        &vak_delivery::built_in_skill_registry(),
+        None,
+    )
 }
 
-/// Like [`snapshot`] but uses a plugin-merged `PresentationPlanner` so that
-/// domain-specific recipes and semantic types are recognized during
-/// live projection. Callers with Core access should use this for SSE and
-/// live session handles; historical views without Core can use `snapshot`.
-pub(crate) fn snapshot_with_planner(
+/// [`snapshot`] with the plugin-merged skill registry, so a plugin's kinds
+/// in ```vak fences are read.
+pub(crate) fn snapshot_with_skills(
     session_id: &str,
     session: &SessionLog,
-    planner: &PresentationPlanner,
+    skills: &SkillRegistry,
 ) -> OutputTimeline {
-    snapshot_inner(session_id, session, planner, None)
+    snapshot_inner(session_id, session, skills, None)
 }
 
-/// Live projection variant with the persisted adaptive library. The legacy
-/// planner remains authoritative for validation; the library only contributes
-/// an optional, auditable selection reference to the same document.
-pub(crate) fn snapshot_with_planner_and_library(
+/// [`snapshot_with_skills`] with the effective presentation library, whose
+/// active packs draw the kinds they accept.
+pub(crate) fn snapshot_with_skills_and_library(
     session_id: &str,
     session: &SessionLog,
-    planner: &PresentationPlanner,
+    skills: &SkillRegistry,
     library: &vak_presentation::PresentationLibrary,
 ) -> OutputTimeline {
-    snapshot_inner(session_id, session, planner, Some(library))
+    snapshot_inner(session_id, session, skills, Some(library))
 }
 
 /// Rehydrates sandbox-created artifacts into historical presentation views.
@@ -700,19 +697,6 @@ pub(crate) fn sandbox_artifact_markdown(
     (!rows.is_empty()).then(|| format!("\n\nGenerated artifacts\n\n{}", rows.join("\n")))
 }
 
-/// Declared domains for `tool_name`, accumulated from the chain's
-/// `TurnCapabilitiesBound` entries — never guessed from the tool's name
-/// (docs/design/68-context-engine.md §9's `SignalContext.domains` note).
-fn tool_domain_refs<'a>(
-    tool_domains: &'a HashMap<String, Vec<String>>,
-    tool_name: Option<&str>,
-) -> Vec<&'a str> {
-    tool_name
-        .and_then(|name| tool_domains.get(name))
-        .map(|domains| domains.iter().map(String::as_str).collect())
-        .unwrap_or_default()
-}
-
 fn has_user_request_content(content: &[ContentBlock]) -> bool {
     content.iter().any(|block| match block {
         ContentBlock::Text { text } => !clean_scaffolding(text).is_empty(),
@@ -724,7 +708,7 @@ fn has_user_request_content(content: &[ContentBlock]) -> bool {
 fn snapshot_inner(
     session_id: &str,
     session: &SessionLog,
-    planner: &PresentationPlanner,
+    skills: &SkillRegistry,
     adaptive_library: Option<&vak_presentation::PresentationLibrary>,
 ) -> OutputTimeline {
     let chain = session.chain_to_root();
@@ -788,11 +772,6 @@ fn snapshot_inner(
     let mut turn_evidence_state: HashMap<String, String> = HashMap::new();
     let mut turn_human_review: HashMap<String, String> = HashMap::new();
     let mut turn_review_verdict: HashMap<String, String> = HashMap::new();
-    // Declared domains per tool name, accumulated from every
-    // `TurnCapabilitiesBound` entry in the chain (docs/design/68-context-
-    // engine.md §9's `SignalContext.domains` note): delivery signals derive
-    // from what a capability declared it serves, never from its name.
-    let mut tool_domains: HashMap<String, Vec<String>> = HashMap::new();
     let mut selected_presentation: Option<(String, u64)> = None;
     let mut successful_runs = std::collections::HashSet::new();
     let mut assistant_tool_context: HashMap<String, TurnTool> = HashMap::new();
@@ -877,13 +856,6 @@ fn snapshot_inner(
                     if let Some(turn) = &entry.at_turn {
                         turn_outcomes.insert(turn.clone(), outcome.clone());
                     }
-                }
-            }
-            EntryPayload::TurnCapabilitiesBound(bound) => {
-                for (name, domains) in &bound.tool_domains {
-                    tool_domains
-                        .entry(name.clone())
-                        .or_insert_with(|| domains.clone());
                 }
             }
             EntryPayload::Activity(activity)
@@ -1058,37 +1030,14 @@ fn snapshot_inner(
                             }
                             let text = &cleaned_text_storage;
                             let candidates = if assistant {
-                                structured_outputs_from_text(text)
+                                structured_outputs_from_text_with(text, skills)
                             } else {
                                 Vec::new()
                             };
                             let assistant_tool_call_id = assistant_tool_context
                                 .get(&entry.id)
                                 .map(|(id, ..)| id.clone());
-                            let (tool_name, tool_input, tool_output, is_error) =
-                                assistant_tool_context
-                                    .get(&entry.id)
-                                    .map(|(_, name, input, output, err)| {
-                                        (Some(name.as_str()), Some(input), output.as_deref(), *err)
-                                    })
-                                    .unwrap_or((None, None, None, false));
-                            let tool_domain_refs = tool_domain_refs(&tool_domains, tool_name);
-                            let ctx = SignalContext {
-                                text,
-                                tool_name,
-                                tool_input,
-                                tool_output,
-                                is_error,
-                                domains: &tool_domain_refs,
-                            };
-                            let signals = signals_from_context(&ctx);
-                            let plan = planner.plan(&signals, "desktop", &[], &candidates);
-                            let mut projected_outcome = turn_outcomes.get(&current_turn).cloned();
-                            let mut rejected_outcome_requirements = Vec::new();
-                            if let Some(outcome) = projected_outcome.as_mut() {
-                                rejected_outcome_requirements =
-                                    plan.merge_outcome_requirements(outcome);
-                            }
+                            let projected_outcome = turn_outcomes.get(&current_turn).cloned();
                             // An activation is the user's standing choice for this
                             // scope. Use it automatically for the first compatible
                             // typed result; explicit session selection still wins.
@@ -1100,23 +1049,13 @@ fn snapshot_inner(
                                             header.contract_cwd().to_string_lossy().into_owned()
                                         })
                                         .unwrap_or_else(|| "workspace".into());
-                                    plan.accepted.iter().find_map(|candidate| {
+                                    candidates.iter().find_map(|candidate| {
                                         library
                                             .select_preferred(
                                                 &candidate.semantic_type,
                                                 "user",
                                                 &workspace_owner,
                                             )
-                                            .filter(|stored| {
-                                                stored.spec.metadata.get("seed").map(String::as_str)
-                                                    != Some("true")
-                                                    || stored
-                                                        .spec
-                                                        .metadata
-                                                        .get("certified")
-                                                        .map(String::as_str)
-                                                        == Some("true")
-                                            })
                                             .map(|stored| {
                                                 (stored.spec.id.clone(), stored.spec.revision)
                                             })
@@ -1147,8 +1086,7 @@ fn snapshot_inner(
                                     document: {
                                         let mut document = compile_markdown(text.clone());
                                         if let Some(library) = adaptive_library {
-                                            let available = plan
-                                                .accepted
+                                            let available = candidates
                                                 .iter()
                                                 .filter(|candidate| {
                                                     library.definitions().any(|stored| {
@@ -1164,8 +1102,8 @@ fn snapshot_inner(
                                                     available.to_string(),
                                                 );
                                             }
-                                            if let Some((spec_id, revision)) = selected_for_output
-                                                .as_ref()
+                                            if let Some((spec_id, revision)) =
+                                                selected_for_output.as_ref()
                                                 && library.definitions().any(|stored| {
                                                     stored.spec.id == *spec_id
                                                         && stored.spec.revision == *revision
@@ -1177,39 +1115,6 @@ fn snapshot_inner(
                                                 );
                                             }
                                         }
-                                        if let Some(decision) = plan.recipe.as_ref() {
-                                            document.metadata.insert(
-                                                "recipe_id".into(),
-                                                decision.recipe_id.clone(),
-                                            );
-                                            document.metadata.insert(
-                                                "recipe_version".into(),
-                                                decision.recipe_version.clone(),
-                                            );
-                                            document.metadata.insert(
-                                                "matched_signals".into(),
-                                                decision.matched_signals.join(","),
-                                            );
-                                            document.metadata.insert(
-                                                "renderer".into(),
-                                                decision.renderer.clone(),
-                                            );
-                                            document.metadata.insert(
-                                                "renderer_blocks".into(),
-                                                plan.renderers
-                                                    .iter()
-                                                    .map(|render| {
-                                                        format!(
-                                                            "{}={} ({:?})",
-                                                            render.semantic_type,
-                                                            render.renderer,
-                                                            render.disposition
-                                                        )
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                                    .join(", "),
-                        );
-                    }
                                         if let Some(outcome) = projected_outcome.as_ref() {
                                             document.metadata.insert(
                                                 "outcome_objective".into(),
@@ -1229,12 +1134,6 @@ fn snapshot_inner(
                                                     .join(","),
                                             );
                                         }
-                                        if !rejected_outcome_requirements.is_empty() {
-                                            document.metadata.insert(
-                                                "outcome_requirement_rejections".into(),
-                                                rejected_outcome_requirements.join("; "),
-                                            );
-                                        }
                                         if let Some(status) = turn_evaluations.get(&current_turn) {
                                             let mut parts = status.splitn(2, '|');
                                             let outcome_status =
@@ -1244,19 +1143,23 @@ fn snapshot_inner(
                                                 outcome_status.into(),
                                             );
                                             if let Some(evaluation) = parts.next() {
-                                                let evaluation_json =
-                                                    evaluation.split('|').next().map_or("[]", |value| value);
+                                                let evaluation_json = evaluation
+                                                    .split('|')
+                                                    .next()
+                                                    .map_or("[]", |value| value);
                                                 document.metadata.insert(
                                                     "outcome_evaluation".into(),
                                                     evaluation_json.into(),
                                                 );
-                                                if let Some(receipts) = evaluation.split('|').nth(2) {
+                                                if let Some(receipts) = evaluation.split('|').nth(2)
+                                                {
                                                     document.metadata.insert(
                                                         "outcome_evidence_receipts".into(),
                                                         receipts.into(),
                                                     );
                                                 }
-                                                if let Some(completion) = evaluation.split('|').nth(3)
+                                                if let Some(completion) =
+                                                    evaluation.split('|').nth(3)
                                                 {
                                                     document.metadata.insert(
                                                         "outcome_completion".into(),
@@ -1265,7 +1168,9 @@ fn snapshot_inner(
                                                 }
                                             }
                                         }
-                                        if let Some(evidence_state) = turn_evidence_state.get(&current_turn) {
+                                        if let Some(evidence_state) =
+                                            turn_evidence_state.get(&current_turn)
+                                        {
                                             document.metadata.insert(
                                                 "outcome_evidence_state".into(),
                                                 evidence_state.clone(),
@@ -1277,31 +1182,12 @@ fn snapshot_inner(
                                                 review.clone(),
                                             );
                                         }
-                                        if let Some(verdict) = turn_review_verdict.get(&current_turn) {
+                                        if let Some(verdict) =
+                                            turn_review_verdict.get(&current_turn)
+                                        {
                                             document.metadata.insert(
                                                 "outcome_review_verdict".into(),
                                                 verdict.clone(),
-                                            );
-                                        }
-                                        document.diagnostics.extend(plan.rejected.iter().map(
-                                            |item| {
-                                                format!("{}: {}", item.semantic_type, item.reason)
-                                            },
-                                        ));
-                                        if assistant
-                                            && plan.recipe.as_ref().is_some_and(|decision| {
-                                                decision.requires_typed_output
-                                            })
-                                            && !plan.accepted.iter().any(|candidate| {
-                                                plan.recipe.as_ref().is_some_and(|decision| {
-                                                    decision.typed_output_types.iter().any(|kind| {
-                                                        candidate.semantic_type == *kind
-                                                    })
-                                                })
-                                            })
-                                        {
-                                            document.diagnostics.push(
-                                                "research-shaped prose has no typed evidence contract; rendered as an unverified document".into(),
                                             );
                                         }
                                         document
@@ -1330,7 +1216,7 @@ fn snapshot_inner(
                                 && let Some(stored) = library.definitions().find(|stored| {
                                     stored.spec.id == *spec_id && stored.spec.revision == *revision
                                 })
-                                && let Some(candidate) = plan.accepted.iter().find(|candidate| {
+                                && let Some(candidate) = candidates.iter().find(|candidate| {
                                     stored
                                         .spec
                                         .accepts
@@ -1367,39 +1253,6 @@ fn snapshot_inner(
                                     }),
                                     actions: Vec::new(),
                                     fallback_text: text.clone(),
-                                });
-                            }
-                            for (link_index, preview) in plan
-                                .accepted
-                                .into_iter()
-                                .filter(|candidate| candidate.semantic_type == "link.preview")
-                                .enumerate()
-                            {
-                                timeline.items.push(OutputItem {
-                                    id: format!("{}-link-{link_index}", entry.id),
-                                    timestamp: entry.ts.to_rfc3339(),
-                                    turn_id: turn_id.clone(),
-                                    role: OutputRole::Assistant,
-                                    kind: OutputKind::Card,
-                                    status: OutputStatus::Succeeded,
-                                    outcome: None,
-                                    content: OutputContent::Structured {
-                                        output: preview.clone(),
-                                    },
-                                    provenance: Some(OutputProvenance {
-                                        session_id: Some(session_id.into()),
-                                        entry_id: Some(entry.id.clone()),
-                                        tool_call_id: None,
-                                        source: Some("link_extractor".into()),
-                                        presentation_id: None,
-                                    }),
-                                    actions: Vec::new(),
-                                    fallback_text: preview
-                                        .payload
-                                        .get("url")
-                                        .and_then(serde_json::Value::as_str)
-                                        .unwrap_or_default()
-                                        .into(),
                                 });
                             }
                         }
@@ -1481,36 +1334,16 @@ fn snapshot_inner(
                                     String,
                                     &vak_session::types::PresentationRecord,
                                 )| {
-                                    // A pack's kind no active pack draws any more
-                                    // is drawn by the block that built it
-                                    // (docs/design/91-presentation-capabilities.md §2).
-                                    let pack_owner = session
-                                        .header()
-                                        .map(|header| {
-                                            header.contract_cwd().to_string_lossy().into_owned()
-                                        })
-                                        .unwrap_or_else(|| "workspace".into());
-                                    let semantic_type = match record.block.as_deref() {
-                                        Some(block)
-                                            if !adaptive_library.is_some_and(|library| {
-                                                library
-                                                    .select_preferred(
-                                                        &record.semantic_type,
-                                                        "user",
-                                                        &pack_owner,
-                                                    )
-                                                    .is_some()
-                                            }) =>
-                                        {
-                                            vak_core::presentation_tools::block_kind(block)
-                                                .map(str::to_string)
-                                                .unwrap_or_else(|| record.semantic_type.clone())
-                                        }
-                                        _ => record.semantic_type.clone(),
-                                    };
                                     (
                                         vak_delivery::StructuredOutput {
-                                            semantic_type,
+                                            semantic_type: record.semantic_type.clone(),
+                                            block: record.block.clone().unwrap_or_else(|| {
+                                                if vak_delivery::is_form(&record.semantic_type) {
+                                                    record.semantic_type.clone()
+                                                } else {
+                                                    String::new()
+                                                }
+                                            }),
                                             schema_version: u16::try_from(record.schema_version)
                                                 .unwrap_or(u16::MAX),
                                             skill_id: record.skill_id.clone(),
@@ -1532,26 +1365,10 @@ fn snapshot_inner(
                                             .into_iter()
                                             .collect()
                                     } else {
-                                        let mut outputs: Vec<_> = delegated_by_tool_use_id
+                                        delegated_by_tool_use_id
                                             .get(id)
                                             .map(|cards| cards.iter().map(recorded).collect())
-                                            .unwrap_or_default();
-                                        outputs.extend(
-                                            detail
-                                                .as_deref()
-                                                .map(|text| {
-                                                    structured_outputs_from_tool_result_with(
-                                                        text,
-                                                        "desktop",
-                                                        &built_in_adapters(),
-                                                        &planner.skills,
-                                                    )
-                                                })
-                                                .unwrap_or_default()
-                                                .into_iter()
-                                                .map(|output| (output, None)),
-                                        );
-                                        outputs
+                                            .unwrap_or_default()
                                     };
                                 for (structured_index, (output, presentation_entry_id)) in
                                     outputs.into_iter().enumerate()
@@ -1596,30 +1413,19 @@ fn snapshot_inner(
                                                 )
                                             })
                                     });
-                                    let adaptive = selected
-                                        .filter(|stored| {
-                                            stored.spec.metadata.get("seed").map(String::as_str)
-                                                != Some("true")
-                                                || stored
-                                                    .spec
-                                                    .metadata
-                                                    .get("certified")
-                                                    .map(String::as_str)
-                                                    == Some("true")
-                                        })
-                                        .and_then(|stored| {
-                                            OutputContent::from_compiled_adaptive(
-                                                vak_presentation::compile(
-                                                    &stored.spec,
-                                                    &vak_presentation::CompileInput {
-                                                        semantic_type: output.semantic_type.clone(),
-                                                        payload: output.payload.clone(),
-                                                        fallback_text: fallback_text.clone(),
-                                                    },
-                                                ),
-                                                fallback_text.clone(),
-                                            )
-                                        });
+                                    let adaptive = selected.and_then(|stored| {
+                                        OutputContent::from_compiled_adaptive(
+                                            vak_presentation::compile(
+                                                &stored.spec,
+                                                &vak_presentation::CompileInput {
+                                                    semantic_type: output.semantic_type.clone(),
+                                                    payload: output.payload.clone(),
+                                                    fallback_text: fallback_text.clone(),
+                                                },
+                                            ),
+                                            fallback_text.clone(),
+                                        )
+                                    });
                                     timeline.items.push(OutputItem {
                                         id: item_id,
                                         timestamp: entry.ts.to_rfc3339(),
@@ -4027,325 +3833,6 @@ mod tests {
     }
 
     #[test]
-    fn tool_domain_refs_reads_declared_domains_by_tool_name() {
-        let mut domains = HashMap::new();
-        domains.insert(
-            "tavily_search".to_string(),
-            vec!["web".to_string(), "live-data".to_string()],
-        );
-        assert_eq!(
-            super::tool_domain_refs(&domains, Some("tavily_search")),
-            vec!["web", "live-data"]
-        );
-        assert!(super::tool_domain_refs(&domains, Some("bash")).is_empty());
-        assert!(super::tool_domain_refs(&domains, None).is_empty());
-    }
-
-    /// `snapshot` must read back a `TurnCapabilitiesBound` entry's declared
-    /// `tool_domains` without disturbing the rest of the projection — the
-    /// ledger-round-trip half of docs/design/68-context-engine.md §9's
-    /// `SignalContext.domains` note. The signal/recipe consequence of a
-    /// non-empty `domains` slice is covered directly against
-    /// `signals_from_context` in `vak-delivery`.
-    #[test]
-    fn snapshot_reads_declared_tool_domains_from_the_ledger_without_disrupting_projection() {
-        let dir = tempfile::tempdir().expect("temporary directory");
-        let mut log = SessionLog::create(
-            dir.path().join("presentation.jsonl"),
-            SessionHeader {
-                space: None,
-                run: None,
-                cause: None,
-                agent: None,
-                session_id: "session-domains".into(),
-                created_at: chrono::Utc::now(),
-                cwd: PathBuf::from("/tmp/project"),
-                parent_session_id: None,
-                contract_id: None,
-                work_item_id: None,
-                conversation: None,
-                contract: FrozenContract {
-                    app_version: "test".into(),
-                    provider: "test".into(),
-                    model: "test".into(),
-                    route_ladder: Vec::new(),
-                    route_objective: String::new(),
-                    route_annotations: Vec::new(),
-                    system_prompt: String::new(),
-                    permission_mode: "read-only".into(),
-                    capabilities: Vec::new(),
-                    prompt_layers: Vec::new(),
-                },
-            },
-        )
-        .expect("create session")
-        .with_objects(std::sync::Arc::new(
-            vak_session::objects::MemoryObjects::default(),
-        ));
-        log.append_turn_capabilities(vak_session::types::TurnBinding {
-            epoch: 1,
-            capability_ids: Vec::new(),
-            excluded_ids: Vec::new(),
-            system_prompt: String::new(),
-            tool_schemas: Vec::new(),
-            core_tool_names: Vec::new(),
-            deferred_tool_names: Vec::new(),
-            tool_index: String::new(),
-            tool_domains: BTreeMap::from([(
-                "some_search_tool".to_string(),
-                vec!["web".to_string(), "live-data".to_string()],
-            )]),
-        })
-        .expect("append turn capabilities");
-        log.append_message(MessageRecord {
-            message: Message::user_text("What is happening in the market today?"),
-            meta: None,
-        })
-        .expect("append user");
-        log.append_message(MessageRecord {
-            message: Message::assistant(vec![ContentBlock::ToolUse {
-                id: "call-1".into(),
-                name: "some_search_tool".into(),
-                input: serde_json::json!({"query": "market news"}),
-            }]),
-            meta: None,
-        })
-        .expect("append call");
-        log.append_message(MessageRecord {
-            message: Message {
-                role: Role::User,
-                content: vec![ContentBlock::tool_result("call-1", "found three articles")],
-            },
-            meta: None,
-        })
-        .expect("append result");
-        log.append_message(MessageRecord {
-            message: Message::assistant(vec![ContentBlock::text("Markets are up today.")]),
-            meta: None,
-        })
-        .expect("append narration");
-
-        // Must not panic, and the ordinary answer must still project.
-        let timeline = snapshot("session-domains", &log);
-        assert!(
-            timeline
-                .items
-                .iter()
-                .any(|item| item.kind == OutputKind::Outcome),
-            "the turn's answer must still project with a declared-domains entry in the chain"
-        );
-        assert!(
-            timeline.items.iter().any(|item| {
-                item.role == OutputRole::Assistant
-                    && item.kind == OutputKind::Outcome
-                    && item.outcome.as_ref().is_some_and(|outcome| {
-                        !outcome.result_id.is_empty() && outcome.status == OutputStatus::Succeeded
-                    })
-            }),
-            "every ordinary assistant result needs a stable address in an unbounded timeline"
-        );
-    }
-
-    #[test]
-    fn a_tool_self_declaring_its_own_result_renders_structured_with_no_special_casing() {
-        // Any tool — not just ones this file knows by name — gets a rich
-        // render for free by tagging its own result with a semantic_type the
-        // registry recognizes. This models an arbitrary MCP tool doing that;
-        // nothing here mentions "weather" and nothing should have to.
-        let dir = tempfile::tempdir().expect("temporary directory");
-        let mut log = SessionLog::create(
-            dir.path().join("presentation.jsonl"),
-            SessionHeader {
-                space: None,
-                run: None,
-                cause: None,
-                agent: None,
-                session_id: "session-3".into(),
-                created_at: chrono::Utc::now(),
-                cwd: PathBuf::from("/tmp/project"),
-                parent_session_id: None,
-                contract_id: None,
-                work_item_id: None,
-                conversation: None,
-                contract: FrozenContract {
-                    app_version: "test".into(),
-                    provider: "test".into(),
-                    model: "test".into(),
-                    route_ladder: Vec::new(),
-                    route_objective: String::new(),
-                    route_annotations: Vec::new(),
-                    system_prompt: String::new(),
-                    permission_mode: "read-only".into(),
-                    capabilities: Vec::new(),
-                    prompt_layers: Vec::new(),
-                },
-            },
-        )
-        .expect("create session");
-        log.append_message(MessageRecord {
-            message: Message::user_text("What's the weather?"),
-            meta: None,
-        })
-        .expect("append user");
-        log.append_message(MessageRecord {
-            message: Message::assistant(vec![ContentBlock::ToolUse {
-                id: "tool-any".into(),
-                name: "some_third_party_mcp_tool".into(),
-                input: serde_json::json!({}),
-            }]),
-            meta: None,
-        })
-        .expect("append call");
-        log.append_message(MessageRecord {
-            message: Message {
-                role: Role::User,
-                content: vec![ContentBlock::ToolResult {
-                    tool_use_id: "tool-any".into(),
-                    content: "```vak\n{\"semantic_type\":\"metric\",\"payload\":{\"label\":\"Temperature\",\"value\":25,\"unit\":\"C\"}}\n```".into(),
-                    is_error: false,
-                }],
-            },
-            meta: None,
-        })
-        .expect("append result");
-
-        let timeline = snapshot("session-3", &log);
-        let structured = timeline
-            .items
-            .iter()
-            .find(|item| matches!(item.content, OutputContent::Structured { .. }))
-            .expect("tool result should have produced a structured item");
-        let OutputContent::Structured { output } = &structured.content else {
-            unreachable!()
-        };
-        assert_eq!(output.semantic_type, "metric");
-        assert_eq!(
-            structured
-                .provenance
-                .as_ref()
-                .and_then(|p| p.tool_call_id.as_deref()),
-            Some("tool-any")
-        );
-    }
-
-    /// One end-to-end pass across four unrelated personas' tools, each
-    /// returning bare JSON with no Markdown fence — the shape a real tool
-    /// implementation naturally produces. No persona, tool name, or domain
-    /// is known to `snapshot`; each renders solely because its own result
-    /// declared a `semantic_type` the registry recognizes.
-    #[test]
-    fn different_personas_tools_all_render_through_the_same_unnamed_path() {
-        let dir = tempfile::tempdir().expect("temporary directory");
-        let mut log = SessionLog::create(
-            dir.path().join("presentation.jsonl"),
-            SessionHeader {
-                space: None,
-                run: None,
-                cause: None,
-                agent: None,
-                session_id: "session-personas".into(),
-                created_at: chrono::Utc::now(),
-                cwd: PathBuf::from("/tmp/project"),
-                parent_session_id: None,
-                contract_id: None,
-                work_item_id: None,
-                conversation: None,
-                contract: FrozenContract {
-                    app_version: "test".into(),
-                    provider: "test".into(),
-                    model: "test".into(),
-                    route_ladder: Vec::new(),
-                    route_objective: String::new(),
-                    route_annotations: Vec::new(),
-                    system_prompt: String::new(),
-                    permission_mode: "read-only".into(),
-                    capabilities: Vec::new(),
-                    prompt_layers: Vec::new(),
-                },
-            },
-        )
-        .expect("create session");
-        log.append_message(MessageRecord {
-            message: Message::user_text("Kick off a bunch of unrelated tools"),
-            meta: None,
-        })
-        .expect("append user");
-
-        // (tool name, persona it stands in for, bare-JSON result, expected semantic_type)
-        let calls: [(&str, &str, &str, &str); 4] = [
-            (
-                "get_local_weather",
-                "general user",
-                r#"{"semantic_type":"metric","payload":{"label":"Temperature","value":25,"unit":"C"}}"#,
-                "metric",
-            ),
-            (
-                "run_test_suite",
-                "developer",
-                r#"{"semantic_type":"test.report","payload":{"tests":[{"name":"it_compiles","status":"passed"}],"total":1,"passed":1,"failed":0,"skipped":0}}"#,
-                "test.report",
-            ),
-            (
-                "aggregate_research",
-                "knowledge worker",
-                r#"{"semantic_type":"research.synthesis","payload":{"sources":[{"title":"Report","url":"https://example.com"}],"takeaways":[{"text":"Adoption is rising","citation_indices":[1]}]}}"#,
-                "research.synthesis",
-            ),
-            (
-                "query_warehouse",
-                "data analyst",
-                r#"{"semantic_type":"data.grid","payload":{"columns":[{"key":"region","label":"Region"}],"rows":[{"region":"APAC"}]}}"#,
-                "data.grid",
-            ),
-        ];
-
-        for (index, (tool_name, _persona, result_json, _expected_type)) in calls.iter().enumerate()
-        {
-            let call_id = format!("call-{index}");
-            log.append_message(MessageRecord {
-                message: Message::assistant(vec![ContentBlock::ToolUse {
-                    id: call_id.clone(),
-                    name: (*tool_name).into(),
-                    input: serde_json::json!({}),
-                }]),
-                meta: None,
-            })
-            .expect("append call");
-            log.append_message(MessageRecord {
-                message: Message {
-                    role: Role::User,
-                    content: vec![ContentBlock::ToolResult {
-                        tool_use_id: call_id,
-                        content: (*result_json).into(),
-                        is_error: false,
-                    }],
-                },
-                meta: None,
-            })
-            .expect("append result");
-        }
-
-        let timeline = snapshot("session-personas", &log);
-        for (index, (_tool_name, persona, _result_json, expected_type)) in calls.iter().enumerate()
-        {
-            let call_id = format!("call-{index}");
-            let found = timeline.items.iter().any(|item| {
-                matches!(&item.content, OutputContent::Structured { output }
-                    if output.semantic_type == *expected_type)
-                    && item
-                        .provenance
-                        .as_ref()
-                        .and_then(|p| p.tool_call_id.as_deref())
-                        == Some(call_id.as_str())
-            });
-            assert!(
-                found,
-                "expected a rendered {expected_type} item for the {persona} scenario"
-            );
-        }
-    }
-
-    #[test]
     fn completion_status_requires_exact_complete_verdict() {
         assert_eq!(super::status_for_completion(None), OutputStatus::Succeeded);
         assert_eq!(
@@ -4873,7 +4360,6 @@ mod tests {
             })
             .collect();
         let input = serde_json::json!({
-            "semantic_type": "research.synthesis",
             "sources": sources
         });
         assert!(
@@ -4883,7 +4369,7 @@ mod tests {
         log.append_message(MessageRecord {
             message: Message::assistant(vec![ContentBlock::ToolUse {
                 id: "call-r".into(),
-                name: "emit_research_card".into(),
+                name: "emit_sources_card".into(),
                 input: input.clone(),
             }]),
             meta: None,
@@ -4894,18 +4380,18 @@ mod tests {
                 role: Role::User,
                 content: vec![ContentBlock::ToolResult {
                     tool_use_id: "call-r".into(),
-                    content: "Card displayed to the user (research.synthesis).".into(),
+                    content: "Shown to the user (sources).".into(),
                     is_error: false,
                 }],
             },
             meta: None,
         })
         .expect("result");
-        append_presentation_for_call(&mut log, "emit_research_card", "call-r", &input);
+        append_presentation_for_call(&mut log, "emit_sources_card", "call-r", &input);
         let timeline = snapshot("big-card", &log);
         assert!(
             timeline.items.iter().any(|item| matches!(&item.content,
-                OutputContent::Structured { output } if output.semantic_type == "research.synthesis")),
+                OutputContent::Structured { output } if output.semantic_type == "sources")),
             "the research card must render from the call arguments"
         );
     }
@@ -5328,52 +4814,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn every_built_in_pack_compiles_its_real_emitter_shape() {
-        let cases = vak_core::presentation_tools::conformance_cases();
-        let skills = vak_delivery::built_in_skill_registry();
-        let mut failures = Vec::new();
-        for seed in vak_presentation::seeds::built_in_seed_pack() {
-            let Some((tool, semantic_type, args)) = cases
-                .iter()
-                .find(|(_, kind, _)| seed.spec.accepts.iter().any(|accepted| accepted == kind))
-            else {
-                failures.push(format!("{}: no card block produces its type", seed.spec.id));
-                continue;
-            };
-            // Packs read the stored card, which the tool builds from its
-            // arguments.
-            let payload = vak_core::presentation_tools::presentation_info(tool, args, &skills)
-                .expect("conformance arguments build a card")
-                .payload;
-            let compiled = vak_presentation::compile(
-                &seed.spec,
-                &vak_presentation::CompileInput {
-                    semantic_type: (*semantic_type).into(),
-                    payload: payload.clone(),
-                    fallback_text: "Fallback".into(),
-                },
-            );
-            if !matches!(compiled, vak_presentation::CompiledPresentation::Rich(_)) {
-                failures.push(format!("{} ({semantic_type}): {compiled:?}", seed.spec.id));
-            } else if vak_delivery::adaptive_presentation_markdown(&compiled)
-                .trim()
-                .is_empty()
-            {
-                failures.push(format!(
-                    "{} ({semantic_type}): empty text delivery",
-                    seed.spec.id
-                ));
-            }
-        }
-        assert!(
-            failures.is_empty(),
-            "{} unusable packs:\n{}",
-            failures.len(),
-            failures.join("\n")
-        );
-    }
-
     /// The answer outline (docs/design/87-composed-answers.md §2): the
     /// plan's deliverables are the sections, a card is in the section its
     /// `answers` names, a card that names none is in no section, and the
@@ -5389,7 +4829,7 @@ mod tests {
         })
         .expect("directive");
         for (id, items) in [("a1", vec!["Charger"]), ("a2", vec!["Charger", "Hat"])] {
-            let blocks = serde_json::json!({"blocks": [{"type": "checklist", "items": items}]});
+            let blocks = serde_json::json!({"blocks": [{"type": "list", "items": items}]});
             log.append_message(MessageRecord {
                 message: Message::assistant(vec![ContentBlock::ToolUse {
                     id: id.into(),
@@ -5413,7 +4853,7 @@ mod tests {
             .expect("result");
             append_presentation(
                 &mut log,
-                "emit_checklist_card",
+                "emit_list_card",
                 vak_session::types::PresentationSource::Answer {
                     tool_use_id: id.into(),
                     block: 0,
@@ -5452,8 +4892,8 @@ mod tests {
         ]});
         let blocks = serde_json::json!({"blocks": [
             {"type": "text", "text": "Here it is."},
-            {"type": "checklist", "items": ["Charger"], "deliverable": "packing list"},
-            {"type": "checklist", "items": ["Train", "Car"], "deliverable": "Comparison"}
+            {"type": "list", "items": ["Charger"], "deliverable": "packing list"},
+            {"type": "list", "items": ["Train", "Car"], "deliverable": "Comparison"}
         ]});
         for (id, name, input) in [("p1", "plan", &plan), ("a1", "answer", &blocks)] {
             log.append_message(MessageRecord {
@@ -5481,7 +4921,7 @@ mod tests {
         for block in [1_u32, 2] {
             append_presentation(
                 &mut log,
-                "emit_checklist_card",
+                "emit_list_card",
                 vak_session::types::PresentationSource::Answer {
                     tool_use_id: "a1".into(),
                     block,
@@ -5554,19 +4994,19 @@ mod tests {
         call(
             &mut log,
             "c1",
-            "emit_checklist_card",
+            "emit_list_card",
             serde_json::json!({"items": ["Charger"], "deliverable": "Packing list"}),
         );
         call(
             &mut log,
             "c2",
             "emit_callout_card",
-            serde_json::json!({"text": "Book early."}),
+            serde_json::json!({"tone": "tip", "text": "Book early."}),
         );
         call(
             &mut log,
             "c3",
-            "emit_checklist_card",
+            "emit_list_card",
             serde_json::json!({"items": ["Train", "Car"], "deliverable": "comparison"}),
         );
         log.append_message(MessageRecord {
@@ -6005,25 +5445,6 @@ mod tests {
         })
         .expect("answer");
         assert_eq!(link_cards(&super::snapshot("plain-url", &log)), 0);
-    }
-
-    #[test]
-    fn a_link_the_model_emitted_as_a_card_still_shows() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let mut log = channel_log(&dir, "typed-url");
-        log.append_message(MessageRecord {
-            message: Message::user_text("point me at the docs"),
-            meta: None,
-        })
-        .expect("user");
-        log.append_message(MessageRecord {
-            message: Message::assistant(vec![ContentBlock::text(
-                "Here.\n\n```vak\n{\"semantic_type\":\"link.preview\",\"payload\":{\"url\":\"https://example.com\",\"title\":\"Example\"}}\n```\n",
-            )]),
-            meta: None,
-        })
-        .expect("answer");
-        assert_eq!(link_cards(&super::snapshot("typed-url", &log)), 1);
     }
 
     #[test]
