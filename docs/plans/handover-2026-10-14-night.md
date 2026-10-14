@@ -235,6 +235,11 @@ Git and release:
 
 ## Traps learned this session
 
+- `git mv` stages the rename at once; naming the old path in a later
+  `git add` fails the whole add, and a `&&`-chained commit then commits
+  only the rename (`afe6fc5d4` does not build alone; `eb750e972` follows
+  it). Stage the new path only, and check `git show --stat` before
+  pushing.
 - A purge on the Mac deletes `~/Library/Application Support/Vakyartha`,
   which held the private AWS inventory; keep a copy elsewhere. A purge on
   the host drops the Shared `[server]` section (421 behind the proxy until
