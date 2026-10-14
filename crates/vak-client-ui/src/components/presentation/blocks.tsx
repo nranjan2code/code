@@ -76,7 +76,7 @@ const Eyebrow = (props: { label?: unknown }) => (
 export function renderLead(n: AdaptiveRenderNode) {
   const points = n.props.points as string[];
   return (
-    <section class="answer-block block-lead" aria-label="Answer">
+    <section class="block-lead" aria-label="Answer">
       <Eyebrow label={n.props.label} />
       <h3 class="block-lead-headline">{text(n.props.headline)}</h3>
       <Show when={text(n.props.text)}>{(body) => <p class="block-lead-text">{body()}</p>}</Show>
@@ -90,7 +90,7 @@ export function renderLead(n: AdaptiveRenderNode) {
 export function renderStats(n: AdaptiveRenderNode) {
   const readings = n.props.readings as { label: string; value: string; unit?: string; change?: string }[];
   return (
-    <section class="answer-block block-stats" aria-label={text(n.props.title) ?? "Key figures"}>
+    <section class="block-stats" aria-label={text(n.props.title) ?? "Key figures"}>
       <Eyebrow label={n.props.label ?? n.props.title} />
       <div class="block-stats-row">
         <For each={readings}>{(reading) => (
@@ -109,7 +109,7 @@ export function renderCallout(n: AdaptiveRenderNode) {
   const tone = String(n.props.tone);
   const names: Record<string, string> = { tip: "Tip", note: "Note", warning: "Warning", important: "Important" };
   return (
-    <aside class={`answer-block block-callout tone-${tone}`} role={tone === "warning" || tone === "important" ? "alert" : "note"}>
+    <aside class={`block-callout tone-${tone}`} role={tone === "warning" || tone === "important" ? "alert" : "note"}>
       <div class="block-callout-tone">{text(n.props.label) ?? names[tone]}</div>
       <Show when={text(n.props.title)}>{(title) => <strong class="block-callout-title">{title()}</strong>}</Show>
       <p>{text(n.props.text)}</p>
@@ -120,7 +120,7 @@ export function renderCallout(n: AdaptiveRenderNode) {
 export function renderChecklist(n: AdaptiveRenderNode) {
   const items = n.props.items as { label: string; detail?: string }[];
   return (
-    <section class="answer-block block-checklist" aria-label={text(n.props.title) ?? "Checklist"}>
+    <section class="block-checklist" aria-label={text(n.props.title) ?? "Checklist"}>
       <Eyebrow label={n.props.label} />
       <Show when={text(n.props.title)}>{(title) => <h3>{title()}</h3>}</Show>
       <ul>
@@ -136,7 +136,7 @@ export function renderComparisonOptions(n: AdaptiveRenderNode) {
   const options = n.props.options as { name: string; verdict?: string; strengths: string[]; weaknesses: string[] }[];
   const aspects = n.props.aspects as { label: string; values: string[] }[];
   return (
-    <section class="answer-block block-comparison" aria-label={text(n.props.title) ?? "Comparison"}>
+    <section class="block-comparison" aria-label={text(n.props.title) ?? "Comparison"}>
       <Eyebrow label={n.props.label} />
       <Show when={text(n.props.title)}>{(title) => <h3>{title()}</h3>}</Show>
       <div class="block-comparison-options" style={{ "--options": String(options.length) }}>

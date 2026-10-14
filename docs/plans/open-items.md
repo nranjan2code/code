@@ -48,15 +48,16 @@ across them. Nothing here is started unless it says so.
 
 ## Presentations as capabilities (docs/design/91)
 
-- Built (stages 1 to 5). First live turn, 2026-10-14, home route
-  `qwen3.5:0.8b-mlx`, a Saturday plan in Pune: the model loaded
-  `how-to-guide` rather than `plan-in-time`, looked for transport it was
-  not asked about, sent `emit_steps_card` with no `steps` (the regeneration
-  did not recover it), and sent `chart_type: "bar_chart"` beside a chart
-  card whose kinds include `bar_chart`. Fixed: the `bar_chart` kind is
-  removed, and a call its schema refuses is regenerated at once (doc 89
-  §4.4). Open: the same turn again on both local models; the answer seen
-  in the browser at 1440 × 900 and 390 × 844, light and dark.
+- Built (stages 1 to 5). Live, 2026-10-14, the Pune Saturday plan:
+  the Agent's route (`gpt-6-luna`) planned, loaded `plan-in-time`, and
+  showed a lead, the pack's `at_a_glance` row, an itinerary and a callout
+  in the plan's one section; `qwen3.5:4b-mlx` (98 s) showed an itinerary
+  and a stats card, with no failed call. In the browser at 1440 × 900 and
+  390 × 844 (dark): no sideways scroll, the figure row three columns wide
+  and one on a phone, nothing under 12 px. Not verified: light, because
+  the app's theme setting overrides the emulated scheme; and the first
+  run's route was not read from its receipts. Figures read "3000 ₹", the
+  unit after the value.
 
 ## Installed 7.2.0 run (docs/audits/installed-7.2.0-run-2026-10-14.md)
 

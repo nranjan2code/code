@@ -1,5 +1,8 @@
 ## Unreleased
 
+- A summary, figures, callout, checklist or comparison card no longer
+  gets two frames' spacing and a doubled entrance in an answer.
+
 - Full access no longer asks before shell commands in a conversation that
   read the web or a connected service. The check that a turn holding both
   your data and someone else's words asks before anything leaves the
