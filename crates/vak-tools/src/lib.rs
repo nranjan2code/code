@@ -216,6 +216,15 @@ pub trait ArtifactSink: Send + Sync {
     );
 }
 
+/// See [`Tool::output_of_command`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandOutput {
+    /// The argument holding the command exactly as a call ran it.
+    pub command: &'static str,
+    /// The argument the loop fills with that call's result.
+    pub output: &'static str,
+}
+
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
@@ -293,6 +302,15 @@ pub trait Tool: Send + Sync {
             self.permission().reach,
             vak_permission::Reach::Network | vak_permission::Reach::Integration
         )
+    }
+
+    /// For a card tool that shows what a command printed: the argument
+    /// naming the command, as a call ran it, and the argument the loop
+    /// fills with that call's recorded result, so the card shows what the
+    /// command really printed, never words the model wrote for it. A card
+    /// naming a command no call in the conversation ran is refused.
+    fn output_of_command(&self) -> Option<CommandOutput> {
+        None
     }
 
     /// The code-owned prompt contract this tool's use needs, shown only

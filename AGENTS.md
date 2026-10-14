@@ -1256,8 +1256,11 @@ in progress, and the rest of V4 follows it.
     request's or an answer's words: the freshness, grounding and
     topic-mismatch gates are removed (docs/design/88-control-plane.md §5),
     and a card is refused only for a fact, such as a source URL nothing in
-    the conversation retrieved, or a file a preview names that is neither
-    in the workspace nor among the Agent's drafts. Every correction goes through the one ladder
+    the conversation retrieved, a file a preview names that is neither
+    in the workspace nor among the Agent's drafts, or a command no call
+    ran: a card that shows what a command printed
+    (`Tool::output_of_command`) takes it from that call's recorded
+    result, never from words the model wrote. Every correction goes through the one ladder
     (`vak_control::Ladder`: told once with the evidence, then the frame
     changes or the answer stands);
     a thinking-only step is one `[empty-step]` redo unless a card
@@ -2424,7 +2427,8 @@ effect) states its reach where it checks. Add no table of tool names to
 `vak-permission` or its callers, and decide nothing else by a tool's name
 either: a tool declares what it is (`permission`, `provenance`,
 `leaves_machine`, `prompt_contract`,
-`file_access`, `delivered_file`, `presents_cards`, `fill_defaults` for a
+`file_access`, `delivered_file`, `presents_cards`, `output_of_command`,
+`fill_defaults` for a
 name it accepts for an argument), and a wrapper forwards every
 declaration. Only the loop's own tools (`plan`, `recall`, `task`, `work`,
 the card calls) are recognised by name, because the loop defines them.

@@ -169,15 +169,22 @@ pub const CONTEXT_BLOCK_TAGS: [&str; 10] = [
 pub enum InlineHint {
     Recovery,
     PostToolUseHook,
+    /// What a call stopped at its time limit is told about a longer one.
+    Limit,
 }
 
 impl InlineHint {
-    pub const ALL: [InlineHint; 2] = [InlineHint::Recovery, InlineHint::PostToolUseHook];
+    pub const ALL: [InlineHint; 3] = [
+        InlineHint::Recovery,
+        InlineHint::PostToolUseHook,
+        InlineHint::Limit,
+    ];
 
     pub const fn marker(self) -> &'static str {
         match self {
             InlineHint::Recovery => "[recovery]",
             InlineHint::PostToolUseHook => "[post-tool-use hook]",
+            InlineHint::Limit => "[limit]",
         }
     }
 
@@ -185,7 +192,7 @@ impl InlineHint {
     /// body can run over several lines), as opposed to a hint that ends at
     /// the end of its line.
     pub const fn runs_to_end(self) -> bool {
-        matches!(self, InlineHint::Recovery)
+        matches!(self, InlineHint::Recovery | InlineHint::Limit)
     }
 }
 

@@ -157,7 +157,7 @@ export function assistantParts(text: string, streaming = false): AssistantPart[]
  * differ. (Whole runtime-authored messages — nudges, stop guards — are tagged
  * structurally by the server and never reach the client at all.)
  */
-export const INLINE_HINT_MARKERS = ["[recovery]", "[post-tool-use hook]"] as const;
+export const INLINE_HINT_MARKERS = ["[recovery]", "[post-tool-use hook]", "[limit]"] as const;
 export const CONTEXT_BLOCK_TAGS = [
   "conversation_thread",
   "context_summary",

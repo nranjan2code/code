@@ -90,6 +90,62 @@ impl Tool for FailingFetch {
     }
 }
 
+/// A shell that ran a command and stopped at its limit, as a dev server
+/// does.
+struct FakeShell;
+
+#[async_trait::async_trait]
+impl Tool for FakeShell {
+    fn name(&self) -> &str {
+        "run_command"
+    }
+    fn description(&self) -> &str {
+        "run a command"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn permission(&self) -> vak_permission::Declared {
+        vak_permission::Declared::new(
+            vak_permission::Reach::Command,
+            vak_permission::Subject::Command("command"),
+        )
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok(
+            "starting\n[command stopped at its time limit of 1000ms]\n[limit]: a note for the model",
+        )
+    }
+}
+
+/// A card that shows what a command printed, as the terminal card does.
+struct FakeTerminalCard;
+
+#[async_trait::async_trait]
+impl Tool for FakeTerminalCard {
+    fn name(&self) -> &str {
+        "emit_terminal_card"
+    }
+    fn description(&self) -> &str {
+        "show a command's output"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    fn output_of_command(&self) -> Option<vak_tools::CommandOutput> {
+        Some(vak_tools::CommandOutput {
+            command: "command",
+            output: "output",
+        })
+    }
+    async fn execute(&self, args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok(format!("shown: {}", args["output"].as_str().unwrap_or("")))
+    }
+}
+
 struct FakeEmitChartCard;
 
 #[async_trait]
@@ -230,6 +286,8 @@ async fn build_agent(
                 Arc::new(FakeEmitChartCard),
                 Arc::new(FakeEmitTableCard),
                 Arc::new(FailingFetch),
+                Arc::new(FakeShell),
+                Arc::new(FakeTerminalCard),
             ];
             // As in production: a card tool the request did not predict is
             // deferred, so it is not declared until something loads it.
@@ -248,6 +306,16 @@ async fn build_agent(
                 .deferred(),
                 vak_llm::ToolDefinition::new(
                     "fetch",
+                    "test stand-in",
+                    serde_json::json!({"type": "object"}),
+                ),
+                vak_llm::ToolDefinition::new(
+                    "run_command",
+                    "test stand-in",
+                    serde_json::json!({"type": "object"}),
+                ),
+                vak_llm::ToolDefinition::new(
+                    "emit_terminal_card",
                     "test stand-in",
                     serde_json::json!({"type": "object"}),
                 ),
@@ -303,4 +371,70 @@ async fn a_card_citing_an_unretrieved_page_is_never_shown() {
         .filter(|block| matches!(block, ContentBlock::ToolResult { content, is_error: true, .. } if content.contains("[uncited-source]") && content.contains("made-up.example")))
         .count();
     assert_eq!(refused, 2, "each card is refused, naming the URL");
+}
+
+/// A card showing what a command printed shows what the call that ran it
+/// returned, whatever the model wrote; one naming a command no call ran is
+/// refused with the command named.
+#[tokio::test]
+async fn a_terminal_card_shows_what_its_command_really_printed() {
+    let dir = tempdir().unwrap();
+    let (mut agent, _) = build_agent(
+        &dir,
+        "pc-terminal",
+        vec![
+            tool_call_msg(
+                "s1",
+                "run_command",
+                serde_json::json!({"command": "npm start"}),
+            ),
+            tool_call_msg(
+                "t1",
+                "emit_terminal_card",
+                serde_json::json!({"command": "npm start", "output": "ready"}),
+            ),
+            tool_call_msg(
+                "t2",
+                "emit_terminal_card",
+                serde_json::json!({"command": "npm run dev"}),
+            ),
+            text_msg("The server stopped at its limit."),
+        ],
+    )
+    .await;
+    let outcome = run(&mut agent).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    let session = agent.session.lock().await;
+    let result = |id: &str| {
+        session
+            .message_chain()
+            .iter()
+            .flat_map(|(_, message)| message.content.iter())
+            .find_map(|block| match block {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } if tool_use_id == id => Some((content.clone(), *is_error)),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (shown, failed) = result("t1");
+    assert!(!failed, "{shown}");
+    assert!(shown.contains("stopped at its time limit"), "{shown}");
+    assert!(!shown.contains("ready"), "{shown}");
+    assert!(
+        !shown.contains("[limit]"),
+        "the runtime's note is not output: {shown}"
+    );
+    let (refused, failed) = result("t2");
+    assert!(failed, "{refused}");
+    assert!(
+        refused.contains("no call in this conversation ran `npm run dev`"),
+        "{refused}"
+    );
 }

@@ -384,6 +384,10 @@ impl Tool for BrokeredTool {
         self.inner.leaves_machine()
     }
 
+    fn output_of_command(&self) -> Option<crate::CommandOutput> {
+        self.inner.output_of_command()
+    }
+
     fn time_limit_argument(&self) -> Option<&'static str> {
         self.inner.time_limit_argument()
     }

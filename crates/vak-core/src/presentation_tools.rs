@@ -61,6 +61,8 @@ struct CardShape {
     fill: fn(&mut Map<String, Value>),
     /// Where the card's `label`, the model's own words for it, is kept.
     eyebrow: Eyebrow,
+    /// A card that shows what a command printed (`Tool::output_of_command`).
+    output_of_command: Option<vak_tools::CommandOutput>,
     /// The tool's arguments beside `semantic_type`, as
     /// `{"properties": {...}, "required": [...]}`.
     fields: fn() -> Value,
@@ -310,20 +312,19 @@ fn build_test_report(args: &Map<String, Value>) -> Result<Value, String> {
 fn terminal_fields() -> Value {
     fields(
         serde_json::json!({
-            "command": string("Optional. The command as it was run."),
-            "output": string("What it printed."),
-            "exit_code": integer("Optional. Its exit code."),
-            "duration_ms": integer("Optional. How long it took, in milliseconds.")
+            "command": string("The command exactly as a call in this conversation ran it. What it printed is taken from that call.")
         }),
-        &["output"],
+        &["command"],
     )
 }
 
+/// `output` is never the model's: the loop fills it from the call that ran
+/// `command` before the card is built.
 fn build_terminal(args: &Map<String, Value>) -> Result<Value, String> {
-    Ok(Value::Object(copy(
-        args,
-        &["command", "output", "exit_code", "duration_ms"],
-    )))
+    if !args.get("output").is_some_and(Value::is_string) {
+        return Err("no call in this conversation ran this command".into());
+    }
+    Ok(Value::Object(copy(args, &["command", "output"])))
 }
 
 fn table_fields() -> Value {
@@ -1431,6 +1432,7 @@ const SHAPES: &[CardShape] = &[
         fields: lead_fields,
         build: build_lead,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1463,6 +1465,7 @@ const SHAPES: &[CardShape] = &[
         fields: steps_fields,
         build: build_steps,
         fill: fill_steps,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1484,6 +1487,7 @@ const SHAPES: &[CardShape] = &[
         fields: checklist_fields,
         build: build_checklist,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1494,6 +1498,7 @@ const SHAPES: &[CardShape] = &[
         fields: comparison_fields,
         build: build_comparison,
         fill: fill_comparison,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1521,6 +1526,7 @@ const SHAPES: &[CardShape] = &[
         fields: table_fields,
         build: build_table,
         fill: fill_table,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1531,6 +1537,7 @@ const SHAPES: &[CardShape] = &[
         fields: stats_fields,
         build: build_stats,
         fill: fill_stats,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1549,6 +1556,7 @@ const SHAPES: &[CardShape] = &[
         fields: chart_fields,
         build: build_chart,
         fill: fill_chart,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1559,6 +1567,7 @@ const SHAPES: &[CardShape] = &[
         fields: callout_fields,
         build: build_callout,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1596,6 +1605,7 @@ const SHAPES: &[CardShape] = &[
         fields: details_fields,
         build: build_details,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Title,
     },
     CardShape {
@@ -1622,6 +1632,7 @@ const SHAPES: &[CardShape] = &[
         fields: research_fields,
         build: build_research,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1638,6 +1649,7 @@ const SHAPES: &[CardShape] = &[
         fields: recipe_fields,
         build: build_recipe,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1648,6 +1660,7 @@ const SHAPES: &[CardShape] = &[
         fields: media_fields,
         build: build_media,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1658,6 +1671,7 @@ const SHAPES: &[CardShape] = &[
         fields: ui_preview_fields,
         build: build_ui_preview,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1668,6 +1682,7 @@ const SHAPES: &[CardShape] = &[
         fields: markup_preview_fields,
         build: build_markup_preview,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1678,6 +1693,7 @@ const SHAPES: &[CardShape] = &[
         fields: diff_fields,
         build: build_diff,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
@@ -1688,16 +1704,21 @@ const SHAPES: &[CardShape] = &[
         fields: test_report_fields,
         build: build_test_report,
         fill: fill_nothing,
+        output_of_command: None,
         eyebrow: Eyebrow::Label,
     },
     CardShape {
         name: "emit_terminal_card",
-        description: "A command you ran and its real captured output.",
+        description: "A command you ran, shown with the output it really printed, which Vak takes from that call.",
         semantic_types: &["terminal.view"],
         default_type: Some("terminal.view"),
         fields: terminal_fields,
         build: build_terminal,
         fill: fill_nothing,
+        output_of_command: Some(vak_tools::CommandOutput {
+            command: "command",
+            output: "output",
+        }),
         eyebrow: Eyebrow::Label,
     },
 ];
@@ -1940,6 +1961,10 @@ impl Tool for EmitCardTool {
         true
     }
 
+    fn output_of_command(&self) -> Option<vak_tools::CommandOutput> {
+        self.shape.output_of_command
+    }
+
     fn card_kinds(&self) -> Vec<String> {
         self.shape
             .semantic_types
@@ -2027,9 +2052,11 @@ fn validate_call(
         .as_object()
         .cloned()
         .unwrap_or_default();
+    // What the loop filled from a call is the shape's own field.
+    let filled = shape.output_of_command.map(|spec| spec.output);
     let unknown: Vec<String> = own
         .keys()
-        .filter(|key| !known.contains_key(key.as_str()))
+        .filter(|key| !known.contains_key(key.as_str()) && Some(key.as_str()) != filled)
         .map(|key| format!("`{key}`"))
         .collect();
     if !unknown.is_empty() {

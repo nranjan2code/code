@@ -1316,6 +1316,59 @@ impl SessionLog {
         out
     }
 
+    /// What the latest call in this conversation that ran `command` returned:
+    /// a call whose tool names its command argument (`command_argument`,
+    /// from the tool's own declaration, by the tool's name) and holds
+    /// exactly `command` there. The whole body when the result was
+    /// windowed. `None` when no call ran it.
+    pub fn command_result(
+        &self,
+        command_argument: impl Fn(&str) -> Option<&'static str>,
+        command: &str,
+    ) -> Option<String> {
+        let command = command.trim();
+        if command.is_empty() {
+            return None;
+        }
+        let mut ran: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut found: Option<(String, String)> = None;
+        let mut bodies: HashMap<String, String> = HashMap::new();
+        for entry in self.chain_to_root() {
+            match &entry.payload {
+                EntryPayload::Message(record) => {
+                    for block in &record.message.content {
+                        match block {
+                            vak_llm::ContentBlock::ToolUse { id, name, input } => {
+                                let same = command_argument(name)
+                                    .and_then(|argument| input.get(argument))
+                                    .and_then(serde_json::Value::as_str)
+                                    .is_some_and(|ran| ran.trim() == command);
+                                if same {
+                                    ran.insert(id.clone());
+                                }
+                            }
+                            vak_llm::ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                ..
+                            } if ran.contains(tool_use_id) => {
+                                found = Some((tool_use_id.clone(), content.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                EntryPayload::EvidenceBody(record) if ran.contains(&record.tool_use_id) => {
+                    if let Some(text) = self.object_text(&record.body) {
+                        bodies.insert(record.tool_use_id.clone(), text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        found.map(|(id, content)| bodies.remove(&id).unwrap_or(content))
+    }
+
     /// Everything this conversation holds that a card may cite: the
     /// person's own messages, every non-card tool call's arguments and
     /// result, and the whole body behind a windowed result. A card that

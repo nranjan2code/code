@@ -3378,6 +3378,15 @@ impl Agent {
             else {
                 continue;
             };
+            // A fence shows a command's output only from the call that ran
+            // it, as a card call does.
+            let fence_json = match cards::owner(semantic_type, &self.config.tools) {
+                Some(owner) => match self.with_command_output(owner.as_ref(), &fence_json).await {
+                    Ok(filled) => filled,
+                    Err(_) => continue,
+                },
+                None => fence_json.clone(),
+            };
             // A fence has no tool name; its `semantic_type` names the block
             // that owns it, which the host resolves.
             let Some(info) = rebuild(semantic_type, &fence_json) else {
@@ -6000,6 +6009,37 @@ impl Agent {
     /// deliverable its `deliverable` names (docs/design/87-composed-answers.md
     /// §2). A card identical to one already shown this turn is not shown
     /// twice.
+    /// A card that shows what a command printed (`Tool::output_of_command`)
+    /// with its output taken from the latest call that ran the command,
+    /// never from words the model wrote for it; refused with what to fix
+    /// when no call ran it. Any other card as it came.
+    async fn with_command_output(&self, tool: &dyn Tool, input: &Value) -> Result<Value, String> {
+        let mut input = input.clone();
+        let Some(spec) = tool.output_of_command() else {
+            return Ok(input);
+        };
+        let command = input
+            .get(spec.command)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let ran = self.session.lock().await.command_result(
+            |name| match self.tool_named(name)?.permission().subject {
+                vak_permission::Subject::Command(argument) => Some(argument),
+                _ => None,
+            },
+            &command,
+        );
+        let output = ran.ok_or_else(|| vak_control::card_command_not_run(&command))?;
+        // What the call printed, without the notes the runtime added for
+        // the model.
+        let output = vak_intent::control::clean_scaffolding(&output);
+        if let Some(fields) = input.as_object_mut() {
+            fields.insert(spec.output.to_string(), Value::String(output));
+        }
+        Ok(input)
+    }
+
     async fn show_card(&self, call: &PendingToolCall) -> (ToolRunOutput, vak_control::CallVerdict) {
         use vak_control::{CallVerdict, Refusal};
         let Some(tool) = self.tool_named(&call.name).cloned() else {
@@ -6031,8 +6071,17 @@ impl Agent {
                 CallVerdict::Refused(Refusal::Schema),
             );
         }
-        let answers = call
-            .input
+        let input = match self.with_command_output(tool.as_ref(), &call.input).await {
+            Ok(input) => input,
+            Err(message) => {
+                return (
+                    ToolRunOutput::Err(Fault::Target, message),
+                    CallVerdict::Refused(Refusal::Tool),
+                );
+            }
+        };
+        let input = &input;
+        let answers = input
             .get("deliverable")
             .and_then(Value::as_str)
             .map(str::trim)
@@ -6083,8 +6132,7 @@ impl Agent {
         // A card that previews a file this run delivered for review is not
         // shown: the draft is in front of the person with its change list,
         // and an imitation is not.
-        let previews_delivered = call
-            .input
+        let previews_delivered = input
             .get("artifact_path")
             .and_then(Value::as_str)
             .is_some_and(|path| {
@@ -6097,7 +6145,7 @@ impl Agent {
             });
         // A file preview shows a file that exists: in the workspace, or
         // among this Agent's own drafts.
-        let missing = match call.input.get("artifact_path").and_then(Value::as_str) {
+        let missing = match input.get("artifact_path").and_then(Value::as_str) {
             Some(path) => {
                 let header = self.session.lock().await.header().cloned();
                 let mut ctx = ToolContext::new(
@@ -6137,7 +6185,7 @@ impl Agent {
             .lock()
             .await
             .evidence_text(|name| self.tool_presents_cards(name));
-        let uncited = uncited_urls(&call.input, &evidence);
+        let uncited = uncited_urls(input, &evidence);
         if !uncited.is_empty() {
             return (
                 ToolRunOutput::Err(Fault::Shape, vak_control::uncited_source(&uncited)),
@@ -6151,7 +6199,7 @@ impl Agent {
             .header()
             .map(|header| header.contract_cwd())
             .unwrap_or_default();
-        let checked = tool.execute(&call.input, &ToolContext::new(cwd)).await;
+        let checked = tool.execute(input, &ToolContext::new(cwd)).await;
         if checked.is_error() {
             return (
                 ToolRunOutput::Err(Fault::Shape, checked.content),
@@ -6174,7 +6222,7 @@ impl Agent {
         // The tool accepted the call, so a card that cannot be rebuilt from
         // it is Vak's fault, and the person sees nothing: never say it was
         // shown.
-        let Some(info) = rebuild(call.name.as_str(), &call.input) else {
+        let Some(info) = rebuild(call.name.as_str(), input) else {
             return (
                 ToolRunOutput::Err(
                     Fault::Tool,

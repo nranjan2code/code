@@ -208,6 +208,16 @@ pub fn card_file_missing(path: &str) -> String {
     )
 }
 
+/// What a card is told when it shows the output of a command no call in
+/// the conversation ran.
+pub fn card_command_not_run(command: &str) -> String {
+    format!(
+        "Not shown: no call in this conversation ran `{command}`. This card shows what a \
+         command really printed, taken from the call that ran it: name the command exactly \
+         as that call ran it, or run it first."
+    )
+}
+
 /// What a card is told when its `deliverable` names a deliverable the plan
 /// does not list: the card is not shown, and the plan's cards are given.
 pub fn card_unplanned(answers: &str, planned: &[String]) -> String {
