@@ -1,8 +1,9 @@
 Self-Evolving Capabilities
 ==========================
 
-Status: proposal. Agreed with the maintainer on 2026-10-14; no stage is
-built. Paths below describe targets and may not exist yet. Replaces
+Status: in progress: E1a (a skill's program runs as a tool under its own
+sandbox) built 2026-10-14; E1b and E2 to E9 not built. Agreed with the
+maintainer on 2026-10-14. Paths below describe targets and may not exist yet. Replaces
 [43-governed-self-evolution](43-governed-self-evolution.md).
 
 ## 1. What this is
@@ -126,40 +127,69 @@ A capability is a skill directory, versioned in the Library:
 ```
 <name>/
   SKILL.md          frontmatter + instructions (as today)
-  run.py | run.sh | run.mjs     the program (optional)
+  capability.json   the program's declaration (optional)
+  run.py | run.sh | run.mjs     the program
   tests/            cases the runtime runs: input JSON → expected checks
   requirements.txt | package.json   pinned dependencies (optional)
 ```
 
-`SKILL.md` frontmatter gains, only when there is a program:
+`capability.json` (`vak_tools::capability::Declaration`), JSON because the
+arguments are a JSON Schema; `SKILL.md`'s frontmatter is unchanged and
+names the tool:
 
-```yaml
-name: split-bill
-description: Split a bill among people with tip and per-person extras.
-serves: [documents]
-run:
-  entry: run.py
-  arguments: { ...JSON Schema, flat, as card schemas are (doc 30 §30.1) }
-  reach: [read_path]           # vak_permission::Reach words
-  hosts: []                    # outbound hosts; empty = no network
-  writes: drafts               # drafts | none
-  time_limit_argument: null
+```json
+{
+  "entry": "run.py",
+  "arguments": {"type": "object", "properties": {
+    "amount": {"type": "number", "description": "The bill before tip"}
+  }},
+  "hosts": [],
+  "writes": "none",
+  "requirements": null
+}
 ```
+
+- `entry`: the script inside the skill directory; `.py` runs with
+  `python3`, `.sh` with `sh`, `.mjs`/`.js` with `node`, found on the PATH
+  a scrubbed command gets.
+- `hosts`: outbound hosts; empty is no network at all (E1b adds the
+  egress proxy; until then a declaration with hosts is refused by name).
+- `writes`: `none` or `drafts` (its execution's drafts, named
+  `.vak/scratch/<agent>/<execution>/…`, given to it as `VAK_DRAFTS`).
+- `requirements`: pinned dependencies (R3, E1b; refused by name until
+  then).
+- `timeout_ms` is the runtime's: added to the advertised schema, filled
+  by the loop (`Tool::time_limit_argument`), never passed to the
+  program; a declaration that names it is refused.
+
+What the program reaches is derived, never declared twice: `writes:
+none` is `Reach::ReadPath`, `writes: drafts` is `Reach::WritePath`, and
+(E1b) any host is `Reach::Network`. The tool is named as the skill and
+is offered only when no tool of the turn has that name. Its digest is
+over every file in the skill directory: a call to a program changed
+since the turn froze it is refused, and its new version is offered from
+the next turn.
 
 Rules:
 
-- **The declaration is the permission.** `reach`, `hosts` and `writes`
-  become the tool's `Tool::permission`, `leaves_machine` and
-  `file_access`; the engine reads them like any other tool's (AGENTS.md
+- **The declaration is the permission.** `hosts` and `writes` become
+  the tool's `Tool::permission` (and, with hosts, `leaves_machine`); the engine reads them like any other tool's (AGENTS.md
   "A tool's permission is what it declares"). Nothing is decided by the
   capability's name.
 - **One schema, flat and portable.** The arguments obey
   `every_card_schema_is_flat_and_portable`'s rules and go strict where
   the wire enforces them (doc 89). A schema that fails those checks is
   refused when the capability is proposed, with what to fix.
-- **The program speaks JSON.** Arguments on stdin, one JSON result on
-  stdout, a non-zero exit as a failure; stderr is kept as the call's
-  diagnostic. The result is a normal `ToolOutput`; the program cannot
+- **The program speaks JSON.** Arguments on stdin, one JSON value on
+  stdout (with `writes: drafts`, the result is `{"result": …, "drafts":
+  [names]}`), a non-zero exit as a failure; stderr is kept as the call's
+  diagnostic and stdout and stderr stream to the Workbench.
+- **Its own sandbox.** The broker runs it as `WorkerTask::Capability` in a
+  worker wrapped by a sandbox built from the declaration, never the
+  session's: reads the system, the workspace, the skill directory and the
+  interpreter's installation; writes only its temporary directory, its
+  cache and (when declared) its drafts; no network. A system with no OS
+  backend refuses to run it. The result is a normal `ToolOutput`; the program cannot
   claim a card, an artifact or provenance beyond what its declaration
   allows.
 - **Provenance.** Its results are labelled from its declaration
@@ -308,7 +338,10 @@ Every rule in AGENTS.md "The data rules" holds; the ones that bite here:
   index in the byte-stable prefix and changes only when an epoch
   publishes, i.e. at a turn boundary (invariant 36).
 - Full schemas load through `find_tools`, as deferred tools do today
-  (`ToolSurface`). A capability declares `serves` so the surface can
+  (`ToolSurface`). As built in E1a, a program's tool declares no `serves`
+  domains, so `build_tool_surface` loads it on every turn (undeclared
+  fails open); E4 carries the skill's `serves:` onto its tool so it
+  defers. A capability declares `serves` so the surface can
   rank it; undeclared fails open (doc 41, `capability/domain.rs`).
 - The prompt seed gains no instruction naming any capability. What the
   model needs to know about building is the `propose_skill` tool's own

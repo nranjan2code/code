@@ -7275,6 +7275,7 @@ impl Core {
             }),
         });
         let frozen_skills = std::mem::take(&mut turn_capabilities.frozen_skills);
+        let programs = skills::programs(&frozen_skills, self.tool_worker_exe());
         let skill_tool = (!frozen_skills.is_empty())
             .then(|| Arc::new(skills::SkillTool::new(frozen_skills)) as Arc<dyn vak_tools::Tool>);
         if let Some(skill_tool) = &skill_tool {
@@ -7463,6 +7464,13 @@ impl Core {
                 &detail,
                 None,
             );
+        }
+        // A skill's program is a tool under the skill's name, unless a tool
+        // of this turn already has that name.
+        for program in programs {
+            if !tools.iter().any(|tool| tool.name() == program.name()) {
+                tools.push(program);
+            }
         }
         let carried = self
             .inner

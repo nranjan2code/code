@@ -6,6 +6,7 @@ mod support;
 mod agent_chats;
 mod agent_pause;
 mod bus_config;
+mod capability_worker;
 mod card_kinds_sync;
 mod channel_office_round_trip;
 mod chat_bridges;

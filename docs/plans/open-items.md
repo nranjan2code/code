@@ -108,15 +108,24 @@ Agreed 2026-10-14, nothing built. Each stage's "done when" is in doc 93
 live.
 
 - [x] E0: design agreed, decisions logged, doc 43 superseded.
-- [ ] E1: executable skill (`run` frontmatter, declaration as the tool's
-  permission, `WorkerTask::Capability`, JSON in and out, pinned
-  dependencies installed by their own run, R3).
+- [x] E1a: a skill's program (`capability.json`, `vak_tools::capability`)
+  runs as a tool named after the skill through `WorkerTask::Capability`,
+  under a sandbox built from its declaration (no network, reads the
+  workspace, writes only its drafts when declared), JSON in and out,
+  refused when it changed since the turn froze it.
+- [ ] E1b: declared `hosts` through the egress proxy, and `requirements`
+  installed by their own run (R3); both are refused by name until then.
 - [ ] E2: verification (`tests/`, the `VerifyCapability` worker task as a
   run, per-case results on the version).
 - [ ] E3: proposal and tiers (`propose_skill` with program, tests,
   presentation packs and `parent`; Library versions; the tier gate; registry epoch; the AGENTS.md
   outcome-runtime paragraph on review of tools).
-- [ ] E4: catalog source, prompt index, `find_tools` ranking.
+- [ ] E4: catalog source, prompt index, `find_tools` ranking; the tool
+  carries the skill's `serves:` so it defers (E1a loads it every turn).
+- [ ] Seen live (E1a, dev route): a card the model drew after the
+  program answered showed one per-person figure and dropped the extra
+  cent the program gave one person. E9 (card data from the call) is the
+  designed fix; until then the card is the model's words.
 - [ ] E5: per-version measurement; promotion and withdrawal by observed
   states (R2).
 - [ ] E6: client experience (projection line, capability sheet, Review,

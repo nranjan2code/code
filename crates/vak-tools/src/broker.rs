@@ -36,6 +36,18 @@ struct WorkerRequest {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum WorkerTask {
+    /// A skill's program (`crate::capability`), under the sandbox its
+    /// declaration was given.
+    Capability {
+        run: CapabilityRun,
+        execution_id: String,
+        #[serde(default)]
+        agent_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trace: Option<vak_session::trace::TraceKey>,
+        #[serde(default)]
+        executions: Option<PathBuf>,
+    },
     Tool {
         tool: String,
         args: Value,
@@ -471,6 +483,80 @@ async fn execute(
         &mut request_args,
         &worker_command,
     );
+    let request = WorkerRequest {
+        version: PROTOCOL_VERSION,
+        task: WorkerTask::Tool {
+            tool: tool.to_string(),
+            args: request_args,
+            execution_id: execution_id(ctx),
+            agent_id: ctx.agent_id.clone(),
+            trace: ctx.trace.clone(),
+            new_documents: new_documents.to_vec(),
+            executions: Some(ctx.executions_root()),
+        },
+    };
+    dispatch(&effective, request, ctx).await
+}
+
+/// What the worker needs to run a skill's program.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityRun {
+    /// The skill's name, as the call and the Workbench know it.
+    pub name: String,
+    pub interpreter: PathBuf,
+    pub entry: PathBuf,
+    pub args: Value,
+    pub tmp: PathBuf,
+    pub cache: PathBuf,
+    pub drafts: Option<PathBuf>,
+    pub timeout_ms: u64,
+}
+
+/// Run a skill's program in a worker wrapped by `sandbox`, the one its
+/// declaration was given, whatever the session's own.
+pub async fn run_capability(
+    worker_exe: &Path,
+    sandbox: &dyn crate::sandbox::Sandbox,
+    run: CapabilityRun,
+    ctx: &ToolContext,
+) -> ToolOutput {
+    if !worker_exe.is_file() {
+        return ToolOutput::error(
+            Fault::Tool,
+            format!(
+                "tool broker unavailable: worker executable not found: {}",
+                worker_exe.display()
+            ),
+        );
+    }
+    let worker_command = format!(
+        "{} {}",
+        shell_quote(&worker_exe.display().to_string()),
+        WORKER_SUBCOMMAND
+    );
+    let request = WorkerRequest {
+        version: PROTOCOL_VERSION,
+        task: WorkerTask::Capability {
+            run,
+            execution_id: execution_id(ctx),
+            agent_id: ctx.agent_id.clone(),
+            trace: ctx.trace.clone(),
+            executions: Some(ctx.executions_root()),
+        },
+    };
+    dispatch(&sandbox.wrap(&worker_command), request, ctx).await
+}
+
+fn execution_id(ctx: &ToolContext) -> String {
+    ctx.sandbox_sink
+        .as_ref()
+        .map(|sink| sink.execution_id().to_string())
+        .unwrap_or_else(|| "unidentified".into())
+}
+
+/// Send `request` to a worker started by `effective` and read its answer,
+/// stopping it when the call is cancelled.
+async fn dispatch(effective: &str, request: WorkerRequest, ctx: &ToolContext) -> ToolOutput {
     let mut cmd = tokio::process::Command::new(crate::bash::POSIX_SHELL);
     cmd.arg("-c")
         .arg(effective)
@@ -487,22 +573,6 @@ async fn execute(
         Err(error) => {
             return ToolOutput::error(Fault::Tool, format!("tool broker spawn failed: {error}"));
         }
-    };
-    let request = WorkerRequest {
-        version: PROTOCOL_VERSION,
-        task: WorkerTask::Tool {
-            tool: tool.to_string(),
-            args: request_args,
-            execution_id: ctx
-                .sandbox_sink
-                .as_ref()
-                .map(|sink| sink.execution_id().to_string())
-                .unwrap_or_else(|| "unidentified".into()),
-            agent_id: ctx.agent_id.clone(),
-            trace: ctx.trace.clone(),
-            new_documents: new_documents.to_vec(),
-            executions: Some(ctx.executions_root()),
-        },
     };
     let payload = match serde_json::to_vec(&request) {
         Ok(payload) => payload,
@@ -671,9 +741,29 @@ pub async fn worker_main() -> i32 {
         Ok(request) if request.version == PROTOCOL_VERSION => request,
         _ => return 125,
     };
+    let mut runner: Option<Arc<dyn Tool>> = None;
     let (tool_name, args, execution_id, agent_id, trace, new_documents, executions) = match request
         .task
     {
+        WorkerTask::Capability {
+            run,
+            execution_id,
+            agent_id,
+            trace,
+            executions,
+        } => {
+            let name = run.name.clone();
+            runner = Some(Arc::new(crate::capability::Runner { run }));
+            (
+                name,
+                Value::Null,
+                execution_id,
+                agent_id,
+                trace,
+                Vec::new(),
+                executions,
+            )
+        }
         WorkerTask::Tool {
             tool,
             args,
@@ -889,9 +979,11 @@ pub async fn worker_main() -> i32 {
             .await;
         }
     };
-    let tool = crate::default_tools()
-        .into_iter()
-        .find(|candidate| candidate.name() == tool_name);
+    let tool = runner.or_else(|| {
+        crate::default_tools()
+            .into_iter()
+            .find(|candidate| candidate.name() == tool_name)
+    });
     // A traced call continues its caller's span: this process captures its
     // lines under an `execution` span naming the run and the call's span,
     // and hands them back with its answer.

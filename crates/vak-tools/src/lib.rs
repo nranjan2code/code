@@ -9,6 +9,7 @@ pub mod arguments;
 pub mod artifact;
 pub mod bash;
 pub mod broker;
+pub mod capability;
 pub mod context;
 pub mod contract;
 pub mod doc_read;

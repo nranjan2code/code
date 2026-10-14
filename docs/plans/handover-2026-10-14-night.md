@@ -18,17 +18,46 @@ Run `git status` and `git log --oneline -8`. Stage only your own paths;
 keep only `main`. We are on a Claude Code Pro plan: read lean (grep and
 line ranges, not whole files), commit each verified step, keep the
 tracker ticked, and rewrite this handover's prompt and 'Where things
-stand' before the session's limit. Next: build stage E1 (doc 93 §11;
-decisions D1 to D8 and R1 to R7 are settled) as a design, never spot fixes or tuned numbers;
+stand' before the session's limit. Next: build stage E1b (doc 93 §11:
+declared hosts through the egress proxy, requirements installed by their
+own run; E1a is built; decisions D1 to D8 and R1 to R7 are settled) as a
+design, never spot fixes or tuned numbers;
 UI that gets in the way is rewritten, not patched (no users yet). Live
-runs use launch entry `vak-forms-live` (port 8904, /tmp/vak-live/forms,
-token in /tmp/vak-live/test-gateway-token; route gpt-6-luna, check GET
-/config). Short progress lines."
+runs use launch entry `vak-e1-live` (port 8905, a throwaway
+VAK_HOME=/tmp/vak-live/e1-home, workspace /tmp/vak-live/forms; set the
+route once with PATCH /config to ollama qwen3.5:4b-mlx; the Shared layer
+is then /tmp/vak-live/e1-home/vak-home/.vak). The installed data home
+cannot be used by a dev build until it is purged (it predates the
+home-version stamp). Short progress lines."
 
 ## Where things stand
 
-**Self-evolving capabilities are designed, not built**
-(`docs/design/93-self-evolving-capabilities.md`, status proposal). The
+**E1a is built** (this session, gate green, checked live): a skill may
+carry `capability.json` + a script; `vak_tools::capability` loads and
+checks it (entry inside the skill, every argument typed and described,
+`timeout_ms` reserved, digest over every file), `CapabilityTool` offers it
+under the skill's name (added after the turn's other tools, only when the
+name is free; `skills::programs`), and `broker::run_capability` runs it as
+`WorkerTask::Capability` in a worker wrapped by a sandbox built from the
+declaration (reads system, workspace, skill dir, interpreter install;
+writes its tmp, cache and declared drafts; no network, whatever the
+session's mode). `FrozenSkill::load` tells the model the skill has a
+program, or why it cannot run. Tests: `vak-tools` unit tests and
+`vak-server/tests/it/capability_worker.rs` (JSON answer, no JSON, no
+network, drafts only, changed program refused). Live (dev route): a
+request that never named the skill called it, the loop filled
+`timeout_ms`, the result was exact; the card the model drew dropped a
+cent (recorded; E9). Also fixed: the baseline refusal for an unstamped
+home said "7.x or earlier"; it now says the home was written by "a
+version of vak that did not record itself". And the full gate found the
+baseline check counting a top-level `agents/` folder as old records:
+current paths make `agents/<id>` before any Core stamps a home, so a new
+home could be refused for good (seen as an order-dependent failure in
+`vak-core`'s `agent_identity_per_turn`). Only a tenant store, or the
+pre-7.0 top-level `sessions/`, marks an older home now.
+
+**Self-evolving capabilities are designed**
+(`docs/design/93-self-evolving-capabilities.md`, status in progress). The
 maintainer chose D1 to D8 on 2026-10-14 (`docs/decisions.md`): a skill
 may carry a sandboxed script with tests; live at once only when it is
 sandboxed, reaches no network, only reads the workspace and writes its
@@ -91,7 +120,7 @@ maintainer's decisions, and `scripts/check_records.py` (in `gate.sh` and
 
 ## Next
 
-1. Build E1, then E2 and E3, each step with the full gate and a live
+1. Build E1b, then E2 and E3, each step with the full gate and a live
    turn; tick `docs/plans/open-items.md` and doc 93's Status as stages
    land.
 2. Release questions (the 8.0 data baseline, purge on Mac and AWS) are

@@ -388,7 +388,7 @@ pub(crate) fn is_allowed_env_var(key: &str) -> bool {
     ALLOWED_ENV_VARS.contains(&key) || key.starts_with("LC_") || key.starts_with("XDG_")
 }
 
-fn execution_path() -> std::ffi::OsString {
+pub(crate) fn execution_path() -> std::ffi::OsString {
     #[cfg(target_os = "macos")]
     let mut path = std::env::var_os("PATH").unwrap_or_default();
     #[cfg(not(target_os = "macos"))]
@@ -528,7 +528,7 @@ pub fn kill_process_group(pid: &Option<u32>) {
     }
 }
 
-async fn read_capped_streaming<R: AsyncReadExt + Unpin>(
+pub(crate) async fn read_capped_streaming<R: AsyncReadExt + Unpin>(
     r: &mut R,
     sink: Option<crate::sandbox_events::SandboxEventSink>,
     is_stderr: bool,

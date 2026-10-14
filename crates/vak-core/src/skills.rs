@@ -80,15 +80,51 @@ impl FrozenSkill {
         let body = strip_frontmatter(&content).trim();
         let base = self.path.parent().unwrap_or(Path::new("."));
         let provenance = self.provenance.as_deref().unwrap_or("workspace-or-user");
+        let program = match vak_tools::capability::Program::load(base) {
+            Ok(Some(_)) => format!(
+                "\n\nThis skill has a program: call the `{}` tool to run it.",
+                self.name
+            ),
+            Ok(None) => String::new(),
+            Err(reason) => format!("\n\nThis skill's program cannot run: {reason}."),
+        };
         Ok(format!(
-            "<skill name=\"{}\" location=\"{}\" provenance=\"{}\">\nReferences are relative to {}.\n\n{}\n</skill>",
+            "<skill name=\"{}\" location=\"{}\" provenance=\"{}\">\nReferences are relative to {}.\n\n{}{}\n</skill>",
             self.name,
             self.path.display(),
             provenance,
             base.display(),
-            body
+            body,
+            program
         ))
     }
+}
+
+/// The tool of each frozen skill that carries a program
+/// (`vak_tools::capability`), named as the skill. One whose program does
+/// not load says why when the skill is read (`FrozenSkill::load`).
+pub fn programs(
+    skills: &[FrozenSkill],
+    worker_exe: PathBuf,
+) -> Vec<std::sync::Arc<dyn vak_tools::Tool>> {
+    let mut out = Vec::new();
+    for skill in skills {
+        let Some(dir) = skill.path.parent() else {
+            continue;
+        };
+        let Ok(Some(program)) = vak_tools::capability::Program::load(dir) else {
+            continue;
+        };
+        out.push(
+            std::sync::Arc::new(vak_tools::capability::CapabilityTool::new(
+                skill.name.clone(),
+                skill.description.clone(),
+                program,
+                worker_exe.clone(),
+            )) as std::sync::Arc<dyn vak_tools::Tool>,
+        );
+    }
+    out
 }
 
 pub fn frozen_from_capabilities(

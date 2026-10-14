@@ -1,5 +1,15 @@
 ## Unreleased
 
+- A skill can carry a program: a Python, shell or Node script with a
+  `capability.json` naming its entry and arguments. Vakyartha offers it as
+  a tool named after the skill and runs it in a sandbox built from what it
+  declares, whatever the conversation's access level: it reads the
+  workspace, writes only its own drafts when it says so, and reaches no
+  network. It answers in JSON, and its output streams to the Workbench.
+  (docs/design/93-self-evolving-capabilities.md, stage E1a.)
+- A data home refused for predating the baseline now says it was written
+  by "a version of vak that did not record itself", instead of wrongly
+  saying 7.x or earlier.
 - The supported data baseline is 8.0. A data home now records the version
   that created it, and one made before 8.0 (or with no record of its
   version) is refused with the usual message: purge, install and run setup
