@@ -9835,6 +9835,19 @@ pub fn declarations<'a>(
         .collect()
 }
 
+/// The plugin store of a scope: the Shared layer's for `user` (the
+/// default workspace's project directory, which every Core reads as its
+/// shared capability root), the workspace's own for `workspace`. The CLI and
+/// the server both install through this, so a plugin installed by either is
+/// the one every Core reads.
+pub fn plugin_store(cwd: &std::path::Path, user: bool) -> vak_plugin::PluginStore {
+    vak_plugin::PluginStore::new(if user {
+        learning::shared_capability_root()
+    } else {
+        vak_config::scope::WorkspaceScope::new(cwd).project_dir()
+    })
+}
+
 /// What the built-in tools and the card tools declare, for an engine built
 /// from configuration alone.
 pub fn built_in_declarations() -> Vec<(String, vak_permission::Declared)> {
@@ -10569,7 +10582,11 @@ mod plugin_runtime_tests {
         store.enable("garden-pack").unwrap();
         assert!(research_kinds(&core).contains(&"garden.brief".to_string()));
         assert!(core.capability_declarations().iter().any(|declaration| {
-            declaration.id == crate::capability::CapabilityId::new(CapabilityKind::Presentation, "garden.brief")
+            declaration.id
+                == crate::capability::CapabilityId::new(
+                    CapabilityKind::Presentation,
+                    "garden.brief",
+                )
         }));
         store.disable("garden-pack").unwrap();
         assert!(!research_kinds(&core).contains(&"garden.brief".to_string()));

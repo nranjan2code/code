@@ -1,5 +1,9 @@
 ## Unreleased
 
+- `vak plugins … --scope user` and `vak skills validate` now use the Shared
+  layer every workspace reads (`~/vak-home/.vak`). Before, the CLI put
+  user-scope plugins in the data home, where nothing read them.
+
 - An installed presentation pack can add its own kinds of card: while it is
   active, the card tool it names offers them, and the pack draws them. The
   social add-ons' cards now come from their own packs rather than being

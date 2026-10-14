@@ -11664,14 +11664,7 @@ fn default_marketplace_trust() -> MarketplaceTrust {
 }
 
 fn plugin_store(core: &vak_core::Core, scope: InstallScope) -> PluginStore {
-    let root = match scope {
-        InstallScope::User => {
-            vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace())
-                .project_dir()
-        }
-        InstallScope::Workspace => vak_config::scope::WorkspaceScope::new(core.cwd()).project_dir(),
-    };
-    PluginStore::new(root)
+    vak_core::plugin_store(core.cwd(), scope == InstallScope::User)
 }
 
 #[derive(Debug, serde::Deserialize)]

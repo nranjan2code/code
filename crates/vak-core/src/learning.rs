@@ -427,7 +427,10 @@ pub fn list_proposals(scope: &vak_config::scope::AgentScope, cwd: &Path) -> Vec<
 
 /// The Shared layer's capability root, `~/vak-home/.vak`: where every
 /// workspace discovers Shared skills, and so where a promoted one goes.
-pub(crate) fn shared_capability_root() -> PathBuf {
+/// The Shared layer's capability root: the default workspace's project
+/// directory. Every Core reads it as its shared root, and every surface that
+/// installs or checks a user-scope skill or plugin resolves it here.
+pub fn shared_capability_root() -> PathBuf {
     vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace()).project_dir()
 }
 

@@ -133,7 +133,7 @@ fn run_skills(cwd: PathBuf, action: SkillsAction) -> i32 {
                 || {
                     vec![
                         vak_config::scope::WorkspaceScope::new(&cwd).skills(),
-                        vak_config::paths::data_home().join("skills"),
+                        vak_core::learning::shared_capability_root().join("skills"),
                     ]
                 },
                 |path| vec![path],
