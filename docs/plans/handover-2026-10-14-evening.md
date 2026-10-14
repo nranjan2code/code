@@ -68,39 +68,47 @@ Pushed this session, each with the full gate green and checked live:
 
 `recall` with a query beside a `turn_id` was already fixed (`2e8c916d8`).
 
-Then, after the critical review the maintainer asked for: a terminal card
-fills only from a call that ran a process (`CallEffect::Ran`, set through
-`ToolOutput::ran`, carried by the worker protocol), with its exit code and
-duration, so a call refused before running ("working directory does not
-exist") is never shown as output; the card reads "Stopped · 5.0 s" or
-"Exit 0 · 120 ms". A retired name is told what replaced it.
+After the maintainer's critical review:
 
-## Next (the next round's backlog; nothing here is started)
+- `e43c46753` a terminal card fills only from a call that ran a process:
+  a tool says so (`ToolOutput::ran`, carried by the worker protocol), the
+  loop records `CallEffect::Ran` whether the call failed or not, and the
+  card takes output, exit code and duration from it ("Stopped · 5.0 s",
+  "Exit 0 · 120 ms"). A call refused before running ("working directory
+  does not exist") is never shown as output. A name in `RETIRED_TOOLS`
+  gets `unknown_capability` with `use_instead` from that registry.
+- `ed4c1d6b6` a command stopped at its limit is stopped there under
+  Seatbelt: the sandboxed broker worker's SIGKILL to the command's process
+  group was refused by `(deny default)`, so `sleep 5; echo ready` with a
+  1000 ms limit printed "ready" after 5 s. The restricted profiles now
+  `(allow signal (target same-sandbox))`; a process outside the sandbox
+  still cannot be signalled (tested). Landlock does not restrict signals;
+  not tested on Linux.
+- `54dc3e261` the test-report card names the `command` that ran the
+  tests; its exit code and duration come from that call, a card naming a
+  command no call ran is refused with the commands that did run this turn,
+  and a run that exited non-zero or was stopped cannot report every test
+  passed. The per-test rows are still the model's words (binding them
+  would mean reading the runner's output). Maintainer chose "test report
+  only"; other cards stay model-written.
+- Decided (maintainer): `recall` opens another conversation only through
+  an attached artifact, as now; recorded in doc 90's status line.
 
-1. Done: a command's limit did not stop it under Seatbelt, because the
-   sandboxed broker worker's SIGKILL to the command's process group was
-   refused by `(deny default)`. The restricted profiles now
-   `(allow signal (target same-sandbox))`; a process outside the sandbox
-   still cannot be signalled. Linux Landlock does not restrict signals, so
-   nothing changes there.
-1a. Since `9004b269f` a model that calls `read_file`, `shell` or a retired
-   name gets `unknown_capability` with the listed tools, and a retired name
-   is also told `use_instead` from `RETIRED_TOOLS`. The local model never
-   called an unknown name live (it went straight to `read`/`bash`), so this
-   path is covered by tests only; if a live run shows a model stuck there,
-   look at that answer's contract, never restore an alias.
-2. Done (maintainer chose "test report only"): the test-report card names
-   the `command` that ran the tests; its exit code and duration come from
-   that call, a card naming a command no call ran is refused with the
-   commands that did run this turn, and a run that exited non-zero or was
-   stopped cannot report every test passed. Other cards stay model-written.
-3. Decided (maintainer): `recall` opens another conversation only through
-   an attached artifact, as now; recorded in doc 90.
-4. Recorded model choices, no work unless the maintainer asks: a model
+## Next (nothing here is started; ask the maintainer which first)
+
+1. The unknown-name answer is tested but never seen live: the local model
+   goes straight to `read`/`bash`. If a live run shows a model stuck on
+   `unknown_capability`, look at that answer's contract (what it lists,
+   how it reads), never restore an alias.
+2. New measured patterns from `/eval/proposals`: the next round's backlog.
+3. Recorded model choices, no work unless the maintainer asks: a model
    sometimes invents a folder or writes after the work is done; a table's
    header and row joined by a newline in one string, or a one-row table
-   with no header, are told and fixed on the next call.
-5. New measured patterns from `/eval/proposals` are this round's backlog.
+   with no header, are told and fixed on the next call; prose can still
+   claim what no call did (the "not verified" banner warns).
+4. Not audited: other name or word tables elsewhere in the tree. Two were
+   removed this session (`canonical_tool_name`, the projection's
+   `artifact_from_tool`); nobody has swept for the rest.
 
 ## Traps learned this session
 
@@ -120,6 +128,11 @@ exist") is never shown as output; the card reads "Stopped · 5.0 s" or
 - A card tool's own field check refuses an argument its schema does not
   list, and `show_card` passes the filled arguments through it: a field
   the loop fills must be known to the shape (`output_of_command`).
+- In the browser pane, resizing to 390 × 844 opens the client's sidebar
+  over the conversation: press Escape (after a second) before a
+  screenshot.
+- `scripts/gate.sh` takes about 13 minutes from warm; the first build
+  after cleaning the workspace packages adds about ten.
 - The session nodes route lists nodes whose `session` column is the
   conversation, plus what its calls wrote, read or fetched; a node shared
   by several conversations (a page, a file) traces through every call that
