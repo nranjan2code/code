@@ -209,8 +209,7 @@ Read before changing behaviour in these areas:
   typed tool faults, the checkpoint at the first accepted workspace change;
   the correction ladder with typed findings and one renderer, the
   word-reading checks and count thresholds removed, silence-based model
-  waits); progress is in
-  `docs/plans/handover-2026-10-11-control-plane.md`),
+  waits; what is open is in `docs/plans/open-items.md`),
   `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
   `74-lifecycle-and-data-administration.md` (the pending data architecture

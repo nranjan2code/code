@@ -212,13 +212,10 @@ cards. The items carried below are not built.
 Builds on docs/design/86-model-plans-runtime-checks.md (the model
 plans, the runtime checks) and extends invariant 33 (the runtime evaluates
 satisfaction; the model never does) from satisfaction to every decision.
-The start prompt and working order for the session that builds it are in
-docs/plans/handover-2026-10-11-control-plane.md.
 
 ## 1. Why
 
-Seven real turns on 2026-10-11 (run ids in
-docs/plans/handover-2026-10-11.md) each failed for a different reason, and
+Seven real turns on 2026-10-11 each failed for a different reason, and
 every reason was the same shape: something was left to the model or to a
 default, and the runtime tried to repair the result afterwards.
 

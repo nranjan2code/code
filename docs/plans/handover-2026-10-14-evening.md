@@ -1,9 +1,8 @@
 # Handover — 2026-10-14 evening: the night list is done
 
-Supersedes docs/plans/handover-2026-10-14.md for "Prompt", "Where things
-stand" and "Next". Still apply: "Traps learned this session" in that file,
-"Live runs" and "Traps" in docs/plans/handover-2026-10-13-release.md, "How
-we work" and "Traps" in docs/plans/handover-2026-10-12.md.
+The one handover. Earlier handovers were removed on 2026-10-14 (git
+history keeps them); every note of theirs that is still true is under
+"Working notes" below.
 
 ## Prompt for a fresh session
 
@@ -11,8 +10,7 @@ we work" and "Traps" in docs/plans/handover-2026-10-12.md.
 AGENTS.md first (especially 'Tool arguments are written, then read', 'No
 word lists, no tuned limits', 'Investigating a failure', 'Verification
 before every commit', 'Parallel agents' and invariant 43), then
-docs/plans/handover-2026-10-14-evening.md whole, then the sections it names
-in the older handovers.
+docs/plans/handover-2026-10-14-evening.md whole.
 
 First run `git status` and `git log --oneline -8`. Another session may work
 in this same checkout: stage only your own paths, never `git add -A`. Keep
@@ -94,21 +92,107 @@ After the maintainer's critical review:
 - Decided (maintainer): `recall` opens another conversation only through
   an attached artifact, as now; recorded in doc 90's status line.
 
-## Next (nothing here is started; ask the maintainer which first)
+## Next
 
-1. The unknown-name answer is tested but never seen live: the local model
-   goes straight to `read`/`bash`. If a live run shows a model stuck on
-   `unknown_capability`, look at that answer's contract (what it lists,
-   how it reads), never restore an alias.
-2. New measured patterns from `/eval/proposals`: the next round's backlog.
-3. Recorded model choices, no work unless the maintainer asks: a model
-   sometimes invents a folder or writes after the work is done; a table's
-   header and row joined by a newline in one string, or a one-row table
-   with no header, are told and fixed on the next call; prose can still
-   claim what no call did (the "not verified" banner warns).
-4. Not audited: other name or word tables elsewhere in the tree. Two were
-   removed this session (`canonical_tool_name`, the projection's
-   `artifact_from_tool`); nobody has swept for the rest.
+Everything open is in `docs/plans/open-items.md`, the one tracker: the
+release checklist, what was seen only in tests, what has not been run,
+what needs the maintainer, known limits and decisions not to build. Ask
+the maintainer which item to take first. Being done now: the design-doc
+audit (each doc marked in progress or proposal checked against the code).
+
+## Working notes
+
+Live runs:
+- Build `cargo build -p vak -p vak-server --bins`; the server embeds the
+  client bundle it was built with, so after a client change run
+  `npm run build` in crates/vak-client-ui (both bundles), rebuild, then
+  restart the server.
+- Launch entries in `.claude/launch.json`: `vak-tmp-live` (port 8902) and
+  `vak-tmp-live-8903` serve the dev build from /tmp/vak-live/ws13 with
+  `serve --trust` (trust for that process only, which is what lets the
+  folder's `permission_mode = "workspace-write"` apply). Port 8902 can be
+  held by another chat's server; `preview_stop` cannot stop it, so use
+  8903 (copy /tmp/vak-live/*.sh with `sed 's/8902/8903/g'`).
+- /tmp/vak-live/test-gateway-token holds the dev token (recreate a random
+  one after a reboot); sign in with `/app/?token=<it>`. The link
+  `vak open app --print` gives carries the installed home's token, which
+  the dev server refuses. Ollama must be running with the dev model.
+- A fresh dev data home has no route: `PATCH /config` with the provider
+  and model once, then check `GET /config` (route and `WorkspaceWrite`)
+  before a turn.
+- /tmp/vak-live/turn.sh runs one turn in a new session and prints its
+  calls; sum.sh summarises the last; wait.sh prints the newest run's
+  decisions. `/runs/{id}/decisions` is empty while the run is open: poll
+  its status first. Sessions made over the API do not open in the client
+  list; open `/app/#/s/<id>` directly. The person's own session in the
+  client works in ~/vak-home even on the dev server.
+- A `/until-done` turn is released by a steering message that is exactly
+  `done` (`POST /sessions/{id}/steering {"text":"done"}`).
+- `scripts/measure_tool_form.py replay` records outcomes, not responses:
+  to see how a no-call response ended, post the captured body to
+  `/api/chat` with `stream: false` and read `done_reason`, `eval_count`,
+  `tool_calls` and the thinking's tail.
+- `/library/{id}` lists versions under `history`; `/library/{id}/versions/{v}`
+  returns a version's bytes (how to put an earlier version in the folder).
+- An untrusted project's `permission_mode` is dropped (privileged key).
+- The ledger keeps a call as the model first wrote it; a regenerated call
+  is not in the transcript.
+- A turn that fetches a page after reading private data asks first
+  (invariant 43); a tool the person declined leaves the turn.
+
+Browser pane:
+- The screenshot does not paint a sandboxed preview frame: check it
+  through the DOM (`srcdoc`, `sandbox`, CSP). The static mockup preview
+  always renders light; use its own theme button.
+- Clicks by coordinate miss when the viewport is scaled: use `find` refs.
+  The Results panel covers the chat: close it before clicking behind it.
+- At 390 × 844 the client's sidebar opens over the conversation: press
+  Escape (after a second) before a screenshot.
+- Publishing a hosted artifact page was refused by the permission
+  classifier; mockups live in `docs/assets/`.
+
+Tests and the gate:
+- `scripts/gate.sh` (full, about 13 minutes warm) before every commit;
+  `--changed` while working. `cargo test` prints nothing for a binary
+  until it finishes and stops at the first failing binary, so a failure
+  means the rest did not run. Never edit sources while it runs.
+- A test that fails only beside others reads more than it made, or acts on
+  the whole home: fix it or give it its own binary for that reason, never
+  to hide a failure. A test in a shared-home binary filters by something
+  it made; `/eval/ledgers` and `/library` read every session in the home.
+- `#[path]` inside a nested module resolves through directories that do
+  not exist; declare a shared fixture at the crate root. `cargo fmt`
+  rewraps lines: re-read before a scripted edit.
+- A new field on `ToolContext` needs every literal updated
+  (`git grep -l 'ToolContext {'`). Clippy's argument limit is 7: fold an
+  argument into its struct rather than allowing the lint.
+- A `CallEffect` is a commit point unless it touched nothing outside
+  (`commits()` in vak-session/src/log.rs); a new variant decides which.
+- A WebSocket route needs no `Origin` check of its own (the router does
+  it); test it through `secured_router_with_port`, never
+  `vak_server::router`, which has no auth layer.
+- A sandbox test that redirects to `/dev/null` fails in a read-only grant
+  and proves nothing about the network.
+- Linux checks run in Docker as `scripts/sync-lab/build.sh` does
+  (`rust:1-bookworm`, the `vk-target` and `vk-cargo` volumes). As root,
+  `server_owned_cleanup_removes_a_protected_candidate_tree` and
+  `revision_copy_uses_only_verified_saved_version` fail because root
+  ignores permission bits.
+- `tempfile` is a dev dependency of vak-server only; a route's temporary
+  files go under `vak_config::paths::runtime_dir()`.
+- In a flex-column page, a child with `overflow-x: auto` collapses to zero
+  height unless it has `flex: none`.
+
+Git and release:
+- Another session may share this checkout: stage only your own paths,
+  never `git add -A`; if its half-finished edits break the build, wait for
+  its commit rather than gating over them. `git stash` and `pkill` are
+  refused by the permission classifier: commit your own steps, then
+  `git pull --rebase`; a conflict in crates/vak-client-ui/dist-web/ is
+  resolved by rebuilding the bundle and adding the whole directory.
+- `release.sh` rebuilds the committed bundles in place, so the tree looks
+  dirty while it runs. The AWS inventory uses the `vak-hosting` SSO
+  profile; running remote `setup` over SSH is the owner's to do.
 
 ## Traps learned this session
 

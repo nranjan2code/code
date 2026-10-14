@@ -3244,6 +3244,5 @@ refs either (its runs are swept as abandoned here, as they were once its
 liveness lapsed). Test: `sync_survives_network_loss` renews liveness
 three times and finds nothing owed.
 
-The handover for the session after the plan
-(`docs/plans/handover-2026-10-09.md`) lists the product limits and the
-checks not yet run in a browser or live.
+`docs/plans/open-items.md` lists the product limits and the checks not
+yet run in a browser or live.
