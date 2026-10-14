@@ -8,6 +8,19 @@ across them. Nothing here is started unless it says so.
 
 ## Before the next release
 
+8.0.0 (2026-10-14), a major version with a purge (maintainer's choice):
+
+- [x] CHANGELOG: the `## 8.0.0` section.
+- [x] Version: 8.0.0; `scripts/bump-version.sh`.
+- [ ] `scripts/release.sh`, tag `v8.0.0`.
+- [ ] This Mac: `vak self uninstall --purge`, install from `dist/8.0.0`
+  (`vak self install`, `vak self services-sync`); the maintainer runs setup
+  with the provider key.
+- [ ] The data baseline is still 7.0 (`vak_core::baseline`, invariant 29):
+  bump it to 8.0, so a data home or saved presentation library from before
+  the card forms is refused with the one message instead of half-read.
+  Retire `TurnCapabilitiesBound.tool_domains` (above) in the same change.
+
 7.3.0 (2026-10-14):
 
 - [x] CHANGELOG: the `## 7.3.0` section.

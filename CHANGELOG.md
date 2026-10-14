@@ -1,4 +1,4 @@
-## Unreleased
+## 8.0.0 — 2026-10-14
 
 Cards are rebuilt as eighteen forms (docs/design/92-card-forms.md). This
 release cannot read presentation libraries saved by earlier versions: set
