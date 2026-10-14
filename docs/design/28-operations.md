@@ -1,5 +1,5 @@
 # 28 — Operations: service control plane
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 Design notes behind `vak-ops`, the desktop-owned tray, and the `/ops` HTTP routes
 (operational how-to lives in `docs/hosting.md`).
@@ -15,7 +15,7 @@ launchd (macOS) / systemd --user (Linux)
      vak-ops   status · start · stop · restart · install/uninstall · logs
         ▲
  ┌─────┼──────────────┬──────────────┐
- tray  TUI /services  desktop panel  GET|POST /ops/*
+ tray  vak term       desktop panel  GET|POST /ops/*
 ```
 
 Rules:
@@ -139,8 +139,9 @@ The desktop tray uses `crates/vak-desktop/icons/tray-template.png`, a 36px
 monochrome alpha mask rendered at 18pt by AppKit with template mode enabled.
 The OS handles light, dark and selected states. The menu and tooltip retain
 service status in words. Other desktop platforms use `tray-color.png`.
-The standalone `vak-tray` target uses the same template, with no runtime
-resizing of the Dock artwork. All exports come from the approved raster master and
+The standalone `vak-tray` binary that also drew it was removed on
+2026-10-14: nothing installed or launched it once the desktop owned the
+tray. All exports come from the approved raster master and
 `scripts/brand/generate.mjs`; see `docs/brand/README.md`.
 
 ### `--tray`

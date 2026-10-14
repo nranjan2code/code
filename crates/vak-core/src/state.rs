@@ -592,7 +592,7 @@ pub const REGISTRY: &[StateEntry] = &[
     StateEntry {
         path: "tray.json",
         root: Root::Data,
-        owner: "vak-tray",
+        owner: "vak-ops",
         schema: None,
         class: Class::Derived,
         on_purge: OnPurge::Remove,

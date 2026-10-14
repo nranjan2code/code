@@ -182,7 +182,7 @@ fn workspace() -> PathBuf {
 }
 
 /// Crates and files whose stderr is a person's: the CLI, the terminal and
-/// desktop apps, the tray, binaries, and helper processes whose stderr is
+/// desktop apps, binaries, and helper processes whose stderr is
 /// their parent's to read.
 fn user_output(path: &Path) -> bool {
     let text = path.to_string_lossy();
@@ -190,7 +190,6 @@ fn user_output(path: &Path) -> bool {
         "crates/vak/",
         "crates/vak-terminal/",
         "crates/vak-desktop/",
-        "crates/vak-tray/",
         "/src/bin/",
         "crates/vak-sandbox/src/landlock.rs",
         "/fuzz/",

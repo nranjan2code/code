@@ -1937,9 +1937,6 @@ crates/vak-ops       service-control layer over launchd/systemd — status,
                      start/stop/restart, install/uninstall shared by tray,
                      CLI and desktop, and each service's structured log
                      readers (docs/design/28-operations.md)
-crates/vak-tray      menu-bar controller: colour-coded service dot,
-                     start/stop/restart/install/uninstall, logs, watchdog
-                     with auto-restart + notifications
 crates/vak           binary. Run: exec / plan / flow / eval /
                      serve [--host] [--gateway] /
                      telegram|discord|slack [--bot-id <id>] /
