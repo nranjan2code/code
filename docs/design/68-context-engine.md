@@ -253,9 +253,11 @@ ceiling       = min(horizon.tokens, declared_window − output_reserve)
 budget        = ceiling − prefix_tokens − tail_tokens − current_turn_reserve
                 # reserve is model-specific and learned from observed turns
 # never split a turn
-direct follow-up = include at most the immediately preceding turn's compact card
-older reference  = search indexed turns with recall; reopen only a needed match
-fresh request    = include no historical turns; unused budget stays unused
+carried     = the compact card of the turn the request follows (the last
+              turn of the thread it continues, else the last turn), within
+              the budget; nothing older, whatever the request's words
+older turns = reached through recall by the model, never preloaded;
+              unused budget stays unused
 ```
 
 An older reference may point back hundreds or thousands of turns. The model
@@ -938,6 +940,10 @@ an attached artifact's block carries no conversation text.
 
 ### Context selection repair, 2026-09-30
 
+> **Historical record**: the repair as made that day; the planner it describes was replaced by
+> the one in §4 (AGENTS.md invariant 36: no reading of the request decides
+> what is carried).
+
 The installed desktop weather comparison exposed two planner defects: unrelated
 closed turns were admitted by recency alone, and recorded Full costs omitted
 tool arguments while Card costs measured the search index rather than the wire
@@ -959,6 +965,8 @@ contract. Live model behavior and million-turn scaling remain unproven; see
 
 ### Live review, 2026-10-10
 
+> **Historical record**: a dated review, kept as found.
+
 A local Ollama run showed a self-contained request continuing an older task
 because inferred thread lineage linked it through broad shared nouns. The
 model then called recall with terms copied from that request; the OR-ranked
@@ -973,6 +981,8 @@ recall acceptance remain necessary before claiming all local models use this
 path well.
 
 ### Review follow-ups, 2026-10-02
+
+> **Historical record**: a dated review, kept as found.
 
 A line-by-line review of the engine against its own contract found the
 following, all fixed with regression tests:

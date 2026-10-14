@@ -64,7 +64,7 @@ which:
 3. Prunes stale entries from `[plugins] network_allow` in the config
    via `vak_config::prune_plugins_network_allow()`.
 
-This runs during `vak setup seed`, `vak services-sync`, and
+This runs during `vak setup seed`, `vak self services-sync`, and
 `vak self update` (which calls `services-sync`).
 
 ### 5. Startup Warning (`vak-core::Core::new_with_trust`)

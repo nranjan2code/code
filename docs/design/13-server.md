@@ -38,8 +38,9 @@ consumers.
 | POST | `/sessions/:id/keep` / `discard` | merge or drop a best-of-N candidate branch |
 | GET | `/sessions/:id/pr` | gh-backed PR view + check rollup (`reason: no_pr\|gh_unavailable`) |
 | POST | `/sessions/:id/pr/merge` `{number,method}` | `gh pr merge --auto` (squash/merge/rebase) |
-| GET/POST | `/tasks`, PATCH/DELETE `/tasks/:id` | scheduled-task CRUD (persisted in the data home); additive `schedule` (5-field cron), `script` (zero-token watchdog), `model_pin` fields validated via `TaskDef::validate` → 400 |
-| POST | `/tasks/:id/run-now` | fire immediately; resets schedule |
+| GET/POST | `/triggers`, GET/PUT/DELETE `/triggers/:id` | automations (`vak_core::triggers::Trigger`, Documents in the store); a schedule, an event or a script |
+| GET | `/triggers/:id/slots` | the trigger's slots and the run records they started |
+| POST | `/triggers/:id/run` | start it now, through `triggers::claim_due` |
 | GET | `/sessions/:id/launch` | dev-server configs (`.vak/launch.toml` + npm autodetect) |
 | POST | `/sessions/:id/launch/start\|stop` `{name}` | manage a dev server process |
 | GET | `/sessions/:id/launch/logs?name=` | ring-buffered output tail |
@@ -106,7 +107,7 @@ fallback does not change the underlying outcome or evidence.
   subscribe/publish races, verified by both the rust e2e test and the python
   smoke driver.
 - **Approvals over HTTP**: permission asks publish `ApprovalRequested{id,
-  tool, reason}` and park on a oneshot; `POST /approvals/:rid` resolves it.
+  tool, reason}` and park on a oneshot; `POST /sessions/:id/approvals/:rid` resolves it.
   Grants are consumed exactly once (same invariant as the TUI approver).
 - **Session ledger returns** after each run (`run_turn_with` now yields
   `(TurnOutcome, SessionLog)`), so transcripts stay queryable between runs.
@@ -151,7 +152,7 @@ plus `trusted_hosts`, cross-origin mutations and WebSocket upgrades refused,
   Tauri shell) share the exact same contract; CORS allows webview origins
   only. A scheduler task fires due `/tasks` while the server lives.
 - **Side chats** append Q+A as a sibling branch off the current tail and then
-  restore the branch pointer — reconstructable in the JSONL, invisible to
+  restore the branch pointer — reconstructable in the ledger, invisible to
   `derive_messages()` on the main line.
 - **spawn_isolated_run** is the shared primitive behind best-of-N and
   scheduled tasks: child Core rooted in a fresh worktree, registered handle,

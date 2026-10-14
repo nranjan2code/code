@@ -1053,6 +1053,11 @@ argument of this document in one example.
 
 ## 14. Open questions
 
+> **Historical record**: the questions as they stood before Phase 1. The
+> phases answered what they built; signing in on a headless host is
+> the bootstrap token, then an owner passkey (`docs/hosting.md`,
+> `docs/design/78-headless-identity.md`).
+
 1. **Does the admin console eventually fold into `/app` as a section?**
    Doc 33's operations IA is genuinely different and invariant 26 keeps
    it an evidence projection. The honest answer is probably "shared

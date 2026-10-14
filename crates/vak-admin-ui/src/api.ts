@@ -1109,24 +1109,8 @@ export const api = {
       .then((r) => handle<{ surfaces?: ChatSurface[] }>(r))
       .then((c) => c.surfaces ?? []),
 
-  putBotToken: (
-    surface: string,
-    token: string,
-  ): Promise<{ surface: string; env_var: string; configured: boolean; restarted: boolean }> =>
-    fetch(`/config/bot-token/${encodeURIComponent(surface)}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token }),
-    }).then((r) => handle(r)),
-
-  removeBotToken: (
-    surface: string,
-  ): Promise<{ surface: string; env_var: string; configured: boolean; restarted: boolean }> =>
-    fetch(`/config/bot-token/${encodeURIComponent(surface)}`, { method: "DELETE" }).then((r) => handle(r)),
-
   /** Multi-bot-per-channel (docs/design/34, multi-bot): a `Bot` is an
-   * independent credential/policy identity, distinct from the single
-   * surface-keyed slot `putBotToken` manages. Several bots can share a
+   * independent credential/policy identity. Several bots can share a
    * surface; a chat picks which one it's bound to via its `bot_id`. */
   listBots: (): Promise<{ bots: import("./types").Bot[] }> =>
     fetch("/gateway/bots").then((r) => handle(r)),

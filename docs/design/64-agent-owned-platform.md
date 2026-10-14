@@ -184,9 +184,9 @@ are user/operator actions.
 
 ## Agent workspace and execution scratch topology
 
-This section describes the 4.x tree as built. The planned tenant/space layout
-replaces it in the data architecture refactor (docs/plans/data-architecture-plan.md,
-M3b); until then these are the real paths. `vak_config::paths` is the only
+This section describes the 7.x tree as built: the tenant/space layout of the
+data architecture (docs/plans/data-architecture-plan.md, M3b, the 7.0
+baseline). `vak_config::paths` is the only
 place that resolves them, and `vak_core::state::REGISTRY` declares every
 durable file.
 
@@ -197,7 +197,7 @@ Two roots hold an Agent's things, and they are different directories:
   holds application state. An Agent's private state lives under
   `<data home>/agents/<agent_id>/` (`vak_config::paths::agent_home`); what
   every Agent shares sits at the top of the data home
-  (`Core::shared_data_home()`).
+  (`Core::shared_scope()`).
 - **The workspace** is the directory an Agent's file and shell tools work in
   (`vak_config::paths::agent_workspace`). The built-in `vak` Agent works in
   the base workspace itself (`~/vak-home` for services, or the directory a
@@ -242,7 +242,7 @@ Two roots hold an Agent's things, and they are different directories:
 ```
 
 1. **Private Agent state (`vak_config::paths::agent_home`)**:
-   - `Core::sessions_home()` resolves through `self.agent_identity` to `<data home>/agents/<agent_id>/`.
+   - `Core::scope()` is the Agent's scope (`vak_config::scope::AgentScope`), rooted at `<data home>/agents/<agent_id>/`.
    - Each Agent's session logs, memory notes (`append_note`), reflection entries and skill proposals stay isolated.
    - Admission locks are acquired per-agent and per-session, ensuring that turns running on one Agent never block or stall turns running on another Agent.
 
@@ -253,7 +253,7 @@ Two roots hold an Agent's things, and they are different directories:
 
 3. **Global Shared Infrastructure (`Core::shared_data_home()`)**:
    - Cross-agent services use the top of the data home through `shared_data_home()`.
-   - This encompasses channel routing and transport credentials (`gateway/allowlist.json`, `gateway/bots.json`), operational receipts (`operations/`), the FinOps ledger (`cost-log/`), the inbox, scheduled tasks (`tasks.json`), the archive and the trash. The full-text search index is in the cache home.
+   - This encompasses channel routing and transport credentials (`gateway/allowlist.json`, `gateway/bots.json`), operational receipts (`operations/`), the FinOps ledger (`cost-log/`), the inbox, automations (trigger Documents in the store), the archive and the trash. Search and lineage are the data catalog, `tenants/<tenant>/catalog/catalog.db` in the data home, rebuilt from the records.
 
 4. **Client Presentation and Workbench Isolation (`vak-client-ui`)**:
    - The desktop and web UI maintains `sessionWorkbenchMap: Record<string, WorkbenchExecution[]>`, keying execution events by session ID rather than a single flat global array.

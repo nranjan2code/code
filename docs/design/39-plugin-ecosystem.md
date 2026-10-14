@@ -281,25 +281,23 @@ in 120–200ms and never delays task entry.
 
 ## APIs and CLI
 
-Initial control-plane contract:
+The control-plane routes as built (`crates/vak-server/src/lib.rs`, checked
+2026-10-14):
 
 ```text
-GET    /plugins
-POST   /plugins/inspect
-POST   /plugins/install
-GET    /plugins/catalog
-POST   /plugins/catalog/install
-GET    /plugins/{id}
-POST   /plugins/{id}/enable
-POST   /plugins/{id}/disable
-POST   /plugins/{id}/update
-POST   /plugins/{id}/rollback
-DELETE /plugins/{id}
-GET    /plugin-sources
-POST   /plugin-sources
-POST   /plugin-sources/{id}/sync
-DELETE /plugin-sources/{id}
+GET    /plugins                     GET /plugins/audit
+POST   /plugins/install             POST /plugins/update
+GET    /plugins/catalog             POST /plugins/catalog/install
+POST   /plugins/{name}/enable       POST /plugins/{name}/disable
+POST   /plugins/{name}/rollback     DELETE /plugins/{name}
+GET    /plugins/retired             DELETE /plugins/retired
+GET    /plugins/sources             POST /plugins/sources
+POST   /plugins/sources/{id}/enable POST /plugins/sources/{id}/disable
+POST   /plugins/keys/{id}/revoke    POST /plugins/keys/{id}/restore
 ```
+
+Inspecting a package is the CLI's (`vak plugins inspect`); there is no
+inspect route, and a source is registered as a snapshot rather than synced.
 
 The shared client now has Discover, current-agent inventory, and Manage views
 inside Settings > Capabilities. Discover uses the selected agent's discovered
@@ -313,14 +311,11 @@ update disabled in the selected scope. An agent catalog cannot install into
 Shared. The admin console uses the same endpoint and lifecycle controls;
 activation remains a separate review action.
 
-CLI parity:
+The CLI (`vak plugins`, with `-C` for another workspace):
 
 ```text
-vak plugin inspect <path-or-source>
-vak plugin install <path-or-source> [--scope user|workspace]
-vak plugin list
-vak plugin enable|disable|update|rollback|remove <id>
-vak plugin source add|list|sync|remove
+vak plugins inspect|install|update|enable|disable|rollback|versions|list|audit|remove
+vak plugins catalog-inspect|catalog-register|catalog-sources|catalog-search|catalog-install
 ```
 
 Mutations are authenticated control-plane operations, never model tools. Server

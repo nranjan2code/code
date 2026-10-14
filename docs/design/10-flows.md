@@ -78,7 +78,8 @@ executor authorizes these checks as brokered Bash calls.
   home. `--resume` is a new run, the next attempt, that continues from the
   newest run of that flow's checkpoint: it skips completed nodes and
   revisits pending/running ones. A prior failed/skipped node remains so.
-  `/flows`, `/flows/{name}/runs` and the run graph read the run records.
+  `/flows` and the run graph (`/flows/{name}/runs/{run}/graph`) read the run
+  records.
 
 The executor starts a parent work item when one is supplied, records a
 `FlowNode` evidence reference after each completed node, and moves the work
@@ -93,6 +94,8 @@ can still report partial upstream results. Cancellation returns `Aborted`.
 vak flow list
 vak flow check <name>     # validate + print layers
 vak flow run <name> [--resume] [--yes]
+vak flow adopt --from <session or ledger>
+vak flow diff <a> <b>
 ```
 
 Ctrl-C aborts cleanly; the ledger allows resuming later.
@@ -100,7 +103,8 @@ Ctrl-C aborts cleanly; the ledger allows resuming later.
 ## Deliberately out of scope (per research)
 
 Dynamic LLM-authored planning is a separate mechanism (planner slice); flows
-are deterministic, hand/GPT-authored files validated before execution.
+are deterministic files, written by hand or by a model, validated before
+execution.
 
 ## Later
 

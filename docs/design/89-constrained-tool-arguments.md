@@ -55,10 +55,10 @@ different limits.
 | OpenAI-compatible servers (vLLM, llama.cpp, LM Studio, OpenRouter and others) | varies by server and model | usually | `response_format` `{type: json_schema}`; vLLM also `guided_json` | llama.cpp ignores unsupported keywords and can refuse a large total tool schema; OpenRouter's support is per model (`supported_parameters`) |
 
 Where no constraint is offered, libraries read leniently instead of
-refusing: BAML's schema-aligned parsing and the `jsonrepair` recipe of the
-Vercel AI SDK fix unescaped newlines, missing brackets and similar slips
-before validating. Aider chooses an output format per model from measured
-results instead of one format for every model. The same three ideas carry
+refusing: schema-aligned parsing and JSON-repair recipes fix unescaped
+newlines, missing brackets and similar slips before validating, and one
+coding assistant chooses an output format per model from measured results
+instead of one format for every model. The same three ideas carry
 over: enforce where the wire can, read leniently only where the fix is
 lossless, and choose per model from measurement.
 
@@ -77,9 +77,8 @@ vLLM, [Structured outputs](https://docs.vllm.ai/en/v0.8.1/features/structured_ou
 llama.cpp, [llama-server](https://www.mintlify.com/ggml-org/llama.cpp/api/tools/llama-server);
 LM Studio, [Structured output](https://lmstudio.ai/docs/developer/openai-compat/structured-output);
 OpenRouter, [API reference](https://openrouter.ai/docs/api/reference/overview);
-BoundaryML, [Schema-aligned parsing](https://www.boundaryml.com/blog/schema-aligned-parsing);
-Vercel, [Repair JSON with jsonrepair](https://ai-sdk.dev/cookbook/node/repair-json-with-jsonrepair);
-Aider, [Edit formats](https://aider.chat/docs/more/edit-formats.html).
+and the published notes of the parsing libraries and coding assistants
+described above.
 
 ## 3. Where Vak stands
 

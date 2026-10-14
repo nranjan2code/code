@@ -1,5 +1,5 @@
 # 31 — Network resilience
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 The always-on personal OS must survive DHCP renewals, network switching,
 outages, hibernation/wake, and full restarts **without any user action**.
@@ -10,14 +10,18 @@ network-touching component maps to exactly one of four planes.
 
 ### 1. Local plane — loopback-only, immune by construction
 
-`serve` binds `127.0.0.1:<port>` (hardcoded); the desktop shell binds
-`127.0.0.1:0` ephemeral. TUI/desktop/CLI talk over loopback only.
+`serve` binds loopback by default; the desktop shell binds `127.0.0.1:0`
+ephemeral. The terminal, desktop and CLI talk over loopback. Another
+interface is an explicit `[server] bind` with its `trusted_hosts`, and a
+non-loopback bind with no trusted hosts refuses to start (invariant 34,
+docs/design/48-web-client.md).
 
 ⇒ Host-IP churn from DHCP or network switching cannot affect any local
 surface, ever. Remote access is an explicit user decision (tailscale /
-SSH tunnel / reverse proxy) layered *outside* this design — we never bind
-wildcard interfaces implicitly. The per-process bearer token stays the
-auth boundary; IP allowlists are explicitly NOT part of the model.
+SSH tunnel / reverse proxy, or the explicit `[server]` exposure above) —
+we never bind wildcard interfaces implicitly. The bearer token, and in a
+browser the owner's passkey session (docs/design/78-headless-identity.md),
+are the auth boundary; IP allowlists are explicitly NOT part of the model.
 
 ### 2. Channel plane — crash-only reconnectors
 
@@ -27,8 +31,9 @@ gateway per doc 22 extensions) obey:
 - **Never exit on transient failure.** No consecutive-failure give-up.
   Backoff is exponential with jitter, capped (30 s), reset on first
   success. Process lifetime ≠ connection lifetime.
-- **Resume, don't replay.** Cursor state (Telegram offset) advances only
-  on success; ownership probe (`timeout=0, offset=-1`) re-syncs after any
+- **Resume, don't replay.** The stream position is a cursor
+  (`vak_session::cursors`, one owner per bot, moved by CAS) that advances
+  only on success; ownership probe (`timeout=0, offset=-1`) re-syncs after any
   gap, so restarts and outages neither lose nor duplicate updates.
 - **Single-writer arbitration.** Multi-host conflicts degrade to hot
   standby with auto-takeover, never 409 flapping.
@@ -118,5 +123,5 @@ the delivery plane's rule, store and forward:
 |---|---|
 | Bridge outlives multi-minute outage, resumes cursor | gateway suite: mock API refuses N polls then serves; assert continued consumption, no exit |
 | Inference recovers after outage window | fault_proxy scenario: refuse window ⇒ breaker opens ⇒ proxy restores ⇒ next turn succeeds |
-| Wake fires missed slot exactly once | scheduler suite: backdate last_run past a slot boundary, tick once |
+| Wake fires missed slot exactly once | scheduler suite: a slot that passed while asleep is claimed once (`triggers::claim_due`) |
 | Delivery survives channel-down | P6: zero-transports watchdog lands in inbox (existing) |

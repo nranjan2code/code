@@ -11,7 +11,9 @@ snapshot/SSE projection with merged planner, isolated worker, trusted templates,
 plugin-extensible skill registry, structured fence projection on all markup
 surfaces, engagement posture integration, Telegram/Slack/Discord projections,
 semantic webhook envelope, adapter registry, ordered multi-message output, and
-durable delivery as effects (plan M4.5, AGENTS.md invariant 41) implemented. TUI remains follow-up work.
+durable delivery as effects (plan M4.5, AGENTS.md invariant 41) implemented. A terminal projector of the closed AST is not
+built: the inline TUI was withdrawn, and `vak term` (doc 55) draws the
+presentation items it receives in its own decks.
 
 ## Problem
 
@@ -244,7 +246,7 @@ the host's `vak_presentation::compile()` emits. The behaviors are unchanged:
 - **`research`**: Key takeaway rows with numbered badges, superscript
   citation tags (`[1]`, `[2]`), hover popovers displaying quoted snippets and
   source badges, and verified source link tiles with domain favicons.
-- **`diff`**: Zed/Cursor-grade diff viewer with file drawer, delta
+- **`diff`**: an editor-grade diff viewer with file drawer, delta
   counters (`+` / `-`), unified vs. side-by-side mode toggle, gutter line
   numbering, and one-click `openInEditor` host integration. The standalone
   `DiffInspector.tsx` remains for its non-registry call sites.
@@ -427,7 +429,7 @@ Markdown remains the export and emergency fallback for every projection.
    scaling and timers, `ui_preview` with viewport modes and preview dock
    integration): complete, and since consolidated into the single
    `GenericSpecRenderer` with no per-type components remaining.
-7. TUI projector: planned.
+7. Terminal projector: not built (see the Status line).
 8. Golden fixtures cover parser losslessness, nested structures, tables, code,
    diffs, unsafe links/HTML, artifacts, lifecycle states, legacy drafts, and
    unsupported capabilities; channel-specific accessibility and visual checks

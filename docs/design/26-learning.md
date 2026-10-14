@@ -38,9 +38,8 @@ text rules, so its conflict report is a lead for human review, not proof of a
 contradiction. It is not an overnight job and does not promote skills.
 
 Closes pillars M2 (memory write-path) and G5 (self-improving skills behind
-review). Hermes differentiates itself with a closed loop — experience becomes
-durable knowledge. We implement the loop with two model-invoked tools and one
-human gate:
+review). The point is a closed loop: experience becomes durable knowledge.
+We implement the loop with two model-invoked tools and one human gate:
 
 ```
 run completes ── model decides something is worth keeping
@@ -144,7 +143,7 @@ the same guarded memory/proposal repository used by the interactive tools.
 
 ### Worker ownership and termination
 
-Each delegated agent receives its own child JSONL session and context window,
+Each delegated agent receives its own child session ledger and context window,
 linked by `parent_session_id`. It does not receive a private memory file:
 `remember` writes to the parent workspace tier (or the global profile tier
 when explicitly selected), with the child session id preserved as provenance.

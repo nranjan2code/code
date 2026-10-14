@@ -1,9 +1,10 @@
 # 38 — Voice & Personality (Gemini Live)
-Status: implemented as the legacy narration/configuration layer in 2.0.0;
-the full-duplex and provider-neutral replacement is documented in
-[49-live-voice](49-live-voice.md). Voice identifiers and provider defaults are
-now discovered or explicitly configured; this document's historical examples
-must not be treated as a runtime catalogue.
+Status: superseded by [49-live-voice](49-live-voice.md) for the voice
+route, providers, limits and protocol. Still current here: the bot → chat
+voice tier, `POST /voice/speak` and its callers, and desktop narration;
+those sections were checked against the code on 2026-10-14. Voice
+identifiers and provider defaults are discovered or configured; examples
+below are not a runtime catalogue.
 
 The Agent's `[voice]` configuration owns the conversation route and models
 (docs/design/64-agent-owned-platform.md and docs/design/49-live-voice.md).
@@ -26,9 +27,13 @@ narration) rather than two parallel integrations:
 ### `VoiceConfig` — a new tier alongside `route`/`permission_mode`
 
 ```rust
-pub struct VoiceConfig {
-    pub voice_name: Option<String>, // Gemini prebuilt voice, e.g. "Kore"
-    pub persona: Option<String>,    // style directive -> systemInstruction
+pub struct VoiceConfig {            // vak-config
+    pub provider: Option<String>,
+    pub voice_name: Option<String>,
+    pub transcription_model: Option<String>,
+    pub synthesis_model: Option<String>,
+    pub persona: Option<String>,    // deprecated: the bot/chat `identity`
+                                    // prompt block is the persona now
 }
 ```
 
@@ -48,6 +53,11 @@ PATCH clears back to inherit (`deserialize_present`,
 `crates/vak-server/src/admin.rs`, `crates/vak-server/src/gateway.rs`).
 
 ### `crates/vak-llm/src/google_live.rs` — Live API session wrapper
+
+> **Historical record**: the first voice route as built in 2.0.0. The
+> route, its limits and its providers are doc 49's now: the length limit
+> is `[voice] max_text_chars` (`VoiceSettings`), and `google_live.rs` is
+> one provider behind it.
 
 A from-scratch `BidiGenerateContent` WebSocket client (Gemini's Live API
 has no SSE/REST form), mirroring `google.rs`'s conventions: pure
@@ -90,8 +100,12 @@ middleware (no new auth code):
 - **Admin console Preview button** calls it with an in-progress, unsaved
   config so an operator can hear a voice/persona before committing.
 
-Resolution order: request's explicit `voice_override` > the named
-chat's/bot's resolved voice > built-in default (`"Kore"`, no persona).
+Resolution order (`resolve_speaker`, `crates/vak-server/src/voice.rs`): the
+request's `voice_override` (the Preview) > the session's chat → bot voice
+(`GatewayState::resolve_voice`) > the Agent's and workspace's
+`effective_voice()`. With no voice named, the provider's own default
+applies. The persona comes from the bot/chat `identity` prompt block
+(docs/design/45-prompt-layers.md); an explicit override still wins.
 
 ### Admin console (`crates/vak-admin-ui`)
 

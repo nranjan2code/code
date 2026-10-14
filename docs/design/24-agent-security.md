@@ -38,21 +38,17 @@ provider paths. A boundary must bind the resolved resource and outbound
 destination, not a plausible-looking string. Hardened systems use workspace-only
 filesystem tools, default-denied execution, loopback gateway binding, explicit
 plugin trust, and deep policy-drift audits.
-- Hermes separates credential passthrough by tool/backend, clears the MCP
-  environment except for a small safe set, mounts declared credential files
-  read-only, redacts common secret forms, supports website restrictions, and
-  recommends container or remote execution as the real boundary.
-  <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/security.md>
-- OpenHands executes shell and file actions through a runtime inside a Docker
-  container instead of giving the model direct host-process authority.
-  <https://docs.openhands.dev/openhands/usage/architecture/runtime>
-- NVIDIA OpenShell treats filesystem, process, network, credentials, and
-  inference as distinct enforcement layers. Undeclared filesystem paths and
-  egress are denied; policy changes are generation-bound and old connections
-  are closed; credentials are injected at the gateway rather than exposed to
-  the agent environment.
-  <https://docs.nvidia.com/openshell/security/best-practices>
-  <https://docs.nvidia.com/openshell/latest/sandboxes/policies>
+The patterns Vak takes from comparable systems:
+- Credential passthrough separated by tool and backend; an MCP environment
+  cleared except for a small safe set; declared credential files mounted
+  read-only; common secret forms redacted; website restrictions; container
+  or remote execution as the real boundary.
+- Shell and file actions executed through a runtime inside a container,
+  rather than with direct host-process authority.
+- Filesystem, process, network, credentials and inference as distinct
+  enforcement layers: undeclared paths and egress denied, policy changes
+  bound to a generation with old connections closed, and credentials
+  injected at the gateway rather than exposed to the agent environment.
 
 ## Required invariants
 

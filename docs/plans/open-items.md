@@ -74,6 +74,22 @@ across them. Nothing here is started unless it says so.
 - Other tables of names or words that decide behaviour (AGENTS.md "No
   word lists"): two were removed on 2026-10-14 (`canonical_tool_name`,
   the projection's `artifact_from_tool`); nobody has swept the tree.
+- `[intent] accept_confidence` is read and shown (`vak intent show`, the
+  admin intent policy) but decides nothing since 2026-10-11; within 7.x it
+  can only be documented as such (invariant 29). Decide whether to stop
+  showing it.
+- `vak term`'s approval box takes clicks at fixed screen coordinates; its
+  second region closes the box without answering, and which pill is drawn
+  there was not checked.
+- Two limits for a person's approval: `[gateway] approval_timeout_secs`
+  (a forwarded gate, default 300 s) and `[control.limits] approval_secs`
+  (every other approval, default 900 s). Decide whether the forwarded
+  window is its own limit or the same one (invariant 30).
+- The dynamic planner (`vak plan`, `crates/vak-flow/src/planner.rs`) reads
+  a TOML flow out of the model's prose and patches raw newlines and nested
+  quotes by guessing, with `output_schema: None`. AGENTS.md asks a step
+  whose output is data to set `ChatRequest::output_schema` and never to
+  guess at broken syntax; doc 11 describes the repair as designed.
 - `vak_delivery::skills::signals_from_text` reads words and is now called
   only by the delivery audit tests; decide whether it and those audits
   should go.

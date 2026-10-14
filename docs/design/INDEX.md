@@ -5,7 +5,7 @@ document's `Status:` line; never edit it by hand. The status word says
 what a document is; open the document for the whole Status line.
 Open work across all of them is `docs/plans/open-items.md`.
 
-Counts: 3 proposal, 17 in progress, 53 implemented, 3 reference, 6 superseded, 4 historical.
+Counts: 3 proposal, 17 in progress, 52 implemented, 3 reference, 7 superseded, 4 historical.
 
 | Doc | Title | Status | Summary |
 |---|---|---|---|
@@ -40,7 +40,7 @@ Counts: 3 proposal, 17 in progress, 53 implemented, 3 reference, 6 superseded, 4
 | [35-tavily.md](35-tavily.md) | 35-tavily.md | implemented | in 3.0.24 |
 | [36-first-run-onboarding.md](36-first-run-onboarding.md) | 36-first-run-onboarding.md | historical | v3.0.24 wizard contract |
 | [37-distribution.md](37-distribution.md) | 37-distribution.md | historical | proposal, superseded by the release engineering contract in `docs/design/32-release-engineering.md` and the current operator guide in `docs/release-and-install.md` |
-| [38-voice-personality.md](38-voice-personality.md) | 38 — Voice & Personality (Gemini Live) | implemented | as the legacy narration/configuration layer in 2.0.0 |
+| [38-voice-personality.md](38-voice-personality.md) | 38 — Voice & Personality (Gemini Live) | superseded | by [49-live-voice](49-live-voice.md) for the voice route, providers, limits and protocol |
 | [39-plugin-ecosystem.md](39-plugin-ecosystem.md) | 39 — Plugin ecosystem: compatible packages, governed activation, trusted catalogs | implemented | in 2.0.0 |
 | [40-harness-engineering.md](40-harness-engineering.md) | 40 — Harness engineering | implemented | in 2.0.0 |
 | [41-capability-registry.md](41-capability-registry.md) | Capability registry | implemented | in 2.0.0 |

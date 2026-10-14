@@ -1,5 +1,5 @@
 # 14 — Checkpoints & worktree isolation
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 ## Checkpoints
 
@@ -29,8 +29,7 @@ invariant 29): never partially read, never migrated.
   ones) and delete only files that are present now and absent from the
   manifest's `observed` set — a path the capture walk never saw (over
   budget, unreadable, secret, gitignored) is left untouched. Comparisons use
-  relative paths — immune to symlinked roots (`/tmp` vs `/private/tmp`). A
-  legacy checkpoint with no manifest deletes nothing.
+  relative paths — immune to symlinked roots (`/tmp` vs `/private/tmp`).
 - **Why state-based, not operation-based**: bash mutations are not invertible;
   snapshots cover them by construction. Cost is bounded by the caps above.
 - **Retention**: `store` prunes nothing. A session keeps its first
@@ -60,7 +59,7 @@ with a typed error. Cleanup: `git worktree remove --force` + branch delete.
 
 ## Invariants
 
-- Checkpoint ledgers are append-only artifacts outside the session JSONL
+- Checkpoint ledgers are append-only artifacts outside the session ledger
   (they are workspace state, never model-visible context).
 - Restore deletes only within the tracked scope and only files absent from
   the snapshot — untracked-but-ignored paths are never touched. A rewind can

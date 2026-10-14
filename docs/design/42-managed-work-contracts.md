@@ -1,6 +1,6 @@
 # 42 — Managed work contracts
 
-Status: implemented for the shipped managed-work paths. Managed agent turns dispatch contract-owned static flows through the production flow executor; standalone CLI flows remain deliberately unlinked unless a future explicit linkage option is added. Outcome revisions and collaborative goal updates are recorded by the shared outcome-directed runtime (`docs/design/52-outcome-directed-runtime.md`), while this document remains the durable work-item contract.
+Status: implemented for the shipped managed-work paths; checked against the code on 2026-10-14. Managed agent turns dispatch contract-owned static flows through the production flow executor; standalone CLI flows remain deliberately unlinked unless a future explicit linkage option is added. Outcome revisions and collaborative goal updates are recorded by the shared outcome-directed runtime (`docs/design/52-outcome-directed-runtime.md`), while this document remains the durable work-item contract.
 
 ## Mission
 
@@ -49,7 +49,7 @@ criteria in this document pass.
 
 The implementation builds on:
 
-- append-only session JSONL in `crates/vak-session`;
+- append-only session ledgers in `crates/vak-session`;
 - `SessionLog::derive_messages()` as the model-context projection;
 - the `vak-agent` model/tool loop and stop gate;
 - `PermissionEngine` before every effectful tool execution;
@@ -339,7 +339,7 @@ Rules:
 
 The control projection must:
 
-- be reconstructable from JSONL;
+- be reconstructable from the ledger;
 - be bounded in size;
 - survive compaction while active;
 - not be counted as dropped transcript history;
@@ -412,15 +412,17 @@ contract revision.
 
 ## Work-management tool
 
-Add a model-visible `work` tool with operations such as:
+The loop's own `work` tool has three operations (`vak-agent/src/lib.rs`):
 
 ```text
 get
 transition
-revise
 attach_evidence
-request_input
 ```
+
+`revise` and `request_input` were designed and not built; a revision comes
+from the person (`/goal`), and a worker that needs input asks through
+`ask_parent`.
 
 The tool proposes a typed event. It must not write the session ledger itself.
 The agent validates the proposal, appends the event, and only then returns a
@@ -660,6 +662,9 @@ implementing this feature unless a separate, fully tested change is requested.
 
 ## File-level plan
 
+> **Historical record**: the plan this was built from; the phases below are
+> complete and the sections above describe what holds.
+
 Expected implementation locations:
 
 | Area | Work |
@@ -680,6 +685,10 @@ Do not create a separate work database. If a query needs indexing, treat the
 index as rebuildable cache derived from session JSONL, like `vak-store`.
 
 ## Phased implementation
+
+> **Historical record**: each phase as it was planned and closed. Phase 6's
+> signals were later replaced by the intent kernel's horizon (see
+> "Execution profiles").
 
 ### Phase 0 — contract and test harness — complete
 
@@ -847,7 +856,7 @@ managed session with failed verification
 managed session interrupted and resumed
 ```
 
-Confirm that the raw JSONL is append-only, the projected work state is
+Confirm that the ledger is append-only, the projected work state is
 deterministic, and the UI/API agrees with the ledger.
 
 ## Definition of done

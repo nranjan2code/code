@@ -20,8 +20,10 @@ auth stack; nothing here bypasses permission checks or brokered tools.
 - **Operations first**: a single evidence-backed control plane makes server,
   CorePool, channels, runs, approvals, services, delivery and doctor state
   navigable from posture → subsystem → resource → incident.
-- **Rebuildable intelligence**: SQLite FTS5 index over JSONL ledgers.
-  JSONL remains the source of truth; dropping `store.db` is always safe.
+- **Rebuildable intelligence**: search and lineage come from the data
+  catalog (`crates/vak-catalog`, SQLite with FTS5 in the tenant's
+  `catalog/`), rebuilt from the records alone; the ledgers stay the source
+  of truth, and `vak data rebuild-catalog` remakes it.
 
 The Operations Center is part of this same embedded shell. It is a
 bookmarkable, evidence-first control plane over the server, CorePool, gateway,
@@ -637,8 +639,8 @@ is not a status label, and truncating one mid-word helps nobody.
 
 ## Invariants
 
-1. **JSONL is truth.** `store.db*` are derived artifacts: excluded from
-   checkpoints, safe to delete, rebuilt automatically.
+1. **The records are truth.** The catalog is derived: excluded from
+   checkpoints, rebuilt from the records (`vak data rebuild-catalog`).
 2. **Listing never resolves.** Cross-session approval listing displays;
    answering stays scoped to the owning session's endpoint.
 3. **Mutations are POSTs.** Anything that changes state must never be

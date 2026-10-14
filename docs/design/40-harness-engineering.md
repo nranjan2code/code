@@ -31,7 +31,7 @@ slower and less deterministic than Rust tests.
 
 Prompt scenario identity is a hash of the task, fixture, postcondition, output
 contract, scope contract, and allowed changes. Renaming an identical fixture
-does not create a new semantic scenario. Evidence comes from parsed JSONL
+does not create a new semantic scenario. Evidence comes from parsed ledger entries
 `tool_use` records, not substring matches against user or system prompt text.
 The runner snapshots the complete workspace around each case, rejects
 unexpected changes, verifies that child process groups are gone, writes atomic
@@ -145,7 +145,7 @@ should continue adopting:
   should add durable evaluator scores and an online feedback importer.
 * OpenAI Agents SDK tracing records model generations, tool calls, handoffs,
   guardrails, and custom events, while its testing guidance uses deterministic
-  provider-neutral doubles. VAK has session JSONL, receipts, and event
+  provider-neutral doubles. VAK has session ledgers, receipts, and event
   projections; the next parity step is a normalized trace/span export with
   redaction and flush guarantees.
 * SWE-bench evaluates real repository issues in resettable sandboxed

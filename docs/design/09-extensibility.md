@@ -3,14 +3,16 @@ Status: implemented in 2.0.0; MCP network through a per-server egress proxy (202
 
 ## Skills (shipped)
 
-Markdown packages: `.vak/skills/<name>/SKILL.md` (project) and
-`data_home()/skills/<name>/SKILL.md` (user; `~/Library/Application Support/
-vak/skills` on macOS, `~/.local/share/vak/skills` on Linux).
+Markdown packages: `.vak/skills/<name>/SKILL.md` in the project, the Shared
+layer's `~/vak-home/.vak/skills/<name>/SKILL.md`, an Agent's own
+`~/vak-home/.vak/agents/<agent>/skills/`, and enabled plugins' skills
+(`vak_core::skills::discover_with_plugins`).
 Frontmatter `name:` +
 `description:`. Names must be lowercase kebab-case, 1–64 characters; descriptions
-are required and capped at 1024 characters. Only the name/description/
-path line enters the system prompt; the model reads the file with `read`
-when relevant — progressive disclosure using the portable skill format.
+are required and capped at 1024 characters. Only the name and description
+line enters the system prompt; the model loads a skill's body with the
+`skill` tool, which checks the admitted digest — progressive disclosure
+using the portable skill format.
 Discovered skills are recorded in the frozen contract.
 
 Optional frontmatter `serves:` declares what the skill is for, against the
@@ -24,23 +26,23 @@ serves: documents, live-data
 ---
 ```
 
-Accepts `a, b` or `[a, b]`. Omitting it leaves the skill *undeclared*, which
-is never narrowed away by the per-turn capability slice — skills are already
-progressively disclosed by their loader, so this is advisory context rather
-than a gate.
+Accepts `a, b` or `[a, b]`. Omitting it leaves the skill *undeclared*. It is
+advisory context, never a gate: skills are already progressively disclosed
+by their loader.
 
 `vak skills validate [PATH]` validates every `SKILL.md` below the supplied
 file or directory; without a path it validates both project and user roots.
 `allowed-tools` is advisory only and never grants authorization.
 
-Same-name precedence: project shadows user. Runtime discovery uses the winner,
+Same-name precedence: project shadows Shared. Runtime discovery uses the winner,
 while inventory APIs retain losing entries with `shadowed` and provenance so
 the admin and desktop surfaces can explain why a skill is inactive.
 
 ## Workers (shipped, blocking + parallel fan-out + attach/steer)
 
 The `task` tool delegates a self-contained prompt to a child agent:
-- child session JSONL linked via `parent_session_id`; greppable lineage
+- child session ledger linked via `parent_session_id`; lineage in the data
+  catalog
 - narrowed contract: child tools exclude `task` (depth-1 by construction)
 - inherits permission engine/mode/approver/sandbox/model from parent core
 - final text returns as the tool result; abort/failure/turn-limit become
@@ -52,9 +54,9 @@ The `task` tool delegates a self-contained prompt to a child agent:
 While a child runs it registers its steering queues and cancel token in a
 per-Core `WorkerRegistry` (`vak_agent`), keyed by the unique child
 session id. UIs enumerate live children, push steering/follow-up text into
-a specific child, or cancel just that child. The TUI surfaces this as
-`Alt-S` / `/workers`: attaching retargets the composer (Enter steers the
-child, Tab queues its follow-up, Ctrl-C stops only it, Esc detaches).
+a specific child, or cancel just that child. The clients show it as the
+Workers tab, and the model reaches its own workers through the `workers`
+tool (docs/design/84-worker-questions-and-control.md).
 Registration is removed when the tool call returns, so a finished child can
 never be steered.
 

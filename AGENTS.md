@@ -133,7 +133,8 @@ delivery provenance. Bots are transport identities and channels are
 endpoints; internal tasks are implementation details behind the Agent
 conversation. Global infrastructure (gateway, operations, FinOps, tasks, the
 archive and the trash) stays shared at the top of the data home via
-`Core::shared_scope()`; the FTS index is in the cache home. Doc 64's
+`Core::shared_scope()`; search and lineage are the data catalog in the
+data home (`tenants/<tenant>/catalog/`). Doc 64's
 topology section draws the tree. Invariant 37 states the enforceable half of
 this.
 
@@ -679,8 +680,8 @@ commit (invariant 30).
     same explicit `user`/`project` vocabulary and expose provenance. A GET used
     to seed a write returns that exact layer, never the merged projection.
     Secrets follow the same lookup chain but stay outside TOML: Agent private
-    secret scope → project secret scope → Shared platform secret scope →
-    process environment. Secret scopes are never literal `.env` files — they
+    secret scope → project secret scope → Shared platform secret scope, with
+    a real environment variable above them all (invariant 8). Secret scopes are never literal `.env` files — they
     resolve through `vak_config::credentials` to an OS-native secret service
     (macOS Keychain / Windows Credential Manager / Linux Secret Service) or,
     when none is reachable (the common headless case), an encrypted-file

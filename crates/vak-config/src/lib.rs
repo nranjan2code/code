@@ -826,12 +826,16 @@ pub struct IntentSettings {
     /// Master switch. `false` resolves every turn to the general engagement,
     /// which is vak's behaviour before the kernel existed. Default true.
     pub enabled: Option<bool>,
-    /// Confidence at or above which a reading may narrow capability.
+    /// Read by nothing since 2026-10-11, when readings stopped deciding which
+    /// tools are loaded (docs/design/88-control-plane.md §12.1); kept so a
+    /// file that sets it still reads the same (invariant 29).
     pub accept_confidence: Option<f64>,
-    /// Confidence at or above which a reading may raise risk posture but not
-    /// remove tools.
+    /// Below this, a part's reading is too weak to use: it keeps only the
+    /// risk its words stated and gets the general engagement.
     pub provisional_confidence: Option<f64>,
-    /// Allow progressive disclosure of the capability packet. Default true.
+    /// Progressive disclosure: each tool's own declaration decides whether it
+    /// is loaded or listed in the catalogue; false loads every admitted tool.
+    /// Default true.
     pub slice_capabilities: Option<bool>,
     /// Allow stakes to raise the approval floor. Default true.
     pub posture: Option<bool>,
@@ -941,10 +945,11 @@ pub struct McpServerConfig {
     pub hosts: Vec<String>,
     /// What this server is for, in its own words: `serves = ["live-data"]`.
     ///
-    /// Optional, and deliberately so. It decides whether a call to this
-    /// server counts as retrieval that an answer must be grounded in; an
-    /// empty list means *undeclared*, and the server inherits the `mcp`
-    /// broker's web/live-data claim. It never hides the server from a turn.
+    /// Optional, and deliberately so. It is the server's own declaration
+    /// of what it is for (`Tool::serves`), read where the tool surface
+    /// decides what is loaded; an empty list means *undeclared*, and the
+    /// server inherits the `mcp` broker's web/live-data claim. It never
+    /// hides the server from a turn.
     /// The alternative, guessing a domain from the server's tool names,
     /// would put a keyword table back in the harness and reintroduce the
     /// coupling this field exists to remove.

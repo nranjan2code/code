@@ -780,15 +780,15 @@ vak-core/intent.rs  the seam: gathers facts, runs the cascade, projects the
 ```toml
 [intent]
 enabled = true              # false reproduces pre-kernel behaviour exactly (privileged at false)
-accept_confidence = 0.75    # bar for deciding which tools are loaded
-provisional_confidence = 0.45
-slice_capabilities = true   # false loads every admitted tool on every turn
+provisional_confidence = 0.45  # below it a part's reading is too weak to use
+slice_capabilities = true   # false loads every admitted tool on every turn;
+                            # true lets each tool's declaration decide
 posture = true              # the approval ceiling (stakes × autonomy) may lower the mode (privileged at false)
-escalate = "none"           # none | local (ollama only) | cloud    (privileged at "cloud")
-classify_model = "…"        # model, or provider/model, for the classifier
-max_classify_usd = 0.01
-classify_timeout_secs = 10  # watchdog; an overrun fails open to the free-tier reading
 autonomy = "assisted"       # privileged
+# accept_confidence is still read from a file and shown by `vak intent
+# show`, but nothing decides by it (removed with capability slicing,
+# 2026-10-11); escalate, classify_model, max_classify_usd and
+# classify_timeout_secs belonged to tiers 2 and 3 and are unknown keys now.
 
 [route]
 modality_hints = ["vision", "-vl"]   # legs able to serve non-text input; none ⇒ every leg

@@ -29,6 +29,13 @@ types, required properties, enums, arrays, and item types. A malformed call is
 an error value and never reaches a tool. It is not a network failure and must
 not enter provider retry or route endurance.
 
+Before that, a call whose arguments cannot be read, or that fails the schema
+of a tool its request did not carry, is written again by the model under
+the tool's own schema (`Tool::call_schema`), and the ledger keeps what the
+model first wrote (AGENTS.md "Tool arguments are written, then read",
+docs/design/89-constrained-tool-arguments.md). That is the repair; nothing
+guesses at broken JSON.
+
 The schema boundary does not pretend to understand domain meaning. Temporal
 calls still need an explicit time zone and freshness contract; research needs
 source and claim evidence; coding needs workspace and verification evidence;

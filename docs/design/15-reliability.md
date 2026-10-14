@@ -189,7 +189,7 @@ The standard failure matrix and where each case is handled.
 
 ## Crash & recovery
 
-- **Session ledgers are append-only JSONL** — a crash mid-write loses at most
+- **Session ledgers are append-only record segments** — a crash mid-write loses at most
   the trailing partial line, which `SessionLog::open` skips; nothing else is
   rewritten. Model context is always *derived* from the log, so a crashed run
   resumes with full history.

@@ -1,7 +1,7 @@
 Shared / Global Configuration
 ==============================
 
-Status: implemented in 3.0.24
+Status: implemented in 3.0.24; checked against the code on 2026-10-14.
 
 ## Provider-neutral model routes
 
@@ -49,13 +49,16 @@ literal `.env` files — see "Secrets Chain" below.
 
 ## Trust Model
 
-A project config is **untrusted** until the workspace is trusted
-(`trust_project = true` set by the operator). When untrusted:
+A project config is **untrusted** until the person trusts the workspace
+(the workspace prompt or `--trust`, recorded as a marker in the data home's
+`trusted/` directory, `vak_core::trust`). When untrusted:
 
-- Privileged keys are stripped from the effective config. The
-  `PRIVILEGED_KEYS_NOTICE` constant in `crates/vak-config/src/lib.rs`
-  enumerates them: `[server]`, `[gateway]`, `[finops]`, `[automation]`,
-  `[tools]`, `[route]`.
+- Privileged keys are stripped from the effective config and named in the
+  warning (`PRIVILEGED_KEYS_NOTICE` in `crates/vak-config/src/lib.rs`):
+  `permission_mode`, `approval_mode`, `allow`, `hooks`, provider base URLs
+  and regions, `mcp.servers`, `gateway`, `sandbox`, `server` (with
+  `server.bus`), `update`, `capabilities`, the intent autonomy and floor
+  switches, `control.limits` and `plugins.network_allow`.
 - The `fc.server = ServerSettings::default()` fallback applies
   (rule 27: untrusted projects cannot choose an interface or relax host
   checks).
@@ -68,8 +71,11 @@ logic.
 Secrets follow the same lookup chain but stay outside TOML:
 
 ```
-process environment  >  project secret  >  shared secret  >  operator prompt
+process environment  >  Agent secret  >  project secret  >  shared secret
 ```
+
+(The Agent's private scope is keyed by its home, `home-<id>-agent-<agent>`
+in `vak_config::credentials`.)
 
 - Real environment variables always take precedence over stored secrets
   (rule 8).
@@ -117,7 +123,7 @@ OS-native backend can't answer that by enumeration either.
 
 ## Permission Mode Composition
 
-`PermissionMode::capped_by` (rule 17) returns the least-privilecive mode
+`PermissionMode::capped_by` (rule 17) returns the least-privileged mode
 when composing layers. It is universal in the deny direction — a narrower
 scope can only restrict, never expand, the effective mode.
 
@@ -152,12 +158,11 @@ once and cached forever.
   pick up a global edit mid-run). This was a wiring gap, not missing
   logic: `refresh_persisted_route()` and `CorePool::invalidate_pooled()`
   both predate this fix and are unchanged.
-- Live UIs (desktop, web) subscribe to the server's existing
-  `EventHub`/`SystemEvent::ConfigChanged` stream (already emitted by every
-  config-write handler) over the admin SSE endpoint (`/admin/api/events`)
-  via `api.openConfigEvents()`, and refetch on receipt — see
-  `crates/vak-client-ui/src/components/Settings.tsx`. No new server-side
-  event plumbing was needed; only the client subscription was missing.
+- Live UIs (desktop, web) receive the server's
+  `SystemEvent::ConfigChanged` (emitted by every config-write handler) on
+  the one shared client stream (`/stream`, `watchConfig` in
+  `crates/vak-client-ui/src/streamHub.ts`) and refetch on receipt, as
+  `crates/vak-client-ui/src/components/Settings.tsx` does.
 - Scope: this covers one server process's own `Core`/pooled cores and the
   UIs connected to it. A multi-gateway/distributed deployment where two
   separate `vak-server` processes must agree is a different problem —

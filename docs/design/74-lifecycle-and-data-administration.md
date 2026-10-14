@@ -541,51 +541,60 @@ clients need a real token). Destructive routes also require a
 `confirm_digest`, the preview digest the caller just displayed, so a stale
 preview can never authorise a different impact.
 
+As built (checked against `crates/vak-server/src/lib.rs` on 2026-10-14):
+
 ```
-GET    /data/status                        classes, quotas, reconciler, integrity summary
-GET    /data/usage?scope=&class=&since=    measured usage and growth
-GET    /data/lifecycle/plan                the dry-run plan
-POST   /data/lifecycle/tick                run now (operator)
-GET    /data/lifecycle/transitions?…       lifecycle records
-GET    /data/integrity   POST /data/integrity/verify   POST /data/catalog/rebuild
-GET|POST|PUT  /data/labels[/{id}]          labels; POST /data/labels/{id}/attach, /detach
-GET    /data/labels/effective?node=        resolved policy + chain
-GET|POST      /data/holds  POST /data/holds/{id}/release
-POST   /data/erasure/preview               → { preview, confirm_digest }
-POST   /data/erasure                       { scope, confirm_digest } → request
-POST   /data/erasure/{id}/approve | /cancel   GET /data/erasure/{id}[/receipt]
-POST   /data/export                        { scope } → Run
-GET|POST      /data/keys  POST /data/keys/rotate  POST /data/keys/escrow
-GET|POST      /data/backups  POST /data/backups/{id}/restore/preview | /restore
-POST   /conversations/{id}/trash | /restore | /archive | /unarchive
-GET    /runs  /runs/{id}  /runs/{id}/spans   POST /runs/{id}/cancel | /rerun
-GET    /triggers  /triggers/{id}/slots   POST /triggers/{id}/pause | /resume | /run | /backfill
-GET    /effects  /effects/{id}           POST /effects/{id}/reconcile
-GET    /search  /lineage/{node}  /nodes/{id}
-GET    /library  /library/{key}             the Library (doc 82): from its L1; keys change at M8
-GET    /data/sync …  (M9)
+GET    /data/status   /data/usage   /data/integrity   /data/holds
+GET    /data/lifecycle/plan          POST /data/lifecycle/tick
+GET    /data/rules                   POST /data/rules/preview
+GET    /data/keys                    POST /data/keys/rotate   /data/keys/retire
+POST   /data/backups                 POST /data/backups/restore[/preview]
+GET    /conversations/{id}/erasure   POST (erase)   PUT /conversations/{id}/hold
+GET    /conversations/{id}/guests[/{principal}/erasure]   POST (erase a guest)
+GET    /conversations/{id}/lifecycle   /conversations/{id}/gone
+POST   /data/erasure/accounts/{account}
+POST   /data/erasure/people/preview   /data/erasure/people   /data/erasure/people/allow
+GET|POST /data/erasure/projects/{space}   GET|POST /data/erasure/install
+GET|POST /agents/{agent}/erasure      GET /data/erasure/receipts
+GET    /catalog                      POST /catalog/rebuild
+GET    /runs  /runs/{id}  /runs/{id}/spans  /runs/{id}/decisions
+GET|POST /triggers   GET|PUT|DELETE /triggers/{id}
+GET    /triggers/{id}/slots          POST /triggers/{id}/run
+GET    /effects  /effects/{id}       POST /effects/{id}/reconcile   /effects/{id}/resend
+GET    /search  /lineage/{id}  /nodes/{id}
+GET    /library …                    the Library (doc 82)
+GET    /sync                         POST /sync/setup /now /handover /takeover /forget,
+                                     /sync/key/export, /sync/key/import
 ```
 
-These replace, in the same change (invariant 30):
-- `POST /sessions/{id}/archive`, `DELETE /sessions/{id}`,
-  `DELETE /sessions/archived`, `POST /sessions/{id}/restore`,
-  `GET /sessions?trash=true` (M0's trash, `vak_core::trash`)
-- `POST /memory/cleanup`
-- `POST /workspaces/forget`
-- `POST /backup/export|import` (replaced by `/data/backups` at plan M7a-h)
-- `/agents/{id}/schedule|runs` (already deleted in M0)
-- `/tasks`, `/tasks/{id}/run-now`, `/tasks/{id}/retry-delivery` (by
-  `/triggers` and `/effects` at M4)
-- the session-keyed Operations "runs"
+The trash keeps its session routes (`POST /sessions/{id}/archive`,
+`POST /sessions/{id}/restore`, `DELETE /sessions/{id}`,
+`DELETE /sessions/archived`), which act through `vak_core::trash`.
+
+Designed here and not built: labels as their own routes (`/data/labels`;
+the install's rules are `/data/rules`), an erasure request queue with
+approve and cancel, `/data/export`, key escrow (all four by the
+maintainer's decisions, `docs/decisions.md`), `POST /runs/{id}/cancel` and
+`/rerun`, and the trigger verbs `pause`, `resume` and `backfill` (a trigger
+is changed through `PUT /triggers/{id}`).
+
+Replaced, in the same change that built the new route (invariant 30):
+`POST /memory/cleanup`, `POST /workspaces/forget`,
+`POST /backup/export|import` (by `/data/backups`), `/agents/{id}/schedule|runs`
+(deleted in M0), and `/tasks`, `/tasks/{id}/run-now`,
+`/tasks/{id}/retry-delivery` (by `/triggers` and `/effects`).
 
 ## 8. CLI parity
 
-`vak data status | usage | plan | gc [--dry-run] | verify | rebuild-catalog |
-labels … | hold … | erase --scope … [--preview] | export --scope … | keys … |
-backup … | cat | grep`, plus `vak runs …`, `vak triggers …` and `vak effects …`.
+As built: `vak data status | usage | plan | gc [--dry-run] | rules [--set] |
+hold | erase [--scope conversation|guest|account|agent|project|install] |
+receipts | keys [--rotate|--retire] | verify | rebuild-catalog | cat | grep`,
+plus `vak backup …`, `vak sync …`, `vak runs …`, `vak triggers …` and
+`vak effects …`. There is no `labels` or `export` verb (by the maintainer's
+decisions).
 
-Every destructive command prints the preview and requires `--confirm
-<digest>` (or an interactive typed confirmation). `vak doctor --repair` may
+Every destructive command shows what it will destroy and asks for a typed
+confirmation (`vak data erase` asks for the conversation's title). `vak doctor --repair` may
 invoke only reconciler actions classed as mechanical (invariant 19).
 
 ## 9. Acceptance

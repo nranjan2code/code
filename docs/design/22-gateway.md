@@ -1,5 +1,5 @@
 # 22 — Gateway: always-on surfaces + cron delivery
-Status: implemented in 2.0.0
+Status: implemented in 2.0.0; checked against the code on 2026-10-14.
 
 Closes the platform gap versus always-on personal agent platforms whose core
 differentiator is a gateway that routes many chat surfaces to persistent agent
@@ -58,9 +58,14 @@ cron tick    ┘                          └ any future client
 
 One `Core` per workspace; N concurrent routed sessions above it. The Core owns
 one atomic provider/model default, while each binding may own an atomic
-provider/model override. Sessions remain append-only JSONL trees keyed per-cwd.
+provider/model override. Sessions remain append-only ledger trees keyed by space.
 
 ## Non-goals for this phase
+
+> **Historical record**: the non-goals of G0. Two were later built: the
+> in-tree bridges (`vak telegram`, `vak discord`, `vak slack`,
+> `crates/vak-server/src/surfaces/`) and multi-workspace routing (the
+> `CorePool`, docs/design/34-channel-onboarding.md Phase 2).
 
 - No in-tree Telegram/Discord/Slack clients (they are thin adapters over
   `/gateway/inbound`; shipping them is config-level work, G1 below).
@@ -108,7 +113,7 @@ Session contracts never mutate. Before every inbound dispatch, the gateway
 checks the bound session's workspace, agent, conversation identity, and any
 explicit channel route. Missing ledgers and mismatched identities or explicit
 routes are stale bindings:
-the old JSONL remains intact, the binding rotates, and the inbound message
+the old ledger remains intact, the binding rotates, and the inbound message
 starts a fresh session under the new contract. This is how an administrative
 default propagates without corrupting history.
 Capability descriptions and availability are rebound from the live admitted
@@ -127,7 +132,7 @@ The single-writer discipline (`Option<SessionLog>` handoff) is kept. When an
 inbound arrives mid-run:
 
 1. The text goes onto the session's `SteeringQueues` (logged user entry —
-   invariant 1 holds: model-visible ⇒ reconstructable from the JSONL).
+   invariant 1 holds: model-visible ⇒ reconstructable from the ledger).
 2. The running loop drains steering between turns, so the agent sees the new
    instruction inside the same run.
 3. If the run finishes before draining, the gateway runner drains what is
@@ -226,7 +231,7 @@ channels implement the registry adapter trait. Agent code remains unchanged.
 enabled   = true      # default false — remote execution must be opt-in
 approvals = "deny"    # "deny" | "forward"
 approver  = "telegram:48211"   # required for "forward"; <surface>:<chat>
-approval_timeout_secs = 300    # min 5
+approval_timeout_secs = 300    # min 5; a forwarded gate's window
 
 [gateway.outbound.webhooks.ci]
 url       = "https://ci.example.com/vak"
@@ -352,6 +357,10 @@ Security posture:
 
 ## Phases
 
+> **Historical record**: the phases as they shipped; names such as
+> `TaskDef.deliver_to` are as they were then (scheduled work is a trigger
+> now, docs/design/65-universal-adaptive-platform.md).
+
 | Phase | Delivers | Exit criterion |
 |---|---|---|
 | **G0 ✅** | HTTP inbound + wait mode, bindings persistence, steering-busy path + continuation, AutoDeny unattended turns, log surface, `TaskDef.deliver_to`, `[gateway]` config, `serve --gateway` | e2e tests: roundtrip, reuse, busy-steering, disabled-gateway 409, cron delivery; fmt/clippy/tests green |
@@ -363,8 +372,8 @@ Security posture:
 
 ## Implementation notes (as built)
 
-- `sender` is accepted on the wire but deliberately untyped until group-chat
-  routing lands (G2); serde ignores it today.
+- `sender` is required: `InboundRequest::new` refuses an empty or
+  placeholder `chat` or `sender` (invariant 15).
 - `secured_router`'s routines scheduler pins every session handle until
   process exit. Embedders needing clean teardown use
   `vak_server::gateway_router(core)` — gateway enabled, no background

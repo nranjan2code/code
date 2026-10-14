@@ -1,7 +1,8 @@
 Tavily Out-of-the-Box MCP Integration
 ====================================
 
-Status: implemented in 3.0.24
+Status: implemented in 3.0.24; checked against the code on 2026-10-14 (the
+curated entry is in `crates/vak-server/src/lib.rs`).
 
 ## Overview
 
@@ -33,7 +34,7 @@ sandboxed broker execution.
 1. The model proposes a `tavily_search` tool call.
 2. `vak-core` resolves the capability through the MCP meta-tool. The `tavily`
    server is discovered from the workspace's MCP manifest (`[mcp.servers]`).
-3. The MCP server is spawned as a sandboxed subprocess (`npx tavily-mcp`),
+3. The MCP server is spawned as a sandboxed subprocess (`npx -y tavily-mcp@latest`),
    inheriting only the operational environment allowlist (PATH, HOME, etc.).
 4. The server's outbound HTTPS requests go through its own egress proxy,
    which allows only the hosts its catalog entry declares (`api.tavily.com`
@@ -47,14 +48,15 @@ sandboxed broker execution.
 - **SSRF guard**: The MCP server subprocess runs with `env_clear` and the
   workspace root as its working directory. It cannot access provider
   credentials or the parent environment.
-- **Capability scoping**: `mcp_allow = ["tavily/tavily_search"]` gates which
-  tools the model sees. `mcp_network_deny = ["tavily/*"]` can force the server
-  offline for compliance.
+- **Capability scoping**: a channel's overlay (invariant 20) may narrow MCP
+  with `mcp_allow = ["tavily/tavily_search"]` and `mcp_deny`, and
+  `mcp_network_deny = ["tavily"]` can force the server offline. In a
+  workspace, permission rules gate the calls like any tool's.
 - **Network deny test**: `crates/vak-core/src/lib.rs` verifies that
   `tavily`'s network access can be forced off via MCP deny rules, while
   `sandboxed` (already denied) stays off.
 - **Session logging**: All `tavily_search` results are recorded as
-  `ToolResult` entries in the append-only session JSONL. The model never sees
+  `ToolResult` entries in the append-only session ledger. The model never sees
   raw API output without it being reconstructable from the ledger.
 
 ## Configuration
@@ -62,14 +64,12 @@ sandboxed broker execution.
 ```toml
 [mcp.servers.tavily]
 command = "npx"
-args = ["-y", "tavily-mcp"]
-trust = "read-only"
-
-[mcp.allow]
-patterns = ["tavily/tavily_search"]
+args = ["-y", "tavily-mcp@latest"]
+hosts = ["api.tavily.com", "registry.npmjs.org"]
 ```
 
-The `tavily_search` tool is a model-visible capability only when explicitly
-allowed. When absent from the allow list, the model receives an
-`unknown_capability` error and the request is recorded (not silently
-dropped).
+The server is advertised by name and spawned only when the `mcp` broker is
+called (invariant 25). On a channel whose overlay does not allow it, the
+server is filtered from what the model is offered and refused again at call
+time; a call to a name the turn does not offer gets `unknown_capability`,
+recorded like any refusal.

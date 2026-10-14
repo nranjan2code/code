@@ -362,9 +362,9 @@ resolution, look up the entry's `workspace`; if it's not the default,
 resolve (or start) that workspace's `Core` from the pool instead of using
 `state.core` directly. Each pooled `Core` gets its own:
 
-- session ledger home (already implied — sessions are keyed by cwd today,
-  per docs/design/22's "Sessions remain append-only JSONL trees keyed
-  per-cwd" — this phase makes that actually reachable from a remote
+- session ledger home (already implied — sessions are keyed by workspace,
+  per docs/design/22's "Sessions remain append-only ledger trees keyed by
+  space" — this phase makes that actually reachable from a remote
   channel instead of only from a local CLI/desktop client already sitting
   in that cwd).
 - permission mode / sandbox / trust resolution, loaded the normal way
@@ -551,7 +551,9 @@ as `vak telegram`); `DiscordAdapter` and `SlackAdapter` are registered in
 surface-agnostic — nothing keyed on "telegram" — so the panels needed only
 a `SurfaceBadge`, not generalizing. Desktop Settings renders one
 Telegram-shaped token field per surface from `surfaces` in
-`GET /config`, via `PUT/DELETE /config/bot-token/{surface}`; only Telegram
+`GET /config`, via `PUT/DELETE /config/bot-token/{surface}` (since
+replaced by each bot's own token, `PUT/DELETE /gateway/bots/{id}/token`,
+Phase 5); only Telegram
 has a managed service unit today, so the others say plainly that the
 bridge is started by hand rather than promising a restart that will not
 happen. See the two deferrals at the top of this doc for the polling

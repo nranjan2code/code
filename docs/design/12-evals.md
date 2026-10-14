@@ -55,7 +55,7 @@ Beyond the scripted suites, harness behavior in general flows is covered by
 `crates/vak-agent/tests/it/general_flows.rs`: mid-run steering, abort
 preserving partial artifacts, the stop gate blocking unverified reports,
 compaction during long research sessions (append-only asserted against the
-raw JSONL), MCP meta-tool lookups, and read-only mode denials.
+raw ledger), MCP meta-tool lookups, and read-only mode denials.
 
 ## Generated deterministic batches
 

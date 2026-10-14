@@ -42,13 +42,19 @@ edits detectable when a later linked entry remains intact; they are not a
 signature, external anchor, or proof against an actor who can rewrite the
 whole file.
 
-### One JSONL ledger per session
+### One ledger per session, in record segments
 
-The on-disk representation is newline-delimited JSON. Each non-empty line is
-one independently deserializable entry. Appending has a small, clear commit
-boundary, and a reader can recover the valid prefix if a process stops during
-the final write. JSONL is also inspectable with ordinary tools and allows
-future entry kinds to be added without replacing an entire session document.
+A ledger is a directory of numbered record segments
+(`crates/vak-storage/src/records.rs`, `segments.rs`). Each entry is one
+frame: its JSON, compressed and sealed under the conversation's scope key
+(`vak_session::keys`), with a hash chained over the bytes as stored, so the
+chain verifies with no key and keeps verifying after the key is destroyed.
+Appending has a small commit boundary; a crash leaves a readable prefix,
+and a full segment is sealed by copy, verify and atomic swap. New entry
+kinds are added without rewriting anything. A ledger is read only through
+`SessionLog` (`read_header`, `scan`, `text`, `decode`), never as a file, and
+a large payload is a tenant object (`SessionLog::put_object`). `vak data cat`
+gives a person the plain view.
 
 The location is derived from the Agent's sessions home, the id of the space
 the workspace is bound to, and the session id
@@ -124,7 +130,7 @@ projection; new audit data must not leak into model context by default.
 
 ## Ledger and active history
 
-The JSONL file is the physical history. A session handle indexes parsed entry
+The ledger's frames are the physical history. A session handle indexes parsed entry
 ids in memory, tracks the physical tail hash, and tracks the active logical
 tail. The active chain is obtained by following `parent_id` from that tail to
 the root, then reversing the result into chronological order.
@@ -259,13 +265,13 @@ that drops it while a duplicate of its file is still open.
 sequenceDiagram
     participant Caller
     participant Log as SessionLog
-    participant File as JSONL file
+    participant File as record segment
     Caller->>Log: create(path, header)
     Log->>File: open append, lock, require empty
     Log->>File: append header with sync_data
     Caller->>Log: append(payload)
     Log->>Log: validate parent_id
-    Log->>File: add prev_hash, serialize, append line
+    Log->>File: add prev_hash, serialize, seal, append frame
     Log->>File: sync_data
     Log->>Log: update id index and tails
     Log-->>Caller: committed entry
@@ -597,7 +603,7 @@ Usage totals and other active-conversation calculations follow the active
 chain. Entries that only exist on an abandoned branch do not contribute.
 Similarly, transcript and session search access must honor the shared trash
 and visibility rules before opening a ledger; callers must not bypass the
-session APIs by reading a JSONL file directly.
+session APIs by reading a ledger's segments directly.
 
 ## Failure handling and operational guarantees
 

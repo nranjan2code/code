@@ -531,7 +531,7 @@ tick is the truth. It runs in the server and the desktop shell. It ships
 observe-only first (it plans and shows, and commits nothing), then commits one
 action class at a time, and every destructive action is staged in quarantine
 before commit. The loop, guards and pacing are in doc 74 §5. A CLI surface
-exposes it: `vak data status | gc --dry-run | verify | export | hold`.
+exposes it: `vak data status | plan | gc [--dry-run] | verify | hold`.
 `doctor --repair` calls only its mechanical actions (invariant 19).
 
 ### 7.3 Keys, crypto-shredding and erasure
@@ -615,7 +615,7 @@ dedupe (review R1). The design is:
 - **Transparency and honesty.**
   - A conversation's ledger is always encrypted, with no policy to turn it
     off, because erasure depends on it (plan M7a-a).
-  - `vak data cat | grep | export --plain` gives people the plain view the
+  - `vak data cat | grep` gives people the plain view the
     product promises.
   - On a headless host, the encrypted-file store keeps its key beside its
     data, so at-rest protection there is nominal. Crypto-shred still works,

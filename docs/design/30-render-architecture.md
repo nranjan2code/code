@@ -39,7 +39,7 @@ Three forces pull in different directions:
    hyperlinks in plain messages, no tables, 2000 chars. Desktop renders a
    schema-v2 semantic AST with SolidJS components. Each surface's
    protocol limits are immutable walls, not styling preferences.
-3. **Durability without duplication.** The session ledger (JSONL) is the sole
+3. **Durability without duplication.** The session ledger is the sole
    source of truth. Formatting must not become a second source of truth.
    Every rendering decision must be loss-accounted (native / fallback), and
    every rendered output must carry its `fallback_markdown` so a renderer bug
@@ -76,7 +76,7 @@ Three forces pull in different directions:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Session Ledger (JSONL) — the immutable source of truth     │
+│  Session Ledger — the immutable source of truth             │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
 │  │ Message      │    │ Activity     │    │ ToolResult   │  │
 │  │ (markdown)   │    │ (approval)   │    │ (structured) │  │
@@ -750,6 +750,7 @@ requests, regardless of which model or provider produced the original output.
   streaming delivery posture and per-channel connection state.
 - **Grapheme-cluster-aware chunking:** `unicode-segmentation` dependency to
   avoid splitting emoji sequences. Documented limitation, not yet prioritized.
-- **TUI projector:** A terminal renderer for the `OutputTimeline`.
-  `SurfaceCapabilities` already lists `"tui"` as native; the renderer is
-  planned (design/30 item 8).
+- **Terminal projector:** A terminal renderer for the `OutputTimeline`.
+  `SurfaceCapabilities` lists `"tui"` as native, but no renderer exists:
+  the inline TUI was withdrawn, and `vak term` (doc 55) draws the
+  presentation items it receives in its own decks.

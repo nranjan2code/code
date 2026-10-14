@@ -95,7 +95,7 @@ keys still warn per convention.
 - Search reads only; it never mutates ledgers, and respects the frozen
   contract (no rewriting, branching untouched).
 - `forget` and `amend` rewrite only the curated Markdown note store under a
-  per-store lock and atomic replacement. They do not rewrite session JSONL.
+  per-store lock and atomic replacement. They do not rewrite a session ledger.
   A note id is the FNV-1a hash of its header line, so changing a header
   intentionally changes its id.
 

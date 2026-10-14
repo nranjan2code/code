@@ -597,7 +597,7 @@ expired authority, or exhausted budget blocks/holds work with an honest reason.
 
 ## 10. Durability, performance and failure contracts
 
-Session JSONL remains source of truth; indexes and live projections rebuild.
+The session ledger remains the source of truth; indexes and live projections rebuild.
 Append spec revisions, admission decisions, result references, evaluations and
 presentation decisions using versioned event types. Every model-visible spec,
 correction, recovered fact and discovery result has a corresponding ledger
